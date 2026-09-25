@@ -1,0 +1,321 @@
+import SwiftUI
+
+struct OrgWorkloadView: View {
+    @Environment(OrgStore.self) private var orgs
+
+    let org: String
+    let workload: Workload?
+    @Binding var teamID: String?
+    @Binding var tab: WorkloadTab
+    @Binding var selection: DetailSelection?
+    let searchText: String
+
+    var body: some View {
+        VStack(spacing: 0) {
+            header
+            Divider()
+            if let workload {
+                list(workload)
+            } else if let error = orgs.errors[org] {
+                ContentUnavailableView {
+                    Label("Couldn't load \(org)", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button("Try Again") { Task { await orgs.refresh(org) } }
+                }
+            } else {
+                ProgressView("Loading work in \(org)")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .navigationTitle(orgs.org(login: org)?.displayName ?? org)
+        .toolbar {
+            ToolbarItem {
+                if orgs.refreshing.contains(org) {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button {
+                        Task { await orgs.refresh(org) }
+                    } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .keyboardShortcut("r")
+                    .help("Refresh from GitHub")
+                }
+            }
+        }
+        .task { await orgs.refreshIfStale(org) }
+    }
+
+    // MARK: Header
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Picker("View", selection: $tab) {
+                    ForEach(WorkloadTab.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                Spacer()
+                teamPicker
+            }
+            if let workload {
+                summary(workload)
+            }
+            if let error = orgs.errors[org], workload != nil {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .lineLimit(2)
+            }
+            ForEach(workload?.snapshot.warnings ?? [], id: \.self) { warning in
+                Label(warning, systemImage: "info.circle")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(12)
+    }
+
+    @ViewBuilder
+    private var teamPicker: some View {
+        let teams = (workload?.snapshot.teams ?? []).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        if !teams.isEmpty {
+            Picker("Team", selection: $teamID) {
+                Text("Everyone").tag(String?.none)
+                Divider()
+                ForEach(teams) { team in
+                    Text(team.name).tag(Optional(team.id))
+                }
+            }
+            .fixedSize()
+        }
+    }
+
+    private func summary(_ workload: Workload) -> some View {
+        let stale = workload.openPullRequests.filter(Workload.isStale).count
+        return HStack(spacing: 14) {
+            CountBadge(count: workload.openPullRequests.count, systemImage: "arrow.triangle.pull", help: "Open pull requests", tint: .blue)
+            CountBadge(count: stale, systemImage: "clock.badge.exclamationmark", help: "Open PRs with no activity for \(Workload.staleAfterDays) days", tint: .orange)
+            CountBadge(count: workload.mergedPullRequests.count, systemImage: "checkmark.circle", help: "Merged in the last \(workload.snapshot.lookbackDays) days", tint: .purple)
+            CountBadge(count: workload.assignedIssues.count, systemImage: "smallcircle.filled.circle", help: "Open assigned issues", tint: .green)
+            if workload.team == nil {
+                CountBadge(count: workload.unassignedIssues.count, systemImage: "circle.dashed", help: "Open unassigned issues")
+            }
+            Spacer()
+            HStack(spacing: 3) {
+                Text("Updated")
+                RelativeDate(date: workload.snapshot.fetchedAt)
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: Lists
+
+    @ViewBuilder
+    private func list(_ workload: Workload) -> some View {
+        switch tab {
+        case .people: peopleList(workload)
+        case .pullRequests: pullRequestList(workload)
+        case .issues: issueList(workload)
+        }
+    }
+
+    private func peopleList(_ workload: Workload) -> some View {
+        let people = workload.people.filter { matches($0.person) }
+        let busy = people.filter { $0.inFlight > 0 }
+        let idle = people.filter { $0.inFlight == 0 }
+        let maxLoad = busy.map(\.inFlight).max() ?? 1
+        return List(selection: $selection) {
+            Section("Work in flight") {
+                ForEach(busy) { load in
+                    PersonRow(load: load, maxLoad: maxLoad).tag(DetailSelection.person(load.id))
+                }
+            }
+            if !idle.isEmpty {
+                Section("Nothing in flight") {
+                    ForEach(idle) { load in
+                        PersonRow(load: load, maxLoad: maxLoad).tag(DetailSelection.person(load.id))
+                    }
+                }
+            }
+        }
+    }
+
+    private func pullRequestList(_ workload: Workload) -> some View {
+        let open = workload.openPullRequests.filter(matches)
+        let merged = workload.mergedPullRequests.filter(matches)
+        return List(selection: $selection) {
+            Section("Open (\(open.count))") {
+                ForEach(open) { pr in
+                    PullRequestRow(pr: pr).tag(DetailSelection.pullRequest(pr.id))
+                }
+            }
+            Section("Merged in the last \(workload.snapshot.lookbackDays) days (\(merged.count))") {
+                ForEach(merged) { pr in
+                    PullRequestRow(pr: pr).tag(DetailSelection.pullRequest(pr.id))
+                }
+            }
+        }
+    }
+
+    private func issueList(_ workload: Workload) -> some View {
+        let assigned = workload.assignedIssues.filter(matches)
+        let unassigned = workload.unassignedIssues.filter(matches)
+        return List(selection: $selection) {
+            Section("Assigned (\(assigned.count))") {
+                ForEach(assigned) { issue in
+                    IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
+                        .tag(DetailSelection.issue(issue.id))
+                }
+            }
+            if workload.team == nil {
+                Section("Unassigned (\(unassigned.count))") {
+                    ForEach(unassigned) { issue in
+                        IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
+                            .tag(DetailSelection.issue(issue.id))
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Filtering
+
+    private var query: String { searchText.trimmingCharacters(in: .whitespaces) }
+
+    private func matches(_ text: String) -> Bool {
+        text.localizedCaseInsensitiveContains(query)
+    }
+
+    private func matches(_ person: Person) -> Bool {
+        query.isEmpty || matches(person.login) || matches(person.displayName)
+    }
+
+    private func matches(_ pr: PullRequest) -> Bool {
+        query.isEmpty || matches(pr.title) || matches(pr.repo) || matches("#\(pr.number)")
+            || pr.workers.contains(where: matches) || pr.requestedReviewers.contains(where: matches)
+    }
+
+    private func matches(_ issue: Issue) -> Bool {
+        query.isEmpty || matches(issue.title) || matches(issue.repo) || matches("#\(issue.number)")
+            || issue.assignees.contains(where: matches) || issue.labels.contains { matches($0.name) }
+    }
+}
+
+// MARK: - Rows
+
+struct PersonRow: View {
+    let load: PersonLoad
+    let maxLoad: Int
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Avatar(url: load.person.avatarUrl, size: 28)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(load.person.displayName).fontWeight(.medium)
+                    if load.person.name != nil {
+                        Text(load.person.login).foregroundStyle(.secondary)
+                    }
+                }
+                .lineLimit(1)
+                HStack(spacing: 10) {
+                    CountBadge(count: load.pullRequests.count, systemImage: "arrow.triangle.pull", help: "Open pull requests", tint: .blue)
+                    CountBadge(count: load.reviewRequests.count, systemImage: "eye", help: "Reviews requested", tint: .teal)
+                    CountBadge(count: load.issues.count, systemImage: "smallcircle.filled.circle", help: "Assigned issues", tint: .green)
+                    CountBadge(count: load.merged.count, systemImage: "checkmark.circle", help: "Merged recently", tint: .purple)
+                    if !load.stalePullRequests.isEmpty {
+                        CountBadge(count: load.stalePullRequests.count, systemImage: "clock.badge.exclamationmark", help: "Stale pull requests", tint: .orange)
+                    }
+                }
+            }
+            Spacer()
+            if load.inFlight > 0 {
+                Gauge(value: Double(load.inFlight), in: 0...Double(max(maxLoad, 1))) {
+                    EmptyView()
+                } currentValueLabel: {
+                    Text("\(load.inFlight)")
+                }
+                .gaugeStyle(.accessoryCircularCapacity)
+                .scaleEffect(0.6)
+                .frame(width: 30, height: 30)
+                .help("\(load.inFlight) items in flight")
+            }
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+struct PullRequestRow: View {
+    let pr: PullRequest
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Pill(text: pr.statusText, color: pr.statusColor)
+                    Text(pr.title).lineLimit(1)
+                }
+                HStack(spacing: 4) {
+                    Text("\(pr.repo)#\(pr.number)")
+                    if let author = pr.author {
+                        Text("by \(author.login)")
+                    }
+                    Text("·")
+                    RelativeDate(date: pr.mergedAt ?? pr.updatedAt)
+                    if Workload.isStale(pr) {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .foregroundStyle(.orange)
+                            .help("No activity for \(Workload.staleAfterDays) days")
+                    }
+                    if !pr.linkedIssues.isEmpty {
+                        Label("\(pr.linkedIssues.count)", systemImage: "link")
+                            .help("Linked issues")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            Spacer()
+            AvatarStack(people: pr.assignees.isEmpty ? pr.author.map { [$0] } ?? [] : pr.assignees)
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+struct IssueRow: View {
+    let issue: Issue
+    let linkedCount: Int
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(issue.title).lineLimit(1)
+                HStack(spacing: 4) {
+                    Text("\(issue.repo)#\(issue.number)")
+                    Text("·")
+                    RelativeDate(date: issue.updatedAt)
+                    if linkedCount > 0 {
+                        Label("\(linkedCount)", systemImage: "arrow.triangle.pull")
+                            .help("Linked pull requests")
+                    }
+                    ForEach(issue.labels.prefix(3), id: \.self) { LabelChip(label: $0) }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+            Spacer()
+            AvatarStack(people: issue.assignees)
+        }
+        .padding(.vertical, 2)
+    }
+}

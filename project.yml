@@ -1,0 +1,33 @@
+name: Gannin
+options:
+  bundleIdPrefix: dev.andon
+  deploymentTarget:
+    macOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+    DEVELOPMENT_TEAM: AKC33ZRNL9
+    CODE_SIGN_STYLE: Automatic
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Gannin:
+    type: application
+    platform: macOS
+    sources:
+      - Gannin
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.andon.getgannin
+        PRODUCT_NAME: Gannin
+        INFOPLIST_KEY_CFBundleDisplayName: Gannin
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        GENERATE_INFOPLIST_FILE: YES
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_OUTGOING_NETWORK_CONNECTIONS: YES
+        CODE_SIGN_ENTITLEMENTS: Gannin/Gannin.entitlements
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
