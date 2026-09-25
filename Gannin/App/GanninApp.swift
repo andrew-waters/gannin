@@ -6,12 +6,15 @@ struct GanninApp: App {
     @State private var orgs: OrgStore
     @State private var details: DetailStore
     @State private var hidden = HiddenStore()
+    @State private var metrics: MetricsStore
+    @State private var orgConfigs = OrgConfigStore()
 
     init() {
         let auth = AuthStore()
         _auth = State(initialValue: auth)
         _orgs = State(initialValue: OrgStore(auth: auth))
         _details = State(initialValue: DetailStore(auth: auth))
+        _metrics = State(initialValue: MetricsStore(auth: auth))
     }
 
     var body: some Scene {
@@ -21,6 +24,8 @@ struct GanninApp: App {
                 .environment(orgs)
                 .environment(details)
                 .environment(hidden)
+                .environment(metrics)
+                .environment(orgConfigs)
         }
         .defaultSize(width: 1280, height: 800)
 

@@ -132,7 +132,7 @@ extension GitHubAPI {
     }
 
     /// Issue/PR search. GitHub caps search results at 1000.
-    private func search<Node: Decodable>(_ searchQuery: String, fields: String, pageSize: Int = 100) async throws -> [Node] {
+    func search<Node: Decodable>(_ searchQuery: String, fields: String, pageSize: Int = 100) async throws -> [Node] {
         return try await paginate { cursor in
             var variables = cursorVariables(cursor)
             variables["q"] = searchQuery
@@ -214,7 +214,7 @@ private struct SearchResponse<Node: Decodable>: Decodable {
 
 /// Decodes to nil instead of failing, so one odd search node (a type outside
 /// the fragment decodes as `{}`) doesn't sink the whole page.
-private struct Lossy<Value: Decodable>: Decodable {
+struct Lossy<Value: Decodable>: Decodable {
     let value: Value?
 
     init(from decoder: Decoder) throws {
@@ -252,6 +252,10 @@ private struct RawLinked: Decodable {
 
 private struct RawPullRequest: Decodable {
     struct ReviewRequest: Decodable { let requestedReviewer: RawActor? }
+    struct RequestedEvent: Decodable {
+        let createdAt: Date?
+        let requestedReviewer: RawActor?
+    }
     struct Review: Decodable { let author: RawActor? }
 
     let id: String
@@ -272,6 +276,7 @@ private struct RawPullRequest: Decodable {
     let reviewRequests: Connection<ReviewRequest>?
     let latestReviews: Connection<Review>?
     let closingIssuesReferences: Connection<RawLinked>?
+    let timelineItems: Connection<Lossy<RequestedEvent>>?
 
     static let fields = """
         ... on PullRequest {
@@ -282,11 +287,19 @@ private struct RawPullRequest: Decodable {
           reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
           latestReviews(first: 10) { nodes { author { login avatarUrl } } }
           closingIssuesReferences(first: 10) { nodes { \(RawLinked.fields) } }
+          timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) {
+            nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } } } }
+          }
         }
         """
 
     var model: PullRequest {
-        PullRequest(
+        var requestedAt: [String: Date] = [:]
+        for event in (timelineItems?.nodes ?? []).compactMap(\.value) {
+            guard let login = event.requestedReviewer?.login, let at = event.createdAt else { continue }
+            requestedAt[login] = max(requestedAt[login] ?? .distantPast, at)
+        }
+        return PullRequest(
             id: id,
             number: number,
             title: title,
@@ -303,6 +316,7 @@ private struct RawPullRequest: Decodable {
             deletions: deletions,
             assignees: assignees.nodes.compactMap(\.person),
             requestedReviewers: (reviewRequests?.nodes ?? []).compactMap { $0.requestedReviewer?.person },
+            reviewRequestedAt: requestedAt,
             reviewers: (latestReviews?.nodes ?? []).compactMap { $0.author?.person },
             linkedIssues: (closingIssuesReferences?.nodes ?? []).map(\.model)
         )

@@ -197,6 +197,8 @@ struct PullRequestColumn: View {
     @Environment(DetailStore.self) private var details
     let pr: PullRequest
     let workload: Workload
+    /// Timeline data, when the PR is in the metrics history.
+    var timing: MetricPullRequest?
     @Binding var selection: DetailSelection?
 
     var body: some View {
@@ -265,6 +267,10 @@ struct PullRequestColumn: View {
                 }
             }
 
+            if let timing {
+                TimelineSection(pr: timing)
+            }
+
             DescriptionSections(id: pr.id, url: pr.url)
         }
         .task(id: pr.id) { await details.load(pr.id) }
@@ -274,7 +280,7 @@ struct PullRequestColumn: View {
 // MARK: - Description and comments
 
 /// Body and recent comments, loaded on demand through `DetailStore`.
-private struct DescriptionSections: View {
+struct DescriptionSections: View {
     @Environment(DetailStore.self) private var details
     let id: String
     let url: URL
@@ -352,7 +358,7 @@ struct SectionHeader: View {
     }
 }
 
-private struct ItemHeader: View {
+struct ItemHeader: View {
     let title: String
     let reference: String
     let url: URL
@@ -392,7 +398,7 @@ private struct ChecksLabel: View {
     }
 }
 
-private struct DateGridRow: View {
+struct DateGridRow: View {
     let title: String
     let date: Date
 
@@ -404,7 +410,7 @@ private struct DateGridRow: View {
     }
 }
 
-private struct PeopleGridRow: View {
+struct PeopleGridRow: View {
     let title: String
     let people: [Person]
     @Binding var selection: DetailSelection?
@@ -436,7 +442,7 @@ private struct PeopleGridRow: View {
 
 /// A linked issue or PR that isn't in the snapshot (closed, or outside the
 /// org), so it opens on GitHub instead of in a column.
-private struct ExternalItemRow: View {
+struct ExternalItemRow: View {
     @Environment(\.openURL) private var openURL
     let item: LinkedItem
     let systemImage: String

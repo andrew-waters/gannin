@@ -45,3 +45,32 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 - Hiding is local (`HiddenStore`, keys are node IDs or `person:<login>`). `Workload` drops hidden
   items and, when "Exclude drafts" is on, draft PRs before deriving anything, so counts follow.
   Rows get the Hide/Unhide context menu through the `.hideable(_:url:)` modifier.
+
+## Metrics
+
+- `Gannin/Metrics/`: `MetricsStore` keeps a per-org history of merged PRs (first commit, ready
+  for review, first human review, first approval) in Application Support, backfilled to the
+  window's starting Monday and topped up from the last sync with a day of overlap. Searches run
+  a week at a time (GitHub caps a search at 1000 results) at 25 PRs a page to stay under
+  GitHub's timeout. PRs opened per week are search counts only.
+- `OrgMetrics` derives the numbers: cycle time is first commit (or creation, if earlier) to
+  merge; TTFR is ready-for-review (or creation) to first non-author, non-bot review; the four
+  stages are coding, waiting for review, rework (first review to the *last* approval before
+  merge) and merging (last approval to merge). Medians and p75, not means; stages most PRs skip
+  (`StageSummary.isOccasional`) show their share and median-when-it-happens instead.
+  Bot-authored PRs are excluded, as are logins ending `-bot` or `[bot]` (ordinary user accounts
+  used for automation) unless re-included in the org's stats config (`includedAuthors`).
+- The Overview tab is the org landing page. Tiles, the stage legend, chart weeks and table rows
+  set `DetailSelection.metric(MetricDrill)`, which `MetricColumn` renders as the PRs behind the
+  number. Chart colours are categorical slots 1-4 of the dataviz reference palette
+  (`ChartPalette`), in order.
+- Per-org stats config (`OrgConfigStore`, in `UserDefaults`) excludes repos and authors from
+  `OrgMetrics`. Excluded authors lose their PRs and their reviews, which is why
+  `MetricPullRequest` stores raw `reviews` and derives first review and approval from them.
+  "PRs opened" is a search count and ignores the config.
+- Reviewer stats come from `ReviewRequestedEvent` / `ReviewRequestRemovedEvent` timeline items
+  (`MetricPullRequest.reviewRequests`). Each request is matched to that reviewer's first review
+  between the request and merge (or withdrawal); withdrawn, unanswered requests are dropped.
+  The clock starts at the request or at ready-for-review, whichever is later. "Waiting now" uses
+  `PullRequest.reviewRequestedAt` from the open-PR snapshot. The team filter applies to the
+  reviewer, not the PR author.

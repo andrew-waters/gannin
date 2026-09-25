@@ -1,0 +1,81 @@
+import Foundation
+import Observation
+
+/// Per-org settings for the stats: repos and authors left out of them.
+struct OrgConfig: Codable, Hashable {
+    /// `owner/name` of repos whose PRs are left out.
+    var excludedRepos: Set<String> = []
+    /// Logins whose PRs and reviews are left out.
+    var excludedAuthors: Set<String> = []
+    /// Bot-looking logins the user has chosen to count anyway.
+    var includedAuthors: Set<String> = []
+
+    init() {}
+
+    /// Tolerates configs saved before a field existed.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        excludedRepos = try container.decodeIfPresent(Set<String>.self, forKey: .excludedRepos) ?? []
+        excludedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .excludedAuthors) ?? []
+        includedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .includedAuthors) ?? []
+    }
+
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty }
+
+    /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
+    /// type them as `Bot`) usually follow these naming conventions.
+    static func looksLikeBot(_ login: String) -> Bool {
+        let lower = login.lowercased()
+        return lower.hasSuffix("-bot") || lower.hasSuffix("[bot]")
+    }
+
+    func excludes(_ login: String) -> Bool {
+        if excludedAuthors.contains(login) { return true }
+        return Self.looksLikeBot(login) && !includedAuthors.contains(login)
+    }
+}
+
+@Observable
+final class OrgConfigStore {
+    private static let key = "orgConfigs"
+
+    private(set) var configs: [String: OrgConfig]
+
+    init() {
+        if let data = UserDefaults.standard.data(forKey: Self.key),
+           let configs = try? JSONDecoder().decode([String: OrgConfig].self, from: data) {
+            self.configs = configs
+        } else {
+            configs = [:]
+        }
+    }
+
+    func config(for org: String) -> OrgConfig { configs[org] ?? OrgConfig() }
+
+    func update(_ org: String, _ change: (inout OrgConfig) -> Void) {
+        var config = config(for: org)
+        change(&config)
+        configs[org] = config.isEmpty ? nil : config
+        if let data = try? JSONEncoder().encode(configs) {
+            UserDefaults.standard.set(data, forKey: Self.key)
+        }
+    }
+
+    func toggleRepo(_ repo: String, in org: String) {
+        update(org) { config in
+            if config.excludedRepos.remove(repo) == nil { config.excludedRepos.insert(repo) }
+        }
+    }
+
+    func toggleAuthor(_ login: String, in org: String) {
+        update(org) { config in
+            if config.excludes(login) {
+                config.excludedAuthors.remove(login)
+                if OrgConfig.looksLikeBot(login) { config.includedAuthors.insert(login) }
+            } else {
+                config.includedAuthors.remove(login)
+                if !OrgConfig.looksLikeBot(login) { config.excludedAuthors.insert(login) }
+            }
+        }
+    }
+}

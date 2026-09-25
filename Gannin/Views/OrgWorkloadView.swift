@@ -2,11 +2,14 @@ import SwiftUI
 
 struct OrgWorkloadView: View {
     @Environment(OrgStore.self) private var orgs
+    @Environment(MetricsStore.self) private var metricsStore
+    @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("excludeDrafts") private var excludeDrafts = false
     @AppStorage("showHidden") private var showHidden = false
 
     let org: String
     let workload: Workload?
+    let metrics: OrgMetrics?
     @Binding var teamID: String?
     @Binding var tab: WorkloadTab
     @Binding var selection: DetailSelection?
@@ -33,12 +36,25 @@ struct OrgWorkloadView: View {
         }
         .navigationTitle(orgs.org(login: org)?.displayName ?? org)
         .toolbar {
+            if tab == .overview {
+                ToolbarItem {
+                    Picker("Window", selection: $windowDays) {
+                        ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .fixedSize()
+                    .help("Window for the delivery and people stats")
+                }
+            }
             ToolbarItem {
                 if orgs.refreshing.contains(org) {
                     ProgressView().controlSize(.small)
                 } else {
                     Button {
-                        Task { await orgs.refresh(org) }
+                        Task {
+                            await orgs.refresh(org)
+                            await metricsStore.sync(org, windowDays: windowDays, force: true)
+                        }
                     } label: {
                         Label("Refresh", systemImage: "arrow.clockwise")
                     }
@@ -48,19 +64,13 @@ struct OrgWorkloadView: View {
             }
         }
         .task { await orgs.refreshIfStale(org) }
+        .task(id: windowDays) { await metricsStore.sync(org, windowDays: windowDays) }
     }
 
     // MARK: Header
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Picker("View", selection: $tab) {
-                ForEach(WorkloadTab.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-
             HStack(spacing: 8) {
                 teamPicker
                 filterMenu
@@ -77,7 +87,7 @@ struct OrgWorkloadView: View {
             }
             .controlSize(.small)
 
-            if let workload {
+            if let workload, tab != .overview {
                 summary(workload)
             }
             if let error = orgs.errors[org], workload != nil {
@@ -144,6 +154,7 @@ struct OrgWorkloadView: View {
     @ViewBuilder
     private func list(_ workload: Workload) -> some View {
         switch tab {
+        case .overview: OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
         case .people: peopleList(workload)
         case .pullRequests: pullRequestList(workload)
         case .issues: issueList(workload)

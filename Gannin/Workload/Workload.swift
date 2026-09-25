@@ -155,6 +155,13 @@ struct Workload {
         }
     }
 
+    /// Open, ready PRs with no review yet, oldest first.
+    var awaitingFirstReview: [PullRequest] {
+        openPullRequests
+            .filter { !$0.isDraft && $0.reviewers.isEmpty }
+            .sorted { $0.createdAt < $1.createdAt }
+    }
+
     func load(for login: String) -> PersonLoad? {
         people.first { $0.person.login == login }
     }

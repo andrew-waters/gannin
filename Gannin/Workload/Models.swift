@@ -1,6 +1,6 @@
 import Foundation
 
-struct Person: Codable, Hashable, Identifiable {
+nonisolated struct Person: Codable, Hashable, Identifiable {
     let login: String
     let name: String?
     let avatarUrl: URL?
@@ -77,6 +77,8 @@ struct PullRequest: Codable, Hashable, Identifiable {
     let deletions: Int
     let assignees: [Person]
     let requestedReviewers: [Person]
+    /// When each requested reviewer was (most recently) asked.
+    let reviewRequestedAt: [String: Date]
     let reviewers: [Person]
     let linkedIssues: [LinkedItem]
 

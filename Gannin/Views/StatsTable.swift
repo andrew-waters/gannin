@@ -1,0 +1,220 @@
+import SwiftUI
+
+/// Sort key for a stats column. Text sorts case-insensitively.
+enum StatsSortKey: Comparable {
+    case number(Double)
+    case text(String)
+}
+
+struct StatsColumn<Row> {
+    let id: String
+    let title: String
+    /// Shown when hovering the column header.
+    let help: String
+    /// Fixed width, or nil for the one flexible column.
+    var width: CGFloat?
+    var minWidth: CGFloat = 0
+    var alignment: Alignment = .trailing
+    /// Consecutive columns with the same group share a header above them.
+    var group: String?
+    let sortKey: (Row) -> StatsSortKey
+    let cell: (Row) -> AnyView
+}
+
+struct StatsSort: Equatable {
+    var columnID: String
+    var ascending: Bool
+}
+
+/// A table laid out by hand rather than with `Table`, so it can have a
+/// grouped header row, header tooltips and rows sized to their content.
+/// Click a header to sort; click again to reverse.
+struct StatsTable<Row: Identifiable>: View {
+    let rows: [Row]
+    let columns: [StatsColumn<Row>]
+    /// Nil keeps `rows` in the order given.
+    @Binding var sort: StatsSort?
+    let selectedID: Row.ID?
+    let onSelect: (Row) -> Void
+    var contextMenu: ((Row) -> AnyView)?
+
+    private let rowHeight: CGFloat = 36
+    private let cellPadding: CGFloat = 10
+
+    var body: some View {
+        ScrollView(.horizontal) {
+            VStack(spacing: 0) {
+                if columns.contains(where: { $0.group != nil }) {
+                    groupHeader
+                }
+                columnHeader
+                Divider()
+                ForEach(Array(sortedRows.enumerated()), id: \.element.id) { index, row in
+                    rowView(row, striped: index.isMultiple(of: 2) == false)
+                }
+            }
+            .containerRelativeFrame(.horizontal) { visible, _ in max(visible, minimumWidth) }
+        }
+        .scrollIndicators(.automatic)
+        .scrollBounceBehavior(.basedOnSize, axes: .horizontal)
+    }
+
+    // MARK: Layout
+
+    private var minimumWidth: CGFloat {
+        columns.reduce(0) { $0 + ($1.width ?? $1.minWidth) }
+    }
+
+    /// Frames a cell (or a span of cells) to its column width.
+    @ViewBuilder
+    private func sized<Content: View>(_ column: StatsColumn<Row>, width: CGFloat? = nil, @ViewBuilder _ content: () -> Content) -> some View {
+        if let fixed = width ?? column.width {
+            content().frame(width: fixed, alignment: column.alignment)
+        } else {
+            content().frame(minWidth: column.minWidth, maxWidth: .infinity, alignment: column.alignment)
+        }
+    }
+
+    private func startsGroup(_ index: Int) -> Bool {
+        index > 0 && columns[index].group != nil && columns[index].group != columns[index - 1].group
+    }
+
+    private var groupSpans: [(title: String?, columns: [StatsColumn<Row>], startIndex: Int)] {
+        var spans: [(title: String?, columns: [StatsColumn<Row>], startIndex: Int)] = []
+        for (index, column) in columns.enumerated() {
+            if let last = spans.last, last.title == column.group {
+                spans[spans.count - 1].columns.append(column)
+            } else {
+                spans.append((column.group, [column], index))
+            }
+        }
+        return spans
+    }
+
+    // MARK: Headers
+
+    private var groupHeader: some View {
+        HStack(spacing: 0) {
+            ForEach(groupSpans, id: \.startIndex) { span in
+                let fixedWidth = span.columns.allSatisfy { $0.width != nil }
+                    ? span.columns.reduce(0) { $0 + ($1.width ?? 0) }
+                    : nil
+                Group {
+                    if let title = span.title {
+                        VStack(spacing: 4) {
+                            Text(title)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.secondary)
+                                .textCase(.uppercase)
+                            Capsule()
+                                .fill(.quaternary)
+                                .frame(height: 2)
+                        }
+                        .padding(.horizontal, cellPadding)
+                    } else {
+                        Color.clear
+                    }
+                }
+                .frame(
+                    minWidth: fixedWidth ?? span.columns.reduce(0) { $0 + ($1.width ?? $1.minWidth) },
+                    maxWidth: fixedWidth ?? .infinity
+                )
+                .frame(width: fixedWidth)
+                .overlay(alignment: .leading) {
+                    if span.title != nil && span.startIndex > 0 { separator }
+                }
+            }
+        }
+        .frame(height: 30)
+    }
+
+    private var columnHeader: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
+                sized(column) {
+                    Button {
+                        toggleSort(column)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Text(column.title)
+                            if sort?.columnID == column.id {
+                                Image(systemName: sort?.ascending == true ? "chevron.up" : "chevron.down")
+                                    .font(.caption2.weight(.bold))
+                            }
+                        }
+                        .font(.callout.weight(.medium))
+                        .foregroundStyle(sort?.columnID == column.id ? .primary : .secondary)
+                        .padding(.horizontal, cellPadding)
+                        .frame(maxWidth: .infinity, alignment: column.alignment)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(column.help)
+                }
+                .overlay(alignment: .leading) {
+                    if startsGroup(index) { separator }
+                }
+            }
+        }
+        .frame(height: 30)
+    }
+
+    private func toggleSort(_ column: StatsColumn<Row>) {
+        if sort?.columnID == column.id {
+            sort?.ascending.toggle()
+        } else {
+            // Names read best A to Z; numbers are most useful biggest first.
+            sort = StatsSort(columnID: column.id, ascending: column.width == nil)
+        }
+    }
+
+    // MARK: Rows
+
+    private var sortedRows: [Row] {
+        guard let sort, let column = columns.first(where: { $0.id == sort.columnID }) else { return rows }
+        return rows.enumerated()
+            .sorted { a, b in
+                let keyA = column.sortKey(a.element)
+                let keyB = column.sortKey(b.element)
+                if keyA == keyB { return a.offset < b.offset }
+                return sort.ascending ? keyA < keyB : keyA > keyB
+            }
+            .map(\.element)
+    }
+
+    private func rowView(_ row: Row, striped: Bool) -> some View {
+        let isSelected = row.id == selectedID
+        return Button {
+            onSelect(row)
+        } label: {
+            HStack(spacing: 0) {
+                ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
+                    sized(column) {
+                        column.cell(row)
+                            .padding(.horizontal, cellPadding)
+                    }
+                    .overlay(alignment: .leading) {
+                        if startsGroup(index) { separator }
+                    }
+                }
+            }
+            .frame(height: rowHeight)
+            .background(
+                isSelected
+                    ? AnyShapeStyle(Color.accentColor.opacity(0.22))
+                    : striped ? AnyShapeStyle(.quaternary.opacity(0.35)) : AnyShapeStyle(.clear),
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu { contextMenu?(row) }
+    }
+
+    private var separator: some View {
+        Rectangle()
+            .fill(Color(nsColor: .separatorColor))
+            .frame(width: 1)
+            .padding(.vertical, 6)
+    }
+}
