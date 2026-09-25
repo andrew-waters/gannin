@@ -5,6 +5,7 @@ struct GanninApp: App {
     @State private var auth: AuthStore
     @State private var orgs: OrgStore
     @State private var details: DetailStore
+    @State private var hidden = HiddenStore()
 
     init() {
         let auth = AuthStore()
@@ -19,6 +20,7 @@ struct GanninApp: App {
                 .environment(auth)
                 .environment(orgs)
                 .environment(details)
+                .environment(hidden)
         }
         .defaultSize(width: 1280, height: 800)
 

@@ -10,11 +10,22 @@ enum APIError: Error, LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unauthorized: "Your GitHub session has expired. Sign in again."
-        case .http(let status, let body): "GitHub returned HTTP \(status): \(body)"
+        case .http(502...504, _): "GitHub timed out. Try again in a moment."
+        case .http(let status, let body): "GitHub returned HTTP \(status): \(Self.message(from: body))"
         case .network(let message): "Network error: \(message)"
         case .graphQL(let messages): messages.joined(separator: "\n")
         case .decoding(let reason): "Could not read GitHub's response: \(reason)"
         }
+    }
+
+    /// GitHub error bodies are JSON with a `message`; fall back to the raw text.
+    private static func message(from body: String) -> String {
+        guard let data = body.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let message = json["message"] as? String else {
+            return body
+        }
+        return message
     }
 }
 
@@ -34,6 +45,20 @@ struct GitHubAPI {
     /// GitHub returns when some repos are hidden by org OAuth restrictions)
     /// are returned as data; errors only throw when there is no data at all.
     func query<T: Decodable>(_ query: String, variables: [String: String] = [:], as type: T.Type = T.self) async throws -> T {
+        // Search over a big org regularly times out on GitHub's side; a
+        // retry or two usually gets through.
+        var attempt = 0
+        while true {
+            do {
+                return try await send(query, variables: variables)
+            } catch APIError.http(let status, _) where (502...504).contains(status) && attempt < 2 {
+                attempt += 1
+                try await Task.sleep(for: .seconds(attempt * 2))
+            }
+        }
+    }
+
+    private func send<T: Decodable>(_ query: String, variables: [String: String]) async throws -> T {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

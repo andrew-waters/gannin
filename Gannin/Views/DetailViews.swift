@@ -4,10 +4,34 @@ import SwiftUI
 
 // MARK: - Person
 
+/// Which slices of a person's work the person column shows.
+enum PersonFilter: String, CaseIterable, Identifiable {
+    case active = "Active"
+    case waiting = "Waiting on them"
+    case notStarted = "Not started"
+    case merged = "Merged"
+
+    var id: Self { self }
+
+    static let defaults: Set<PersonFilter> = [.active, .waiting]
+
+    var help: String {
+        switch self {
+        case .active: "Their open PRs, and assigned issues with an open PR"
+        case .waiting: "Reviews requested of them"
+        case .notStarted: "Assigned issues nobody has opened a PR for"
+        case .merged: "Their PRs merged in the lookback window"
+        }
+    }
+}
+
 struct PersonColumn: View {
     let load: PersonLoad
     let workload: Workload
     @Binding var selection: DetailSelection?
+
+    /// Comma-separated `PersonFilter` raw values, shared by every person column.
+    @AppStorage("personFilters") private var storedFilters = PersonFilter.defaults.map(\.rawValue).joined(separator: ",")
 
     var body: some View {
         List(selection: $selection) {
@@ -28,17 +52,76 @@ struct PersonColumn: View {
                 .padding(.vertical, 4)
             }
 
-            pullRequestSection("Pull requests", load.pullRequests)
-            pullRequestSection("Waiting on their review", load.reviewRequests)
-
-            Section(header: SectionHeader(title: "Assigned issues", count: load.issues.count)) {
-                ForEach(load.issues) { issue in
-                    IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
-                        .tag(DetailSelection.issue(issue.id))
-                }
+            if filters.contains(.active) {
+                pullRequestSection("Pull requests", load.pullRequests)
+                issueSection("Issues in progress", load.activeIssues)
             }
+            if filters.contains(.waiting) {
+                pullRequestSection("Review requests", load.reviewRequests)
+            }
+            if filters.contains(.notStarted) {
+                issueSection("Assigned, not started", load.notStartedIssues)
+            }
+            if filters.contains(.merged) {
+                pullRequestSection("Merged in the last \(workload.snapshot.lookbackDays) days", load.merged)
+            }
+            if filters.isEmpty {
+                Text("Pick a filter above to see their work.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            filterBar
+        }
+    }
 
-            pullRequestSection("Merged in the last \(workload.snapshot.lookbackDays) days", load.merged)
+    private var filterBar: some View {
+        VStack(spacing: 0) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(PersonFilter.allCases) { filter in
+                        Toggle(isOn: binding(for: filter)) {
+                            HStack(spacing: 4) {
+                                Text(filter.rawValue)
+                                Text("\(count(for: filter))")
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .toggleStyle(.button)
+                        .help(filter.help)
+                    }
+                }
+                .controlSize(.small)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+            }
+            .scrollIndicators(.never)
+            Divider()
+        }
+        .background(.bar)
+    }
+
+    private var filters: Set<PersonFilter> {
+        Set(storedFilters.split(separator: ",").compactMap { PersonFilter(rawValue: String($0)) })
+    }
+
+    private func binding(for filter: PersonFilter) -> Binding<Bool> {
+        Binding {
+            filters.contains(filter)
+        } set: { isOn in
+            var updated = filters
+            if isOn { updated.insert(filter) } else { updated.remove(filter) }
+            storedFilters = PersonFilter.allCases.filter(updated.contains).map(\.rawValue).joined(separator: ",")
+        }
+    }
+
+    private func count(for filter: PersonFilter) -> Int {
+        switch filter {
+        case .active: load.pullRequests.count + load.activeIssues.count
+        case .waiting: load.reviewRequests.count
+        case .notStarted: load.notStartedIssues.count
+        case .merged: load.merged.count
         }
     }
 
@@ -46,6 +129,15 @@ struct PersonColumn: View {
         Section(header: SectionHeader(title: title, count: prs.count)) {
             ForEach(prs) { pr in
                 PullRequestRow(pr: pr).tag(DetailSelection.pullRequest(pr.id))
+            }
+        }
+    }
+
+    private func issueSection(_ title: String, _ issues: [Issue]) -> some View {
+        Section(header: SectionHeader(title: title, count: issues.count)) {
+            ForEach(issues) { issue in
+                IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
+                    .tag(DetailSelection.issue(issue.id))
             }
         }
     }

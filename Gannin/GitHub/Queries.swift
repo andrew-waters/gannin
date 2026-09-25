@@ -120,7 +120,9 @@ extension GitHubAPI {
     }
 
     private func pullRequests(_ searchQuery: String) async throws -> [PullRequest] {
-        let nodes: [Lossy<RawPullRequest>] = try await search(searchQuery, fields: RawPullRequest.fields)
+        // PR nodes carry several nested connections; smaller pages keep
+        // each request under GitHub's timeout.
+        let nodes: [Lossy<RawPullRequest>] = try await search(searchQuery, fields: RawPullRequest.fields, pageSize: 50)
         return nodes.compactMap { $0.value?.model }
     }
 
@@ -130,13 +132,13 @@ extension GitHubAPI {
     }
 
     /// Issue/PR search. GitHub caps search results at 1000.
-    private func search<Node: Decodable>(_ searchQuery: String, fields: String) async throws -> [Node] {
+    private func search<Node: Decodable>(_ searchQuery: String, fields: String, pageSize: Int = 100) async throws -> [Node] {
         return try await paginate { cursor in
             var variables = cursorVariables(cursor)
             variables["q"] = searchQuery
             let response: SearchResponse<Node> = try await query("""
                 query($q: String!, $cursor: String) {
-                  search(query: $q, type: ISSUE, first: 100, after: $cursor) {
+                  search(query: $q, type: ISSUE, first: \(pageSize), after: $cursor) {
                     pageInfo { hasNextPage endCursor }
                     nodes { \(fields) }
                   }

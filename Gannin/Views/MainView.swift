@@ -17,6 +17,9 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
 
 struct MainView: View {
     @Environment(OrgStore.self) private var orgs
+    @Environment(HiddenStore.self) private var hidden
+    @AppStorage("excludeDrafts") private var excludeDrafts = false
+    @AppStorage("showHidden") private var showHidden = false
 
     @AppStorage("selectedOrg") private var selectedOrg: String?
     @State private var teamID: String?
@@ -60,7 +63,8 @@ struct MainView: View {
     private var workload: Workload? {
         guard let selectedOrg, let snapshot = orgs.snapshot(for: selectedOrg) else { return nil }
         let team = teamID.flatMap { id in snapshot.teams.first { $0.id == id } }
-        return Workload(snapshot: snapshot, team: team)
+        let options = Workload.Options(excludeDrafts: excludeDrafts, hidden: hidden.keys, showHidden: showHidden)
+        return Workload(snapshot: snapshot, team: team, options: options)
     }
 }
 
@@ -165,7 +169,7 @@ private struct ColumnBrowser: View {
         ContentUnavailableView(
             "Not in this view",
             systemImage: "eye.slash",
-            description: Text("They aren't an org member, or the team filter hides them.")
+            description: Text("It's hidden, filtered out, or not part of this org's snapshot.")
         )
     }
 }

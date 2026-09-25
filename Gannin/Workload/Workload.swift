@@ -11,16 +11,24 @@ struct PersonLoad: Identifiable, Hashable {
     var issues: [Issue] = []
     /// PRs they authored that merged within the lookback window.
     var merged: [PullRequest] = []
+    /// IDs of their assigned issues that an open PR (anyone's) is closing.
+    var inProgressIssueIDs: Set<String> = []
 
     var id: String { person.login }
 
-    /// Items needing their attention. An assigned issue that one of their
-    /// own open PRs already closes is the same piece of work, so it isn't
-    /// counted twice.
+    /// Assigned issues with an open PR against them.
+    var activeIssues: [Issue] { issues.filter { inProgressIssueIDs.contains($0.id) } }
+
+    /// Assigned issues nobody has opened a PR for yet.
+    var notStartedIssues: [Issue] { issues.filter { !inProgressIssueIDs.contains($0.id) } }
+
+    /// Active work plus review requests. Assigned issues nobody has started
+    /// are backlog, not load, and an issue one of their own PRs closes is
+    /// the same piece of work as the PR, so neither is counted.
     var inFlight: Int {
         let coveredIssueIDs = Set(pullRequests.flatMap(\.linkedIssues).map(\.id))
-        let uncovered = issues.filter { !coveredIssueIDs.contains($0.id) }
-        return pullRequests.count + uncovered.count + reviewRequests.count
+        let otherActive = activeIssues.filter { !coveredIssueIDs.contains($0.id) }
+        return pullRequests.count + otherActive.count + reviewRequests.count
     }
 
     var stalePullRequests: [PullRequest] {
@@ -32,6 +40,7 @@ struct PersonLoad: Identifiable, Hashable {
 struct Workload {
     static let staleAfterDays = 7
 
+    /// The snapshot with hidden items (and drafts, when excluded) removed.
     let snapshot: OrgSnapshot
     let team: Team?
     let people: [PersonLoad]
@@ -43,9 +52,35 @@ struct Workload {
     private let pullRequestsByID: [String: PullRequest]
     private let issuesByID: [String: Issue]
 
-    init(snapshot: OrgSnapshot, team: Team?) {
-        self.snapshot = snapshot
+    /// Hidden items and people in the snapshot, whether or not they're shown.
+    let hiddenCount: Int
+
+    struct Options {
+        var excludeDrafts = false
+        var hidden: Set<String> = []
+        var showHidden = false
+    }
+
+    init(snapshot raw: OrgSnapshot, team: Team?, options: Options = Options()) {
         self.team = team
+
+        let hiddenIDs = (raw.openPullRequests.map(\.id) + raw.mergedPullRequests.map(\.id) + raw.issues.map(\.id)
+            + raw.members.map { HiddenStore.personKey($0.login) }).filter(options.hidden.contains)
+        hiddenCount = Set(hiddenIDs).count
+
+        func isVisible(_ key: String) -> Bool { options.showHidden || !options.hidden.contains(key) }
+        let snapshot = OrgSnapshot(
+            orgLogin: raw.orgLogin,
+            fetchedAt: raw.fetchedAt,
+            lookbackDays: raw.lookbackDays,
+            members: raw.members,
+            teams: raw.teams,
+            openPullRequests: raw.openPullRequests.filter { isVisible($0.id) && !(options.excludeDrafts && $0.isDraft) },
+            mergedPullRequests: raw.mergedPullRequests.filter { isVisible($0.id) },
+            issues: raw.issues.filter { isVisible($0.id) },
+            warnings: raw.warnings
+        )
+        self.snapshot = snapshot
 
         let teamLogins = team.map { Set($0.members) }
         func involvesTeam(_ logins: some Sequence<String>) -> Bool {
@@ -68,7 +103,9 @@ struct Workload {
         )
         issuesByID = Dictionary(snapshot.issues.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
+        // Hiding a person drops them from People; their PRs and issues stay.
         people = Self.loads(snapshot: snapshot, teamLogins: teamLogins)
+            .filter { isVisible(HiddenStore.personKey($0.person.login)) }
     }
 
     private static func loads(snapshot: OrgSnapshot, teamLogins: Set<String>?) -> [PersonLoad] {
@@ -102,6 +139,14 @@ struct Workload {
         }
         for issue in snapshot.issues {
             for person in issue.assignees { update(person) { $0.issues.append(issue) } }
+        }
+
+        var inProgress = Set(snapshot.openPullRequests.flatMap(\.linkedIssues).map(\.id))
+        for issue in snapshot.issues where issue.linkedPullRequests.contains(where: { $0.state == "OPEN" }) {
+            inProgress.insert(issue.id)
+        }
+        for (login, load) in byLogin {
+            byLogin[login]!.inProgressIssueIDs = inProgress.intersection(load.issues.map(\.id))
         }
 
         return byLogin.values.sorted {

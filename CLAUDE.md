@@ -39,4 +39,9 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 - A snapshot is five parallel queries: members, teams, open PRs, PRs merged in the lookback
   window, and open issues. Issue and PR search is capped at 1000 results by GitHub.
 - People are org members; activity from non-members still shows in the PR and issue lists.
-- An assigned issue closed by one of the same person's open PRs counts once in their load.
+- A person's load (`inFlight`) is their open PRs, review requests and assigned issues with an open
+  PR. Assigned issues nobody has started are backlog and not counted; an issue closed by one of
+  their own PRs counts once.
+- Hiding is local (`HiddenStore`, keys are node IDs or `person:<login>`). `Workload` drops hidden
+  items and, when "Exclude drafts" is on, draft PRs before deriving anything, so counts follow.
+  Rows get the Hide/Unhide context menu through the `.hideable(_:url:)` modifier.

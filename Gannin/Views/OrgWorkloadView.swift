@@ -2,6 +2,8 @@ import SwiftUI
 
 struct OrgWorkloadView: View {
     @Environment(OrgStore.self) private var orgs
+    @AppStorage("excludeDrafts") private var excludeDrafts = false
+    @AppStorage("showHidden") private var showHidden = false
 
     let org: String
     let workload: Workload?
@@ -52,30 +54,39 @@ struct OrgWorkloadView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Picker("View", selection: $tab) {
-                    ForEach(WorkloadTab.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                Spacer()
-                teamPicker
+            Picker("View", selection: $tab) {
+                ForEach(WorkloadTab.allCases) { Text($0.rawValue).tag($0) }
             }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity)
+
+            HStack(spacing: 8) {
+                teamPicker
+                filterMenu
+                Spacer(minLength: 8)
+                if let workload {
+                    HStack(spacing: 3) {
+                        Text("Updated")
+                        RelativeDate(date: workload.snapshot.fetchedAt)
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                }
+            }
+            .controlSize(.small)
+
             if let workload {
                 summary(workload)
             }
             if let error = orgs.errors[org], workload != nil {
-                Label(error, systemImage: "exclamationmark.triangle")
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .lineLimit(2)
+                Banner(message: "Refresh failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
+                    Task { await orgs.refresh(org) }
+                }
             }
             ForEach(workload?.snapshot.warnings ?? [], id: \.self) { warning in
-                Label(warning, systemImage: "info.circle")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                Banner(message: warning, systemImage: "info.circle", tint: .secondary)
             }
         }
         .padding(12)
@@ -85,20 +96,37 @@ struct OrgWorkloadView: View {
     private var teamPicker: some View {
         let teams = (workload?.snapshot.teams ?? []).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         if !teams.isEmpty {
-            Picker("Team", selection: $teamID) {
+            Picker(selection: $teamID) {
                 Text("Everyone").tag(String?.none)
                 Divider()
                 ForEach(teams) { team in
                     Text(team.name).tag(Optional(team.id))
                 }
+            } label: {
+                Image(systemName: "person.3")
             }
             .fixedSize()
+            .help("Team")
         }
+    }
+
+    private var filterMenu: some View {
+        let hiddenCount = workload?.hiddenCount ?? 0
+        let isFiltering = excludeDrafts || (hiddenCount > 0 && !showHidden)
+        return Menu {
+            Toggle("Exclude Drafts", isOn: $excludeDrafts)
+            Toggle("Show Hidden (\(hiddenCount))", isOn: $showHidden)
+        } label: {
+            Image(systemName: isFiltering ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+        }
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Filter. Right-click a row to hide it.")
     }
 
     private func summary(_ workload: Workload) -> some View {
         let stale = workload.openPullRequests.filter(Workload.isStale).count
-        return HStack(spacing: 14) {
+        return HStack(spacing: 12) {
             CountBadge(count: workload.openPullRequests.count, systemImage: "arrow.triangle.pull", help: "Open pull requests", tint: .blue)
             CountBadge(count: stale, systemImage: "clock.badge.exclamationmark", help: "Open PRs with no activity for \(Workload.staleAfterDays) days", tint: .orange)
             CountBadge(count: workload.mergedPullRequests.count, systemImage: "checkmark.circle", help: "Merged in the last \(workload.snapshot.lookbackDays) days", tint: .purple)
@@ -106,14 +134,9 @@ struct OrgWorkloadView: View {
             if workload.team == nil {
                 CountBadge(count: workload.unassignedIssues.count, systemImage: "circle.dashed", help: "Open unassigned issues")
             }
-            Spacer()
-            HStack(spacing: 3) {
-                Text("Updated")
-                RelativeDate(date: workload.snapshot.fetchedAt)
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
+            Spacer(minLength: 0)
         }
+        .lineLimit(1)
     }
 
     // MARK: Lists
@@ -229,7 +252,7 @@ struct PersonRow: View {
                 HStack(spacing: 10) {
                     CountBadge(count: load.pullRequests.count, systemImage: "arrow.triangle.pull", help: "Open pull requests", tint: .blue)
                     CountBadge(count: load.reviewRequests.count, systemImage: "eye", help: "Reviews requested", tint: .teal)
-                    CountBadge(count: load.issues.count, systemImage: "smallcircle.filled.circle", help: "Assigned issues", tint: .green)
+                    CountBadge(count: load.activeIssues.count, systemImage: "smallcircle.filled.circle", help: "Assigned issues in progress", tint: .green)
                     CountBadge(count: load.merged.count, systemImage: "checkmark.circle", help: "Merged recently", tint: .purple)
                     if !load.stalePullRequests.isEmpty {
                         CountBadge(count: load.stalePullRequests.count, systemImage: "clock.badge.exclamationmark", help: "Stale pull requests", tint: .orange)
@@ -250,6 +273,7 @@ struct PersonRow: View {
             }
         }
         .padding(.vertical, 2)
+        .hideable(HiddenStore.personKey(load.person.login), url: URL(string: "https://github.com/\(load.person.login)"))
     }
 }
 
@@ -288,6 +312,7 @@ struct PullRequestRow: View {
             AvatarStack(people: pr.assignees.isEmpty ? pr.author.map { [$0] } ?? [] : pr.assignees)
         }
         .padding(.vertical, 2)
+        .hideable(pr.id, url: pr.url)
     }
 }
 
@@ -317,5 +342,6 @@ struct IssueRow: View {
             AvatarStack(people: issue.assignees)
         }
         .padding(.vertical, 2)
+        .hideable(issue.id, url: issue.url)
     }
 }

@@ -124,3 +124,31 @@ struct RelativeDate: View {
             .help(date.formatted(date: .abbreviated, time: .shortened))
     }
 }
+
+/// One-line notice with the full text in a tooltip and an optional retry.
+struct Banner: View {
+    let message: String
+    let systemImage: String
+    let tint: Color
+    var retry: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: systemImage)
+            Text(message)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 4)
+            if let retry {
+                Button("Retry", action: retry)
+                    .controlSize(.small)
+            }
+        }
+        .font(.caption)
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 6))
+        .help(message)
+    }
+}
