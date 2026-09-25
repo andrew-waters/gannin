@@ -4,11 +4,13 @@ import SwiftUI
 struct GanninApp: App {
     @State private var auth: AuthStore
     @State private var orgs: OrgStore
+    @State private var details: DetailStore
 
     init() {
         let auth = AuthStore()
         _auth = State(initialValue: auth)
         _orgs = State(initialValue: OrgStore(auth: auth))
+        _details = State(initialValue: DetailStore(auth: auth))
     }
 
     var body: some Scene {
@@ -16,6 +18,7 @@ struct GanninApp: App {
             RootView()
                 .environment(auth)
                 .environment(orgs)
+                .environment(details)
         }
         .defaultSize(width: 1280, height: 800)
 

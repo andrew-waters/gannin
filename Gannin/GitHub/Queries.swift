@@ -151,6 +151,59 @@ extension GitHubAPI {
     }
 }
 
+// MARK: - Item detail
+
+extension GitHubAPI {
+    /// Description, recent comments and (for PRs) branch and checks.
+    func itemDetail(id: String) async throws -> ItemDetail? {
+        struct RawComment: Decodable {
+            let url: URL
+            let author: RawActor?
+            let body: String
+            let createdAt: Date
+        }
+        struct Comments: Decodable {
+            let totalCount: Int
+            let nodes: [RawComment]
+        }
+        struct Rollup: Decodable { let state: ItemDetail.CheckState }
+        struct Commit: Decodable { let statusCheckRollup: Rollup? }
+        struct CommitNode: Decodable { let commit: Commit }
+        struct Node: Decodable {
+            let body: String?
+            let comments: Comments?
+            let headRefName: String?
+            let baseRefName: String?
+            let commits: Connection<CommitNode>?
+        }
+        struct Response: Decodable { let node: Node? }
+
+        let comments = "comments(last: 5) { totalCount nodes { url body createdAt author { login avatarUrl } } }"
+        let response: Response = try await query("""
+            query($id: ID!) {
+              node(id: $id) {
+                ... on Issue { body \(comments) }
+                ... on PullRequest {
+                  body headRefName baseRefName \(comments)
+                  commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+                }
+              }
+            }
+            """, variables: ["id": id])
+        guard let node = response.node, let body = node.body else { return nil }
+        return ItemDetail(
+            body: body,
+            commentCount: node.comments?.totalCount ?? 0,
+            recentComments: (node.comments?.nodes ?? []).map {
+                Comment(url: $0.url, author: $0.author?.person, body: $0.body, createdAt: $0.createdAt)
+            },
+            headRef: node.headRefName,
+            baseRef: node.baseRefName,
+            checks: node.commits?.nodes.first?.commit.statusCheckRollup?.state
+        )
+    }
+}
+
 // MARK: - Raw GraphQL shapes
 
 private struct SearchResponse<Node: Decodable>: Decodable {

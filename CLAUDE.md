@@ -26,8 +26,12 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 - `Gannin/Workload/`: models (`Models.swift`), `OrgStore` (org list, stars, per-org snapshots
   cached as JSON in Application Support) and `Workload`, which derives per-person load from a
   snapshot, optionally filtered by team.
-- `Gannin/Views/`: three-column `NavigationSplitView` in `MainView` (orgs, workload list,
-  detail). `DetailSelection` drives the detail column.
+- `Gannin/Workload/DetailStore.swift`: issue and PR bodies, recent comments, branch and checks,
+  fetched by node ID when an item is opened and cached in memory.
+- `Gannin/Views/`: `MainView` is an org sidebar plus a Finder-style `ColumnBrowser`. The first
+  column is the org's workload list; `path: [DetailSelection]` holds one entry per column opened
+  to its right (person, issue or PR, in `DetailViews.swift`). Selecting in a column truncates the
+  path there and appends; Esc closes the last column.
 
 ## Behaviour worth knowing
 

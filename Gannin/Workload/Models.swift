@@ -120,3 +120,31 @@ struct OrgSnapshot: Codable {
     /// Non-fatal problems (e.g. teams hidden from this token).
     let warnings: [String]
 }
+
+struct Comment: Codable, Hashable, Identifiable {
+    let url: URL
+    let author: Person?
+    let body: String
+    let createdAt: Date
+
+    var id: URL { url }
+}
+
+/// The heavier fields of an issue or PR, fetched when it is opened rather
+/// than for every item in a snapshot.
+struct ItemDetail: Codable, Hashable {
+    enum CheckState: String, Codable {
+        case success = "SUCCESS"
+        case failure = "FAILURE"
+        case error = "ERROR"
+        case pending = "PENDING"
+        case expected = "EXPECTED"
+    }
+
+    let body: String
+    let commentCount: Int
+    let recentComments: [Comment]
+    let headRef: String?
+    let baseRef: String?
+    let checks: CheckState?
+}
