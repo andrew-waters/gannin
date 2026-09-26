@@ -188,7 +188,7 @@ struct OrgMetrics {
     let isTeamScoped: Bool
 
     /// Team-scoped merged PRs across the whole stored range (whole weeks).
-    private let coverage: [MetricPullRequest]
+    let coverage: [MetricPullRequest]
     private let byID: [String: MetricPullRequest]
 
     init(

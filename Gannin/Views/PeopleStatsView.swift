@@ -1,12 +1,14 @@
 import SwiftUI
 
 /// The People page: authoring and reviewing stats per person for the chosen
-/// window. A row opens that person's PRs and reviews in the next column.
+/// window (a row opens that person's PRs and reviews in the next column),
+/// then the work log.
 struct PeopleStatsView: View {
     @Environment(MetricsStore.self) private var store
     @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
 
     let org: String
+    let workload: Workload?
     let metrics: OrgMetrics?
     @Binding var selection: DetailSelection?
 
@@ -42,10 +44,21 @@ struct PeopleStatsView: View {
                         HStack(spacing: 12) {
                             Text("People")
                             Spacer(minLength: 8)
+                            // Only the table follows the window; the work log
+                            // below pages on its own.
+                            Picker("Window", selection: $windowDays) {
+                                ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                            .font(.body)
+                            .help("Window for the people stats")
                             ColumnGuideButton.people
                         }
                     }
                 }
+                WorkLogSection(org: org, workload: workload)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

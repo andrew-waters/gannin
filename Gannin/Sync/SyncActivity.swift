@@ -63,6 +63,7 @@ final class SyncRun: Identifiable {
     enum Kind: String, CaseIterable {
         case workload = "Workload"
         case metrics = "Metrics"
+        case workLog = "Work log"
     }
 
     let id = UUID()

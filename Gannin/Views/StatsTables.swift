@@ -115,7 +115,7 @@ struct PeopleStatsTable: View {
             ),
             StatsColumn(
                 id: "reviewed", title: "Reviewed", help: "Other people's merged PRs they reviewed",
-                width: 88, group: "Authoring",
+                width: 88, group: "Reviewing",
                 sortKey: { .number(Double($0.reviewed)) },
                 cell: { row in
                     AnyView(NumberCell(text: "\(row.reviewed)", dimmed: row.reviewed == 0)

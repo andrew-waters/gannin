@@ -27,6 +27,8 @@ struct OrgSettingsView: View {
                 TextField("Filter repositories and people", text: $search)
             }
 
+            InvestmentCategoriesSection(org: org)
+
             Section {
                 if repos.isEmpty {
                     Text(search.isEmpty ? "No repositories yet. They appear once the org has synced." : "No matches")

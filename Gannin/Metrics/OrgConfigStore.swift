@@ -9,6 +9,10 @@ struct OrgConfig: Codable, Hashable {
     var excludedAuthors: Set<String> = []
     /// Bot-looking logins the user has chosen to count anyway.
     var includedAuthors: Set<String> = []
+    /// Investment categories; nil until edited, meaning the default preset.
+    var investments: InvestmentConfig?
+
+    var investmentConfig: InvestmentConfig { investments ?? .default }
 
     init() {}
 
@@ -18,9 +22,10 @@ struct OrgConfig: Codable, Hashable {
         excludedRepos = try container.decodeIfPresent(Set<String>.self, forKey: .excludedRepos) ?? []
         excludedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .excludedAuthors) ?? []
         includedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .includedAuthors) ?? []
+        investments = try container.decodeIfPresent(InvestmentConfig.self, forKey: .investments)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && investments == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.
@@ -59,6 +64,19 @@ final class OrgConfigStore {
         if let data = try? JSONEncoder().encode(configs) {
             UserDefaults.standard.set(data, forKey: Self.key)
         }
+    }
+
+    func updateInvestments(_ org: String, _ change: (inout InvestmentConfig) -> Void) {
+        update(org) { config in
+            var investments = config.investmentConfig
+            change(&investments)
+            config.investments = investments
+        }
+    }
+
+    /// Chooses a PR's category by hand; nil goes back to the rules.
+    func setCategory(_ categoryID: UUID?, for prID: String, in org: String) {
+        updateInvestments(org) { $0.manual[prID] = categoryID }
     }
 
     func toggleRepo(_ repo: String, in org: String) {

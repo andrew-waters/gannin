@@ -16,6 +16,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case pullRequests = "Pull Requests"
     case people = "People"
     case repositories = "Repositories"
+    case investments = "Investments"
     case settings = "Settings"
 
     var id: Self { self }
@@ -27,6 +28,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .pullRequests: "arrow.triangle.pull"
         case .people: "person.2"
         case .repositories: "folder"
+        case .investments: "chart.pie"
         case .settings: "gearshape"
         }
     }
@@ -230,6 +232,7 @@ private struct ColumnBrowser: View {
         .onExitCommand {
             if !path.isEmpty { path.removeLast() }
         }
+        .environment(\.currentOrg, org)
     }
 
     /// The last column stretches to fill any room left in the window.
@@ -243,7 +246,7 @@ private struct ColumnBrowser: View {
     /// the list tabs. Either can be dragged, and the width is remembered.
     /// Dashboard and the People stats hold wide tables.
     private var isWide: Bool {
-        tab == .dashboard || (tab == .people && person == nil)
+        tab == .dashboard || tab == .investments || (tab == .people && person == nil)
     }
 
     private func rootWidth(available: CGFloat) -> CGFloat {
@@ -461,7 +464,7 @@ struct OrgSidebar: View {
         switch tab {
         case .pullRequests: return workload.openPullRequests.count
         case .issues: return workload.assignedIssues.count
-        case .dashboard, .people, .repositories, .settings: return 0
+        case .dashboard, .people, .repositories, .investments, .settings: return 0
         }
     }
 }

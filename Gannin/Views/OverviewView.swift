@@ -547,7 +547,7 @@ private struct WeeklyCycleTimeChart: View {
 }
 
 /// Maps the pointer to the nearest week for hover and click.
-private struct WeekHoverOverlay: View {
+struct WeekHoverOverlay: View {
     let proxy: ChartProxy
     let weeks: [Date]
     @Binding var hovered: Date?

@@ -103,3 +103,37 @@ marked otherwise. The app is sandboxed with outgoing network access only.
   The clock starts at the request or at ready-for-review, whichever is later. "Waiting now" uses
   `PullRequest.reviewRequestedAt` from the open-PR snapshot. The team filter applies to the
   reviewer, not the PR author.
+
+## Investments
+
+- `Gannin/Investments/`: investment balance in the spirit of Swarmia's investment categories.
+  `InvestmentConfig` (per org, inside `OrgConfig.investments`; nil means the Balance framework
+  preset) holds ordered categories, each with rules (a rule is all of its conditions, a
+  category any of its rules) over label, title, branch, repository, author, issue type and
+  milestone, plus PRs categorised by hand (`manual`).
+- A PR's category: chosen by hand, else the top-most category matching the PR, else one
+  matching an issue it closes, else that issue's parent, else uncategorised. Rules run locally
+  over the metrics history; editing them never refetches.
+- `InvestmentBalance` measures merged PRs and approximate engineer-days: each PR counts its
+  author's working days from first commit to merge (the last 10 at most), a day split evenly
+  across the PRs that author had open. The Investments page shows the share bar, a weekly
+  stacked chart and the biggest pockets of uncategorised work; categories are edited in
+  Settings (`InvestmentCategoriesSection`), and merged PR rows get Categorise in their menu.
+- Category colours are palette slots 1-8 in fixed order, stored on the category so reordering
+  never repaints; uncategorised is a neutral grey.
+- `MetricPullRequest` carries labels, branch and linked issues (with parent) for this.
+  `MetricsHistory.currentFormat` is bumped whenever the stored shape changes, which drops old
+  histories so they refetch in full.
+
+## Work log
+
+- `Gannin/WorkLog/`: a section under the People stats table (`WorkLogSection`): people by day
+  (14 per page) or week (12 per page), paging back up to a year, a packed cluster of dots per cell
+  (commits, reviews, PRs opened, PRs merged; commit dots grow with lines changed).
+  `WorkLogStore` keeps PRs updated since the earliest range viewed (28 days at first) with
+  their commits (last 100) and reviews, on disk. Missing weeks are fetched as week-long
+  "last updated" searches, four at a time, then topped up with a changes search. It's only
+  fetched once the People page has been opened for an org, and Refresh includes it from then
+  on. Commits count for their
+  GitHub author when the email is linked, else the PR author.
+

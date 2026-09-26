@@ -22,7 +22,7 @@ struct OrgWorkloadView: View {
             if tab == .settings {
                 OrgSettingsView(org: org)
             } else if tab == .people && person == nil, let workload {
-                // Everyone's stats: no team or filter bar.
+                // Everyone's stats and the work log: no team or filter bar.
                 list(workload)
             } else {
                 VStack(spacing: 0) {
@@ -34,7 +34,7 @@ struct OrgWorkloadView: View {
         }
         .navigationTitle(orgs.org(login: org)?.displayName ?? org)
         .toolbar {
-            if tab == .dashboard || (tab == .people && person == nil) {
+            if tab == .dashboard || tab == .investments {
                 ToolbarItem {
                     Picker("Window", selection: $windowDays) {
                         ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
@@ -78,7 +78,7 @@ struct OrgWorkloadView: View {
             }
             .controlSize(.small)
 
-            if let workload, tab != .dashboard, tab != .people {
+            if let workload, tab != .dashboard, tab != .people, tab != .investments {
                 summary(workload)
             }
             if let error = orgs.errors[org], workload != nil {
@@ -151,6 +151,7 @@ struct OrgWorkloadView: View {
         case .pullRequests: pullRequestList(workload)
         case .issues: issueList(workload)
         case .repositories: repositoryList(workload)
+        case .investments: InvestmentsView(org: org, metrics: metrics, selection: $selection)
         case .settings: EmptyView()
         }
     }
@@ -188,7 +189,7 @@ struct OrgWorkloadView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            PeopleStatsView(org: org, metrics: metrics, selection: $selection)
+            PeopleStatsView(org: org, workload: workload, metrics: metrics, selection: $selection)
         }
     }
 

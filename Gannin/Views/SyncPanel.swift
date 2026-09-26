@@ -7,6 +7,7 @@ struct SyncFooter: View {
     @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
     @Environment(MetricsStore.self) private var metricsStore
+    @Environment(WorkLogStore.self) private var workLog
     @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     let org: String
 
@@ -178,7 +179,9 @@ struct SyncFooter: View {
         Task {
             async let workload: Void = orgs.refresh(org, mode: mode)
             async let metrics: Void = metricsStore.sync(org, windowDays: windowDays, force: true)
-            _ = await (workload, metrics)
+            // The work log only once it's been opened for this org.
+            async let log: Void = workLog.isTracking(org) ? workLog.sync(org, force: true) : ()
+            _ = await (workload, metrics, log)
         }
     }
 }

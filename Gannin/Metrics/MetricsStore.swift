@@ -37,6 +37,7 @@ final class MetricsStore {
         let now = Date.now
         let start = Self.coverageStart(windowDays: windowDays, now: now)
         var history = histories[org] ?? MetricsHistory(
+            formatVersion: MetricsHistory.currentFormat,
             orgLogin: org,
             coveredFrom: now,
             syncedAt: .distantPast,
@@ -156,7 +157,8 @@ final class MetricsStore {
     private func loadCached(_ org: String) {
         guard histories[org] == nil,
               let data = try? Data(contentsOf: Self.fileURL(org)),
-              let history = try? Self.decoder.decode(MetricsHistory.self, from: data) else {
+              let history = try? Self.decoder.decode(MetricsHistory.self, from: data),
+              history.formatVersion == MetricsHistory.currentFormat else {
             return
         }
         histories[org] = history

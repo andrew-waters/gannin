@@ -13,7 +13,9 @@ extension GitHubAPI {
         let nodes: [Lossy<RawMetricPullRequest>] = try await search(
             query,
             fields: RawMetricPullRequest.fields,
-            pageSize: 25,
+            // PR nodes are heavy (reviews, timeline, linked issues); small
+            // pages keep each request under GitHub's timeout.
+            pageSize: 15,
             onPage: onPage
         )
         return nodes.compactMap { $0.value?.model }
@@ -116,8 +118,48 @@ private struct RawMetricPullRequest: Decodable {
     let commits: Connection<CommitNode>
     let timelineItems: Connection<Lossy<TimelineEvent>>
     let reviews: Connection<Review>?
+    let labels: Connection<Label>?
+    let headRefName: String?
+    let closingIssuesReferences: Connection<Lossy<LinkedIssue>>?
 
     struct Repository: Decodable { let nameWithOwner: String }
+    struct Label: Decodable { let name: String }
+    struct IssueType: Decodable { let name: String }
+    struct Milestone: Decodable { let title: String }
+    struct Issue: Decodable {
+        let title: String
+        let repository: Repository
+        let labels: Connection<Label>?
+        let issueType: IssueType?
+        let milestone: Milestone?
+
+        var model: MetricIssue {
+            MetricIssue(
+                title: title,
+                repo: repository.nameWithOwner,
+                labels: labels?.nodes.map(\.name) ?? [],
+                issueType: issueType?.name,
+                milestone: milestone?.title
+            )
+        }
+    }
+    struct LinkedIssue: Decodable {
+        let title: String
+        let repository: Repository
+        let labels: Connection<Label>?
+        let issueType: IssueType?
+        let milestone: Milestone?
+        let parent: Issue?
+
+        var model: MetricLinkedIssue {
+            MetricLinkedIssue(
+                issue: Issue(title: title, repository: repository, labels: labels, issueType: issueType, milestone: milestone).model,
+                parent: parent?.model
+            )
+        }
+    }
+
+    private static let issueFields = "title repository { nameWithOwner } labels(first: 20) { nodes { name } } issueType { name } milestone { title }"
 
     static let fields = """
         ... on PullRequest {
@@ -134,6 +176,9 @@ private struct RawMetricPullRequest: Decodable {
             }
           }
           reviews(first: 50) { nodes { state submittedAt author { __typename login avatarUrl } } }
+          labels(first: 20) { nodes { name } }
+          headRefName
+          closingIssuesReferences(first: 5) { nodes { \(issueFields) parent { \(issueFields) } } }
         }
         """
 
@@ -181,7 +226,10 @@ private struct RawMetricPullRequest: Decodable {
             },
             reviewRequests: requests,
             additions: additions,
-            deletions: deletions
+            deletions: deletions,
+            labels: labels?.nodes.map(\.name) ?? [],
+            branch: headRefName,
+            linkedIssues: closingIssuesReferences?.nodes.compactMap(\.value?.model) ?? []
         )
     }
 }

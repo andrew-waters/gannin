@@ -66,7 +66,11 @@ struct StatsTable<Row: Identifiable>: View {
 
     private var minimumWidth: CGFloat {
         columns.reduce(0) { $0 + (columnWidth(of: $1) ?? $1.minWidth) }
+            + CGFloat(columns.indices.filter(startsGroup).count) * groupGap
     }
+
+    /// Space between column groups, with a line down its middle.
+    private let groupGap: CGFloat = 20
 
     /// A fixed column's width plus its chevron slot.
     private func columnWidth(of column: StatsColumn<Row>) -> CGFloat? {
@@ -107,9 +111,10 @@ struct StatsTable<Row: Identifiable>: View {
                 let fixedWidth = span.columns.allSatisfy { $0.width != nil }
                     ? span.columns.reduce(0) { $0 + (columnWidth(of: $1) ?? 0) }
                     : nil
+                if startsGroup(span.startIndex) { gutter }
                 Group {
                     if let title = span.title {
-                        VStack(spacing: 4) {
+                        VStack(alignment: .leading, spacing: 4) {
                             Text(title)
                                 .font(.caption.weight(.semibold))
                                 .foregroundStyle(.secondary)
@@ -128,9 +133,6 @@ struct StatsTable<Row: Identifiable>: View {
                     maxWidth: fixedWidth ?? .infinity
                 )
                 .frame(width: fixedWidth)
-                .overlay(alignment: .leading) {
-                    if span.title != nil && span.startIndex > 0 { separator }
-                }
             }
         }
         .frame(height: 30)
@@ -139,6 +141,7 @@ struct StatsTable<Row: Identifiable>: View {
     private var columnHeader: some View {
         HStack(spacing: 0) {
             ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
+                if startsGroup(index) { gutter }
                 sized(column) {
                     Button {
                         toggleSort(column)
@@ -170,9 +173,7 @@ struct StatsTable<Row: Identifiable>: View {
                     .buttonStyle(.plain)
                     .help(column.help)
                 }
-                .overlay(alignment: .leading) {
-                    if startsGroup(index) { separator }
-                }
+
             }
         }
         .frame(height: 30)
@@ -208,12 +209,10 @@ struct StatsTable<Row: Identifiable>: View {
         } label: {
             HStack(spacing: 0) {
                 ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
+                    if startsGroup(index) { gutter }
                     sized(column) {
                         column.cell(row)
                             .padding(.horizontal, cellPadding)
-                    }
-                    .overlay(alignment: .leading) {
-                        if startsGroup(index) { separator }
                     }
                 }
             }
@@ -230,10 +229,13 @@ struct StatsTable<Row: Identifiable>: View {
         .contextMenu { contextMenu?(row) }
     }
 
-    private var separator: some View {
+    /// The gap before a column group, with a line down its middle that
+    /// runs unbroken from the group title to the last row.
+    private var gutter: some View {
         Rectangle()
             .fill(Color(nsColor: .separatorColor))
             .frame(width: 1)
-            .padding(.vertical, 6)
+            .frame(width: groupGap)
+            .frame(maxHeight: .infinity)
     }
 }

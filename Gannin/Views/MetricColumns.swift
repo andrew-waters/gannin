@@ -15,6 +15,8 @@ enum MetricDrill: Hashable {
     case week(Date)
     case personStats(String)
     case unansweredRequests
+    /// Investment category (by `InvestmentBalance.Key.drillID`) and its name.
+    case investment(String, String)
 
     var title: String {
         switch self {
@@ -31,6 +33,7 @@ enum MetricDrill: Hashable {
         case .week(let week): "Week of \(week.formatted(.dateTime.day().month()))"
         case .personStats(let login): login
         case .unansweredRequests: "Unanswered review requests"
+        case .investment(_, let name): name
         }
     }
 
@@ -44,6 +47,9 @@ enum MetricDrill: Hashable {
         case .stage(let stage): "\(stage.help), slowest first."
         case .personStats: "Their PRs merged in the window, and review requests on merged PRs plus open ones waiting on them. Response time runs from the request (or the PR being marked ready) to their first review."
         case .unansweredRequests: "Requested reviewers who never reviewed before the PR merged. Withdrawn requests aren't counted."
+        case .investment(let id, _) where id == InvestmentBalance.Key.uncategorised.drillID:
+            "Merged PRs in the window no category rule matched. Right-click one to categorise it, or add rules in Settings."
+        case .investment: "Merged PRs in the window in this category. Right-click one to categorise it by hand."
         default: nil
         }
     }
@@ -120,6 +126,24 @@ struct MetricColumn: View {
             mergedSection((metrics?.merged ?? []).filter { $0.author?.login == login }, value: { $0.cycleTime }, title: "Their merged PRs")
         case .unansweredRequests:
             outcomeSection("Not answered", (metrics?.reviewOutcomes ?? []).filter { $0.respondedAt == nil }, showReviewer: true)
+        case .investment(let id, _):
+            investmentSection(id)
+        }
+    }
+
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(\.currentOrg) private var org
+
+    private func investmentSection(_ id: String) -> some View {
+        let config = org.map { configs.config(for: $0).investmentConfig } ?? .default
+        let placed = (metrics?.merged ?? []).map { pr in (pr, config.categorise(pr)) }
+        let prs = placed.filter { ($0.1.map { $0.category.id.uuidString } ?? InvestmentBalance.Key.uncategorised.drillID) == id }
+        return Section(header: SectionHeader(title: "Merged pull requests", count: prs.count)) {
+            ForEach(prs, id: \.0.id) { pr, placement in
+                MetricPullRequestRow(pr: pr, value: nil)
+                    .help(placement?.source.rawValue ?? "No rule matched")
+                    .tag(DetailSelection.pullRequest(pr.id))
+            }
         }
     }
 
@@ -219,7 +243,9 @@ struct MetricPullRequestRow: View {
             }
         }
         .padding(.vertical, 2)
-        .hideable(pr.id, url: pr.url)
+        .hideable(pr.id, url: pr.url) {
+            CategoriseMenu(prID: pr.id)
+        }
     }
 }
 
@@ -395,6 +421,20 @@ enum ChartPalette {
     static let orange = Color(light: 0xEB6834, dark: 0xD95926)
     static let aqua = Color(light: 0x1BAF7A, dark: 0x199E70)
     static let yellow = Color(light: 0xEDA100, dark: 0xC98500)
+    static let magenta = Color(light: 0xE87BA4, dark: 0xD55181)
+    static let green = Color(light: 0x008300, dark: 0x008300)
+    static let violet = Color(light: 0x4A3AA7, dark: 0x9085E9)
+    static let red = Color(light: 0xE34948, dark: 0xE66767)
+    /// For "no category"; not a series hue.
+    static let neutral = Color(light: 0xB9B8B2, dark: 0x5A5955)
+
+    /// Categorical slots 1-8 in the palette's fixed, validated order.
+    static let categorical = [blue, orange, aqua, yellow, magenta, green, violet, red]
+
+    static func slot(_ slot: Int?) -> Color {
+        guard let slot, categorical.indices.contains(slot) else { return neutral }
+        return categorical[slot]
+    }
 }
 
 extension Color {

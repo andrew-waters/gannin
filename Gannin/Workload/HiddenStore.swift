@@ -35,6 +35,8 @@ struct HideableRow: ViewModifier {
     @Environment(\.openURL) private var openURL
     let key: String
     let url: URL?
+    /// More context menu items, between Hide and Open on GitHub.
+    var extra: AnyView?
 
     func body(content: Content) -> some View {
         let isHidden = hidden.isHidden(key)
@@ -50,6 +52,7 @@ struct HideableRow: ViewModifier {
             }
             .contextMenu {
                 Button(isHidden ? "Unhide" : "Hide") { hidden.toggle(key) }
+                if let extra { extra }
                 if let url {
                     Button("Open on GitHub") { openURL(url) }
                 }
@@ -60,5 +63,9 @@ struct HideableRow: ViewModifier {
 extension View {
     func hideable(_ key: String, url: URL? = nil) -> some View {
         modifier(HideableRow(key: key, url: url))
+    }
+
+    func hideable<Menu: View>(_ key: String, url: URL? = nil, @ViewBuilder menu: () -> Menu) -> some View {
+        modifier(HideableRow(key: key, url: url, extra: AnyView(menu())))
     }
 }
