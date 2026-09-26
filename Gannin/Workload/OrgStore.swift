@@ -18,9 +18,11 @@ final class OrgStore {
     private(set) var isLoadingOrgs = false
 
     private let auth: AuthStore
+    private let activity: SyncActivity
 
-    init(auth: AuthStore) {
+    init(auth: AuthStore, activity: SyncActivity) {
         self.auth = auth
+        self.activity = activity
         starred = Set(UserDefaults.standard.stringArray(forKey: Self.starredKey) ?? [])
         if let data = UserDefaults.standard.data(forKey: Self.orgsKey),
            let cached = try? JSONDecoder().decode([Organisation].self, from: data) {
@@ -82,35 +84,79 @@ final class OrgStore {
         snapshots[login] = snapshot
     }
 
-    func refresh(_ login: String) async {
+    enum RefreshMode {
+        /// Opening an org: members and teams only when stale.
+        case automatic
+        /// The Refresh button: members and teams too.
+        case manual
+        /// Everything searched again from scratch.
+        case full
+    }
+
+    private static let peopleMaxAge: TimeInterval = 60 * 60
+    private static let fullMaxAge: TimeInterval = 24 * 60 * 60
+    /// Overlap on the changes search, so an update landing while the
+    /// previous refresh ran isn't missed.
+    private static let changesOverlap: TimeInterval = 5 * 60
+
+    func refresh(_ login: String, mode: RefreshMode = .manual) async {
+        loadCached(login)
         guard let api = auth.api, !refreshing.contains(login) else { return }
         refreshing.insert(login)
         defer { refreshing.remove(login) }
+
+        let previous = snapshots[login]
+        var plan = GitHubAPI.SnapshotPlan()
+        if let previous, mode != .full {
+            plan.people = mode == .manual || previous.peopleFetchedAt.map { -$0.timeIntervalSinceNow > Self.peopleMaxAge } ?? true
+            // Changes only while the last full search is recent and for the
+            // same lookback; otherwise search everything again.
+            if let full = previous.fullFetchedAt,
+               -full.timeIntervalSinceNow < Self.fullMaxAge,
+               previous.lookbackDays == lookbackDays {
+                plan.changesSince = previous.fetchedAt.addingTimeInterval(-Self.changesOverlap)
+            }
+        }
+
+        let run = activity.begin(.workload, org: login)
         do {
-            let snapshot = try await api.snapshot(org: login, lookbackDays: lookbackDays)
+            let snapshot = try await api.snapshot(
+                org: login,
+                lookbackDays: lookbackDays,
+                previous: previous,
+                plan: plan,
+                run: run
+            )
             snapshots[login] = snapshot
             errors[login] = nil
             if let data = try? Self.encoder.encode(snapshot) {
                 try? data.write(to: Self.snapshotURL(login), options: .atomic)
             }
+            run.finish()
         } catch is CancellationError {
+            run.finish()
         } catch {
+            run.finish(error: error)
             handle(error, key: login)
         }
     }
 
     /// Shows the cached snapshot straight away, then refreshes when there is
-    /// none or it is older than `maxAge`.
+    /// none or it is older than `maxAge`. With a cached snapshot, waits out a
+    /// low rate limit rather than spending the last of it.
     func refreshIfStale(_ login: String, maxAge: TimeInterval = 5 * 60) async {
         loadCached(login)
-        if let snapshot = snapshots[login], snapshot.fetchedAt.timeIntervalSinceNow > -maxAge { return }
-        await refresh(login)
+        if let snapshot = snapshots[login] {
+            if snapshot.fetchedAt.timeIntervalSinceNow > -maxAge || auth.shouldHoldOff { return }
+        }
+        await refresh(login, mode: .automatic)
     }
 
     func clear() {
         snapshots = [:]
         orgs = []
         errors = [:]
+        activity.clear()
         UserDefaults.standard.removeObject(forKey: Self.orgsKey)
         try? FileManager.default.removeItem(at: Self.snapshotsDirectory)
     }

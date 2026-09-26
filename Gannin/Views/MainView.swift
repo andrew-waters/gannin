@@ -5,31 +5,35 @@ enum DetailSelection: Hashable {
     case person(String)
     case pullRequest(String)
     case issue(String)
+    case repository(String)
     case metric(MetricDrill)
 }
 
+/// The sidebar's sections, in sidebar order.
 enum WorkloadTab: String, CaseIterable, Identifiable {
-    case overview = "Overview"
-    case people = "People"
-    case pullRequests = "Pull Requests"
+    case dashboard = "Dashboard"
     case issues = "Issues"
+    case pullRequests = "Pull Requests"
+    case people = "People"
+    case repositories = "Repositories"
 
     var id: Self { self }
 
     var systemImage: String {
         switch self {
-        case .overview: "square.grid.2x2"
-        case .people: "person.2"
-        case .pullRequests: "arrow.triangle.pull"
+        case .dashboard: "square.grid.2x2"
         case .issues: "smallcircle.filled.circle"
+        case .pullRequests: "arrow.triangle.pull"
+        case .people: "person.2"
+        case .repositories: "folder"
         }
     }
 }
 
-/// A sidebar row: an org (which opens its overview) or one of its views.
-struct SidebarItem: Hashable {
-    let org: String
-    let tab: WorkloadTab
+/// A sidebar row: a section, or a person listed under People.
+enum SidebarItem: Hashable {
+    case tab(WorkloadTab)
+    case person(String)
 }
 
 struct MainView: View {
@@ -43,7 +47,7 @@ struct MainView: View {
 
     @AppStorage("selectedOrg") private var selectedOrg: String?
     @State private var teamID: String?
-    @AppStorage("selectedTab") private var tab: WorkloadTab = .overview
+    @AppStorage("selectedTab") private var tab: WorkloadTab = .dashboard
     /// The drill-down trail: each entry is the item open in the next column.
     @State private var path: [DetailSelection] = []
     /// No search field for now; the list filtering is kept for when it returns.
@@ -51,7 +55,7 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            OrgSidebar(selection: sidebarSelection)
+            OrgSidebar(selectedOrg: $selectedOrg, selection: sidebarSelection, workload: workload)
                 .navigationSplitViewColumnWidth(min: 200, ideal: 240)
         } detail: {
             if let selectedOrg {
@@ -69,7 +73,7 @@ struct MainView: View {
                 ContentUnavailableView(
                     "Pick an organisation",
                     systemImage: "building.2",
-                    description: Text("Star the orgs you look after to keep them at the top.")
+                    description: Text("Choose one with the switcher at the bottom of the sidebar.")
                 )
             }
         }
@@ -78,16 +82,30 @@ struct MainView: View {
             teamID = nil
             path = []
         }
-        .onChange(of: tab) { path = [] }
+        .onChange(of: orgs.orgs, initial: true) {
+            if selectedOrg == nil {
+                selectedOrg = (orgs.starredOrgs.first ?? orgs.orgs.first)?.login
+            }
+        }
     }
 
+    /// The section, or the person when one is open from People, so the
+    /// sidebar follows a person picked in the list as well.
     private var sidebarSelection: Binding<SidebarItem?> {
         Binding {
-            selectedOrg.map { SidebarItem(org: $0, tab: tab) }
+            if tab == .people, case .person(let login) = path.first { return .person(login) }
+            return .tab(tab)
         } set: { item in
-            guard let item else { return }
-            selectedOrg = item.org
-            tab = item.tab
+            switch item {
+            case .tab(let newTab):
+                tab = newTab
+                path = []
+            case .person(let login):
+                tab = .people
+                path = [.person(login)]
+            case nil:
+                break
+            }
         }
     }
 
@@ -199,7 +217,7 @@ private struct ColumnBrowser: View {
     /// Overview wants room for its tables, so it defaults much wider than
     /// the list tabs. Either can be dragged, and the width is remembered.
     private func rootWidth(available: CGFloat) -> CGFloat {
-        let stored = tab == .overview ? (overviewWidth > 0 ? overviewWidth : available * 0.6) : listWidth
+        let stored = tab == .dashboard ? (overviewWidth > 0 ? overviewWidth : available * 0.6) : listWidth
         let maximum = max(Self.minimumRootWidth, available - Self.columnWidth)
         return min(max(CGFloat(stored), Self.minimumRootWidth), maximum)
     }
@@ -208,7 +226,7 @@ private struct ColumnBrowser: View {
         let start = dragStartWidth ?? rootWidth(available: available)
         dragStartWidth = start
         let width = Double(min(max(start + translation, Self.minimumRootWidth), available - 200))
-        if tab == .overview {
+        if tab == .dashboard {
             overviewWidth = width
         } else {
             listWidth = width
@@ -251,6 +269,12 @@ private struct ColumnBrowser: View {
             } else {
                 unavailable
             }
+        case .repository(let name):
+            if let workload, let repository = workload.repository(named: name) {
+                RepositoryColumn(repository: repository, workload: workload, selection: selection)
+            } else {
+                unavailable
+            }
         case .metric(let drill):
             MetricColumn(drill: drill, workload: workload, metrics: metrics, selection: selection)
         }
@@ -266,6 +290,8 @@ private struct ColumnBrowser: View {
             return "Pull request"
         case .issue(let id):
             return workload?.issue(id: id).map { "\($0.repo)#\($0.number)" } ?? "Issue"
+        case .repository(let name):
+            return name
         case .metric(let drill):
             if case .personStats(let login) = drill,
                let person = metrics?.people.first(where: { $0.id == login })?.person
@@ -288,26 +314,28 @@ private struct ColumnBrowser: View {
 // MARK: - Sidebar
 
 struct OrgSidebar: View {
-    @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
+    @Binding var selectedOrg: String?
     @Binding var selection: SidebarItem?
+    let workload: Workload?
+    @AppStorage("sidebarPeopleExpanded") private var peopleExpanded = true
 
     var body: some View {
         List(selection: $selection) {
-            if !orgs.starredOrgs.isEmpty {
-                Section("Starred") {
-                    ForEach(orgs.starredOrgs) { org in
-                        orgRows(org)
+            if selectedOrg != nil {
+                ForEach(WorkloadTab.allCases) { tab in
+                    if tab == .people {
+                        peopleRow
+                        if peopleExpanded {
+                            ForEach(people) { load in
+                                personRow(load)
+                            }
+                        }
+                    } else {
+                        Label(tab.rawValue, systemImage: tab.systemImage)
+                            .badge(badge(for: tab))
+                            .tag(SidebarItem.tab(tab))
                     }
-                }
-            }
-            Section("Organisations") {
-                ForEach(orgs.orgs.filter { !orgs.isStarred($0) }) { org in
-                    orgRows(org)
-                }
-                if orgs.orgs.isEmpty && !orgs.isLoadingOrgs {
-                    Text("No organisations found")
-                        .foregroundStyle(.secondary)
                 }
             }
             if let error = orgs.errors["orgs"] {
@@ -318,94 +346,160 @@ struct OrgSidebar: View {
                 }
             }
         }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    Task { await orgs.loadOrgs() }
-                } label: {
-                    Label("Reload Organisations", systemImage: "arrow.clockwise")
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            VStack(spacing: 0) {
+                if let selectedOrg {
+                    SyncFooter(org: selectedOrg)
                 }
-                .disabled(orgs.isLoadingOrgs)
-            }
-        }
-        .safeAreaInset(edge: .bottom) {
-            accountBar
-        }
-    }
-
-    /// The org, then its views indented beneath it while it's selected.
-    @ViewBuilder
-    private func orgRows(_ org: Organisation) -> some View {
-        OrgRow(org: org).tag(SidebarItem(org: org.login, tab: .overview))
-        if selection?.org == org.login {
-            ForEach(WorkloadTab.allCases.filter { $0 != .overview }) { tab in
-                Label(tab.rawValue, systemImage: tab.systemImage)
-                    .padding(.leading, 22)
-                    .badge(badge(for: tab, org: org.login))
-                    .tag(SidebarItem(org: org.login, tab: tab))
+                SidebarFooter(selectedOrg: $selectedOrg)
             }
         }
     }
 
-    private func badge(for tab: WorkloadTab, org: String) -> Int {
-        guard let snapshot = orgs.snapshot(for: org) else { return 0 }
+    private var peopleRow: some View {
+        HStack {
+            Label(WorkloadTab.people.rawValue, systemImage: WorkloadTab.people.systemImage)
+            Spacer(minLength: 4)
+            Button {
+                withAnimation(.easeOut(duration: 0.15)) { peopleExpanded.toggle() }
+            } label: {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .rotationEffect(.degrees(peopleExpanded ? 90 : 0))
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .help(peopleExpanded ? "Hide people" : "Show people")
+        }
+        .tag(SidebarItem.tab(.people))
+    }
+
+    private func personRow(_ load: PersonLoad) -> some View {
+        HStack(spacing: 6) {
+            Avatar(url: load.person.avatarUrl, size: 16)
+            Text(load.person.displayName)
+                .lineLimit(1)
+        }
+        .padding(.leading, 20)
+        .badge(load.inFlight)
+        .tag(SidebarItem.person(load.id))
+    }
+
+    /// Everyone in view (team and hidden filters apply), by name.
+    private var people: [PersonLoad] {
+        (workload?.people ?? []).sorted {
+            $0.person.displayName.localizedCaseInsensitiveCompare($1.person.displayName) == .orderedAscending
+        }
+    }
+
+    private func badge(for tab: WorkloadTab) -> Int {
+        guard let workload else { return 0 }
         switch tab {
-        case .pullRequests: return snapshot.openPullRequests.count
-        case .issues: return snapshot.issues.filter { !$0.assignees.isEmpty }.count
-        case .overview, .people: return 0
-        }
-    }
-
-    @ViewBuilder
-    private var accountBar: some View {
-        if let viewer = auth.viewer {
-            HStack(spacing: 8) {
-                Avatar(url: viewer.avatarUrl, size: 24)
-                Text(viewer.name ?? viewer.login)
-                    .lineLimit(1)
-                Spacer()
-                Menu {
-                    Button("Sign Out") {
-                        auth.signOut()
-                        orgs.clear()
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.button)
-                .buttonStyle(.plain)
-                .fixedSize()
-            }
-            .padding(10)
+        case .pullRequests: return workload.openPullRequests.count
+        case .issues: return workload.assignedIssues.count
+        case .dashboard, .people, .repositories: return 0
         }
     }
 }
 
-private struct OrgRow: View {
+/// The org switcher and the account menu, pinned to the bottom of the sidebar.
+private struct SidebarFooter: View {
+    @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
     @Environment(\.openURL) private var openURL
-    let org: Organisation
+    @Binding var selectedOrg: String?
 
     var body: some View {
         HStack(spacing: 8) {
-            Avatar(url: org.avatarUrl, size: 20)
-            Text(org.displayName)
-                .lineLimit(1)
-            Spacer()
-            Button {
-                orgs.toggleStar(org)
-            } label: {
-                Image(systemName: orgs.isStarred(org) ? "star.fill" : "star")
-                    .foregroundStyle(orgs.isStarred(org) ? Color.yellow : Color.secondary)
-            }
-            .buttonStyle(.plain)
-            .help(orgs.isStarred(org) ? "Unstar" : "Star")
+            orgMenu
+            accountMenu
         }
-        .contextMenu {
-            Button(orgs.isStarred(org) ? "Unstar" : "Star") { orgs.toggleStar(org) }
-            Button("Open on GitHub") {
-                if let url = URL(string: "https://github.com/\(org.login)") { openURL(url) }
+        .padding(.horizontal, 10)
+        .padding(.bottom, 10)
+    }
+
+    private var current: Organisation? {
+        selectedOrg.flatMap(orgs.org(login:))
+    }
+
+    private var orgMenu: some View {
+        Menu {
+            Picker("Organisation", selection: $selectedOrg) {
+                if !orgs.starredOrgs.isEmpty {
+                    Section("Starred") {
+                        ForEach(orgs.starredOrgs) { org in
+                            Text(org.displayName).tag(Optional(org.login))
+                        }
+                    }
+                }
+                Section(orgs.starredOrgs.isEmpty ? "Organisations" : "Other Organisations") {
+                    ForEach(orgs.orgs.filter { !orgs.isStarred($0) }) { org in
+                        Text(org.displayName).tag(Optional(org.login))
+                    }
+                }
             }
+            .pickerStyle(.inline)
+            .labelsHidden()
+            Divider()
+            if let current {
+                Button(orgs.isStarred(current) ? "Unstar \(current.displayName)" : "Star \(current.displayName)") {
+                    orgs.toggleStar(current)
+                }
+                Button("Open \(current.displayName) on GitHub") {
+                    if let url = URL(string: "https://github.com/\(current.login)") { openURL(url) }
+                }
+            }
+            Button("Reload Organisations") {
+                Task { await orgs.loadOrgs() }
+            }
+            .disabled(orgs.isLoadingOrgs)
+        } label: {
+            HStack(spacing: 8) {
+                if let current {
+                    Avatar(url: current.avatarUrl, size: 20)
+                } else {
+                    Image(systemName: "building.2")
+                        .frame(width: 20, height: 20)
+                }
+                Text(current?.displayName ?? "Choose Organisation")
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .help("Switch organisation")
+    }
+
+    @ViewBuilder
+    private var accountMenu: some View {
+        if let viewer = auth.viewer {
+            Menu {
+                Text(viewer.name ?? viewer.login)
+                Divider()
+                SettingsLink { Text("Settings") }
+                Button("Sign Out") {
+                    auth.signOut()
+                    orgs.clear()
+                }
+            } label: {
+                Avatar(url: viewer.avatarUrl, size: 26)
+            }
+            .menuStyle(.button)
+            .buttonStyle(.plain)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help(viewer.login)
         }
     }
 }

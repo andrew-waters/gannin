@@ -36,7 +36,7 @@ struct OrgWorkloadView: View {
         }
         .navigationTitle(orgs.org(login: org)?.displayName ?? org)
         .toolbar {
-            if tab == .overview {
+            if tab == .dashboard {
                 ToolbarItem {
                     Picker("Window", selection: $windowDays) {
                         ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
@@ -44,22 +44,6 @@ struct OrgWorkloadView: View {
                     .pickerStyle(.segmented)
                     .fixedSize()
                     .help("Window for the delivery and people stats")
-                }
-            }
-            ToolbarItem {
-                if orgs.refreshing.contains(org) {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Button {
-                        Task {
-                            await orgs.refresh(org)
-                            await metricsStore.sync(org, windowDays: windowDays, force: true)
-                        }
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .keyboardShortcut("r")
-                    .help("Refresh from GitHub")
                 }
             }
         }
@@ -87,7 +71,7 @@ struct OrgWorkloadView: View {
             }
             .controlSize(.small)
 
-            if let workload, tab != .overview {
+            if let workload, tab != .dashboard {
                 summary(workload)
             }
             if let error = orgs.errors[org], workload != nil {
@@ -154,10 +138,31 @@ struct OrgWorkloadView: View {
     @ViewBuilder
     private func list(_ workload: Workload) -> some View {
         switch tab {
-        case .overview: OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
+        case .dashboard: OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
         case .people: peopleList(workload)
         case .pullRequests: pullRequestList(workload)
         case .issues: issueList(workload)
+        case .repositories: repositoryList(workload)
+        }
+    }
+
+    private func repositoryList(_ workload: Workload) -> some View {
+        let repositories = workload.repositories.filter { query.isEmpty || matches($0.name) }
+        let active = repositories.filter { !$0.openPullRequests.isEmpty || !$0.issues.isEmpty }
+        let quiet = repositories.filter { $0.openPullRequests.isEmpty && $0.issues.isEmpty }
+        return List(selection: $selection) {
+            Section("Open work (\(active.count))") {
+                ForEach(active) { repository in
+                    RepositoryRow(repository: repository).tag(DetailSelection.repository(repository.id))
+                }
+            }
+            if !quiet.isEmpty {
+                Section("Merged only (\(quiet.count))") {
+                    ForEach(quiet) { repository in
+                        RepositoryRow(repository: repository).tag(DetailSelection.repository(repository.id))
+                    }
+                }
+            }
         }
     }
 
@@ -285,6 +290,33 @@ struct PersonRow: View {
         }
         .padding(.vertical, 2)
         .hideable(HiddenStore.personKey(load.person.login), url: URL(string: "https://github.com/\(load.person.login)"))
+    }
+}
+
+struct RepositoryRow: View {
+    let repository: RepositoryLoad
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 3) {
+                Text(repository.shortName)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                HStack(spacing: 10) {
+                    CountBadge(count: repository.openPullRequests.count, systemImage: "arrow.triangle.pull", help: "Open pull requests", tint: .blue)
+                    if !repository.stalePullRequests.isEmpty {
+                        CountBadge(count: repository.stalePullRequests.count, systemImage: "clock.badge.exclamationmark", help: "Stale pull requests", tint: .orange)
+                    }
+                    CountBadge(count: repository.mergedPullRequests.count, systemImage: "checkmark.circle", help: "Merged recently", tint: .purple)
+                    CountBadge(count: repository.issues.count, systemImage: "smallcircle.filled.circle", help: "Open issues", tint: .green)
+                }
+            }
+            Spacer()
+        }
+        .padding(.vertical, 2)
     }
 }
 

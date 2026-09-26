@@ -29,9 +29,23 @@ enum APIError: Error, LocalizedError {
     }
 }
 
+/// GitHub's GraphQL budget, as of the latest query.
+nonisolated struct RateLimit: Decodable, Equatable, Sendable {
+    /// Points the query that reported this cost.
+    let cost: Int
+    let remaining: Int
+    let limit: Int
+    let resetAt: Date
+
+    /// Low enough that automatic refreshes should wait for the reset.
+    var isLow: Bool { remaining < max(250, limit / 10) && resetAt > .now }
+}
+
 /// Thin GitHub GraphQL client. Every call is a read.
 struct GitHubAPI {
     let token: String
+    /// Told the budget after every query.
+    var onRateLimit: (@MainActor @Sendable (RateLimit) -> Void)?
 
     private static let endpoint = URL(string: "https://api.github.com/graphql")!
 
@@ -64,7 +78,7 @@ struct GitHubAPI {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: [
-            "query": query,
+            "query": Self.askingForRateLimit(query),
             "variables": variables,
         ])
 
@@ -87,15 +101,43 @@ struct GitHubAPI {
         } catch {
             throw APIError.decoding(String(describing: error))
         }
-        guard let result = envelope.data else {
+        if let rateLimit = envelope.data?.rateLimit {
+            onRateLimit?(rateLimit)
+            if let step = SyncContext.step {
+                step.run.addCost(rateLimit.cost, to: step.id)
+            }
+        }
+        guard let result = envelope.data?.value else {
             throw APIError.graphQL(envelope.errors?.map(\.message) ?? ["Empty response"])
         }
         return result
     }
 
+    /// Adds `rateLimit` to the query's top-level selection. Variable
+    /// definitions never contain braces, so the first one opens it.
+    private static func askingForRateLimit(_ query: String) -> String {
+        guard let brace = query.firstIndex(of: "{") else { return query }
+        var query = query
+        query.insert(contentsOf: " rateLimit { cost remaining limit resetAt } ", at: query.index(after: brace))
+        return query
+    }
+
     private struct Envelope<T: Decodable>: Decodable {
-        let data: T?
+        let data: Payload<T>?
         let errors: [Message]?
+    }
+
+    /// The query's own data plus the `rateLimit` sitting alongside it.
+    private struct Payload<T: Decodable>: Decodable {
+        let value: T
+        let rateLimit: RateLimit?
+
+        private enum CodingKeys: String, CodingKey { case rateLimit }
+
+        init(from decoder: Decoder) throws {
+            value = try T(from: decoder)
+            rateLimit = try? decoder.container(keyedBy: CodingKeys.self).decodeIfPresent(RateLimit.self, forKey: .rateLimit)
+        }
     }
 
     private struct Message: Decodable {
@@ -112,6 +154,12 @@ struct Connection<Node: Decodable>: Decodable {
 struct PagedConnection<Node: Decodable>: Decodable {
     let pageInfo: PageInfo
     let nodes: [Node]
+    /// Set when the query asks for it: `totalCount` on most connections,
+    /// `issueCount` on search.
+    let totalCount: Int?
+    let issueCount: Int?
+
+    var total: Int? { totalCount ?? issueCount }
 }
 
 struct PageInfo: Decodable {
@@ -124,6 +172,7 @@ extension GitHubAPI {
     /// `page` receives the cursor for the next request (nil on the first).
     func paginate<Node>(
         limit: Int = 1000,
+        onPage: (_ fetched: Int, _ total: Int?) -> Void = { _, _ in },
         _ page: (String?) async throws -> PagedConnection<Node>?
     ) async throws -> [Node] {
         var collected: [Node] = []
@@ -131,6 +180,7 @@ extension GitHubAPI {
         while collected.count < limit {
             guard let connection = try await page(cursor) else { break }
             collected.append(contentsOf: connection.nodes)
+            onPage(min(collected.count, limit), connection.total.map { min($0, limit) })
             guard connection.pageInfo.hasNextPage, let next = connection.pageInfo.endCursor else { break }
             cursor = next
         }

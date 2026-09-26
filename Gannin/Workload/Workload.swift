@@ -72,6 +72,8 @@ struct Workload {
         let snapshot = OrgSnapshot(
             orgLogin: raw.orgLogin,
             fetchedAt: raw.fetchedAt,
+            peopleFetchedAt: raw.peopleFetchedAt,
+            fullFetchedAt: raw.fullFetchedAt,
             lookbackDays: raw.lookbackDays,
             members: raw.members,
             teams: raw.teams,
@@ -162,6 +164,21 @@ struct Workload {
             .sorted { $0.createdAt < $1.createdAt }
     }
 
+    /// Repos with open or recently merged work, busiest first.
+    var repositories: [RepositoryLoad] {
+        var byName: [String: RepositoryLoad] = [:]
+        for pr in openPullRequests { byName[pr.repo, default: RepositoryLoad(name: pr.repo)].openPullRequests.append(pr) }
+        for pr in mergedPullRequests { byName[pr.repo, default: RepositoryLoad(name: pr.repo)].mergedPullRequests.append(pr) }
+        for issue in assignedIssues + unassignedIssues { byName[issue.repo, default: RepositoryLoad(name: issue.repo)].issues.append(issue) }
+        return byName.values.sorted {
+            ($0.openPullRequests.count + $0.issues.count, $1.name) > ($1.openPullRequests.count + $1.issues.count, $0.name)
+        }
+    }
+
+    func repository(named name: String) -> RepositoryLoad? {
+        repositories.first { $0.name == name }
+    }
+
     func load(for login: String) -> PersonLoad? {
         people.first { $0.person.login == login }
     }
@@ -187,4 +204,22 @@ struct Workload {
         }
         return pr.updatedAt < cutoff
     }
+}
+
+/// Work in one repo, from the same filtered lists as the rest of `Workload`.
+struct RepositoryLoad: Identifiable, Hashable {
+    /// `owner/name`.
+    let name: String
+    var openPullRequests: [PullRequest] = []
+    var mergedPullRequests: [PullRequest] = []
+    var issues: [Issue] = []
+
+    var id: String { name }
+
+    /// The name without the org, which the sidebar already shows.
+    var shortName: String { name.split(separator: "/").last.map(String.init) ?? name }
+
+    var url: URL? { URL(string: "https://github.com/\(name)") }
+
+    var stalePullRequests: [PullRequest] { openPullRequests.filter(Workload.isStale) }
 }

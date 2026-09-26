@@ -27,17 +27,37 @@ marked otherwise. The app is sandboxed with outgoing network access only.
   cached as JSON in Application Support) and `Workload`, which derives per-person load from a
   snapshot, optionally filtered by team.
 - `Gannin/Workload/DetailStore.swift`: issue and PR bodies, recent comments, branch and checks,
-  fetched by node ID when an item is opened and cached in memory.
-- `Gannin/Views/`: `MainView` is an org sidebar plus a Finder-style `ColumnBrowser`. The first
-  column is the org's workload list; `path: [DetailSelection]` holds one entry per column opened
+  fetched by node ID when an item is opened. Cached on disk (`Details.json`, newest 500) and
+  fetched again only when the item's `updatedAt` is newer, its checks are pending, or (with no
+  `updatedAt` to compare) after a day.
+- `Gannin/Sync/SyncActivity.swift`: the latest workload and metrics `SyncRun` per org, one
+  `SyncStep` per GitHub query (metrics backfill is one step per week), with counts and totals
+  from `totalCount` / `issueCount`. `OrgStore` and `MetricsStore` drive it through
+  `SyncRun.track`. `SyncFooter` (`SyncPanel.swift`) sits at the bottom of the sidebar with the
+  sync status and Refresh (⌘R, Full Refresh in its menu); the step detail slides up while a sync
+  runs and closes itself a few seconds after, or can be toggled from the status row.
+- `Gannin/Views/`: `MainView` is a sidebar plus a Finder-style `ColumnBrowser`. The sidebar lists
+  the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People with each person nested
+  beneath, Repositories) for the selected org; the org switcher and account menu sit in its
+  footer. Picking a person there opens the People tab with that person's column. The first
+  column is the section's list; `path: [DetailSelection]` holds one entry per column opened
   to its right (person, issue or PR, in `DetailViews.swift`). Selecting in a column truncates the
   path there and appends; Esc closes the last column.
 
 ## Behaviour worth knowing
 
 - Stars are local to the app (GitHub has no org stars), stored in `UserDefaults`.
-- A snapshot is five parallel queries: members, teams, open PRs, PRs merged in the lookback
+- A full snapshot is five parallel queries: members, teams, open PRs, PRs merged in the lookback
   window, and open issues. Issue and PR search is capped at 1000 results by GitHub.
+- Refreshes are incremental (`GitHubAPI.SnapshotPlan`): PRs and issues updated since the last
+  fetch (five minutes' overlap), in any state, merged into the previous snapshot by
+  `OrgSnapshot.merging`. A full search happens daily, when the lookback changes, when the
+  changes search passes 1000 results, or via Full Refresh. Members and teams are refetched
+  hourly, or on every manual Refresh.
+- Every query also asks for `rateLimit` (injected in `GitHubAPI.send`). The budget lives on
+  `AuthStore.rateLimit`; each query's cost is charged to the running `SyncStep` through the
+  `SyncContext.step` task-local. Automatic refreshes and syncs hold off when it's low
+  (`RateLimit.isLow`) and there's cached data to show.
 - People are org members; activity from non-members still shows in the PR and issue lists.
 - A person's load (`inFlight`) is their open PRs, review requests and assigned issues with an open
   PR. Assigned issues nobody has started are backlog and not counted; an issue closed by one of

@@ -14,9 +14,11 @@ final class MetricsStore {
     private(set) var errors: [String: String] = [:]
 
     private let auth: AuthStore
+    private let activity: SyncActivity
 
-    init(auth: AuthStore) {
+    init(auth: AuthStore, activity: SyncActivity) {
         self.auth = auth
+        self.activity = activity
     }
 
     func history(for org: String) -> MetricsHistory? { histories[org] }
@@ -43,43 +45,76 @@ final class MetricsStore {
         )
         let isFresh = now.timeIntervalSince(history.syncedAt) < 10 * 60
         if !force && isFresh && history.coveredFrom <= start { return }
+        // Wait out a low rate limit unless asked, as long as there's history to show.
+        if !force && auth.shouldHoldOff && histories[org] != nil { return }
+
+        // Backfill anything older than we hold, then top up since the last
+        // sync with a day of overlap, a week per search.
+        let backfill = history.coveredFrom > start ? GitHubAPI.weeklyChunks(from: start, to: history.coveredFrom) : []
+        let topUp = history.syncedAt != .distantPast
+            ? GitHubAPI.weeklyChunks(from: history.syncedAt.addingTimeInterval(-24 * 60 * 60), to: now)
+            : []
+        // Opened counts are cheap: fetch missing weeks and refresh the last
+        // two, which may still be changing.
+        let recent = Calendar.metrics.date(byAdding: .day, value: -7, to: Calendar.metrics.startOfWeek(for: now)) ?? now
+        let weeks = Self.weeks(from: start, to: now).filter { history.openedPerWeek[$0] == nil || $0 >= recent }
+
+        let run = activity.begin(.metrics, org: org)
+        let chunks = backfill + topUp
+        if !chunks.isEmpty {
+            run.add("merged", title: "Merged PRs", detail: Self.mergedDetail(backfill: backfill.count, topUp: topUp.count))
+        }
+        if !weeks.isEmpty {
+            run.add("opened", title: "Opened per week", detail: weeks.count == 1 ? "1 week" : "\(weeks.count) weeks")
+        }
 
         syncing.insert(org)
         defer { syncing.remove(org) }
         do {
-            // Backfill anything older than we hold, then top up since the
-            // last sync with a day of overlap.
-            if history.coveredFrom > start {
-                for pr in try await api.metricPullRequests(org: org, from: start, to: history.coveredFrom) {
-                    history.pullRequests[pr.id] = pr
+            if !chunks.isEmpty {
+                let prs = try await run.track("merged", count: \.count) { progress in
+                    var fetched: [MetricPullRequest] = []
+                    for (index, (from, to)) in chunks.enumerated() {
+                        run.setParts(index, of: chunks.count, for: "merged")
+                        let before = fetched.count
+                        fetched += try await api.metricPullRequests(org: org, from: from, to: to) { page, _ in
+                            progress(before + page, nil)
+                        }
+                    }
+                    return fetched
                 }
-                history.coveredFrom = start
+                for pr in prs { history.pullRequests[pr.id] = pr }
+                if !backfill.isEmpty { history.coveredFrom = start }
             }
-            if history.syncedAt != .distantPast {
-                let since = history.syncedAt.addingTimeInterval(-24 * 60 * 60)
-                for pr in try await api.metricPullRequests(org: org, from: since, to: now) {
-                    history.pullRequests[pr.id] = pr
+            if !weeks.isEmpty {
+                let counts = try await run.track("opened", count: \.count) { progress in
+                    try await api.openedCounts(org: org, weeks: weeks) { progress($0, weeks.count) }
                 }
-            }
-
-            // Opened counts are cheap: fetch missing weeks and refresh the
-            // last two, which may still be changing.
-            let recent = Calendar.metrics.date(byAdding: .day, value: -7, to: Calendar.metrics.startOfWeek(for: now)) ?? now
-            let weeks = Self.weeks(from: start, to: now).filter { history.openedPerWeek[$0] == nil || $0 >= recent }
-            for (week, count) in try await api.openedCounts(org: org, weeks: weeks) {
-                history.openedPerWeek[week] = count
+                for (week, count) in counts { history.openedPerWeek[week] = count }
             }
 
             history.syncedAt = now
             histories[org] = history
             errors[org] = nil
             save(history)
+            run.finish()
         } catch is CancellationError {
+            run.finish()
         } catch APIError.unauthorized {
+            run.finish(error: APIError.unauthorized)
             auth.signOut()
         } catch {
+            run.finish(error: error)
             errors[org] = error.localizedDescription
         }
+    }
+
+    private static func mergedDetail(backfill: Int, topUp: Int) -> String {
+        func weeks(_ count: Int) -> String { count == 1 ? "1 week" : "\(count) weeks" }
+        var parts: [String] = []
+        if backfill > 0 { parts.append("\(weeks(backfill)) of history") }
+        if topUp > 0 { parts.append("\(weeks(topUp)) since the last sync") }
+        return parts.joined(separator: ", ")
     }
 
     static func weeks(from start: Date, to end: Date) -> [Date] {
@@ -96,6 +131,7 @@ final class MetricsStore {
     func clear() {
         histories = [:]
         errors = [:]
+        activity.clear()
         try? FileManager.default.removeItem(at: Self.directory)
     }
 

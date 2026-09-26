@@ -1,24 +1,30 @@
 import Foundation
 
 extension GitHubAPI {
-    /// Merged PRs in `[from, to]`, fetched a week at a time so no single
-    /// search reaches GitHub's 1000 result cap.
-    func metricPullRequests(org: String, from: Date, to: Date) async throws -> [MetricPullRequest] {
-        var results: [MetricPullRequest] = []
-        for (start, end) in Self.weeklyChunks(from: from, to: to) {
-            let query = "org:\(org) archived:false is:pr is:merged merged:\(Self.day(start))..\(Self.day(end))"
-            let nodes: [Lossy<RawMetricPullRequest>] = try await search(
-                query,
-                fields: RawMetricPullRequest.fields,
-                pageSize: 25
-            )
-            results.append(contentsOf: nodes.compactMap { $0.value?.model })
-        }
-        return results
+    /// Merged PRs in `[from, to]`. Keep the range to a week (see
+    /// `weeklyChunks`) so the search stays under GitHub's 1000 result cap.
+    func metricPullRequests(
+        org: String,
+        from: Date,
+        to: Date,
+        onPage: (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }
+    ) async throws -> [MetricPullRequest] {
+        let query = "org:\(org) archived:false is:pr is:merged merged:\(Self.day(from))..\(Self.day(to))"
+        let nodes: [Lossy<RawMetricPullRequest>] = try await search(
+            query,
+            fields: RawMetricPullRequest.fields,
+            pageSize: 25,
+            onPage: onPage
+        )
+        return nodes.compactMap { $0.value?.model }
     }
 
     /// Number of PRs opened in each week starting at the given dates.
-    func openedCounts(org: String, weeks: [Date]) async throws -> [Date: Int] {
+    func openedCounts(
+        org: String,
+        weeks: [Date],
+        onWeek: (_ done: Int) -> Void = { _ in }
+    ) async throws -> [Date: Int] {
         struct Response: Decodable {
             struct Search: Decodable { let issueCount: Int }
             let search: Search
@@ -30,11 +36,13 @@ extension GitHubAPI {
                 query($q: String!) { search(query: $q, type: ISSUE, first: 1) { issueCount } }
                 """, variables: ["q": "org:\(org) archived:false is:pr created:\(Self.day(week))..\(Self.day(end))"])
             counts[week] = response.search.issueCount
+            onWeek(counts.count)
         }
         return counts
     }
 
-    private static func weeklyChunks(from: Date, to: Date) -> [(Date, Date)] {
+    /// Week-long `[start, end]` ranges covering `[from, to]`.
+    static func weeklyChunks(from: Date, to: Date) -> [(Date, Date)] {
         let calendar = Calendar.metrics
         var chunks: [(Date, Date)] = []
         var start = calendar.startOfDay(for: from)

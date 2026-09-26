@@ -108,11 +108,16 @@ struct Issue: Codable, Hashable, Identifiable {
     let linkedPullRequests: [LinkedItem]
 }
 
-/// Everything fetched for one org in a single refresh. Persisted to disk so
-/// the last view is available instantly on launch.
+/// Everything fetched for one org. Persisted to disk so the last view is
+/// available instantly on launch, and so refreshes only fetch what changed.
 struct OrgSnapshot: Codable {
     let orgLogin: String
+    /// When the latest refresh started; the next one fetches changes since.
     let fetchedAt: Date
+    /// When members and teams were last fetched.
+    var peopleFetchedAt: Date?
+    /// When PRs and issues were last searched in full rather than for changes.
+    var fullFetchedAt: Date?
     let lookbackDays: Int
     let members: [Person]
     let teams: [Team]
@@ -149,4 +154,6 @@ struct ItemDetail: Codable, Hashable {
     let headRef: String?
     let baseRef: String?
     let checks: CheckState?
+    /// The item's `updatedAt` when this was fetched.
+    let updatedAt: Date?
 }

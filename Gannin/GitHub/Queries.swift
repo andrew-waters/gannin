@@ -34,51 +34,155 @@ extension GitHubAPI {
 // MARK: - Org snapshot
 
 extension GitHubAPI {
-    func snapshot(org: String, lookbackDays: Int) async throws -> OrgSnapshot {
-        let since = Calendar.current.date(byAdding: .day, value: -lookbackDays, to: .now) ?? .now
-        let sinceString = since.formatted(.iso8601.year().month().day())
+    /// How much of a snapshot to fetch again. Anything not fetched is carried
+    /// over from the previous snapshot.
+    struct SnapshotPlan {
+        /// Members and teams.
+        var people = true
+        /// Search only for PRs and issues updated since this date and merge
+        /// them in, rather than searching for everything.
+        var changesSince: Date?
+    }
+
+    /// The workload snapshot. Each query is tracked as a step of `run`.
+    func snapshot(
+        org: String,
+        lookbackDays: Int,
+        previous: OrgSnapshot?,
+        plan: SnapshotPlan,
+        run: SyncRun
+    ) async throws -> OrgSnapshot {
+        let startedAt = Date.now
+        let mergedSince = Calendar.current.startOfDay(
+            for: Calendar.current.date(byAdding: .day, value: -lookbackDays, to: startedAt) ?? startedAt
+        )
         let scope = "org:\(org) archived:false"
+        let fetchPeople = plan.people || previous == nil
+        let changesSince = previous == nil ? nil : plan.changesSince
 
-        async let memberList = members(org: org)
-        async let teamResult = teams(org: org)
-        async let openList = pullRequests("\(scope) is:pr is:open sort:updated-desc")
-        async let mergedList = pullRequests("\(scope) is:pr is:merged merged:>=\(sinceString) sort:updated-desc")
-        async let issueList = issues("\(scope) is:issue is:open sort:updated-desc")
-
-        var warnings: [String] = []
-        let teamList: [Team]
-        do {
-            teamList = try await teamResult
-        } catch {
-            teamList = []
-            warnings.append("Teams unavailable: \(error.localizedDescription)")
+        if fetchPeople {
+            run.add("members", title: "Members")
+            run.add("teams", title: "Teams")
+        }
+        if let changesSince {
+            let since = changesSince.formatted(date: .omitted, time: .shortened)
+            run.add("changed-prs", title: "Pull requests", detail: "Changed since \(since)")
+            run.add("changed-issues", title: "Issues", detail: "Changed since \(since)")
+        } else {
+            run.add("open-prs", title: "Open PRs")
+            run.add("merged-prs", title: "Merged PRs", detail: "Last \(lookbackDays) days")
+            run.add("issues", title: "Open issues")
         }
 
-        return try await OrgSnapshot(
+        async let memberList: [Person]? = fetchPeople ? fetchMembers(org: org, run: run) : nil
+        async let teamResult: [Team]? = fetchPeople ? fetchTeams(org: org, run: run) : nil
+        async let items = fetchChanges(scope: scope, since: changesSince, run: run)
+        async let fullItems = changesSince == nil ? fetchAll(scope: scope, mergedSince: mergedSince, run: run) : nil
+
+        var warnings = previous?.warnings ?? []
+        var teamList = previous?.teams ?? []
+        if fetchPeople {
+            do {
+                teamList = try await teamResult ?? []
+                warnings = []
+            } catch {
+                teamList = []
+                warnings = ["Teams unavailable: \(error.localizedDescription)"]
+            }
+        }
+        let members = try await memberList ?? previous?.members ?? []
+
+        var open: [PullRequest]
+        var merged: [PullRequest]
+        var issues: [Issue]
+        if let full = try await fullItems {
+            (open, merged, issues) = full
+        } else if let changes = try await items, let previous {
+            guard !changes.truncated else {
+                // Too much changed to trust a merge: search everything instead.
+                let carried = previous.with(members: members, teams: teamList, warnings: warnings, peopleFetchedAt: fetchPeople ? startedAt : previous.peopleFetchedAt)
+                return try await snapshot(org: org, lookbackDays: lookbackDays, previous: carried, plan: SnapshotPlan(people: false), run: run)
+            }
+            (open, merged, issues) = previous.merging(changes, mergedSince: mergedSince)
+        } else {
+            (open, merged, issues) = ([], [], [])
+        }
+
+        return OrgSnapshot(
             orgLogin: org,
-            fetchedAt: .now,
+            fetchedAt: startedAt,
+            peopleFetchedAt: fetchPeople ? startedAt : previous?.peopleFetchedAt,
+            fullFetchedAt: changesSince == nil ? startedAt : previous?.fullFetchedAt,
             lookbackDays: lookbackDays,
-            members: memberList,
+            members: members,
             teams: teamList,
-            openPullRequests: openList,
-            mergedPullRequests: mergedList,
-            issues: issueList,
+            openPullRequests: open,
+            mergedPullRequests: merged,
+            issues: issues,
             warnings: warnings
         )
     }
 
-    private func members(org: String) async throws -> [Person] {
+    private func fetchMembers(org: String, run: SyncRun) async throws -> [Person] {
+        try await run.track("members", count: \.count) { try await members(org: org, onPage: $0) }
+    }
+
+    private func fetchTeams(org: String, run: SyncRun) async throws -> [Team] {
+        try await run.track("teams", count: \.count) { try await teams(org: org, onPage: $0) }
+    }
+
+    /// Open PRs, PRs merged since `mergedSince` and open issues, in full.
+    private func fetchAll(
+        scope: String,
+        mergedSince: Date,
+        run: SyncRun
+    ) async throws -> ([PullRequest], [PullRequest], [Issue])? {
+        let since = mergedSince.formatted(.iso8601.year().month().day())
+        async let open = run.track("open-prs", count: \.count) {
+            try await pullRequests("\(scope) is:pr is:open sort:updated-desc", onPage: $0).items
+        }
+        async let merged = run.track("merged-prs", count: \.count) {
+            try await pullRequests("\(scope) is:pr is:merged merged:>=\(since) sort:updated-desc", onPage: $0).items
+        }
+        async let issueList = run.track("issues", count: \.count) {
+            try await issues("\(scope) is:issue is:open sort:updated-desc", onPage: $0).items
+        }
+        return try await (open, merged, issueList)
+    }
+
+    /// PRs and issues in any state updated since `since`; nil without one.
+    private func fetchChanges(scope: String, since: Date?, run: SyncRun) async throws -> SnapshotChanges? {
+        guard let since else { return nil }
+        // Search takes a full timestamp; `+00:00` rather than `Z` is the form
+        // GitHub documents.
+        let timestamp = since.formatted(.iso8601).replacingOccurrences(of: "Z", with: "+00:00")
+        async let prs = run.track("changed-prs", count: \.items.count) {
+            try await pullRequests("\(scope) is:pr updated:>=\(timestamp)", onPage: $0)
+        }
+        async let issueList = run.track("changed-issues", count: \.items.count) {
+            try await issues("\(scope) is:issue updated:>=\(timestamp)", onPage: $0)
+        }
+        let (prResult, issueResult) = try await (prs, issueList)
+        return SnapshotChanges(
+            pullRequests: prResult.items,
+            issues: issueResult.items,
+            truncated: prResult.isTruncated || issueResult.isTruncated
+        )
+    }
+
+    private func members(org: String, onPage: (Int, Int?) -> Void) async throws -> [Person] {
         struct Response: Decodable {
             struct Org: Decodable { let membersWithRole: PagedConnection<Person> }
             let organization: Org?
         }
-        return try await paginate { cursor in
+        return try await paginate(onPage: onPage) { cursor in
             var variables = cursorVariables(cursor)
             variables["login"] = org
             let response: Response = try await query("""
                 query($login: String!, $cursor: String) {
                   organization(login: $login) {
                     membersWithRole(first: 100, after: $cursor) {
+                      totalCount
                       pageInfo { hasNextPage endCursor }
                       nodes { login name avatarUrl }
                     }
@@ -89,7 +193,7 @@ extension GitHubAPI {
         }
     }
 
-    private func teams(org: String) async throws -> [Team] {
+    private func teams(org: String, onPage: (Int, Int?) -> Void) async throws -> [Team] {
         struct RawTeam: Decodable {
             struct Member: Decodable { let login: String }
             let id: String
@@ -101,13 +205,14 @@ extension GitHubAPI {
             struct Org: Decodable { let teams: PagedConnection<RawTeam> }
             let organization: Org?
         }
-        let raw: [RawTeam] = try await paginate(limit: 300) { cursor in
+        let raw: [RawTeam] = try await paginate(limit: 300, onPage: onPage) { cursor in
             var variables = cursorVariables(cursor)
             variables["login"] = org
             let response: Response = try await query("""
                 query($login: String!, $cursor: String) {
                   organization(login: $login) {
                     teams(first: 100, after: $cursor) {
+                      totalCount
                       pageInfo { hasNextPage endCursor }
                       nodes { id slug name members(first: 100) { nodes { login } } }
                     }
@@ -119,26 +224,40 @@ extension GitHubAPI {
         return raw.map { Team(id: $0.id, slug: $0.slug, name: $0.name, members: $0.members.nodes.map(\.login)) }
     }
 
-    private func pullRequests(_ searchQuery: String) async throws -> [PullRequest] {
+    private func pullRequests(_ searchQuery: String, onPage: (Int, Int?) -> Void) async throws -> SearchResult<PullRequest> {
         // PR nodes carry several nested connections; smaller pages keep
         // each request under GitHub's timeout.
-        let nodes: [Lossy<RawPullRequest>] = try await search(searchQuery, fields: RawPullRequest.fields, pageSize: 50)
-        return nodes.compactMap { $0.value?.model }
+        var total: Int?
+        let nodes: [Lossy<RawPullRequest>] = try await search(searchQuery, fields: RawPullRequest.fields, pageSize: 50) {
+            total = $1
+            onPage($0, $1)
+        }
+        return SearchResult(items: nodes.compactMap { $0.value?.model }, total: total)
     }
 
-    private func issues(_ searchQuery: String) async throws -> [Issue] {
-        let nodes: [Lossy<RawIssue>] = try await search(searchQuery, fields: RawIssue.fields)
-        return nodes.compactMap { $0.value?.model }
+    private func issues(_ searchQuery: String, onPage: (Int, Int?) -> Void) async throws -> SearchResult<Issue> {
+        var total: Int?
+        let nodes: [Lossy<RawIssue>] = try await search(searchQuery, fields: RawIssue.fields) {
+            total = $1
+            onPage($0, $1)
+        }
+        return SearchResult(items: nodes.compactMap { $0.value?.model }, total: total)
     }
 
     /// Issue/PR search. GitHub caps search results at 1000.
-    func search<Node: Decodable>(_ searchQuery: String, fields: String, pageSize: Int = 100) async throws -> [Node] {
-        return try await paginate { cursor in
+    func search<Node: Decodable>(
+        _ searchQuery: String,
+        fields: String,
+        pageSize: Int = 100,
+        onPage: (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }
+    ) async throws -> [Node] {
+        return try await paginate(onPage: onPage) { cursor in
             var variables = cursorVariables(cursor)
             variables["q"] = searchQuery
             let response: SearchResponse<Node> = try await query("""
                 query($q: String!, $cursor: String) {
                   search(query: $q, type: ISSUE, first: \(pageSize), after: $cursor) {
+                    issueCount
                     pageInfo { hasNextPage endCursor }
                     nodes { \(fields) }
                   }
@@ -173,6 +292,7 @@ extension GitHubAPI {
         struct CommitNode: Decodable { let commit: Commit }
         struct Node: Decodable {
             let body: String?
+            let updatedAt: Date?
             let comments: Comments?
             let headRefName: String?
             let baseRefName: String?
@@ -184,9 +304,9 @@ extension GitHubAPI {
         let response: Response = try await query("""
             query($id: ID!) {
               node(id: $id) {
-                ... on Issue { body \(comments) }
+                ... on Issue { body updatedAt \(comments) }
                 ... on PullRequest {
-                  body headRefName baseRefName \(comments)
+                  body updatedAt headRefName baseRefName \(comments)
                   commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
                 }
               }
@@ -201,7 +321,67 @@ extension GitHubAPI {
             },
             headRef: node.headRefName,
             baseRef: node.baseRefName,
-            checks: node.commits?.nodes.first?.commit.statusCheckRollup?.state
+            checks: node.commits?.nodes.first?.commit.statusCheckRollup?.state,
+            updatedAt: node.updatedAt
+        )
+    }
+}
+
+// MARK: - Snapshot merging
+
+nonisolated private struct SearchResult<Item: Sendable>: Sendable {
+    let items: [Item]
+    /// Matches GitHub reports, which can exceed what search will return.
+    let total: Int?
+
+    /// Search stops at 1000 results, so anything past that was missed.
+    var isTruncated: Bool { (total ?? 0) > 1000 }
+}
+
+/// PRs and issues updated since the previous snapshot, in any state.
+struct SnapshotChanges {
+    let pullRequests: [PullRequest]
+    let issues: [Issue]
+    let truncated: Bool
+}
+
+extension OrgSnapshot {
+    /// The previous lists with changed items swapped in: open ones kept,
+    /// newly merged PRs moved across, closed ones dropped, and merged PRs
+    /// that have aged out of the lookback removed.
+    func merging(_ changes: SnapshotChanges, mergedSince: Date) -> ([PullRequest], [PullRequest], [Issue]) {
+        var open = Dictionary(openPullRequests.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var merged = Dictionary(mergedPullRequests.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        var openIssues = Dictionary(issues.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        for pr in changes.pullRequests {
+            open[pr.id] = pr.state == "OPEN" ? pr : nil
+            merged[pr.id] = pr.state == "MERGED" ? pr : nil
+        }
+        for issue in changes.issues {
+            openIssues[issue.id] = issue.state == "OPEN" ? issue : nil
+        }
+        let newestFirst = { (a: PullRequest, b: PullRequest) in a.updatedAt > b.updatedAt }
+        return (
+            open.values.sorted(by: newestFirst),
+            merged.values.filter { ($0.mergedAt ?? .distantPast) >= mergedSince }.sorted(by: newestFirst),
+            openIssues.values.sorted { $0.updatedAt > $1.updatedAt }
+        )
+    }
+
+    /// A copy with fresh members and teams.
+    func with(members: [Person], teams: [Team], warnings: [String], peopleFetchedAt: Date?) -> OrgSnapshot {
+        OrgSnapshot(
+            orgLogin: orgLogin,
+            fetchedAt: fetchedAt,
+            peopleFetchedAt: peopleFetchedAt,
+            fullFetchedAt: fullFetchedAt,
+            lookbackDays: lookbackDays,
+            members: members,
+            teams: teams,
+            openPullRequests: openPullRequests,
+            mergedPullRequests: mergedPullRequests,
+            issues: issues,
+            warnings: warnings
         )
     }
 }

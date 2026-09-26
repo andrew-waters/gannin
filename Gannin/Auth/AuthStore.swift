@@ -7,10 +7,19 @@ final class AuthStore {
 
     private(set) var viewer: Viewer?
     private(set) var token: String?
+    /// GitHub's GraphQL budget as of the latest query.
+    private(set) var rateLimit: RateLimit?
 
     var isSignedIn: Bool { token != nil && viewer != nil }
 
-    var api: GitHubAPI? { token.map(GitHubAPI.init(token:)) }
+    var api: GitHubAPI? {
+        token.map { token in
+            GitHubAPI(token: token) { [weak self] in self?.rateLimit = $0 }
+        }
+    }
+
+    /// Automatic refreshes hold off until the budget resets.
+    var shouldHoldOff: Bool { rateLimit?.isLow ?? false }
 
     init() {
         token = Keychain.token()
@@ -30,6 +39,7 @@ final class AuthStore {
         Keychain.clearToken()
         token = nil
         viewer = nil
+        rateLimit = nil
         UserDefaults.standard.removeObject(forKey: Self.viewerKey)
     }
 
