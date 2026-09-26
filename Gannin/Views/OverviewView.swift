@@ -2,13 +2,10 @@ import Charts
 import SwiftUI
 
 /// The org landing page: the state of work right now, delivery metrics for
-/// the chosen window, and breakdowns by person and repo. Every number opens
-/// the items behind it in the next column.
+/// the chosen window, and the breakdown by repo. Every number opens the
+/// items behind it in the next column. The breakdown by person is on People.
 struct OverviewView: View {
     @Environment(MetricsStore.self) private var store
-    @Environment(OrgConfigStore.self) private var configs
-    @State private var showingConfig = false
-    @State private var configTab: OrgStatsConfigView.Tab = .people
     @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
 
     let org: String
@@ -19,13 +16,18 @@ struct OverviewView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                // People first. Its header carries the window and stats
-                // controls, which every metric below also follows.
                 Section {
-                    VStack(alignment: .leading, spacing: 14) {
+                    rightNow.sectionContent()
+                } header: {
+                    PinnedHeader { Text("Right now") }
+                }
+                Section {
+                    VStack(alignment: .leading, spacing: 28) {
                         notices
                         if let metrics {
-                            PeopleStatsTable(org: org, metrics: metrics, selection: $selection)
+                            delivery(metrics)
+                            stageBreakdown(metrics)
+                            charts(metrics)
                         } else if store.syncing.contains(org) {
                             loading
                         } else if store.errors[org] == nil {
@@ -35,27 +37,10 @@ struct OverviewView: View {
                     .sectionContent()
                 } header: {
                     PinnedHeader {
-                        peopleHeader
+                        Text("Delivery · last \(windowDays) days")
                     }
-                }
-                Section {
-                    rightNow.sectionContent()
-                } header: {
-                    PinnedHeader { Text("Right now") }
                 }
                 if let metrics {
-                    Section {
-                        VStack(alignment: .leading, spacing: 28) {
-                            delivery(metrics)
-                            stageBreakdown(metrics)
-                            charts(metrics)
-                        }
-                        .sectionContent()
-                    } header: {
-                        PinnedHeader {
-                            Text("Delivery · last \(windowDays) days")
-                        }
-                    }
                     Section {
                         RepoStatsTable(org: org, metrics: metrics, selection: $selection)
                             .sectionContent()
@@ -70,9 +55,6 @@ struct OverviewView: View {
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .sheet(isPresented: $showingConfig) {
-            OrgStatsConfigView(org: org, history: store.history(for: org), members: workload.snapshot.members, initialTab: configTab)
         }
     }
 
@@ -113,50 +95,7 @@ struct OverviewView: View {
         }
     }
 
-    // MARK: Window
-
-    /// People's header: the title on the left; exclusions, sync status, the
-    /// column guide and the stats config on the right, config last.
-    private var peopleHeader: some View {
-        let config = configs.config(for: org)
-        let hasExclusions = !config.excludedRepos.isEmpty || !config.excludedAuthors.isEmpty
-        return HStack(spacing: 12) {
-            Text("People")
-            Spacer(minLength: 8)
-            Group {
-                if hasExclusions {
-                    Button {
-                        configTab = config.excludedAuthors.isEmpty ? .repos : .people
-                        showingConfig = true
-                    } label: {
-                        Label(exclusionSummary(config), systemImage: "line.3.horizontal.decrease.circle")
-                    }
-                    .buttonStyle(.link)
-                    .help("Change which repos and people count towards the stats")
-                }
-                if store.syncing.contains(org) {
-                    ProgressView().controlSize(.small)
-                } else if let metrics {
-                    HStack(spacing: 3) {
-                        Text("Synced")
-                        RelativeDate(date: metrics.syncedAt)
-                    }
-                    .foregroundStyle(.secondary)
-                }
-            }
-            .font(.callout.weight(.regular))
-            ColumnGuideButton.people
-            Button {
-                configTab = .people
-                showingConfig = true
-            } label: {
-                Image(systemName: "gearshape")
-            }
-            .buttonStyle(.borderless)
-            .font(.body)
-            .help("Choose which repos and people count towards the stats")
-        }
-    }
+    // MARK: Notices
 
     @ViewBuilder
     private var notices: some View {
@@ -174,17 +113,6 @@ struct OverviewView: View {
             }
             .font(.callout)
         }
-    }
-
-    private func exclusionSummary(_ config: OrgConfig) -> String {
-        var parts: [String] = []
-        if !config.excludedRepos.isEmpty {
-            parts.append(config.excludedRepos.count == 1 ? "1 repo" : "\(config.excludedRepos.count) repos")
-        }
-        if !config.excludedAuthors.isEmpty {
-            parts.append(config.excludedAuthors.count == 1 ? "1 person" : "\(config.excludedAuthors.count) people")
-        }
-        return "Excluding " + parts.joined(separator: " and ")
     }
 
     private var loading: some View {
@@ -350,7 +278,7 @@ nonisolated struct PersonStatsRow: Identifiable {
 // MARK: - Layout
 
 /// Section title that stays pinned to the top while its section scrolls.
-private struct PinnedHeader<Content: View>: View {
+struct PinnedHeader<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {

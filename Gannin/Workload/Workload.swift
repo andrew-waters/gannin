@@ -52,34 +52,43 @@ struct Workload {
     private let pullRequestsByID: [String: PullRequest]
     private let issuesByID: [String: Issue]
 
-    /// Hidden items and people in the snapshot, whether or not they're shown.
+    /// Hidden PRs and issues in the snapshot, whether or not they're shown.
     let hiddenCount: Int
 
     struct Options {
         var excludeDrafts = false
         var hidden: Set<String> = []
         var showHidden = false
+        /// The org's excluded repos and people, which drop out entirely.
+        var config = OrgConfig()
     }
 
     init(snapshot raw: OrgSnapshot, team: Team?, options: Options = Options()) {
         self.team = team
 
-        let hiddenIDs = (raw.openPullRequests.map(\.id) + raw.mergedPullRequests.map(\.id) + raw.issues.map(\.id)
-            + raw.members.map { HiddenStore.personKey($0.login) }).filter(options.hidden.contains)
+        let hiddenIDs = (raw.openPullRequests.map(\.id) + raw.mergedPullRequests.map(\.id) + raw.issues.map(\.id))
+            .filter(options.hidden.contains)
         hiddenCount = Set(hiddenIDs).count
 
         func isVisible(_ key: String) -> Bool { options.showHidden || !options.hidden.contains(key) }
+        // Excluded in the org's settings, or hidden with the old per-person Hide.
+        func isExcluded(_ login: String) -> Bool {
+            options.config.excludes(login) || options.hidden.contains(HiddenStore.personKey(login))
+        }
+        func isIncluded(_ pr: PullRequest) -> Bool {
+            !options.config.excludedRepos.contains(pr.repo) && !(pr.author.map { isExcluded($0.login) } ?? false)
+        }
         let snapshot = OrgSnapshot(
             orgLogin: raw.orgLogin,
             fetchedAt: raw.fetchedAt,
             peopleFetchedAt: raw.peopleFetchedAt,
             fullFetchedAt: raw.fullFetchedAt,
             lookbackDays: raw.lookbackDays,
-            members: raw.members,
+            members: raw.members.filter { !isExcluded($0.login) },
             teams: raw.teams,
-            openPullRequests: raw.openPullRequests.filter { isVisible($0.id) && !(options.excludeDrafts && $0.isDraft) },
-            mergedPullRequests: raw.mergedPullRequests.filter { isVisible($0.id) },
-            issues: raw.issues.filter { isVisible($0.id) },
+            openPullRequests: raw.openPullRequests.filter { isVisible($0.id) && isIncluded($0) && !(options.excludeDrafts && $0.isDraft) },
+            mergedPullRequests: raw.mergedPullRequests.filter { isVisible($0.id) && isIncluded($0) },
+            issues: raw.issues.filter { isVisible($0.id) && !options.config.excludedRepos.contains($0.repo) },
             warnings: raw.warnings
         )
         self.snapshot = snapshot
@@ -105,9 +114,10 @@ struct Workload {
         )
         issuesByID = Dictionary(snapshot.issues.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
-        // Hiding a person drops them from People; their PRs and issues stay.
+        // Without a member list, loads falls back to whoever shows up in the
+        // activity, so excluded people are filtered here too.
         people = Self.loads(snapshot: snapshot, teamLogins: teamLogins)
-            .filter { isVisible(HiddenStore.personKey($0.person.login)) }
+            .filter { !isExcluded($0.person.login) }
     }
 
     private static func loads(snapshot: OrgSnapshot, teamLogins: Set<String>?) -> [PersonLoad] {

@@ -16,6 +16,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case pullRequests = "Pull Requests"
     case people = "People"
     case repositories = "Repositories"
+    case settings = "Settings"
 
     var id: Self { self }
 
@@ -26,6 +27,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .pullRequests: "arrow.triangle.pull"
         case .people: "person.2"
         case .repositories: "folder"
+        case .settings: "gearshape"
         }
     }
 }
@@ -50,13 +52,15 @@ struct MainView: View {
     @AppStorage("selectedTab") private var tab: WorkloadTab = .dashboard
     /// The drill-down trail: each entry is the item open in the next column.
     @State private var path: [DetailSelection] = []
+    /// The person picked under People in the sidebar, shown as the main view.
+    @State private var person: String?
     /// No search field for now; the list filtering is kept for when it returns.
     @State private var searchText = ""
 
     var body: some View {
         NavigationSplitView {
             OrgSidebar(selectedOrg: $selectedOrg, selection: sidebarSelection, workload: workload)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } detail: {
             if let selectedOrg {
                 ColumnBrowser(
@@ -65,6 +69,7 @@ struct MainView: View {
                     metrics: metrics,
                     teamID: $teamID,
                     tab: $tab,
+                    person: person,
                     path: $path,
                     searchText: searchText
                 )
@@ -80,6 +85,7 @@ struct MainView: View {
         .task { await orgs.loadOrgs() }
         .onChange(of: selectedOrg) {
             teamID = nil
+            person = nil
             path = []
         }
         .onChange(of: orgs.orgs, initial: true) {
@@ -89,20 +95,21 @@ struct MainView: View {
         }
     }
 
-    /// The section, or the person when one is open from People, so the
-    /// sidebar follows a person picked in the list as well.
+    /// The section, or the person picked under People.
     private var sidebarSelection: Binding<SidebarItem?> {
         Binding {
-            if tab == .people, case .person(let login) = path.first { return .person(login) }
+            if tab == .people, let person { return .person(person) }
             return .tab(tab)
         } set: { item in
             switch item {
             case .tab(let newTab):
                 tab = newTab
+                person = nil
                 path = []
             case .person(let login):
                 tab = .people
-                path = [.person(login)]
+                person = login
+                path = []
             case nil:
                 break
             }
@@ -112,8 +119,24 @@ struct MainView: View {
     private var workload: Workload? {
         guard let selectedOrg, let snapshot = orgs.snapshot(for: selectedOrg) else { return nil }
         let team = teamID.flatMap { id in snapshot.teams.first { $0.id == id } }
-        let options = Workload.Options(excludeDrafts: excludeDrafts, hidden: hidden.keys, showHidden: showHidden)
+        let options = Workload.Options(
+            excludeDrafts: excludeDrafts,
+            hidden: hidden.keys,
+            showHidden: showHidden,
+            config: config(for: selectedOrg)
+        )
         return Workload(snapshot: snapshot, team: team, options: options)
+    }
+
+    /// The org's exclusions plus anyone hidden with the old per-person Hide,
+    /// so the workload and the stats leave out the same people.
+    private func config(for org: String) -> OrgConfig {
+        var config = orgConfigs.config(for: org)
+        let prefix = HiddenStore.personKey("")
+        for key in hidden.keys where key.hasPrefix(prefix) {
+            config.excludedAuthors.insert(String(key.dropFirst(prefix.count)))
+        }
+        return config
     }
 
     private var metrics: OrgMetrics? {
@@ -126,7 +149,7 @@ struct MainView: View {
             team: team,
             members: snapshot?.members ?? [],
             hidden: showHidden ? [] : hidden.keys,
-            config: orgConfigs.config(for: selectedOrg),
+            config: config(for: selectedOrg),
             openPullRequests: workload?.openPullRequests ?? []
         )
     }
@@ -142,6 +165,7 @@ private struct ColumnBrowser: View {
     let metrics: OrgMetrics?
     @Binding var teamID: String?
     @Binding var tab: WorkloadTab
+    let person: String?
     @Binding var path: [DetailSelection]
     let searchText: String
 
@@ -165,6 +189,7 @@ private struct ColumnBrowser: View {
                             metrics: metrics,
                             teamID: $teamID,
                             tab: $tab,
+                            person: person,
                             selection: selection(at: 0),
                             searchText: searchText
                         )
@@ -216,8 +241,13 @@ private struct ColumnBrowser: View {
 
     /// Overview wants room for its tables, so it defaults much wider than
     /// the list tabs. Either can be dragged, and the width is remembered.
+    /// Dashboard and the People stats hold wide tables.
+    private var isWide: Bool {
+        tab == .dashboard || (tab == .people && person == nil)
+    }
+
     private func rootWidth(available: CGFloat) -> CGFloat {
-        let stored = tab == .dashboard ? (overviewWidth > 0 ? overviewWidth : available * 0.6) : listWidth
+        let stored = isWide ? (overviewWidth > 0 ? overviewWidth : available * 0.6) : listWidth
         let maximum = max(Self.minimumRootWidth, available - Self.columnWidth)
         return min(max(CGFloat(stored), Self.minimumRootWidth), maximum)
     }
@@ -226,7 +256,7 @@ private struct ColumnBrowser: View {
         let start = dragStartWidth ?? rootWidth(available: available)
         dragStartWidth = start
         let width = Double(min(max(start + translation, Self.minimumRootWidth), available - 200))
-        if tab == .dashboard {
+        if isWide {
             overviewWidth = width
         } else {
             listWidth = width
@@ -323,7 +353,7 @@ struct OrgSidebar: View {
     var body: some View {
         List(selection: $selection) {
             if selectedOrg != nil {
-                ForEach(WorkloadTab.allCases) { tab in
+                ForEach(WorkloadTab.allCases.filter { $0 != .settings }) { tab in
                     if tab == .people {
                         peopleRow
                         if peopleExpanded {
@@ -336,6 +366,10 @@ struct OrgSidebar: View {
                             .badge(badge(for: tab))
                             .tag(SidebarItem.tab(tab))
                     }
+                }
+                Section {
+                    Label(WorkloadTab.settings.rawValue, systemImage: WorkloadTab.settings.systemImage)
+                        .tag(SidebarItem.tab(.settings))
                 }
             }
             if let error = orgs.errors["orgs"] {
@@ -376,15 +410,43 @@ struct OrgSidebar: View {
         .tag(SidebarItem.tab(.people))
     }
 
+    /// Name, then what they have on in words ("2 PRs · 1 review"), with
+    /// only "stale" coloured as a warning.
     private func personRow(_ load: PersonLoad) -> some View {
-        HStack(spacing: 6) {
-            Avatar(url: load.person.avatarUrl, size: 16)
-            Text(load.person.displayName)
-                .lineLimit(1)
+        HStack(spacing: 8) {
+            Avatar(url: load.person.avatarUrl, size: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(load.person.displayName)
+                    .lineLimit(1)
+                workSummary(load)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
         }
         .padding(.leading, 20)
-        .badge(load.inFlight)
+        .padding(.vertical, 1)
+        .excludable(login: load.person.login, org: selectedOrg ?? "")
         .tag(SidebarItem.person(load.id))
+    }
+
+    private func workSummary(_ load: PersonLoad) -> Text {
+        func count(_ n: Int, _ singular: String, _ plural: String) -> String? {
+            n == 0 ? nil : "\(n) \(n == 1 ? singular : plural)"
+        }
+        let parts = [
+            count(load.pullRequests.count, "PR", "PRs"),
+            count(load.reviewRequests.count, "review", "reviews"),
+            count(load.activeIssues.count, "issue", "issues"),
+        ].compactMap { $0 }
+        let stale = load.stalePullRequests.count
+        guard !parts.isEmpty || stale > 0 else { return Text("Nothing in flight") }
+        var summary = Text(parts.joined(separator: " · "))
+        if stale > 0 {
+            let staleText = Text("\(stale) stale").foregroundStyle(.orange)
+            summary = parts.isEmpty ? staleText : Text("\(summary) · \(staleText)")
+        }
+        return summary
     }
 
     /// Everyone in view (team and hidden filters apply), by name.
@@ -399,7 +461,7 @@ struct OrgSidebar: View {
         switch tab {
         case .pullRequests: return workload.openPullRequests.count
         case .issues: return workload.assignedIssues.count
-        case .dashboard, .people, .repositories: return 0
+        case .dashboard, .people, .repositories, .settings: return 0
         }
     }
 }

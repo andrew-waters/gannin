@@ -71,7 +71,7 @@ struct PeopleStatsTable: View {
         return [
             StatsColumn(
                 id: "person", title: "Person", help: "Org members with PRs or review requests in the window",
-                width: nil, minWidth: 180, alignment: .leading,
+                width: nil, minWidth: 180,
                 sortKey: { .text($0.name.lowercased()) },
                 cell: { row in
                     AnyView(HStack(spacing: 8) {
@@ -187,7 +187,7 @@ struct RepoStatsTable: View {
             columns: [
                 StatsColumn(
                     id: "repo", title: "Repository", help: "Repositories with PRs merged in the window",
-                    width: nil, minWidth: 200, alignment: .leading,
+                    width: nil, minWidth: 200,
                     sortKey: { .text($0.name.lowercased()) },
                     cell: { repo in AnyView(Text(repo.name).lineLimit(1).help(repo.repo)) }
                 ),
@@ -245,7 +245,8 @@ struct BarScale {
     }
 }
 
-/// A duration with a bar behind it, scaled against the rest of the column.
+/// A duration with its bar to the right, scaled against the rest of the
+/// column.
 struct BarCell: View {
     let value: TimeInterval?
     let scale: BarScale
@@ -253,6 +254,9 @@ struct BarCell: View {
     var body: some View {
         if let value {
             HStack(spacing: 8) {
+                Text(value.compactDuration)
+                    .monospacedDigit()
+                    .frame(minWidth: 40, alignment: .leading)
                 GeometryReader { geometry in
                     ZStack(alignment: .leading) {
                         Capsule().fill(.quaternary.opacity(0.6))
@@ -262,12 +266,12 @@ struct BarCell: View {
                     }
                 }
                 .frame(height: 6)
-                Text(value.compactDuration)
-                    .monospacedDigit()
-                    .frame(minWidth: 40, alignment: .trailing)
             }
         } else {
-            NumberCell(text: "-", dimmed: true)
+            Text("-")
+                .foregroundStyle(.tertiary)
+                .frame(width: 40, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
@@ -280,7 +284,7 @@ struct NumberCell: View {
         Text(text)
             .monospacedDigit()
             .foregroundStyle(dimmed ? .tertiary : .primary)
-            .frame(maxWidth: .infinity, alignment: .trailing)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -298,7 +302,7 @@ struct WaitingCell: View {
             }
         }
         .monospacedDigit()
-        .frame(maxWidth: .infinity, alignment: .trailing)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .help(help)
     }
 

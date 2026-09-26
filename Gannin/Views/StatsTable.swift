@@ -14,7 +14,7 @@ struct StatsColumn<Row> {
     /// Fixed width, or nil for the one flexible column.
     var width: CGFloat?
     var minWidth: CGFloat = 0
-    var alignment: Alignment = .trailing
+    var alignment: Alignment = .leading
     /// Consecutive columns with the same group share a header above them.
     var group: String?
     let sortKey: (Row) -> StatsSortKey
@@ -40,6 +40,9 @@ struct StatsTable<Row: Identifiable>: View {
 
     private let rowHeight: CGFloat = 36
     private let cellPadding: CGFloat = 10
+    /// Room at the right of every header for the sort chevron, so it never
+    /// crowds the title.
+    private let sortSlot: CGFloat = 12
 
     var body: some View {
         ScrollView(.horizontal) {
@@ -62,13 +65,18 @@ struct StatsTable<Row: Identifiable>: View {
     // MARK: Layout
 
     private var minimumWidth: CGFloat {
-        columns.reduce(0) { $0 + ($1.width ?? $1.minWidth) }
+        columns.reduce(0) { $0 + (columnWidth(of: $1) ?? $1.minWidth) }
+    }
+
+    /// A fixed column's width plus its chevron slot.
+    private func columnWidth(of column: StatsColumn<Row>) -> CGFloat? {
+        column.width.map { $0 + sortSlot }
     }
 
     /// Frames a cell (or a span of cells) to its column width.
     @ViewBuilder
     private func sized<Content: View>(_ column: StatsColumn<Row>, width: CGFloat? = nil, @ViewBuilder _ content: () -> Content) -> some View {
-        if let fixed = width ?? column.width {
+        if let fixed = width ?? columnWidth(of: column) {
             content().frame(width: fixed, alignment: column.alignment)
         } else {
             content().frame(minWidth: column.minWidth, maxWidth: .infinity, alignment: column.alignment)
@@ -97,7 +105,7 @@ struct StatsTable<Row: Identifiable>: View {
         HStack(spacing: 0) {
             ForEach(groupSpans, id: \.startIndex) { span in
                 let fixedWidth = span.columns.allSatisfy { $0.width != nil }
-                    ? span.columns.reduce(0) { $0 + ($1.width ?? 0) }
+                    ? span.columns.reduce(0) { $0 + (columnWidth(of: $1) ?? 0) }
                     : nil
                 Group {
                     if let title = span.title {
@@ -116,7 +124,7 @@ struct StatsTable<Row: Identifiable>: View {
                     }
                 }
                 .frame(
-                    minWidth: fixedWidth ?? span.columns.reduce(0) { $0 + ($1.width ?? $1.minWidth) },
+                    minWidth: fixedWidth ?? span.columns.reduce(0) { $0 + (columnWidth(of: $1) ?? $1.minWidth) },
                     maxWidth: fixedWidth ?? .infinity
                 )
                 .frame(width: fixedWidth)
@@ -135,18 +143,29 @@ struct StatsTable<Row: Identifiable>: View {
                     Button {
                         toggleSort(column)
                     } label: {
-                        HStack(spacing: 3) {
-                            Text(column.title)
-                            if sort?.columnID == column.id {
-                                Image(systemName: sort?.ascending == true ? "chevron.up" : "chevron.down")
-                                    .font(.caption2.weight(.bold))
+                        // One line; the sort chevron sits at the far right of
+                        // the cell, in its slot, so sorting never shifts or
+                        // wraps the title.
+                        // Titles always read from the left, whatever the
+                        // column's alignment.
+                        Text(column.title)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .font(.callout.weight(.medium))
+                            .foregroundStyle(sort?.columnID == column.id ? .primary : .secondary)
+                            .padding(.leading, cellPadding)
+                            .padding(.trailing, cellPadding + sortSlot)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .overlay(alignment: .trailing) {
+                                if sort?.columnID == column.id {
+                                    Image(systemName: sort?.ascending == true ? "chevron.up" : "chevron.down")
+                                        .font(.caption2.weight(.bold))
+                                        .foregroundStyle(.primary)
+                                        .fixedSize()
+                                        .padding(.trailing, 6)
+                                }
                             }
-                        }
-                        .font(.callout.weight(.medium))
-                        .foregroundStyle(sort?.columnID == column.id ? .primary : .secondary)
-                        .padding(.horizontal, cellPadding)
-                        .frame(maxWidth: .infinity, alignment: column.alignment)
-                        .contentShape(Rectangle())
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
                     .help(column.help)

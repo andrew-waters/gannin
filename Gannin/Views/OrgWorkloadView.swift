@@ -12,31 +12,29 @@ struct OrgWorkloadView: View {
     let metrics: OrgMetrics?
     @Binding var teamID: String?
     @Binding var tab: WorkloadTab
+    /// The person picked under People in the sidebar.
+    let person: String?
     @Binding var selection: DetailSelection?
     let searchText: String
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider()
-            if let workload {
+        Group {
+            if tab == .settings {
+                OrgSettingsView(org: org)
+            } else if tab == .people && person == nil, let workload {
+                // Everyone's stats: no team or filter bar.
                 list(workload)
-            } else if let error = orgs.errors[org] {
-                ContentUnavailableView {
-                    Label("Couldn't load \(org)", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text(error)
-                } actions: {
-                    Button("Try Again") { Task { await orgs.refresh(org) } }
-                }
             } else {
-                ProgressView("Loading work in \(org)")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                VStack(spacing: 0) {
+                    header
+                    Divider()
+                    content
+                }
             }
         }
         .navigationTitle(orgs.org(login: org)?.displayName ?? org)
         .toolbar {
-            if tab == .dashboard {
+            if tab == .dashboard || (tab == .people && person == nil) {
                 ToolbarItem {
                     Picker("Window", selection: $windowDays) {
                         ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
@@ -51,6 +49,24 @@ struct OrgWorkloadView: View {
         .task(id: windowDays) { await metricsStore.sync(org, windowDays: windowDays) }
     }
 
+    @ViewBuilder
+    private var content: some View {
+        if let workload {
+            list(workload)
+        } else if let error = orgs.errors[org] {
+            ContentUnavailableView {
+                Label("Couldn't load \(org)", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { Task { await orgs.refresh(org) } }
+            }
+        } else {
+            ProgressView("Loading work in \(org)")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     // MARK: Header
 
     private var header: some View {
@@ -59,19 +75,10 @@ struct OrgWorkloadView: View {
                 teamPicker
                 filterMenu
                 Spacer(minLength: 8)
-                if let workload {
-                    HStack(spacing: 3) {
-                        Text("Updated")
-                        RelativeDate(date: workload.snapshot.fetchedAt)
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                }
             }
             .controlSize(.small)
 
-            if let workload, tab != .dashboard {
+            if let workload, tab != .dashboard, tab != .people {
                 summary(workload)
             }
             if let error = orgs.errors[org], workload != nil {
@@ -138,11 +145,13 @@ struct OrgWorkloadView: View {
     @ViewBuilder
     private func list(_ workload: Workload) -> some View {
         switch tab {
-        case .dashboard: OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
-        case .people: peopleList(workload)
+        case .dashboard:
+            OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
+        case .people: personView(workload)
         case .pullRequests: pullRequestList(workload)
         case .issues: issueList(workload)
         case .repositories: repositoryList(workload)
+        case .settings: EmptyView()
         }
     }
 
@@ -166,24 +175,20 @@ struct OrgWorkloadView: View {
         }
     }
 
-    private func peopleList(_ workload: Workload) -> some View {
-        let people = workload.people.filter { matches($0.person) }
-        let busy = people.filter { $0.inFlight > 0 }
-        let idle = people.filter { $0.inFlight == 0 }
-        let maxLoad = busy.map(\.inFlight).max() ?? 1
-        return List(selection: $selection) {
-            Section("Work in flight") {
-                ForEach(busy) { load in
-                    PersonRow(load: load, maxLoad: maxLoad).tag(DetailSelection.person(load.id))
-                }
-            }
-            if !idle.isEmpty {
-                Section("Nothing in flight") {
-                    ForEach(idle) { load in
-                        PersonRow(load: load, maxLoad: maxLoad).tag(DetailSelection.person(load.id))
-                    }
-                }
-            }
+    /// The person picked in the sidebar, or everyone's stats until then.
+    @ViewBuilder
+    private func personView(_ workload: Workload) -> some View {
+        if let person, let load = workload.load(for: person) {
+            PersonColumn(load: load, workload: workload, selection: $selection)
+        } else if person != nil {
+            ContentUnavailableView(
+                "Not in this view",
+                systemImage: "eye.slash",
+                description: Text("They're excluded, or not in the selected team.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            PeopleStatsView(org: org, metrics: metrics, selection: $selection)
         }
     }
 
@@ -249,49 +254,6 @@ struct OrgWorkloadView: View {
 }
 
 // MARK: - Rows
-
-struct PersonRow: View {
-    let load: PersonLoad
-    let maxLoad: Int
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Avatar(url: load.person.avatarUrl, size: 28)
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 6) {
-                    Text(load.person.displayName).fontWeight(.medium)
-                    if load.person.name != nil {
-                        Text(load.person.login).foregroundStyle(.secondary)
-                    }
-                }
-                .lineLimit(1)
-                HStack(spacing: 10) {
-                    CountBadge(count: load.pullRequests.count, systemImage: "arrow.triangle.pull", help: "Open pull requests", tint: .blue)
-                    CountBadge(count: load.reviewRequests.count, systemImage: "eye", help: "Reviews requested", tint: .teal)
-                    CountBadge(count: load.activeIssues.count, systemImage: "smallcircle.filled.circle", help: "Assigned issues in progress", tint: .green)
-                    CountBadge(count: load.merged.count, systemImage: "checkmark.circle", help: "Merged recently", tint: .purple)
-                    if !load.stalePullRequests.isEmpty {
-                        CountBadge(count: load.stalePullRequests.count, systemImage: "clock.badge.exclamationmark", help: "Stale pull requests", tint: .orange)
-                    }
-                }
-            }
-            Spacer()
-            if load.inFlight > 0 {
-                Gauge(value: Double(load.inFlight), in: 0...Double(max(maxLoad, 1))) {
-                    EmptyView()
-                } currentValueLabel: {
-                    Text("\(load.inFlight)")
-                }
-                .gaugeStyle(.accessoryCircularCapacity)
-                .scaleEffect(0.6)
-                .frame(width: 30, height: 30)
-                .help("\(load.inFlight) items in flight")
-            }
-        }
-        .padding(.vertical, 2)
-        .hideable(HiddenStore.personKey(load.person.login), url: URL(string: "https://github.com/\(load.person.login)"))
-    }
-}
 
 struct RepositoryRow: View {
     let repository: RepositoryLoad

@@ -42,7 +42,9 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 - `Gannin/Views/`: `MainView` is a sidebar plus a Finder-style `ColumnBrowser`. The sidebar lists
   the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People with each person nested
   beneath, Repositories) for the selected org; the org switcher and account menu sit in its
-  footer. Picking a person there opens the People tab with that person's column. The first
+  footer. Picking a person there shows their `PersonColumn` as the main view; the People section on its
+  own is empty for now. A Settings section holds the org's repo and people exclusions
+  (`OrgSettingsView`), which apply to the workload and the stats alike. The first
   column is the section's list; `path: [DetailSelection]` holds one entry per column opened
   to its right (person, issue or PR, in `DetailViews.swift`). Selecting in a column truncates the
   path there and appends; Esc closes the last column.
@@ -65,9 +67,10 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 - A person's load (`inFlight`) is their open PRs, review requests and assigned issues with an open
   PR. Assigned issues nobody has started are backlog and not counted; an issue closed by one of
   their own PRs counts once.
-- Hiding is local (`HiddenStore`, keys are node IDs or `person:<login>`). `Workload` drops hidden
+- Hiding is local (`HiddenStore`, keys are PR and issue node IDs). `Workload` drops hidden
   items and, when "Exclude drafts" is on, draft PRs before deriving anything, so counts follow.
-  Rows get the Hide/Unhide context menu through the `.hideable(_:url:)` modifier.
+  Rows get the Hide/Unhide context menu through the `.hideable(_:url:)` modifier. Old
+  `person:<login>` keys are treated as org exclusions (`MainView.config(for:)`).
 
 ## Metrics
 
@@ -83,12 +86,15 @@ marked otherwise. The app is sandboxed with outgoing network access only.
   (`StageSummary.isOccasional`) show their share and median-when-it-happens instead.
   Bot-authored PRs are excluded, as are logins ending `-bot` or `[bot]` (ordinary user accounts
   used for automation) unless re-included in the org's stats config (`includedAuthors`).
-- The Overview tab is the org landing page. Tiles, the stage legend, chart weeks and table rows
+- Dashboard (`OverviewView`) is the org landing page: right now, delivery and the repo table;
+  the people table is the People page (`PeopleStatsView`). Tiles, the stage legend, chart weeks
+  and table rows
   set `DetailSelection.metric(MetricDrill)`, which `MetricColumn` renders as the PRs behind the
   number. Chart colours are categorical slots 1-4 of the dataviz reference palette
   (`ChartPalette`), in order.
-- Per-org stats config (`OrgConfigStore`, in `UserDefaults`) excludes repos and authors from
-  `OrgMetrics`. Excluded authors lose their PRs and their reviews, which is why
+- Per-org config (`OrgConfigStore`, in `UserDefaults`, edited on the Settings page) excludes
+  repos and people from both `Workload` and `OrgMetrics`. Excluded authors lose their PRs and
+  their reviews, which is why
   `MetricPullRequest` stores raw `reviews` and derives first review and approval from them.
   "PRs opened" is a search count and ignores the config.
 - Reviewer stats come from `ReviewRequestedEvent` / `ReviewRequestRemovedEvent` timeline items
