@@ -33,9 +33,12 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 - `Gannin/Sync/SyncActivity.swift`: the latest workload and metrics `SyncRun` per org, one
   `SyncStep` per GitHub query (metrics backfill is one step per week), with counts and totals
   from `totalCount` / `issueCount`. `OrgStore` and `MetricsStore` drive it through
-  `SyncRun.track`. `SyncFooter` (`SyncPanel.swift`) sits at the bottom of the sidebar with the
-  sync status and Refresh (⌘R, Full Refresh in its menu); the step detail slides up while a sync
-  runs and closes itself a few seconds after, or can be toggled from the status row.
+  `SyncRun.track`. Before fetching, one aliased counts query (`GitHubAPI.counts`) sets every
+  step's total, so overall progress is weighted by items from the start.
+  `SyncFooter` (`SyncPanel.swift`) sits at the bottom of the sidebar: a Refresh link (⌘R;
+  Option-click or right-click for Full Refresh), the API budget and reset, and a chevron. The
+  step detail slides up while a sync runs and closes itself a few seconds after; overall
+  progress runs along the divider above the row.
 - `Gannin/Views/`: `MainView` is a sidebar plus a Finder-style `ColumnBrowser`. The sidebar lists
   the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People with each person nested
   beneath, Repositories) for the selected org; the org switcher and account menu sit in its

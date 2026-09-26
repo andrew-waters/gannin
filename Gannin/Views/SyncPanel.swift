@@ -4,6 +4,7 @@ import SwiftUI
 /// step-by-step detail sliding up above it while a sync runs.
 struct SyncFooter: View {
     @Environment(SyncActivity.self) private var activity
+    @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
     @Environment(MetricsStore.self) private var metricsStore
     @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
@@ -74,58 +75,92 @@ struct SyncFooter: View {
         }
     }
 
+    /// Redrawn every 30 seconds so the ages in it keep up.
     private func statusRow(runs: [SyncRun], syncing: Bool) -> some View {
+        TimelineView(.periodic(from: .now, by: 30)) { _ in
+            statusRowContent(runs: runs, syncing: syncing)
+        }
+    }
+
+    private func statusRowContent(runs: [SyncRun], syncing: Bool) -> some View {
         HStack(spacing: 8) {
+            status(runs: runs, syncing: syncing)
+                .font(.callout)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let rateLimit = auth.rateLimit {
+                RateLimitBadge(rateLimit: rateLimit)
+            }
             Button {
                 isExpanded.toggle()
                 openedForSync = false
             } label: {
-                status(runs: runs, syncing: syncing)
-                    .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: "chevron.up")
+                    .font(.caption.weight(.semibold))
+                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
+                    .frame(width: 16, height: 16)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(.borderless)
             .help(isExpanded ? "Hide sync details" : "Show sync details")
-
-            refreshButton(syncing: syncing)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
     }
 
+    /// "Syncing 3 of 6" while a sync runs; otherwise a Refresh link (Retry
+    /// after a failure) with the last update in its tooltip.
     @ViewBuilder
     private func status(runs: [SyncRun], syncing: Bool) -> some View {
         if syncing {
-            let steps = runs.filter(\.isRunning).flatMap(\.steps)
-            let done = steps.filter { $0.state == .done }.count
+            let steps = Self.currentRuns(runs).flatMap(\.steps)
+            let done = steps.filter { $0.state != .pending && $0.state != .running }.count
             Text("Syncing \(done) of \(steps.count)")
                 .monospacedDigit()
-                .font(.callout)
-        } else if let failed = runs.first(where: { $0.failure != nil }) {
-            Label("Sync failed", systemImage: "exclamationmark.triangle.fill")
-                .font(.callout)
-                .foregroundStyle(.red)
-                .help(failed.failure ?? "")
-        } else if let fetchedAt = orgs.snapshot(for: org)?.fetchedAt {
-            // Re-rendered each minute so the age keeps up.
-            TimelineView(.periodic(from: .now, by: 60)) { _ in
-                Text("Updated \(Self.age(of: fetchedAt))")
-            }
-            .font(.callout)
-            .foregroundStyle(.secondary)
-        } else {
-            Text("Not synced yet")
-                .font(.callout)
                 .foregroundStyle(.secondary)
+        } else {
+            let failure = runs.compactMap(\.failure).first
+            Button(failure == nil ? "Refresh" : "Retry") {
+                refresh(NSEvent.modifierFlags.contains(.option) ? .full : .manual)
+            }
+            .buttonStyle(.link)
+            .tint(failure == nil ? nil : .red)
+            .foregroundStyle(failure == nil ? AnyShapeStyle(.link) : AnyShapeStyle(.red))
+            .keyboardShortcut("r")
+            .contextMenu {
+                Button("Full Refresh") { refresh(.full) }
+            }
+            .help(refreshHelp(failure: failure))
         }
     }
 
-    /// 0-1 through the running syncs' steps.
+    private func refreshHelp(failure: String?) -> String {
+        var lines: [String] = []
+        if let failure { lines.append("Last sync failed: \(failure)") }
+        if let fetchedAt = orgs.snapshot(for: org)?.fetchedAt {
+            lines.append("Updated \(Self.age(of: fetchedAt)).")
+        } else {
+            lines.append("Not synced yet.")
+        }
+        lines.append("Fetch what's changed on GitHub (⌘R). Option-click for a full refresh.")
+        return lines.joined(separator: "\n")
+    }
+
+    /// The runs making up the sync in progress: those still running, and
+    /// any that finished since the earliest of them started (workload
+    /// usually finishes well before metrics).
+    private static func currentRuns(_ runs: [SyncRun]) -> [SyncRun] {
+        guard let start = runs.filter(\.isRunning).map(\.startedAt).min() else { return [] }
+        return runs.filter { $0.isRunning || ($0.finishedAt ?? .distantPast) >= start }
+    }
+
+    /// 0-1 through every item of the sync in progress.
     private static func fraction(of runs: [SyncRun]) -> Double {
-        let steps = runs.filter(\.isRunning).flatMap(\.steps)
-        guard !steps.isEmpty else { return 0 }
-        return steps.map(\.fraction).reduce(0, +) / Double(steps.count)
+        let steps = currentRuns(runs).flatMap(\.steps)
+        let total = steps.map(\.weight).reduce(0, +)
+        guard total > 0 else { return 0 }
+        return steps.map { $0.fraction * $0.weight }.reduce(0, +) / total
     }
 
     /// "just now", "4m ago", "2h ago".
@@ -135,23 +170,6 @@ struct SyncFooter: View {
         if seconds < 3600 { return "\(Int(seconds / 60))m ago" }
         if seconds < 86400 { return "\(Int(seconds / 3600))h ago" }
         return date.formatted(date: .abbreviated, time: .omitted)
-    }
-
-    /// Fetches changes; Option-click (or the context menu) searches
-    /// everything again.
-    private func refreshButton(syncing: Bool) -> some View {
-        Button {
-            refresh(NSEvent.modifierFlags.contains(.option) ? .full : .manual)
-        } label: {
-            Image(systemName: "arrow.clockwise")
-        }
-        .buttonStyle(.borderless)
-        .keyboardShortcut("r")
-        .disabled(syncing)
-        .contextMenu {
-            Button("Full Refresh") { refresh(.full) }
-        }
-        .help("Fetch what's changed on GitHub (⌘R). Option-click for a full refresh.")
     }
 
     /// Workload and metrics in parallel, so both sections are in the panel
@@ -165,17 +183,13 @@ struct SyncFooter: View {
     }
 }
 
-/// The API budget and each resource the latest syncs fetched, checked off
+/// Each resource the latest syncs fetched, checked off
 /// as they complete.
 private struct SyncPanel: View {
-    @Environment(AuthStore.self) private var auth
     let runs: [SyncRun]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let rateLimit = auth.rateLimit {
-                RateLimitSection(rateLimit: rateLimit)
-            }
             ForEach(runs) { run in
                 SyncRunSection(run: run)
             }
@@ -190,45 +204,36 @@ private struct SyncPanel: View {
     }
 }
 
-/// A sidebar-style section heading.
-private struct PanelHeading<Trailing: View>: View {
-    let title: String
-    @ViewBuilder let trailing: Trailing
-
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Spacer(minLength: 8)
-            trailing
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-}
-
-/// GitHub's hourly GraphQL budget.
-private struct RateLimitSection: View {
+/// GitHub's hourly GraphQL budget: share left and minutes to the reset,
+/// with the detail in the tooltip.
+private struct RateLimitBadge: View {
     let rateLimit: RateLimit
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            PanelHeading(title: "GitHub API") {
-                Text("\(rateLimit.remaining.formatted()) left")
-                    .monospacedDigit()
-            }
-            ProgressView(value: Double(rateLimit.remaining), total: Double(max(rateLimit.limit, 1)))
-                .progressViewStyle(.linear)
-                .controlSize(.small)
-                .tint(rateLimit.isLow ? .orange : .accentColor)
-            if rateLimit.isLow {
-                Label("Auto refresh paused", systemImage: "pause.circle.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-            }
-        }
-        .help("\(rateLimit.remaining.formatted()) of \(rateLimit.limit.formatted()) points left this hour. Resets at \(rateLimit.resetAt.formatted(date: .omitted, time: .shortened)).\(rateLimit.isLow ? " Automatic refreshes wait until then." : "")")
+        Text("\(percent) · \(Self.untilReset(rateLimit.resetAt))")
+        .help(tooltip)
+        .font(.caption)
+        .monospacedDigit()
+        .lineLimit(1)
+        .fixedSize()
+        .foregroundStyle(rateLimit.isLow ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+    }
+
+    private var percent: String {
+        (Double(rateLimit.remaining) / Double(max(rateLimit.limit, 1))).formatted(.percent.precision(.fractionLength(0)))
+    }
+
+    private var tooltip: String {
+        var text = "\(percent) of the GitHub API budget left (\(rateLimit.remaining.formatted()) of \(rateLimit.limit.formatted()) points). "
+            + "Resets in \(Self.untilReset(rateLimit.resetAt)), at \(rateLimit.resetAt.formatted(date: .omitted, time: .shortened))."
+        if rateLimit.isLow { text += " Automatic refreshes wait until then." }
+        return text
+    }
+
+    /// "23m", or "<1m" in the last minute.
+    private static func untilReset(_ date: Date) -> String {
+        let minutes = Int((date.timeIntervalSinceNow / 60).rounded(.up))
+        return minutes < 1 ? "<1m" : "\(minutes)m"
     }
 }
 
@@ -237,16 +242,6 @@ private struct SyncRunSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            PanelHeading(title: run.kind.rawValue) {
-                if run.isRunning {
-                    Text(run.startedAt, style: .timer)
-                        .monospacedDigit()
-                } else if let finishedAt = run.finishedAt {
-                    Text(SyncDuration.format(finishedAt.timeIntervalSince(run.startedAt)))
-                        .monospacedDigit()
-                        .help("Finished \(finishedAt.formatted(date: .omitted, time: .shortened)), \(SyncCost.format(run.cost))")
-                }
-            }
             if run.steps.isEmpty {
                 Text("Nothing to fetch")
                     .font(.callout)

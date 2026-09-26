@@ -74,10 +74,33 @@ extension GitHubAPI {
             run.add("issues", title: "Open issues")
         }
 
+        var searches: [String: String] = [:]
+        if let changesSince {
+            // Search takes a full timestamp; `+00:00` rather than `Z` is the
+            // form GitHub documents.
+            let timestamp = changesSince.formatted(.iso8601).replacingOccurrences(of: "Z", with: "+00:00")
+            searches["changed-prs"] = "\(scope) is:pr updated:>=\(timestamp)"
+            searches["changed-issues"] = "\(scope) is:issue updated:>=\(timestamp)"
+        } else {
+            let since = mergedSince.formatted(.iso8601.year().month().day())
+            searches["open-prs"] = "\(scope) is:pr is:open sort:updated-desc"
+            searches["merged-prs"] = "\(scope) is:pr is:merged merged:>=\(since) sort:updated-desc"
+            searches["issues"] = "\(scope) is:issue is:open sort:updated-desc"
+        }
+
+        // Every step's total up front, in one cheap request, so progress is
+        // by items from the start. Search and the member and team lists stop
+        // at 1000, 1000 and 300. Progress only, so a failure is ignored.
+        let limits = ["members": 1000, "teams": 300]
+        if let counts = try? await run.overhead({ try await counts(searches: searches, membersOf: fetchPeople ? org : nil) }) {
+            for (id, count) in counts { run.setTotal(min(count, limits[id] ?? 1000), for: id) }
+        }
+
+        let plannedSearches = searches
         async let memberList: [Person]? = fetchPeople ? fetchMembers(org: org, run: run) : nil
         async let teamResult: [Team]? = fetchPeople ? fetchTeams(org: org, run: run) : nil
-        async let items = fetchChanges(scope: scope, since: changesSince, run: run)
-        async let fullItems = changesSince == nil ? fetchAll(scope: scope, mergedSince: mergedSince, run: run) : nil
+        async let items = fetchChanges(searches: plannedSearches, run: run)
+        async let fullItems = changesSince == nil ? fetchAll(searches: plannedSearches, run: run) : nil
 
         var warnings = previous?.warnings ?? []
         var teamList = previous?.teams ?? []
@@ -131,36 +154,33 @@ extension GitHubAPI {
         try await run.track("teams", count: \.count) { try await teams(org: org, onPage: $0) }
     }
 
-    /// Open PRs, PRs merged since `mergedSince` and open issues, in full.
-    private func fetchAll(
-        scope: String,
-        mergedSince: Date,
-        run: SyncRun
-    ) async throws -> ([PullRequest], [PullRequest], [Issue])? {
-        let since = mergedSince.formatted(.iso8601.year().month().day())
+    /// Open PRs, PRs merged in the lookback and open issues, in full; nil
+    /// when `searches` is for changes.
+    private func fetchAll(searches: [String: String], run: SyncRun) async throws -> ([PullRequest], [PullRequest], [Issue])? {
+        guard let openQuery = searches["open-prs"], let mergedQuery = searches["merged-prs"], let issueQuery = searches["issues"] else {
+            return nil
+        }
         async let open = run.track("open-prs", count: \.count) {
-            try await pullRequests("\(scope) is:pr is:open sort:updated-desc", onPage: $0).items
+            try await pullRequests(openQuery, onPage: $0).items
         }
         async let merged = run.track("merged-prs", count: \.count) {
-            try await pullRequests("\(scope) is:pr is:merged merged:>=\(since) sort:updated-desc", onPage: $0).items
+            try await pullRequests(mergedQuery, onPage: $0).items
         }
         async let issueList = run.track("issues", count: \.count) {
-            try await issues("\(scope) is:issue is:open sort:updated-desc", onPage: $0).items
+            try await issues(issueQuery, onPage: $0).items
         }
         return try await (open, merged, issueList)
     }
 
-    /// PRs and issues in any state updated since `since`; nil without one.
-    private func fetchChanges(scope: String, since: Date?, run: SyncRun) async throws -> SnapshotChanges? {
-        guard let since else { return nil }
-        // Search takes a full timestamp; `+00:00` rather than `Z` is the form
-        // GitHub documents.
-        let timestamp = since.formatted(.iso8601).replacingOccurrences(of: "Z", with: "+00:00")
+    /// PRs and issues in any state updated since the last fetch; nil when
+    /// `searches` is for everything.
+    private func fetchChanges(searches: [String: String], run: SyncRun) async throws -> SnapshotChanges? {
+        guard let prQuery = searches["changed-prs"], let issueQuery = searches["changed-issues"] else { return nil }
         async let prs = run.track("changed-prs", count: \.items.count) {
-            try await pullRequests("\(scope) is:pr updated:>=\(timestamp)", onPage: $0)
+            try await pullRequests(prQuery, onPage: $0)
         }
         async let issueList = run.track("changed-issues", count: \.items.count) {
-            try await issues("\(scope) is:issue updated:>=\(timestamp)", onPage: $0)
+            try await issues(issueQuery, onPage: $0)
         }
         let (prResult, issueResult) = try await (prs, issueList)
         return SnapshotChanges(
@@ -242,6 +262,40 @@ extension GitHubAPI {
             onPage($0, $1)
         }
         return SearchResult(items: nodes.compactMap { $0.value?.model }, total: total)
+    }
+
+    /// How many results each search matches (uncapped), keyed as given, in
+    /// one request. With `membersOf`, also the org's "members" and "teams".
+    func counts(searches: [String: String], membersOf org: String? = nil) async throws -> [String: Int] {
+        let keys = searches.keys.sorted()
+        var variables: [String: String] = [:]
+        var definitions: [String] = []
+        var fields: [String] = []
+        for (index, key) in keys.enumerated() {
+            variables["q\(index)"] = searches[key]
+            definitions.append("$q\(index): String!")
+            fields.append("s\(index): search(query: $q\(index), type: ISSUE, first: 1) { issueCount }")
+        }
+        if let org {
+            variables["login"] = org
+            definitions.append("$login: String!")
+            fields.append("org: organization(login: $login) { membersWithRole(first: 1) { totalCount } teams(first: 1) { totalCount } }")
+        }
+        guard !fields.isEmpty else { return [:] }
+
+        let response: [String: CountNode?] = try await query(
+            "query(\(definitions.joined(separator: ", "))) { \(fields.joined(separator: " ")) }",
+            variables: variables
+        )
+        var counts: [String: Int] = [:]
+        for (index, key) in keys.enumerated() {
+            if let count = response["s\(index)"]??.issueCount { counts[key] = count }
+        }
+        if let node = response["org"] ?? nil {
+            counts["members"] = node.membersWithRole?.totalCount
+            counts["teams"] = node.teams?.totalCount
+        }
+        return counts
     }
 
     /// Issue/PR search. GitHub caps search results at 1000.
@@ -387,6 +441,15 @@ extension OrgSnapshot {
 }
 
 // MARK: - Raw GraphQL shapes
+
+/// Any of the aliased fields in a counts query (and the `rateLimit` beside
+/// them, which decodes to all nils).
+private struct CountNode: Decodable {
+    struct Total: Decodable { let totalCount: Int }
+    let issueCount: Int?
+    let membersWithRole: Total?
+    let teams: Total?
+}
 
 private struct SearchResponse<Node: Decodable>: Decodable {
     let search: PagedConnection<Node>

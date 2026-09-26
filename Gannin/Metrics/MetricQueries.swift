@@ -9,7 +9,7 @@ extension GitHubAPI {
         to: Date,
         onPage: (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }
     ) async throws -> [MetricPullRequest] {
-        let query = "org:\(org) archived:false is:pr is:merged merged:\(Self.day(from))..\(Self.day(to))"
+        let query = Self.mergedSearch(org: org, from: from, to: to)
         let nodes: [Lossy<RawMetricPullRequest>] = try await search(
             query,
             fields: RawMetricPullRequest.fields,
@@ -17,6 +17,11 @@ extension GitHubAPI {
             onPage: onPage
         )
         return nodes.compactMap { $0.value?.model }
+    }
+
+    /// The search for PRs merged in `[from, to]`, by day.
+    static func mergedSearch(org: String, from: Date, to: Date) -> String {
+        "org:\(org) archived:false is:pr is:merged merged:\(day(from))..\(day(to))"
     }
 
     /// Number of PRs opened in each week starting at the given dates.

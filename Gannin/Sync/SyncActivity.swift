@@ -34,14 +34,20 @@ struct SyncStep: Identifiable {
         case .done, .failed, .skipped: 1
         case .pending: 0
         case .running:
-            if let parts, parts.of > 0 {
+            if let total, total > 0 {
+                min(Double(count ?? 0) / Double(total), 1)
+            } else if let parts, parts.of > 0 {
                 Double(parts.done) / Double(parts.of)
-            } else if let count, let total, total > 0 {
-                min(Double(count) / Double(total), 1)
             } else {
                 0
             }
         }
+    }
+
+    /// Share of a sync's progress: the items it fetches, so a step of 149
+    /// merged PRs outweighs one of 3 teams.
+    var weight: Double {
+        Double(max(total ?? count ?? 1, 1))
     }
 
     var duration: TimeInterval? {
@@ -72,13 +78,11 @@ final class SyncRun: Identifiable {
 
     var isRunning: Bool { finishedAt == nil }
 
-    var cost: Int { steps.map(\.cost).reduce(0, +) }
+    /// Queries outside any step, such as the up-front counts.
+    private(set) var overheadCost = 0
 
-    /// 0-1 through the whole run, counting partial progress in running steps.
-    var fraction: Double {
-        guard !steps.isEmpty else { return isRunning ? 0 : 1 }
-        return steps.map(\.fraction).reduce(0, +) / Double(steps.count)
-    }
+    var cost: Int { steps.map(\.cost).reduce(0, +) + overheadCost }
+
 
     func add(_ id: String, title: String, detail: String? = nil) {
         steps.append(SyncStep(id: id, title: title, detail: detail))
@@ -131,12 +135,29 @@ final class SyncRun: Identifiable {
         finishedAt = .now
     }
 
+    /// Runs queries that belong to the run but no one step (their cost
+    /// still counts towards the run).
+    func overhead<T>(_ work: @MainActor () async throws -> T) async throws -> T {
+        try await SyncContext.$step.withValue(SyncContext.Step(run: self, id: "")) {
+            try await work()
+        }
+    }
+
+    /// The number of items a step will fetch, when known before it starts.
+    func setTotal(_ total: Int, for id: String) {
+        update(id) { $0.total = total }
+    }
+
     func setParts(_ done: Int, of total: Int, for id: String) {
         update(id) { $0.parts = (done, total) }
     }
 
     func addCost(_ cost: Int, to id: String) {
-        update(id) { $0.cost += cost }
+        if steps.contains(where: { $0.id == id }) {
+            update(id) { $0.cost += cost }
+        } else {
+            overheadCost += cost
+        }
     }
 
     private func update(_ id: String, _ change: (inout SyncStep) -> Void) {

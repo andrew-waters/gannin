@@ -66,10 +66,26 @@ final class MetricsStore {
         }
         if !weeks.isEmpty {
             run.add("opened", title: "Opened per week", detail: weeks.count == 1 ? "1 week" : "\(weeks.count) weeks")
+            run.setTotal(weeks.count, for: "opened")
         }
 
         syncing.insert(org)
         defer { syncing.remove(org) }
+
+        // How many merged PRs the weeks hold, in one cheap request, so
+        // progress is by PRs rather than weeks. Progress only, so a failure
+        // is ignored.
+        var searches: [String: String] = [:]
+        if let first = backfill.first, let last = backfill.last {
+            searches["backfill"] = GitHubAPI.mergedSearch(org: org, from: first.0, to: last.1)
+        }
+        if let first = topUp.first, let last = topUp.last {
+            searches["topUp"] = GitHubAPI.mergedSearch(org: org, from: first.0, to: last.1)
+        }
+        if !searches.isEmpty, let counts = try? await run.overhead({ try await api.counts(searches: searches) }) {
+            run.setTotal(counts.values.reduce(0, +), for: "merged")
+        }
+
         do {
             if !chunks.isEmpty {
                 let prs = try await run.track("merged", count: \.count) { progress in
