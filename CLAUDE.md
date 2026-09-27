@@ -29,6 +29,12 @@ Mac-only styles and modifiers go through `App/Platform.swift` (`checkboxToggle`,
 `#if os(macOS)`. Window tabs and Rename Tab are the Mac's; on iPad the app's Settings open as a
 sheet from the account menu.
 
+Each page's title is the window's (`MainView.automaticTitle`) and its top-level controls are
+toolbar items (`.toolbar` on the page, the metrics window picker on `OrgWorkloadView`), so on
+iPad they share the bar with the sidebar toggle and on the Mac sit in the title bar.
+`PinnedHeader` is only for section headers further down a page, and for the calendar and
+report inside a person's view, which are one column of several.
+
 ## Layout
 
 - `Gannin/Auth/`: GitHub OAuth device flow (`DeviceFlow`), token in the keychain (`Keychain`),

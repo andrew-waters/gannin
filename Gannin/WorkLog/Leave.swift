@@ -306,29 +306,27 @@ struct LeaveReportView: View {
                             .foregroundStyle(.tertiary)
                     }
                     .sectionContent()
-                } header: {
-                    PinnedHeader {
-                        HStack(spacing: 12) {
-                            Text("Allowance")
-                            Text("\(year.label) · \(year.range)")
-                                .foregroundStyle(.secondary)
-                                .fontWeight(.regular)
-                            Spacer(minLength: 8)
-                            ControlGroup {
-                                Button { offset -= 1 } label: { Label("Earlier", systemImage: "chevron.left") }
-                                    .help("Previous leave year")
-                                Button("This Year") { offset = 0 }
-                                    .disabled(offset == 0)
-                                Button { offset += 1 } label: { Label("Later", systemImage: "chevron.right") }
-                                    .help("Next leave year")
-                            }
-                            .fixedSize()
-                            .font(.body)
-                        }
-                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toolbar {
+            ToolbarItem {
+                Text("\(year.label) · \(year.range)")
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+            }
+            ToolbarItem {
+                ControlGroup {
+                    Button { offset -= 1 } label: { Label("Earlier", systemImage: "chevron.left") }
+                        .help("Previous leave year")
+                    Button("This Year") { offset = 0 }
+                        .disabled(offset == 0)
+                    Button { offset += 1 } label: { Label("Later", systemImage: "chevron.right") }
+                        .help("Next leave year")
+                }
+                .fixedSize()
+            }
         }
         .task(id: "\(year.key) \(regions.hashValue)") {
             await holidayStore.load(regions, years: year.years)

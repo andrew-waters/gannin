@@ -32,20 +32,20 @@ struct TimeOffPage: View {
     @AppStorage("timeOffTab") private var tab: Tab = .calendar
 
     var body: some View {
-        VStack(spacing: 0) {
-            Picker("View", selection: $tab) {
-                ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
-            .background(.bar)
-            Divider()
+        Group {
             switch tab {
             case .calendar: TimeOffCalendarView(org: org, workload: workload)
             case .allowance: LeaveReportView(org: org, workload: workload)
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("View", selection: $tab) {
+                    ForEach(Tab.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
             }
         }
     }
@@ -105,10 +105,25 @@ struct TimeOffCalendarView: View {
                     }
                     .sectionContent()
                 } header: {
-                    PinnedHeader { controls }
+                    // In a person's view the calendar is one column of
+                    // several, so its controls stay with it; on the Time off
+                    // page they're the window's toolbar.
+                    if fixedPerson != nil {
+                        PinnedHeader { controls }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toolbar {
+            if fixedPerson == nil {
+                ToolbarItem {
+                    Text(title)
+                        .foregroundStyle(.secondary)
+                        .fixedSize()
+                }
+                ToolbarItemGroup { controlItems }
+            }
         }
         .task(id: "\(years(range)) \(regions.hashValue)") {
             await holidayStore.load(regions, years: years(range))
@@ -132,7 +147,13 @@ struct TimeOffCalendarView: View {
                 .foregroundStyle(.secondary)
                 .fontWeight(.regular)
             Spacer(minLength: 8)
-            Group {
+            Group { controlItems }
+                .font(.body)
+        }
+    }
+
+    @ViewBuilder
+    private var controlItems: some View {
                 Button {
                     addTimeOff()
                 } label: {
@@ -176,9 +197,6 @@ struct TimeOffCalendarView: View {
                         .help("Later")
                 }
                 .fixedSize()
-            }
-            .font(.body)
-        }
     }
 
     // MARK: Selection

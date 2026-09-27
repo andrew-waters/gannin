@@ -40,26 +40,14 @@ struct PeopleStatsView: View {
                         }
                     }
                     .sectionContent()
-                } header: {
-                    PinnedHeader {
-                        HStack(spacing: 12) {
-                            Text("People")
-                            MetricsSyncIndicator(org: org)
-                            Spacer(minLength: 8)
-                            Picker("Window", selection: $windowDays) {
-                                ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .fixedSize()
-                            .font(.body)
-                            .help("Window for the people stats")
-                            ColumnGuideButton.people
-                        }
-                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        // The title is the window's; the window picker is `OrgWorkloadView`'s.
+        .toolbar {
+            ToolbarItem { MetricsSyncIndicator(org: org) }
+            ToolbarItem { ColumnGuideButton.people }
         }
     }
 }
@@ -92,26 +80,13 @@ struct RepositoryStatsView: View {
                         }
                     }
                     .sectionContent()
-                } header: {
-                    PinnedHeader {
-                        HStack(spacing: 12) {
-                            Text("Repositories")
-                            MetricsSyncIndicator(org: org)
-                            Spacer(minLength: 8)
-                            Picker("Window", selection: $windowDays) {
-                                ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
-                            }
-                            .pickerStyle(.segmented)
-                            .labelsHidden()
-                            .fixedSize()
-                            .font(.body)
-                            .help("Window for the repo stats")
-                            ColumnGuideButton.repos
-                        }
-                    }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toolbar {
+            ToolbarItem { MetricsSyncIndicator(org: org) }
+            ToolbarItem { ColumnGuideButton.repos }
         }
     }
 }

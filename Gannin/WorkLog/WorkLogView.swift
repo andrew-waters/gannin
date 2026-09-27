@@ -65,14 +65,13 @@ struct WorkLogPage: View {
                 Section {
                     content(columns)
                         .padding(.horizontal, view == .punchcards ? 20 : 8)
-                        .padding(.top, view == .punchcards ? 14 : 0)
+                        .padding(.top, 14)
                         .padding(.bottom, 28)
-                } header: {
-                    PinnedHeader { controls(columns) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .toolbar { toolbar(columns) }
         .task(id: "\(org) \(columns.first?.start.timeIntervalSince1970 ?? 0)") {
             await store.sync(org, from: columns.first?.start)
         }
@@ -144,43 +143,50 @@ struct WorkLogPage: View {
         }
     }
 
-    private func controls(_ columns: [WorkLogGrid.Column]) -> some View {
-        HStack(spacing: 12) {
+    /// The tabs in the middle of the toolbar; the range, scale and paging
+    /// at its end.
+    @ToolbarContentBuilder
+    private func toolbar(_ columns: [WorkLogGrid.Column]) -> some ToolbarContent {
+        ToolbarItem(placement: .principal) {
             Picker("View", selection: $view) {
                 ForEach(ActivityView.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            .font(.body)
-            Text(Self.rangeLabel(columns))
-                .foregroundStyle(.secondary)
-                .fontWeight(.regular)
-            if store.syncing.contains(org) {
-                ProgressView().controlSize(.small)
-            }
-            Spacer(minLength: 8)
-            Group {
-                Picker("Scale", selection: $scale) {
-                    ForEach(WorkLogScale.allCases) { Text($0.rawValue).tag($0) }
+        }
+        ToolbarItem {
+            HStack(spacing: 8) {
+                if store.syncing.contains(org) {
+                    ProgressView().controlSize(.small)
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
-                .help("What each column covers")
-                ControlGroup {
-                    Button { pagesBack += 1 } label: { Label("Earlier", systemImage: "chevron.left") }
-                        .disabled(!canGoBack)
-                        .help("Earlier")
-                    Button("Today") { pagesBack = 0 }
-                        .disabled(pagesBack == 0)
-                    Button { pagesBack -= 1 } label: { Label("Later", systemImage: "chevron.right") }
-                        .disabled(pagesBack == 0)
-                        .help("Later")
-                }
-                .fixedSize()
+                Text(Self.rangeLabel(columns))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
             }
-            .font(.body)
+            .fixedSize()
+        }
+        ToolbarItem {
+            Picker("Scale", selection: $scale) {
+                ForEach(WorkLogScale.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .help("What each column covers")
+        }
+        ToolbarItem {
+            ControlGroup {
+                Button { pagesBack += 1 } label: { Label("Earlier", systemImage: "chevron.left") }
+                    .disabled(!canGoBack)
+                    .help("Earlier")
+                Button("Today") { pagesBack = 0 }
+                    .disabled(pagesBack == 0)
+                Button { pagesBack -= 1 } label: { Label("Later", systemImage: "chevron.right") }
+                    .disabled(pagesBack == 0)
+                    .help("Later")
+            }
+            .fixedSize()
         }
     }
 

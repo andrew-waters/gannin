@@ -32,8 +32,6 @@ struct IssuesStatsView: View {
                         }
                         .updating(store.syncing.contains(org))
                         .sectionContent()
-                    } header: {
-                        PinnedHeader { header }
                     }
                     Section {
                         OpenClosedCharts(buckets: metrics.buckets(granularity), granularity: granularity)
@@ -102,12 +100,13 @@ struct IssuesStatsView: View {
                             }
                         }
                         .sectionContent()
-                    } header: {
-                        PinnedHeader { header }
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toolbar {
+            ToolbarItem { syncIndicator }
         }
         .task(id: "\(org) \(windowDays)") { await store.sync(org, windowDays: windowDays) }
         .onAppear {
@@ -118,24 +117,15 @@ struct IssuesStatsView: View {
         .onChange(of: descending) { UserDefaults.standard.set(descending, forKey: "inProgressDescending.\(org)") }
     }
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            Text("Issues")
-            if store.syncing.contains(org) {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Updating").font(.callout.weight(.regular)).foregroundStyle(.secondary)
-                }
+    /// In the toolbar; the title is the window's and the window picker
+    /// `OrgWorkloadView`'s.
+    @ViewBuilder
+    private var syncIndicator: some View {
+        if store.syncing.contains(org) {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Updating").font(.callout).foregroundStyle(.secondary)
             }
-            Spacer(minLength: 8)
-            Picker("Window", selection: $windowDays) {
-                ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .font(.body)
-            .help("Window for the issue metrics")
         }
     }
 

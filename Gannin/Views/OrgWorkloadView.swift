@@ -47,30 +47,11 @@ struct OrgWorkloadView: View {
                 }
             }
         }
-        #if os(macOS)
         .toolbar {
             if hasWindowPicker {
                 ToolbarItem { windowPicker }
             }
         }
-        #else
-        // iPad has no navigation bar over the detail (see `MainView`), so
-        // the window picker gets a bar of its own.
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if hasWindowPicker {
-                VStack(spacing: 0) {
-                    HStack {
-                        Spacer()
-                        windowPicker
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 8)
-                    Divider()
-                }
-                .background(.bar)
-            }
-        }
-        #endif
         .task { await orgs.refreshIfStale(org) }
         .task(id: windowDays) { await metricsStore.sync(org, windowDays: windowDays) }
     }
@@ -166,7 +147,17 @@ struct OrgWorkloadView: View {
         .lineLimit(1)
     }
 
-    private var hasWindowPicker: Bool { tab == .dashboard || tab == .investments }
+    /// Pages on the metrics window: Dashboard, Investments, and the People,
+    /// Repositories and Issues stats (not a person, repo or list in them).
+    private var hasWindowPicker: Bool {
+        switch tab {
+        case .dashboard, .investments: true
+        case .people: person == nil && peopleView == nil
+        case .repositories: repository == nil
+        case .issues: issueList == nil
+        default: false
+        }
+    }
 
     private var windowPicker: some View {
         Picker("Window", selection: $windowDays) {

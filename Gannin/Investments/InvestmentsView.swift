@@ -38,8 +38,6 @@ struct InvestmentsView: View {
                     let balance = InvestmentBalance(history: history, config: configs.config(for: org), team: team, range: range, granularity: period)
                     Section {
                         summary(balance).sectionContent()
-                    } header: {
-                        PinnedHeader { header }
                     }
                     if scope == .completed {
                         Section {
@@ -64,12 +62,13 @@ struct InvestmentsView: View {
                             Text("Fetching issues back to \(range.start.formatted(date: .abbreviated, time: .omitted)).").foregroundStyle(.secondary)
                         }
                         .sectionContent()
-                    } header: {
-                        PinnedHeader { header }
                     }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .toolbar {
+            ToolbarItemGroup { controls }
         }
         .task(id: "\(org) \(Int(range.start.timeIntervalSince1970))") {
             let days = max(1, Int(Date.now.timeIntervalSince(range.start) / 86_400) + 1)
@@ -81,47 +80,41 @@ struct InvestmentsView: View {
 
     // MARK: Header
 
-    private var header: some View {
-        HStack(spacing: 12) {
-            Text("Investment balance")
-            if store.syncing.contains(org) {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text("Updating").font(.callout.weight(.regular)).foregroundStyle(.secondary)
-                }
+    /// In the toolbar, beside the window's title.
+    @ViewBuilder
+    private var controls: some View {
+        if store.syncing.contains(org) {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Updating").font(.callout).foregroundStyle(.secondary)
             }
-            Spacer(minLength: 8)
-            Group {
-                Picker("Show", selection: $scope) {
-                    ForEach(InvestmentBalance.Scope.allCases) { Text($0.rawValue).tag($0) }
-                }
-                .pickerStyle(.segmented)
+        }
+        Picker("Show", selection: $scope) {
+            ForEach(InvestmentBalance.Scope.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("Issues completed in the range, or in progress at its end")
+        Picker("Range", selection: $rangePreset) {
+            ForEach(InvestmentRange.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .labelsHidden()
+        .fixedSize()
+        if rangePreset == .custom {
+            DatePicker("From", selection: date($customFrom), displayedComponents: .date)
                 .labelsHidden()
-                .fixedSize()
-                .help("Issues completed in the range, or in progress at its end")
-                Picker("Range", selection: $rangePreset) {
-                    ForEach(InvestmentRange.allCases) { Text($0.rawValue).tag($0) }
-                }
+            Text("to").foregroundStyle(.secondary)
+            DatePicker("To", selection: date($customTo), in: ...Date.now, displayedComponents: .date)
                 .labelsHidden()
-                .fixedSize()
-                if rangePreset == .custom {
-                    DatePicker("From", selection: date($customFrom), displayedComponents: .date)
-                        .labelsHidden()
-                    Text("to").foregroundStyle(.secondary)
-                    DatePicker("To", selection: date($customTo), in: ...Date.now, displayedComponents: .date)
-                        .labelsHidden()
-                }
-                if scope == .completed {
-                    Picker("Per", selection: $period) {
-                        ForEach([IssueMetrics.Granularity.week, .month, .quarter]) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                }
+        }
+        if scope == .completed {
+            Picker("Per", selection: $period) {
+                ForEach([IssueMetrics.Granularity.week, .month, .quarter]) { Text($0.rawValue).tag($0) }
             }
-            .font(.body)
-            .controlSize(.small)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
         }
     }
 
