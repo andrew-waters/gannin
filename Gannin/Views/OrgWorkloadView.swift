@@ -208,9 +208,8 @@ struct OrgWorkloadView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if peopleView == .timeOff {
             TimeOffPage(org: org, workload: workload)
-        } else if let peopleView {
-            WorkLogPage(org: org, workload: workload, view: peopleView)
-                .id(peopleView)
+        } else if peopleView == .activity {
+            WorkLogPage(org: org, workload: workload)
         } else {
             PeopleStatsView(org: org, workload: workload, metrics: metrics, selection: $selection)
         }

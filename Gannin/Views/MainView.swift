@@ -482,12 +482,9 @@ struct OrgSidebar: View {
                     if tab == .people {
                         expandableRow(.people, isExpanded: $peopleExpanded)
                         if peopleExpanded {
+                            peopleViewRow(.activity)
+                            peopleViewRow(.timeOff)
                             teamRows
-                            ForEach(PeopleView.allCases, id: \.self) { view in
-                                Label(view.rawValue, systemImage: view.systemImage)
-                                    .padding(.leading, 20)
-                                    .tag(SidebarItem.peopleView(view))
-                            }
                         }
                     } else if tab == .issues {
                         expandableRow(.issues, isExpanded: $issuesExpanded)
@@ -650,6 +647,12 @@ struct OrgSidebar: View {
             count(load.reviewRequests.count, "review", "reviews"),
             count(load.activeIssues.count, "issue", "issues"),
         ], stale: load.stalePullRequests.count)
+    }
+
+    private func peopleViewRow(_ view: PeopleView) -> some View {
+        Label(view.rawValue, systemImage: view.systemImage)
+            .padding(.leading, 20)
+            .tag(SidebarItem.peopleView(view))
     }
 
     // MARK: Teams

@@ -11,26 +11,30 @@ enum WorkLogScale: String, CaseIterable, Identifiable {
     var columns: Int { self == .days ? 14 : 12 }
 }
 
-/// The pages listed under People in the sidebar: three drawn from the work
-/// log's PR activity, and the time off calendar.
+/// The pages listed under People in the sidebar: Activity (drawn from the
+/// work log's PR activity) and the time off calendar.
 enum PeopleView: String, CaseIterable, Hashable {
-    case workLog = "Work log"
-    case threads = "Threads"
-    case punchcards = "Punchcards"
+    case activity = "Activity"
     case timeOff = "Time off"
 
     var systemImage: String {
         switch self {
-        case .workLog: "circle.grid.3x3"
-        case .threads: "chart.bar.xaxis"
-        case .punchcards: "clock"
+        case .activity: "circle.grid.3x3"
         case .timeOff: "calendar"
         }
     }
 }
 
-/// A People page over a page of days or weeks, with the scale and paging in
-/// the pinned header. The work log is people down the side, days or weeks
+/// The Activity page's tabs.
+enum ActivityView: String, CaseIterable, Hashable {
+    case workLog = "Work log"
+    case threads = "Threads"
+    case punchcards = "Punchcards"
+}
+
+/// The Activity page under People: Work log, Threads and Punchcards as tabs
+/// over one page of days or weeks, the tabs, scale and paging in the pinned
+/// header (the page stays put when switching tabs). The work log is people down the side, days or weeks
 /// across the top, and a cluster of dots per cell, one per commit, review,
 /// PR opened and PR merged; Threads and Punchcards draw the same activity
 /// another way.
@@ -44,8 +48,7 @@ struct WorkLogPage: View {
 
     let org: String
     let workload: Workload?
-    let view: PeopleView
-
+    @AppStorage("activityTab") private var view: ActivityView = .workLog
     @AppStorage("workLogScale") private var scale: WorkLogScale = .days
     /// Pages back from the current one.
     @State private var pagesBack = 0
@@ -122,9 +125,6 @@ struct WorkLogPage: View {
                     header(columns)
                     Divider()
                     ThreadsContent(org: org, pullRequests: history.pullRequests(config: config, hidden: hidden.keys), columns: columns, scale: scale, people: people, calendars: calendars, week: config.week)
-                case .timeOff:
-                    // A page of its own, `TimeOffPage`.
-                    EmptyView()
                 case .punchcards:
                     PunchcardContent(org: org, pullRequests: history.pullRequests(config: config, hidden: hidden.keys), columns: columns, people: people, calendars: calendars, week: config.week)
                 }
@@ -146,7 +146,13 @@ struct WorkLogPage: View {
 
     private func controls(_ columns: [WorkLogGrid.Column]) -> some View {
         HStack(spacing: 12) {
-            Text(view.rawValue)
+            Picker("View", selection: $view) {
+                ForEach(ActivityView.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            .font(.body)
             Text(Self.rangeLabel(columns))
                 .foregroundStyle(.secondary)
                 .fontWeight(.regular)

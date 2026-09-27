@@ -48,9 +48,9 @@ marked otherwise. The app is sandboxed with outgoing network access only.
   `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a Finder-style `ColumnBrowser`. The sidebar lists
   the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People, Repositories) for the
-  selected org; the org switcher and account menu sit in its footer. Under People: All (everyone), Teams (each
-  org team opening to its members, then No team; an org without teams lists people directly),
-  then Work log, Threads, Punchcards and Time off. Picking a person shows their `PersonColumn` as the
+  selected org; the org switcher and account menu sit in its footer. Under People: Activity, Time off, All (everyone), Teams (each
+  org team opening to its members, then No team; an org without teams lists people directly).
+  Picking a person shows their `PersonColumn` as the
   main view; People on its own is the people stats table. A Settings section holds the org's repo and people exclusions
   (`OrgSettingsView`), which apply to the workload and the stats alike. The first
   column is the section's list; `path: [DetailSelection]` holds one entry per column opened
@@ -133,8 +133,8 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 
 ## Work log
 
-- `Gannin/WorkLog/`: pages under People in the sidebar (`PeopleView`: Work log, Threads,
-  Punchcards), each a `WorkLogPage` with its own scale and paging. The work log is people by day
+- `Gannin/WorkLog/`: the Activity page under People (`WorkLogPage`), with Work log, Threads and
+  Punchcards as tabs (`ActivityView`) sharing one scale and page. The work log is people by day
   (14 per page) or week (12 per page), paging back up to a year, a packed cluster of dots per cell
   (commits, reviews, PRs opened, PRs merged; commit dots grow with lines changed).
   `WorkLogStore` keeps PRs updated since the earliest range viewed (28 days at first) with
