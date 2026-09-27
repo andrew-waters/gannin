@@ -29,6 +29,14 @@ struct OrgSettingsView: View {
 
             InvestmentCategoriesSection(org: org)
 
+            IssueWorkflowSection(org: org)
+
+            WorkWeekSection(org: org)
+
+            LeavePolicySection(org: org)
+
+            PeopleDatesSection(org: org, people: (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending })
+
             Section {
                 if repos.isEmpty {
                     Text(search.isEmpty ? "No repositories yet. They appear once the org has synced." : "No matches")
@@ -234,6 +242,24 @@ struct ExcludablePerson: ViewModifier {
             if let url = URL(string: "https://github.com/\(login)") {
                 Button("Open on GitHub") { openURL(url) }
             }
+        }
+    }
+}
+
+/// Exclude and Open on GitHub for a repo row's context menu.
+struct RepositoryMenu: View {
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(OrgStore.self) private var orgs
+    @Environment(\.openURL) private var openURL
+    let repository: String
+    let org: String
+
+    var body: some View {
+        Button("Exclude from \(orgs.org(login: org)?.displayName ?? org)") {
+            if !configs.config(for: org).excludedRepos.contains(repository) { configs.toggleRepo(repository, in: org) }
+        }
+        if let url = URL(string: "https://github.com/\(repository)") {
+            Button("Open on GitHub") { openURL(url) }
         }
     }
 }

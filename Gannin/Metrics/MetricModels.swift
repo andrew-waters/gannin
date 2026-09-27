@@ -22,11 +22,6 @@ struct MetricPullRequest: Codable, Hashable, Identifiable {
     var reviewRequests: [MetricReviewRequest]
     let additions: Int
     let deletions: Int
-    /// PR labels, branch and the issues it closes, for investment categories.
-    let labels: [String]
-    let branch: String?
-    let linkedIssues: [MetricLinkedIssue]
-
     /// When the PR started waiting for review.
     var reviewableAt: Date { readyAt ?? createdAt }
 
@@ -60,28 +55,12 @@ struct MetricReview: Codable, Hashable {
     let submittedAt: Date
 }
 
-/// An issue's fields that investment rules can match on.
-struct MetricIssue: Codable, Hashable {
-    let title: String
-    let repo: String
-    let labels: [String]
-    /// GitHub issue type, such as Bug or Feature.
-    let issueType: String?
-    let milestone: String?
-}
-
-/// An issue a PR closes, with its parent (for sub-issues).
-struct MetricLinkedIssue: Codable, Hashable {
-    let issue: MetricIssue
-    let parent: MetricIssue?
-}
-
 /// Per-org metrics history kept on disk. Merged PRs are fetched once and
 /// topped up on each sync; opened counts are cheap and refetched.
 struct MetricsHistory: Codable {
     /// Bumped when the stored PR shape gains fields, so older histories are
     /// dropped and fetched again rather than half-filled.
-    static let currentFormat = 2
+    static let currentFormat = 4
 
     var formatVersion: Int?
     let orgLogin: String

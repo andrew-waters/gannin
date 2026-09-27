@@ -22,7 +22,10 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 - `Gannin/Auth/`: GitHub OAuth device flow (`DeviceFlow`), token in the keychain (`Keychain`),
   signed-in state (`AuthStore`). The OAuth App client ID lives in `GitHubOAuthConfig`.
 - `Gannin/GitHub/`: GraphQL client (`GitHubAPI`) and the queries (`Queries.swift`). All calls are
-  reads. Raw GraphQL shapes are private to `Queries.swift` and mapped onto the models.
+  reads except the project board writes in `ProjectFields.swift` (adding an issue to or
+  removing it from a board, and saving its fields, from the issue window's
+  `ProjectFieldsSections`), which need the `project` scope. Mutations skip the injected
+  `rateLimit` field. Raw GraphQL shapes are private to `Queries.swift` and mapped onto the models.
 - `Gannin/Workload/`: models (`Models.swift`), `OrgStore` (org list, stars, per-org snapshots
   cached as JSON in Application Support) and `Workload`, which derives per-person load from a
   snapshot, optionally filtered by team.
@@ -39,11 +42,16 @@ marked otherwise. The app is sandboxed with outgoing network access only.
   Option-click or right-click for Full Refresh), the API budget and reset, and a chevron. The
   step detail slides up while a sync runs and closes itself a few seconds after; overall
   progress runs along the divider above the row.
+- Windows are independent: the selected org, section and metrics window of days are
+  `@SceneStorage`, so each main window or tab has its own (File > New Window, or New Tab, which
+  `WindowTabs.swift` joins to the current window). Preferences like column widths stay
+  `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a Finder-style `ColumnBrowser`. The sidebar lists
-  the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People with each person nested
-  beneath, Repositories) for the selected org; the org switcher and account menu sit in its
-  footer. Picking a person there shows their `PersonColumn` as the main view; the People section on its
-  own is empty for now. A Settings section holds the org's repo and people exclusions
+  the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People, Repositories) for the
+  selected org; the org switcher and account menu sit in its footer. Under People: All (everyone), Teams (each
+  org team opening to its members, then No team; an org without teams lists people directly),
+  then Work log, Threads, Punchcards and Time off. Picking a person shows their `PersonColumn` as the
+  main view; People on its own is the people stats table. A Settings section holds the org's repo and people exclusions
   (`OrgSettingsView`), which apply to the workload and the stats alike. The first
   column is the section's list; `path: [DetailSelection]` holds one entry per column opened
   to its right (person, issue or PR, in `DetailViews.swift`). Selecting in a column truncates the
@@ -106,28 +114,27 @@ marked otherwise. The app is sandboxed with outgoing network access only.
 
 ## Investments
 
-- `Gannin/Investments/`: investment balance in the spirit of Swarmia's investment categories.
+- `Gannin/Investments/`: investment balance, in the spirit of Swarmia's investment categories,
+  built entirely on issues (the issue history the Issues page keeps), never PRs.
   `InvestmentConfig` (per org, inside `OrgConfig.investments`; nil means the Balance framework
   preset) holds ordered categories, each with rules (a rule is all of its conditions, a
-  category any of its rules) over label, title, branch, repository, author, issue type and
-  milestone, plus PRs categorised by hand (`manual`).
-- A PR's category: chosen by hand, else the top-most category matching the PR, else one
-  matching an issue it closes, else that issue's parent, else uncategorised. Rules run locally
-  over the metrics history; editing them never refetches.
-- `InvestmentBalance` measures merged PRs and approximate engineer-days: each PR counts its
-  author's working days from first commit to merge (the last 10 at most), a day split evenly
-  across the PRs that author had open. The Investments page shows the share bar, a weekly
-  stacked chart and the biggest pockets of uncategorised work; categories are edited in
-  Settings (`InvestmentCategoriesSection`), and merged PR rows get Categorise in their menu.
+  category any of its rules) over the issue's label, title, repository, issue type, milestone
+  and a named project board field (such as Bucket), plus issues categorised by hand (`manual`,
+  by issue node ID). Branch and author stay in the field enum only so older saved rules decode.
+- An issue's category: chosen by hand, else the top-most category matching the issue, else one
+  matching its parent (from the stored history), else uncategorised.
+- `InvestmentBalance` counts issues completed in a range (Last 30 or 90 days, this or last
+  quarter, this year, or custom dates) and those in progress at its end, and buckets completed
+  ones by week, month or quarter; clicking a bucket shows its breakdown. The issue history is
+  extended back to the range's start as needed. Categories are edited in Settings
+  (`InvestmentCategoriesSection`); issues get Categorise in their context menu and window.
 - Category colours are palette slots 1-8 in fixed order, stored on the category so reordering
   never repaints; uncategorised is a neutral grey.
-- `MetricPullRequest` carries labels, branch and linked issues (with parent) for this.
-  `MetricsHistory.currentFormat` is bumped whenever the stored shape changes, which drops old
-  histories so they refetch in full.
 
 ## Work log
 
-- `Gannin/WorkLog/`: a section under the People stats table (`WorkLogSection`): people by day
+- `Gannin/WorkLog/`: pages under People in the sidebar (`PeopleView`: Work log, Threads,
+  Punchcards), each a `WorkLogPage` with its own scale and paging. The work log is people by day
   (14 per page) or week (12 per page), paging back up to a year, a packed cluster of dots per cell
   (commits, reviews, PRs opened, PRs merged; commit dots grow with lines changed).
   `WorkLogStore` keeps PRs updated since the earliest range viewed (28 days at first) with
@@ -136,4 +143,87 @@ marked otherwise. The app is sandboxed with outgoing network access only.
   fetched once the People page has been opened for an org, and Refresh includes it from then
   on. Commits count for their
   GitHub author when the email is linked, else the PR author.
+- Threads (`ThreadsView.swift`) is each person's PRs (authored only, since "Update branch"
+  and merges from main put others' commits on a PR) as bars from
+  first commit to merge (or now while open), packed into rows, with their reviews of others'
+  PRs on a line beneath. Punchcards (`PunchcardView.swift`), weekday by hour per person in
+  their own time. Commits keep the offset from their git timestamp (`GitTimestamp`); other
+  events use the person's most common commit offset. Merges are left out of the punchcards
+  (merge queues land them whenever CI finishes).
+- The org's working week (`WorkWeek`, in `OrgConfig.workWeek`, Settings) sets working days
+  and hours: the work log and threads shade days off, the punchcards shade working hours and
+  count what falls outside. Weeks still start on Monday everywhere.
+- People's dates (`PeopleDates.swift`, `PeopleDatesStore` in `UserDefaults`, per org and login):
+  start and end dates and time off (holiday or sick, inclusive day ranges with a note), entered
+  by hand and never sent anywhere. The Time off part of the person view (`PersonColumn`, Work
+  or Time off) has Calendar (`TimeOffCalendarView` with `fixedPerson`), Report
+  (`PersonLeaveReport`: allowance tiles, holiday and sick by month, the year's entries, past
+  leave years) and Details, where they're edited, from a person's context menu on the work log, threads or
+  punchcards, or in Settings; all share `PersonDatesSections`. The work log and threads tint time off and dim the
+  days before a start or after an end (`TimelineMark`); punchcards count working days off and
+  activity on them.
+- Time off (under People, `TimeOffCalendarView`) is a calendar of everyone's booked time off,
+  or one person's, by Year (mini months tinted by how many are off; click a day for its
+  week), Month (names on each day) or Week (people by day, marked as the work log marks them).
+  Month and Week draw time off as continuous bars (`TimeOffSpans`, weekends included, stacked
+  in lanes; click one to edit it) under the bank holidays of the regions ticked in the Bank
+  Holidays menu (the org's and anyone's own; hidden ones in `timeOffHiddenHolidayRegions`).
+  Click picks a day, Shift-click a run (in the week view, within one person's row); Add Time
+  Off, or right-click, opens `AbsenceSheet` for those days with a person to choose.
+- Holiday allowance (`Leave.swift`): the org's `LeavePolicy` (in `OrgConfig.leave`, Settings:
+  leave year start month, days a year, part-time pro-rating) and a person's own `allowance` and
+  `carryOver` (by leave year) in their Time off. `LeaveSummary` pro-rates by the share of the
+  leave year between start and end dates and, for an own pattern, working days a week over the
+  org's, rounds up to a half day, adds carry-over, and counts holiday taken (to today), booked
+  and sick days and spells. The Allowance tab of Time off (`LeaveReportView`, beside the calendar in
+  `TimeOffPage`) tables it by leave year.
+- Time off is added and edited in `AbsenceSheet`: kind, first day, then Full day, Morning,
+  Afternoon or Longer as a number of working days, the last day worked out from the person's
+  `WorkingCalendar`. Counts and timeline tints only cover working days.
+- Time off can be a half day (`Absence.half`, morning or afternoon, single days only): it
+  counts 0.5 and tints half the cell.
+- Bank holidays (`BankHolidays.swift`): `BankHolidayStore` fetches public holidays per
+  country and year from date.nager.at (only those two are sent), cached in Application
+  Support. The org picks a region in the working week (`WorkWeek.holidays`); a person can
+  override it (`PersonDates.holidayRegion`). `WorkingCalendar` is a person's working week less
+  their bank holidays: they're shaded and labelled on the work log and threads, never counted
+  as time off, and count as out of hours on the punchcards.
+- A person can have their own working pattern (`PersonDates.workWeek`, every day's hours in
+  `WorkWeek.dayHours`, for part time or other hours, shown as FTE against the org's week) and
+  time zone (`PersonDates.timeZone`), set in the person's Time off (`WorkPatternSection`).
+  `PeopleDatesStore.workingCalendar` combines pattern, bank holidays and time zone; the work
+  log and threads shade their days off, and punchcards use their hours and, when set, their
+  time zone for every event instead of commit offsets.
+- `WorkLogHistory.version` discards caches from before a field was added (closedAt, commit
+  offsets), so they're fetched again.
+
+## Issue metrics
+
+- `Gannin/Issues/`: the Issues page (`IssuesStatsView`) is issue metrics; the assigned and
+  unassigned lists sit under Issues in the sidebar. `IssueStore` keeps issues closed since
+  the window's starting Monday plus every open issue, with project board status changes
+  (`ProjectV2ItemStatusChangedEvent`), assignments, reopenings, sub-issues added and the PRs
+  that close them (with their commit and review dates). Closed weeks are fetched as parallel
+  searches, changes by `updated:`, and open issues in full hourly, because board moves don't
+  touch `updatedAt`. Reading boards needs the `project` scope.
+- `IssueWorkflow` (per org, Settings) picks the project and the statuses that count as in
+  progress, and whether to fall back to the first linked PR. Cycle time is time spent in
+  those statuses (pauses don't count); lead time is created to closed as completed; flow
+  efficiency is the share of in-progress days with linked PR activity; scope creep is the
+  share of sub-issues added after work started.
+
+## Projects
+
+- `Gannin/Projects/`: GitHub project boards. The sidebar lists the org's open boards under
+  Projects; a board page (`ProjectBoardView`) shows the board's saved views as tabs, each
+  opening with its own filter, layout, grouping (table sections or board swimlanes), board
+  columns, sort and visible fields. Changes there are local and never saved back.
+- Items are fetched with the view's filter passed to GitHub (`items(query:)`), so GitHub
+  applies its own filter syntax; `ProjectStore` caches each board's definition and each
+  filter's items on disk, refreshed after 10 minutes. Layouts: Table (`StatsTable` per group),
+  Board (columns in board option order with GitHub's option colours) and Insights (time in
+  each status from the issue history's board status changes). Roadmap views show as tables.
+- Issues carry their board field values (`IssueRecord.projectFields`), which "In progress now"
+  on the Issues page can order by (remembered per org); issues not on the chosen board say
+  so rather than being hidden.
 

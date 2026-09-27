@@ -125,6 +125,33 @@ struct RelativeDate: View {
     }
 }
 
+/// "Updating" with a spinner for a section header while the org's metrics
+/// sync, such as after the window changes and older weeks are backfilled.
+struct MetricsSyncIndicator: View {
+    @Environment(MetricsStore.self) private var store
+    let org: String
+
+    var body: some View {
+        if store.syncing.contains(org) {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Updating")
+                    .font(.callout.weight(.regular))
+                    .foregroundStyle(.secondary)
+            }
+            .transition(.opacity)
+        }
+    }
+}
+
+extension View {
+    /// Fades content showing numbers that are about to change.
+    func updating(_ isUpdating: Bool) -> some View {
+        opacity(isUpdating ? 0.5 : 1)
+            .animation(.easeOut(duration: 0.2), value: isUpdating)
+    }
+}
+
 /// One-line notice with the full text in a tooltip and an optional retry.
 struct Banner: View {
     let message: String

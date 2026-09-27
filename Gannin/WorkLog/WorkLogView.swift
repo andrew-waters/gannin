@@ -11,54 +11,123 @@ enum WorkLogScale: String, CaseIterable, Identifiable {
     var columns: Int { self == .days ? 14 : 12 }
 }
 
-/// A section of the People page: people down the side, days or weeks across
-/// the top, and a cluster of dots per cell, one per commit, review, PR opened
-/// and PR merged. Its controls sit in the pinned section header.
-struct WorkLogSection: View {
+/// The pages listed under People in the sidebar: three drawn from the work
+/// log's PR activity, and the time off calendar.
+enum PeopleView: String, CaseIterable, Hashable {
+    case workLog = "Work log"
+    case threads = "Threads"
+    case punchcards = "Punchcards"
+    case timeOff = "Time off"
+
+    var systemImage: String {
+        switch self {
+        case .workLog: "circle.grid.3x3"
+        case .threads: "chart.bar.xaxis"
+        case .punchcards: "clock"
+        case .timeOff: "calendar"
+        }
+    }
+}
+
+/// A People page over a page of days or weeks, with the scale and paging in
+/// the pinned header. The work log is people down the side, days or weeks
+/// across the top, and a cluster of dots per cell, one per commit, review,
+/// PR opened and PR merged; Threads and Punchcards draw the same activity
+/// another way.
+struct WorkLogPage: View {
     @Environment(WorkLogStore.self) private var store
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HiddenStore.self) private var hidden
+    @Environment(PeopleDatesStore.self) private var peopleDates
+    @Environment(BankHolidayStore.self) private var holidayStore
     @Environment(\.openWindow) private var openWindow
 
     let org: String
     let workload: Workload?
+    let view: PeopleView
 
     @AppStorage("workLogScale") private var scale: WorkLogScale = .days
     /// Pages back from the current one.
     @State private var pagesBack = 0
 
-    private static let nameWidth: CGFloat = 170
+    static let nameWidth: CGFloat = 170
     private static let rowHeight: CGFloat = 104
     /// How far back paging goes.
     private static let maxDaysBack = 365
 
     var body: some View {
         let columns = columns
-        Section {
-            content(columns)
-                .padding(.horizontal, 8)
-                .padding(.bottom, 28)
-                .task(id: "\(org) \(columns.first?.start.timeIntervalSince1970 ?? 0)") {
-                    await store.sync(org, from: columns.first?.start)
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
+                Section {
+                    content(columns)
+                        .padding(.horizontal, view == .punchcards ? 20 : 8)
+                        .padding(.top, view == .punchcards ? 14 : 0)
+                        .padding(.bottom, 28)
+                } header: {
+                    PinnedHeader { controls(columns) }
                 }
-                .onChange(of: scale) { pagesBack = 0 }
-        } header: {
-            PinnedHeader { controls(columns) }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .task(id: "\(org) \(columns.first?.start.timeIntervalSince1970 ?? 0)") {
+            await store.sync(org, from: columns.first?.start)
+        }
+        .task(id: "\(years(columns)) \(regions.hashValue)") {
+            await holidayStore.load(regions, years: years(columns))
+        }
+        .onChange(of: scale) { pagesBack = 0 }
+    }
+
+    /// Everyone's bank holiday regions, the org's included.
+    private var regions: Set<BankHolidayRegion> {
+        let orgRegion = configs.config(for: org).week.holidays
+        return Set(people.compactMap { peopleDates.region(for: $0.login, in: org, default: orgRegion) })
+    }
+
+    private func years(_ columns: [WorkLogGrid.Column]) -> ClosedRange<Int> {
+        let calendar = Calendar.current
+        let first = calendar.component(.year, from: columns.first?.start ?? .now)
+        let last = calendar.component(.year, from: columns.last?.end ?? .now)
+        return first...max(first, last)
+    }
+
+    /// Each person's working days on this page: their pattern or the org's
+    /// week, less their bank holidays.
+    private func workingCalendars(_ columns: [WorkLogGrid.Column]) -> [String: WorkingCalendar] {
+        let week = configs.config(for: org).week
+        let years = years(columns)
+        return Dictionary(uniqueKeysWithValues: people.map { person in
+            (person.login, peopleDates.workingCalendar(for: person.login, in: org, orgWeek: week, holidays: holidayStore, years: years))
+        })
     }
 
     @ViewBuilder
     private func content(_ columns: [WorkLogGrid.Column]) -> some View {
         VStack(spacing: 0) {
             if let history = store.history(for: org) {
-                let grid = WorkLogGrid(history: history, columns: columns, scale: scale, people: people, config: configs.config(for: org), hidden: hidden.keys)
-                header(columns)
-                Divider()
-                ForEach(grid.rows, id: \.person.login) { row in
-                    rowView(row, columns: columns)
+                let config = configs.config(for: org)
+                let calendars = workingCalendars(columns)
+                switch view {
+                case .workLog:
+                    let grid = WorkLogGrid(history: history, columns: columns, scale: scale, people: people, config: config, hidden: hidden.keys)
+                    header(columns)
                     Divider()
+                    ForEach(grid.rows, id: \.person.login) { row in
+                        rowView(row, columns: columns, working: calendars[row.person.login] ?? WorkingCalendar(week: config.week))
+                        Divider()
+                    }
+                    legend
+                case .threads:
+                    header(columns)
+                    Divider()
+                    ThreadsContent(org: org, pullRequests: history.pullRequests(config: config, hidden: hidden.keys), columns: columns, scale: scale, people: people, calendars: calendars, week: config.week)
+                case .timeOff:
+                    // A page of its own, `TimeOffPage`.
+                    EmptyView()
+                case .punchcards:
+                    PunchcardContent(org: org, pullRequests: history.pullRequests(config: config, hidden: hidden.keys), columns: columns, people: people, calendars: calendars, week: config.week)
                 }
-                legend
             } else if let error = store.errors[org] {
                 ContentUnavailableView {
                     Label("Couldn't load the work log", systemImage: "exclamationmark.triangle")
@@ -77,8 +146,8 @@ struct WorkLogSection: View {
 
     private func controls(_ columns: [WorkLogGrid.Column]) -> some View {
         HStack(spacing: 12) {
-            Text("Work log")
-            Text(rangeLabel(columns))
+            Text(view.rawValue)
+            Text(Self.rangeLabel(columns))
                 .foregroundStyle(.secondary)
                 .fontWeight(.regular)
             if store.syncing.contains(org) {
@@ -140,7 +209,7 @@ struct WorkLogSection: View {
         return first > limit
     }
 
-    private func rangeLabel(_ columns: [WorkLogGrid.Column]) -> String {
+    static func rangeLabel(_ columns: [WorkLogGrid.Column]) -> String {
         guard let first = columns.first, let last = columns.last,
               let lastDay = Calendar.current.date(byAdding: .day, value: -1, to: last.end) else { return "" }
         let sameMonth = Calendar.current.isDate(first.start, equalTo: lastDay, toGranularity: .month)
@@ -182,7 +251,7 @@ struct WorkLogSection: View {
         .padding(.vertical, 10)
     }
 
-    private func rowView(_ row: WorkLogGrid.Row, columns: [WorkLogGrid.Column]) -> some View {
+    private func rowView(_ row: WorkLogGrid.Row, columns: [WorkLogGrid.Column], working: WorkingCalendar) -> some View {
         HStack(spacing: 0) {
             HStack(spacing: 8) {
                 Avatar(url: row.person.avatarUrl, size: 22)
@@ -190,8 +259,15 @@ struct WorkLogSection: View {
             }
             .padding(.leading, 16)
             .frame(width: Self.nameWidth, alignment: .leading)
+            .contentShape(Rectangle())
+            .personDatesMenu(row.person, org: org)
+            let dates = peopleDates.dates(for: row.person.login, in: org)
             ForEach(columns) { column in
-                WorkLogCell(dots: row.cells[column.start] ?? [], isWeekend: scale == .days && Calendar.current.isDateInWeekend(column.start)) { event in
+                WorkLogCell(
+                    dots: row.cells[column.start] ?? [],
+                    isDayOff: scale == .days && !working.isWorkingDay(column.start),
+                    mark: dates.mark(from: column.start, to: column.end, isDay: scale == .days, working: working)
+                ) { event in
                     open(event.pullRequest)
                 }
                 .overlay(alignment: .leading) { Divider() }
@@ -249,8 +325,7 @@ struct WorkLogGrid {
             scale == .days ? Calendar.current.startOfDay(for: date) : Calendar.metrics.startOfWeek(for: date)
         }
 
-        let events = history.pullRequests.values
-            .filter { !hidden.contains($0.id) && !config.excludedRepos.contains($0.repo) }
+        let events = history.pullRequests(config: config, hidden: hidden)
             .flatMap(\.events)
             .filter { $0.at >= first && $0.at < end }
         var byPersonDay: [String: [Date: [WorkLogEvent]]] = [:]
@@ -260,6 +335,13 @@ struct WorkLogGrid {
         rows = people.map { person in
             Row(person: person, cells: (byPersonDay[person.login] ?? [:]).mapValues(DotPacker.pack))
         }
+    }
+}
+
+extension WorkLogHistory {
+    /// PRs left after hiding and the org's repo exclusions.
+    func pullRequests(config: OrgConfig, hidden: Set<String>) -> [WorkLogPullRequest] {
+        pullRequests.values.filter { !hidden.contains($0.id) && !config.excludedRepos.contains($0.repo) }
     }
 }
 
@@ -333,7 +415,8 @@ enum DotPacker {
 /// hover detail and click to open.
 private struct WorkLogCell: View {
     let dots: [PackedDot]
-    let isWeekend: Bool
+    let isDayOff: Bool
+    let mark: TimelineMark?
     let onOpen: (WorkLogEvent) -> Void
 
     @State private var hovered: PackedDot?
@@ -342,8 +425,11 @@ private struct WorkLogCell: View {
         GeometryReader { geometry in
             let transform = Transform(dots: dots, size: geometry.size)
             ZStack {
-                if isWeekend {
+                if isDayOff {
                     Rectangle().fill(.quaternary.opacity(0.35))
+                }
+                if let mark {
+                    TimelineMarkView(mark: mark)
                 }
                 Canvas { context, _ in
                     for dot in dots {

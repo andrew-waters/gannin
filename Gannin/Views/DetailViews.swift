@@ -26,31 +26,108 @@ enum PersonFilter: String, CaseIterable, Identifiable {
 }
 
 struct PersonColumn: View {
+    /// The person view's parts: what they're working on, and their time off.
+    enum Part: String, CaseIterable {
+        case work = "Work"
+        case timeOff = "Time off"
+    }
+
+    @Environment(\.currentOrg) private var org
+
     let load: PersonLoad
     let workload: Workload
     @Binding var selection: DetailSelection?
 
     /// Comma-separated `PersonFilter` raw values, shared by every person column.
     @AppStorage("personFilters") private var storedFilters = PersonFilter.defaults.map(\.rawValue).joined(separator: ",")
+    @AppStorage("personPart") private var part: Part = .work
+    @AppStorage("personTimeOffPart") private var timeOffPart: TimeOffPart = .calendar
+
+    /// The Time off part's own views.
+    enum TimeOffPart: String, CaseIterable {
+        case calendar = "Calendar"
+        case report = "Report"
+        case details = "Details"
+    }
 
     var body: some View {
-        List(selection: $selection) {
-            Section {
-                HStack(spacing: 12) {
-                    Avatar(url: load.person.avatarUrl, size: 44)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(load.person.displayName).font(.title3.weight(.semibold))
-                        Link(load.person.login, destination: URL(string: "https://github.com/\(load.person.login)")!)
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    VStack(alignment: .trailing) {
-                        Text("\(load.inFlight)").font(.title.monospacedDigit().weight(.semibold))
-                        Text("in flight").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                .padding(.vertical, 4)
+        Group {
+            switch part {
+            case .work: work
+            case .timeOff: timeOff
             }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            VStack(spacing: 0) {
+                if org != nil {
+                    HStack(spacing: 12) {
+                        Picker("Part", selection: $part) {
+                            ForEach(Part.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .fixedSize()
+                        if part == .timeOff {
+                            Picker("Time off", selection: $timeOffPart) {
+                                ForEach(TimeOffPart.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                            .fixedSize()
+                        }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .background(.bar)
+                    Divider()
+                }
+                if part == .work || org == nil {
+                    filterBar
+                }
+            }
+        }
+    }
+
+    private var identity: some View {
+        Section {
+            HStack(spacing: 12) {
+                Avatar(url: load.person.avatarUrl, size: 44)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(load.person.displayName).font(.title3.weight(.semibold))
+                    Link(load.person.login, destination: URL(string: "https://github.com/\(load.person.login)")!)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                VStack(alignment: .trailing) {
+                    Text("\(load.inFlight)").font(.title.monospacedDigit().weight(.semibold))
+                    Text("in flight").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var timeOff: some View {
+        if let org {
+            switch timeOffPart {
+            case .calendar:
+                TimeOffCalendarView(org: org, workload: workload, fixedPerson: load.person)
+            case .report:
+                PersonLeaveReport(org: org, person: load.person)
+            case .details:
+                Form {
+                    identity
+                    PersonDatesSections(org: org, person: load.person)
+                }
+                .formStyle(.grouped)
+            }
+        }
+    }
+
+    private var work: some View {
+        List(selection: $selection) {
+            identity
 
             if filters.contains(.active) {
                 pullRequestSection("Pull requests", load.pullRequests)
@@ -69,9 +146,6 @@ struct PersonColumn: View {
                 Text("Pick a filter above to see their work.")
                     .foregroundStyle(.secondary)
             }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            filterBar
         }
     }
 

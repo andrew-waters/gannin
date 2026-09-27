@@ -1,33 +1,72 @@
 import Foundation
 
-/// How the balance is measured.
-enum InvestmentUnit: String, CaseIterable, Identifiable {
-    case days = "Engineer-days"
-    case pullRequests = "PRs"
+/// A span of time for the Investments page.
+enum InvestmentRange: String, CaseIterable, Identifiable {
+    case last30 = "Last 30 days"
+    case last90 = "Last 90 days"
+    case thisQuarter = "This quarter"
+    case lastQuarter = "Last quarter"
+    case thisYear = "This year"
+    case custom = "Custom"
 
     var id: Self { self }
 
-    var help: String {
+    /// The span, ending today for the rolling ones. Custom uses the dates given.
+    func interval(customFrom: Date, customTo: Date, now exactly: Date = .now) -> DateInterval {
+        // To the minute, so a rolling range (and the drill-down it opens)
+        // stays equal across redraws.
+        let now = Date(timeIntervalSince1970: (exactly.timeIntervalSince1970 / 60).rounded(.down) * 60)
+        let calendar = Calendar.current
+        let quarter = IssueMetrics.Granularity.quarter
         switch self {
-        case .days: "Approximate effort. Each merged PR counts its author's working days from first commit to merge (at most \(InvestmentBalance.maxDaysPerPullRequest)), and a day is shared between PRs the same author had open."
-        case .pullRequests: "Merged PRs, each counting once."
+        case .last30: return DateInterval(start: calendar.date(byAdding: .day, value: -30, to: now) ?? now, end: now)
+        case .last90: return DateInterval(start: calendar.date(byAdding: .day, value: -90, to: now) ?? now, end: now)
+        case .thisQuarter: return DateInterval(start: quarter.start(of: now), end: now)
+        case .lastQuarter:
+            let thisStart = quarter.start(of: now)
+            let lastStart = calendar.date(byAdding: .month, value: -3, to: thisStart) ?? thisStart
+            return DateInterval(start: lastStart, end: thisStart)
+        case .thisYear:
+            return DateInterval(start: calendar.dateInterval(of: .year, for: now)?.start ?? now, end: now)
+        case .custom:
+            let start = calendar.startOfDay(for: min(customFrom, customTo))
+            let end = min(calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: max(customFrom, customTo))) ?? now, now)
+            return DateInterval(start: start, end: max(start, end))
         }
     }
 }
 
-/// Where effort went over a metrics window, by investment category.
+/// Issues by investment category over a range: those completed in it, and
+/// those in progress at its end, bucketed by week, month or quarter.
 struct InvestmentBalance {
     enum Key: Hashable {
         case category(UUID)
         case uncategorised
+    }
 
-        /// For `MetricDrill`, which needs plain hashable values.
-        var drillID: String {
-            switch self {
-            case .category(let id): id.uuidString
-            case .uncategorised: "uncategorised"
-            }
-        }
+    /// What a drill-down column shows: one category's issues for a scope,
+    /// range and (optionally) period. It's recomputed from the live history
+    /// and config, so edits move issues between lists at once.
+    struct Drill: Hashable {
+        let key: Key
+        let scope: Scope
+        let range: DateInterval
+        let period: IssueMetrics.Granularity
+        let bucket: Date?
+        let title: String
+    }
+
+    /// The issues a drill shows, as things stand.
+    func issues(for drill: Drill) -> [IssueRecord] {
+        let shares = drill.scope == .completed ? completed(in: drill.bucket) : inProgress
+        return shares.first { $0.key == drill.key }?.issues ?? []
+    }
+
+    enum Scope: String, CaseIterable, Identifiable {
+        case completed = "Completed"
+        case inProgress = "In progress"
+
+        var id: Self { self }
     }
 
     struct Share: Identifiable {
@@ -35,115 +74,85 @@ struct InvestmentBalance {
         let name: String
         /// Palette slot; nil for uncategorised.
         let slot: Int?
-        var pullRequests: [MetricPullRequest] = []
-        var days: Double = 0
+        var issues: [IssueRecord] = []
 
         var id: Key { key }
-
-        func value(_ unit: InvestmentUnit) -> Double {
-            unit == .days ? days : Double(pullRequests.count)
-        }
     }
 
-    struct Week: Identifiable {
+    struct Bucket: Identifiable {
         let start: Date
-        var pullRequests: [Key: Int] = [:]
-        var days: [Key: Double] = [:]
+        let end: Date
+        var completed: [Key: [IssueRecord]] = [:]
 
         var id: Date { start }
 
-        func value(_ key: Key, _ unit: InvestmentUnit) -> Double {
-            unit == .days ? days[key] ?? 0 : Double(pullRequests[key] ?? 0)
-        }
+        func count(_ key: Key) -> Int { completed[key]?.count ?? 0 }
+        var total: Int { completed.values.map(\.count).reduce(0, +) }
     }
 
-    /// A PR open for months with the odd commit isn't months of work; like
-    /// Swarmia's cut-off for idle work, only the last working days count.
-    static let maxDaysPerPullRequest = 10
-
-    /// Categories in their configured order, then uncategorised.
-    let shares: [Share]
-    let weeks: [Week]
-    /// Where each PR in the stored range landed, and why.
+    let range: DateInterval
+    let categories: [(key: Key, name: String, slot: Int?)]
+    let buckets: [Bucket]
+    /// In progress at the range's end, by category.
+    let inProgress: [Share]
+    /// Why each issue landed where it did.
     let placements: [String: (key: Key, source: InvestmentConfig.Source?)]
 
-    init(metrics: OrgMetrics, config: InvestmentConfig, now: Date = .now) {
-        let calendar = Calendar.metrics
+    init(history: IssueHistory, config: OrgConfig, team: Team?, range: DateInterval, granularity: IssueMetrics.Granularity, now: Date = .now) {
+        self.range = range
+        let investments = config.investmentConfig
+        let teamLogins = team.map { Set($0.members) }
+        let records = history.issues.values.filter { record in
+            !config.excludedRepos.contains(record.repo)
+                && (teamLogins.map { logins in record.assignees.contains(where: logins.contains) } ?? true)
+        }
+
         var placements: [String: (key: Key, source: InvestmentConfig.Source?)] = [:]
-        for pr in metrics.coverage {
-            if let (category, source) = config.categorise(pr) {
-                placements[pr.id] = (.category(category.id), source)
+        for record in records {
+            let parent = record.parentID.flatMap { history.issues[$0] }
+            if let (category, source) = investments.categorise(record, parent: parent) {
+                placements[record.id] = (.category(category.id), source)
             } else {
-                placements[pr.id] = (.uncategorised, nil)
+                placements[record.id] = (.uncategorised, nil)
             }
         }
         self.placements = placements
+        func key(_ record: IssueRecord) -> Key { placements[record.id]?.key ?? .uncategorised }
 
-        var shares = config.categories.map { Share(key: .category($0.id), name: $0.name, slot: $0.slot) }
-        shares.append(Share(key: .uncategorised, name: "Uncategorised", slot: nil))
-        let index = Dictionary(uniqueKeysWithValues: shares.enumerated().map { ($1.key, $0) })
-        func key(_ pr: MetricPullRequest) -> Key { placements[pr.id]?.key ?? .uncategorised }
+        categories = investments.categories.map { (Key.category($0.id), $0.name, Optional($0.slot)) }
+            + [(Key.uncategorised, "Uncategorised", nil)]
 
-        for pr in metrics.merged {
-            if let i = index[key(pr)] { shares[i].pullRequests.append(pr) }
+        var buckets: [Bucket] = []
+        var start = granularity.start(of: range.start)
+        while start < range.end {
+            let end = granularity.next(after: start)
+            buckets.append(Bucket(start: start, end: end))
+            start = end
         }
-
-        var weeks = Dictionary(uniqueKeysWithValues: metrics.weeks.map { ($0.start, Week(start: $0.start)) })
-        for pr in metrics.coverage {
-            weeks[calendar.startOfWeek(for: pr.mergedAt)]?.pullRequests[key(pr), default: 0] += 1
+        for record in records where record.isCompleted {
+            guard let closedAt = record.closedAt, range.contains(closedAt),
+                  let index = buckets.lastIndex(where: { $0.start <= closedAt }) else { continue }
+            buckets[index].completed[key(record), default: []].append(record)
         }
+        self.buckets = buckets
 
-        // Engineer-days: each author's working day is split evenly across
-        // the PRs they had on the go that day.
-        var workingDays: [String: [Date]] = [:]
-        var byAuthorDay: [String: [Date: Int]] = [:]
-        for pr in metrics.coverage {
-            let days = Self.workingDays(of: pr, calendar: calendar)
-            workingDays[pr.id] = days
-            let author = pr.author?.login ?? ""
-            for day in days { byAuthorDay[author, default: [:]][day, default: 0] += 1 }
+        // In progress at the range's end, under the org's workflow.
+        let at = min(range.end, now)
+        var inProgress = categories.map { Share(key: $0.key, name: $0.name, slot: $0.slot) }
+        let index = Dictionary(uniqueKeysWithValues: inProgress.enumerated().map { ($1.key, $0) })
+        for record in records {
+            let timing = IssueTiming(record, workflow: config.workflow, now: now)
+            let isInProgress = at >= now ? timing.isInProgress : timing.intervals.contains { $0.contains(at) }
+            if isInProgress, let i = index[key(record)] { inProgress[i].issues.append(record) }
         }
-        let windowStart = calendar.startOfDay(for: metrics.windowStart)
-        for pr in metrics.coverage {
-            let author = pr.author?.login ?? ""
-            let prKey = key(pr)
-            for day in workingDays[pr.id] ?? [] {
-                let share = 1 / Double(byAuthorDay[author]?[day] ?? 1)
-                weeks[calendar.startOfWeek(for: day)]?.days[prKey, default: 0] += share
-                if day >= windowStart, day <= now, let i = index[prKey] {
-                    shares[i].days += share
-                }
-            }
-        }
-
-        self.shares = shares
-        self.weeks = weeks.values.sorted { $0.start < $1.start }
+        self.inProgress = inProgress
     }
 
-    func total(_ unit: InvestmentUnit) -> Double {
-        shares.map { $0.value(unit) }.reduce(0, +)
-    }
-
-    /// Share of the total that has a category, 0-1.
-    func categorised(_ unit: InvestmentUnit) -> Double {
-        let total = total(unit)
-        guard total > 0 else { return 0 }
-        let uncategorised = shares.first { $0.key == .uncategorised }?.value(unit) ?? 0
-        return (total - uncategorised) / total
-    }
-
-    /// Weekdays from first commit (or creation, if earlier) to merge, the
-    /// last `maxDaysPerPullRequest` of them.
-    static func workingDays(of pr: MetricPullRequest, calendar: Calendar) -> [Date] {
-        let start = calendar.startOfDay(for: min(pr.firstCommitAt ?? pr.createdAt, pr.createdAt))
-        var day = calendar.startOfDay(for: pr.mergedAt)
-        var days: [Date] = []
-        while day >= start && days.count < maxDaysPerPullRequest {
-            if !calendar.isDateInWeekend(day) { days.append(day) }
-            guard let previous = calendar.date(byAdding: .day, value: -1, to: day) else { break }
-            day = previous
+    /// Completed issues by category, over the whole range or one bucket.
+    func completed(in bucket: Date? = nil) -> [Share] {
+        let chosen = bucket.map { start in buckets.filter { $0.start == start } } ?? buckets
+        return categories.map { category in
+            Share(key: category.key, name: category.name, slot: category.slot, issues: chosen.flatMap { $0.completed[category.key] ?? [] })
         }
-        // A PR opened and merged at the weekend still took a day.
-        return days.isEmpty ? [calendar.startOfDay(for: pr.mergedAt)] : days
     }
 }

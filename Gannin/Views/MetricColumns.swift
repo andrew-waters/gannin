@@ -15,8 +15,8 @@ enum MetricDrill: Hashable {
     case week(Date)
     case personStats(String)
     case unansweredRequests
-    /// Investment category (by `InvestmentBalance.Key.drillID`) and its name.
-    case investment(String, String)
+    /// An investment category's issues, recomputed live.
+    case investment(InvestmentBalance.Drill)
 
     var title: String {
         switch self {
@@ -33,7 +33,7 @@ enum MetricDrill: Hashable {
         case .week(let week): "Week of \(week.formatted(.dateTime.day().month()))"
         case .personStats(let login): login
         case .unansweredRequests: "Unanswered review requests"
-        case .investment(_, let name): name
+        case .investment(let drill): drill.title
         }
     }
 
@@ -47,9 +47,7 @@ enum MetricDrill: Hashable {
         case .stage(let stage): "\(stage.help), slowest first."
         case .personStats: "Their PRs merged in the window, and review requests on merged PRs plus open ones waiting on them. Response time runs from the request (or the PR being marked ready) to their first review."
         case .unansweredRequests: "Requested reviewers who never reviewed before the PR merged. Withdrawn requests aren't counted."
-        case .investment(let id, _) where id == InvestmentBalance.Key.uncategorised.drillID:
-            "Merged PRs in the window no category rule matched. Right-click one to categorise it, or add rules in Settings."
-        case .investment: "Merged PRs in the window in this category. Right-click one to categorise it by hand."
+        case .investment: "Right-click an issue to choose its investment category by hand; click it to open it in its own window."
         default: nil
         }
     }
@@ -126,23 +124,60 @@ struct MetricColumn: View {
             mergedSection((metrics?.merged ?? []).filter { $0.author?.login == login }, value: { $0.cycleTime }, title: "Their merged PRs")
         case .unansweredRequests:
             outcomeSection("Not answered", (metrics?.reviewOutcomes ?? []).filter { $0.respondedAt == nil }, showReviewer: true)
-        case .investment(let id, _):
-            investmentSection(id)
+        case .investment(let drill):
+            issuesSection(investmentIssues(drill))
         }
     }
 
-    @Environment(OrgConfigStore.self) private var configs
+    @Environment(IssueStore.self) private var issueStore
     @Environment(\.currentOrg) private var org
+    @Environment(\.openWindow) private var openWindow
 
-    private func investmentSection(_ id: String) -> some View {
-        let config = org.map { configs.config(for: $0).investmentConfig } ?? .default
-        let placed = (metrics?.merged ?? []).map { pr in (pr, config.categorise(pr)) }
-        let prs = placed.filter { ($0.1.map { $0.category.id.uuidString } ?? InvestmentBalance.Key.uncategorised.drillID) == id }
-        return Section(header: SectionHeader(title: "Merged pull requests", count: prs.count)) {
-            ForEach(prs, id: \.0.id) { pr, placement in
-                MetricPullRequestRow(pr: pr, value: nil)
-                    .help(placement?.source.rawValue ?? "No rule matched")
-                    .tag(DetailSelection.pullRequest(pr.id))
+    @Environment(OrgConfigStore.self) private var configs
+
+    /// The drill's issues from the live history and config.
+    private func investmentIssues(_ drill: InvestmentBalance.Drill) -> [IssueRecord] {
+        guard let org, let history = issueStore.history(for: org) else { return [] }
+        let balance = InvestmentBalance(history: history, config: configs.config(for: org), team: workload?.team, range: drill.range, granularity: drill.period)
+        return balance.issues(for: drill)
+    }
+
+    /// Issues, newest completed first, open ones on top.
+    private func issuesSection(_ records: [IssueRecord]) -> some View {
+        let records = records
+            .sorted { ($0.closedAt ?? .distantFuture) > ($1.closedAt ?? .distantFuture) }
+        return Section(header: SectionHeader(title: "Issues", count: records.count)) {
+            ForEach(records) { record in
+                Button {
+                    if let org { openWindow(value: IssueReference(org: org, record: record)) }
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(record.title).lineLimit(1)
+                            HStack(spacing: 4) {
+                                Text("\(record.repo)#\(record.number)")
+                                if let closedAt = record.closedAt {
+                                    Text("· completed")
+                                    RelativeDate(date: closedAt)
+                                } else {
+                                    Text("· open")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        }
+                        Spacer()
+                        AvatarStack(people: record.assignees.map { Person(login: $0, name: nil, avatarUrl: URL(string: "https://github.com/\($0).png?size=64")) })
+                    }
+                    .padding(.vertical, 2)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    CategoriseMenu(issueID: record.id)
+                    Link("Open on GitHub", destination: record.url)
+                }
             }
         }
     }
@@ -243,9 +278,7 @@ struct MetricPullRequestRow: View {
             }
         }
         .padding(.vertical, 2)
-        .hideable(pr.id, url: pr.url) {
-            CategoriseMenu(prID: pr.id)
-        }
+        .hideable(pr.id, url: pr.url)
     }
 }
 

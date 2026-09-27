@@ -17,6 +17,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case people = "People"
     case repositories = "Repositories"
     case investments = "Investments"
+    case projects = "Projects"
     case settings = "Settings"
 
     var id: Self { self }
@@ -29,15 +30,39 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .people: "person.2"
         case .repositories: "folder"
         case .investments: "chart.pie"
+        case .projects: "rectangle.3.group"
         case .settings: "gearshape"
         }
     }
 }
 
-/// A sidebar row: a section, or a person listed under People.
+/// A sidebar row: a section, a person listed under People, or a repo listed
+/// under Repositories.
 enum SidebarItem: Hashable {
     case tab(WorkloadTab)
     case person(String)
+    case peopleView(PeopleView)
+    case repository(String)
+    case issueList(IssueList)
+    case project(Int)
+}
+
+/// Opens a person's view in this window, as picking them in the sidebar
+/// does. Sheets and deep views use it to link to someone.
+struct ShowPersonAction {
+    let perform: (String) -> Void
+
+    func callAsFunction(_ login: String) { perform(login) }
+}
+
+extension EnvironmentValues {
+    @Entry var showPerson: ShowPersonAction?
+}
+
+/// The issue lists under Issues in the sidebar.
+enum IssueList: String, CaseIterable {
+    case assigned = "Assigned"
+    case unassigned = "Unassigned"
 }
 
 struct MainView: View {
@@ -45,17 +70,31 @@ struct MainView: View {
     @Environment(HiddenStore.self) private var hidden
     @Environment(MetricsStore.self) private var metricsStore
     @Environment(OrgConfigStore.self) private var orgConfigs
-    @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
+    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("excludeDrafts") private var excludeDrafts = false
     @AppStorage("showHidden") private var showHidden = false
 
-    @AppStorage("selectedOrg") private var selectedOrg: String?
+    @SceneStorage("selectedOrg") private var selectedOrg: String?
+    /// A title chosen with Rename Tab; empty means the automatic one.
+    @SceneStorage("customTitle") private var customTitle = ""
+    @State private var isRenaming = false
+    @State private var draftTitle = ""
+    @State private var windowID = UUID()
+    @Environment(ProjectStore.self) private var projectStore
     @State private var teamID: String?
-    @AppStorage("selectedTab") private var tab: WorkloadTab = .dashboard
+    @SceneStorage("selectedTab") private var tab: WorkloadTab = .dashboard
     /// The drill-down trail: each entry is the item open in the next column.
     @State private var path: [DetailSelection] = []
     /// The person picked under People in the sidebar, shown as the main view.
     @State private var person: String?
+    /// The work log, threads or punchcards, picked under People.
+    @State private var peopleView: PeopleView?
+    /// The repo picked under Repositories in the sidebar, shown as the main view.
+    @State private var repository: String?
+    /// The issue list picked under Issues; nil shows the issue metrics.
+    @State private var issueList: IssueList?
+    /// The board picked under Projects, by number.
+    @State private var project: Int?
     /// No search field for now; the list filtering is kept for when it returns.
     @State private var searchText = ""
 
@@ -72,6 +111,10 @@ struct MainView: View {
                     teamID: $teamID,
                     tab: $tab,
                     person: person,
+                    peopleView: peopleView,
+                    repository: repository,
+                    issueList: issueList,
+                    project: $project,
                     path: $path,
                     searchText: searchText
                 )
@@ -84,10 +127,32 @@ struct MainView: View {
                 )
             }
         }
+        // The title (and so the tab) names what the window shows; the org
+        // sits underneath as the subtitle.
+        .navigationTitle(customTitle.isEmpty ? automaticTitle : customTitle)
+        .navigationSubtitle(selectedOrg.map { orgs.org(login: $0)?.displayName ?? $0 } ?? "")
+        .focusedSceneValue(\.renameTab, RenameTabAction(window: windowID, perform: startRenaming))
+        .environment(\.showPerson, ShowPersonAction { login in sidebarSelection.wrappedValue = .person(login) })
+        .background(WindowAccessor { window in
+            TabMenuRename.shared.register(window, action: startRenaming)
+        })
+        .alert("Rename Tab", isPresented: $isRenaming) {
+            TextField("Title", text: $draftTitle)
+            Button("Rename") { customTitle = draftTitle.trimmingCharacters(in: .whitespaces) }
+                .keyboardShortcut(.defaultAction)
+            Button("Use Automatic Title") { customTitle = "" }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Leave it empty to name the tab after what it shows.")
+        }
         .task { await orgs.loadOrgs() }
         .onChange(of: selectedOrg) {
             teamID = nil
             person = nil
+            peopleView = nil
+            repository = nil
+            issueList = nil
+            project = nil
             path = []
         }
         .onChange(of: orgs.orgs, initial: true) {
@@ -97,23 +162,64 @@ struct MainView: View {
         }
     }
 
-    /// The section, or the person picked under People.
+    private func startRenaming() {
+        draftTitle = customTitle.isEmpty ? automaticTitle : customTitle
+        isRenaming = true
+    }
+
+    /// What the window shows: the section, or the person, repo, issue list
+    /// or board picked beneath it.
+    private var automaticTitle: String {
+        guard let selectedOrg else { return "Gannin" }
+        switch tab {
+        case .people:
+            return person.map { login in workload?.load(for: login)?.person.displayName ?? login } ?? peopleView?.rawValue ?? "People"
+        case .repositories:
+            return repository.map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? "Repositories"
+        case .issues:
+            return issueList.map { "\($0.rawValue) issues" } ?? "Issues"
+        case .projects:
+            return project.map { number in projectStore.boardLists[selectedOrg]?.first { $0.number == number }?.title ?? "Project \(number)" } ?? "Projects"
+        default:
+            return tab.rawValue
+        }
+    }
+
+    /// The section, or the person or repo picked beneath it.
     private var sidebarSelection: Binding<SidebarItem?> {
         Binding {
             if tab == .people, let person { return .person(person) }
+            if tab == .people, let peopleView { return .peopleView(peopleView) }
+            if tab == .repositories, let repository { return .repository(repository) }
+            if tab == .issues, let issueList { return .issueList(issueList) }
+            if tab == .projects, let project { return .project(project) }
             return .tab(tab)
         } set: { item in
+            guard let item else { return }
+            person = nil
+            peopleView = nil
+            repository = nil
+            issueList = nil
+            project = nil
+            path = []
             switch item {
             case .tab(let newTab):
                 tab = newTab
-                person = nil
-                path = []
             case .person(let login):
                 tab = .people
                 person = login
-                path = []
-            case nil:
-                break
+            case .peopleView(let view):
+                tab = .people
+                peopleView = view
+            case .repository(let name):
+                tab = .repositories
+                repository = name
+            case .issueList(let list):
+                tab = .issues
+                issueList = list
+            case .project(let number):
+                tab = .projects
+                project = number
             }
         }
     }
@@ -168,6 +274,10 @@ private struct ColumnBrowser: View {
     @Binding var teamID: String?
     @Binding var tab: WorkloadTab
     let person: String?
+    let peopleView: PeopleView?
+    let repository: String?
+    let issueList: IssueList?
+    @Binding var project: Int?
     @Binding var path: [DetailSelection]
     let searchText: String
 
@@ -192,6 +302,10 @@ private struct ColumnBrowser: View {
                             teamID: $teamID,
                             tab: $tab,
                             person: person,
+                            peopleView: peopleView,
+                            repository: repository,
+                            issueList: issueList,
+                            project: $project,
                             selection: selection(at: 0),
                             searchText: searchText
                         )
@@ -246,7 +360,7 @@ private struct ColumnBrowser: View {
     /// the list tabs. Either can be dragged, and the width is remembered.
     /// Dashboard and the People stats hold wide tables.
     private var isWide: Bool {
-        tab == .dashboard || tab == .investments || (tab == .people && person == nil)
+        tab == .dashboard || tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && issueList == nil) || tab == .projects
     }
 
     private func rootWidth(available: CGFloat) -> CGFloat {
@@ -352,16 +466,54 @@ struct OrgSidebar: View {
     @Binding var selection: SidebarItem?
     let workload: Workload?
     @AppStorage("sidebarPeopleExpanded") private var peopleExpanded = true
+    @AppStorage("sidebarAllExpanded") private var allExpanded = false
+    @AppStorage("sidebarTeamsExpanded") private var teamsExpanded = true
+    /// Team IDs opened under Teams, comma separated.
+    @AppStorage("sidebarExpandedTeams") private var expandedTeamIDs = ""
+    @AppStorage("sidebarRepositoriesExpanded") private var repositoriesExpanded = true
+    @AppStorage("sidebarIssuesExpanded") private var issuesExpanded = true
+    @AppStorage("sidebarProjectsExpanded") private var projectsExpanded = true
+    @Environment(ProjectStore.self) private var projectStore
 
     var body: some View {
         List(selection: $selection) {
             if selectedOrg != nil {
                 ForEach(WorkloadTab.allCases.filter { $0 != .settings }) { tab in
                     if tab == .people {
-                        peopleRow
+                        expandableRow(.people, isExpanded: $peopleExpanded)
                         if peopleExpanded {
-                            ForEach(people) { load in
-                                personRow(load)
+                            teamRows
+                            ForEach(PeopleView.allCases, id: \.self) { view in
+                                Label(view.rawValue, systemImage: view.systemImage)
+                                    .padding(.leading, 20)
+                                    .tag(SidebarItem.peopleView(view))
+                            }
+                        }
+                    } else if tab == .issues {
+                        expandableRow(.issues, isExpanded: $issuesExpanded)
+                        if issuesExpanded {
+                            ForEach(IssueList.allCases, id: \.self) { list in
+                                Text(list.rawValue)
+                                    .padding(.leading, 30)
+                                    .badge(issueCount(list))
+                                    .tag(SidebarItem.issueList(list))
+                            }
+                        }
+                    } else if tab == .projects {
+                        expandableRow(.projects, isExpanded: $projectsExpanded)
+                        if projectsExpanded, let selectedOrg {
+                            ForEach(projectStore.boardLists[selectedOrg] ?? []) { board in
+                                Text(board.title)
+                                    .lineLimit(1)
+                                    .padding(.leading, 30)
+                                    .tag(SidebarItem.project(board.number))
+                            }
+                        }
+                    } else if tab == .repositories {
+                        expandableRow(.repositories, isExpanded: $repositoriesExpanded)
+                        if repositoriesExpanded {
+                            ForEach(repositories) { repository in
+                                repositoryRow(repository)
                             }
                         }
                     } else {
@@ -383,6 +535,9 @@ struct OrgSidebar: View {
                 }
             }
         }
+        .task(id: selectedOrg) {
+            if let selectedOrg { await projectStore.loadBoards(org: selectedOrg) }
+        }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 if let selectedOrg {
@@ -393,29 +548,85 @@ struct OrgSidebar: View {
         }
     }
 
-    private var peopleRow: some View {
+    /// A section row with a chevron that shows or hides what's listed under it.
+    private func expandableRow(_ tab: WorkloadTab, isExpanded: Binding<Bool>) -> some View {
         HStack {
-            Label(WorkloadTab.people.rawValue, systemImage: WorkloadTab.people.systemImage)
+            Label(tab.rawValue, systemImage: tab.systemImage)
             Spacer(minLength: 4)
             Button {
-                withAnimation(.easeOut(duration: 0.15)) { peopleExpanded.toggle() }
+                withAnimation(.easeOut(duration: 0.15)) { isExpanded.wrappedValue.toggle() }
             } label: {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.semibold))
-                    .rotationEffect(.degrees(peopleExpanded ? 90 : 0))
+                    .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
                     .frame(width: 16, height: 16)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(.secondary)
-            .help(peopleExpanded ? "Hide people" : "Show people")
+            .help(isExpanded.wrappedValue ? "Hide \(tab.rawValue.lowercased())" : "Show \(tab.rawValue.lowercased())")
         }
-        .tag(SidebarItem.tab(.people))
+        .tag(SidebarItem.tab(tab))
+    }
+
+    private func issueCount(_ list: IssueList) -> Int {
+        switch list {
+        case .assigned: workload?.assignedIssues.count ?? 0
+        case .unassigned: workload?.unassignedIssues.count ?? 0
+        }
+    }
+
+    /// Repos with open PRs or issues, by name.
+    private var repositories: [RepositoryLoad] {
+        (workload?.repositories ?? [])
+            .filter { !$0.openPullRequests.isEmpty || !$0.issues.isEmpty }
+            .sorted { $0.shortName.localizedCaseInsensitiveCompare($1.shortName) == .orderedAscending }
+    }
+
+    /// Name, then its open work in words ("3 PRs · 2 issues"), with only
+    /// "stale" coloured as a warning.
+    private func repositoryRow(_ repository: RepositoryLoad) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "folder")
+                .foregroundStyle(.secondary)
+                .frame(width: 22)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(repository.shortName)
+                    .lineLimit(1)
+                summary([
+                    count(repository.openPullRequests.count, "PR", "PRs"),
+                    count(repository.issues.count, "issue", "issues"),
+                ], stale: repository.stalePullRequests.count)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+            }
+        }
+        .padding(.leading, 20)
+        .padding(.vertical, 1)
+        .contextMenu { RepositoryMenu(repository: repository.name, org: selectedOrg ?? "") }
+        .tag(SidebarItem.repository(repository.name))
+    }
+
+    private func count(_ n: Int, _ singular: String, _ plural: String) -> String? {
+        n == 0 ? nil : "\(n) \(n == 1 ? singular : plural)"
+    }
+
+    /// Parts joined with " · ", then "N stale" in orange.
+    private func summary(_ parts: [String?], stale: Int) -> Text {
+        let parts = parts.compactMap { $0 }
+        guard !parts.isEmpty || stale > 0 else { return Text("Nothing in flight") }
+        var text = Text(parts.joined(separator: " · "))
+        if stale > 0 {
+            let staleText = Text("\(stale) stale").foregroundStyle(.orange)
+            text = parts.isEmpty ? staleText : Text("\(text) · \(staleText)")
+        }
+        return text
     }
 
     /// Name, then what they have on in words ("2 PRs · 1 review"), with
     /// only "stale" coloured as a warning.
-    private func personRow(_ load: PersonLoad) -> some View {
+    private func personRow(_ load: PersonLoad, indent: CGFloat = 20) -> some View {
         HStack(spacing: 8) {
             Avatar(url: load.person.avatarUrl, size: 22)
             VStack(alignment: .leading, spacing: 1) {
@@ -427,29 +638,102 @@ struct OrgSidebar: View {
                     .lineLimit(1)
             }
         }
-        .padding(.leading, 20)
+        .padding(.leading, indent)
         .padding(.vertical, 1)
         .excludable(login: load.person.login, org: selectedOrg ?? "")
         .tag(SidebarItem.person(load.id))
     }
 
     private func workSummary(_ load: PersonLoad) -> Text {
-        func count(_ n: Int, _ singular: String, _ plural: String) -> String? {
-            n == 0 ? nil : "\(n) \(n == 1 ? singular : plural)"
-        }
-        let parts = [
+        summary([
             count(load.pullRequests.count, "PR", "PRs"),
             count(load.reviewRequests.count, "review", "reviews"),
             count(load.activeIssues.count, "issue", "issues"),
-        ].compactMap { $0 }
-        let stale = load.stalePullRequests.count
-        guard !parts.isEmpty || stale > 0 else { return Text("Nothing in flight") }
-        var summary = Text(parts.joined(separator: " · "))
-        if stale > 0 {
-            let staleText = Text("\(stale) stale").foregroundStyle(.orange)
-            summary = parts.isEmpty ? staleText : Text("\(summary) · \(staleText)")
+        ], stale: load.stalePullRequests.count)
+    }
+
+    // MARK: Teams
+
+    /// All (the whole org) and Teams under People, each opening to its
+    /// members, with anyone in no team last under Teams. An org without teams lists its people directly.
+    @ViewBuilder
+    private var teamRows: some View {
+        let groups = teamGroups
+        if groups.isEmpty {
+            ForEach(people) { load in personRow(load) }
+        } else {
+            disclosureRow("All", systemImage: "person.2", count: people.count, indent: 20, isExpanded: $allExpanded)
+            if allExpanded {
+                ForEach(people) { load in personRow(load, indent: 40) }
+            }
+            disclosureRow("Teams", systemImage: "person.3", indent: 20, isExpanded: $teamsExpanded)
+            if teamsExpanded {
+                ForEach(groups, id: \.id) { group in
+                    disclosureRow(group.name, count: group.members.count, indent: 40, isExpanded: teamBinding(group.id))
+                    if expandedTeams.contains(group.id) {
+                        ForEach(group.members) { load in personRow(load, indent: 60) }
+                    }
+                }
+            }
         }
-        return summary
+    }
+
+    /// The org's teams with the people in view in each, by name, plus
+    /// "No team" for the rest. Empty when the org has no teams.
+    private var teamGroups: [(id: String, name: String, members: [PersonLoad])] {
+        let teams = (workload?.snapshot.teams ?? [])
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        guard !teams.isEmpty else { return [] }
+        let everyone = people
+        var groups: [(id: String, name: String, members: [PersonLoad])] = teams.compactMap { team in
+            let logins = Set(team.members)
+            let members = everyone.filter { logins.contains($0.person.login) }
+            return members.isEmpty ? nil : (team.id, team.name, members)
+        }
+        let inTeams = Set(teams.flatMap(\.members))
+        let rest = everyone.filter { !inTeams.contains($0.person.login) }
+        if !rest.isEmpty { groups.append(("none", "No team", rest)) }
+        return groups
+    }
+
+    private var expandedTeams: Set<String> {
+        Set(expandedTeamIDs.split(separator: ",").map(String.init))
+    }
+
+    private func teamBinding(_ id: String) -> Binding<Bool> {
+        Binding {
+            expandedTeams.contains(id)
+        } set: { open in
+            var ids = expandedTeams
+            if open { ids.insert(id) } else { ids.remove(id) }
+            expandedTeamIDs = ids.sorted().joined(separator: ",")
+        }
+    }
+
+    /// A row that only opens and closes what's under it; clicking anywhere
+    /// on it toggles, and it can't be selected.
+    private func disclosureRow(_ title: String, systemImage: String? = nil, count: Int? = nil, indent: CGFloat, isExpanded: Binding<Bool>) -> some View {
+        HStack(spacing: 6) {
+            if let systemImage {
+                Label(title, systemImage: systemImage)
+            } else {
+                Text(title).lineLimit(1)
+            }
+            Spacer(minLength: 4)
+            if let count {
+                Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
+            }
+            Image(systemName: "chevron.right")
+                .font(.caption.weight(.semibold))
+                .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
+                .frame(width: 16, height: 16)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.leading, indent)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            withAnimation(.easeOut(duration: 0.15)) { isExpanded.wrappedValue.toggle() }
+        }
     }
 
     /// Everyone in view (team and hidden filters apply), by name.
@@ -464,7 +748,7 @@ struct OrgSidebar: View {
         switch tab {
         case .pullRequests: return workload.openPullRequests.count
         case .issues: return workload.assignedIssues.count
-        case .dashboard, .people, .repositories, .investments, .settings: return 0
+        case .dashboard, .people, .repositories, .investments, .projects, .settings: return 0
         }
     }
 }

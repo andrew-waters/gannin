@@ -11,6 +11,8 @@ struct WorkLogPullRequest: Codable, Hashable, Identifiable {
     let author: String?
     let createdAt: Date
     let mergedAt: Date?
+    /// When it was closed, merged or not; nil while open.
+    let closedAt: Date?
     let mergedBy: String?
     let commits: [WorkLogCommit]
     let reviews: [WorkLogReview]
@@ -22,6 +24,9 @@ struct WorkLogCommit: Codable, Hashable {
     let author: String?
     let additions: Int
     let deletions: Int
+    /// The author's UTC offset in seconds, from the commit's own timestamp
+    /// (the clock of the machine it was made on).
+    let utcOffset: Int?
 }
 
 struct WorkLogReview: Codable, Hashable {
@@ -32,6 +37,11 @@ struct WorkLogReview: Codable, Hashable {
 
 /// Recent PR activity per org, kept on disk and topped up with what changed.
 struct WorkLogHistory: Codable {
+    /// Bumped when the stored shape gains fields old caches can't fill in,
+    /// so they're fetched again.
+    static let currentVersion = 2
+
+    var version: Int? = Self.currentVersion
     let orgLogin: String
     /// PRs updated since this date are all here.
     var coveredFrom: Date
@@ -65,6 +75,8 @@ struct WorkLogEvent: Identifiable, Hashable {
     let pullRequest: WorkLogPullRequest
     /// Lines changed, for commits.
     let lines: Int
+    /// The author's UTC offset at the time, for commits.
+    var utcOffset: Int? = nil
 
     /// Radius in points before a cell scales its cluster to fit.
     var radius: Double {
@@ -89,7 +101,7 @@ extension WorkLogPullRequest {
         var events: [WorkLogEvent] = []
         for (index, commit) in commits.enumerated() {
             guard let login = commit.author ?? author else { continue }
-            events.append(WorkLogEvent(id: "\(id)-c\(index)", kind: .commit, at: commit.authoredAt, login: login, pullRequest: self, lines: commit.additions + commit.deletions))
+            events.append(WorkLogEvent(id: "\(id)-c\(index)", kind: .commit, at: commit.authoredAt, login: login, pullRequest: self, lines: commit.additions + commit.deletions, utcOffset: commit.utcOffset))
         }
         for (index, review) in reviews.enumerated() where review.author != author {
             events.append(WorkLogEvent(id: "\(id)-r\(index)", kind: .review, at: review.submittedAt, login: review.author, pullRequest: self, lines: 0))

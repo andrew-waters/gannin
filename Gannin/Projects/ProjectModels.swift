@@ -1,0 +1,131 @@
+import Foundation
+
+/// A GitHub project board: its fields and saved views.
+struct Board: Codable, Hashable {
+    let id: String
+    let number: Int
+    let title: String
+    let url: URL
+    let fields: [BoardField]
+    let views: [BoardView]
+
+    func field(named name: String) -> BoardField? {
+        fields.first { $0.name.caseInsensitiveCompare(name) == .orderedSame }
+    }
+}
+
+struct BoardField: Codable, Hashable, Identifiable {
+    let id: String
+    let name: String
+    /// GitHub's data type: TITLE, ASSIGNEES, SINGLE_SELECT, ITERATION and so on.
+    let dataType: String
+    /// Single-select options or iterations, in board order.
+    let options: [BoardOption]
+
+    var isGroupable: Bool {
+        ["SINGLE_SELECT", "ITERATION", "ASSIGNEES", "LABELS", "MILESTONE", "REPOSITORY", "TEXT", "NUMBER", "DATE"].contains(dataType)
+    }
+}
+
+struct BoardOption: Codable, Hashable, Identifiable {
+    let id: String
+    let name: String
+    /// Single-select colour name (GRAY, BLUE, GREEN, and so on).
+    let color: String?
+    /// Iteration start.
+    let start: Date?
+}
+
+/// A saved view: its layout, filter, grouping, sort and visible fields.
+struct BoardView: Codable, Hashable, Identifiable {
+    enum Layout: String, Codable, CaseIterable, Identifiable {
+        case table = "Table"
+        case board = "Board"
+        case roadmap = "Roadmap"
+
+        var id: Self { self }
+
+        var systemImage: String {
+            switch self {
+            case .table: "tablecells"
+            case .board: "rectangle.split.3x1"
+            case .roadmap: "calendar.day.timeline.left"
+            }
+        }
+    }
+
+    struct Sort: Codable, Hashable {
+        let field: String
+        let descending: Bool
+    }
+
+    let id: String
+    let number: Int
+    let name: String
+    let layout: Layout
+    let filter: String
+    /// Table sections, or board swimlanes.
+    let groupBy: [String]
+    /// Board columns.
+    let columnBy: [String]
+    let sortBy: [Sort]
+    let visibleFields: [String]
+}
+
+/// An item on a board: an issue, a pull request or a draft.
+struct BoardItem: Codable, Hashable, Identifiable {
+    enum Kind: String, Codable {
+        case issue = "ISSUE"
+        case pullRequest = "PULL_REQUEST"
+        case draft = "DRAFT_ISSUE"
+        case redacted = "REDACTED"
+    }
+
+    let id: String
+    let kind: Kind
+    /// The issue or PR node ID.
+    let contentID: String?
+    let title: String
+    let number: Int?
+    let url: URL?
+    let repo: String?
+    /// OPEN, CLOSED or MERGED.
+    let state: String?
+    let assignees: [Person]
+    let labels: [IssueLabel]
+    let milestone: String?
+    let parent: String?
+    let subIssuesProgress: Double?
+    let linkedPullRequests: Int
+    let updatedAt: Date?
+    /// Custom field values by field name.
+    let values: [String: IssueFieldValue]
+
+    /// A field's value for grouping, sorting and display, built-ins included.
+    func value(_ field: String) -> IssueFieldValue? {
+        switch field.lowercased() {
+        case "title": return .text(title)
+        case "assignees": return assignees.isEmpty ? nil : .text(assignees.map(\.login).joined(separator: ", "))
+        case "labels": return labels.isEmpty ? nil : .text(labels.map(\.name).joined(separator: ", "))
+        case "repository": return repo.map { .text($0) }
+        case "milestone": return milestone.map { .text($0) }
+        case "parent issue": return parent.map { .text($0) }
+        case "sub-issues progress": return subIssuesProgress.map { .number($0) }
+        case "linked pull requests": return linkedPullRequests > 0 ? .number(Double(linkedPullRequests)) : nil
+        default: return values.first { $0.key.caseInsensitiveCompare(field) == .orderedSame }?.value
+        }
+    }
+}
+
+/// A view's items as last fetched, keyed by the filter used.
+struct BoardItems: Codable {
+    var fetchedAt: Date
+    var items: [BoardItem]
+}
+
+/// Everything saved for one board.
+struct BoardCache: Codable {
+    var board: Board
+    var fetchedAt: Date
+    var items: [String: BoardItems] = [:]
+}

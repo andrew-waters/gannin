@@ -41,11 +41,15 @@ nonisolated struct RateLimit: Decodable, Equatable, Sendable {
     var isLow: Bool { remaining < max(250, limit / 10) && resetAt > .now }
 }
 
-/// Thin GitHub GraphQL client. Every call is a read.
+/// Thin GitHub GraphQL client. Every call is a read, except adding an issue
+/// to or removing it from a project board and setting its fields there,
+/// from the issue window (`ProjectFields.swift`).
 struct GitHubAPI {
     let token: String
     /// Told the budget after every query.
     var onRateLimit: (@MainActor @Sendable (RateLimit) -> Void)?
+    /// Told the token's OAuth scopes (GitHub's `X-OAuth-Scopes` header).
+    var onScopes: (@MainActor @Sendable (Set<String>) -> Void)?
 
     private static let endpoint = URL(string: "https://api.github.com/graphql")!
 
@@ -90,6 +94,9 @@ struct GitHubAPI {
             throw APIError.network(error.localizedDescription)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if let scopes = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-OAuth-Scopes") {
+            onScopes?(Set(scopes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }))
+        }
         if status == 401 { throw APIError.unauthorized }
         guard (200..<300).contains(status) else {
             throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
@@ -116,7 +123,9 @@ struct GitHubAPI {
     /// Adds `rateLimit` to the query's top-level selection. Variable
     /// definitions never contain braces, so the first one opens it.
     private static func askingForRateLimit(_ query: String) -> String {
-        guard let brace = query.firstIndex(of: "{") else { return query }
+        // `rateLimit` is a query field; a mutation can't select it.
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("mutation"),
+              let brace = query.firstIndex(of: "{") else { return query }
         var query = query
         query.insert(contentsOf: " rateLimit { cost remaining limit resetAt } ", at: query.index(after: brace))
         return query

@@ -10,7 +10,9 @@ enum GitHubOAuthConfig {
     /// `read:org` lists orgs, members and teams. `repo` is needed to read PRs
     /// and issues in private repositories (classic OAuth has no read-only
     /// variant). Gannin only ever issues read queries.
-    static let scopes = "read:user read:org repo"
+    /// `project` is for board status history, and for adding an issue to a
+    /// board and editing its fields there: the app's only writes.
+    static let scopes = "read:user read:org repo project"
 }
 
 // MARK: - Models

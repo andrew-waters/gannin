@@ -8,7 +8,11 @@ struct GanninApp: App {
     @State private var hidden = HiddenStore()
     @State private var metrics: MetricsStore
     @State private var workLog: WorkLogStore
+    @State private var issues: IssueStore
+    @State private var projects: ProjectStore
     @State private var orgConfigs = OrgConfigStore()
+    @State private var peopleDates = PeopleDatesStore()
+    @State private var bankHolidays = BankHolidayStore()
     @State private var activity: SyncActivity
 
     init() {
@@ -20,21 +24,37 @@ struct GanninApp: App {
         _details = State(initialValue: DetailStore(auth: auth))
         _metrics = State(initialValue: MetricsStore(auth: auth, activity: activity))
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
+        _issues = State(initialValue: IssueStore(auth: auth, activity: activity))
+        _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
+        TabMenuRename.shared.install()
     }
 
     var body: some Scene {
-        WindowGroup {
+        // The main window. Each window (or tab) keeps its own org, section and
+        // window of days in scene storage, so they're independent.
+        WindowGroup(id: "main") {
             RootView()
+                .joinsRequestedTab()
                 .environment(auth)
                 .environment(orgs)
                 .environment(details)
                 .environment(hidden)
                 .environment(metrics)
                 .environment(workLog)
+                .environment(issues)
+                .environment(projects)
                 .environment(orgConfigs)
+                .environment(peopleDates)
+                .environment(bankHolidays)
                 .environment(activity)
         }
         .defaultSize(width: 1280, height: 800)
+        .commands {
+            CommandGroup(after: .newItem) {
+                NewTabCommand()
+                RenameTabCommand()
+            }
+        }
 
         // A PR opened from the work log; one window per PR.
         WindowGroup("Pull Request", for: PullRequestReference.self) { $reference in
@@ -46,11 +66,33 @@ struct GanninApp: App {
                     .environment(hidden)
                     .environment(metrics)
                     .environment(workLog)
+                    .environment(issues)
+                    .environment(projects)
                     .environment(orgConfigs)
                     .environment(activity)
             }
         }
         .defaultSize(width: 560, height: 720)
+
+        // An issue opened from the issue metrics; one window per issue, the
+        // issue on the left and its board fields on the right.
+        WindowGroup("Issue", for: IssueReference.self) { $reference in
+            if let reference {
+                IssueWindow(reference: reference)
+                    .environment(auth)
+                    .environment(orgs)
+                    .environment(details)
+                    .environment(hidden)
+                    .environment(metrics)
+                    .environment(workLog)
+                    .environment(issues)
+                    .environment(projects)
+                    .environment(orgConfigs)
+                    .environment(activity)
+            }
+        }
+        .defaultSize(width: 1080, height: 960)
+        .windowResizability(.contentMinSize)
 
         Settings {
             SettingsView()
@@ -64,6 +106,8 @@ struct RootView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(DetailStore.self) private var details
     @Environment(WorkLogStore.self) private var workLog
+    @Environment(IssueStore.self) private var issues
+    @Environment(ProjectStore.self) private var projects
 
     var body: some View {
         Group {
@@ -78,6 +122,8 @@ struct RootView: View {
             if !auth.isSignedIn {
                 details.clear()
                 workLog.clear()
+                issues.clear()
+                projects.clear()
             }
         }
     }

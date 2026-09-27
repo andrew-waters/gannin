@@ -4,7 +4,7 @@ import SwiftUI
 /// picker and an editor sheet per category.
 struct InvestmentCategoriesSection: View {
     @Environment(OrgConfigStore.self) private var configs
-    @Environment(MetricsStore.self) private var metricsStore
+    @Environment(IssueStore.self) private var issueStore
     let org: String
 
     @State private var editing: InvestmentCategory?
@@ -12,8 +12,11 @@ struct InvestmentCategoriesSection: View {
 
     var body: some View {
         let config = configs.config(for: org).investmentConfig
-        let prs = metricsStore.history(for: org).map { Array($0.pullRequests.values) } ?? []
-        let placed = Dictionary(grouping: prs.compactMap { config.categorise($0)?.category.id }, by: { $0 }).mapValues(\.count)
+        let history = issueStore.history(for: org)
+        let issues = history.map { Array($0.issues.values) } ?? []
+        let placed = Dictionary(grouping: issues.compactMap { issue in
+            config.categorise(issue, parent: issue.parentID.flatMap { history?.issues[$0] })?.category.id
+        }, by: { $0 }).mapValues(\.count)
 
         Section {
             ForEach(Array(config.categories.enumerated()), id: \.element.id) { index, category in
@@ -23,7 +26,7 @@ struct InvestmentCategoriesSection: View {
                         .frame(width: 12, height: 12)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(category.name)
-                        Text("\(category.rules.count == 1 ? "1 rule" : "\(category.rules.count) rules") · \(placed[category.id] ?? 0) PRs in the stored history")
+                        Text("\(category.rules.count == 1 ? "1 rule" : "\(category.rules.count) rules") · \(placed[category.id] ?? 0) stored issues")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -61,7 +64,7 @@ struct InvestmentCategoriesSection: View {
         } header: {
             Text("Investment categories")
         } footer: {
-            Text("A PR goes to the first category, top to bottom, with a rule matching the PR itself; failing that, one matching an issue it closes, then that issue's parent. Choosing a category by hand (right-click a merged PR) beats the rules.")
+            Text("An issue goes to the first category, top to bottom, with a rule matching it; failing that, one matching its parent. Choosing a category by hand (right-click an issue, or in its window) beats the rules.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -95,7 +98,7 @@ struct InvestmentCategoriesSection: View {
 /// Name, colour and rules for one category, saved on Done.
 private struct InvestmentCategoryEditor: View {
     @Environment(OrgConfigStore.self) private var configs
-    @Environment(MetricsStore.self) private var metricsStore
+    @Environment(IssueStore.self) private var issueStore
     @Environment(\.dismiss) private var dismiss
 
     let org: String
@@ -108,8 +111,9 @@ private struct InvestmentCategoryEditor: View {
 
     var body: some View {
         let config = configs.config(for: org).investmentConfig
-        let prs = metricsStore.history(for: org).map { Array($0.pullRequests.values) } ?? []
-        let suggestions = Suggestions(prs)
+        let history = issueStore.history(for: org)
+        let issues = history.map { Array($0.issues.values) } ?? []
+        let suggestions = Suggestions(issues)
         let usedSlots = Set(config.categories.filter { $0.id != category.id }.map(\.slot))
 
         VStack(spacing: 0) {
@@ -168,7 +172,7 @@ private struct InvestmentCategoryEditor: View {
                         category.rules.append(InvestmentRule(conditions: [InvestmentCondition(field: .label, op: .isEqual, value: "")]))
                     }
                 } footer: {
-                    Text(matchSummary(prs, config: config))
+                    Text(matchSummary(issues, history: history, config: config))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -203,21 +207,20 @@ private struct InvestmentCategoryEditor: View {
         .frame(width: 640, height: 620)
     }
 
-    /// How many stored PRs the rules match, and how many land here once
+    /// How many stored issues the rules match, and how many land here once
     /// higher categories have taken theirs.
-    private func matchSummary(_ prs: [MetricPullRequest], config: InvestmentConfig) -> String {
+    private func matchSummary(_ issues: [IssueRecord], history: IssueHistory?, config: InvestmentConfig) -> String {
         var edited = config
         if let index = edited.categories.firstIndex(where: { $0.id == category.id }) {
             edited.categories[index] = category
         } else {
             edited.categories.append(category)
         }
-        let matching = prs.filter { pr in
-            ([InvestmentItem(pr)] + pr.linkedIssues.map { InvestmentItem($0.issue) } + pr.linkedIssues.compactMap(\.parent).map(InvestmentItem.init))
-                .contains(where: category.matches)
+        let matching = issues.filter { category.matches(InvestmentItem($0)) }.count
+        let landing = issues.filter { issue in
+            edited.categorise(issue, parent: issue.parentID.flatMap { history?.issues[$0] })?.category.id == category.id
         }.count
-        let landing = prs.filter { edited.categorise($0)?.category.id == category.id }.count
-        return "A PR lands here when any rule matches. These rules match \(matching) of the \(prs.count) merged PRs in the stored history; \(landing) land here after categories above take theirs."
+        return "An issue lands here when any rule matches it (or its parent). These rules match \(matching) of the \(issues.count) stored issues; \(landing) land here after categories above take theirs."
     }
 }
 
@@ -229,10 +232,30 @@ private struct ConditionRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Picker("Field", selection: $condition.field) {
-                ForEach(InvestmentCondition.Field.allCases) { Text($0.name).tag($0) }
+                // An older rule's PR-only field still shows, so it can be changed.
+                ForEach(InvestmentCondition.Field.issueFields + (InvestmentCondition.Field.issueFields.contains(condition.field) ? [] : [condition.field])) { Text($0.name).tag($0) }
             }
             .labelsHidden()
             .fixedSize()
+            if condition.field == .projectField {
+                TextField("Field", text: Binding(get: { condition.projectField ?? "" }, set: { condition.projectField = $0.isEmpty ? nil : $0 }))
+                    .labelsHidden()
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 110)
+                    .help("The board field to compare, such as Bucket")
+                if !suggestions.projectFieldNames.isEmpty {
+                    Menu {
+                        ForEach(suggestions.projectFieldNames, id: \.self) { name in
+                            Button(name) { condition.projectField = name }
+                        }
+                    } label: {
+                        Image(systemName: "chevron.down")
+                    }
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Board fields seen in the stored history")
+                }
+            }
             Picker("Operator", selection: $condition.op) {
                 ForEach(InvestmentCondition.Operator.allCases) { Text($0.name).tag($0) }
             }
@@ -240,7 +263,9 @@ private struct ConditionRow: View {
             .fixedSize()
             TextField("Value", text: $condition.value)
                 .textFieldStyle(.roundedBorder)
-            let options = suggestions.values(for: condition.field)
+            let options = condition.field == .projectField
+                ? suggestions.projectFieldValues(condition.projectField)
+                : suggestions.values(for: condition.field)
             if !options.isEmpty {
                 Menu {
                     ForEach(options.prefix(40), id: \.self) { option in
@@ -268,19 +293,32 @@ private struct ConditionRow: View {
 /// Values seen in the stored history, most common first, for the value menu.
 private struct Suggestions {
     private let values: [InvestmentCondition.Field: [String]]
+    private let projectFields: [String: [String]]
+    let projectFieldNames: [String]
 
-    init(_ prs: [MetricPullRequest]) {
-        let issues = prs.flatMap { pr in pr.linkedIssues.flatMap { [$0.issue] + ($0.parent.map { [$0] } ?? []) } }
+    init(_ issues: [IssueRecord]) {
         func ranked(_ items: [String]) -> [String] {
             Dictionary(grouping: items, by: { $0 }).sorted { $0.value.count > $1.value.count }.map(\.key)
         }
         values = [
-            .label: ranked(prs.flatMap(\.labels) + issues.flatMap(\.labels)),
-            .repository: ranked(prs.map(\.repo)),
-            .author: ranked(prs.compactMap(\.author?.login)),
+            .label: ranked(issues.flatMap(\.labels)),
+            .repository: ranked(issues.map(\.repo)),
             .issueType: ranked(issues.compactMap(\.issueType)),
             .milestone: ranked(issues.compactMap(\.milestone)),
         ]
+        var byField: [String: [String]] = [:]
+        for issue in issues {
+            for board in issue.projectFields {
+                for (name, value) in board.values { byField[name, default: []].append(value.display) }
+            }
+        }
+        projectFields = byField.mapValues(ranked)
+        projectFieldNames = byField.keys.sorted()
+    }
+
+    func projectFieldValues(_ field: String?) -> [String] {
+        guard let field else { return [] }
+        return projectFields.first { $0.key.caseInsensitiveCompare(field) == .orderedSame }?.value ?? []
     }
 
     func values(for field: InvestmentCondition.Field) -> [String] {

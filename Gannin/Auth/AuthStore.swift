@@ -9,12 +9,24 @@ final class AuthStore {
     private(set) var token: String?
     /// GitHub's GraphQL budget as of the latest query.
     private(set) var rateLimit: RateLimit?
+    /// The token's scopes, as GitHub last reported them.
+    private(set) var grantedScopes: Set<String>?
+
+    /// Project boards need the `project` scope, which tokens from before it
+    /// was requested lack. Unknown counts as yes.
+    var canUseProjects: Bool { grantedScopes?.contains("project") ?? true }
 
     var isSignedIn: Bool { token != nil && viewer != nil }
 
     var api: GitHubAPI? {
         token.map { token in
-            GitHubAPI(token: token) { [weak self] in self?.rateLimit = $0 }
+            GitHubAPI(
+                token: token,
+                onRateLimit: { [weak self] in self?.rateLimit = $0 },
+                onScopes: { [weak self] scopes in
+                    if self?.grantedScopes != scopes { self?.grantedScopes = scopes }
+                }
+            )
         }
     }
 
@@ -40,6 +52,7 @@ final class AuthStore {
         token = nil
         viewer = nil
         rateLimit = nil
+        grantedScopes = nil
         UserDefaults.standard.removeObject(forKey: Self.viewerKey)
     }
 

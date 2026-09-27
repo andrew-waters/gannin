@@ -11,6 +11,18 @@ struct OrgConfig: Codable, Hashable {
     var includedAuthors: Set<String> = []
     /// Investment categories; nil until edited, meaning the default preset.
     var investments: InvestmentConfig?
+    /// How issues move through the org's board; nil means the defaults.
+    var issueWorkflow: IssueWorkflow?
+    /// Working days and hours; nil means Monday to Friday, 9 to 5.
+    var workWeek: WorkWeek?
+
+    var week: WorkWeek { workWeek ?? WorkWeek() }
+    /// Holiday allowance and leave year; nil means 25 days from January.
+    var leave: LeavePolicy?
+
+    var leavePolicy: LeavePolicy { leave ?? LeavePolicy() }
+
+    var workflow: IssueWorkflow { issueWorkflow ?? IssueWorkflow() }
 
     var investmentConfig: InvestmentConfig { investments ?? .default }
 
@@ -23,9 +35,12 @@ struct OrgConfig: Codable, Hashable {
         excludedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .excludedAuthors) ?? []
         includedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .includedAuthors) ?? []
         investments = try container.decodeIfPresent(InvestmentConfig.self, forKey: .investments)
+        issueWorkflow = try container.decodeIfPresent(IssueWorkflow.self, forKey: .issueWorkflow)
+        workWeek = try container.decodeIfPresent(WorkWeek.self, forKey: .workWeek)
+        leave = try container.decodeIfPresent(LeavePolicy.self, forKey: .leave)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && investments == nil }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.

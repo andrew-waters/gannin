@@ -1,12 +1,12 @@
 import Charts
 import SwiftUI
 
-/// The org landing page: the state of work right now, delivery metrics for
-/// the chosen window, and the breakdown by repo. Every number opens the
-/// items behind it in the next column. The breakdown by person is on People.
+/// The org landing page: the state of work right now and delivery metrics
+/// for the chosen window. Every number opens the items behind it in the next
+/// column. The breakdowns by person and repo are on People and Repositories.
 struct OverviewView: View {
     @Environment(MetricsStore.self) private var store
-    @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
+    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
 
     let org: String
     let workload: Workload
@@ -25,9 +25,12 @@ struct OverviewView: View {
                     VStack(alignment: .leading, spacing: 28) {
                         notices
                         if let metrics {
-                            delivery(metrics)
-                            stageBreakdown(metrics)
-                            charts(metrics)
+                            Group {
+                                delivery(metrics)
+                                stageBreakdown(metrics)
+                                charts(metrics)
+                            }
+                            .updating(store.syncing.contains(org))
                         } else if store.syncing.contains(org) {
                             loading
                         } else if store.errors[org] == nil {
@@ -37,19 +40,9 @@ struct OverviewView: View {
                     .sectionContent()
                 } header: {
                     PinnedHeader {
-                        Text("Delivery · last \(windowDays) days")
-                    }
-                }
-                if let metrics {
-                    Section {
-                        RepoStatsTable(org: org, metrics: metrics, selection: $selection)
-                            .sectionContent()
-                    } header: {
-                        PinnedHeader {
-                            HStack(spacing: 8) {
-                                Text("Repositories")
-                                ColumnGuideButton.repos
-                            }
+                        HStack(spacing: 12) {
+                            Text("Delivery · last \(windowDays) days")
+                            MetricsSyncIndicator(org: org)
                         }
                     }
                 }
@@ -316,7 +309,7 @@ private struct TileGrid<Content: View>: View {
 }
 
 /// A headline number. With a drill it's a button that opens the items behind it.
-private struct StatTile: View {
+struct StatTile: View {
     let title: String
     let value: String
     var detail: String?

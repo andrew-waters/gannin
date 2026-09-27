@@ -10,6 +10,15 @@ struct PullRequestReference: Codable, Hashable {
     let repo: String
     let url: URL
 
+    init(org: String, id: String, number: Int, title: String, repo: String, url: URL) {
+        self.org = org
+        self.id = id
+        self.number = number
+        self.title = title
+        self.repo = repo
+        self.url = url
+    }
+
     init(org: String, pullRequest pr: WorkLogPullRequest) {
         self.org = org
         id = pr.id
@@ -71,6 +80,7 @@ struct PullRequestWindow: View {
             DescriptionSections(id: reference.id, url: reference.url)
         }
         .navigationTitle("\(reference.repo)#\(reference.number)")
+        .navigationSubtitle(reference.title)
         .task(id: reference.id) { await details.load(reference.id, updatedAt: open?.updatedAt) }
     }
 

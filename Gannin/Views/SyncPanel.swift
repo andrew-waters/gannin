@@ -8,7 +8,8 @@ struct SyncFooter: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(MetricsStore.self) private var metricsStore
     @Environment(WorkLogStore.self) private var workLog
-    @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
+    @Environment(IssueStore.self) private var issueStore
+    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     let org: String
 
     @State private var isExpanded = false
@@ -181,7 +182,8 @@ struct SyncFooter: View {
             async let metrics: Void = metricsStore.sync(org, windowDays: windowDays, force: true)
             // The work log only once it's been opened for this org.
             async let log: Void = workLog.isTracking(org) ? workLog.sync(org, force: true) : ()
-            _ = await (workload, metrics, log)
+            async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: windowDays, force: true) : ()
+            _ = await (workload, metrics, log, issues)
         }
     }
 }

@@ -144,7 +144,8 @@ final class WorkLogStore {
     private func loadCached(_ org: String) {
         guard histories[org] == nil,
               let data = try? Data(contentsOf: Self.fileURL(org)),
-              let history = try? Self.decoder.decode(WorkLogHistory.self, from: data) else {
+              let history = try? Self.decoder.decode(WorkLogHistory.self, from: data),
+              history.version == WorkLogHistory.currentVersion else {
             return
         }
         histories[org] = history

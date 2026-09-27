@@ -31,7 +31,7 @@ private struct RawWorkLogPullRequest: Decodable {
     struct CommitNode: Decodable {
         struct Commit: Decodable {
             struct Author: Decodable { let user: Actor? }
-            let authoredDate: Date
+            let authoredDate: String
             let additions: Int
             let deletions: Int
             let author: Author?
@@ -50,6 +50,7 @@ private struct RawWorkLogPullRequest: Decodable {
     let url: URL
     let createdAt: Date
     let mergedAt: Date?
+    let closedAt: Date?
     let repository: Repository
     let author: Actor?
     let mergedBy: Actor?
@@ -58,7 +59,7 @@ private struct RawWorkLogPullRequest: Decodable {
 
     static let fields = """
         ... on PullRequest {
-          id number title url createdAt mergedAt
+          id number title url createdAt mergedAt closedAt
           repository { nameWithOwner }
           author { login }
           mergedBy { login }
@@ -77,14 +78,42 @@ private struct RawWorkLogPullRequest: Decodable {
             author: author?.login,
             createdAt: createdAt,
             mergedAt: mergedAt,
+            closedAt: closedAt,
             mergedBy: mergedBy?.login,
-            commits: commits.nodes.map {
-                WorkLogCommit(authoredAt: $0.commit.authoredDate, author: $0.commit.author?.user?.login, additions: $0.commit.additions, deletions: $0.commit.deletions)
+            commits: commits.nodes.compactMap { node in
+                guard let stamp = GitTimestamp(node.commit.authoredDate) else { return nil }
+                return WorkLogCommit(authoredAt: stamp.date, author: node.commit.author?.user?.login, additions: node.commit.additions, deletions: node.commit.deletions, utcOffset: stamp.utcOffset)
             },
             reviews: (reviews?.nodes ?? []).compactMap { review in
                 guard let at = review.submittedAt, let login = review.author?.login, review.state != "PENDING" else { return nil }
                 return WorkLogReview(submittedAt: at, author: login, state: review.state)
             }
         )
+    }
+}
+
+/// A git timestamp, which GitHub returns as written (not converted to UTC),
+/// so its offset says what the author's clock read.
+struct GitTimestamp {
+    let date: Date
+    let utcOffset: Int
+
+    private static let parser = ISO8601DateFormatter()
+
+    init?(_ text: String) {
+        guard let date = Self.parser.date(from: text) else { return nil }
+        self.date = date
+        // The offset is the trailing `Z` or `+hh:mm` / `-hh:mm`.
+        if text.hasSuffix("Z") {
+            utcOffset = 0
+        } else if text.count > 6 {
+            let suffix = text.suffix(6)
+            let sign: Int = suffix.first == "-" ? -1 : 1
+            let parts = suffix.dropFirst().split(separator: ":").compactMap { Int($0) }
+            guard parts.count == 2, suffix.first == "+" || suffix.first == "-" else { return nil }
+            utcOffset = sign * (parts[0] * 3600 + parts[1] * 60)
+        } else {
+            return nil
+        }
     }
 }

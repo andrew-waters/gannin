@@ -3,7 +3,7 @@ import SwiftUI
 struct OrgWorkloadView: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(MetricsStore.self) private var metricsStore
-    @AppStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
+    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("excludeDrafts") private var excludeDrafts = false
     @AppStorage("showHidden") private var showHidden = false
 
@@ -14,6 +14,14 @@ struct OrgWorkloadView: View {
     @Binding var tab: WorkloadTab
     /// The person picked under People in the sidebar.
     let person: String?
+    /// The work log, threads or punchcards, picked under People.
+    let peopleView: PeopleView?
+    /// The repo picked under Repositories in the sidebar.
+    let repository: String?
+    /// The issue list picked under Issues in the sidebar.
+    let issueList: IssueList?
+    /// The board picked under Projects in the sidebar.
+    @Binding var project: Int?
     @Binding var selection: DetailSelection?
     let searchText: String
 
@@ -21,8 +29,15 @@ struct OrgWorkloadView: View {
         Group {
             if tab == .settings {
                 OrgSettingsView(org: org)
-            } else if tab == .people && person == nil, let workload {
-                // Everyone's stats and the work log: no team or filter bar.
+            } else if tab == .projects {
+                if let project {
+                    ProjectBoardView(org: org, number: project)
+                        .id(project)
+                } else {
+                    ProjectsLandingView(org: org) { project = $0 }
+                }
+            } else if (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && issueList == nil), let workload {
+                // The people and repo stats pages: no team or filter bar.
                 list(workload)
             } else {
                 VStack(spacing: 0) {
@@ -32,7 +47,6 @@ struct OrgWorkloadView: View {
                 }
             }
         }
-        .navigationTitle(orgs.org(login: org)?.displayName ?? org)
         .toolbar {
             if tab == .dashboard || tab == .investments {
                 ToolbarItem {
@@ -149,32 +163,36 @@ struct OrgWorkloadView: View {
             OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
         case .people: personView(workload)
         case .pullRequests: pullRequestList(workload)
-        case .issues: issueList(workload)
-        case .repositories: repositoryList(workload)
-        case .investments: InvestmentsView(org: org, metrics: metrics, selection: $selection)
+        case .issues:
+            if let issueList {
+                issueListView(workload, list: issueList)
+            } else {
+                IssuesStatsView(org: org, workload: workload, selection: $selection)
+            }
+        case .repositories: repositoryView(workload)
+        case .investments: InvestmentsView(org: org, team: workload.team, selection: $selection)
+        case .projects: EmptyView()
         case .settings: EmptyView()
         }
     }
 
-    private func repositoryList(_ workload: Workload) -> some View {
-        let repositories = workload.repositories.filter { query.isEmpty || matches($0.name) }
-        let active = repositories.filter { !$0.openPullRequests.isEmpty || !$0.issues.isEmpty }
-        let quiet = repositories.filter { $0.openPullRequests.isEmpty && $0.issues.isEmpty }
-        return List(selection: $selection) {
-            Section("Open work (\(active.count))") {
-                ForEach(active) { repository in
-                    RepositoryRow(repository: repository).tag(DetailSelection.repository(repository.id))
-                }
-            }
-            if !quiet.isEmpty {
-                Section("Merged only (\(quiet.count))") {
-                    ForEach(quiet) { repository in
-                        RepositoryRow(repository: repository).tag(DetailSelection.repository(repository.id))
-                    }
-                }
-            }
+    /// The repo picked in the sidebar, or every repo's stats until then.
+    @ViewBuilder
+    private func repositoryView(_ workload: Workload) -> some View {
+        if let repository, let load = workload.repository(named: repository) {
+            RepositoryColumn(repository: load, workload: workload, selection: $selection)
+        } else if repository != nil {
+            ContentUnavailableView(
+                "Not in this view",
+                systemImage: "eye.slash",
+                description: Text("It's excluded, or has no open or recent work.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            RepositoryStatsView(org: org, metrics: metrics, selection: $selection)
         }
     }
+
 
     /// The person picked in the sidebar, or everyone's stats until then.
     @ViewBuilder
@@ -188,6 +206,11 @@ struct OrgWorkloadView: View {
                 description: Text("They're excluded, or not in the selected team.")
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if peopleView == .timeOff {
+            TimeOffPage(org: org, workload: workload)
+        } else if let peopleView {
+            WorkLogPage(org: org, workload: workload, view: peopleView)
+                .id(peopleView)
         } else {
             PeopleStatsView(org: org, workload: workload, metrics: metrics, selection: $selection)
         }
@@ -210,22 +233,13 @@ struct OrgWorkloadView: View {
         }
     }
 
-    private func issueList(_ workload: Workload) -> some View {
-        let assigned = workload.assignedIssues.filter(matches)
-        let unassigned = workload.unassignedIssues.filter(matches)
+    private func issueListView(_ workload: Workload, list: IssueList) -> some View {
+        let issues = (list == .assigned ? workload.assignedIssues : workload.unassignedIssues).filter(matches)
         return List(selection: $selection) {
-            Section("Assigned (\(assigned.count))") {
-                ForEach(assigned) { issue in
+            Section("\(list.rawValue) (\(issues.count))") {
+                ForEach(issues) { issue in
                     IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
                         .tag(DetailSelection.issue(issue.id))
-                }
-            }
-            if workload.team == nil {
-                Section("Unassigned (\(unassigned.count))") {
-                    ForEach(unassigned) { issue in
-                        IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
-                            .tag(DetailSelection.issue(issue.id))
-                    }
                 }
             }
         }
@@ -255,33 +269,6 @@ struct OrgWorkloadView: View {
 }
 
 // MARK: - Rows
-
-struct RepositoryRow: View {
-    let repository: RepositoryLoad
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "folder")
-                .foregroundStyle(.secondary)
-                .frame(width: 20)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(repository.shortName)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                HStack(spacing: 10) {
-                    CountBadge(count: repository.openPullRequests.count, systemImage: "arrow.triangle.pull", help: "Open pull requests", tint: .blue)
-                    if !repository.stalePullRequests.isEmpty {
-                        CountBadge(count: repository.stalePullRequests.count, systemImage: "clock.badge.exclamationmark", help: "Stale pull requests", tint: .orange)
-                    }
-                    CountBadge(count: repository.mergedPullRequests.count, systemImage: "checkmark.circle", help: "Merged recently", tint: .purple)
-                    CountBadge(count: repository.issues.count, systemImage: "smallcircle.filled.circle", help: "Open issues", tint: .green)
-                }
-            }
-            Spacer()
-        }
-        .padding(.vertical, 2)
-    }
-}
 
 struct PullRequestRow: View {
     let pr: PullRequest
