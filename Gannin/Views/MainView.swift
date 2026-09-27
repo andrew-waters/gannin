@@ -95,11 +95,14 @@ struct MainView: View {
     @State private var issueList: IssueList?
     /// The board picked under Projects, by number.
     @State private var project: Int?
+    /// Whether the sidebar is showing, so iPad can bring back the bar that
+    /// holds its toggle once it's hidden.
+    @State private var columnVisibility: NavigationSplitViewVisibility = .automatic
     /// No search field for now; the list filtering is kept for when it returns.
     @State private var searchText = ""
 
     var body: some View {
-        NavigationSplitView {
+        NavigationSplitView(columnVisibility: $columnVisibility) {
             OrgSidebar(selectedOrg: $selectedOrg, selection: sidebarSelection, workload: workload)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
         } detail: {
@@ -121,8 +124,10 @@ struct MainView: View {
                 .id(selectedOrg)
                 #if !os(macOS)
                 // Every page has its own pinned header, so the bar above the
-                // detail would only be empty space. The sidebar keeps its own.
-                .toolbar(.hidden, for: .navigationBar)
+                // detail would only be empty space while the sidebar (with its
+                // own toggle) shows. Hidden, the bar comes back for the button
+                // that brings it back.
+                .toolbar(columnVisibility == .detailOnly ? .visible : .hidden, for: .navigationBar)
                 // Pinned headers stop at the status bar, and pages scroll
                 // on under it; a bar there matches the headers and covers
                 // what scrolls past.
