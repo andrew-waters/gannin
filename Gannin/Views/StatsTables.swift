@@ -336,7 +336,7 @@ struct ColumnGuideButton: View {
         .buttonStyle(.borderless)
         .font(.body)
         .help("What the columns mean")
-        .popover(isPresented: $isShowing, arrowEdge: .bottom) {
+        .popover(isPresented: $isShowing, arrowEdge: Self.arrowEdge) {
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
                     VStack(alignment: .leading, spacing: 3) {
@@ -368,6 +368,17 @@ struct ColumnGuideButton: View {
             .frame(width: 400, alignment: .leading)
             .presentationBackground(Color.windowBackground)
         }
+    }
+
+    /// Below the button on the Mac. On iPad the button sits at the window's
+    /// right edge, and a sideways arrow would push the guide off screen, so
+    /// it hangs below the button instead.
+    private static var arrowEdge: Edge {
+        #if os(macOS)
+        .bottom
+        #else
+        .top
+        #endif
     }
 
     static let people = ColumnGuideButton(
