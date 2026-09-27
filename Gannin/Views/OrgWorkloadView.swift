@@ -47,18 +47,30 @@ struct OrgWorkloadView: View {
                 }
             }
         }
+        #if os(macOS)
         .toolbar {
-            if tab == .dashboard || tab == .investments {
-                ToolbarItem {
-                    Picker("Window", selection: $windowDays) {
-                        ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                    .help("Window for the delivery and people stats")
-                }
+            if hasWindowPicker {
+                ToolbarItem { windowPicker }
             }
         }
+        #else
+        // iPad has no navigation bar over the detail (see `MainView`), so
+        // the window picker gets a bar of its own.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if hasWindowPicker {
+                VStack(spacing: 0) {
+                    HStack {
+                        Spacer()
+                        windowPicker
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 8)
+                    Divider()
+                }
+                .background(.bar)
+            }
+        }
+        #endif
         .task { await orgs.refreshIfStale(org) }
         .task(id: windowDays) { await metricsStore.sync(org, windowDays: windowDays) }
     }
@@ -152,6 +164,17 @@ struct OrgWorkloadView: View {
             Spacer(minLength: 0)
         }
         .lineLimit(1)
+    }
+
+    private var hasWindowPicker: Bool { tab == .dashboard || tab == .investments }
+
+    private var windowPicker: some View {
+        Picker("Window", selection: $windowDays) {
+            ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .fixedSize()
+        .help("Window for the delivery and people stats")
     }
 
     // MARK: Lists

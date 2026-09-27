@@ -119,6 +119,11 @@ struct MainView: View {
                     searchText: searchText
                 )
                 .id(selectedOrg)
+                #if !os(macOS)
+                // Every page has its own pinned header, so the bar above the
+                // detail would only be empty space. The sidebar keeps its own.
+                .toolbar(.hidden, for: .navigationBar)
+                #endif
             } else {
                 ContentUnavailableView(
                     "Pick an organisation",
