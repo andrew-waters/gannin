@@ -80,7 +80,7 @@ struct PullRequestWindow: View {
             DescriptionSections(id: reference.id, url: reference.url)
         }
         .navigationTitle("\(reference.repo)#\(reference.number)")
-        .navigationSubtitle(reference.title)
+        .windowSubtitle(reference.title)
         .task(id: reference.id) { await details.load(reference.id, updatedAt: open?.updatedAt) }
     }
 

@@ -1,4 +1,16 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
+
+/// Option-click on Refresh means Full Refresh, on a Mac.
+private func optionKeyHeld() -> Bool {
+    #if os(macOS)
+    NSEvent.modifierFlags.contains(.option)
+    #else
+    false
+    #endif
+}
 
 /// Bottom of the sidebar: sync status and the refresh button, with the
 /// step-by-step detail sliding up above it while a sync runs.
@@ -124,9 +136,9 @@ struct SyncFooter: View {
         } else {
             let failure = runs.compactMap(\.failure).first
             Button(failure == nil ? "Refresh" : "Retry") {
-                refresh(NSEvent.modifierFlags.contains(.option) ? .full : .manual)
+                refresh(optionKeyHeld() ? .full : .manual)
             }
-            .buttonStyle(.link)
+            .linkButton()
             .tint(failure == nil ? nil : .red)
             .foregroundStyle(failure == nil ? AnyShapeStyle(.link) : AnyShapeStyle(.red))
             .keyboardShortcut("r")

@@ -34,7 +34,7 @@ struct IssueWorkflowSection: View {
                                 }
                             }
                         }
-                        .toggleStyle(.checkbox)
+                        .checkboxToggle()
                     }
                     HStack {
                         TextField("Add a status", text: $newStatus)

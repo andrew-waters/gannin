@@ -130,12 +130,14 @@ struct MainView: View {
         // The title (and so the tab) names what the window shows; the org
         // sits underneath as the subtitle.
         .navigationTitle(customTitle.isEmpty ? automaticTitle : customTitle)
-        .navigationSubtitle(selectedOrg.map { orgs.org(login: $0)?.displayName ?? $0 } ?? "")
+        .windowSubtitle(selectedOrg.map { orgs.org(login: $0)?.displayName ?? $0 } ?? "")
         .focusedSceneValue(\.renameTab, RenameTabAction(window: windowID, perform: startRenaming))
         .environment(\.showPerson, ShowPersonAction { login in sidebarSelection.wrappedValue = .person(login) })
+        #if os(macOS)
         .background(WindowAccessor { window in
             TabMenuRename.shared.register(window, action: startRenaming)
         })
+        #endif
         .alert("Rename Tab", isPresented: $isRenaming) {
             TextField("Title", text: $draftTitle)
             Button("Rename") { customTitle = draftTitle.trimmingCharacters(in: .whitespaces) }
@@ -343,7 +345,7 @@ private struct ColumnBrowser: View {
                 }
             }
         }
-        .onExitCommand {
+        .onEscape {
             if !path.isEmpty { path.removeLast() }
         }
         .environment(\.currentOrg, org)
@@ -762,6 +764,7 @@ private struct SidebarFooter: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(\.openURL) private var openURL
     @Binding var selectedOrg: String?
+    @State private var showingSettings = false
 
     var body: some View {
         HStack(spacing: 8) {
@@ -839,7 +842,11 @@ private struct SidebarFooter: View {
             Menu {
                 Text(viewer.name ?? viewer.login)
                 Divider()
+                #if os(macOS)
                 SettingsLink { Text("Settings") }
+                #else
+                Button("Settings") { showingSettings = true }
+                #endif
                 Button("Sign Out") {
                     auth.signOut()
                     orgs.clear()
@@ -852,6 +859,19 @@ private struct SidebarFooter: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help(viewer.login)
+            #if !os(macOS)
+            // iPad has no Settings window, so the app's settings are a sheet.
+            .sheet(isPresented: $showingSettings) {
+                NavigationStack {
+                    SettingsView()
+                        .toolbar {
+                            ToolbarItem(placement: .confirmationAction) {
+                                Button("Done") { showingSettings = false }
+                            }
+                        }
+                }
+            }
+            #endif
         }
     }
 }
@@ -866,7 +886,7 @@ private struct ColumnResizeHandle: View {
 
     var body: some View {
         Rectangle()
-            .fill(isHovering ? Color.accentColor.opacity(0.6) : Color(nsColor: .separatorColor))
+            .fill(isHovering ? Color.accentColor.opacity(0.6) : Color.separatorLine)
             .frame(width: isHovering ? 2 : 1)
             .frame(width: 1)
             .overlay {
@@ -875,7 +895,9 @@ private struct ColumnResizeHandle: View {
                     .contentShape(Rectangle())
                     .onHover { hovering in
                         isHovering = hovering
+                        #if os(macOS)
                         if hovering { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                        #endif
                     }
                     .gesture(
                         DragGesture(minimumDistance: 1, coordinateSpace: .global)

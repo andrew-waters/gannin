@@ -60,7 +60,7 @@ struct IssueWindow: View {
         }
         .frame(minWidth: 860, minHeight: 480)
         .navigationTitle("\(reference.repo)#\(reference.number)")
-        .navigationSubtitle(reference.title)
+        .windowSubtitle(reference.title)
         .task(id: reference.id) { await details.load(reference.id) }
     }
 

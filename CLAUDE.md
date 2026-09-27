@@ -17,6 +17,18 @@ xcodebuild -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS
 Swift 6 with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so everything is main-actor unless
 marked otherwise. The app is sandboxed with outgoing network access only.
 
+The target also builds for iPad (`supportedDestinations: [macOS, iOS]`, iPad only), from the
+same sources:
+
+```bash
+xcodebuild -project Gannin.xcodeproj -scheme Gannin -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' build
+```
+
+Mac-only styles and modifiers go through `App/Platform.swift` (`checkboxToggle`, `linkButton`,
+`onEscape`, `windowSubtitle`, `Color.separatorLine`); anything else AppKit sits behind
+`#if os(macOS)`. Window tabs and Rename Tab are the Mac's; on iPad the app's Settings open as a
+sheet from the account menu.
+
 ## Layout
 
 - `Gannin/Auth/`: GitHub OAuth device flow (`DeviceFlow`), token in the keychain (`Keychain`),

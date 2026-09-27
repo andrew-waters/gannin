@@ -1,5 +1,7 @@
-import AppKit
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 /// What the time off calendar shows at once.
 enum CalendarScale: String, CaseIterable {
@@ -117,7 +119,7 @@ struct TimeOffCalendarView: View {
         .sheet(item: $adding) { new in
             AbsenceSheet(org: org, person: new.person, absence: new.absence, choosable: new.choosable ? people : [])
         }
-        .onExitCommand { clearSelection() }
+        .onEscape { clearSelection() }
         .onChange(of: scale) { clearSelection() }
     }
 
@@ -194,7 +196,7 @@ struct TimeOffCalendarView: View {
     /// Click picks a day; Shift-click extends from the first one picked, in
     /// the same row in the week view.
     private func select(_ day: Date, person: String? = nil) {
-        if NSEvent.modifierFlags.contains(.shift), selectionStart != nil, selectionPerson == person {
+        if Self.extending, selectionStart != nil, selectionPerson == person {
             selectionEnd = day
         } else if isSelected(day, person: person), selectionStart == selectionEnd {
             clearSelection()
@@ -203,6 +205,16 @@ struct TimeOffCalendarView: View {
             selectionEnd = day
             selectionPerson = person
         }
+    }
+
+    /// Shift held on a Mac; on iPad a second tap in a row extends instead
+    /// (see `select`), so this is only the Mac's.
+    private static var extending: Bool {
+        #if os(macOS)
+        NSEvent.modifierFlags.contains(.shift)
+        #else
+        false
+        #endif
     }
 
     private func clearSelection() {

@@ -26,7 +26,9 @@ struct GanninApp: App {
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
         _issues = State(initialValue: IssueStore(auth: auth, activity: activity))
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
+        #if os(macOS)
         TabMenuRename.shared.install()
+        #endif
     }
 
     var body: some Scene {
@@ -51,7 +53,9 @@ struct GanninApp: App {
         .defaultSize(width: 1280, height: 800)
         .commands {
             CommandGroup(after: .newItem) {
+                #if os(macOS)
                 NewTabCommand()
+                #endif
                 RenameTabCommand()
             }
         }
@@ -94,11 +98,13 @@ struct GanninApp: App {
         .defaultSize(width: 1080, height: 960)
         .windowResizability(.contentMinSize)
 
+        #if os(macOS)
         Settings {
             SettingsView()
                 .environment(auth)
                 .environment(orgs)
         }
+        #endif
     }
 }
 

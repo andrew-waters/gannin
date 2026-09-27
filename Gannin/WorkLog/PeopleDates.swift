@@ -619,7 +619,7 @@ struct WorkPatternSection: View {
                     if on { week.days.insert(weekday) } else { week.days.remove(weekday) }
                 }
             })
-            .toggleStyle(.checkbox)
+            .checkboxToggle()
             .frame(width: 70, alignment: .leading)
             Spacer()
             if isOn {

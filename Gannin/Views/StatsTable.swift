@@ -233,7 +233,7 @@ struct StatsTable<Row: Identifiable>: View {
     /// runs unbroken from the group title to the last row.
     private var gutter: some View {
         Rectangle()
-            .fill(Color(nsColor: .separatorColor))
+            .fill(Color.separatorLine)
             .frame(width: 1)
             .frame(width: groupGap)
             .frame(maxHeight: .infinity)

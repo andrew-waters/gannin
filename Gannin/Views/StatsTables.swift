@@ -366,7 +366,7 @@ struct ColumnGuideButton: View {
             .font(.callout)
             .padding(14)
             .frame(width: 400, alignment: .leading)
-            .presentationBackground(Color(nsColor: .windowBackgroundColor))
+            .presentationBackground(Color.windowBackground)
         }
     }
 

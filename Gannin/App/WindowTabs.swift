@@ -1,5 +1,12 @@
-import AppKit
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
+
+// Window tabs are the Mac's: iPad gets Rename Tab's focused value (harmless)
+// and a `joinsRequestedTab` that does nothing.
+
+#if os(macOS)
 
 /// File > New Tab: opens another main window as a tab of the current one.
 /// SwiftUI can open a window but not tab it, so the new window's
@@ -20,6 +27,8 @@ struct NewTabCommand: View {
         .keyboardShortcut("t")
     }
 }
+
+#endif
 
 /// Asks the focused main window to rename itself. Compared by window, so
 /// focus changes (not every redraw) update the menu.
@@ -45,6 +54,7 @@ struct RenameTabCommand: View {
     }
 }
 
+#if os(macOS)
 /// Hands the hosting `NSWindow` to `onAttach` once the view is in one.
 struct WindowAccessor: NSViewRepresentable {
     let onAttach: (NSWindow) -> Void
@@ -120,4 +130,8 @@ final class TabMenuRename: NSObject {
         actions[ObjectIdentifier(window)]?()
     }
 }
-
+#else
+extension View {
+    func joinsRequestedTab() -> some View { self }
+}
+#endif

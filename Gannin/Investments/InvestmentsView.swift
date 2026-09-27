@@ -236,7 +236,7 @@ struct InvestmentsView: View {
                     title: "Uncategorised · \(scope.rawValue.lowercased())"
                 )))
             }
-            .buttonStyle(.link)
+            .linkButton()
         }
     }
 

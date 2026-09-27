@@ -116,7 +116,7 @@ struct MetricColumn: View {
                 } label: {
                     Label("Current work", systemImage: "person.crop.rectangle.stack")
                 }
-                .buttonStyle(.link)
+                .linkButton()
             }
             pendingSection((metrics?.pendingReviews ?? []).filter { $0.login == login }, showReviewer: false)
             outcomeSection("Review requests not answered", outcomes.filter { $0.respondedAt == nil }, showReviewer: false)
@@ -472,16 +472,25 @@ enum ChartPalette {
 
 extension Color {
     init(light: UInt32, dark: UInt32) {
+        func components(_ hex: UInt32) -> (CGFloat, CGFloat, CGFloat) {
+            (CGFloat((hex >> 16) & 0xFF) / 255, CGFloat((hex >> 8) & 0xFF) / 255, CGFloat(hex & 0xFF) / 255)
+        }
+        #if os(macOS)
         func color(_ hex: UInt32) -> NSColor {
-            NSColor(
-                srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
-                green: CGFloat((hex >> 8) & 0xFF) / 255,
-                blue: CGFloat(hex & 0xFF) / 255,
-                alpha: 1
-            )
+            let (r, g, b) = components(hex)
+            return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
         }
         self.init(nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color(dark) : color(light)
         })
+        #else
+        func color(_ hex: UInt32) -> UIColor {
+            let (r, g, b) = components(hex)
+            return UIColor(red: r, green: g, blue: b, alpha: 1)
+        }
+        self.init(uiColor: UIColor { traits in
+            traits.userInterfaceStyle == .dark ? color(dark) : color(light)
+        })
+        #endif
     }
 }

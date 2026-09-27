@@ -1,8 +1,13 @@
-import AppKit
 import SwiftUI
+#if os(macOS)
+import AppKit
+#else
+import UIKit
+#endif
 
 struct SignInView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(\.openURL) private var openURL
 
     @State private var phase: Phase = .idle
     @State private var code: DeviceCode?
@@ -86,7 +91,7 @@ struct SignInView: View {
                 .help("Copy code")
             }
             HStack {
-                Button("Open GitHub") { NSWorkspace.shared.open(code.verificationURI) }
+                Button("Open GitHub") { openURL(code.verificationURI) }
                     .buttonStyle(.borderedProminent)
                 Button("Cancel", action: cancel)
             }
@@ -104,7 +109,7 @@ struct SignInView: View {
                 self.code = code
                 phase = .awaitingUser
                 copy(code.userCode)
-                NSWorkspace.shared.open(code.verificationURI)
+                openURL(code.verificationURI)
                 let token = try await DeviceFlow.pollForToken(code)
                 phase = .finishing
                 try await auth.completeSignIn(token: token)
@@ -125,8 +130,12 @@ struct SignInView: View {
     }
 
     private func copy(_ value: String) {
+        #if os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
+        #else
+        UIPasteboard.general.string = value
+        #endif
         copied = true
         Task {
             try? await Task.sleep(for: .seconds(1.5))

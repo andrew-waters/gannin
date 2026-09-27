@@ -80,7 +80,7 @@ struct WorkWeekSection: View {
                 HStack(spacing: 10) {
                     ForEach(WorkWeek.weekdays, id: \.self) { weekday in
                         Toggle(WorkWeek.name(weekday), isOn: dayBinding(weekday))
-                            .toggleStyle(.checkbox)
+                            .checkboxToggle()
                     }
                 }
             }
