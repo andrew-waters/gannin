@@ -544,6 +544,11 @@ struct OrgSidebar: View {
                 }
                 SidebarFooter(selectedOrg: $selectedOrg)
             }
+            #if !os(macOS)
+            // The Mac's sidebar gives the footer its own material; iPad's
+            // lets the rows show through, so it needs one.
+            .background(.bar)
+            #endif
         }
     }
 
