@@ -123,6 +123,14 @@ struct MainView: View {
                 // Every page has its own pinned header, so the bar above the
                 // detail would only be empty space. The sidebar keeps its own.
                 .toolbar(.hidden, for: .navigationBar)
+                // Pinned headers stop at the status bar, and pages scroll
+                // on under it; a bar there matches the headers and covers
+                // what scrolls past.
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    Color.clear
+                        .frame(height: 0)
+                        .background(.bar, ignoresSafeAreaEdges: .top)
+                }
                 #endif
             } else {
                 ContentUnavailableView(
