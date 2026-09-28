@@ -29,6 +29,11 @@ Mac-only styles and modifiers go through `App/Platform.swift` (`checkboxToggle`,
 `#if os(macOS)`. Window tabs and Rename Tab are the Mac's; on iPad the app's Settings open as a
 sheet from the account menu.
 
+The app's settings (`SettingsView`) are General and Storage panes on the Mac (a form with a
+Storage page on iPad). Storage (`StorageSettings`) shows each cache's size on disk with Clear
+(the stores' `clear()`, fetched again when next needed), what's been entered in Gannin with
+Delete Your Data, and Erase Everything and Sign Out.
+
 Each page's title is the window's (`MainView.automaticTitle`) and its top-level controls are
 toolbar items (`.toolbar` on the page, the metrics window picker on `OrgWorkloadView`), so on
 iPad they share the bar with the sidebar toggle and on the Mac sit in the title bar.

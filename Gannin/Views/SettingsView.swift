@@ -1,6 +1,29 @@
 import SwiftUI
 
+/// The app's settings: General (account and activity) and Storage. Panes on
+/// the Mac; on iPad, a form with Storage a page of its own.
 struct SettingsView: View {
+    var body: some View {
+        #if os(macOS)
+        TabView {
+            Tab("General", systemImage: "gearshape") {
+                GeneralSettings()
+                    .frame(width: 440)
+            }
+            Tab("Storage", systemImage: "internaldrive") {
+                StorageSettings()
+                    .frame(width: 560)
+                    .frame(minHeight: 520)
+            }
+        }
+        #else
+        GeneralSettings()
+            .navigationTitle("Settings")
+        #endif
+    }
+}
+
+struct GeneralSettings: View {
     @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
     @AppStorage(OrgStore.lookbackDaysKey) private var lookbackDays = OrgStore.defaultLookbackDays
@@ -31,8 +54,15 @@ struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            #if !os(macOS)
+            Section {
+                NavigationLink("Storage") {
+                    StorageSettings()
+                        .navigationTitle("Storage")
+                }
+            }
+            #endif
         }
         .formStyle(.grouped)
-        .frame(width: 440)
     }
 }

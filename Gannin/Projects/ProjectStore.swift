@@ -88,6 +88,8 @@ final class ProjectStore {
         }
     }
 
+    static var cacheDirectory: URL { directory }
+
     func clear() {
         boardLists = [:]
         caches = [:]

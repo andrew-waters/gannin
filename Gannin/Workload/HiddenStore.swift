@@ -26,6 +26,11 @@ final class HiddenStore {
         }
         UserDefaults.standard.set(keys.sorted(), forKey: Self.key)
     }
+
+    func clear() {
+        keys = []
+        UserDefaults.standard.removeObject(forKey: Self.key)
+    }
 }
 
 /// Adds Hide/Unhide and Open on GitHub to a row's context menu, and dims the

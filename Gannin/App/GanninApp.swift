@@ -103,6 +103,15 @@ struct GanninApp: App {
             SettingsView()
                 .environment(auth)
                 .environment(orgs)
+                .environment(metrics)
+                .environment(issues)
+                .environment(workLog)
+                .environment(projects)
+                .environment(details)
+                .environment(bankHolidays)
+                .environment(peopleDates)
+                .environment(orgConfigs)
+                .environment(hidden)
         }
         #endif
     }

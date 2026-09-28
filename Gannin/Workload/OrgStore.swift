@@ -54,6 +54,21 @@ final class OrgStore {
         UserDefaults.standard.set(starred.sorted(), forKey: Self.starredKey)
     }
 
+    func clearStars() {
+        starred = []
+        UserDefaults.standard.removeObject(forKey: Self.starredKey)
+    }
+
+    /// Drops the cached snapshots but keeps the org list; each org is
+    /// fetched again when next shown or refreshed.
+    func clearSnapshots() {
+        snapshots = [:]
+        errors = [:]
+        try? FileManager.default.removeItem(at: Self.snapshotsDirectory)
+    }
+
+    static var cacheDirectory: URL { snapshotsDirectory }
+
     // MARK: Loading
 
     func loadOrgs() async {

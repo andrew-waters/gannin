@@ -168,6 +168,14 @@ final class PeopleDatesStore {
 
     func all(in org: String) -> [String: PersonDates] { dates[org] ?? [:] }
 
+    func clear() {
+        dates = [:]
+        UserDefaults.standard.removeObject(forKey: Self.key)
+    }
+
+    /// Bytes stored, for the Storage settings.
+    var storedBytes: Int { UserDefaults.standard.data(forKey: Self.key)?.count ?? 0 }
+
     func update(_ login: String, in org: String, _ change: (inout PersonDates) -> Void) {
         var person = dates(for: login, in: org)
         change(&person)

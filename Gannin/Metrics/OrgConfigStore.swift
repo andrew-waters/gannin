@@ -72,6 +72,15 @@ final class OrgConfigStore {
 
     func config(for org: String) -> OrgConfig { configs[org] ?? OrgConfig() }
 
+    /// Every org back to the defaults.
+    func clear() {
+        configs = [:]
+        UserDefaults.standard.removeObject(forKey: Self.key)
+    }
+
+    /// Bytes stored, for the Storage settings.
+    var storedBytes: Int { UserDefaults.standard.data(forKey: Self.key)?.count ?? 0 }
+
     func update(_ org: String, _ change: (inout OrgConfig) -> Void) {
         var config = config(for: org)
         change(&config)

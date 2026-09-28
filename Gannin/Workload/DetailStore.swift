@@ -64,6 +64,8 @@ final class DetailStore {
         return age < Self.maxAgeWithoutUpdatedAt
     }
 
+    static var cacheFile: URL { fileURL }
+
     func clear() {
         details = [:]
         errors = [:]

@@ -137,6 +137,15 @@ final class BankHolidayStore {
 
     private static func cacheKey(_ country: String, _ year: Int) -> String { "\(country) \(year)" }
 
+    /// Fetched again as they're needed.
+    func clear() {
+        holidays = [:]
+        countries = []
+        try? FileManager.default.removeItem(at: Self.directory)
+    }
+
+    static var cacheDirectory: URL { directory }
+
     // MARK: Disk cache
 
     private static var directory: URL {

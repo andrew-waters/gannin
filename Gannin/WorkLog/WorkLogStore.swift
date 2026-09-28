@@ -133,6 +133,8 @@ final class WorkLogStore {
         return ranges
     }
 
+    static var cacheDirectory: URL { directory }
+
     func clear() {
         histories = [:]
         errors = [:]

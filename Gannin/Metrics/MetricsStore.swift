@@ -145,6 +145,8 @@ final class MetricsStore {
         return weeks
     }
 
+    static var cacheDirectory: URL { directory }
+
     func clear() {
         histories = [:]
         errors = [:]

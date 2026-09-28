@@ -159,6 +159,8 @@ final class IssueStore {
         save(history)
     }
 
+    static var cacheDirectory: URL { directory }
+
     func clear() {
         histories = [:]
         errors = [:]
