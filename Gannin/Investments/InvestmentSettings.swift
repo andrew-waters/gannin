@@ -209,7 +209,17 @@ private struct InvestmentCategoryEditor: View {
                         }
                         .buttonStyle(.borderless)
                     } header: {
-                        Text(rule.conditions.count > 1 ? "Rule: all of these" : "Rule")
+                        let kind = config.trackedBy.writesToGitHub ? "Suggestion rule" : "Rule"
+                        Text(rule.conditions.count > 1 ? "\(kind): all of these" : kind)
+                    } footer: {
+                        if Self.repeatsTracked(rule, category: category, tracking: config.trackedBy) {
+                            HStack {
+                                Text("This rule only repeats the \(config.trackedBy.valueName.lowercased()), so it never suggests anything.")
+                                    .foregroundStyle(.orange)
+                                Button("Remove It") { category.rules.removeAll { $0.id == rule.id } }
+                                    .linkButton()
+                            }
+                        }
                     }
                 }
 
@@ -218,7 +228,9 @@ private struct InvestmentCategoryEditor: View {
                         category.rules.append(InvestmentRule(conditions: [InvestmentCondition(field: .label, op: .isEqual, value: "")]))
                     }
                 } footer: {
-                    Text(matchSummary(issues, history: history, config: config))
+                    Text(config.trackedBy.writesToGitHub
+                         ? "Optional. Issues get their category from GitHub; rules only suggest one when assigning issues that don't have it yet, so they're worth adding for things other than the \(config.trackedBy.valueName.lowercased()) (a label, a type, a repository)."
+                         : matchSummary(issues, history: history, config: config))
                         .foregroundStyle(.secondary)
                 }
             }
@@ -251,6 +263,21 @@ private struct InvestmentCategoryEditor: View {
             .padding(16)
         }
         .frame(width: 640, height: 620)
+    }
+
+    /// A rule that only checks the category's own label or option: it can
+    /// only match issues already in the category.
+    static func repeatsTracked(_ rule: InvestmentRule, category: InvestmentCategory, tracking: InvestmentTracking) -> Bool {
+        guard let value = category.githubValue, !value.isEmpty, !rule.conditions.isEmpty else { return false }
+        return rule.conditions.allSatisfy { condition in
+            let sameValue = condition.value.caseInsensitiveCompare(value) == .orderedSame && (condition.op == .isEqual || condition.op == .contains || condition.op == .startsWith)
+            switch tracking {
+            case .gannin: return false
+            case .labels: return condition.field == .label && sameValue
+            case .projectField(_, _, let field):
+                return condition.field == .projectField && (condition.projectField ?? "").caseInsensitiveCompare(field) == .orderedSame && sameValue
+            }
+        }
     }
 
     private func githubSuggestions(_ tracking: InvestmentTracking, suggestions: Suggestions) -> [String] {
