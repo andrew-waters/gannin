@@ -120,6 +120,7 @@ struct TimeOffCalendarView: View {
                 ToolbarItem {
                     Text(title)
                         .foregroundStyle(.secondary)
+                        .toolbarTextPadding()
                         .fixedSize()
                 }
                 ToolbarItemGroup { controlItems }

@@ -63,3 +63,15 @@ extension Color {
         #endif
     }
 }
+
+extension View {
+    /// Text alone in a toolbar item: the Mac gives it a capsule of its own
+    /// with no inset, so it needs room; iPad groups it with its neighbours.
+    func toolbarTextPadding() -> some View {
+        #if os(macOS)
+        padding(.horizontal, 10)
+        #else
+        self
+        #endif
+    }
+}

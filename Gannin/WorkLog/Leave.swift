@@ -314,6 +314,7 @@ struct LeaveReportView: View {
             ToolbarItem {
                 Text("\(year.label) · \(year.range)")
                     .foregroundStyle(.secondary)
+                    .toolbarTextPadding()
                     .fixedSize()
             }
             ToolbarItem {

@@ -164,6 +164,7 @@ struct WorkLogPage: View {
                     .foregroundStyle(.secondary)
                     .monospacedDigit()
             }
+            .toolbarTextPadding()
             .fixedSize()
         }
         ToolbarItem {
