@@ -257,6 +257,10 @@ added, removed or created, and the tracked board field set), always confirmed fi
   that close them (with their commit and review dates). Closed weeks are fetched as parallel
   searches, changes by `updated:`, and open issues in full hourly, because board moves don't
   touch `updatedAt`. Reading boards needs the `project` scope.
+- Issues › Not on a board (`OffBoardIssuesView`) lists stored issues on no board, or not on a
+  chosen one (starting from the investments board), open, closed or all. Select them and add
+  them to a board in bulk through `BulkWriteSheet` (confirm, then each ticked off, open until
+  Done), which also records them locally (`IssueStore.recordAddedToBoard`).
 - `IssueWorkflow` (per org, Settings) picks the project and the statuses that count as in
   progress, and whether to fall back to the first linked PR. Cycle time is time spent in
   those statuses (pauses don't count); lead time is created to closed as completed; flow

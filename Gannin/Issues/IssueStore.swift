@@ -168,6 +168,16 @@ final class IssueStore {
         save(history)
     }
 
+    /// An issue added to a board from the app, shown before the next fetch.
+    func recordAddedToBoard(org: String, issueID: String, projectNumber: Int, projectTitle: String) {
+        guard var history = histories[org], var record = history.issues[issueID],
+              record.fields(onProject: projectNumber) == nil else { return }
+        record.projectFields.append(IssueProjectFields(projectNumber: projectNumber, projectTitle: projectTitle, values: [:]))
+        history.issues[issueID] = record
+        histories[org] = history
+        save(history)
+    }
+
     /// Records a board field saved from the app (nil clears it), so ordering
     /// by that field updates at once.
     func recordFieldValue(org: String, issueID: String, projectNumber: Int, projectTitle: String, field: String, value: IssueFieldValue?) {

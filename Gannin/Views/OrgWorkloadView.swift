@@ -38,7 +38,7 @@ struct OrgWorkloadView: View {
                 } else {
                     ProjectsLandingView(org: org) { project = $0 }
                 }
-            } else if (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && issueList == nil), let workload {
+            } else if (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && (issueList == nil || issueList == .notOnBoard)), let workload {
                 // The people and repo stats pages: no team or filter bar.
                 list(workload)
             } else {
@@ -187,7 +187,9 @@ struct OrgWorkloadView: View {
         case .people: personView(workload)
         case .pullRequests: pullRequestList(workload)
         case .issues:
-            if let issueList {
+            if issueList == .notOnBoard {
+                OffBoardIssuesView(org: org, team: workload.team)
+            } else if let issueList {
                 issueListView(workload, list: issueList)
             } else {
                 IssuesStatsView(org: org, workload: workload, selection: $selection)

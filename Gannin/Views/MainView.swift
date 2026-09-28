@@ -63,6 +63,14 @@ extension EnvironmentValues {
 enum IssueList: String, CaseIterable {
     case assigned = "Assigned"
     case unassigned = "Unassigned"
+    case notOnBoard = "Not on a board"
+
+    var title: String {
+        switch self {
+        case .assigned, .unassigned: "\(rawValue) issues"
+        case .notOnBoard: "Issues not on a board"
+        }
+    }
 }
 
 struct MainView: View {
@@ -186,7 +194,7 @@ struct MainView: View {
         case .repositories:
             return repository.map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? "Repositories"
         case .issues:
-            return issueList.map { "\($0.rawValue) issues" } ?? "Issues"
+            return issueList?.title ?? "Issues"
         case .projects:
             return project.map { number in projectStore.boardLists[selectedOrg]?.first { $0.number == number }?.title ?? "Project \(number)" } ?? "Projects"
         default:
@@ -369,7 +377,7 @@ private struct ColumnBrowser: View {
     /// the list tabs. Either can be dragged, and the width is remembered.
     /// Dashboard and the People stats hold wide tables.
     private var isWide: Bool {
-        tab == .dashboard || tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && issueList == nil) || tab == .projects
+        tab == .dashboard || tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && (issueList == nil || issueList == .notOnBoard)) || tab == .projects
     }
 
     private func rootWidth(available: CGFloat) -> CGFloat {
@@ -471,6 +479,7 @@ private struct ColumnBrowser: View {
 
 struct OrgSidebar: View {
     @Environment(OrgStore.self) private var orgs
+    @Environment(IssueStore.self) private var issueStore
     @Binding var selectedOrg: String?
     @Binding var selection: SidebarItem?
     let workload: Workload?
@@ -584,6 +593,8 @@ struct OrgSidebar: View {
         switch list {
         case .assigned: workload?.assignedIssues.count ?? 0
         case .unassigned: workload?.unassignedIssues.count ?? 0
+        // Open ones on no board, once the issue history has loaded.
+        case .notOnBoard: selectedOrg.flatMap { issueStore.history(for: $0) }?.issues.values.filter { $0.isOpen && $0.projectFields.isEmpty }.count ?? 0
         }
     }
 
