@@ -55,18 +55,20 @@ struct OrgConfig: Codable, Hashable {
     }
 }
 
+/// Each org's settings, in memory and written through to the synced
+/// `UserDatabase`; loaded again when another device's changes arrive.
 @Observable
 final class OrgConfigStore {
-    private static let key = "orgConfigs"
-
     private(set) var configs: [String: OrgConfig]
+    @ObservationIgnored private let database: UserDatabase
 
-    init() {
-        if let data = UserDefaults.standard.data(forKey: Self.key),
-           let configs = try? JSONDecoder().decode([String: OrgConfig].self, from: data) {
-            self.configs = configs
-        } else {
-            configs = [:]
+    init(database: UserDatabase) {
+        self.database = database
+        configs = database.loadConfigs()
+        database.onRemoteChange { [weak self] in
+            guard let self else { return }
+            let loaded = database.loadConfigs()
+            if loaded != configs { configs = loaded }
         }
     }
 
@@ -75,19 +77,16 @@ final class OrgConfigStore {
     /// Every org back to the defaults.
     func clear() {
         configs = [:]
-        UserDefaults.standard.removeObject(forKey: Self.key)
+        database.deleteAllConfigs()
     }
 
-    /// Bytes stored, for the Storage settings.
-    var storedBytes: Int { UserDefaults.standard.data(forKey: Self.key)?.count ?? 0 }
-
     func update(_ org: String, _ change: (inout OrgConfig) -> Void) {
-        var config = config(for: org)
+        let before = config(for: org)
+        var config = before
         change(&config)
+        guard config != before else { return }
         configs[org] = config.isEmpty ? nil : config
-        if let data = try? JSONEncoder().encode(configs) {
-            UserDefaults.standard.set(data, forKey: Self.key)
-        }
+        database.saveConfig(org: org, config.isEmpty ? nil : config)
     }
 
     func updateInvestments(_ org: String, _ change: (inout InvestmentConfig) -> Void) {

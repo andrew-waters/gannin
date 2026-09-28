@@ -17,6 +17,7 @@ struct StorageSettings: View {
     @Environment(PeopleDatesStore.self) private var peopleDates
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HiddenStore.self) private var hidden
+    @Environment(UserDatabase.self) private var database
 
     /// Bytes on disk per cache, measured when the pane opens and after a clear.
     @State private var sizes: [Cache: Int] = [:]
@@ -102,7 +103,7 @@ struct StorageSettings: View {
                     Text(peopleSummary).foregroundStyle(.secondary)
                 }
                 LabeledContent("Org settings") {
-                    Text(configs.configs.isEmpty ? "Defaults" : "\(configs.configs.count) \(configs.configs.count == 1 ? "org" : "orgs"), \(Self.size(configs.storedBytes))")
+                    Text(configs.configs.isEmpty ? "Defaults" : "\(configs.configs.count) \(configs.configs.count == 1 ? "org" : "orgs")")
                         .foregroundStyle(.secondary)
                 }
                 LabeledContent("Hidden items") {
@@ -111,12 +112,21 @@ struct StorageSettings: View {
                 LabeledContent("Starred orgs") {
                     Text("\(orgs.starred.count)").monospacedDigit().foregroundStyle(.secondary)
                 }
+                LabeledContent("Stored") {
+                    Text(Self.size(database.storedBytes)).monospacedDigit().foregroundStyle(.secondary)
+                }
+                LabeledContent("Sync") {
+                    Label(database.isSyncing ? "iCloud" : "This device only", systemImage: database.isSyncing ? "icloud" : "icloud.slash")
+                        .foregroundStyle(.secondary)
+                }
                 Button("Delete Your Data", role: .destructive) { confirming = .yourData }
                     .disabled(!hasYourData)
             } header: {
                 Text("Entered in Gannin")
             } footer: {
-                Text("Stored only on this device and never sent anywhere. Deleting it can't be undone.")
+                Text(database.isSyncing
+                     ? "Synced through your private iCloud, so your other devices signed into the same Apple Account share it. Nothing is sent anywhere else. Deleting it removes it from every device and can't be undone."
+                     : "Stored only on this device (iCloud isn't available to this build) and never sent anywhere. Deleting it can't be undone.")
                     .foregroundStyle(.secondary)
             }
 
@@ -157,7 +167,7 @@ struct StorageSettings: View {
         let people = peopleDates.dates.values.reduce(0) { $0 + $1.count }
         let entries = peopleDates.dates.values.flatMap(\.values).map(\.absences.count).reduce(0, +)
         guard people > 0 else { return "None" }
-        return "\(people) \(people == 1 ? "person" : "people"), \(entries) time off \(entries == 1 ? "entry" : "entries"), \(Self.size(peopleDates.storedBytes))"
+        return "\(people) \(people == 1 ? "person" : "people"), \(entries) time off \(entries == 1 ? "entry" : "entries")"
     }
 
     private var hasYourData: Bool {

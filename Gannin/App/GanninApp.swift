@@ -5,13 +5,14 @@ struct GanninApp: App {
     @State private var auth: AuthStore
     @State private var orgs: OrgStore
     @State private var details: DetailStore
-    @State private var hidden = HiddenStore()
+    @State private var database: UserDatabase
+    @State private var hidden: HiddenStore
     @State private var metrics: MetricsStore
     @State private var workLog: WorkLogStore
     @State private var issues: IssueStore
     @State private var projects: ProjectStore
-    @State private var orgConfigs = OrgConfigStore()
-    @State private var peopleDates = PeopleDatesStore()
+    @State private var orgConfigs: OrgConfigStore
+    @State private var peopleDates: PeopleDatesStore
     @State private var bankHolidays = BankHolidayStore()
     @State private var activity: SyncActivity
 
@@ -20,7 +21,12 @@ struct GanninApp: App {
         let activity = SyncActivity()
         _auth = State(initialValue: auth)
         _activity = State(initialValue: activity)
-        _orgs = State(initialValue: OrgStore(auth: auth, activity: activity))
+        let database = UserDatabase()
+        _database = State(initialValue: database)
+        _hidden = State(initialValue: HiddenStore(database: database))
+        _orgConfigs = State(initialValue: OrgConfigStore(database: database))
+        _peopleDates = State(initialValue: PeopleDatesStore(database: database))
+        _orgs = State(initialValue: OrgStore(auth: auth, activity: activity, database: database))
         _details = State(initialValue: DetailStore(auth: auth))
         _metrics = State(initialValue: MetricsStore(auth: auth, activity: activity))
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
@@ -49,6 +55,7 @@ struct GanninApp: App {
                 .environment(peopleDates)
                 .environment(bankHolidays)
                 .environment(activity)
+                .environment(database)
         }
         .defaultSize(width: 1280, height: 800)
         .commands {
@@ -112,6 +119,7 @@ struct GanninApp: App {
                 .environment(peopleDates)
                 .environment(orgConfigs)
                 .environment(hidden)
+                .environment(database)
         }
         #endif
     }

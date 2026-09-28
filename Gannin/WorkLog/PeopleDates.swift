@@ -146,19 +146,20 @@ enum DayStatus: Hashable {
     }
 }
 
-/// Per org, per login, in `UserDefaults`.
+/// Per org, per login, in memory and written through to the synced
+/// `UserDatabase`; loaded again when another device's changes arrive.
 @Observable
 final class PeopleDatesStore {
-    private static let key = "peopleDates"
-
     private(set) var dates: [String: [String: PersonDates]]
+    @ObservationIgnored private let database: UserDatabase
 
-    init() {
-        if let data = UserDefaults.standard.data(forKey: Self.key),
-           let dates = try? JSONDecoder().decode([String: [String: PersonDates]].self, from: data) {
-            self.dates = dates
-        } else {
-            dates = [:]
+    init(database: UserDatabase) {
+        self.database = database
+        dates = database.loadPeople()
+        database.onRemoteChange { [weak self] in
+            guard let self else { return }
+            let loaded = database.loadPeople()
+            if loaded != dates { dates = loaded }
         }
     }
 
@@ -170,19 +171,16 @@ final class PeopleDatesStore {
 
     func clear() {
         dates = [:]
-        UserDefaults.standard.removeObject(forKey: Self.key)
+        database.deleteAllPeople()
     }
 
-    /// Bytes stored, for the Storage settings.
-    var storedBytes: Int { UserDefaults.standard.data(forKey: Self.key)?.count ?? 0 }
-
     func update(_ login: String, in org: String, _ change: (inout PersonDates) -> Void) {
-        var person = dates(for: login, in: org)
+        let before = dates(for: login, in: org)
+        var person = before
         change(&person)
+        guard person != before else { return }
         dates[org, default: [:]][login] = person.isEmpty ? nil : person
-        if let data = try? JSONEncoder().encode(dates) {
-            UserDefaults.standard.set(data, forKey: Self.key)
-        }
+        database.savePerson(org: org, login: login, person)
     }
 }
 

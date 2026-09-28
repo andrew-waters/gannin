@@ -17,7 +17,7 @@ xcodebuild -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS
 Swift 6 with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so everything is main-actor unless
 marked otherwise. The app is sandboxed with outgoing network access only.
 
-The target also builds for iPad (`supportedDestinations: [macOS, iOS]`, iPad only), from the
+The target also builds for iPhone and iPad (`supportedDestinations: [macOS, iOS]`), from the
 same sources:
 
 ```bash
@@ -28,6 +28,15 @@ Mac-only styles and modifiers go through `App/Platform.swift` (`checkboxToggle`,
 `onEscape`, `windowSubtitle`, `Color.separatorLine`); anything else AppKit sits behind
 `#if os(macOS)`. Window tabs and Rename Tab are the Mac's; on iPad the app's Settings open as a
 sheet from the account menu.
+
+What's entered in Gannin (people's dates and time off, org settings, hidden items, stars) is
+kept in SwiftData (`Sync/UserDatabase.swift`) and synced through the private CloudKit database
+`iCloud.dev.andon.getgannin`; without the entitlement it falls back to a local store. The
+stores keep their data in memory, write through, and load again on remote changes. Records
+have no unique constraints (CloudKit allows none), so duplicates from two devices are merged
+on load: newest wins, time off merges by its UUID. It was copied from `UserDefaults` once
+(`userDataMigrated`). GitHub caches stay local JSON. Mac builds need `-allowProvisioningUpdates`
+for the iCloud profile.
 
 The app's settings (`SettingsView`) are General and Storage panes on the Mac (a form with a
 Storage page on iPad). Storage (`StorageSettings`) shows each cache's size on disk with Clear

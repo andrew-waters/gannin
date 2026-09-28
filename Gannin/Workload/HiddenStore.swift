@@ -6,12 +6,18 @@ import SwiftUI
 /// IDs for issues and PRs, and `person:<login>` for people.
 @Observable
 final class HiddenStore {
-    private static let key = "hiddenItems"
-
     private(set) var keys: Set<String>
+    @ObservationIgnored private let database: UserDatabase
 
-    init() {
-        keys = Set(UserDefaults.standard.stringArray(forKey: Self.key) ?? [])
+    /// In memory, written through to the synced `UserDatabase`.
+    init(database: UserDatabase) {
+        self.database = database
+        keys = database.loadHidden()
+        database.onRemoteChange { [weak self] in
+            guard let self else { return }
+            let loaded = database.loadHidden()
+            if loaded != keys { keys = loaded }
+        }
     }
 
     static func personKey(_ login: String) -> String { "person:\(login)" }
@@ -19,17 +25,14 @@ final class HiddenStore {
     func isHidden(_ key: String) -> Bool { keys.contains(key) }
 
     func toggle(_ key: String) {
-        if keys.contains(key) {
-            keys.remove(key)
-        } else {
-            keys.insert(key)
-        }
-        UserDefaults.standard.set(keys.sorted(), forKey: Self.key)
+        let hide = !keys.contains(key)
+        if hide { keys.insert(key) } else { keys.remove(key) }
+        database.setHidden(key, hide)
     }
 
     func clear() {
         keys = []
-        UserDefaults.standard.removeObject(forKey: Self.key)
+        database.deleteAllHidden()
     }
 }
 

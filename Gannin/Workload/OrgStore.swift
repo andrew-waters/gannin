@@ -7,7 +7,6 @@ import Observation
 final class OrgStore {
     static let lookbackDaysKey = "lookbackDays"
     static let defaultLookbackDays = 14
-    private static let starredKey = "starredOrgs"
     private static let orgsKey = "orgs"
 
     private(set) var orgs: [Organisation] = []
@@ -19,11 +18,19 @@ final class OrgStore {
 
     private let auth: AuthStore
     private let activity: SyncActivity
+    @ObservationIgnored private let database: UserDatabase
 
-    init(auth: AuthStore, activity: SyncActivity) {
+    /// Stars are kept in the synced `UserDatabase`.
+    init(auth: AuthStore, activity: SyncActivity, database: UserDatabase) {
         self.auth = auth
         self.activity = activity
-        starred = Set(UserDefaults.standard.stringArray(forKey: Self.starredKey) ?? [])
+        self.database = database
+        starred = database.loadStars()
+        database.onRemoteChange { [weak self] in
+            guard let self else { return }
+            let loaded = database.loadStars()
+            if loaded != starred { starred = loaded }
+        }
         if let data = UserDefaults.standard.data(forKey: Self.orgsKey),
            let cached = try? JSONDecoder().decode([Organisation].self, from: data) {
             orgs = cached
@@ -46,17 +53,14 @@ final class OrgStore {
     func isStarred(_ org: Organisation) -> Bool { starred.contains(org.login) }
 
     func toggleStar(_ org: Organisation) {
-        if starred.contains(org.login) {
-            starred.remove(org.login)
-        } else {
-            starred.insert(org.login)
-        }
-        UserDefaults.standard.set(starred.sorted(), forKey: Self.starredKey)
+        let star = !starred.contains(org.login)
+        if star { starred.insert(org.login) } else { starred.remove(org.login) }
+        database.setStar(org.login, star)
     }
 
     func clearStars() {
         starred = []
-        UserDefaults.standard.removeObject(forKey: Self.starredKey)
+        database.deleteAllStars()
     }
 
     /// Drops the cached snapshots but keeps the org list; each org is
