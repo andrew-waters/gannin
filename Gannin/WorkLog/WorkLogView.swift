@@ -143,6 +143,28 @@ struct WorkLogPage: View {
         }
     }
 
+    private func rangeLabel(_ columns: [WorkLogGrid.Column]) -> some View {
+        HStack(spacing: 8) {
+            if store.syncing.contains(org) {
+                ProgressView().controlSize(.small)
+            }
+            Text(Self.rangeLabel(columns))
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        }
+        .fixedSize()
+    }
+
+    private var scalePicker: some View {
+        Picker("Scale", selection: $scale) {
+            ForEach(WorkLogScale.allCases) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
+        .help("What each column covers")
+    }
+
     /// The tabs in the middle of the toolbar; the range, scale and paging
     /// at its end.
     @ToolbarContentBuilder
@@ -155,27 +177,21 @@ struct WorkLogPage: View {
             .labelsHidden()
             .fixedSize()
         }
+        #if os(macOS)
+        // One item, so the Mac draws the range and the scale in one capsule
+        // as iPad does with neighbouring items.
         ToolbarItem {
-            HStack(spacing: 8) {
-                if store.syncing.contains(org) {
-                    ProgressView().controlSize(.small)
-                }
-                Text(Self.rangeLabel(columns))
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
+            HStack(spacing: 10) {
+                rangeLabel(columns)
+                    .padding(.leading, 10)
+                scalePicker
             }
-            .toolbarTextPadding()
             .fixedSize()
         }
-        ToolbarItem {
-            Picker("Scale", selection: $scale) {
-                ForEach(WorkLogScale.allCases) { Text($0.rawValue).tag($0) }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            .help("What each column covers")
-        }
+        #else
+        ToolbarItem { rangeLabel(columns) }
+        ToolbarItem { scalePicker }
+        #endif
         ToolbarItem {
             ControlGroup {
                 Button { pagesBack += 1 } label: { Label("Earlier", systemImage: "chevron.left") }
