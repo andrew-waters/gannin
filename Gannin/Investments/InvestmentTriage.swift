@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Assign to Categories: a queue of issues, one at a time, each put in a
-/// category with a click or its number key (Skip and Back with the arrows).
+/// category with a click or its number key (Next and Back with the arrows).
 /// The rules' suggestion is marked. Tracked in Gannin, each choice applies
 /// at once; tracked in GitHub, choices collect until Review and Write, which
 /// shows every change before making it.
@@ -74,7 +74,7 @@ struct InvestmentTriage: View {
             Button { index = max(0, index - 1) } label: { Label("Back", systemImage: "chevron.left") }
                 .keyboardShortcut(.leftArrow, modifiers: [])
                 .disabled(index == 0)
-            Button { index = min(queue.issues.count, index + 1) } label: { Label("Skip", systemImage: "chevron.right") }
+            Button { index = min(queue.issues.count, index + 1) } label: { Label("Next", systemImage: "chevron.right") }
                 .keyboardShortcut(.rightArrow, modifiers: [])
                 .disabled(index >= queue.issues.count)
             Spacer()
@@ -269,7 +269,7 @@ struct InvestmentTriage: View {
             Image(systemName: "checkmark.circle").font(.largeTitle).foregroundStyle(.secondary)
             Text("That's the lot.").font(.title3)
             Text(chosen.isEmpty
-                 ? "Nothing assigned. Go Back to pick up any you skipped."
+                 ? "Nothing assigned. Go Back to pick up any you passed."
                  : config.trackedBy.writesToGitHub ? "Review and Write shows the changes before anything is written to GitHub." : "Your choices are saved.")
                 .foregroundStyle(.secondary)
         }
