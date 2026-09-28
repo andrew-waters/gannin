@@ -269,7 +269,7 @@ struct InvestmentTriage: View {
             Image(systemName: "checkmark.circle").font(.largeTitle).foregroundStyle(.secondary)
             Text("That's the lot.").font(.title3)
             Text(chosen.isEmpty
-                 ? "Nothing assigned. Go to Previous to pick up any you passed."
+                 ? "Nothing assigned. Use Previous to pick up any you passed."
                  : config.trackedBy.writesToGitHub ? "Review and Write shows the changes before anything is written to GitHub." : "Your choices are saved.")
                 .foregroundStyle(.secondary)
         }
