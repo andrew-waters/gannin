@@ -2,6 +2,8 @@ import SwiftUI
 
 struct OrgWorkloadView: View {
     @Environment(OrgStore.self) private var orgs
+    @Environment(ProjectStore.self) private var projects
+    @Environment(OrgConfigStore.self) private var configs
     @Environment(MetricsStore.self) private var metricsStore
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("excludeDrafts") private var excludeDrafts = false
@@ -52,7 +54,14 @@ struct OrgWorkloadView: View {
                 ToolbarItem { windowPicker }
             }
         }
-        .task { await orgs.refreshIfStale(org) }
+        .task {
+            await orgs.refreshIfStale(org)
+            // The investments board's fields, when stale; the board list
+            // loads with the sidebar.
+            if case .projectField(let number, _, _) = configs.config(for: org).investmentConfig.trackedBy, number != 0 {
+                await projects.loadDefinition(org: org, number: number)
+            }
+        }
         .task(id: windowDays) { await metricsStore.sync(org, windowDays: windowDays) }
     }
 

@@ -30,11 +30,47 @@ final class ProjectStore {
 
     func isLoading(org: String, number: Int) -> Bool { loading.contains(Self.key(org, number)) }
 
+    /// The org's open boards: from disk at once, then fetched again.
     func loadBoards(org: String) async {
+        loadCachedBoards(org)
         guard let api = auth.api else { return }
         if let projects = try? await api.orgProjects(org: org) {
             boardLists[org] = projects
+            if let data = try? Self.encoder.encode(projects) {
+                try? data.write(to: Self.boardListURL(org), options: .atomic)
+            }
         }
+    }
+
+    private func loadCachedBoards(_ org: String) {
+        guard boardLists[org] == nil,
+              let data = try? Data(contentsOf: Self.boardListURL(org)),
+              let projects = try? Self.decoder.decode([OrgProject].self, from: data) else { return }
+        boardLists[org] = projects
+    }
+
+    /// Part of Refresh: the board list, and the definitions of boards the
+    /// org's settings depend on (the tracked investments board).
+    func refresh(org: String, definitions: [Int]) async {
+        await loadBoards(org: org)
+        for number in definitions where number != 0 {
+            await loadDefinition(org: org, number: number, force: true)
+        }
+    }
+
+    /// Just the board's fields and views (no items), for settings that pick a
+    /// board field; from cache when fresh enough.
+    func loadDefinition(org: String, number: Int, force: Bool = false) async {
+        let key = Self.key(org, number)
+        loadCached(key)
+        guard let api = auth.api, !loading.contains(key) else { return }
+        if !force, let cached = caches[key], Date.now.timeIntervalSince(cached.fetchedAt) < Self.maxAge { return }
+        guard let board = try? await api.board(org: org, number: number) else { return }
+        var cache = caches[key] ?? BoardCache(board: board, fetchedAt: .now)
+        cache.board = board
+        cache.fetchedAt = .now
+        caches[key] = cache
+        save(cache, key: key)
     }
 
     /// The board's definition and the items for `filter`, from cache when
@@ -128,6 +164,10 @@ final class ProjectStore {
 
     private static var directory: URL {
         URL.applicationSupportDirectory.appending(path: "Projects", directoryHint: .isDirectory)
+    }
+
+    private static func boardListURL(_ org: String) -> URL {
+        fileURL("boards-\(org)")
     }
 
     private static func fileURL(_ key: String) -> URL {

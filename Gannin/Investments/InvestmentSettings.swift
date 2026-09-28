@@ -119,6 +119,7 @@ struct InvestmentCategoriesSection: View {
 /// Name, colour and rules for one category, saved on Done.
 private struct InvestmentCategoryEditor: View {
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(ProjectStore.self) private var projects
     @Environment(IssueStore.self) private var issueStore
     @Environment(\.dismiss) private var dismiss
 
@@ -284,7 +285,10 @@ private struct InvestmentCategoryEditor: View {
         switch tracking {
         case .gannin: []
         case .labels: suggestions.values(for: .label)
-        case .projectField(_, _, let field): suggestions.projectFieldValues(field)
+        case .projectField(let number, _, let field):
+            // The field's options in board order, else values seen on issues.
+            projects.cache(org: org, number: number)?.board.field(named: field)?.options.map(\.name)
+                ?? suggestions.projectFieldValues(field)
         }
     }
 
@@ -410,9 +414,11 @@ private struct Suggestions {
 // MARK: - Tracking
 
 /// How the org keeps investment categories: in Gannin, as labels, or as a
-/// single-select field on a board. Everything else follows it.
+/// single-select field on a board. Everything else follows it. Boards and
+/// their fields come from GitHub.
 private struct TrackingSection: View {
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(ProjectStore.self) private var projects
     let org: String
     let issues: [IssueRecord]
 
@@ -422,17 +428,11 @@ private struct TrackingSection: View {
         case projectField = "A board field"
     }
 
-    /// Boards seen on stored issues, with their fields that hold options.
-    private var boards: [(number: Int, title: String, fields: [String])] {
-        var byBoard: [Int: (title: String, fields: Set<String>)] = [:]
-        for issue in issues {
-            for board in issue.projectFields {
-                let options = board.values.filter { if case .option = $0.value { true } else { false } }.map(\.key)
-                byBoard[board.projectNumber, default: (board.projectTitle, [])].fields.formUnion(options)
-            }
-        }
-        return byBoard.map { ($0.key, $0.value.title, $0.value.fields.sorted()) }
-            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    private var boards: [OrgProject] { projects.boardLists[org] ?? [] }
+
+    /// The board's single-select fields, once its definition has loaded.
+    private func fields(_ number: Int) -> [BoardField]? {
+        projects.cache(org: org, number: number)?.board.fields.filter { $0.dataType == "SINGLE_SELECT" }
     }
 
     var body: some View {
@@ -442,25 +442,35 @@ private struct TrackingSection: View {
                 ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             if case .projectField(let number, _, let field) = tracking {
-                let boards = boards
                 Picker("Board", selection: Binding {
                     number
                 } set: { newNumber in
-                    let board = boards.first { $0.number == newNumber }
-                    set(.projectField(projectNumber: newNumber, projectTitle: board?.title ?? "", field: board?.fields.first ?? field))
+                    let title = boards.first { $0.number == newNumber }?.title ?? ""
+                    set(.projectField(projectNumber: newNumber, projectTitle: title, field: ""))
                 }) {
-                    ForEach(boards, id: \.number) { Text($0.title).tag($0.number) }
-                    if !boards.contains(where: { $0.number == number }) { Text("Project \(number)").tag(number) }
+                    if number == 0 || !boards.contains(where: { $0.number == number }) {
+                        Text(number == 0 ? (boards.isEmpty ? "Loading boards" : "Choose a board") : "Project \(number)").tag(number)
+                    }
+                    ForEach(boards) { Text($0.title).tag($0.number) }
                 }
-                Picker("Field", selection: Binding {
-                    field
-                } set: { newField in
-                    let board = boards.first { $0.number == number }
-                    set(.projectField(projectNumber: number, projectTitle: board?.title ?? "", field: newField))
-                }) {
-                    let fields = boards.first { $0.number == number }?.fields ?? []
-                    ForEach(fields, id: \.self) { Text($0).tag($0) }
-                    if !fields.contains(field) { Text(field.isEmpty ? "Choose a field" : field).tag(field) }
+                .task { await projects.loadBoards(org: org) }
+                if number != 0 {
+                    let fields = fields(number)
+                    Picker("Field", selection: Binding {
+                        field
+                    } set: { newField in
+                        let title = boards.first { $0.number == number }?.title ?? ""
+                        set(.projectField(projectNumber: number, projectTitle: title, field: newField))
+                    }) {
+                        if field.isEmpty || !(fields ?? []).contains(where: { $0.name == field }) {
+                            Text(field.isEmpty ? (fields == nil ? "Loading fields" : "Choose a field") : field).tag(field)
+                        }
+                        ForEach(fields ?? []) { Text($0.name).tag($0.name) }
+                    }
+                    .task(id: number) { await projects.loadDefinition(org: org, number: number) }
+                    if let fields, fields.isEmpty {
+                        Text("This board has no single-select fields.").foregroundStyle(.secondary)
+                    }
                 }
             }
         } header: {
@@ -495,8 +505,8 @@ private struct TrackingSection: View {
             case .gannin: set(.gannin)
             case .labels: set(.labels)
             case .projectField:
-                let board = boards.first
-                set(.projectField(projectNumber: board?.number ?? 0, projectTitle: board?.title ?? "", field: board?.fields.first ?? ""))
+                if case .projectField = tracking { return }
+                set(.projectField(projectNumber: 0, projectTitle: "", field: ""))
             }
         }
     }

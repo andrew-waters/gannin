@@ -166,6 +166,9 @@ added, removed or created, and the tracked board field set), always confirmed fi
     needed) and every GitHub write is confirmed first (`InvestmentConfirmation`), through
     the window's `InvestmentPrompt` (`.investmentPrompt()` on the main and issue windows).
     Missing labels are created in the repo. Writes update the local issue history at once.
+- The Board and Field pickers come from GitHub: `ProjectStore.boardLists` (cached on disk per
+  org) and `loadDefinition` (a board's fields and options, no items). Refresh includes both
+  (`ProjectStore.refresh`), for the tracked board; opening the org loads it when stale.
 - Assign to Categories (`InvestmentTriage`) goes through a queue of issues one at a time,
   number keys for categories and arrows to skip or go back, with the rules' suggestion
   marked; GitHub-tracked choices collect until Review and Write. The Investments page lists a

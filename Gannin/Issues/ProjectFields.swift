@@ -10,7 +10,7 @@ struct ProjectItem: Identifiable {
 }
 
 /// A project board in the org, for Add to Project.
-struct OrgProject: Identifiable, Hashable {
+struct OrgProject: Codable, Identifiable, Hashable {
     let id: String
     let number: Int
     let title: String

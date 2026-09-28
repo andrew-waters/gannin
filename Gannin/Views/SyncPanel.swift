@@ -21,6 +21,8 @@ struct SyncFooter: View {
     @Environment(MetricsStore.self) private var metricsStore
     @Environment(WorkLogStore.self) private var workLog
     @Environment(IssueStore.self) private var issueStore
+    @Environment(ProjectStore.self) private var projects
+    @Environment(OrgConfigStore.self) private var configs
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     let org: String
 
@@ -188,6 +190,11 @@ struct SyncFooter: View {
 
     /// Workload and metrics in parallel, so both sections are in the panel
     /// from the start and it doesn't grow part way through.
+    private var trackedBoards: [Int] {
+        if case .projectField(let number, _, _) = configs.config(for: org).investmentConfig.trackedBy { return [number] }
+        return []
+    }
+
     private func refresh(_ mode: OrgStore.RefreshMode) {
         Task {
             async let workload: Void = orgs.refresh(org, mode: mode)
@@ -195,7 +202,9 @@ struct SyncFooter: View {
             // The work log only once it's been opened for this org.
             async let log: Void = workLog.isTracking(org) ? workLog.sync(org, force: true) : ()
             async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: windowDays, force: true) : ()
-            _ = await (workload, metrics, log, issues)
+            // Boards, and the board investments are tracked on.
+            async let boards: Void = projects.refresh(org: org, definitions: trackedBoards)
+            _ = await (workload, metrics, log, issues, boards)
         }
     }
 }
