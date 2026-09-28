@@ -350,7 +350,9 @@ struct InvestmentConfirmation: View {
                         .frame(width: 160)
                     Text("\(done) of \(count)").monospacedDigit().foregroundStyle(.secondary)
                 } else if let failures {
-                    Text(failures.isEmpty ? "Done." : "\(count - failures.count) updated, \(failures.count) failed.")
+                    Text(failures.isEmpty
+                         ? (count == 1 ? "Updated on GitHub." : "All \(count) updated on GitHub.")
+                         : "\(count - failures.count) updated, \(failures.count) failed.")
                         .foregroundStyle(failures.isEmpty ? Color.secondary : .red)
                 }
                 Spacer()
@@ -409,11 +411,7 @@ struct InvestmentConfirmation: View {
             done = count
         }
         isApplying = false
+        // Stays open with every row ticked (or marked failed) until Done.
         failures = result
-        if result.isEmpty {
-            // A moment to see every row ticked before it closes.
-            try? await Task.sleep(for: .seconds(0.8))
-            onClose()
-        }
     }
 }
