@@ -20,6 +20,12 @@ struct InvestmentsView: View {
     @State private var selectedBucket: Date?
     /// The category whose issues are listed on the page.
     @State private var shown: InvestmentBalance.Key?
+    @AppStorage("investmentChartValues") private var chartValues: ChartValues = .count
+
+    enum ChartValues: String, CaseIterable {
+        case count = "Count"
+        case share = "Share"
+    }
     /// Issues being assigned to categories one at a time.
     @State private var triage: InvestmentTriage.Queue?
     @Environment(\.openWindow) private var openWindow
@@ -46,10 +52,23 @@ struct InvestmentsView: View {
                     }
                     if scope == .completed {
                         Section {
-                            InvestmentChart(balance: balance, period: period, selected: $selectedBucket)
+                            InvestmentChart(balance: balance, period: period, asShare: chartValues == .share, selected: $selectedBucket)
                                 .sectionContent()
                         } header: {
-                            PinnedHeader { Text("Completed per \(period.rawValue.lowercased())") }
+                            PinnedHeader {
+                                HStack(spacing: 12) {
+                                    Text("Completed per \(period.rawValue.lowercased())")
+                                    Spacer(minLength: 8)
+                                    Picker("Show", selection: $chartValues) {
+                                        ForEach(ChartValues.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                                    }
+                                    .pickerStyle(.segmented)
+                                    .labelsHidden()
+                                    .fixedSize()
+                                    .font(.body)
+                                    .help("Issues per category, or each category's share of the period")
+                                }
+                            }
                         }
                     }
                     let shares = scope == .completed ? balance.completed(in: selectedBucket) : balance.inProgress
@@ -380,6 +399,8 @@ private struct ShareBar: View {
 private struct InvestmentChart: View {
     let balance: InvestmentBalance
     let period: IssueMetrics.Granularity
+    /// Each category as a percentage of its period, rather than a count.
+    let asShare: Bool
     @Binding var selected: Date?
     @State private var hovered: Date?
 
@@ -387,6 +408,8 @@ private struct InvestmentChart: View {
         let start: Date
         let name: String
         let count: Int
+        /// Percent of the period's issues.
+        let share: Double
         var id: String { "\(start.timeIntervalSince1970)-\(name)" }
     }
 
@@ -400,10 +423,14 @@ private struct InvestmentChart: View {
         }
     }
 
+    /// The middle of each period (thinned to about ten), where its bar is
+    /// drawn, so every label sits under its bar.
     private var axisValues: [Date] {
         let starts = balance.buckets.map(\.start)
         let stride = max(1, Int((Double(starts.count) / 10).rounded(.up)))
-        return starts.enumerated().filter { $0.offset % stride == 0 }.map(\.element)
+        return starts.enumerated().filter { $0.offset % stride == 0 }.map { _, start in
+            start.addingTimeInterval(period.next(after: start).timeIntervalSince(start) / 2)
+        }
     }
 
     static func label(_ bucket: InvestmentBalance.Bucket, period: IssueMetrics.Granularity) -> String {
@@ -418,23 +445,37 @@ private struct InvestmentChart: View {
 
     var body: some View {
         let points = balance.buckets.flatMap { bucket in
-            balance.categories.map { Point(start: bucket.start, name: $0.name, count: bucket.count($0.key)) }
+            let total = balance.categories.map { bucket.count($0.key) }.reduce(0, +)
+            return balance.categories.map { category in
+                let count = bucket.count(category.key)
+                return Point(start: bucket.start, name: category.name, count: count, share: total > 0 ? Double(count) / Double(total) * 100 : 0)
+            }
         }
         let focus = hovered ?? selected
         VStack(alignment: .leading, spacing: 8) {
             Chart(points) { point in
-                BarMark(x: .value("Period", point.start, unit: unit), y: .value("Issues", point.count))
+                BarMark(x: .value("Period", point.start, unit: unit), y: asShare ? .value("Share", point.share) : .value("Issues", Double(point.count)))
                     .foregroundStyle(by: .value("Category", point.name))
                     .opacity(focus == nil || focus == point.start ? 1 : 0.4)
             }
             .chartForegroundStyleScale(domain: balance.categories.map(\.name), range: balance.categories.map { ChartPalette.slot($0.slot) })
-            .chartLegend(position: .top, alignment: .leading)
-            .chartYAxis { AxisMarks(position: .leading) { _ in AxisGridLine().foregroundStyle(.quaternary); AxisValueLabel() } }
+            .chartLegend(position: .bottom, alignment: .leading, spacing: 14)
+            .chartYScale(domain: asShare ? 0...100 : 0...Double(max(1, balance.buckets.map { bucket in balance.categories.map { bucket.count($0.key) }.reduce(0, +) }.max() ?? 1)))
+            .chartYAxis {
+                if asShare {
+                    AxisMarks(position: .leading, values: [0, 25, 50, 75, 100]) { value in
+                        AxisGridLine().foregroundStyle(.quaternary)
+                        AxisValueLabel { Text("\(value.as(Double.self).map { Int($0) } ?? 0)%") }
+                    }
+                } else {
+                    AxisMarks(position: .leading) { _ in AxisGridLine().foregroundStyle(.quaternary); AxisValueLabel() }
+                }
+            }
             .chartXAxis {
                 // One label per period (thinned to about ten), so a quarter
                 // isn't labelled once per month.
                 AxisMarks(values: axisValues) { _ in
-                    AxisValueLabel(format: period.axisFormat, centered: true)
+                    AxisValueLabel(format: period.axisFormat)
                 }
             }
             .chartOverlay { proxy in
@@ -454,7 +495,12 @@ private struct InvestmentChart: View {
             }
             .frame(height: 220)
             if let focus, let bucket = balance.buckets.first(where: { $0.start == focus }) {
-                let parts = balance.categories.filter { bucket.count($0.key) > 0 }.map { "\($0.name) \(bucket.count($0.key))" }
+                let total = balance.categories.map { bucket.count($0.key) }.reduce(0, +)
+                let parts = balance.categories.filter { bucket.count($0.key) > 0 }.map { category in
+                    asShare
+                        ? "\(category.name) \((Double(bucket.count(category.key)) / Double(max(total, 1))).formatted(.percent.precision(.fractionLength(0))))"
+                        : "\(category.name) \(bucket.count(category.key))"
+                }
                 Text("\(Self.label(bucket, period: period).prefix(1).uppercased() + Self.label(bucket, period: period).dropFirst()): \(parts.isEmpty ? "nothing completed" : parts.joined(separator: ", "))")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
