@@ -31,6 +31,8 @@ struct OrgWorkloadView: View {
         Group {
             if tab == .settings {
                 OrgSettingsView(org: org)
+            } else if tab == .actions {
+                ActionsView(org: org, selection: $selection)
             } else if tab == .projects {
                 if let project {
                     ProjectBoardView(org: org, number: project)
@@ -160,7 +162,7 @@ struct OrgWorkloadView: View {
     /// Repositories and Issues stats (not a person, repo or list in them).
     private var hasWindowPicker: Bool {
         switch tab {
-        case .dashboard, .investments: true
+        case .dashboard, .investments, .actions: true
         case .people: person == nil && peopleView == nil
         case .repositories: repository == nil
         case .issues: issueList == nil
@@ -196,8 +198,7 @@ struct OrgWorkloadView: View {
             }
         case .repositories: repositoryView(workload)
         case .investments: InvestmentsView(org: org, team: workload.team, selection: $selection)
-        case .projects: EmptyView()
-        case .settings: EmptyView()
+        case .projects, .actions, .settings: EmptyView()
         }
     }
 
@@ -329,7 +330,7 @@ struct PullRequestRow: View {
             AvatarStack(people: pr.assignees.isEmpty ? pr.author.map { [$0] } ?? [] : pr.assignees)
         }
         .padding(.vertical, 2)
-        .hideable(pr.id, url: pr.url)
+        .hideable(pr.id, url: pr.url, opens: .pullRequest(pr.id))
     }
 }
 
@@ -359,6 +360,6 @@ struct IssueRow: View {
             AvatarStack(people: issue.assignees)
         }
         .padding(.vertical, 2)
-        .hideable(issue.id, url: issue.url)
+        .hideable(issue.id, url: issue.url, opens: .issue(issue.id))
     }
 }

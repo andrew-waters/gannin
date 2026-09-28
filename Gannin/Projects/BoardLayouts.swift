@@ -9,6 +9,7 @@ struct BoardTableView: View {
     let groupBy: String?
     let visibleFields: [String]
     let open: (BoardItem) -> Void
+    @Environment(\.currentOrg) private var org
 
     @State private var sort: StatsSort?
     @State private var collapsed: Set<String> = []
@@ -39,7 +40,7 @@ struct BoardTableView: View {
                         .buttonStyle(.plain)
                     }
                     if !collapsed.contains(group.id) {
-                        StatsTable(rows: group.items, columns: columns, sort: $sort, selectedID: nil, onSelect: open)
+                        StatsTable(rows: group.items, columns: columns, sort: $sort, selectedID: nil, onSelect: open, destination: { item in org.flatMap(item.page) })
                             .padding(.horizontal, 8)
                     }
                 }
@@ -177,6 +178,7 @@ struct BoardColumnsView: View {
     let swimlaneBy: String?
     let visibleFields: [String]
     let open: (BoardItem) -> Void
+    @Environment(\.currentOrg) private var org
 
     private static let columnWidth: CGFloat = 290
 
@@ -263,6 +265,9 @@ struct BoardColumnsView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let page = org.flatMap(item.page) { OpenElsewhereItems(page) }
+        }
     }
 }
 

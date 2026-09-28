@@ -43,13 +43,16 @@ nonisolated struct RateLimit: Decodable, Equatable, Sendable {
 
 /// Thin GitHub GraphQL client. Every call is a read, except adding an issue
 /// to or removing it from a project board and setting its fields there,
-/// from the issue window (`ProjectFields.swift`).
+/// from the issue window (`ProjectFields.swift`). Actions runs and jobs are
+/// REST only (`ActionsQueries.swift`).
 struct GitHubAPI {
     let token: String
     /// Told the budget after every query.
     var onRateLimit: (@MainActor @Sendable (RateLimit) -> Void)?
     /// Told the token's OAuth scopes (GitHub's `X-OAuth-Scopes` header).
     var onScopes: (@MainActor @Sendable (Set<String>) -> Void)?
+    /// Told the REST budget after every REST request (Actions runs and jobs).
+    var onRESTRateLimit: (@MainActor @Sendable (RateLimit) -> Void)?
 
     private static let endpoint = URL(string: "https://api.github.com/graphql")!
 

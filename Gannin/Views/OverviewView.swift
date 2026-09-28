@@ -315,6 +315,8 @@ struct StatTile: View {
     var detail: String?
     var drill: MetricDrill?
     var selection: Binding<DetailSelection?>?
+    /// Change on the period before, beside the value.
+    var change: StatChange?
 
     var body: some View {
         if let drill, let selection {
@@ -325,6 +327,7 @@ struct StatTile: View {
                 tile(isSelected: isSelected)
             }
             .buttonStyle(.plain)
+            .opensElsewhere(.metric(drill))
         } else {
             tile(isSelected: false)
         }
@@ -340,8 +343,12 @@ struct StatTile: View {
             }
             .font(.callout)
             .foregroundStyle(.secondary)
-            Text(value)
-                .font(.title.weight(.semibold).monospacedDigit())
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(value)
+                    .font(.title.weight(.semibold).monospacedDigit())
+                ChangeLabel(change: change)
+                    .font(.callout.weight(.medium))
+            }
             if let detail {
                 Text(detail)
                     .font(.callout)

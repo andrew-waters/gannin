@@ -36,6 +36,9 @@ struct IssueWindow: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(DetailStore.self) private var details
     let reference: IssueReference
+    /// Shown as a page in a main window rather than a window of its own:
+    /// the main window has the title and the investment prompt.
+    var isEmbedded = false
 
     var body: some View {
         let record = store.history(for: reference.org)?.issues[reference.id]
@@ -58,11 +61,10 @@ struct IssueWindow: View {
                 .frame(width: 340)
             }
         }
-        .frame(minWidth: 860, minHeight: 480)
-        .navigationTitle("\(reference.repo)#\(reference.number)")
-        .windowSubtitle(reference.title)
+        .frame(minWidth: isEmbedded ? nil : 860, minHeight: isEmbedded ? nil : 480)
+        .ownWindowTitle(isEmbedded ? nil : "\(reference.repo)#\(reference.number)", subtitle: reference.title)
         .task(id: reference.id) { await details.load(reference.id) }
-        .investmentPrompt()
+        .modifier(OwnInvestmentPrompt(isEnabled: !isEmbedded))
     }
 
     /// Full width across the top: the title and the headline facts.

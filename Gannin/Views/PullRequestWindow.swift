@@ -36,6 +36,9 @@ struct PullRequestWindow: View {
     @Environment(WorkLogStore.self) private var workLog
     @Environment(DetailStore.self) private var details
     let reference: PullRequestReference
+    /// Shown as a page in a main window rather than a window of its own, so
+    /// it leaves the window's title alone.
+    var isEmbedded = false
 
     var body: some View {
         let open = orgs.snapshot(for: reference.org)?.openPullRequests.first { $0.id == reference.id }
@@ -79,8 +82,7 @@ struct PullRequestWindow: View {
             }
             DescriptionSections(id: reference.id, url: reference.url)
         }
-        .navigationTitle("\(reference.repo)#\(reference.number)")
-        .windowSubtitle(reference.title)
+        .ownWindowTitle(isEmbedded ? nil : "\(reference.repo)#\(reference.number)", subtitle: reference.title)
         .task(id: reference.id) { await details.load(reference.id, updatedAt: open?.updatedAt) }
     }
 

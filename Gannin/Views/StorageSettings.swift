@@ -12,6 +12,7 @@ struct StorageSettings: View {
     @Environment(IssueStore.self) private var issues
     @Environment(WorkLogStore.self) private var workLog
     @Environment(ProjectStore.self) private var projects
+    @Environment(ActionsStore.self) private var actions
     @Environment(DetailStore.self) private var details
     @Environment(BankHolidayStore.self) private var bankHolidays
     @Environment(PeopleDatesStore.self) private var peopleDates
@@ -29,6 +30,7 @@ struct StorageSettings: View {
         case issues = "Issue history"
         case workLog = "Work log"
         case projects = "Project boards"
+        case actions = "Actions runs"
         case details = "PR and issue details"
         case bankHolidays = "Bank holidays"
 
@@ -41,6 +43,7 @@ struct StorageSettings: View {
             case .issues: "Issues with their board history, behind the issue metrics and investments"
             case .workLog: "PRs with their commits and reviews, behind Activity"
             case .projects: "Project board definitions and items"
+            case .actions: "Workflow runs and the jobs of those opened, behind Actions"
             case .details: "Bodies, comments and checks of items you've opened"
             case .bankHolidays: "Public holidays by country and year, from date.nager.at"
             }
@@ -53,6 +56,7 @@ struct StorageSettings: View {
             case .issues: IssueStore.cacheDirectory
             case .workLog: WorkLogStore.cacheDirectory
             case .projects: ProjectStore.cacheDirectory
+            case .actions: ActionsStore.cacheDirectory
             case .details: DetailStore.cacheFile
             case .bankHolidays: BankHolidayStore.cacheDirectory
             }
@@ -192,6 +196,7 @@ struct StorageSettings: View {
         case .issues: issues.clear()
         case .workLog: workLog.clear()
         case .projects: projects.clear()
+        case .actions: actions.clear()
         case .details: details.clear()
         case .bankHolidays: bankHolidays.clear()
         }

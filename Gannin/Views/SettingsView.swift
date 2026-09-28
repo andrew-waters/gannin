@@ -27,6 +27,7 @@ struct GeneralSettings: View {
     @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
     @AppStorage(OrgStore.lookbackDaysKey) private var lookbackDays = OrgStore.defaultLookbackDays
+    @AppStorage(ActionsStore.jobRunLimitKey) private var jobRunLimit = 0
 
     var body: some View {
         Form {
@@ -53,6 +54,18 @@ struct GeneralSettings: View {
                 Text("Applies on the next refresh.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            Section {
+                Picker("Jobs fetched per workflow", selection: $jobRunLimit) {
+                    ForEach(ActionsStore.jobRunLimitOptions, id: \.self) { limit in
+                        Text(limit == 0 ? "Every run in the window" : "Latest \(limit) runs").tag(limit)
+                    }
+                }
+                Text("When you open a workflow on the Actions page, each run's jobs are one request to GitHub, so a busy workflow over 90 days can take thousands and a while to fetch. Lower this to fetch fewer; jobs already fetched are kept.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("GitHub Actions")
             }
             #if !os(macOS)
             Section {

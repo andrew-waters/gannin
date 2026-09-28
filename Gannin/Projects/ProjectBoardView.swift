@@ -10,6 +10,7 @@ struct ProjectBoardView: View {
 
     @Environment(ProjectStore.self) private var store
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.navigate) private var navigate
     @Environment(\.openURL) private var openURL
     let org: String
     let number: Int
@@ -191,16 +192,19 @@ struct ProjectBoardView: View {
         }
     }
 
-    /// Issues and PRs in windows of their own; drafts on GitHub.
+    /// Issues and PRs over the board, or in windows of their own outside a
+    /// main window; drafts on GitHub.
     private func open(_ item: BoardItem) {
         guard let id = item.contentID, let number = item.number, let repo = item.repo, let url = item.url else {
             return
         }
         switch item.kind {
         case .issue:
-            openWindow(value: IssueReference(org: org, id: id, number: number, title: item.title, repo: repo, url: url))
+            let reference = IssueReference(org: org, id: id, number: number, title: item.title, repo: repo, url: url)
+            if let navigate { navigate(.issueReference(reference)) } else { openWindow(value: reference) }
         case .pullRequest:
-            openWindow(value: PullRequestReference(org: org, id: id, number: number, title: item.title, repo: repo, url: url))
+            let reference = PullRequestReference(org: org, id: id, number: number, title: item.title, repo: repo, url: url)
+            if let navigate { navigate(.pullRequestReference(reference)) } else { openWindow(value: reference) }
         default:
             openURL(url)
         }
@@ -273,6 +277,18 @@ enum BoardLayout {
         case "PINK": .pink
         case "PURPLE": .purple
         default: .gray
+        }
+    }
+}
+
+extension BoardItem {
+    /// The page an issue or PR on a board opens; drafts have none.
+    func page(org: String) -> DetailSelection? {
+        guard let id = contentID, let number, let repo, let url else { return nil }
+        switch kind {
+        case .issue: return .issueReference(IssueReference(org: org, id: id, number: number, title: title, repo: repo, url: url))
+        case .pullRequest: return .pullRequestReference(PullRequestReference(org: org, id: id, number: number, title: title, repo: repo, url: url))
+        default: return nil
         }
     }
 }

@@ -11,6 +11,7 @@ struct GanninApp: App {
     @State private var workLog: WorkLogStore
     @State private var issues: IssueStore
     @State private var projects: ProjectStore
+    @State private var actions: ActionsStore
     @State private var orgConfigs: OrgConfigStore
     @State private var peopleDates: PeopleDatesStore
     @State private var bankHolidays = BankHolidayStore()
@@ -32,6 +33,7 @@ struct GanninApp: App {
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
         _issues = State(initialValue: IssueStore(auth: auth, activity: activity))
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
+        _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))
         #if os(macOS)
         TabMenuRename.shared.install()
         #endif
@@ -43,6 +45,7 @@ struct GanninApp: App {
         WindowGroup(id: "main") {
             RootView()
                 .joinsRequestedTab()
+                .environment(actions)
                 .environment(auth)
                 .environment(orgs)
                 .environment(details)
@@ -108,6 +111,7 @@ struct GanninApp: App {
         #if os(macOS)
         Settings {
             SettingsView()
+                .environment(actions)
                 .environment(auth)
                 .environment(orgs)
                 .environment(metrics)
@@ -131,6 +135,7 @@ struct RootView: View {
     @Environment(WorkLogStore.self) private var workLog
     @Environment(IssueStore.self) private var issues
     @Environment(ProjectStore.self) private var projects
+    @Environment(ActionsStore.self) private var actions
 
     var body: some View {
         Group {
@@ -147,6 +152,7 @@ struct RootView: View {
                 workLog.clear()
                 issues.clear()
                 projects.clear()
+                actions.clear()
             }
         }
     }

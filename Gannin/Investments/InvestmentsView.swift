@@ -29,6 +29,7 @@ struct InvestmentsView: View {
     /// Issues being assigned to categories one at a time.
     @State private var triage: InvestmentTriage.Queue?
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.navigate) private var navigate
 
     let org: String
     let team: Team?
@@ -313,7 +314,8 @@ struct InvestmentsView: View {
         return LazyVStack(alignment: .leading, spacing: 0) {
             ForEach(records) { record in
                 Button {
-                    openWindow(value: IssueReference(org: org, record: record))
+                    let reference = IssueReference(org: org, record: record)
+                    if let navigate { navigate(.issueReference(reference)) } else { openWindow(value: reference) }
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
@@ -342,6 +344,7 @@ struct InvestmentsView: View {
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
+                    OpenElsewhereItems(.issueReference(IssueReference(org: org, record: record)))
                     CategoriseMenu(issueID: record.id, org: org)
                     Link("Open on GitHub", destination: record.url)
                 }

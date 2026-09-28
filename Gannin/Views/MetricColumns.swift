@@ -132,6 +132,7 @@ struct MetricColumn: View {
     @Environment(IssueStore.self) private var issueStore
     @Environment(\.currentOrg) private var org
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.navigate) private var navigate
 
     @Environment(OrgConfigStore.self) private var configs
 
@@ -149,7 +150,10 @@ struct MetricColumn: View {
         return Section(header: SectionHeader(title: "Issues", count: records.count)) {
             ForEach(records) { record in
                 Button {
-                    if let org { openWindow(value: IssueReference(org: org, record: record)) }
+                    if let org {
+                        let reference = IssueReference(org: org, record: record)
+                        if let navigate { navigate(.issueReference(reference)) } else { openWindow(value: reference) }
+                    }
                 } label: {
                     HStack(alignment: .top, spacing: 10) {
                         VStack(alignment: .leading, spacing: 3) {
@@ -175,6 +179,7 @@ struct MetricColumn: View {
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
+                    if let org { OpenElsewhereItems(.issueReference(IssueReference(org: org, record: record))) }
                     CategoriseMenu(issueID: record.id)
                     Link("Open on GitHub", destination: record.url)
                 }
@@ -278,7 +283,7 @@ struct MetricPullRequestRow: View {
             }
         }
         .padding(.vertical, 2)
-        .hideable(pr.id, url: pr.url)
+        .hideable(pr.id, url: pr.url, opens: .pullRequest(pr.id))
     }
 }
 
@@ -460,6 +465,12 @@ enum ChartPalette {
     static let red = Color(light: 0xE34948, dark: 0xE66767)
     /// For "no category"; not a series hue.
     static let neutral = Color(light: 0xB9B8B2, dark: 0x5A5955)
+
+    /// Status colours, for states rather than series (a run passed or
+    /// failed). Never used for a series, and always beside a label or shape.
+    static let good = Color(light: 0x0CA30C, dark: 0x0CA30C)
+    static let warning = Color(light: 0xFAB219, dark: 0xFAB219)
+    static let critical = Color(light: 0xD03B3B, dark: 0xD03B3B)
 
     /// Categorical slots 1-8 in the palette's fixed, validated order.
     static let categorical = [blue, orange, aqua, yellow, magenta, green, violet, red]

@@ -22,6 +22,7 @@ struct OffBoardIssuesView: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(AuthStore.self) private var auth
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.navigate) private var navigate
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("offBoardState") private var state: StateFilter = .open
 
@@ -57,8 +58,12 @@ struct OffBoardIssuesView: View {
         .contextMenu(forSelectionType: String.self) { ids in
             addMenu(ids)
         } primaryAction: { ids in
-            for issue in issues where ids.contains(issue.id) {
-                openWindow(value: IssueReference(org: org, record: issue))
+            let picked = issues.filter { ids.contains($0.id) }
+            if picked.count == 1, let issue = picked.first, let navigate {
+                navigate(.issueReference(IssueReference(org: org, record: issue)))
+            } else {
+                // Several at once get a window each.
+                for issue in picked { openWindow(value: IssueReference(org: org, record: issue)) }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {

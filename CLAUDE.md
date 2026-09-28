@@ -77,18 +77,28 @@ added, removed or created, and the tracked board field set), always confirmed fi
   progress runs along the divider above the row.
 - Windows are independent: the selected org, section and metrics window of days are
   `@SceneStorage`, so each main window or tab has its own (File > New Window, or New Tab, which
-  `WindowTabs.swift` joins to the current window). Preferences like column widths stay
+  `WindowTabs.swift` joins to the current window). Preferences like chart granularity stay
   `@AppStorage`, shared.
-- `Gannin/Views/`: `MainView` is a sidebar plus a Finder-style `ColumnBrowser`. The sidebar lists
-  the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People, Repositories) for the
+- `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar lists
+  the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People, Repositories, Actions) for the
   selected org; the org switcher and account menu sit in its footer. Under People: Activity, Time off, All (everyone), Teams (each
   org team opening to its members, then No team; an org without teams lists people directly).
   Picking a person shows their `PersonColumn` as the
   main view; People on its own is the people stats table. A Settings section holds the org's repo and people exclusions
   (`OrgSettingsView`), which apply to the workload and the stats alike. The first
-  column is the section's list; `path: [DetailSelection]` holds one entry per column opened
-  to its right (person, issue or PR, in `DetailViews.swift`). Selecting in a column truncates the
-  path there and appends; Esc closes the last column.
+  page is the section's (or the person, repo, list or board picked under it);
+  `path: [DetailSelection]` is the trail of pages pushed over it (`PageStack` in
+  `MainView.swift`). Only the last shows, full width, under breadcrumbs, with Back in the
+  toolbar (⌘[, Esc) and its name as the window title (`PageTitles`). Pages push through
+  their `selection` binding or the `navigate` environment action (`Navigation.swift`); a
+  page already in the trail is gone back to. Picking a sidebar row clears the trail.
+- Right-click menus offer Open in New Tab (the Mac's) and Open in New Window
+  (`OpenElsewhereItems`, the `openElsewhere` action): a PR or issue in a new window gets its
+  own window (`PullRequestWindow`, `IssueWindow`); anything else opens a main window on the
+  same org, sidebar item and trail plus the page, handed over through
+  `WindowRequest.pending` and claimed by the new window's `MainView`. PRs and issues from
+  the work log, boards and issue history push `pullRequestReference` or `issueReference`,
+  which show those windows' views embedded (`isEmbedded`).
 
 ## Behaviour worth knowing
 
@@ -181,6 +191,48 @@ added, removed or created, and the tracked board field set), always confirmed fi
   (`InvestmentCategoriesSection`); issues get Categorise in their context menu and window.
 - Category colours are palette slots 1-8 in fixed order, stored on the category so reordering
   never repaints; uncategorised is a neutral grey.
+
+## Actions
+
+- `Gannin/Actions/`: GitHub Actions insights, the Actions page in the sidebar (`ActionsView`),
+  in the spirit of Swarmia's CI visibility and Blacksmith's analytics. Runs and jobs are REST
+  only (`ActionsQueries.swift`, the one REST client: `GitHubAPI.rest`), with their own budget
+  on `AuthStore.restRateLimit`; there's no org-wide runs API, so it goes repo by repo.
+- `ActionsStore` lists non-archived repos pushed to since 60 days before the stored range
+  (scheduled workflows run without pushes), then each repo's runs created since the Monday
+  before twice the window (`ActionsStore.coverageStart`, so every number can be compared
+  with the period before), four repos at once, topped up from its last sync with a day of
+  overlap (or from its oldest unfinished run). The runs list caps a filtered query at 1000,
+  so a range holding more is halved until it fits. Excluded repos aren't fetched. It's only
+  fetched once the page has been opened for an org, and Refresh includes it from then on.
+  Runs older than 190 days are dropped.
+- Jobs (every attempt, `filter=all`) are fetched when a workflow is opened: every completed
+  run in the window, or the latest N when Settings > General > GitHub Actions lowers it
+  (`ActionsStore.jobRunLimitKey`, 0 for all). They're fetched 40 runs a batch with progress
+  (`jobProgress`), saved every few batches and on leaving, fetched again when a run is
+  re-run, and stop when the REST budget drops under 300 (`jobNotices`).
+- `ActionsMetrics` derives: outcomes (failure includes timed out and startup failure;
+  cancelled and skipped stay out of rates), duration as the latest attempt's start to its
+  last update, p50, p75 and p90 (`PercentileStat`), wall-clock run time, re-runs, flaky
+  signals (passed only on a re-run, or a commit with both a failed and a passing run),
+  default-branch health (`BranchHealth`: runs on the default branch outside PRs, red now and
+  since when, time back to green), the period before (`PeriodSummary`, shown as changes
+  only when every repo's runs reach back that far, `hasPrevious`), per-repo totals
+  (`RepoStats`: run time, share, weekly run time), duration histograms (`DurationHistogram`:
+  60s, 5, 10, 20, 60 minutes, longer) and run time stacked by repo, workflow or job
+  (`StackedRunTime`, the top seven and Others). Needs attention flags red default branches,
+  often-failing ones, flaky workflows and ones 25% slower in the window's second half;
+  failures on PRs alone are CI doing its job, so they aren't flagged. Only a run's latest
+  attempt is listed.
+- Pages, in the spirit of Swarmia's CI visibility: the dashboard (`ActionsView`: tiles with
+  changes, needs attention, run time by repo, runs and duration trends, repositories table,
+  workflows by repository, by trigger), a repo (`ActionsRepositoryPage`), a workflow
+  (`WorkflowPage`: p50/p75/p90 by week, every run's duration, example runs, default branch,
+  jobs with their distribution and table), a run (`RunPage`: job timeline with the wait for
+  a runner, steps, earlier attempts) and a job (`JobPage`). Charts and cells are in
+  `ActionsCharts.swift`. Outcomes use the palette's status colours (`ChartPalette.good`,
+  `critical`) with shape as well: the `OutcomeStrip` draws failures tall, the scatter draws
+  them as crosses.
 
 ## Work log
 

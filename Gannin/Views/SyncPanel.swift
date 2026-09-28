@@ -22,6 +22,7 @@ struct SyncFooter: View {
     @Environment(WorkLogStore.self) private var workLog
     @Environment(IssueStore.self) private var issueStore
     @Environment(ProjectStore.self) private var projects
+    @Environment(ActionsStore.self) private var actions
     @Environment(OrgConfigStore.self) private var configs
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     let org: String
@@ -202,9 +203,13 @@ struct SyncFooter: View {
             // The work log only once it's been opened for this org.
             async let log: Void = workLog.isTracking(org) ? workLog.sync(org, force: true) : ()
             async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: windowDays, force: true) : ()
+            // Actions runs likewise, once the Actions page has been opened.
+            async let runs: Void = actions.isTracking(org)
+                ? actions.sync(org, windowDays: windowDays, excluding: configs.config(for: org).excludedRepos, force: true)
+                : ()
             // Boards, and the board investments are tracked on.
             async let boards: Void = projects.refresh(org: org, definitions: trackedBoards)
-            _ = await (workload, metrics, log, issues, boards)
+            _ = await (workload, metrics, log, issues, runs, boards)
         }
     }
 }

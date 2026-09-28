@@ -233,9 +233,12 @@ struct ExcludablePerson: ViewModifier {
     @Environment(\.openURL) private var openURL
     let login: String
     let org: String
+    /// The sidebar row this is, for Open in New Tab and Window.
+    var opens: SidebarItem?
 
     func body(content: Content) -> some View {
         content.contextMenu {
+            if let opens { OpenElsewhereItems(sidebar: opens) }
             Button("Exclude from \(orgs.org(login: org)?.displayName ?? org)") {
                 if !configs.config(for: org).excludes(login) { configs.toggleAuthor(login, in: org) }
             }
@@ -265,7 +268,7 @@ struct RepositoryMenu: View {
 }
 
 extension View {
-    func excludable(login: String, org: String) -> some View {
-        modifier(ExcludablePerson(login: login, org: org))
+    func excludable(login: String, org: String, opens: SidebarItem? = nil) -> some View {
+        modifier(ExcludablePerson(login: login, org: org, opens: opens))
     }
 }

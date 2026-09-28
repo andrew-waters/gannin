@@ -6,6 +6,7 @@ import SwiftUI
 /// juggling, what's dragging, and who is carrying the reviews.
 struct ThreadsContent: View {
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.navigate) private var navigate
     @Environment(PeopleDatesStore.self) private var peopleDates
 
     let org: String
@@ -76,6 +77,7 @@ struct ThreadsContent: View {
                             .frame(width: max(x.width(bar.start, bar.end), 6), height: ThreadLayout.barHeight)
                             .offset(x: x(bar.start), y: ThreadLayout.top + CGFloat(bar.row) * (ThreadLayout.barHeight + ThreadLayout.spacing))
                             .onTapGesture { open(bar.pullRequest) }
+                            .opensElsewhere(.pullRequestReference(PullRequestReference(org: org, pullRequest: bar.pullRequest)))
                     }
                     ForEach(lane.reviews) { review in
                         Circle()
@@ -186,8 +188,10 @@ struct ThreadsContent: View {
         .padding(.top, 12)
     }
 
+    /// Over this page, or in a window of its own outside a main window.
     private func open(_ pr: WorkLogPullRequest) {
-        openWindow(value: PullRequestReference(org: org, pullRequest: pr))
+        let reference = PullRequestReference(org: org, pullRequest: pr)
+        if let navigate { navigate(.pullRequestReference(reference)) } else { openWindow(value: reference) }
     }
 }
 

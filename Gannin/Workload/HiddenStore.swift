@@ -36,13 +36,16 @@ final class HiddenStore {
     }
 }
 
-/// Adds Hide/Unhide and Open on GitHub to a row's context menu, and dims the
-/// row when it is hidden (only visible while "Show hidden" is on).
+/// Adds Open in New Tab and Window, Hide/Unhide and Open on GitHub to a
+/// row's context menu, and dims the row when it is hidden (only visible
+/// while "Show hidden" is on).
 struct HideableRow: ViewModifier {
     @Environment(HiddenStore.self) private var hidden
     @Environment(\.openURL) private var openURL
     let key: String
     let url: URL?
+    /// The page the row opens, for Open in New Tab and Window.
+    var opens: DetailSelection?
     /// More context menu items, between Hide and Open on GitHub.
     var extra: AnyView?
 
@@ -59,6 +62,7 @@ struct HideableRow: ViewModifier {
                 }
             }
             .contextMenu {
+                if let opens { OpenElsewhereItems(opens) }
                 Button(isHidden ? "Unhide" : "Hide") { hidden.toggle(key) }
                 if let extra { extra }
                 if let url {
@@ -69,11 +73,11 @@ struct HideableRow: ViewModifier {
 }
 
 extension View {
-    func hideable(_ key: String, url: URL? = nil) -> some View {
-        modifier(HideableRow(key: key, url: url))
+    func hideable(_ key: String, url: URL? = nil, opens: DetailSelection? = nil) -> some View {
+        modifier(HideableRow(key: key, url: url, opens: opens))
     }
 
-    func hideable<Menu: View>(_ key: String, url: URL? = nil, @ViewBuilder menu: () -> Menu) -> some View {
-        modifier(HideableRow(key: key, url: url, extra: AnyView(menu())))
+    func hideable<Menu: View>(_ key: String, url: URL? = nil, opens: DetailSelection? = nil, @ViewBuilder menu: () -> Menu) -> some View {
+        modifier(HideableRow(key: key, url: url, opens: opens, extra: AnyView(menu())))
     }
 }

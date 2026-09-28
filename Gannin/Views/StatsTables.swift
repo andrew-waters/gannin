@@ -53,7 +53,8 @@ struct PeopleStatsTable: View {
                 AnyView(Button("Exclude \(row.person.login) from Stats") {
                     configs.toggleAuthor(row.person.login, in: org)
                 })
-            }
+            },
+            destination: { .metric(.personStats($0.person.login)) }
         )
     }
 
@@ -217,7 +218,8 @@ struct RepoStatsTable: View {
                 AnyView(Button("Exclude \(repo.repo) from Stats") {
                     configs.toggleRepo(repo.repo, in: org)
                 })
-            }
+            },
+            destination: { .metric(.repo($0.repo)) }
         )
     }
 

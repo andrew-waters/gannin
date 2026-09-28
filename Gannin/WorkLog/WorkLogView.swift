@@ -45,6 +45,7 @@ struct WorkLogPage: View {
     @Environment(PeopleDatesStore.self) private var peopleDates
     @Environment(BankHolidayStore.self) private var holidayStore
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.navigate) private var navigate
 
     let org: String
     let workload: Workload?
@@ -313,7 +314,7 @@ struct WorkLogPage: View {
                     Text(kind.rawValue)
                 }
             }
-            Text("Commit dots grow with lines changed. Hover a dot for detail, click to open its PR in a new window.")
+            Text("Commit dots grow with lines changed. Hover a dot for detail, click to open its PR. Right-click for a new tab or window.")
                 .foregroundStyle(.tertiary)
             Spacer()
         }
@@ -322,9 +323,10 @@ struct WorkLogPage: View {
         .padding(.top, 12)
     }
 
-    /// In a window of its own; clicking again brings that window forward.
+    /// Over this page, or in a window of its own outside a main window.
     private func open(_ pr: WorkLogPullRequest) {
-        openWindow(value: PullRequestReference(org: org, pullRequest: pr))
+        let reference = PullRequestReference(org: org, pullRequest: pr)
+        if let navigate { navigate(.pullRequestReference(reference)) } else { openWindow(value: reference) }
     }
 }
 

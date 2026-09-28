@@ -9,6 +9,8 @@ final class AuthStore {
     private(set) var token: String?
     /// GitHub's GraphQL budget as of the latest query.
     private(set) var rateLimit: RateLimit?
+    /// GitHub's REST budget (Actions runs and jobs) as of the latest request.
+    private(set) var restRateLimit: RateLimit?
     /// The token's scopes, as GitHub last reported them.
     private(set) var grantedScopes: Set<String>?
 
@@ -25,13 +27,17 @@ final class AuthStore {
                 onRateLimit: { [weak self] in self?.rateLimit = $0 },
                 onScopes: { [weak self] scopes in
                     if self?.grantedScopes != scopes { self?.grantedScopes = scopes }
-                }
+                },
+                onRESTRateLimit: { [weak self] in self?.restRateLimit = $0 }
             )
         }
     }
 
     /// Automatic refreshes hold off until the budget resets.
     var shouldHoldOff: Bool { rateLimit?.isLow ?? false }
+
+    /// The same for the REST budget, which only the Actions sync spends.
+    var shouldHoldOffREST: Bool { restRateLimit?.isLow ?? false }
 
     init() {
         token = Keychain.token()
@@ -52,6 +58,7 @@ final class AuthStore {
         token = nil
         viewer = nil
         rateLimit = nil
+        restRateLimit = nil
         grantedScopes = nil
         UserDefaults.standard.removeObject(forKey: Self.viewerKey)
     }

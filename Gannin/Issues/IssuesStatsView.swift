@@ -7,6 +7,7 @@ struct IssuesStatsView: View {
     @Environment(IssueStore.self) private var store
     @Environment(OrgConfigStore.self) private var configs
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.navigate) private var navigate
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("issueGrouping") private var grouping: IssueMetrics.Grouping = .type
     @AppStorage("issueGranularity") private var granularity: IssueMetrics.Granularity = .week
@@ -288,6 +289,7 @@ struct IssuesStatsView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .opensElsewhere(.issueReference(IssueReference(org: org, record: timing.record)))
                 Divider()
             }
         }
@@ -330,9 +332,10 @@ struct IssuesStatsView: View {
         )
     }
 
-    /// In a window of its own; clicking again brings that window forward.
+    /// Over this page, or in a window of its own outside a main window.
     private func open(_ record: IssueRecord) {
-        openWindow(value: IssueReference(org: org, record: record))
+        let reference = IssueReference(org: org, record: record)
+        if let navigate { navigate(.issueReference(reference)) } else { openWindow(value: reference) }
     }
 }
 

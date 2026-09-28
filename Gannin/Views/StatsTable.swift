@@ -37,6 +37,8 @@ struct StatsTable<Row: Identifiable>: View {
     let selectedID: Row.ID?
     let onSelect: (Row) -> Void
     var contextMenu: ((Row) -> AnyView)?
+    /// The page a row opens, for Open in New Tab and Window in its menu.
+    var destination: ((Row) -> DetailSelection?)?
 
     private let rowHeight: CGFloat = 36
     private let cellPadding: CGFloat = 10
@@ -226,7 +228,10 @@ struct StatsTable<Row: Identifiable>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .contextMenu { contextMenu?(row) }
+        .contextMenu {
+            if let page = destination?(row) { OpenElsewhereItems(page) }
+            contextMenu?(row)
+        }
     }
 
     /// The gap before a column group, with a line down its middle that
