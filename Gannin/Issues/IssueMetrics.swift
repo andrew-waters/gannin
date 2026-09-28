@@ -101,6 +101,8 @@ struct IssueMetrics {
         case week = "Week"
         case month = "Month"
         case quarter = "Quarter"
+        /// Investments over all time only.
+        case year = "Year"
 
         var id: Self { self }
 
@@ -114,6 +116,7 @@ struct IssueMetrics {
                 var parts = calendar.dateComponents([.year, .month], from: date)
                 parts.month = ((parts.month ?? 1) - 1) / 3 * 3 + 1
                 return calendar.date(from: parts) ?? date
+            case .year: return Calendar.current.dateInterval(of: .year, for: date)?.start ?? date
             }
         }
 
@@ -121,6 +124,7 @@ struct IssueMetrics {
         var axisFormat: Date.FormatStyle {
             switch self {
             case .quarter: .dateTime.quarter().year(.twoDigits)
+            case .year: .dateTime.year()
             case .month: .dateTime.month(.abbreviated).year(.twoDigits)
             default: .dateTime.day().month()
             }
@@ -132,6 +136,7 @@ struct IssueMetrics {
             case .week: (.weekOfYear, 1)
             case .month: (.month, 1)
             case .quarter: (.month, 3)
+            case .year: (.year, 1)
             }
             return Calendar.current.date(byAdding: component, value: value, to: start) ?? start.addingTimeInterval(86_400)
         }

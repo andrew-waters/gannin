@@ -42,7 +42,7 @@ struct IssuesStatsView: View {
                                 Text("Opened and closed")
                                 Spacer(minLength: 8)
                                 Picker("Per", selection: $granularity) {
-                                    ForEach(IssueMetrics.Granularity.allCases) { Text($0.rawValue).tag($0) }
+                                    ForEach(IssueMetrics.Granularity.allCases.filter { $0 != .year }) { Text($0.rawValue).tag($0) }
                                 }
                                 .pickerStyle(.segmented)
                                 .labelsHidden()
@@ -352,6 +352,7 @@ private struct OpenClosedCharts: View {
         case .week: .weekOfYear
         case .month: .month
         case .quarter: .quarter
+        case .year: .year
         }
     }
 
@@ -439,6 +440,7 @@ private struct OpenClosedCharts: View {
             case .week: "Week of \(bucket.start.formatted(.dateTime.day().month()))"
             case .month: bucket.start.formatted(.dateTime.month(.wide).year())
             case .quarter: bucket.start.formatted(.dateTime.quarter().year())
+            case .year: bucket.start.formatted(.dateTime.year())
             }
             Text("\(label): \(bucket.opened) opened, \(bucket.closed) closed, \(bucket.openAtEnd) open at the end")
                 .font(.callout.monospacedDigit())

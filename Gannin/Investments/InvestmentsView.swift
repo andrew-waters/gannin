@@ -32,7 +32,7 @@ struct InvestmentsView: View {
     private static let categorisedTarget = 0.8
 
     private var range: DateInterval {
-        rangePreset.interval(customFrom: Date(timeIntervalSince1970: customFrom), customTo: Date(timeIntervalSince1970: customTo))
+        rangePreset.interval(customFrom: Date(timeIntervalSince1970: customFrom), customTo: Date(timeIntervalSince1970: customTo), earliest: store.earliestIssue(org))
     }
 
     var body: some View {
@@ -103,6 +103,13 @@ struct InvestmentsView: View {
             let days = max(1, Int(Date.now.timeIntervalSince(range.start) / 86_400) + 1)
             await store.sync(org, windowDays: days)
         }
+        .task(id: "\(org) \(rangePreset.rawValue)") {
+            if rangePreset == .allTime { await store.loadEarliestIssue(org) }
+        }
+        .onChange(of: rangePreset) {
+            // Years only make sense over all time; weeks don't.
+            if !periods.contains(period) { period = rangePreset == .allTime ? .quarter : .week }
+        }
         .onChange(of: period) { selectedBucket = nil }
         .onChange(of: rangePreset) { selectedBucket = nil }
     }
@@ -139,12 +146,16 @@ struct InvestmentsView: View {
         }
         if scope == .completed {
             Picker("Per", selection: $period) {
-                ForEach([IssueMetrics.Granularity.week, .month, .quarter]) { Text($0.rawValue).tag($0) }
+                ForEach(periods) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
         }
+    }
+
+    private var periods: [IssueMetrics.Granularity] {
+        rangePreset == .allTime ? [.month, .quarter, .year] : [.week, .month, .quarter]
     }
 
     private func date(_ seconds: Binding<Double>) -> Binding<Date> {
@@ -385,11 +396,19 @@ private struct InvestmentChart: View {
         case .week: .weekOfYear
         case .month: .month
         case .quarter: .quarter
+        case .year: .year
         }
+    }
+
+    private var axisValues: [Date] {
+        let starts = balance.buckets.map(\.start)
+        let stride = max(1, Int((Double(starts.count) / 10).rounded(.up)))
+        return starts.enumerated().filter { $0.offset % stride == 0 }.map(\.element)
     }
 
     static func label(_ bucket: InvestmentBalance.Bucket, period: IssueMetrics.Granularity) -> String {
         switch period {
+        case .year: bucket.start.formatted(.dateTime.year())
         case .week: "the week of \(bucket.start.formatted(.dateTime.day().month()))"
         case .month: bucket.start.formatted(.dateTime.month(.wide).year())
         case .quarter: bucket.start.formatted(.dateTime.quarter().year())
@@ -412,8 +431,10 @@ private struct InvestmentChart: View {
             .chartLegend(position: .top, alignment: .leading)
             .chartYAxis { AxisMarks(position: .leading) { _ in AxisGridLine().foregroundStyle(.quaternary); AxisValueLabel() } }
             .chartXAxis {
-                AxisMarks(values: .automatic(desiredCount: 8)) { _ in
-                    AxisValueLabel(format: period.axisFormat)
+                // One label per period (thinned to about ten), so a quarter
+                // isn't labelled once per month.
+                AxisMarks(values: axisValues) { _ in
+                    AxisValueLabel(format: period.axisFormat, centered: true)
                 }
             }
             .chartOverlay { proxy in

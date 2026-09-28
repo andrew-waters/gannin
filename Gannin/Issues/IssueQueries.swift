@@ -195,3 +195,20 @@ private struct RawIssueRecord: Decodable {
         )
     }
 }
+
+extension GitHubAPI {
+    /// When the org's first issue was opened.
+    func earliestIssue(org: String) async throws -> Date? {
+        struct Response: Decodable {
+            struct Node: Decodable { let createdAt: Date? }
+            struct Search: Decodable { let nodes: [Node] }
+            let search: Search
+        }
+        let response: Response = try await query("""
+            query($q: String!) {
+              search(query: $q, type: ISSUE, first: 1) { nodes { ... on Issue { createdAt } } }
+            }
+            """, variables: ["q": "org:\(org) is:issue sort:created-asc"])
+        return response.search.nodes.first?.createdAt
+    }
+}

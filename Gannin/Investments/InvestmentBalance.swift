@@ -7,12 +7,16 @@ enum InvestmentRange: String, CaseIterable, Identifiable {
     case thisQuarter = "This quarter"
     case lastQuarter = "Last quarter"
     case thisYear = "This year"
+    /// From the org's first issue.
+    case allTime = "All time"
     case custom = "Custom"
 
     var id: Self { self }
 
     /// The span, ending today for the rolling ones. Custom uses the dates given.
-    func interval(customFrom: Date, customTo: Date, now exactly: Date = .now) -> DateInterval {
+    /// `earliest` is the org's first issue, for All time (a year back until
+    /// it's known).
+    func interval(customFrom: Date, customTo: Date, earliest: Date? = nil, now exactly: Date = .now) -> DateInterval {
         // To the minute, so a rolling range (and the drill-down it opens)
         // stays equal across redraws.
         let now = Date(timeIntervalSince1970: (exactly.timeIntervalSince1970 / 60).rounded(.down) * 60)
@@ -28,6 +32,9 @@ enum InvestmentRange: String, CaseIterable, Identifiable {
             return DateInterval(start: lastStart, end: thisStart)
         case .thisYear:
             return DateInterval(start: calendar.dateInterval(of: .year, for: now)?.start ?? now, end: now)
+        case .allTime:
+            let start = calendar.startOfDay(for: earliest ?? calendar.date(byAdding: .year, value: -1, to: now) ?? now)
+            return DateInterval(start: min(start, now), end: now)
         case .custom:
             let start = calendar.startOfDay(for: min(customFrom, customTo))
             let end = min(calendar.date(byAdding: .day, value: 1, to: calendar.startOfDay(for: max(customFrom, customTo))) ?? now, now)

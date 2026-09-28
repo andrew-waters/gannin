@@ -174,8 +174,9 @@ added, removed or created, and the tracked board field set), always confirmed fi
   marked; GitHub-tracked choices collect until Review and Write. The Investments page lists a
   category's issues on the page (no drill-down column).
 - `InvestmentBalance` counts issues completed in a range (Last 30 or 90 days, this or last
-  quarter, this year, or custom dates) and those in progress at its end, and buckets completed
-  ones by week, month or quarter; clicking a bucket shows its breakdown. The issue history is
+  quarter, this year, all time from the org's first issue (`IssueStore.earliestIssue`), or
+  custom dates) and those in progress at its end, and buckets completed ones by week, month or
+  quarter (month, quarter or year over all time); clicking a bucket shows its breakdown. The issue history is
   extended back to the range's start as needed. Categories are edited in Settings
   (`InvestmentCategoriesSection`); issues get Categorise in their context menu and window.
 - Category colours are palette slots 1-8 in fixed order, stored on the category so reordering

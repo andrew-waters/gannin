@@ -14,6 +14,7 @@ final class IssueStore {
     private(set) var histories: [String: IssueHistory] = [:]
     private(set) var syncing: Set<String> = []
     private(set) var errors: [String: String] = [:]
+    private var earliest: [String: Date] = [:]
 
     private let auth: AuthStore
     private let activity: SyncActivity
@@ -24,6 +25,20 @@ final class IssueStore {
     }
 
     func history(for org: String) -> IssueHistory? { histories[org] }
+
+    /// When the org's first issue was opened, for All time; kept once found.
+    func earliestIssue(_ org: String) -> Date? {
+        if let known = earliest[org] { return known }
+        let stored = UserDefaults.standard.double(forKey: "earliestIssue.\(org)")
+        return stored > 0 ? Date(timeIntervalSince1970: stored) : nil
+    }
+
+    func loadEarliestIssue(_ org: String) async {
+        guard earliestIssue(org) == nil, let api = auth.api,
+              let date = try? await api.earliestIssue(org: org) else { return }
+        earliest[org] = date
+        UserDefaults.standard.set(date.timeIntervalSince1970, forKey: "earliestIssue.\(org)")
+    }
 
     func isTracking(_ org: String) -> Bool { histories[org] != nil }
 
