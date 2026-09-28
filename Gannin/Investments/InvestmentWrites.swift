@@ -82,12 +82,15 @@ enum InvestmentWriter {
         }
     }
 
-    /// Writes to GitHub; returns what failed.
-    static func applyOnGitHub(_ changes: [InvestmentChange], org: String, tracking: InvestmentTracking, api: GitHubAPI, issues: IssueStore, progress: (Int) -> Void) async -> [Failure] {
+    /// Writes to GitHub one issue at a time, reporting each as it starts
+    /// and finishes (with its failure, if any); returns what failed.
+    static func applyOnGitHub(_ changes: [InvestmentChange], org: String, tracking: InvestmentTracking, api: GitHubAPI, issues: IssueStore, started: (String) -> Void = { _ in }, progress: (Int, Failure?) -> Void) async -> [Failure] {
         var failures: [Failure] = []
         var labelIDs: [String: String] = [:]
         var projects: [OrgProject]?
         for (index, change) in changes.enumerated() {
+            started(change.id)
+            let failuresBefore = failures.count
             do {
                 switch tracking {
                 case .gannin:
@@ -101,7 +104,7 @@ enum InvestmentWriter {
             } catch {
                 failures.append(Failure(issue: change.issue, message: error.localizedDescription))
             }
-            progress(index + 1)
+            progress(index + 1, failures.count > failuresBefore ? failures.last : nil)
         }
         return failures
     }
@@ -297,6 +300,14 @@ struct InvestmentConfirmation: View {
     @State private var done = 0
     @State private var isApplying = false
     @State private var failures: [InvestmentWriter.Failure]?
+    /// Each change's progress, by issue ID, ticked off as it's written.
+    @State private var states: [String: RowState] = [:]
+
+    private enum RowState: Equatable {
+        case writing
+        case done
+        case failed(String)
+    }
 
     var body: some View {
         let count = pending.changes.count
@@ -306,15 +317,29 @@ struct InvestmentConfirmation: View {
             Text(explanation)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            List(pending.changes) { change in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(change.issue.title).lineLimit(1)
-                    Text("\(change.issue.repo)#\(change.issue.number) · \(change.summary(pending.tracking))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    if let failure = failures?.first(where: { $0.issue.id == change.issue.id }) {
-                        Text(failure.message).font(.caption).foregroundStyle(.red)
+            ScrollViewReader { proxy in
+                List(pending.changes) { change in
+                    HStack(alignment: .top, spacing: 10) {
+                        stateIcon(states[change.id])
+                            .frame(width: 16, height: 16)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(change.issue.title).lineLimit(1)
+                            Text("\(change.issue.repo)#\(change.issue.number) · \(change.summary(pending.tracking))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            if case .failed(let message) = states[change.id] {
+                                Text(message).font(.caption).foregroundStyle(.red)
+                            }
+                        }
+                    }
+                    .id(change.id)
+                }
+                // Follows the write in progress down the list.
+                .onChange(of: done) {
+                    if pending.changes.indices.contains(done) {
+                        withAnimation { proxy.scrollTo(pending.changes[done].id, anchor: .center) }
                     }
                 }
             }
@@ -358,15 +383,37 @@ struct InvestmentConfirmation: View {
         }
     }
 
+    @ViewBuilder
+    private func stateIcon(_ state: RowState?) -> some View {
+        switch state {
+        case nil:
+            Image(systemName: "circle").foregroundStyle(.tertiary)
+        case .writing:
+            ProgressView().controlSize(.small)
+        case .done:
+            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+        case .failed:
+            Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+        }
+    }
+
     private func apply() async {
         guard let api = auth.api else { return }
         isApplying = true
-        let result = await InvestmentWriter.applyOnGitHub(pending.changes, org: pending.org, tracking: pending.tracking, api: api, issues: issues) { done = $0 }
+        let result = await InvestmentWriter.applyOnGitHub(
+            pending.changes, org: pending.org, tracking: pending.tracking, api: api, issues: issues,
+            started: { states[$0] = .writing }
+        ) { count, failure in
+            let id = pending.changes[count - 1].id
+            states[id] = failure.map { .failed($0.message) } ?? .done
+            done = count
+        }
         isApplying = false
+        failures = result
         if result.isEmpty {
+            // A moment to see every row ticked before it closes.
+            try? await Task.sleep(for: .seconds(0.8))
             onClose()
-        } else {
-            failures = result
         }
     }
 }

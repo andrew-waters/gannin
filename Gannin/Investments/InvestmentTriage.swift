@@ -227,11 +227,21 @@ struct InvestmentTriage: View {
         return Button {
             choose(category, for: issue)
         } label: {
-            HStack(spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
                 RoundedRectangle(cornerRadius: 3)
                     .fill(ChartPalette.slot(category.slot))
                     .frame(width: 12, height: 12)
-                Text(category.name).lineLimit(1)
+                    .padding(.top, 3)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(category.name).lineLimit(1)
+                    if !category.details.isEmpty {
+                        Text(category.details)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(3)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 Spacer(minLength: 4)
                 if number <= 9 {
                     Text("\(number)")
@@ -241,7 +251,7 @@ struct InvestmentTriage: View {
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 8)
-            .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .background(isChosen ? Color.accentColor.opacity(0.25) : Color.secondary.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
             .overlay {
                 if suggested { RoundedRectangle(cornerRadius: 8).strokeBorder(Color.accentColor, lineWidth: 1.5) }
