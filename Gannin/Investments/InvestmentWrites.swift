@@ -84,11 +84,12 @@ enum InvestmentWriter {
 
     /// Writes to GitHub one issue at a time, reporting each as it starts
     /// and finishes (with its failure, if any); returns what failed.
-    static func applyOnGitHub(_ changes: [InvestmentChange], org: String, tracking: InvestmentTracking, api: GitHubAPI, issues: IssueStore, started: (String) -> Void = { _ in }, progress: (Int, Failure?) -> Void) async -> [Failure] {
+    static func applyOnGitHub(_ changes: [InvestmentChange], org: String, tracking: InvestmentTracking, api: GitHubAPI, issues: IssueStore, shouldContinue: () -> Bool = { true }, started: (String) -> Void = { _ in }, progress: (Int, Failure?) -> Void) async -> [Failure] {
         var failures: [Failure] = []
         var labelIDs: [String: String] = [:]
         var projects: [OrgProject]?
-        for (index, change) in changes.enumerated() {
+        // Stopping takes effect between issues; one in flight finishes.
+        for (index, change) in changes.enumerated() where shouldContinue() {
             started(change.id)
             let failuresBefore = failures.count
             do {
@@ -302,6 +303,7 @@ struct InvestmentConfirmation: View {
     @State private var failures: [InvestmentWriter.Failure]?
     /// Each change's progress, by issue ID, ticked off as it's written.
     @State private var states: [String: RowState] = [:]
+    @State private var stopping = false
 
     private enum RowState: Equatable {
         case writing
@@ -350,16 +352,24 @@ struct InvestmentConfirmation: View {
                         .frame(width: 160)
                     Text("\(done) of \(count)").monospacedDigit().foregroundStyle(.secondary)
                 } else if let failures {
-                    Text(failures.isEmpty
+                    let updated = done - failures.count
+                    let notWritten = count - done
+                    Text(notWritten > 0
+                         ? "Stopped: \(updated) updated\(failures.isEmpty ? "" : ", \(failures.count) failed"), \(notWritten) not written."
+                         : failures.isEmpty
                          ? (count == 1 ? "Updated on GitHub." : "All \(count) updated on GitHub.")
-                         : "\(count - failures.count) updated, \(failures.count) failed.")
+                         : "\(updated) updated, \(failures.count) failed.")
                         .foregroundStyle(failures.isEmpty ? Color.secondary : .red)
                 }
                 Spacer()
                 if failures == nil {
-                    Button("Cancel", role: .cancel, action: onClose)
-                        .keyboardShortcut(.cancelAction)
-                        .disabled(isApplying)
+                    // Before writing it closes; while writing it stops after
+                    // the issue in flight.
+                    Button(isApplying ? (stopping ? "Stopping" : "Stop") : "Cancel", role: .cancel) {
+                        if isApplying { stopping = true } else { onClose() }
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(stopping)
                     Button(count == 1 ? "Update Issue" : "Update \(count) Issues") { Task { await apply() } }
                         .keyboardShortcut(.defaultAction)
                         .disabled(isApplying || auth.api == nil)
@@ -404,6 +414,7 @@ struct InvestmentConfirmation: View {
         isApplying = true
         let result = await InvestmentWriter.applyOnGitHub(
             pending.changes, org: pending.org, tracking: pending.tracking, api: api, issues: issues,
+            shouldContinue: { !stopping },
             started: { states[$0] = .writing }
         ) { count, failure in
             let id = pending.changes[count - 1].id

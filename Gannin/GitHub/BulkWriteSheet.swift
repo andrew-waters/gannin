@@ -22,6 +22,7 @@ struct BulkWriteSheet: View {
     @State private var done = 0
     @State private var isWriting = false
     @State private var finished = false
+    @State private var stopping = false
 
     private enum RowState: Equatable {
         case writing
@@ -64,16 +65,23 @@ struct BulkWriteSheet: View {
                     ProgressView(value: Double(done), total: Double(rows.count)).frame(width: 160)
                     Text("\(done) of \(rows.count)").monospacedDigit().foregroundStyle(.secondary)
                 } else if finished {
-                    Text(failed == 0 ? (rows.count == 1 ? "Done on GitHub." : "All \(rows.count) done on GitHub.") : "\(rows.count - failed) done, \(failed) failed.")
+                    let notWritten = rows.count - done
+                    Text(notWritten > 0
+                         ? "Stopped: \(done - failed) done\(failed == 0 ? "" : ", \(failed) failed"), \(notWritten) not written."
+                         : failed == 0 ? (rows.count == 1 ? "Done on GitHub." : "All \(rows.count) done on GitHub.") : "\(rows.count - failed) done, \(failed) failed.")
                         .foregroundStyle(failed == 0 ? Color.secondary : .red)
                 }
                 Spacer()
                 if finished {
                     Button("Done", action: onClose).keyboardShortcut(.defaultAction)
                 } else {
-                    Button("Cancel", role: .cancel, action: onClose)
-                        .keyboardShortcut(.cancelAction)
-                        .disabled(isWriting)
+                    // Before writing it closes; while writing it stops after
+                    // the row in flight.
+                    Button(isWriting ? (stopping ? "Stopping" : "Stop") : "Cancel", role: .cancel) {
+                        if isWriting { stopping = true } else { onClose() }
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(stopping)
                     Button(action) { Task { await write() } }
                         .keyboardShortcut(.defaultAction)
                         .disabled(isWriting || rows.isEmpty)
@@ -97,7 +105,7 @@ struct BulkWriteSheet: View {
 
     private func write() async {
         isWriting = true
-        for (index, row) in rows.enumerated() {
+        for (index, row) in rows.enumerated() where !stopping {
             states[row.id] = .writing
             do {
                 try await perform(row)
