@@ -79,7 +79,7 @@ struct InvestmentsView: View {
                             PinnedHeader { Text("Uncategorised") }
                         }
                     }
-                    if let shown, let share = shares.first(where: { $0.key == shown }) {
+                    if let shown, let share = shares.first(where: { $0.key == shown }), shown != .uncategorised || !share.issues.isEmpty {
                         Section {
                             issueList(share)
                         } header: {
@@ -205,7 +205,8 @@ struct InvestmentsView: View {
             }
             ShareBar(shares: shares)
             VStack(spacing: 0) {
-                ForEach(shares) { share in
+                // Uncategorised only when something is.
+                ForEach(shares.filter { $0.key != .uncategorised || !$0.issues.isEmpty }) { share in
                     shareRow(share, total: total, balance: balance)
                     Divider()
                 }
@@ -423,6 +424,14 @@ private struct InvestmentChart: View {
         }
     }
 
+    /// The categories to draw and list in the legend: Uncategorised only
+    /// when some period has any.
+    private var categories: [(key: InvestmentBalance.Key, name: String, slot: Int?)] {
+        balance.categories.filter { category in
+            category.key != .uncategorised || balance.buckets.contains { $0.count(category.key) > 0 }
+        }
+    }
+
     /// The middle of each period (thinned to about ten), where its bar is
     /// drawn, so every label sits under its bar.
     private var axisValues: [Date] {
@@ -446,7 +455,7 @@ private struct InvestmentChart: View {
     var body: some View {
         let points = balance.buckets.flatMap { bucket in
             let total = balance.categories.map { bucket.count($0.key) }.reduce(0, +)
-            return balance.categories.map { category in
+            return categories.map { category in
                 let count = bucket.count(category.key)
                 return Point(start: bucket.start, name: category.name, count: count, share: total > 0 ? Double(count) / Double(total) * 100 : 0)
             }
@@ -458,7 +467,7 @@ private struct InvestmentChart: View {
                     .foregroundStyle(by: .value("Category", point.name))
                     .opacity(focus == nil || focus == point.start ? 1 : 0.4)
             }
-            .chartForegroundStyleScale(domain: balance.categories.map(\.name), range: balance.categories.map { ChartPalette.slot($0.slot) })
+            .chartForegroundStyleScale(domain: categories.map(\.name), range: categories.map { ChartPalette.slot($0.slot) })
             .chartLegend(position: .bottom, alignment: .leading, spacing: 14)
             .chartYScale(domain: asShare ? 0...100 : 0...Double(max(1, balance.buckets.map { bucket in balance.categories.map { bucket.count($0.key) }.reduce(0, +) }.max() ?? 1)))
             .chartYAxis {
