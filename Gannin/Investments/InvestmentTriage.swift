@@ -13,7 +13,9 @@ struct InvestmentTriage: View {
 
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
+    @Environment(DetailStore.self) private var details
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
 
     let org: String
     let queue: Queue
@@ -23,6 +25,8 @@ struct InvestmentTriage: View {
     /// GitHub (applied at once in Gannin, but kept for the count).
     @State private var chosen: [String: UUID] = [:]
     @State private var reviewing: InvestmentPrompt.Pending?
+    /// Whether the description is open; stays open from issue to issue.
+    @AppStorage("triageShowsDescription") private var showsDescription = false
 
     var body: some View {
         Group {
@@ -43,7 +47,7 @@ struct InvestmentTriage: View {
                     Divider()
                     footer
                 }
-                .frame(width: 620, height: 560)
+                .frame(width: 680, height: 640)
             }
         }
     }
@@ -102,11 +106,21 @@ struct InvestmentTriage: View {
         let suggestion = config.suggest(issue) ?? parent.flatMap(config.suggest)
         return VStack(alignment: .leading, spacing: 16) {
             VStack(alignment: .leading, spacing: 6) {
-                Text(issue.title)
-                    .font(.title3.weight(.medium))
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(issue.title)
+                        .font(.title3.weight(.medium))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button {
+                        openURL(issue.url)
+                    } label: {
+                        Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                    }
+                    .keyboardShortcut("o", modifiers: .command)
+                    .help("Open \(issue.repo)#\(issue.number) on GitHub (⌘O)")
+                }
                 HStack(spacing: 6) {
-                    Link("\(issue.repo)#\(issue.number)", destination: issue.url)
+                    Text("\(issue.repo)#\(issue.number)")
                     if let closedAt = issue.closedAt {
                         Text("· completed")
                         RelativeDate(date: closedAt)
@@ -122,9 +136,10 @@ struct InvestmentTriage: View {
                 .lineLimit(1)
             }
             facts(issue, parent: parent)
+            description(issue)
             VStack(alignment: .leading, spacing: 8) {
                 Text("Category").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 8)], alignment: .leading, spacing: 8) {
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 8), GridItem(.flexible(), spacing: 8)], alignment: .leading, spacing: 8) {
                     ForEach(Array(config.categories.enumerated()), id: \.element.id) { offset, category in
                         categoryButton(category, number: offset + 1, issue: issue, suggested: suggestion?.id == category.id)
                     }
@@ -138,6 +153,35 @@ struct InvestmentTriage: View {
             Spacer(minLength: 0)
         }
         .padding(20)
+    }
+
+    /// The issue's body, fetched when first opened and kept with the other
+    /// details; scrolls within the card when long.
+    private func description(_ issue: IssueRecord) -> some View {
+        DisclosureGroup(isExpanded: $showsDescription) {
+            Group {
+                if let detail = details.detail(for: issue.id) {
+                    if detail.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("No description.").foregroundStyle(.secondary)
+                    } else {
+                        ScrollView {
+                            MarkdownText(source: detail.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .textSelection(.enabled)
+                        }
+                        .frame(maxHeight: 220)
+                    }
+                } else if let error = details.errors[issue.id] {
+                    Text(error).foregroundStyle(.secondary)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            }
+            .padding(.top, 6)
+            .task(id: issue.id) { await details.load(issue.id) }
+        } label: {
+            Text("Description").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+        }
     }
 
     /// Labels, type, milestone and parent: what a category is usually read from.
