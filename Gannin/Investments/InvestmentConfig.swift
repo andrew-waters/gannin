@@ -1,12 +1,15 @@
 import Foundation
 
-// Investment balance: which kind of work merged PRs are, by category rules
-// in the spirit of Swarmia's investment categories.
+// Investment balance: which kind of work issues are, in the spirit of
+// Swarmia's investment categories.
 //
-// A category matches when any of its rules does, and a rule needs all of its
-// conditions. Everything here is issues: an issue's category, in order, is a
-// manual choice; the top-most category matching the issue; then one matching
-// its parent; otherwise uncategorised.
+// Each org says how it tracks investments (`InvestmentTracking`), and every
+// read and write follows it. Tracked in Gannin, an issue's category is a
+// choice made here, else the top-most category whose rules match it, else
+// one matching its parent. Tracked in GitHub (a label per category, or an
+// option of a board's single-select field), it's what GitHub says, else what
+// its parent says; choosing a category writes that label or option back
+// (after confirming), and the rules only suggest.
 
 struct InvestmentCondition: Codable, Hashable, Identifiable {
     enum Field: String, Codable, CaseIterable, Identifiable {
@@ -92,16 +95,53 @@ struct InvestmentCategory: Codable, Hashable, Identifiable {
     /// 0-7; follows the category, so reordering never repaints it.
     var slot: Int
     var rules: [InvestmentRule]
+    /// Its label, or its option on the tracked board field, when the org
+    /// tracks investments in GitHub.
+    var githubValue: String?
 
     func matches(_ item: InvestmentItem) -> Bool {
         rules.contains { $0.matches(item) }
     }
 }
 
+/// Where an org keeps an issue's investment category.
+enum InvestmentTracking: Codable, Hashable {
+    /// Rules and choices made in Gannin; nothing is written to GitHub.
+    case gannin
+    /// A label per category.
+    case labels
+    /// A single-select field on one board, an option per category.
+    case projectField(projectNumber: Int, projectTitle: String, field: String)
+
+    var writesToGitHub: Bool { self != .gannin }
+
+    var summary: String {
+        switch self {
+        case .gannin: "In Gannin"
+        case .labels: "GitHub labels"
+        case .projectField(_, let project, let field): "\(field) on \(project)"
+        }
+    }
+
+    /// What a category's GitHub value is called here.
+    var valueName: String {
+        switch self {
+        case .gannin: ""
+        case .labels: "Label"
+        case .projectField(_, _, let field): "\(field) option"
+        }
+    }
+}
+
 struct InvestmentConfig: Codable, Hashable {
     var categories: [InvestmentCategory]
     /// Issue node ID to category ID, chosen by hand. Wins over the rules.
+    /// Only when tracked in Gannin.
     var manual: [String: UUID] = [:]
+    /// Nil (older configs) is in Gannin.
+    var tracking: InvestmentTracking?
+
+    var trackedBy: InvestmentTracking { tracking ?? .gannin }
 
     static var `default`: InvestmentConfig { InvestmentConfig(categories: InvestmentPreset.balance.categories) }
 
@@ -120,26 +160,62 @@ struct InvestmentConfig: Codable, Hashable {
         case manual = "Chosen by hand"
         case issue = "Matched on the issue"
         case parent = "Matched on its parent"
+        case github = "From GitHub"
+        case githubParent = "From its parent on GitHub"
     }
 
-    /// An issue's category: chosen by hand, else the top-most category
-    /// matching the issue, else one matching its parent, else none.
+    /// An issue's category, as the org tracks it.
     func categorise(_ issue: IssueRecord, parent: IssueRecord?) -> (category: InvestmentCategory, source: Source)? {
-        if let id = manual[issue.id], let category = category(id: id) {
-            return (category, .manual)
-        }
-        let own = InvestmentItem(issue)
-        if let category = categories.first(where: { $0.matches(own) }) {
-            return (category, .issue)
-        }
-        if let parent {
-            let inherited = InvestmentItem(parent)
-            if let category = categories.first(where: { $0.matches(inherited) }) {
+        switch trackedBy {
+        case .gannin:
+            if let id = manual[issue.id], let category = category(id: id) {
+                return (category, .manual)
+            }
+            if let category = suggest(issue) {
+                return (category, .issue)
+            }
+            if let parent, let category = suggest(parent) {
                 return (category, .parent)
             }
+            return nil
+        case .labels, .projectField:
+            if let category = tracked(issue) { return (category, .github) }
+            if let parent, let category = tracked(parent) { return (category, .githubParent) }
+            return nil
         }
-        return nil
     }
+
+    /// The top-most category whose rules match: the category when tracked
+    /// in Gannin, a suggestion when tracked in GitHub.
+    func suggest(_ issue: IssueRecord) -> InvestmentCategory? {
+        let item = InvestmentItem(issue)
+        return categories.first { $0.matches(item) }
+    }
+
+    /// The category GitHub says: the first whose label the issue has, or
+    /// whose option it has on the tracked field.
+    func tracked(_ issue: IssueRecord) -> InvestmentCategory? {
+        let value: (InvestmentCategory) -> Bool
+        switch trackedBy {
+        case .gannin:
+            return nil
+        case .labels:
+            value = { category in
+                guard let label = category.githubValue, !label.isEmpty else { return false }
+                return issue.labels.contains { $0.caseInsensitiveCompare(label) == .orderedSame }
+            }
+        case .projectField(let number, _, let field):
+            let current = issue.fields(onProject: number)?.values.first { $0.key.caseInsensitiveCompare(field) == .orderedSame }?.value.display
+            value = { category in
+                guard let option = category.githubValue, let current else { return false }
+                return option.caseInsensitiveCompare(current) == .orderedSame
+            }
+        }
+        return categories.first(where: value)
+    }
+
+    /// The categories' GitHub values, for removing the others when one is set.
+    var githubValues: [String] { categories.compactMap(\.githubValue).filter { !$0.isEmpty } }
 }
 
 /// The fields of an issue that conditions test.

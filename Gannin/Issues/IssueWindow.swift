@@ -62,6 +62,7 @@ struct IssueWindow: View {
         .navigationTitle("\(reference.repo)#\(reference.number)")
         .windowSubtitle(reference.title)
         .task(id: reference.id) { await details.load(reference.id) }
+        .investmentPrompt()
     }
 
     /// Full width across the top: the title and the headline facts.

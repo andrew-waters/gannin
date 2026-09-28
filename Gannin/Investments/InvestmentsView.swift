@@ -18,6 +18,11 @@ struct InvestmentsView: View {
     @SceneStorage("investmentPeriod") private var period: IssueMetrics.Granularity = .week
     /// A bucket clicked in the chart; nil shows the whole range.
     @State private var selectedBucket: Date?
+    /// The category whose issues are listed on the page.
+    @State private var shown: InvestmentBalance.Key?
+    /// Issues being assigned to categories one at a time.
+    @State private var triage: InvestmentTriage.Queue?
+    @Environment(\.openWindow) private var openWindow
 
     let org: String
     let team: Team?
@@ -55,6 +60,27 @@ struct InvestmentsView: View {
                             PinnedHeader { Text("Uncategorised") }
                         }
                     }
+                    if let shown, let share = shares.first(where: { $0.key == shown }) {
+                        Section {
+                            issueList(share)
+                        } header: {
+                            PinnedHeader {
+                                HStack(spacing: 12) {
+                                    Text("\(share.name) · \(scope.rawValue.lowercased())")
+                                    Text("\(share.issues.count)").foregroundStyle(.secondary).fontWeight(.regular)
+                                    Spacer(minLength: 8)
+                                    Group {
+                                        Button("Assign to Categories") { startTriage(share.issues) }
+                                            .disabled(share.issues.isEmpty)
+                                        Button { self.shown = nil } label: { Image(systemName: "xmark") }
+                                            .buttonStyle(.borderless)
+                                            .help("Close the list")
+                                    }
+                                    .font(.body)
+                                }
+                            }
+                        }
+                    }
                 } else {
                     Section {
                         HStack(spacing: 8) {
@@ -69,6 +95,9 @@ struct InvestmentsView: View {
         }
         .toolbar {
             ToolbarItemGroup { controls }
+        }
+        .sheet(item: $triage) { queue in
+            InvestmentTriage(org: org, queue: queue)
         }
         .task(id: "\(org) \(Int(range.start.timeIntervalSince1970))") {
             let days = max(1, Int(Date.now.timeIntervalSince(range.start) / 86_400) + 1)
@@ -169,14 +198,9 @@ struct InvestmentsView: View {
     }
 
     private func shareRow(_ share: InvestmentBalance.Share, total: Int, balance: InvestmentBalance) -> some View {
-        let drill = MetricDrill.investment(InvestmentBalance.Drill(
-            key: share.key, scope: scope, range: balance.range, period: period,
-            bucket: scope == .completed ? selectedBucket : nil,
-            title: "\(share.name) · \(scope.rawValue.lowercased())"
-        ))
-        let isSelected = selection == .metric(drill)
+        let isSelected = shown == share.key
         return Button {
-            selection = .metric(drill)
+            shown = isSelected ? nil : share.key
         } label: {
             HStack(spacing: 10) {
                 RoundedRectangle(cornerRadius: 3)
@@ -190,7 +214,7 @@ struct InvestmentsView: View {
                 Text(total > 0 ? (Double(share.issues.count) / Double(total)).formatted(.percent.precision(.fractionLength(0))) : "-")
                     .monospacedDigit()
                     .frame(width: 48, alignment: .trailing)
-                Image(systemName: "chevron.right")
+                Image(systemName: isSelected ? "chevron.down" : "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)
             }
@@ -215,22 +239,86 @@ struct InvestmentsView: View {
             .prefix(5)
         let unlabelled = share.issues.filter { $0.labels.isEmpty && $0.issueType == nil && $0.projectFields.isEmpty }.count
         return VStack(alignment: .leading, spacing: 14) {
-            Text("\(share.issues.count) issues didn't match a rule. \(unlabelled) have no labels, type or board fields. Add rules in Settings, or right-click an issue to categorise it.")
+            Text(uncategorisedText(share.issues.count, unlabelled: unlabelled))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             HStack(alignment: .top, spacing: 40) {
                 group("By repository", Array(byRepo))
                 if !byLabel.isEmpty { group("By label", Array(byLabel)) }
             }
-            Button("Show Uncategorised Issues") {
-                selection = .metric(.investment(InvestmentBalance.Drill(
-                    key: .uncategorised, scope: scope, range: balance.range, period: period,
-                    bucket: scope == .completed ? selectedBucket : nil,
-                    title: "Uncategorised · \(scope.rawValue.lowercased())"
-                )))
+            HStack(spacing: 12) {
+                Button("Assign to Categories") { startTriage(share.issues) }
+                    .buttonStyle(.borderedProminent)
+                    .help("Go through them one at a time and choose each one's category")
+                Button(shown == .uncategorised ? "Hide Issues" : "Show Issues") {
+                    shown = shown == .uncategorised ? nil : .uncategorised
+                }
             }
-            .linkButton()
         }
+    }
+
+    private func uncategorisedText(_ count: Int, unlabelled: Int) -> String {
+        let tracking = configs.config(for: org).investmentConfig.trackedBy
+        switch tracking {
+        case .gannin:
+            return "\(count) issues didn't match a rule. \(unlabelled) have no labels, type or board fields. Add rules in Settings, or assign them here."
+        case .labels:
+            return "\(count) issues have none of the categories' labels, and nor does their parent. Assigning them adds the label on GitHub."
+        case .projectField(_, let project, let field):
+            return "\(count) issues have no category in \(field) on \(project), and nor does their parent. Assigning them sets it on GitHub."
+        }
+    }
+
+    private func startTriage(_ issues: [IssueRecord]) {
+        triage = InvestmentTriage.Queue(issues: issues.sorted { ($0.closedAt ?? .distantFuture) > ($1.closedAt ?? .distantFuture) })
+    }
+
+    // MARK: Issues
+
+    /// The shown category's issues, newest completed first; click one to open
+    /// it, right-click to change its category.
+    private func issueList(_ share: InvestmentBalance.Share) -> some View {
+        let records = share.issues.sorted { ($0.closedAt ?? .distantFuture) > ($1.closedAt ?? .distantFuture) }
+        return LazyVStack(alignment: .leading, spacing: 0) {
+            ForEach(records) { record in
+                Button {
+                    openWindow(value: IssueReference(org: org, record: record))
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(record.title).lineLimit(1)
+                            HStack(spacing: 4) {
+                                Text("\(record.repo)#\(record.number)")
+                                if let closedAt = record.closedAt {
+                                    Text("· completed")
+                                    RelativeDate(date: closedAt)
+                                } else {
+                                    Text("· open")
+                                }
+                                if !record.labels.isEmpty {
+                                    Text("· \(record.labels.prefix(3).joined(separator: ", "))")
+                                }
+                            }
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                        }
+                        Spacer()
+                        AvatarStack(people: record.assignees.map { Person(login: $0, name: nil, avatarUrl: URL(string: "https://github.com/\($0).png?size=64")) })
+                    }
+                    .padding(.vertical, 6)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .contextMenu {
+                    CategoriseMenu(issueID: record.id, org: org)
+                    Link("Open on GitHub", destination: record.url)
+                }
+                Divider()
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 28)
     }
 
     private func group(_ title: String, _ rows: [(String, Int)]) -> some View {
@@ -366,25 +454,41 @@ private struct InvestmentChart: View {
 
 // MARK: - Categorise menu
 
-/// An issue's investment category: by hand, or back to the rules.
+/// An issue's investment category, as the org tracks it: chosen in Gannin
+/// (or back to the rules), or its label or board option on GitHub, which the
+/// window confirms before writing.
 struct CategoriseMenu: View {
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(IssueStore.self) private var issueStore
+    @Environment(InvestmentPrompt.self) private var prompt: InvestmentPrompt?
     @Environment(\.currentOrg) private var currentOrg
     let issueID: String
     /// For windows outside the column browser, which has no current org.
     var org: String?
 
     var body: some View {
-        if let org = org ?? currentOrg {
+        if let org = org ?? currentOrg, let history = issueStore.history(for: org), let issue = history.issues[issueID] {
             let config = configs.config(for: org).investmentConfig
+            let tracking = config.trackedBy
+            let current = tracking.writesToGitHub
+                ? config.tracked(issue)?.id
+                : config.manual[issueID]
             Picker("Investment category", selection: Binding(
-                get: { config.manual[issueID] },
-                set: { configs.setCategory($0, for: issueID, in: org) }
+                get: { current },
+                set: { id in
+                    let category = id.flatMap(config.category(id:))
+                    if let prompt {
+                        prompt.assign([issue], to: category, org: org, configs: configs)
+                    } else if !tracking.writesToGitHub {
+                        configs.setCategory(id, for: issueID, in: org)
+                    }
+                }
             )) {
-                Text("Use Rules").tag(UUID?.none)
+                Text(tracking.writesToGitHub ? "None" : "Use Rules").tag(UUID?.none)
                 Divider()
                 ForEach(config.categories) { category in
                     Text(category.name).tag(Optional(category.id))
+                        .disabled(tracking.writesToGitHub && (category.githubValue ?? "").isEmpty)
                 }
             }
             .pickerStyle(.menu)

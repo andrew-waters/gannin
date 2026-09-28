@@ -138,6 +138,7 @@ struct MainView: View {
         .navigationTitle(customTitle.isEmpty ? automaticTitle : customTitle)
         .windowSubtitle(selectedOrg.map { orgs.org(login: $0)?.displayName ?? $0 } ?? "")
         .focusedSceneValue(\.renameTab, RenameTabAction(window: windowID, perform: startRenaming))
+        .investmentPrompt()
         .environment(\.showPerson, ShowPersonAction { login in sidebarSelection.wrappedValue = .person(login) })
         #if os(macOS)
         .background(WindowAccessor { window in

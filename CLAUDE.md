@@ -56,7 +56,8 @@ report inside a person's view, which are one column of several.
 - `Gannin/GitHub/`: GraphQL client (`GitHubAPI`) and the queries (`Queries.swift`). All calls are
   reads except the project board writes in `ProjectFields.swift` (adding an issue to or
   removing it from a board, and saving its fields, from the issue window's
-  `ProjectFieldsSections`), which need the `project` scope. Mutations skip the injected
+  `ProjectFieldsSections`), which need the `project` scope, and the investment writes in `InvestmentWrites.swift` (labels
+added, removed or created, and the tracked board field set), always confirmed first. Mutations skip the injected
   `rateLimit` field. Raw GraphQL shapes are private to `Queries.swift` and mapped onto the models.
 - `Gannin/Workload/`: models (`Models.swift`), `OrgStore` (org list, stars, per-org snapshots
   cached as JSON in Application Support) and `Workload`, which derives per-person load from a
@@ -153,8 +154,22 @@ report inside a person's view, which are one column of several.
   category any of its rules) over the issue's label, title, repository, issue type, milestone
   and a named project board field (such as Bucket), plus issues categorised by hand (`manual`,
   by issue node ID). Branch and author stay in the field enum only so older saved rules decode.
-- An issue's category: chosen by hand, else the top-most category matching the issue, else one
-  matching its parent (from the stored history), else uncategorised.
+- Each org says how it tracks investments (`InvestmentConfig.tracking`, Settings > How we
+  track investments), and every read and write follows it:
+  - In Gannin: an issue's category is chosen by hand (`manual`), else the top-most category
+    whose rules match it, else one matching its parent, else uncategorised. Nothing is
+    written to GitHub.
+  - GitHub labels, or a single-select field on one board: each category has a `githubValue`
+    (its label or option). The category is what GitHub says, else what the parent says; the
+    rules only suggest. Choosing a category plans an `InvestmentChange` (add its label and
+    remove the other categories', or set the option, adding the issue to the board if
+    needed) and every GitHub write is confirmed first (`InvestmentConfirmation`), through
+    the window's `InvestmentPrompt` (`.investmentPrompt()` on the main and issue windows).
+    Missing labels are created in the repo. Writes update the local issue history at once.
+- Assign to Categories (`InvestmentTriage`) goes through a queue of issues one at a time,
+  number keys for categories and arrows to skip or go back, with the rules' suggestion
+  marked; GitHub-tracked choices collect until Review and Write. The Investments page lists a
+  category's issues on the page (no drill-down column).
 - `InvestmentBalance` counts issues completed in a range (Last 30 or 90 days, this or last
   quarter, this year, or custom dates) and those in progress at its end, and buckets completed
   ones by week, month or quarter; clicking a bucket shows its breakdown. The issue history is

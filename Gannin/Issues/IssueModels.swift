@@ -9,7 +9,8 @@ struct IssueRecord: Codable, Hashable, Identifiable {
     let url: URL
     let repo: String
     let assignees: [String]
-    let labels: [String]
+    /// A var so labels written from the app show before the next fetch.
+    var labels: [String]
     let issueType: String?
     let milestone: String?
     /// The parent issue's node ID, for inheriting its investment category.

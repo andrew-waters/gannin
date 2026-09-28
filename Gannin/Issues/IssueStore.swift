@@ -145,6 +145,14 @@ final class IssueStore {
         save(history)
     }
 
+    /// Labels written from the app, shown before the next fetch.
+    func recordLabels(org: String, issueID: String, labels: [String]) {
+        guard var history = histories[org], history.issues[issueID] != nil else { return }
+        history.issues[issueID]?.labels = labels
+        histories[org] = history
+        save(history)
+    }
+
     /// Records a board field saved from the app (nil clears it), so ordering
     /// by that field updates at once.
     func recordFieldValue(org: String, issueID: String, projectNumber: Int, projectTitle: String, field: String, value: IssueFieldValue?) {

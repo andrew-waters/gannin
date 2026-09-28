@@ -5,6 +5,7 @@ import SwiftUI
 struct InvestmentCategoriesSection: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
+    @Environment(InvestmentPrompt.self) private var prompt: InvestmentPrompt?
     let org: String
 
     @State private var editing: InvestmentCategory?
@@ -18,6 +19,7 @@ struct InvestmentCategoriesSection: View {
             config.categorise(issue, parent: issue.parentID.flatMap { history?.issues[$0] })?.category.id
         }, by: { $0 }).mapValues(\.count)
 
+        TrackingSection(org: org, issues: issues)
         Section {
             ForEach(Array(config.categories.enumerated()), id: \.element.id) { index, category in
                 HStack(spacing: 10) {
@@ -26,9 +28,9 @@ struct InvestmentCategoriesSection: View {
                         .frame(width: 12, height: 12)
                     VStack(alignment: .leading, spacing: 1) {
                         Text(category.name)
-                        Text("\(category.rules.count == 1 ? "1 rule" : "\(category.rules.count) rules") · \(placed[category.id] ?? 0) stored issues")
+                        Text(rowSummary(category, config: config, placed: placed[category.id] ?? 0))
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(config.trackedBy.writesToGitHub && (category.githubValue ?? "").isEmpty ? Color.orange : .secondary)
                     }
                     Spacer()
                     Button { move(index, by: -1) } label: { Image(systemName: "arrow.up") }
@@ -56,6 +58,16 @@ struct InvestmentCategoriesSection: View {
                 .fixedSize()
                 Spacer()
                 if !config.manual.isEmpty {
+                    if config.trackedBy.writesToGitHub, let prompt, let history {
+                        // Choices made here before the org tracked in GitHub.
+                        Button("Write \(config.manual.count) Chosen in Gannin to GitHub") {
+                            let changes = config.manual.compactMap { issueID, categoryID -> InvestmentChange? in
+                                guard let issue = history.issues[issueID], let category = config.category(id: categoryID) else { return nil }
+                                return InvestmentChange.plan(issue, to: category, config: config)
+                            }
+                            prompt.propose(changes, org: org, configs: configs)
+                        }
+                    }
                     Button("Clear \(config.manual.count) Chosen by Hand") {
                         configs.updateInvestments(org) { $0.manual = [:] }
                     }
@@ -64,7 +76,9 @@ struct InvestmentCategoriesSection: View {
         } header: {
             Text("Investment categories")
         } footer: {
-            Text("An issue goes to the first category, top to bottom, with a rule matching it; failing that, one matching its parent. Choosing a category by hand (right-click an issue, or in its window) beats the rules.")
+            Text(config.trackedBy.writesToGitHub
+                 ? "An issue's category is the one whose \(config.trackedBy.valueName.lowercased()) it has on GitHub, else its parent's. Rules only suggest a category when assigning. Choosing a category (right-click an issue, in its window, or Assign to Categories) writes it to GitHub after you confirm."
+                 : "An issue goes to the first category, top to bottom, with a rule matching it; failing that, one matching its parent. Choosing a category by hand (right-click an issue, or in its window) beats the rules.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -82,6 +96,13 @@ struct InvestmentCategoriesSection: View {
         } message: { preset in
             Text("\(preset.summary) Your categories and choices made by hand are replaced.")
         }
+    }
+
+    private func rowSummary(_ category: InvestmentCategory, config: InvestmentConfig, placed: Int) -> String {
+        let rules = category.rules.count == 1 ? "1 rule" : "\(category.rules.count) rules"
+        guard config.trackedBy.writesToGitHub else { return "\(rules) · \(placed) stored issues" }
+        let value = category.githubValue.flatMap { $0.isEmpty ? nil : $0 }
+        return "\(config.trackedBy.valueName): \(value ?? "not set") · \(placed) stored issues · \(rules) to suggest"
     }
 
     private func move(_ index: Int, by offset: Int) {
@@ -145,6 +166,31 @@ private struct InvestmentCategoryEditor: View {
                     }
                 }
 
+                if config.trackedBy.writesToGitHub {
+                    Section {
+                        HStack {
+                            TextField(config.trackedBy.valueName, text: Binding(get: { category.githubValue ?? "" }, set: { category.githubValue = $0 }))
+                            Menu {
+                                ForEach(githubSuggestions(config.trackedBy, suggestions: suggestions).prefix(40), id: \.self) { value in
+                                    Button(value) { category.githubValue = value }
+                                }
+                            } label: {
+                                Image(systemName: "chevron.down")
+                            }
+                            .menuIndicator(.hidden)
+                            .fixedSize()
+                            .help("Values seen on stored issues")
+                        }
+                    } header: {
+                        Text("On GitHub")
+                    } footer: {
+                        Text(config.trackedBy == .labels
+                             ? "Issues with this label are in this category, and choosing it adds the label (and removes the other categories')."
+                             : "Issues with this option are in this category, and choosing it sets the option.")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 ForEach($category.rules) { $rule in
                     Section {
                         ForEach($rule.conditions) { $condition in
@@ -205,6 +251,14 @@ private struct InvestmentCategoryEditor: View {
             .padding(16)
         }
         .frame(width: 640, height: 620)
+    }
+
+    private func githubSuggestions(_ tracking: InvestmentTracking, suggestions: Suggestions) -> [String] {
+        switch tracking {
+        case .gannin: []
+        case .labels: suggestions.values(for: .label)
+        case .projectField(_, _, let field): suggestions.projectFieldValues(field)
+        }
     }
 
     /// How many stored issues the rules match, and how many land here once
@@ -323,5 +377,104 @@ private struct Suggestions {
 
     func values(for field: InvestmentCondition.Field) -> [String] {
         values[field] ?? []
+    }
+}
+
+// MARK: - Tracking
+
+/// How the org keeps investment categories: in Gannin, as labels, or as a
+/// single-select field on a board. Everything else follows it.
+private struct TrackingSection: View {
+    @Environment(OrgConfigStore.self) private var configs
+    let org: String
+    let issues: [IssueRecord]
+
+    private enum Kind: String, CaseIterable {
+        case gannin = "In Gannin"
+        case labels = "GitHub labels"
+        case projectField = "A board field"
+    }
+
+    /// Boards seen on stored issues, with their fields that hold options.
+    private var boards: [(number: Int, title: String, fields: [String])] {
+        var byBoard: [Int: (title: String, fields: Set<String>)] = [:]
+        for issue in issues {
+            for board in issue.projectFields {
+                let options = board.values.filter { if case .option = $0.value { true } else { false } }.map(\.key)
+                byBoard[board.projectNumber, default: (board.projectTitle, [])].fields.formUnion(options)
+            }
+        }
+        return byBoard.map { ($0.key, $0.value.title, $0.value.fields.sorted()) }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    var body: some View {
+        let tracking = configs.config(for: org).investmentConfig.trackedBy
+        Section {
+            Picker("Tracked by", selection: kindBinding(tracking)) {
+                ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            if case .projectField(let number, _, let field) = tracking {
+                let boards = boards
+                Picker("Board", selection: Binding {
+                    number
+                } set: { newNumber in
+                    let board = boards.first { $0.number == newNumber }
+                    set(.projectField(projectNumber: newNumber, projectTitle: board?.title ?? "", field: board?.fields.first ?? field))
+                }) {
+                    ForEach(boards, id: \.number) { Text($0.title).tag($0.number) }
+                    if !boards.contains(where: { $0.number == number }) { Text("Project \(number)").tag(number) }
+                }
+                Picker("Field", selection: Binding {
+                    field
+                } set: { newField in
+                    let board = boards.first { $0.number == number }
+                    set(.projectField(projectNumber: number, projectTitle: board?.title ?? "", field: newField))
+                }) {
+                    let fields = boards.first { $0.number == number }?.fields ?? []
+                    ForEach(fields, id: \.self) { Text($0).tag($0) }
+                    if !fields.contains(field) { Text(field.isEmpty ? "Choose a field" : field).tag(field) }
+                }
+            }
+        } header: {
+            Text("How we track investments")
+        } footer: {
+            Text(footer(tracking))
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func footer(_ tracking: InvestmentTracking) -> String {
+        switch tracking {
+        case .gannin:
+            "Categories come from the rules below and choices made in Gannin, and nothing is written to GitHub."
+        case .labels:
+            "Each category is a label. The balance reads issues' labels, and choosing a category adds its label and removes the other categories', after you confirm. Set each category's label below."
+        case .projectField(_, let project, let field):
+            "Each category is an option of \(field.isEmpty ? "a single-select field" : field) on \(project.isEmpty ? "the board" : project). The balance reads it, and choosing a category sets it (adding the issue to the board if needed), after you confirm. Set each category's option below."
+        }
+    }
+
+    private func kindBinding(_ tracking: InvestmentTracking) -> Binding<Kind> {
+        Binding {
+            switch tracking {
+            case .gannin: .gannin
+            case .labels: .labels
+            case .projectField: .projectField
+            }
+        } set: { kind in
+            switch kind {
+            case .gannin: set(.gannin)
+            case .labels: set(.labels)
+            case .projectField:
+                let board = boards.first
+                set(.projectField(projectNumber: board?.number ?? 0, projectTitle: board?.title ?? "", field: board?.fields.first ?? ""))
+            }
+        }
+    }
+
+    private func set(_ tracking: InvestmentTracking) {
+        configs.updateInvestments(org) { $0.tracking = tracking == .gannin ? nil : tracking }
     }
 }
