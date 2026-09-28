@@ -40,8 +40,9 @@ struct OrgWorkloadView: View {
                 } else {
                     ProjectsLandingView(org: org) { project = $0 }
                 }
-            } else if (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && (issueList == nil || issueList == .notOnBoard)), let workload {
-                // The people and repo stats pages: no team or filter bar.
+            } else if tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && (issueList == nil || issueList == .notOnBoard)), let workload {
+                // Investments and the people and repo stats pages: no team
+                // or filter bar.
                 list(workload)
             } else {
                 VStack(spacing: 0) {
@@ -96,7 +97,7 @@ struct OrgWorkloadView: View {
             }
             .controlSize(.small)
 
-            if let workload, tab != .dashboard, tab != .people, tab != .investments {
+            if let workload, tab != .dashboard, tab != .people {
                 summary(workload)
             }
             if let error = orgs.errors[org], workload != nil {
@@ -197,7 +198,8 @@ struct OrgWorkloadView: View {
                 IssuesStatsView(org: org, workload: workload, selection: $selection)
             }
         case .repositories: repositoryView(workload)
-        case .investments: InvestmentsView(org: org, team: workload.team, selection: $selection)
+        // Across everyone: a team picked on another page doesn't carry over.
+        case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
         case .projects, .actions, .settings: EmptyView()
         }
     }
