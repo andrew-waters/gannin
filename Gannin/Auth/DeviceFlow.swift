@@ -78,13 +78,23 @@ enum DeviceFlow {
     /// cancelled.
     static func pollForToken(_ code: DeviceCode) async throws -> String {
         var interval = max(code.interval, 1)
+        let expiry = Date.now.addingTimeInterval(TimeInterval(code.expiresIn))
         while true {
             try await Task.sleep(for: .seconds(interval))
-            let json = try await post(accessTokenURL, [
-                "client_id": GitHubOAuthConfig.clientID,
-                "device_code": code.deviceCode,
-                "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
-            ])
+            let json: [String: Any]
+            do {
+                json = try await post(accessTokenURL, [
+                    "client_id": GitHubOAuthConfig.clientID,
+                    "device_code": code.deviceCode,
+                    "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+                ])
+            } catch AuthError.network {
+                // On iPhone and iPad the app is suspended while you approve
+                // in Safari, which drops the request in flight; keep polling
+                // until the code expires rather than failing the sign-in.
+                guard Date.now < expiry else { throw AuthError.expired }
+                continue
+            }
             if let token = json["access_token"] as? String {
                 return token
             }
