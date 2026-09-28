@@ -52,9 +52,34 @@ final class ProjectStore {
     /// Part of Refresh: the board list, and the definitions of boards the
     /// org's settings depend on (the tracked investments board).
     func refresh(org: String, definitions: [Int]) async {
-        await loadBoards(org: org)
-        for number in definitions where number != 0 {
-            await loadDefinition(org: org, number: number, force: true)
+        guard let api = auth.api else { return }
+        loadCachedBoards(org)
+        let tracked = definitions.filter { $0 != 0 }
+        let run = activity.begin(.projects, org: org)
+        run.add("boards", title: "Boards")
+        if !tracked.isEmpty { run.add("fields", title: "Investment board fields") }
+        do {
+            let projects = try await run.track("boards", count: { $0.count }) { _ in try await api.orgProjects(org: org) }
+            boardLists[org] = projects
+            if let data = try? Self.encoder.encode(projects) {
+                try? data.write(to: Self.boardListURL(org), options: .atomic)
+            }
+            for number in tracked {
+                let key = Self.key(org, number)
+                loadCached(key)
+                let board = try await run.track("fields", count: { $0?.fields.count }) { _ in try await api.board(org: org, number: number) }
+                guard let board else { continue }
+                var cache = caches[key] ?? BoardCache(board: board, fetchedAt: .now)
+                cache.board = board
+                cache.fetchedAt = .now
+                caches[key] = cache
+                save(cache, key: key)
+            }
+            run.finish()
+        } catch is CancellationError {
+            run.finish()
+        } catch {
+            run.finish(error: error)
         }
     }
 
