@@ -174,7 +174,7 @@ struct InvestmentsView: View {
     }
 
     private var periods: [IssueMetrics.Granularity] {
-        rangePreset == .allTime ? [.month, .quarter, .year] : [.week, .month, .quarter]
+        rangePreset == .allTime ? [.week, .month, .quarter, .year] : [.week, .month, .quarter]
     }
 
     private func date(_ seconds: Binding<Double>) -> Binding<Date> {
@@ -443,13 +443,15 @@ private struct InvestmentChart: View {
     }
 
     static func label(_ bucket: InvestmentBalance.Bucket, period: IssueMetrics.Granularity) -> String {
-        switch period {
+        let name = switch period {
         case .year: bucket.start.formatted(.dateTime.year())
         case .week: "the week of \(bucket.start.formatted(.dateTime.day().month()))"
         case .month: bucket.start.formatted(.dateTime.month(.wide).year())
         case .quarter: bucket.start.formatted(.dateTime.quarter().year())
         case .day: bucket.start.formatted(date: .abbreviated, time: .omitted)
         }
+        // The current period runs to today.
+        return bucket.end > .now ? "\(name) so far" : name
     }
 
     var body: some View {
