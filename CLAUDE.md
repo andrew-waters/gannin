@@ -81,12 +81,14 @@ added, removed or created, and the tracked board field set), always confirmed fi
   `@SceneStorage`, so each main window or tab has its own (File > New Window, or New Tab, which
   `WindowTabs.swift` joins to the current window). Preferences like chart granularity stay
   `@AppStorage`, shared.
-- `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar lists
-  the `WorkloadTab` sections (Dashboard, Issues, Pull Requests, People, Repositories, Actions) for the
-  selected org; the org switcher and account menu sit in its footer. Under People: Activity, Time off, All (everyone), Teams (each
-  org team opening to its members, then No team; an org without teams lists people directly).
-  Picking a person shows their `PersonColumn` as the
-  main view; People on its own is the people stats table. A Settings section holds the org's repo and people exclusions
+- `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
+  (`OrgSidebar`) is laid out as Mail's: Dashboard, Issues, Pull Requests, Repositories and Actions,
+  then People, Planning (Investments, Harness, Projects) and Claude Code as collapsible
+  `Section`s, with what's under a row in a `DisclosureGroup` so the system draws the triangles and
+  indents. Rows are single-line `Label`s with counts as badges and breakdowns in tooltips. The org
+  switcher and account menu sit in its footer. Under People: Activity, Standup, Time off, Everyone
+  (the people stats table, opening to everyone), then each org team and No team opening to their
+  members. Picking a person shows their `PersonColumn` as the main view. A Settings section holds the org's repo and people exclusions
   (`OrgSettingsView`), which apply to the workload and the stats alike. The first
   page is the section's (or the person, repo, list or board picked under it);
   `path: [DetailSelection]` is the trail of pages pushed over it (`PageStack` in

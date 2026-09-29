@@ -46,8 +46,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .repositories: "folder"
         case .actions: "play.circle"
         case .investments: "chart.pie"
-        case .projects: "rectangle.3.group"
-        case .harness: "books.vertical"
+        case .projects: "rectangle.split.3x1"
+        case .harness: "text.book.closed"
         case .settings: "gearshape"
         }
     }
@@ -81,6 +81,14 @@ enum IssueList: String, CaseIterable {
     case assigned = "Assigned"
     case unassigned = "Unassigned"
     case notOnBoard = "Not on a board"
+
+    var systemImage: String {
+        switch self {
+        case .assigned: "person.crop.circle"
+        case .unassigned: "circle.dashed"
+        case .notOnBoard: "rectangle.dashed"
+        }
+    }
 
     var title: String {
         switch self {
@@ -692,6 +700,10 @@ private struct PageStack: View {
 
 // MARK: - Sidebar
 
+/// The sidebar, laid out as Mail's is: the org's pages first, then People,
+/// Planning and Claude Code as sections that hide and show from their
+/// headers, with what's under a row in a disclosure group, so the system
+/// draws the triangles, indents and badges.
 struct OrgSidebar: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(IssueStore.self) private var issueStore
@@ -699,11 +711,12 @@ struct OrgSidebar: View {
     @Binding var selection: SidebarItem?
     let workload: Workload?
     @AppStorage("sidebarPeopleExpanded") private var peopleExpanded = true
+    @AppStorage("sidebarPlanningExpanded") private var planningExpanded = true
+    @AppStorage("sidebarSessionsExpanded") private var sessionsExpanded = true
     @AppStorage("sidebarAllExpanded") private var allExpanded = false
-    @AppStorage("sidebarTeamsExpanded") private var teamsExpanded = true
-    /// Team IDs opened under Teams, comma separated.
+    /// Team IDs opened under People, comma separated.
     @AppStorage("sidebarExpandedTeams") private var expandedTeamIDs = ""
-    @AppStorage("sidebarRepositoriesExpanded") private var repositoriesExpanded = true
+    @AppStorage("sidebarRepositoriesExpanded") private var repositoriesExpanded = false
     @AppStorage("sidebarIssuesExpanded") private var issuesExpanded = true
     @AppStorage("sidebarProjectsExpanded") private var projectsExpanded = true
     @Environment(ProjectStore.self) private var projectStore
@@ -719,63 +732,62 @@ struct OrgSidebar: View {
 
     var body: some View {
         List(selection: $selection) {
-            if selectedOrg != nil {
-                ForEach(WorkloadTab.allCases.filter { $0 != .settings && ($0 != .harness || hasHarness) }) { tab in
-                    if tab == .people {
-                        expandableRow(.people, isExpanded: $peopleExpanded)
-                        if peopleExpanded {
-                            peopleViewRow(.activity)
-                            peopleViewRow(.standup)
-                            peopleViewRow(.timeOff)
-                            teamRows
+            if let selectedOrg {
+                Section {
+                    row(.dashboard)
+                    DisclosureGroup(isExpanded: $issuesExpanded) {
+                        ForEach(IssueList.allCases, id: \.self) { list in
+                            Label(list.rawValue, systemImage: list.systemImage)
+                                .badge(issueCount(list))
+                                .tag(SidebarItem.issueList(list))
+                                .contextMenu { OpenElsewhereItems(sidebar: .issueList(list)) }
                         }
-                    } else if tab == .issues {
-                        expandableRow(.issues, isExpanded: $issuesExpanded)
-                        if issuesExpanded {
-                            ForEach(IssueList.allCases, id: \.self) { list in
-                                Text(list.rawValue)
-                                    .padding(.leading, 30)
-                                    .badge(issueCount(list))
-                                    .tag(SidebarItem.issueList(list))
-                                    .contextMenu { OpenElsewhereItems(sidebar: .issueList(list)) }
-                            }
+                    } label: {
+                        row(.issues)
+                    }
+                    row(.pullRequests)
+                    DisclosureGroup(isExpanded: $repositoriesExpanded) {
+                        ForEach(repositories) { repository in
+                            repositoryRow(repository)
                         }
-                    } else if tab == .projects {
-                        expandableRow(.projects, isExpanded: $projectsExpanded)
-                        if projectsExpanded, let selectedOrg {
-                            ForEach(projectStore.boardLists[selectedOrg] ?? []) { board in
-                                Text(board.title)
-                                    .lineLimit(1)
-                                    .padding(.leading, 30)
-                                    .tag(SidebarItem.project(board.number))
-                                    .contextMenu { OpenElsewhereItems(sidebar: .project(board.number)) }
-                            }
+                    } label: {
+                        row(.repositories)
+                    }
+                    row(.actions)
+                }
+
+                Section("People", isExpanded: $peopleExpanded) {
+                    peopleViewRow(.activity)
+                    peopleViewRow(.standup)
+                    peopleViewRow(.timeOff)
+                    peopleRows
+                }
+
+                Section("Planning", isExpanded: $planningExpanded) {
+                    row(.investments)
+                    if hasHarness { row(.harness) }
+                    DisclosureGroup(isExpanded: $projectsExpanded) {
+                        ForEach(projectStore.boardLists[selectedOrg] ?? []) { board in
+                            Label(board.title, systemImage: "rectangle.split.3x1")
+                                .lineLimit(1)
+                                .tag(SidebarItem.project(board.number))
+                                .contextMenu { OpenElsewhereItems(sidebar: .project(board.number)) }
                         }
-                    } else if tab == .repositories {
-                        expandableRow(.repositories, isExpanded: $repositoriesExpanded)
-                        if repositoriesExpanded {
-                            ForEach(repositories) { repository in
-                                repositoryRow(repository)
-                            }
-                        }
-                    } else {
-                        Label(tab.rawValue, systemImage: tab.systemImage)
-                            .badge(badge(for: tab))
-                            .tag(SidebarItem.tab(tab))
-                            .contextMenu { OpenElsewhereItems(sidebar: .tab(tab)) }
+                    } label: {
+                        row(.projects)
                     }
                 }
+
                 #if os(macOS)
-                if let selectedOrg, !sessions.sessions(for: selectedOrg).isEmpty {
-                    Section("Claude Code") {
+                if !sessions.sessions(for: selectedOrg).isEmpty {
+                    Section("Claude Code", isExpanded: $sessionsExpanded) {
                         SessionSidebarRows(org: selectedOrg)
                     }
                 }
                 #endif
+
                 Section {
-                    Label(WorkloadTab.settings.rawValue, systemImage: WorkloadTab.settings.systemImage)
-                        .tag(SidebarItem.tab(.settings))
-                        .contextMenu { OpenElsewhereItems(sidebar: .tab(.settings)) }
+                    row(.settings)
                 }
             }
             if let error = orgs.errors["orgs"] {
@@ -804,26 +816,12 @@ struct OrgSidebar: View {
         }
     }
 
-    /// A section row with a chevron that shows or hides what's listed under it.
-    private func expandableRow(_ tab: WorkloadTab, isExpanded: Binding<Bool>) -> some View {
-        HStack {
-            Label(tab.rawValue, systemImage: tab.systemImage)
-            Spacer(minLength: 4)
-            Button {
-                withAnimation(.easeOut(duration: 0.15)) { isExpanded.wrappedValue.toggle() }
-            } label: {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.semibold))
-                    .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
-                    .frame(width: 16, height: 16)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .help(isExpanded.wrappedValue ? "Hide \(tab.rawValue.lowercased())" : "Show \(tab.rawValue.lowercased())")
-        }
-        .tag(SidebarItem.tab(tab))
-        .contextMenu { OpenElsewhereItems(sidebar: .tab(tab)) }
+    /// A section's own row: its page, with its count.
+    private func row(_ tab: WorkloadTab) -> some View {
+        Label(tab.rawValue, systemImage: tab.systemImage)
+            .badge(badge(for: tab))
+            .tag(SidebarItem.tab(tab))
+            .contextMenu { OpenElsewhereItems(sidebar: .tab(tab)) }
     }
 
     private func issueCount(_ list: IssueList) -> Int {
@@ -842,107 +840,77 @@ struct OrgSidebar: View {
             .sorted { $0.shortName.localizedCaseInsensitiveCompare($1.shortName) == .orderedAscending }
     }
 
-    /// Name, then its open work in words ("3 PRs · 2 issues"), with only
-    /// "stale" coloured as a warning.
+    /// Its name, with open PRs as the count and the rest in the tooltip.
     private func repositoryRow(_ repository: RepositoryLoad) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "folder")
-                .foregroundStyle(.secondary)
-                .frame(width: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(repository.shortName)
-                    .lineLimit(1)
-                summary([
-                    count(repository.openPullRequests.count, "PR", "PRs"),
-                    count(repository.issues.count, "issue", "issues"),
-                ], stale: repository.stalePullRequests.count)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
+        Label(repository.shortName, systemImage: "folder")
+            .lineLimit(1)
+            .badge(repository.openPullRequests.count)
+            .help(summary([
+                count(repository.openPullRequests.count, "PR", "PRs"),
+                count(repository.issues.count, "issue", "issues"),
+            ], stale: repository.stalePullRequests.count))
+            .contextMenu {
+                OpenElsewhereItems(sidebar: .repository(repository.name))
+                RepositoryMenu(repository: repository.name, org: selectedOrg ?? "")
             }
-        }
-        .padding(.leading, 20)
-        .padding(.vertical, 1)
-        .contextMenu {
-            OpenElsewhereItems(sidebar: .repository(repository.name))
-            RepositoryMenu(repository: repository.name, org: selectedOrg ?? "")
-        }
-        .tag(SidebarItem.repository(repository.name))
+            .tag(SidebarItem.repository(repository.name))
     }
 
     private func count(_ n: Int, _ singular: String, _ plural: String) -> String? {
         n == 0 ? nil : "\(n) \(n == 1 ? singular : plural)"
     }
 
-    /// Parts joined with " · ", then "N stale" in orange.
-    private func summary(_ parts: [String?], stale: Int) -> Text {
-        let parts = parts.compactMap { $0 }
-        guard !parts.isEmpty || stale > 0 else { return Text("Nothing in flight") }
-        var text = Text(parts.joined(separator: " · "))
-        if stale > 0 {
-            let staleText = Text("\(stale) stale").foregroundStyle(.orange)
-            text = parts.isEmpty ? staleText : Text("\(text) · \(staleText)")
-        }
-        return text
+    /// "3 PRs, 2 issues, 1 stale", for a tooltip.
+    private func summary(_ parts: [String?], stale: Int) -> String {
+        let parts = parts.compactMap { $0 } + (stale > 0 ? ["\(stale) stale"] : [])
+        return parts.isEmpty ? "Nothing in flight" : parts.joined(separator: ", ")
     }
 
-    /// Name, then what they have on in words ("2 PRs · 1 review"), with
-    /// only "stale" coloured as a warning.
-    private func personRow(_ load: PersonLoad, indent: CGFloat = 20) -> some View {
-        HStack(spacing: 8) {
-            Avatar(url: load.person.avatarUrl, size: 22)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(load.person.displayName)
-                    .lineLimit(1)
-                workSummary(load)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
+    /// Avatar and name, with what they have in flight as the count and the
+    /// breakdown in the tooltip.
+    private func personRow(_ load: PersonLoad) -> some View {
+        Label {
+            Text(load.person.displayName).lineLimit(1)
+        } icon: {
+            Avatar(url: load.person.avatarUrl, size: 18)
         }
-        .padding(.leading, indent)
-        .padding(.vertical, 1)
+        .badge(load.pullRequests.count + load.reviewRequests.count + load.activeIssues.count)
+        .help(summary([
+            count(load.pullRequests.count, "PR", "PRs"),
+            count(load.reviewRequests.count, "review", "reviews"),
+            count(load.activeIssues.count, "issue", "issues"),
+        ], stale: load.stalePullRequests.count))
         .excludable(login: load.person.login, org: selectedOrg ?? "", opens: .person(load.id))
         .tag(SidebarItem.person(load.id))
     }
 
-    private func workSummary(_ load: PersonLoad) -> Text {
-        summary([
-            count(load.pullRequests.count, "PR", "PRs"),
-            count(load.reviewRequests.count, "review", "reviews"),
-            count(load.activeIssues.count, "issue", "issues"),
-        ], stale: load.stalePullRequests.count)
-    }
-
     private func peopleViewRow(_ view: PeopleView) -> some View {
         Label(view.rawValue, systemImage: view.systemImage)
-            .padding(.leading, 20)
             .tag(SidebarItem.peopleView(view))
             .contextMenu { OpenElsewhereItems(sidebar: .peopleView(view)) }
     }
 
-    // MARK: Teams
+    // MARK: People
 
-    /// All (the whole org) and Teams under People, each opening to its
-    /// members, with anyone in no team last under Teams. An org without teams lists its people directly.
+    /// Everyone (the people stats, opening to each person), then each
+    /// team and No team opening to their members. An org without teams
+    /// lists its people under Everyone alone.
     @ViewBuilder
-    private var teamRows: some View {
-        let groups = teamGroups
-        if groups.isEmpty {
+    private var peopleRows: some View {
+        DisclosureGroup(isExpanded: $allExpanded) {
             ForEach(people) { load in personRow(load) }
-        } else {
-            disclosureRow("All", systemImage: "person.2", count: people.count, indent: 20, isExpanded: $allExpanded)
-            if allExpanded {
-                ForEach(people) { load in personRow(load, indent: 40) }
-            }
-            disclosureRow("Teams", systemImage: "person.3", indent: 20, isExpanded: $teamsExpanded)
-            if teamsExpanded {
-                ForEach(groups, id: \.id) { group in
-                    disclosureRow(group.name, count: group.members.count, indent: 40, isExpanded: teamBinding(group.id))
-                    if expandedTeams.contains(group.id) {
-                        ForEach(group.members) { load in personRow(load, indent: 60) }
-                    }
-                }
+        } label: {
+            Label("Everyone", systemImage: WorkloadTab.people.systemImage)
+                .badge(people.count)
+                .tag(SidebarItem.tab(.people))
+                .contextMenu { OpenElsewhereItems(sidebar: .tab(.people)) }
+        }
+        ForEach(teamGroups, id: \.id) { group in
+            DisclosureGroup(isExpanded: teamBinding(group.id)) {
+                ForEach(group.members) { load in personRow(load) }
+            } label: {
+                Label(group.name, systemImage: group.id == "none" ? "person.crop.circle.dashed" : "person.2.circle")
+                    .badge(group.members.count)
             }
         }
     }
@@ -979,32 +947,6 @@ struct OrgSidebar: View {
         }
     }
 
-    /// A row that only opens and closes what's under it; clicking anywhere
-    /// on it toggles, and it can't be selected.
-    private func disclosureRow(_ title: String, systemImage: String? = nil, count: Int? = nil, indent: CGFloat, isExpanded: Binding<Bool>) -> some View {
-        HStack(spacing: 6) {
-            if let systemImage {
-                Label(title, systemImage: systemImage)
-            } else {
-                Text(title).lineLimit(1)
-            }
-            Spacer(minLength: 4)
-            if let count {
-                Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
-            }
-            Image(systemName: "chevron.right")
-                .font(.caption.weight(.semibold))
-                .rotationEffect(.degrees(isExpanded.wrappedValue ? 90 : 0))
-                .frame(width: 16, height: 16)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.leading, indent)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            withAnimation(.easeOut(duration: 0.15)) { isExpanded.wrappedValue.toggle() }
-        }
-    }
-
     /// Everyone in view (team and hidden filters apply), by name.
     private var people: [PersonLoad] {
         (workload?.people ?? []).sorted {
@@ -1016,8 +958,8 @@ struct OrgSidebar: View {
         guard let workload else { return 0 }
         switch tab {
         case .pullRequests: return workload.openPullRequests.count
-        case .issues: return workload.assignedIssues.count
-        case .dashboard, .people, .repositories, .actions, .investments, .projects, .harness, .settings: return 0
+        // Issues' lists under it have their own counts.
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .settings: return 0
         }
     }
 }

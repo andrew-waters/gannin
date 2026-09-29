@@ -58,7 +58,7 @@ struct HarnessView: View {
             } else {
                 ContentUnavailableView(
                     "No harness",
-                    systemImage: "books.vertical",
+                    systemImage: "text.book.closed",
                     description: Text("Name the repo the org keeps its plans and requirements in, in Settings.")
                 )
             }
@@ -130,7 +130,7 @@ struct HarnessView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ContentUnavailableView {
-                Label("Not indexed yet", systemImage: "books.vertical")
+                Label("Not indexed yet", systemImage: "text.book.closed")
             } actions: {
                 Button("Index Now") { Task { await harness.load(org: org, setup: setup, force: true) } }
             }

@@ -17,7 +17,7 @@ struct ProjectsLandingView: View {
                 ForEach(boards) { board in
                     Button { onOpen(board.number) } label: {
                         HStack {
-                            Image(systemName: "rectangle.3.group").foregroundStyle(.secondary)
+                            Image(systemName: "rectangle.split.3x1").foregroundStyle(.secondary)
                             Text(board.title)
                             Spacer()
                             Text("#\(String(board.number))").foregroundStyle(.secondary)

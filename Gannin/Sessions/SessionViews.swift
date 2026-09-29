@@ -238,21 +238,17 @@ struct SessionSidebarRows: View {
             Button {
                 openWindow(value: SessionWindowID(id: session.id))
             } label: {
-                HStack(spacing: 8) {
-                    Circle().fill(state.color).frame(width: 8, height: 8).frame(width: 22)
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(session.issue.title).lineLimit(1)
-                        Text(verbatim: "#\(session.issue.number) · \(state.label)")
-                            .font(.caption)
-                            .foregroundStyle(state == .needsYou ? AnyShapeStyle(Color.orange) : AnyShapeStyle(HierarchicalShapeStyle.secondary))
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 0)
+                Label {
+                    Text(session.issue.title).lineLimit(1)
+                } icon: {
+                    Image(systemName: "circle.fill")
+                        .font(.system(size: 8))
+                        .foregroundStyle(state.color)
                 }
-                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .help(session.issue.reference)
+            .badge(Text(state.label))
+            .help("\(session.issue.reference): \(state.label)")
         }
     }
 }
