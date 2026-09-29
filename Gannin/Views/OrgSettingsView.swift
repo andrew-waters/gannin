@@ -94,9 +94,12 @@ struct OrgSettingsView: View {
                             Avatar(url: option.person.avatarUrl, size: 22)
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(option.person.displayName)
-                                Text(option.summary)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
+                                // The login, when the name isn't it already.
+                                if option.person.name != nil {
+                                    Text(option.person.login)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
                             }
                         }
                     }
@@ -204,13 +207,6 @@ extension OrgSettingsView {
         let merged: Int
 
         var id: String { person.login }
-
-        var summary: String {
-            var parts: [String] = []
-            if person.name != nil { parts.append(person.login) }
-            parts.append(merged == 1 ? "1 merged PR" : "\(merged) merged PRs")
-            return parts.joined(separator: " · ")
-        }
     }
 
     struct HiddenItem: Identifiable {
