@@ -259,7 +259,7 @@ struct MainView: View {
             workload: workload,
             metrics: metrics,
             actions: selectedOrg.flatMap(actionsStore.history(for:)),
-            harness: selectedOrg.flatMap { org in orgConfigs.config(for: org).harness.flatMap { harnessStore.index(for: org, repo: $0.repo) } }
+            harness: selectedOrg.flatMap { org in orgConfigs.config(for: org).harness.flatMap { harnessStore.index(for: org, $0) } }
         )
     }
 

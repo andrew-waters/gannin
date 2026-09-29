@@ -380,9 +380,10 @@ added, removed or created, and the tracked board field set), always confirmed fi
 ## Harness
 
 - `Gannin/Harness/`: the org's harness repo (Ctrl Hub's `ctrl-hub/harness`), a repo of plans,
-  requirements, findings and skills beside the code, chosen in the org's Settings
-  (`OrgConfig.harness`). `HarnessStore` indexes it from GitHub, so it's the same for everyone:
-  the branch head (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
+  requirements, findings and skills beside the code. Its repo and branch (the default when
+  none is picked) are chosen from GitHub's lists in the org's Settings (`OrgConfig.harness`).
+  `HarnessStore` indexes it from GitHub, so it's the same for everyone: the branch's head
+  commit (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
   parsed off the main thread. Cached in Application Support/Harness, fetched again after 10
   minutes. The fetch is the store's own task, so a view going away doesn't cancel it.
 - The layout (`HarnessKind`): plans under `requirements/<module>/plans/`, requirements the rest

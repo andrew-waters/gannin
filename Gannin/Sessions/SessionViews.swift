@@ -228,7 +228,7 @@ struct StartSessionButton: View {
         let record = history?.issues[reference.id]
         let parent = record?.parentID.flatMap { history?.issues[$0] }
         let detail = details.detail(for: reference.id)
-        let index = configs.config(for: reference.org).harness.flatMap { harness.index(for: reference.org, repo: $0.repo) }
+        let index = configs.config(for: reference.org).harness.flatMap { harness.index(for: reference.org, $0) }
         let session = sessions.start(reference, in: repo) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index)
         }

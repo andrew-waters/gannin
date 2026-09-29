@@ -6,6 +6,8 @@ import Foundation
 struct HarnessConfig: Codable, Hashable {
     /// `owner/name`.
     var repo: String
+    /// The branch the harness is read from; nil for the repo's default.
+    var branch: String?
 }
 
 /// What a document in the harness is, from where it sits.
@@ -93,7 +95,11 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 /// An org's harness as last fetched.
 nonisolated struct HarnessIndex: Codable, Sendable {
     let repo: String
-    /// The default branch and the commit it was indexed at.
+    /// The branch asked for; nil for the default. An index made for one
+    /// branch isn't shown for another.
+    let requestedBranch: String?
+    /// The branch read (the default's name, when that was asked for) and
+    /// the commit it was indexed at.
     let branch: String
     let commit: String
     var fetchedAt: Date

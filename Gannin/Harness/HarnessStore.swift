@@ -24,25 +24,27 @@ final class HarnessStore {
         self.auth = auth
     }
 
-    /// The org's index for its configured harness repo; nil until loaded, or
-    /// when the repo has changed since.
-    func index(for org: String, repo: String) -> HarnessIndex? {
-        indexes[org].flatMap { $0.repo == repo ? $0 : nil }
+    /// The org's index for its harness; nil until loaded, or when the repo
+    /// or branch has changed since.
+    func index(for org: String, _ setup: HarnessConfig) -> HarnessIndex? {
+        indexes[org].flatMap { $0.repo == setup.repo && $0.requestedBranch == setup.branch ? $0 : nil }
     }
 
     /// From disk at once, then from GitHub when stale (or `force`). The
     /// fetch is the store's, not the caller's: a view going away (as Settings
     /// redraws once a harness is picked) mustn't cancel it half done, and a
     /// second caller waits on the fetch already running.
-    func load(org: String, repo: String, force: Bool = false) async {
+    func load(org: String, setup: HarnessConfig, force: Bool = false) async {
         loadCached(org)
-        if !force, let index = index(for: org, repo: repo), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge { return }
+        if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge { return }
         if let running = fetches[org] {
             await running.value
             return
         }
         guard let api = auth.api else { return }
-        let previous = index(for: org, repo: repo)
+        // Unchanged blobs are kept from whatever was indexed before, even
+        // another branch.
+        let previous = indexes[org].flatMap { $0.repo == setup.repo ? $0 : nil }
         loading.insert(org)
         let task = Task {
             defer {
@@ -50,7 +52,7 @@ final class HarnessStore {
                 fetches[org] = nil
             }
             do {
-                indexes[org] = try await Self.fetch(repo: repo, previous: previous, api: api)
+                indexes[org] = try await Self.fetch(setup: setup, previous: previous, api: api)
                 errors[org] = nil
                 save(org)
             } catch APIError.unauthorized {
@@ -63,6 +65,17 @@ final class HarnessStore {
         await task.value
     }
 
+    /// A repo's branches, and which is its default, once a launch.
+    private(set) var branches: [String: (all: [String], defaultBranch: String?)] = [:]
+
+    func loadBranches(repo: String) async {
+        let parts = repo.split(separator: "/").map(String.init)
+        guard branches[repo] == nil, parts.count == 2, let api = auth.api else { return }
+        if let result = try? await api.branchNames(owner: parts[0], name: parts[1]) {
+            branches[repo] = result
+        }
+    }
+
     /// The org's repos, once a launch.
     func loadRepositories(org: String) async {
         guard repositories[org] == nil, let api = auth.api else { return }
@@ -71,11 +84,12 @@ final class HarnessStore {
         }
     }
 
-    private static func fetch(repo: String, previous: HarnessIndex?, api: GitHubAPI) async throws -> HarnessIndex {
+    private static func fetch(setup: HarnessConfig, previous: HarnessIndex?, api: GitHubAPI) async throws -> HarnessIndex {
+        let repo = setup.repo
         let parts = repo.split(separator: "/").map(String.init)
         guard parts.count == 2 else { throw APIError.graphQL(["\(repo) isn't owner/name."]) }
-        let head = try await api.harnessHead(owner: parts[0], name: parts[1])
-        if var previous, previous.commit == head.commit {
+        let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
+        if var previous, previous.commit == head.commit, previous.requestedBranch == setup.branch {
             previous.fetchedAt = .now
             return previous
         }
@@ -102,7 +116,7 @@ final class HarnessStore {
             }.value
         }
         documents.sort { $0.path < $1.path }
-        return HarnessIndex(repo: repo, branch: head.branch, commit: head.commit, fetchedAt: .now, documents: documents)
+        return HarnessIndex(repo: repo, requestedBranch: setup.branch, branch: head.branch, commit: head.commit, fetchedAt: .now, documents: documents)
     }
 
     func clear() {
@@ -181,23 +195,60 @@ extension GitHubAPI {
         return nodes.map(\.nameWithOwner).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
 
-    /// The harness repo's default branch and its head commit.
-    func harnessHead(owner: String, name: String) async throws -> (branch: String, commit: String) {
+    /// The harness branch (the default when nil) and its head commit.
+    func harnessHead(owner: String, name: String, branch: String?) async throws -> (branch: String, commit: String) {
         struct Response: Decodable {
             struct Target: Decodable { let oid: String }
             struct Ref: Decodable { let name: String; let target: Target }
-            struct Repository: Decodable { let defaultBranchRef: Ref? }
+            struct Repository: Decodable { let defaultBranchRef: Ref?; let ref: Ref? }
             let repository: Repository?
         }
+        var variables = ["owner": owner, "name": name]
+        let selection: String
+        if let branch {
+            variables["ref"] = "refs/heads/\(branch)"
+            selection = "ref(qualifiedName: $ref) { name target { oid } }"
+        } else {
+            selection = "defaultBranchRef { name target { oid } }"
+        }
         let response: Response = try await query("""
-            query($owner: String!, $name: String!) {
-              repository(owner: $owner, name: $name) { defaultBranchRef { name target { oid } } }
+            query($owner: String!, $name: String!\(branch == nil ? "" : ", $ref: String!")) {
+              repository(owner: $owner, name: $name) { \(selection) }
             }
-            """, variables: ["owner": owner, "name": name])
-        guard let ref = response.repository?.defaultBranchRef else {
-            throw APIError.graphQL(["Couldn't find \(owner)/\(name), or it has no default branch."])
+            """, variables: variables)
+        guard let ref = branch == nil ? response.repository?.defaultBranchRef : response.repository?.ref else {
+            throw APIError.graphQL([branch.map { "Couldn't find the branch \($0) in \(owner)/\(name)." } ?? "Couldn't find \(owner)/\(name), or it has no default branch."])
         }
         return (ref.name, ref.target.oid)
+    }
+
+    /// A repo's branches by name, and its default.
+    func branchNames(owner: String, name: String) async throws -> (all: [String], defaultBranch: String?) {
+        struct Node: Decodable { let name: String }
+        struct Ref: Decodable { let name: String }
+        struct Response: Decodable {
+            struct Repository: Decodable { let refs: PagedConnection<Node>; let defaultBranchRef: Ref? }
+            let repository: Repository?
+        }
+        var defaultBranch: String?
+        let nodes: [Node] = try await paginate(limit: 1000) { cursor in
+            var variables = ["owner": owner, "name": name]
+            if let cursor { variables["cursor"] = cursor }
+            let response: Response = try await query("""
+                query($owner: String!, $name: String!, $cursor: String) {
+                  repository(owner: $owner, name: $name) {
+                    defaultBranchRef { name }
+                    refs(refPrefix: "refs/heads/", first: 100, after: $cursor, orderBy: { field: ALPHABETICAL, direction: ASC }) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes { name }
+                    }
+                  }
+                }
+                """, variables: variables)
+            defaultBranch = defaultBranch ?? response.repository?.defaultBranchRef?.name
+            return response.repository?.refs
+        }
+        return (nodes.map(\.name), defaultBranch)
     }
 
     /// Every file at the commit, from REST's recursive tree listing.
