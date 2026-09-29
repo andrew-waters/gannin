@@ -464,7 +464,9 @@ struct HarnessSettingsSection: View {
             }
             if let saved {
                 let branches = harness.branches[saved.repo]
+                // The default is Default's, so it isn't listed again.
                 let listed = Set(branches?.all ?? []).union(saved.branch.map { [$0] } ?? [])
+                    .subtracting(branches?.defaultBranch.map { [$0] } ?? [])
                     .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
                 LabeledContent("Branch") {
                     SearchablePicker(

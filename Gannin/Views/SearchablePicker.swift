@@ -65,14 +65,7 @@ struct SearchableList: View {
     var body: some View {
         let matches = matches
         VStack(spacing: 0) {
-            TextField(prompt, text: $query)
-                .textFieldStyle(.roundedBorder)
-                .focused($isSearching)
-                .padding(10)
-                .onSubmit { pickHighlighted(in: matches) }
-                .onKeyPress(.downArrow) { move(1, in: matches) }
-                .onKeyPress(.upArrow) { move(-1, in: matches) }
-            Divider()
+            searchField(matches)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
@@ -81,7 +74,7 @@ struct SearchableList: View {
                                 Text(title)
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 10)
+                                    .padding(.horizontal, 13)
                                     .padding(.top, 8)
                                     .padding(.bottom, 2)
                             }
@@ -110,8 +103,10 @@ struct SearchableList: View {
                 }
             }
         }
-        .frame(width: 340)
+        .frame(width: 320)
         .frame(minHeight: 120, maxHeight: 380)
+        // A Form's trailing alignment would otherwise carry into the field.
+        .multilineTextAlignment(.leading)
         .onAppear {
             highlighted = selection.map { SearchableChoice(value: $0, title: "").id } ?? choices.first?.id
             isSearching = true
@@ -120,6 +115,37 @@ struct SearchableList: View {
             // Typing puts the best match first under the keyboard.
             highlighted = self.matches.first?.id
         }
+    }
+
+    /// The Mac's search field: a capsule with a magnifying glass, and a
+    /// clear button once there's something to clear.
+    private func searchField(_ matches: [SearchableChoice]) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(.secondary)
+            TextField(prompt, text: $query)
+                .textFieldStyle(.plain)
+                .focused($isSearching)
+                .onSubmit { pickHighlighted(in: matches) }
+                .onKeyPress(.downArrow) { move(1, in: matches) }
+                .onKeyPress(.upArrow) { move(-1, in: matches) }
+            if !query.isEmpty {
+                Button {
+                    query = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.tertiary)
+                .help("Clear")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+        .background(.quaternary.opacity(0.7), in: Capsule())
+        .padding(.horizontal, 10)
+        .padding(.top, 10)
+        .padding(.bottom, 4)
     }
 
     private func row(_ choice: SearchableChoice) -> some View {
@@ -136,11 +162,11 @@ struct SearchableList: View {
                     .truncationMode(.middle)
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
             .foregroundStyle(isHighlighted ? Color.white : Color.primary)
-            .background(isHighlighted ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 5))
-            .padding(.horizontal, 4)
+            .background(isHighlighted ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal, 5)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
