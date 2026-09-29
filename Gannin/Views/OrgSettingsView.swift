@@ -104,10 +104,10 @@ struct OrgSettingsView: View {
             } header: {
                 header("People", excluded: everyone.filter { isExcluded($0.person.login) }.count)
             }
-            PeopleDatesSection(org: org, people: (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending })
         case .workingTime:
             WorkWeekSection(org: org)
             LeavePolicySection(org: org)
+            PeopleDatesSection(org: org, people: (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending })
         case .issues:
             IssueWorkflowSection(org: org)
         case .investments:
