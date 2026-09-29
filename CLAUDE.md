@@ -258,7 +258,8 @@ added, removed or created, and the tracked board field set), always confirmed fi
   and merges from main put others' commits on a PR) as bars from
   first commit to merge (or now while open), packed into rows, with their reviews of others'
   PRs on a line beneath. Punchcards (`PunchcardView.swift`), weekday by hour per person in
-  their own time. Commits keep the offset from their git timestamp (`GitTimestamp`); other
+  their own time, also by a single Day (that day's hours; Work log and Threads offer Days and
+  Weeks only). Commits keep the offset from their git timestamp (`GitTimestamp`); other
   events use the person's most common commit offset. Merges are left out of the punchcards
   (merge queues land them whenever CI finishes).
 - Standup (`StandupView.swift`, People › Standup) is everyone's activity on one day, today

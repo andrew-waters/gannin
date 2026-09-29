@@ -2,13 +2,27 @@ import SwiftUI
 
 /// How much time each column covers.
 enum WorkLogScale: String, CaseIterable, Identifiable {
+    /// One day a page: the punchcards only.
+    case day = "Day"
     case days = "Days"
     case weeks = "Weeks"
 
     var id: Self { self }
 
     /// Columns per page.
-    var columns: Int { self == .days ? 14 : 12 }
+    var columns: Int {
+        switch self {
+        case .day: 1
+        case .days: 14
+        case .weeks: 12
+        }
+    }
+
+    /// The scales a tab offers: a single day only means something on the
+    /// punchcards, where it's that day's hours.
+    static func offered(for view: ActivityView) -> [WorkLogScale] {
+        view == .punchcards ? allCases : [.days, .weeks]
+    }
 }
 
 /// The pages listed under People in the sidebar: Activity (drawn from the
@@ -52,9 +66,14 @@ struct WorkLogPage: View {
     let org: String
     let workload: Workload?
     @AppStorage("activityTab") private var view: ActivityView = .workLog
-    @AppStorage("workLogScale") private var scale: WorkLogScale = .days
+    @AppStorage("workLogScale") private var chosenScale: WorkLogScale = .days
     /// Pages back from the current one.
     @State private var pagesBack = 0
+
+    /// The chosen scale, or Days on a tab that doesn't offer Day.
+    private var scale: WorkLogScale {
+        WorkLogScale.offered(for: view).contains(chosenScale) ? chosenScale : .days
+    }
 
     static let nameWidth: CGFloat = 170
     private static let rowHeight: CGFloat = 104
@@ -159,8 +178,8 @@ struct WorkLogPage: View {
     }
 
     private var scalePicker: some View {
-        Picker("Scale", selection: $scale) {
-            ForEach(WorkLogScale.allCases) { Text($0.rawValue).tag($0) }
+        Picker("Scale", selection: Binding(get: { scale }, set: { chosenScale = $0 })) {
+            ForEach(WorkLogScale.offered(for: view)) { Text($0.rawValue).tag($0) }
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -217,7 +236,7 @@ struct WorkLogPage: View {
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: .now)
         switch scale {
-        case .days:
+        case .day, .days:
             let last = calendar.date(byAdding: .day, value: -pagesBack * scale.columns, to: today) ?? today
             return (0..<scale.columns).reversed().compactMap { offset in
                 guard let day = calendar.date(byAdding: .day, value: -offset, to: last),
@@ -244,6 +263,7 @@ struct WorkLogPage: View {
     static func rangeLabel(_ columns: [WorkLogGrid.Column]) -> String {
         guard let first = columns.first, let last = columns.last,
               let lastDay = Calendar.current.date(byAdding: .day, value: -1, to: last.end) else { return "" }
+        if columns.count == 1 { return first.start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated)) }
         let sameMonth = Calendar.current.isDate(first.start, equalTo: lastDay, toGranularity: .month)
         let start = sameMonth ? first.start.formatted(.dateTime.day()) : first.start.formatted(.dateTime.day().month(.abbreviated))
         return "\(start) - \(lastDay.formatted(.dateTime.day().month(.abbreviated)))"
@@ -262,7 +282,7 @@ struct WorkLogPage: View {
             ForEach(columns) { column in
                 HStack(alignment: .firstTextBaseline, spacing: 3) {
                     switch scale {
-                    case .days:
+                    case .day, .days:
                         Text(column.start.formatted(.dateTime.day()))
                             .font(.title3.weight(.medium).monospacedDigit())
                         Text(column.start.formatted(.dateTime.weekday(.abbreviated)).uppercased())
@@ -297,8 +317,8 @@ struct WorkLogPage: View {
             ForEach(columns) { column in
                 WorkLogCell(
                     dots: row.cells[column.start] ?? [],
-                    isDayOff: scale == .days && !working.isWorkingDay(column.start),
-                    mark: dates.mark(from: column.start, to: column.end, isDay: scale == .days, working: working)
+                    isDayOff: scale != .weeks && !working.isWorkingDay(column.start),
+                    mark: dates.mark(from: column.start, to: column.end, isDay: scale != .weeks, working: working)
                 ) { event in
                     open(event.pullRequest)
                 }
@@ -355,7 +375,7 @@ struct WorkLogGrid {
         let first = columns.first?.start ?? .distantPast
         let end = columns.last?.end ?? .distantFuture
         func bucket(_ date: Date) -> Date {
-            scale == .days ? Calendar.current.startOfDay(for: date) : Calendar.metrics.startOfWeek(for: date)
+            scale != .weeks ? Calendar.current.startOfDay(for: date) : Calendar.metrics.startOfWeek(for: date)
         }
 
         let events = history.pullRequests(config: config, hidden: hidden)

@@ -157,7 +157,7 @@ struct ThreadsContent: View {
     /// Days off shaded as in the work log, when columns are days.
     @ViewBuilder
     private func daysOff(_ working: WorkingCalendar, x: XScale, height: CGFloat) -> some View {
-        if scale == .days {
+        if scale != .weeks {
             ForEach(columns.filter { !working.isWorkingDay($0.start) }) { column in
                 Rectangle()
                     .fill(.quaternary.opacity(0.35))

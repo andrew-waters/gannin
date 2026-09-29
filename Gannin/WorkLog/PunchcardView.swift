@@ -16,6 +16,12 @@ struct PunchcardContent: View {
     let calendars: [String: WorkingCalendar]
     let week: WorkWeek
 
+    /// On a one-day page, that day's row (Monday is 0); nil for the week.
+    private var singleDay: Int? {
+        guard columns.count == 1, let start = columns.first?.start else { return nil }
+        return WorkWeek.weekdays.firstIndex(of: Calendar.current.component(.weekday, from: start))
+    }
+
     var body: some View {
         let cards = Punchcard.cards(pullRequests: pullRequests, people: people, from: columns.first?.start ?? .now, to: columns.last?.end ?? .now, calendars: calendars, week: week)
         VStack(alignment: .leading, spacing: 12) {
@@ -27,6 +33,7 @@ struct PunchcardContent: View {
                     PunchcardCard(
                         card: card,
                         week: calendars[card.person.login]?.week ?? week,
+                        day: singleDay,
                         timeOff: dates.daysOff(from: from, to: to, working: calendars[card.person.login] ?? WorkingCalendar(week: week)),
                         activeWhileOff: card.activeDays.filter { if case .absent = dates.status(on: $0) { true } else { false } }.count
                     )
@@ -152,6 +159,8 @@ struct Punchcard {
 private struct PunchcardCard: View {
     let card: Punchcard
     let week: WorkWeek
+    /// A one-day page's row; nil draws the whole week.
+    let day: Int?
     /// Working days off in the range, by kind.
     let timeOff: [Absence.Kind: Double]
     /// Days off with activity anyway.
@@ -160,7 +169,17 @@ private struct PunchcardCard: View {
     @State private var hovered: Punchcard.Slot?
 
     private static let labelWidth: CGFloat = 32
-    private static let rowHeight: CGFloat = 15
+    private static let weekRowHeight: CGFloat = 15
+
+    /// A single day's row has room to be taller.
+    private var rowHeight: CGFloat { day == nil ? Self.weekRowHeight : 24 }
+
+    /// The rows drawn: the week, or the day plus any row it spills into in
+    /// the person's own time zone (a late night elsewhere is the next day).
+    private var rows: [Int] {
+        guard let day else { return Array(WorkWeek.weekdays.indices) }
+        return Set(card.counts.keys.map(\.day)).union([day]).sorted()
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -207,12 +226,12 @@ private struct PunchcardCard: View {
                     Canvas { context, _ in
                         draw(in: &context, cellWidth: cellWidth)
                     }
-                    ForEach(WorkWeek.weekdays.indices, id: \.self) { day in
+                    ForEach(Array(rows.enumerated()), id: \.element) { index, day in
                         Text(WorkWeek.name(WorkWeek.weekdays[day]))
                             .font(.caption2)
                             .foregroundStyle(.secondary)
-                            .frame(width: Self.labelWidth - 4, height: Self.rowHeight, alignment: .leading)
-                            .offset(y: CGFloat(day) * Self.rowHeight)
+                            .frame(width: Self.labelWidth - 4, height: rowHeight, alignment: .leading)
+                            .offset(y: CGFloat(index) * rowHeight)
                     }
                 }
                 .contentShape(Rectangle())
@@ -220,14 +239,14 @@ private struct PunchcardCard: View {
                     switch phase {
                     case .active(let location):
                         let hour = Int((location.x - Self.labelWidth) / cellWidth)
-                        let day = Int(location.y / Self.rowHeight)
-                        hovered = (0..<24).contains(hour) && (0..<7).contains(day) && location.x >= Self.labelWidth ? Punchcard.Slot(day: day, hour: hour) : nil
+                        let index = Int(location.y / rowHeight)
+                        hovered = (0..<24).contains(hour) && rows.indices.contains(index) && location.x >= Self.labelWidth ? Punchcard.Slot(day: rows[index], hour: hour) : nil
                     case .ended:
                         hovered = nil
                     }
                 }
             }
-            .frame(height: Self.rowHeight * 7)
+            .frame(height: rowHeight * CGFloat(rows.count))
             HStack(spacing: 0) {
                 Spacer().frame(width: Self.labelWidth)
                 ForEach([0, 6, 12, 18], id: \.self) { hour in
@@ -242,11 +261,11 @@ private struct PunchcardCard: View {
 
     private func draw(in context: inout GraphicsContext, cellWidth: CGFloat) {
         let busiest = Double(max(card.busiest, 1))
-        for day in 0..<7 {
+        for (index, day) in rows.enumerated() {
             let weekday = WorkWeek.weekdays[day]
-            let y = CGFloat(day) * Self.rowHeight
+            let y = CGFloat(index) * rowHeight
             for hour in 0..<24 {
-                let rect = CGRect(x: Self.labelWidth + CGFloat(hour) * cellWidth, y: y, width: cellWidth, height: Self.rowHeight)
+                let rect = CGRect(x: Self.labelWidth + CGFloat(hour) * cellWidth, y: y, width: cellWidth, height: rowHeight)
                 let slot = Punchcard.Slot(day: day, hour: hour)
                 if week.isWorkingTime(weekday: weekday, hour: hour) {
                     context.fill(Path(rect.insetBy(dx: 0, dy: 0.5)), with: .color(.secondary.opacity(0.14)))
@@ -257,7 +276,7 @@ private struct PunchcardCard: View {
                 let count = card.count(slot)
                 guard count > 0 else { continue }
                 // Area follows the count, so the radius follows its root.
-                let maxRadius = min(cellWidth, Self.rowHeight) / 2 - 1
+                let maxRadius = min(cellWidth, rowHeight) / 2 - 1
                 let radius = max(1.5, maxRadius * sqrt(Double(count) / busiest))
                 let center = CGPoint(x: rect.midX, y: rect.midY)
                 context.fill(Path(ellipseIn: CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)), with: .color(.primary.opacity(0.75)))
