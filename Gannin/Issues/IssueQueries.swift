@@ -53,6 +53,7 @@ private struct RawIssueRecord: Decodable {
     let closedAt: Date?
     let stateReason: String?
     let repository: Repository
+    let author: Actor?
     let assignees: Connection<Actor>
     let labels: Connection<Label>?
     let issueType: IssueType?
@@ -114,6 +115,7 @@ private struct RawIssueRecord: Decodable {
         ... on Issue {
           id number title url createdAt closedAt stateReason
           repository { nameWithOwner }
+          author { login }
           assignees(first: 10) { nodes { login } }
           labels(first: 20) { nodes { name } }
           issueType { name }
@@ -163,6 +165,7 @@ private struct RawIssueRecord: Decodable {
             title: title,
             url: url,
             repo: repository.nameWithOwner,
+            author: author?.login,
             assignees: assignees.nodes.map(\.login),
             labels: labels?.nodes.map(\.name) ?? [],
             issueType: issueType?.name,

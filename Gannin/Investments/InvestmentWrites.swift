@@ -327,7 +327,7 @@ struct InvestmentConfirmation: View {
                             .padding(.top, 2)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(change.issue.title).lineLimit(1)
-                            Text("\(change.issue.repo)#\(change.issue.number) · \(change.summary(pending.tracking))")
+                            Text("\(change.issue.repo)#\(String(change.issue.number)) · \(change.summary(pending.tracking))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1)

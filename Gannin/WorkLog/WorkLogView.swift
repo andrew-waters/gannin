@@ -15,11 +15,13 @@ enum WorkLogScale: String, CaseIterable, Identifiable {
 /// work log's PR activity) and the time off calendar.
 enum PeopleView: String, CaseIterable, Hashable {
     case activity = "Activity"
+    case standup = "Standup"
     case timeOff = "Time off"
 
     var systemImage: String {
         switch self {
         case .activity: "circle.grid.3x3"
+        case .standup: "sunrise"
         case .timeOff: "calendar"
         }
     }

@@ -120,7 +120,7 @@ struct InvestmentTriage: View {
                     .help("Open \(issue.repo)#\(issue.number) on GitHub (⌘O)")
                 }
                 HStack(spacing: 6) {
-                    Text("\(issue.repo)#\(issue.number)")
+                    Text("\(issue.repo)#\(String(issue.number))")
                     if let closedAt = issue.closedAt {
                         Text("· completed")
                         RelativeDate(date: closedAt)
@@ -208,7 +208,7 @@ struct InvestmentTriage: View {
             if let parent {
                 GridRow {
                     Text("Parent").foregroundStyle(.secondary)
-                    Text("\(parent.title) (#\(parent.number))").lineLimit(1)
+                    Text("\(parent.title) (#\(String(parent.number)))").lineLimit(1)
                 }
             }
             if issue.labels.isEmpty && issue.issueType == nil && issue.milestone == nil && parent == nil {

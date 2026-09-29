@@ -8,6 +8,9 @@ struct IssueRecord: Codable, Hashable, Identifiable {
     let title: String
     let url: URL
     let repo: String
+    /// Who opened it. Optional so records from before it was fetched still
+    /// load; they gain it when next fetched.
+    let author: String?
     let assignees: [String]
     /// A var so labels written from the app show before the next fetch.
     var labels: [String]

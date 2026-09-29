@@ -269,9 +269,10 @@ struct IssuesStatsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(timing.record.title).lineLimit(1)
                             HStack(spacing: 4) {
-                                Text("\(timing.record.repo)#\(timing.record.number)")
+                                Text("\(timing.record.repo)#\(String(timing.record.number))")
+                                if let author = timing.record.author { Text("by \(author)") }
                                 if let status = timing.currentStatus { Text("· \(status)") }
-                                if let pr = timing.record.linkedPullRequests.last { Text("· PR #\(pr.number) \(pr.state.lowercased())") }
+                                if let pr = timing.record.linkedPullRequests.last { Text("· PR #\(String(pr.number)) \(pr.state.lowercased())") }
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -403,7 +404,7 @@ private struct OpenClosedCharts: View {
                     }
                 }
                 .chartForegroundStyleScale(["Opened": ChartPalette.blue, "Closed": ChartPalette.orange])
-                .chartLegend(position: .top, alignment: .leading)
+                .chartLegend(position: .bottom, alignment: .leading)
                 .chartYAxis { AxisMarks(position: .leading) { _ in AxisGridLine().foregroundStyle(.quaternary); AxisValueLabel() } }
                 .chartXAxis { xAxis }
                 .chartOverlay { proxy in hover(proxy) }
@@ -523,7 +524,7 @@ private struct CycleScatter: View {
             }
             .frame(height: 220)
             if let hovered {
-                Text("\(hovered.record.repo)#\(hovered.record.number) \(hovered.record.title) · \(hovered.cycleTime?.compactDuration ?? "-") in progress")
+                Text("\(hovered.record.repo)#\(String(hovered.record.number)) \(hovered.record.title) · \(hovered.cycleTime?.compactDuration ?? "-") in progress")
                     .font(.callout).foregroundStyle(.secondary).lineLimit(1)
             } else {
                 Text("Each dot is a completed issue. Hover for detail, click to open it in a new window.").font(.callout).foregroundStyle(.tertiary)

@@ -250,7 +250,7 @@ struct PercentileTrendChart: View {
                 }
             }
             .chartForegroundStyleScale(["p50": ChartPalette.blue, "p75": ChartPalette.orange, "p90": ChartPalette.aqua])
-            .chartLegend(position: .top, alignment: .leading)
+            .chartLegend(position: .bottom, alignment: .leading)
             .chartYScale(domain: 0...top)
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in

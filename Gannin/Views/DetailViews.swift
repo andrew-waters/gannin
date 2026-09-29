@@ -573,7 +573,7 @@ struct ExternalItemRow: View {
                 Image(systemName: systemImage).foregroundStyle(item.stateColor)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(item.title).lineLimit(1)
-                    Text("\(item.repo)#\(item.number) · \(item.state.capitalized)")
+                    Text("\(item.repo)#\(String(item.number)) · \(item.state.capitalized)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

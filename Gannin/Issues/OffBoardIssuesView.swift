@@ -152,7 +152,8 @@ struct OffBoardIssuesView: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(issue.title).lineLimit(1)
                 HStack(spacing: 4) {
-                    Text("\(issue.repo)#\(issue.number)")
+                    Text("\(issue.repo)#\(String(issue.number))")
+                    if let author = issue.author { Text("by \(author)") }
                     if let closedAt = issue.closedAt {
                         Text("· closed")
                         RelativeDate(date: closedAt)

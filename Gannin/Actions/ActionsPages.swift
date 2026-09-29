@@ -828,7 +828,7 @@ struct DurationScatter: View {
             }
             .chartForegroundStyleScale(domain: [RunOutcome.success.rawValue, RunOutcome.failure.rawValue], range: [ChartPalette.good, ChartPalette.critical])
             .chartSymbolScale(domain: [RunOutcome.success.rawValue, RunOutcome.failure.rawValue], range: [.circle, .cross])
-            .chartLegend(position: .top, alignment: .leading)
+            .chartLegend(position: .bottom, alignment: .leading)
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
                     AxisGridLine().foregroundStyle(.quaternary)

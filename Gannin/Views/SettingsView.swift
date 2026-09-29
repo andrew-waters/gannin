@@ -28,6 +28,8 @@ struct GeneralSettings: View {
     @Environment(OrgStore.self) private var orgs
     @AppStorage(OrgStore.lookbackDaysKey) private var lookbackDays = OrgStore.defaultLookbackDays
     @AppStorage(ActionsStore.jobRunLimitKey) private var jobRunLimit = 0
+    @AppStorage("excludeDrafts") private var excludeDrafts = false
+    @AppStorage("showHidden") private var showHidden = false
 
     var body: some View {
         Form {
@@ -54,6 +56,15 @@ struct GeneralSettings: View {
                 Text("Applies on the next refresh.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Exclude draft PRs", isOn: $excludeDrafts)
+                Toggle("Show hidden PRs and issues", isOn: $showHidden)
+                Text("Hide a PR or issue by right-clicking it. Hidden ones are left out of lists and counts; show them to find one and Unhide it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Pull requests and issues")
             }
             Section {
                 Picker("Jobs fetched per workflow", selection: $jobRunLimit) {

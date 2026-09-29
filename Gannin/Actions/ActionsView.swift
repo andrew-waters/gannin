@@ -196,7 +196,7 @@ struct ActionsView: View {
 
 // MARK: - Needs attention
 
-private struct AttentionList: View {
+struct AttentionList: View {
     let items: [ActionsAttention]
     let open: (String) -> Void
 
@@ -378,7 +378,7 @@ private struct RunsChart: View {
                 }
             }
             .chartForegroundStyleScale(domain: Self.series.map(\.0.rawValue), range: Self.series.map(\.1))
-            .chartLegend(position: .top, alignment: .leading)
+            .chartLegend(position: .bottom, alignment: .leading)
             .chartYAxis { AxisMarks(position: .leading) { _ in AxisGridLine().foregroundStyle(.quaternary); AxisValueLabel() } }
             .chartXAxis { AxisMarks(values: .automatic(desiredCount: 8)) { _ in AxisValueLabel(format: .dateTime.day().month()) } }
             .chartOverlay { proxy in BucketHover(proxy: proxy, starts: buckets.map(\.start), hovered: $hovered) }
@@ -437,7 +437,7 @@ private struct DurationChart: View {
                 }
             }
             .chartForegroundStyleScale(["Median": ChartPalette.blue, "p90": ChartPalette.orange])
-            .chartLegend(position: .top, alignment: .leading)
+            .chartLegend(position: .bottom, alignment: .leading)
             .chartYScale(domain: 0...top)
             .chartYAxis {
                 AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in

@@ -170,6 +170,7 @@ struct MainView: View {
         .focusedSceneValue(\.renameTab, RenameTabAction(window: windowID, perform: startRenaming))
         .investmentPrompt()
         .environment(\.showPerson, ShowPersonAction { login in sidebarSelection.wrappedValue = .person(login) })
+        .environment(\.showSidebarItem, ShowSidebarAction { item in sidebarSelection.wrappedValue = item })
         #if os(macOS)
         .background(WindowAccessor { window in
             TabMenuRename.shared.register(window, action: startRenaming)
@@ -700,6 +701,7 @@ struct OrgSidebar: View {
                         expandableRow(.people, isExpanded: $peopleExpanded)
                         if peopleExpanded {
                             peopleViewRow(.activity)
+                            peopleViewRow(.standup)
                             peopleViewRow(.timeOff)
                             teamRows
                         }

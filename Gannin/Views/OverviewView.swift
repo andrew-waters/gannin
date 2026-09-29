@@ -1,9 +1,10 @@
 import Charts
 import SwiftUI
 
-/// The org landing page: the state of work right now and delivery metrics
-/// for the chosen window. Every number opens the items behind it in the next
-/// column. The breakdowns by person and repo are on People and Repositories.
+/// The org landing page: the state of work right now, delivery metrics for
+/// the chosen window, and summaries of investment balance and GitHub
+/// Actions linking to their pages. Every number opens the items behind it.
+/// The breakdowns by person and repo are on People and Repositories.
 struct OverviewView: View {
     @Environment(MetricsStore.self) private var store
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
@@ -45,6 +46,18 @@ struct OverviewView: View {
                             MetricsSyncIndicator(org: org)
                         }
                     }
+                }
+                Section {
+                    InvestmentsSummary(org: org, windowDays: windowDays, selection: $selection)
+                        .sectionContent()
+                } header: {
+                    PinnedHeader { SummaryHeader(title: "Investments · last \(windowDays) days", link: "Investments", item: .tab(.investments)) }
+                }
+                Section {
+                    ActionsSummary(org: org, windowDays: windowDays, selection: $selection)
+                        .sectionContent()
+                } header: {
+                    PinnedHeader { SummaryHeader(title: "GitHub Actions · last \(windowDays) days", link: "Actions", item: .tab(.actions)) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -454,7 +467,7 @@ private struct WeeklyThroughputChart: View {
                 bar(point)
             }
             .chartForegroundStyleScale(["Opened": ChartPalette.blue, "Merged": ChartPalette.orange])
-            .chartLegend(position: .top, alignment: .leading)
+            .chartLegend(position: .bottom, alignment: .leading)
             .chartYAxis { AxisMarks(position: .leading) { _ in AxisGridLine().foregroundStyle(.quaternary); AxisValueLabel() } }
             .chartXAxis { AxisMarks(values: .stride(by: .weekOfYear, count: weeks.count > 8 ? 2 : 1)) { _ in AxisValueLabel(format: .dateTime.day().month()) } }
             .chartOverlay { proxy in

@@ -137,8 +137,10 @@ added, removed or created, and the tracked board field set), always confirmed fi
   (`StageSummary.isOccasional`) show their share and median-when-it-happens instead.
   Bot-authored PRs are excluded, as are logins ending `-bot` or `[bot]` (ordinary user accounts
   used for automation) unless re-included in the org's stats config (`includedAuthors`).
-- Dashboard (`OverviewView`) is the org landing page: right now, delivery and the repo table;
-  the people table is the People page (`PeopleStatsView`). Tiles, the stage legend, chart weeks
+- Dashboard (`OverviewView`) is the org landing page: right now, delivery, and summaries of
+  investment balance and GitHub Actions for the window (`DashboardSummaries.swift`), each
+  linking to its page through `showSidebarItem`. Opening it syncs the issue history and the
+  Actions runs, so Refresh includes them from then on; the people table is the People page (`PeopleStatsView`). Tiles, the stage legend, chart weeks
   and table rows
   set `DetailSelection.metric(MetricDrill)`, which `MetricColumn` renders as the PRs behind the
   number. Chart colours are categorical slots 1-4 of the dataviz reference palette
@@ -243,7 +245,7 @@ added, removed or created, and the tracked board field set), always confirmed fi
   `WorkLogStore` keeps PRs updated since the earliest range viewed (28 days at first) with
   their commits (last 100) and reviews, on disk. Missing weeks are fetched as week-long
   "last updated" searches, four at a time, then topped up with a changes search. It's only
-  fetched once the People page has been opened for an org, and Refresh includes it from then
+  fetched once the People page (Activity or Standup) has been opened for an org, and Refresh includes it from then
   on. Commits count for their
   GitHub author when the email is linked, else the PR author.
 - Threads (`ThreadsView.swift`) is each person's PRs (authored only, since "Update branch"
@@ -253,6 +255,24 @@ added, removed or created, and the tracked board field set), always confirmed fi
   their own time. Commits keep the offset from their git timestamp (`GitTimestamp`); other
   events use the person's most common commit offset. Merges are left out of the punchcards
   (merge queues land them whenever CI finishes).
+- Standup (`StandupView.swift`, People › Standup) is everyone's activity on one day, today
+  by default, with arrows stepping back and forward through the org's working days (Friday
+  before a Monday) up to today. By Person, Team or Changelog (a toolbar control, `StandupLayout`). Changelog
+  (`StandupChangelog`) is the issues closed that day from the issue history alone: completed
+  ones by investment category (as `InvestmentConfig.categorise` places them), then those
+  closed as not planned. By Person is a row
+  each: their counts on the left (with the timeline's icons, as its legend,
+  `StandupLegend`), a day strip on one hour
+  axis for everyone (6:00 to 22:00 at most, working hours shaded, ticks outside pinned to
+  the edge), then a timeline (`StandupItem`): time, the action's icon on a rail, and the
+  title with its context. Runs of commits on one PR are one item, unfolded with a chevron
+  or the Commits toggle; a merge lists the issues it closes. Commits count for their linked
+  GitHub author, else the PR author; an issue opened counts for its author
+  (`IssueRecord.author`, optional so older records load and gain it when next fetched);
+  issue moves and closes count for the assignees (GitHub doesn't say who did them). Team is everyone's items on one timeline
+  (`StandupTimelineList` with avatars before the times) under the team's counts and one
+  strip. People off or with nothing recorded are listed at the end. It needs the work log's commit messages and closing issues
+  (`WorkLogCommit.message`, `WorkLogPullRequest.closingIssues`).
 - The org's working week (`WorkWeek`, in `OrgConfig.workWeek`, Settings) sets working days
   and hours: the work log and threads shade days off, the punchcards shade working hours and
   count what falls outside. Weeks still start on Monday everywhere.

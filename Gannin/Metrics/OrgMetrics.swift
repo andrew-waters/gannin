@@ -349,8 +349,10 @@ struct OrgMetrics {
 }
 
 extension TimeInterval {
-    /// Compact duration: minutes under an hour, hours under two days, else days.
+    /// Compact duration: seconds under a minute, minutes under an hour,
+    /// hours under two days, else days.
     var compactDuration: String {
+        if self < 59.5 { return "\(Int(max(self, 0).rounded()))s" }
         let minutes = self / 60
         if minutes < 60 { return "\(Int(minutes.rounded()))m" }
         let hours = minutes / 60

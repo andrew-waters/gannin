@@ -16,6 +16,9 @@ struct WorkLogPullRequest: Codable, Hashable, Identifiable {
     let mergedBy: String?
     let commits: [WorkLogCommit]
     let reviews: [WorkLogReview]
+    var isDraft: Bool? = nil
+    /// Issues the PR closes when merged, for the standup's context.
+    var closingIssues: [LinkedItem] = []
 }
 
 struct WorkLogCommit: Codable, Hashable {
@@ -27,6 +30,9 @@ struct WorkLogCommit: Codable, Hashable {
     /// The author's UTC offset in seconds, from the commit's own timestamp
     /// (the clock of the machine it was made on).
     let utcOffset: Int?
+    /// The first line of the message, for the standup.
+    var message: String? = nil
+    var url: URL? = nil
 }
 
 struct WorkLogReview: Codable, Hashable {
@@ -39,7 +45,7 @@ struct WorkLogReview: Codable, Hashable {
 struct WorkLogHistory: Codable {
     /// Bumped when the stored shape gains fields old caches can't fill in,
     /// so they're fetched again.
-    static let currentVersion = 2
+    static let currentVersion = 3
 
     var version: Int? = Self.currentVersion
     let orgLogin: String

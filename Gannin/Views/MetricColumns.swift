@@ -159,7 +159,8 @@ struct MetricColumn: View {
                         VStack(alignment: .leading, spacing: 3) {
                             Text(record.title).lineLimit(1)
                             HStack(spacing: 4) {
-                                Text("\(record.repo)#\(record.number)")
+                                Text("\(record.repo)#\(String(record.number))")
+                                if let author = record.author { Text("by \(author)") }
                                 if let closedAt = record.closedAt {
                                     Text("· completed")
                                     RelativeDate(date: closedAt)
@@ -264,7 +265,7 @@ struct MetricPullRequestRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(pr.title).lineLimit(1)
                 HStack(spacing: 4) {
-                    Text("\(pr.repo)#\(pr.number)")
+                    Text("\(pr.repo)#\(String(pr.number))")
                     if let author = pr.author {
                         Text("by \(author.login)")
                     }

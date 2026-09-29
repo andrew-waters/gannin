@@ -6,12 +6,12 @@ struct OrgWorkloadView: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(MetricsStore.self) private var metricsStore
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
-    @AppStorage("excludeDrafts") private var excludeDrafts = false
-    @AppStorage("showHidden") private var showHidden = false
 
     let org: String
     let workload: Workload?
     let metrics: OrgMetrics?
+    /// The team the stats are filtered to. Nothing picks one for now, so
+    /// it stays nil (everyone); the filtering behind it is kept.
     @Binding var teamID: String?
     @Binding var tab: WorkloadTab
     /// The person picked under People in the sidebar.
@@ -41,13 +41,15 @@ struct OrgWorkloadView: View {
                     ProjectsLandingView(org: org) { project = $0 }
                 }
             } else if tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && (issueList == nil || issueList == .notOnBoard)), let workload {
-                // Investments and the people and repo stats pages: no team
-                // or filter bar.
+                // Investments and the people and repo stats pages: no
+                // counts bar.
                 list(workload)
             } else {
                 VStack(spacing: 0) {
-                    header
-                    Divider()
+                    if hasHeader {
+                        header
+                        Divider()
+                    }
                     content
                 }
             }
@@ -88,15 +90,16 @@ struct OrgWorkloadView: View {
 
     // MARK: Header
 
+    /// The counts on the list pages, and any refresh error or warning.
+    /// Exclude Drafts and Show Hidden are in Settings.
+    private var hasHeader: Bool {
+        (workload != nil && tab != .dashboard && tab != .people)
+            || (orgs.errors[org] != nil && workload != nil)
+            || !(workload?.snapshot.warnings ?? []).isEmpty
+    }
+
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                teamPicker
-                filterMenu
-                Spacer(minLength: 8)
-            }
-            .controlSize(.small)
-
             if let workload, tab != .dashboard, tab != .people {
                 summary(workload)
             }
@@ -110,38 +113,6 @@ struct OrgWorkloadView: View {
             }
         }
         .padding(12)
-    }
-
-    @ViewBuilder
-    private var teamPicker: some View {
-        let teams = (workload?.snapshot.teams ?? []).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        if !teams.isEmpty {
-            Picker(selection: $teamID) {
-                Text("Everyone").tag(String?.none)
-                Divider()
-                ForEach(teams) { team in
-                    Text(team.name).tag(Optional(team.id))
-                }
-            } label: {
-                Image(systemName: "person.3")
-            }
-            .fixedSize()
-            .help("Team")
-        }
-    }
-
-    private var filterMenu: some View {
-        let hiddenCount = workload?.hiddenCount ?? 0
-        let isFiltering = excludeDrafts || (hiddenCount > 0 && !showHidden)
-        return Menu {
-            Toggle("Exclude Drafts", isOn: $excludeDrafts)
-            Toggle("Show Hidden (\(hiddenCount))", isOn: $showHidden)
-        } label: {
-            Image(systemName: isFiltering ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
-        }
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Filter. Right-click a row to hide it.")
     }
 
     private func summary(_ workload: Workload) -> some View {
@@ -238,6 +209,8 @@ struct OrgWorkloadView: View {
             TimeOffPage(org: org, workload: workload)
         } else if peopleView == .activity {
             WorkLogPage(org: org, workload: workload)
+        } else if peopleView == .standup {
+            StandupPage(org: org, workload: workload)
         } else {
             PeopleStatsView(org: org, workload: workload, metrics: metrics, selection: $selection)
         }
@@ -308,7 +281,7 @@ struct PullRequestRow: View {
                     Text(pr.title).lineLimit(1)
                 }
                 HStack(spacing: 4) {
-                    Text("\(pr.repo)#\(pr.number)")
+                    Text("\(pr.repo)#\(String(pr.number))")
                     if let author = pr.author {
                         Text("by \(author.login)")
                     }
@@ -345,7 +318,10 @@ struct IssueRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 Text(issue.title).lineLimit(1)
                 HStack(spacing: 4) {
-                    Text("\(issue.repo)#\(issue.number)")
+                    Text("\(issue.repo)#\(String(issue.number))")
+                    if let author = issue.author {
+                        Text("by \(author.login)")
+                    }
                     Text("·")
                     RelativeDate(date: issue.updatedAt)
                     if linkedCount > 0 {

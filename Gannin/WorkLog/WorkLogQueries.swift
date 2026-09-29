@@ -35,8 +35,18 @@ private struct RawWorkLogPullRequest: Decodable {
             let additions: Int
             let deletions: Int
             let author: Author?
+            let messageHeadline: String?
+            let url: URL?
         }
         let commit: Commit
+    }
+    struct ClosingIssue: Decodable {
+        let id: String
+        let number: Int
+        let title: String
+        let url: URL
+        let state: String
+        let repository: Repository
     }
     struct Review: Decodable {
         let submittedAt: Date?
@@ -56,14 +66,17 @@ private struct RawWorkLogPullRequest: Decodable {
     let mergedBy: Actor?
     let commits: Connection<CommitNode>
     let reviews: Connection<Review>?
+    let isDraft: Bool?
+    let closingIssuesReferences: Connection<ClosingIssue>?
 
     static let fields = """
         ... on PullRequest {
-          id number title url createdAt mergedAt closedAt
+          id number title url createdAt mergedAt closedAt isDraft
           repository { nameWithOwner }
+          closingIssuesReferences(first: 5) { nodes { id number title url state repository { nameWithOwner } } }
           author { login }
           mergedBy { login }
-          commits(last: 100) { nodes { commit { authoredDate additions deletions author { user { login } } } } }
+          commits(last: 100) { nodes { commit { authoredDate additions deletions messageHeadline url author { user { login } } } } }
           reviews(last: 50) { nodes { submittedAt state author { login } } }
         }
         """
@@ -82,11 +95,15 @@ private struct RawWorkLogPullRequest: Decodable {
             mergedBy: mergedBy?.login,
             commits: commits.nodes.compactMap { node in
                 guard let stamp = GitTimestamp(node.commit.authoredDate) else { return nil }
-                return WorkLogCommit(authoredAt: stamp.date, author: node.commit.author?.user?.login, additions: node.commit.additions, deletions: node.commit.deletions, utcOffset: stamp.utcOffset)
+                return WorkLogCommit(authoredAt: stamp.date, author: node.commit.author?.user?.login, additions: node.commit.additions, deletions: node.commit.deletions, utcOffset: stamp.utcOffset, message: node.commit.messageHeadline, url: node.commit.url)
             },
             reviews: (reviews?.nodes ?? []).compactMap { review in
                 guard let at = review.submittedAt, let login = review.author?.login, review.state != "PENDING" else { return nil }
                 return WorkLogReview(submittedAt: at, author: login, state: review.state)
+            },
+            isDraft: isDraft,
+            closingIssues: (closingIssuesReferences?.nodes ?? []).map {
+                LinkedItem(id: $0.id, number: $0.number, title: $0.title, url: $0.url, repo: $0.repository.nameWithOwner, state: $0.state)
             }
         )
     }

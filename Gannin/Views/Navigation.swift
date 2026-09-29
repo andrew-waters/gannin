@@ -28,7 +28,16 @@ struct OpenElsewhereAction {
     let openSidebar: (SidebarItem, OpenPlacement) -> Void
 }
 
+/// Picks a sidebar row in this window, as clicking it does: a page linking
+/// to another section (the dashboard to Investments, say).
+struct ShowSidebarAction {
+    let perform: (SidebarItem) -> Void
+
+    func callAsFunction(_ item: SidebarItem) { perform(item) }
+}
+
 extension EnvironmentValues {
+    @Entry var showSidebarItem: ShowSidebarAction?
     /// Set on every page of a main window; nil in the PR and issue windows,
     /// which open items in windows of their own instead.
     @Entry var navigate: NavigateAction?

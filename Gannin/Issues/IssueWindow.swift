@@ -75,6 +75,7 @@ struct IssueWindow: View {
                 let timing = IssueTiming(record, workflow: workflow, now: .now)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16, alignment: .topLeading)], alignment: .leading, spacing: 12) {
                     fact("Created", record.createdAt.formatted(date: .abbreviated, time: .omitted))
+                    if let author = record.author { fact("Opened by", author) }
                     if let closedAt = record.closedAt {
                         fact(record.isNotPlanned ? "Closed, not planned" : "Closed", closedAt.formatted(date: .abbreviated, time: .omitted))
                     }

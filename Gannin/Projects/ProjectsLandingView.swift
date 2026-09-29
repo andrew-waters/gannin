@@ -20,7 +20,7 @@ struct ProjectsLandingView: View {
                             Image(systemName: "rectangle.3.group").foregroundStyle(.secondary)
                             Text(board.title)
                             Spacer()
-                            Text("#\(board.number)").foregroundStyle(.secondary)
+                            Text("#\(String(board.number))").foregroundStyle(.secondary)
                             Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                         }
                         .contentShape(Rectangle())
