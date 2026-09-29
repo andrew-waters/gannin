@@ -786,9 +786,6 @@ struct OrgSidebar: View {
                 }
                 #endif
 
-                Section {
-                    row(.settings)
-                }
             }
             if let error = orgs.errors["orgs"] {
                 Section {
@@ -806,7 +803,7 @@ struct OrgSidebar: View {
                 if let selectedOrg {
                     SyncFooter(org: selectedOrg)
                 }
-                SidebarFooter(selectedOrg: $selectedOrg)
+                SidebarFooter(selectedOrg: $selectedOrg, selection: $selection)
             }
             #if !os(macOS)
             // The Mac's sidebar gives the footer its own material; iPad's
@@ -964,17 +961,22 @@ struct OrgSidebar: View {
     }
 }
 
-/// The org switcher and the account menu, pinned to the bottom of the sidebar.
+/// The org switcher, the org's settings and the account menu, pinned to the
+/// bottom of the sidebar.
 private struct SidebarFooter: View {
     @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
     @Environment(\.openURL) private var openURL
     @Binding var selectedOrg: String?
+    @Binding var selection: SidebarItem?
     @State private var showingSettings = false
 
     var body: some View {
         HStack(spacing: 8) {
             orgMenu
+            if let current {
+                orgSettingsButton(current)
+            }
             accountMenu
         }
         .padding(.horizontal, 10)
@@ -1040,6 +1042,23 @@ private struct SidebarFooter: View {
         .buttonStyle(.plain)
         .menuIndicator(.hidden)
         .help("Switch organisation")
+    }
+
+    /// The org's Settings page, lit while it's showing.
+    private func orgSettingsButton(_ org: Organisation) -> some View {
+        let isShowing = selection == .tab(.settings)
+        return Button {
+            selection = .tab(.settings)
+        } label: {
+            Image(systemName: WorkloadTab.settings.systemImage)
+                .font(.system(size: 15))
+                .foregroundStyle(isShowing ? Color.accentColor : .secondary)
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(org.displayName) settings")
+        .contextMenu { OpenElsewhereItems(sidebar: .tab(.settings)) }
     }
 
     @ViewBuilder

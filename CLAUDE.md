@@ -88,8 +88,10 @@ added, removed or created, and the tracked board field set), always confirmed fi
   indents. Rows are single-line `Label`s with counts as badges and breakdowns in tooltips. The org
   switcher and account menu sit in its footer. Under People: Activity, Standup, Time off, Everyone
   (the people stats table, opening to everyone), then each org team and No team opening to their
-  members. Picking a person shows their `PersonColumn` as the main view. A Settings section holds the org's repo and people exclusions
-  (`OrgSettingsView`), which apply to the workload and the stats alike. The first
+  members. Picking a person shows their `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
+  by the cog beside the account menu in the sidebar's footer, are panes picked from a segmented
+  control in the toolbar: Repositories and People (exclusions, which apply to the workload and
+  the stats alike), Working Time, Issues, Investments, Harness and Hidden. The first
   page is the section's (or the person, repo, list or board picked under it);
   `path: [DetailSelection]` is the trail of pages pushed over it (`PageStack` in
   `MainView.swift`). Only the last shows, full width, under breadcrumbs, with Back in the
@@ -337,9 +339,10 @@ added, removed or created, and the tracked board field set), always confirmed fi
   chosen one (starting from the investments board), open, closed or all. Select them and add
   them to a board in bulk through `BulkWriteSheet` (confirm, then each ticked off, open until
   Done), which also records them locally (`IssueStore.recordAddedToBoard`).
-- `IssueWorkflow` (per org, Settings) picks the project and the statuses that count as in
-  progress, and whether to fall back to the first linked PR. Cycle time is time spent in
-  those statuses (pauses don't count); lead time is created to closed as completed; flow
+- `IssueWorkflow` (per org, Settings) picks the board and the statuses that count as in
+  progress (the board's Status options once one is picked), and whether to fall back to the
+  first linked PR. Cycle time is time spent in those statuses: moving to any other status
+  (Done, Backlog) or closing stops the clock, and coming back starts it again; lead time is created to closed as completed; flow
   efficiency is the share of in-progress days with linked PR activity; scope creep is the
   share of sub-issues added after work started.
 

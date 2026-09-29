@@ -1,7 +1,9 @@
 import SwiftUI
 
-/// Per-org settings: which repos and people count anywhere in the app, and
-/// the PRs and issues hidden one at a time.
+/// The org's settings, as panes picked from a segmented control in the
+/// toolbar: which repos and people count anywhere in the app,
+/// working time, the issue workflow, investments, the harness, and the PRs
+/// and issues hidden one at a time.
 struct OrgSettingsView: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(MetricsStore.self) private var metricsStore
@@ -10,35 +12,54 @@ struct OrgSettingsView: View {
 
     let org: String
     @State private var search = ""
+    @SceneStorage("orgSettingsPane") private var pane: Pane = .repositories
+
+    enum Pane: String, CaseIterable, Identifiable {
+        case repositories = "Repositories"
+        case people = "People"
+        case workingTime = "Working Time"
+        case issues = "Issues"
+        case investments = "Investments"
+        case harness = "Harness"
+        case hidden = "Hidden"
+
+        var id: Self { self }
+    }
 
     var body: some View {
+        Form {
+            content(pane)
+        }
+        .formStyle(.grouped)
+        .id(pane)
+        .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Settings", selection: $pane) {
+                    ForEach(Pane.allCases) { pane in
+                        Text(pane.rawValue).tag(pane)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .fixedSize()
+            }
+        }
+        .onChange(of: pane) { search = "" }
+    }
+
+    @ViewBuilder
+    private func content(_ pane: Pane) -> some View {
         let snapshot = orgs.snapshot(for: org)
         let history = metricsStore.history(for: org)
-        let repos = Self.repositories(snapshot: snapshot, history: history).filter { matches($0.name) }
-        let people = Self.people(snapshot: snapshot, history: history).filter { matches($0.person.login) || matches($0.person.displayName) }
-        let hiddenItems = Self.hiddenItems(snapshot: snapshot, hidden: hidden.keys)
-        let config = configs.config(for: org)
-
-        Form {
+        let orgName = orgs.org(login: org)?.displayName ?? org
+        switch pane {
+        case .repositories:
+            let repos = Self.repositories(snapshot: snapshot, history: history).filter { matches($0.name) }
             Section {
-                Text("Unticked repositories and people are left out everywhere in \(orgs.org(login: org)?.displayName ?? org): the workload lists, People and the stats. An excluded person's PRs and reviews don't count. Accounts ending in -bot start unticked.")
+                Text("Unticked repositories are left out everywhere in \(orgName): the workload lists, People and the stats.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                TextField("Filter repositories and people", text: $search)
+                TextField("Filter repositories", text: $search)
             }
-
-            InvestmentCategoriesSection(org: org)
-
-            IssueWorkflowSection(org: org)
-
-            HarnessSettingsSection(org: org)
-
-            WorkWeekSection(org: org)
-
-            LeavePolicySection(org: org)
-
-            PeopleDatesSection(org: org, people: (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending })
-
             Section {
                 if repos.isEmpty {
                     Text(search.isEmpty ? "No repositories yet. They appear once the org has synced." : "No matches")
@@ -51,9 +72,17 @@ struct OrgSettingsView: View {
                     }
                 }
             } header: {
-                header("Repositories", excluded: config.excludedRepos.count)
+                header("Repositories", excluded: configs.config(for: org).excludedRepos.count)
             }
-
+        case .people:
+            let everyone = Self.people(snapshot: snapshot, history: history)
+            let people = everyone.filter { matches($0.person.login) || matches($0.person.displayName) }
+            Section {
+                Text("Unticked people are left out everywhere in \(orgName): their PRs and reviews don't count in the workload lists, People or the stats. Accounts ending in -bot start unticked.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                TextField("Filter people", text: $search)
+            }
             Section {
                 if people.isEmpty {
                     Text(search.isEmpty ? "No people yet. They appear once the org has synced." : "No matches")
@@ -73,9 +102,20 @@ struct OrgSettingsView: View {
                     }
                 }
             } header: {
-                header("People", excluded: Self.people(snapshot: snapshot, history: history).filter { isExcluded($0.person.login) }.count)
+                header("People", excluded: everyone.filter { isExcluded($0.person.login) }.count)
             }
-
+            PeopleDatesSection(org: org, people: (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending })
+        case .workingTime:
+            WorkWeekSection(org: org)
+            LeavePolicySection(org: org)
+        case .issues:
+            IssueWorkflowSection(org: org)
+        case .investments:
+            InvestmentCategoriesSection(org: org)
+        case .harness:
+            HarnessSettingsSection(org: org)
+        case .hidden:
+            let hiddenItems = Self.hiddenItems(snapshot: snapshot, hidden: hidden.keys)
             Section {
                 if hiddenItems.isEmpty {
                     Text("Nothing hidden. Right-click a pull request or issue to hide it.")
@@ -93,7 +133,6 @@ struct OrgSettingsView: View {
                 header("Hidden items", excluded: 0)
             }
         }
-        .formStyle(.grouped)
     }
 
     private func header(_ title: String, excluded: Int) -> some View {
