@@ -437,8 +437,7 @@ struct HarnessIssueSection: View {
 
 // MARK: - Settings
 
-/// Settings: the org's harness repo and branch, picked from GitHub's, and
-/// what was found there.
+/// Settings: the org's harness repo and branch, picked from GitHub's.
 struct HarnessSettingsSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
@@ -480,31 +479,15 @@ struct HarnessSettingsSection: View {
                     }
                 }
                 .task(id: saved.repo) { await harness.loadBranches(repo: saved.repo) }
-                status(saved)
+                // Only a failure to read it; what's found is on the Harness page.
+                if let error = harness.errors[org] {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
             }
-            Text("Plans are Markdown under requirements/<module>/plans/, requirements the rest of requirements/, then findings/ and skills/. A document is about an issue named in its file name (prd-123) or its header table's GitHub row (owner/name#123); others it names are mentions.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
         } header: {
             Text("Harness")
         }
         .task { await harness.loadRepositories(org: org) }
         .loadsHarness(org: org)
-    }
-
-    @ViewBuilder
-    private func status(_ setup: HarnessConfig) -> some View {
-        if let index = harness.index(for: org, setup) {
-            let linked = index.documents.filter { ($0.kind == .plans || $0.kind == .requirements) && !$0.subjects.isEmpty }.count
-            let linkable = index.documents.filter { $0.kind == .plans || $0.kind == .requirements }.count
-            Text("\(index.documents(.plans).count) plans, \(index.documents(.requirements).count) requirements, \(index.documents(.findings).count) findings and \(index.documents(.skills).count) skills on \(index.branch). \(linked) of \(linkable) plans and requirements name an issue.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        } else if let error = harness.errors[org] {
-            Text(error).font(.caption).foregroundStyle(.red)
-        } else if harness.loading.contains(org) {
-            Text("Indexing \(setup.repo)").font(.caption).foregroundStyle(.secondary)
-        }
     }
 }
