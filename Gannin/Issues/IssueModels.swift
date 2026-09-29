@@ -63,6 +63,8 @@ enum IssueFieldValue: Codable, Hashable {
     /// A single-select option, with its position on the board for ordering.
     case option(name: String, position: Int)
     case iteration(title: String, start: Date)
+    /// A multi-select field's options, in board order.
+    case options([String])
 
     var display: String {
         switch self {
@@ -71,6 +73,7 @@ enum IssueFieldValue: Codable, Hashable {
         case .date(let date): date.formatted(date: .abbreviated, time: .omitted)
         case .option(let name, _): name
         case .iteration(let title, _): title
+        case .options(let names): names.joined(separator: ", ")
         }
     }
 

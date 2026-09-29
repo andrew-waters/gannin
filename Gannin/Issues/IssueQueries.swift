@@ -66,6 +66,8 @@ private struct RawIssueRecord: Decodable {
     let closedByPullRequestsReferences: Connection<Lossy<PullRequest>>?
     let projectItems: Connection<Lossy<ProjectItem>>?
 
+    struct Named: Decodable { let name: String }
+
     struct ProjectItem: Decodable {
         struct FieldValue: Decodable {
             struct Field: Decodable {
@@ -81,6 +83,8 @@ private struct RawIssueRecord: Decodable {
             let optionId: String?
             let title: String?
             let startDate: String?
+            /// A multi-select value's options.
+            let options: [Named]?
             let field: Field?
         }
         let project: Project
@@ -104,6 +108,8 @@ private struct RawIssueRecord: Decodable {
                     if let title = value.title, let start = value.startDate.flatMap({ try? Date($0, strategy: .iso8601.year().month().day()) }) {
                         values[name] = .iteration(title: title, start: start)
                     }
+                case "MULTI_SELECT":
+                    if let options = value.options, !options.isEmpty { values[name] = .options(options.map(\.name)) }
                 default: break
                 }
             }
@@ -140,6 +146,7 @@ private struct RawIssueRecord: Decodable {
                   ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name dataType } } }
                   ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { id } } } }
                   ... on ProjectV2ItemFieldIterationValue { title startDate field { ... on ProjectV2FieldCommon { name dataType } } }
+                  ... on ProjectV2ItemFieldMultiSelectValue { options { name } field { ... on ProjectV2FieldCommon { name dataType } } }
                 }
               }
             }

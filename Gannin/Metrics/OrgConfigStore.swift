@@ -21,6 +21,8 @@ struct OrgConfig: Codable, Hashable {
     var leave: LeavePolicy?
     /// The repo of plans and requirements kept beside the code; nil for none.
     var harness: HarnessConfig?
+    /// Saved field views, in sidebar order.
+    var fieldViews: [FieldView] = []
 
     var leavePolicy: LeavePolicy { leave ?? LeavePolicy() }
 
@@ -41,9 +43,10 @@ struct OrgConfig: Codable, Hashable {
         workWeek = try container.decodeIfPresent(WorkWeek.self, forKey: .workWeek)
         leave = try container.decodeIfPresent(LeavePolicy.self, forKey: .leave)
         harness = try container.decodeIfPresent(HarnessConfig.self, forKey: .harness)
+        fieldViews = try container.decodeIfPresent([FieldView].self, forKey: .fieldViews) ?? []
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && fieldViews.isEmpty }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.
@@ -103,6 +106,25 @@ final class OrgConfigStore {
     /// Chooses a PR's category by hand; nil goes back to the rules.
     func setCategory(_ categoryID: UUID?, for prID: String, in org: String) {
         updateInvestments(org) { $0.manual[prID] = categoryID }
+    }
+
+    func fieldView(_ id: UUID, in org: String) -> FieldView? {
+        config(for: org).fieldViews.first { $0.id == id }
+    }
+
+    /// Adds the view, or replaces the one with its ID.
+    func saveFieldView(_ view: FieldView, in org: String) {
+        update(org) { config in
+            if let index = config.fieldViews.firstIndex(where: { $0.id == view.id }) {
+                config.fieldViews[index] = view
+            } else {
+                config.fieldViews.append(view)
+            }
+        }
+    }
+
+    func deleteFieldView(_ id: UUID, in org: String) {
+        update(org) { $0.fieldViews.removeAll { $0.id == id } }
     }
 
     func toggleRepo(_ repo: String, in org: String) {

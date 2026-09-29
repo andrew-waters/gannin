@@ -19,8 +19,10 @@ struct BoardField: Codable, Hashable, Identifiable {
     let name: String
     /// GitHub's data type: TITLE, ASSIGNEES, SINGLE_SELECT, ITERATION and so on.
     let dataType: String
-    /// Single-select options or iterations, in board order.
+    /// Single- or multi-select options or iterations, in board order.
     let options: [BoardOption]
+    /// An iteration field's length in days.
+    var iterationDuration: Int?
 
     var isGroupable: Bool {
         ["SINGLE_SELECT", "ITERATION", "ASSIGNEES", "LABELS", "MILESTONE", "REPOSITORY", "TEXT", "NUMBER", "DATE"].contains(dataType)
@@ -34,6 +36,10 @@ struct BoardOption: Codable, Hashable, Identifiable {
     let color: String?
     /// Iteration start.
     let start: Date?
+    /// What the option means, as set on the board.
+    var description: String?
+    /// An iteration's length in days.
+    var duration: Int?
 }
 
 /// A saved view: its layout, filter, grouping, sort and visible fields.

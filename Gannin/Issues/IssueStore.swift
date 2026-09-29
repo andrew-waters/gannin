@@ -192,6 +192,19 @@ final class IssueStore {
         save(history)
     }
 
+    /// Changes every stored issue's values on one board at once, after the
+    /// board's fields change (a rename, an option renamed or removed).
+    func rewriteFieldValues(org: String, projectNumber: Int, _ change: (inout [String: IssueFieldValue]) -> Void) {
+        guard var history = histories[org] else { return }
+        for (id, var record) in history.issues {
+            guard let index = record.projectFields.firstIndex(where: { $0.projectNumber == projectNumber }) else { continue }
+            change(&record.projectFields[index].values)
+            history.issues[id] = record
+        }
+        histories[org] = history
+        save(history)
+    }
+
     static var cacheDirectory: URL { directory }
 
     func clear() {

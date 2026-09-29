@@ -33,6 +33,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case investments = "Investments"
     case projects = "Projects"
     case harness = "Harness"
+    case views = "Views"
     case settings = "Settings"
 
     var id: Self { self }
@@ -48,6 +49,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .investments: "chart.pie"
         case .projects: "rectangle.split.3x1"
         case .harness: "text.book.closed"
+        case .views: "square.grid.3x3"
         case .settings: "gearshape"
         }
     }
@@ -62,6 +64,8 @@ enum SidebarItem: Hashable {
     case repository(String)
     case issueList(IssueList)
     case project(Int)
+    /// A saved field view, by ID.
+    case fieldView(UUID)
 }
 
 /// Opens a person's view in this window, as picking them in the sidebar
@@ -134,6 +138,8 @@ struct MainView: View {
     @State private var issueList: IssueList?
     /// The board picked under Projects, by number.
     @State private var project: Int?
+    /// The field view picked under Views.
+    @State private var fieldView: UUID?
     /// No search field for now; the list filtering is kept for when it returns.
     @State private var searchText = ""
 
@@ -155,6 +161,7 @@ struct MainView: View {
                     repository: repository,
                     issueList: issueList,
                     project: $project,
+                    fieldView: $fieldView,
                     path: $path,
                     sidebar: sidebarSelection.wrappedValue ?? .tab(tab),
                     rootTitle: rootTitle,
@@ -207,6 +214,7 @@ struct MainView: View {
             repository = nil
             issueList = nil
             project = nil
+            fieldView = nil
             path = []
             if let request, request.org == selectedOrg { apply(request) }
         }
@@ -283,6 +291,8 @@ struct MainView: View {
             return issueList?.title ?? "Issues"
         case .projects:
             return project.map { number in projectStore.boardLists[selectedOrg]?.first { $0.number == number }?.title ?? "Project \(number)" } ?? "Projects"
+        case .views:
+            return fieldView.flatMap { orgConfigs.fieldView($0, in: selectedOrg)?.name } ?? "Views"
         default:
             return tab.rawValue
         }
@@ -296,6 +306,7 @@ struct MainView: View {
             if tab == .repositories, let repository { return .repository(repository) }
             if tab == .issues, let issueList { return .issueList(issueList) }
             if tab == .projects, let project { return .project(project) }
+            if tab == .views, let fieldView { return .fieldView(fieldView) }
             return .tab(tab)
         } set: { item in
             guard let item else { return }
@@ -304,6 +315,7 @@ struct MainView: View {
             repository = nil
             issueList = nil
             project = nil
+            fieldView = nil
             path = []
             switch item {
             case .tab(let newTab):
@@ -323,6 +335,9 @@ struct MainView: View {
             case .project(let number):
                 tab = .projects
                 project = number
+            case .fieldView(let id):
+                tab = .views
+                fieldView = id
             }
         }
     }
@@ -432,6 +447,7 @@ private struct PageStack: View {
     let repository: String?
     let issueList: IssueList?
     @Binding var project: Int?
+    @Binding var fieldView: UUID?
     @Binding var path: [DetailSelection]
     /// What the sidebar has picked, for new windows opened from here.
     let sidebar: SidebarItem
@@ -463,6 +479,7 @@ private struct PageStack: View {
                     repository: repository,
                     issueList: issueList,
                     project: $project,
+                    fieldView: $fieldView,
                     selection: selection(at: 0),
                     searchText: searchText
                 )
@@ -719,6 +736,7 @@ struct OrgSidebar: View {
     @AppStorage("sidebarRepositoriesExpanded") private var repositoriesExpanded = false
     @AppStorage("sidebarIssuesExpanded") private var issuesExpanded = true
     @AppStorage("sidebarProjectsExpanded") private var projectsExpanded = true
+    @AppStorage("sidebarViewsExpanded") private var viewsExpanded = true
     @Environment(ProjectStore.self) private var projectStore
     @Environment(OrgConfigStore.self) private var configs
     #if os(macOS)
@@ -775,6 +793,28 @@ struct OrgSidebar: View {
                         }
                     } label: {
                         row(.projects)
+                    }
+                    DisclosureGroup(isExpanded: $viewsExpanded) {
+                        ForEach(configs.config(for: selectedOrg).fieldViews) { view in
+                            Label(view.name, systemImage: WorkloadTab.views.systemImage)
+                                .lineLimit(1)
+                                .tag(SidebarItem.fieldView(view.id))
+                                .contextMenu {
+                                    OpenElsewhereItems(sidebar: .fieldView(view.id))
+                                    Button("Duplicate") {
+                                        var copy = view
+                                        copy.id = UUID()
+                                        copy.name = "\(view.name) copy"
+                                        configs.saveFieldView(copy, in: selectedOrg)
+                                    }
+                                    Button("Delete", role: .destructive) {
+                                        if selection == .fieldView(view.id) { selection = .tab(.views) }
+                                        configs.deleteFieldView(view.id, in: selectedOrg)
+                                    }
+                                }
+                        }
+                    } label: {
+                        row(.views)
                     }
                 }
 
@@ -956,7 +996,7 @@ struct OrgSidebar: View {
         switch tab {
         case .pullRequests: return workload.openPullRequests.count
         // Issues' lists under it have their own counts.
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .settings: return 0
         }
     }
 }

@@ -1,0 +1,724 @@
+import SwiftUI
+
+/// Changes waiting to be confirmed, for the write sheet.
+struct PendingFieldChanges: Identifiable {
+    let id = UUID()
+    let changes: [FieldChange]
+}
+
+/// A saved view: its issues in one of five layouts (Outline, Board, Table,
+/// Grid, Aging), each group with its count and the view's measure, each
+/// issue with how long it's sat and anything that doesn't add up. Issues
+/// can be selected and a board field set on all of them, dragged between
+/// the board's columns, or filled in one at a time; every write is
+/// confirmed first.
+struct FieldViewPage: View {
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(IssueStore.self) private var issueStore
+    @Environment(ProjectStore.self) private var projects
+    @Environment(\.navigate) private var navigate
+    @Environment(\.openWindow) private var openWindow
+    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
+
+    let org: String
+    let id: UUID
+    @Binding var selection: DetailSelection?
+
+    @State private var selected: Set<String> = []
+    @State private var expanded: Set<String> = []
+    @State private var editing: FieldView?
+    @State private var writing: PendingFieldChanges?
+    @State private var fillIn: FieldFillIn.Request?
+    /// The grid's picked cell: its row and column values.
+    @State private var cell: [FieldValue]?
+    @State private var editingFields: BoardFieldsRequest?
+
+    var body: some View {
+        if let view = configs.fieldView(id, in: org) {
+            let context = view.context(workflow: configs.config(for: org).workflow, history: issueStore.history(for: org))
+            let issues = view.issues(in: issueStore.history(for: org), context: context)
+            content(view, issues: issues, context: context)
+                .toolbar { toolbar(view, issues: issues) }
+                .task(id: view.projectNumber) {
+                    await projects.loadBoards(org: org)
+                    if let number = view.projectNumber { await projects.loadDefinition(org: org, number: number) }
+                }
+                .task(id: org) { await issueStore.sync(org, windowDays: windowDays) }
+                .sheet(item: $editing) { draft in
+                    FieldViewEditor(org: org, view: draft) { saved in
+                        configs.saveFieldView(saved, in: org)
+                        editing = nil
+                    } onCancel: {
+                        editing = nil
+                    }
+                }
+                .sheet(item: $writing) { pending in
+                    FieldWriteSheet(org: org, changes: pending.changes, board: board(view)) {
+                        writing = nil
+                        selected = []
+                    }
+                }
+                .sheet(item: $fillIn) { request in
+                    FieldFillIn(org: org, request: request, board: board(view)) {
+                        fillIn = nil
+                    }
+                }
+                .sheet(item: $editingFields) { request in
+                    BoardFieldsEditor(org: org, number: request.number) { editingFields = nil }
+                }
+                .onChange(of: view) { cell = nil }
+        } else {
+            ContentUnavailableView("No such view", systemImage: WorkloadTab.views.systemImage, description: Text("It was deleted."))
+        }
+    }
+
+    // MARK: Content
+
+    @ViewBuilder
+    private func content(_ view: FieldView, issues: [IssueRecord], context: FieldContext) -> some View {
+        let definition = board(view)
+        let actions = FieldActions(
+            open: open,
+            setMenu: { AnyView(setMenu($0, view: view, definition: definition)) },
+            propose: { writing = PendingFieldChanges(changes: $0) }
+        )
+        if view.dimensions.isEmpty {
+            ContentUnavailableView {
+                Label("Nothing to group by", systemImage: WorkloadTab.views.systemImage)
+            } actions: {
+                Button("Edit View") { editing = view }
+            }
+        } else {
+            switch view.layout {
+            case .outline:
+                list(issues, view: view, dimensions: view.dimensions, context: context, definition: definition, heading: nil)
+            case .board:
+                FieldBoard(issues: issues, view: view, context: context, definition: definition, actions: actions)
+            case .table:
+                FieldTable(issues: issues, view: view, context: context, selected: $selected, actions: actions)
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if !selected.isEmpty { selectionBar(issues, view: view, definition: definition) }
+                    }
+            case .grid where view.dimensions.count >= 2:
+                VStack(spacing: 0) {
+                    FieldGrid(issues: issues, view: view, context: context, cell: $cell)
+                        .frame(maxHeight: 360)
+                    Divider()
+                    if let cell {
+                        let members = issues.filter { issue in
+                            view.dimensions[0].values(of: issue, in: context).contains(cell[0])
+                                && view.dimensions[1].values(of: issue, in: context).contains(cell[1])
+                        }
+                        list(members, view: view, dimensions: Array(view.dimensions.dropFirst(2)), context: context, definition: definition, heading: "\(cell[0].title), \(cell[1].title)")
+                    } else {
+                        ContentUnavailableView("Pick a cell", systemImage: "square.grid.3x3.middle.filled", description: Text("Its issues are listed here, to open or change."))
+                    }
+                }
+            case .grid:
+                // One grouping gives the rows; the columns need a second.
+                ContentUnavailableView {
+                    Label("Pick the grid's columns", systemImage: FieldViewLayout.grid.systemImage)
+                } description: {
+                    Text("Rows are \(view.dimensions[0].title). Choose what the columns are.")
+                } actions: {
+                    Menu("Columns") {
+                        ForEach(sortKeys(view).filter { !view.dimensions.contains($0) }, id: \.self) { key in
+                            Button(key.title) {
+                                var changed = view
+                                changed.dimensions.append(key)
+                                configs.saveFieldView(changed, in: org)
+                            }
+                        }
+                    }
+                    .fixedSize()
+                }
+            case .aging:
+                FieldAging(issues: issues, view: view, context: context, history: issueStore.history(for: org), workflow: configs.config(for: org).workflow, actions: actions)
+            }
+        }
+    }
+
+    private func open(_ issue: IssueRecord) {
+        if let navigate {
+            navigate(.issueReference(IssueReference(org: org, record: issue)))
+        } else {
+            openWindow(value: IssueReference(org: org, record: issue))
+        }
+    }
+
+    /// The issues grouped by `dimensions`, or flat when there are none left,
+    /// with selection and the bar for acting on it.
+    private func list(_ issues: [IssueRecord], view: FieldView, dimensions: [FieldKey], context: FieldContext, definition: Board?, heading: String?) -> some View {
+        let groups = FieldGroup.groups(issues, by: dimensions, context: context, order: view.groupOrder, measure: view.measure)
+        return List(selection: $selected) {
+            Section {
+                if issues.isEmpty {
+                    Text(issueStore.history(for: org) == nil ? "Loading issues." : "No issues match.")
+                        .foregroundStyle(.secondary)
+                }
+                if dimensions.isEmpty {
+                    ForEach(issues) { issue in
+                        FieldIssueRow(issue: issue, signals: context.signals(issue), shown: FieldChips.values(issue, keys: view.shownFields, context: context), definition: definition).tag(issue.id)
+                    }
+                } else {
+                    ForEach(groups) { group in
+                        groupView(group, dimensions: dimensions, total: issues.count, view: view, context: context, definition: definition)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text(heading.map { "\($0): " } ?? "")
+                        + Text(issues.count == 1 ? "1 issue" : "\(issues.count) issues")
+                    Spacer()
+                    if !dimensions.isEmpty {
+                        Button(expanded.isEmpty ? "Expand All" : "Collapse All") {
+                            expanded = expanded.isEmpty ? Set(Self.allIDs(groups)) : []
+                        }
+                        .linkButton()
+                        .font(.caption)
+                    }
+                }
+            }
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            setMenu(issues.filter { ids.contains($0.id) }, view: view, definition: definition)
+        } primaryAction: { ids in
+            let picked = issues.filter { ids.contains($0.id) }
+            if picked.count == 1, let issue = picked.first {
+                open(issue)
+            } else {
+                for issue in picked { openWindow(value: IssueReference(org: org, record: issue)) }
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !selected.isEmpty { selectionBar(issues, view: view, definition: definition) }
+        }
+    }
+
+    private static func allIDs(_ groups: [FieldGroup]) -> [String] {
+        groups.flatMap { [$0.id] + allIDs($0.children) }
+    }
+
+    /// A group's row, opening to the next level's groups or, at the last
+    /// level, its issues.
+    private func groupView(_ group: FieldGroup, dimensions: [FieldKey], total: Int, view: FieldView, context: FieldContext, definition: Board?) -> AnyView {
+        // A group's path holds one value per level of this list's dimensions.
+        let key = dimensions[group.path.count - 1]
+        let isOpen = Binding(
+            get: { expanded.contains(group.id) },
+            set: { if $0 { expanded.insert(group.id) } else { expanded.remove(group.id) } }
+        )
+        return AnyView(
+            DisclosureGroup(isExpanded: isOpen) {
+                if group.children.isEmpty {
+                    ForEach(group.issues) { issue in
+                        FieldIssueRow(issue: issue, signals: context.signals(issue), shown: FieldChips.values(issue, keys: view.shownFields, context: context), definition: definition).tag(issue.id)
+                    }
+                } else {
+                    ForEach(group.children) { child in
+                        groupView(child, dimensions: dimensions, total: group.issues.count, view: view, context: context, definition: definition)
+                    }
+                }
+            } label: {
+                FieldGroupLabel(
+                    value: group.value,
+                    key: key,
+                    count: group.issues.count,
+                    total: total,
+                    measure: view.measure == .count ? nil : view.measure.format(view.measure.value(group.issues, context: context)),
+                    color: FieldColors.color(group.value, key: key, definition: definition)
+                )
+                .contextMenu {
+                    Button(group.issues.count == 1 ? "Select Issue" : "Select \(group.issues.count) Issues") {
+                        selected.formUnion(group.issues.map(\.id))
+                    }
+                    if group.value == .none, let field = key.fieldName, definition?.field(named: field) != nil {
+                        Button("Fill In \(field)") {
+                            fillIn = FieldFillIn.Request(field: field, issues: group.issues)
+                        }
+                    }
+                }
+            }
+        )
+    }
+
+    // MARK: Acting on issues
+
+    private func selectionBar(_ issues: [IssueRecord], view: FieldView, definition: Board?) -> some View {
+        let chosen = issues.filter { selected.contains($0.id) }
+        return VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 12) {
+                Text("\(chosen.count) selected").monospacedDigit()
+                Button("Select All \(issues.count)") { selected = Set(issues.map(\.id)) }
+                    .disabled(chosen.count == issues.count)
+                Button("Clear") { selected = [] }
+                Spacer()
+                Menu {
+                    setMenu(chosen, view: view, definition: definition)
+                } label: {
+                    Label(chosen.count == 1 ? "Set Field" : "Set Field on \(chosen.count)", systemImage: "square.and.pencil")
+                }
+                .fixedSize()
+                .disabled(definition == nil)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+        }
+        .background(.bar)
+    }
+
+    /// Each field on the board that takes an option or iteration, opening
+    /// to its values and Clear.
+    @ViewBuilder
+    private func setMenu(_ issues: [IssueRecord], view: FieldView, definition: Board?) -> some View {
+        if let definition, !issues.isEmpty {
+            ForEach(FieldColors.settableFields(definition)) { field in
+                Menu(field.name) {
+                    ForEach(field.options) { option in
+                        Button(option.name) { propose(issues, field: field.name, value: option.name, view: view) }
+                    }
+                    Divider()
+                    Button("Clear \(field.name)") { propose(issues, field: field.name, value: nil, view: view) }
+                }
+            }
+        } else if !issues.isEmpty {
+            Text(view.projectNumber == nil ? "Pick a board in Edit View to set its fields" : "Loading the board's fields")
+        }
+        if issues.count == 1, let issue = issues.first {
+            Divider()
+            Link("Open on GitHub", destination: issue.url)
+        }
+    }
+
+    /// The changes, leaving out issues that already have the value.
+    private func propose(_ issues: [IssueRecord], field: String, value: String?, view: FieldView) {
+        let changes = FieldChange.plan(issues, field: field, value: value, board: view.projectNumber)
+        guard !changes.isEmpty else { return }
+        writing = PendingFieldChanges(changes: changes)
+    }
+
+    /// The board's fields and the rest, for ordering by.
+    private func sortKeys(_ view: FieldView) -> [FieldKey] {
+        let fields = board(view)?.fields
+            .filter { ["SINGLE_SELECT", "ITERATION", "NUMBER", "DATE", "TEXT"].contains($0.dataType) && $0.name != "Title" }
+            .map { FieldKey.field($0.name) } ?? view.dimensions.filter { $0.fieldName != nil }
+        return fields + FieldKey.attributes + FieldKey.derived
+    }
+
+    // MARK: Board
+
+    private func board(_ view: FieldView) -> Board? {
+        view.projectNumber.flatMap { projects.cache(org: org, number: $0)?.board }
+    }
+
+    @ToolbarContentBuilder
+    private func toolbar(_ view: FieldView, issues: [IssueRecord]) -> some ToolbarContent {
+        ToolbarItem {
+            Picker("Layout", selection: Binding(get: { view.layout }, set: { layout in
+                var changed = view
+                changed.layout = layout
+                configs.saveFieldView(changed, in: org)
+            })) {
+                ForEach(FieldViewLayout.allCases, id: \.self) { layout in
+                    Label(layout.rawValue, systemImage: layout.systemImage).tag(layout)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelStyle(.iconOnly)
+            .fixedSize()
+            .help("Outline, Board, Table, Grid (the first two groupings) or Aging")
+        }
+        ToolbarItem {
+            FieldSortMenu(view: view, keys: sortKeys(view)) { changed in configs.saveFieldView(changed, in: org) }
+        }
+        ToolbarItem {
+            FieldShownMenu(view: view, keys: sortKeys(view)) { changed in configs.saveFieldView(changed, in: org) }
+        }
+        ToolbarItem {
+            Picker("Measure", selection: Binding(get: { view.measure }, set: { measure in
+                var changed = view
+                changed.measure = measure
+                configs.saveFieldView(changed, in: org)
+            })) {
+                ForEach(FieldMeasure.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+            .fixedSize()
+            .help("What each group shows beside its count")
+        }
+        if let definition = board(view) {
+            let missing = FieldColors.settableFields(definition).compactMap { field -> (String, [IssueRecord])? in
+                let without = issues.filter { $0.fields(onProject: definition.number)?.values[field.name] == nil }
+                return without.isEmpty ? nil : (field.name, without)
+            }
+            ToolbarItem {
+                Menu {
+                    ForEach(missing, id: \.0) { field, without in
+                        Button("\(field) (\(without.count))") {
+                            fillIn = FieldFillIn.Request(field: field, issues: without)
+                        }
+                    }
+                } label: {
+                    Label("Fill In", systemImage: "rectangle.and.pencil.and.ellipsis")
+                }
+                .disabled(missing.isEmpty)
+                .help("Go through the issues here missing a field, one at a time")
+            }
+        }
+        if let number = view.projectNumber {
+            ToolbarItem {
+                Button {
+                    editingFields = BoardFieldsRequest(number: number)
+                } label: {
+                    Label("Board Fields", systemImage: "square.grid.3x1.below.line.grid.1x2")
+                }
+                .help("Add, rename and reorder the board's fields and their options")
+            }
+        }
+        ToolbarItem {
+            Button {
+                editing = view
+            } label: {
+                Label("Edit View", systemImage: "slider.horizontal.3")
+            }
+            .help("Change what this view groups and filters by")
+        }
+    }
+}
+
+/// What the layouts can do with issues, handed down from the page.
+struct FieldActions {
+    let open: (IssueRecord) -> Void
+    /// The Set Field menu for these issues.
+    let setMenu: ([IssueRecord]) -> AnyView
+    /// Confirms and writes changes.
+    let propose: ([FieldChange]) -> Void
+}
+
+extension FieldChange {
+    /// Setting `field` to `value` on each issue, leaving out those that
+    /// already have it.
+    static func plan(_ issues: [IssueRecord], field: String, value: String?, board: Int?) -> [FieldChange] {
+        issues.compactMap { issue in
+            let current = board.flatMap { issue.fields(onProject: $0)?.values[field]?.display }
+            let same = current == nil ? value == nil : current?.caseInsensitiveCompare(value ?? "") == .orderedSame
+            return same ? nil : FieldChange(issue: issue, field: field, value: value)
+        }
+    }
+}
+
+/// Colours and settable fields, shared by the layouts.
+enum FieldColors {
+    /// The option's colour on the board, the palette's for Attention, grey
+    /// for no value, else the accent.
+    static func color(_ value: FieldValue, key: FieldKey, definition: Board?) -> Color {
+        guard let name = value.name else { return .secondary.opacity(0.4) }
+        switch key {
+        case .attention: return ChartPalette.warning
+        case .ageInStatus:
+            let order = Int(value.order)
+            return order <= 1 ? ChartPalette.good : order <= 3 ? ChartPalette.warning : ChartPalette.critical
+        default:
+            guard let field = key.fieldName.flatMap({ definition?.field(named: $0) }),
+                  let option = field.options.first(where: { $0.name == name }) else { return .accentColor }
+            return BoardLayout.color(option.color)
+        }
+    }
+
+    static func settableFields(_ board: Board) -> [BoardField] {
+        board.fields.filter { ($0.dataType == "SINGLE_SELECT" || $0.dataType == "ITERATION") && !$0.options.isEmpty }
+    }
+}
+
+/// A group's label: its value (in the option's colour), a share bar, the
+/// view's measure when it isn't the count, and the count.
+struct FieldGroupLabel: View {
+    let value: FieldValue
+    let key: FieldKey
+    let count: Int
+    let total: Int
+    let measure: String?
+    let color: Color
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(color)
+                .frame(width: 9, height: 9)
+            Text(value.title)
+                .foregroundStyle(value == .none ? .secondary : .primary)
+                .lineLimit(1)
+            Text(key.title)
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 8)
+            if let measure, !measure.isEmpty {
+                Text(measure)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(.quaternary)
+                    Capsule().fill(color.opacity(0.8))
+                        .frame(width: geometry.size.width * CGFloat(count) / CGFloat(max(total, 1)))
+                }
+            }
+            .frame(width: 90, height: 6)
+            Text(verbatim: "\(count)")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(minWidth: 28, alignment: .trailing)
+        }
+    }
+}
+
+/// An issue in a list: title, where it's from, how long it's sat, what
+/// doesn't add up, and who has it.
+struct FieldIssueRow: View {
+    let issue: IssueRecord
+    let signals: IssueSignals
+    /// The view's shown fields with this issue's values.
+    var shown: [(key: FieldKey, values: [FieldValue])] = []
+    var definition: Board?
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(issue.title).lineLimit(1)
+                HStack(spacing: 4) {
+                    Text(verbatim: "\(issue.repo)#\(issue.number)")
+                    if let status = signals.status, let time = signals.timeInStatus {
+                        Text("· \(status) for \(time.compactDuration)")
+                    }
+                    if let inProgress = signals.inProgress {
+                        Text("· \(inProgress.compactDuration) in progress")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                if !shown.isEmpty {
+                    FieldChips(shown: shown, definition: definition)
+                }
+            }
+            Spacer()
+            FlagBadge(flags: signals.flags)
+            AvatarStack(people: issue.assignees.map { Person(login: $0, name: nil, avatarUrl: URL(string: "https://github.com/\($0).png?size=64")) })
+        }
+        .padding(.vertical, 2)
+    }
+}
+
+/// A warning triangle when the board and the code disagree, saying how.
+struct FlagBadge: View {
+    let flags: [IssueSignals.Flag]
+
+    var body: some View {
+        if !flags.isEmpty {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(ChartPalette.warning)
+                .help(flags.map { "\($0.rawValue): \($0.explanation)" }.joined(separator: "\n"))
+        }
+    }
+}
+
+/// Views, with none picked: the org's saved views, and New View.
+struct FieldViewsLanding: View {
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(ProjectStore.self) private var projects
+    let org: String
+    let open: (UUID) -> Void
+    @State private var creating: FieldView?
+
+    var body: some View {
+        let views = configs.config(for: org).fieldViews
+        Group {
+            if views.isEmpty {
+                ContentUnavailableView {
+                    Label("No views yet", systemImage: WorkloadTab.views.systemImage)
+                } description: {
+                    Text("Group issues by any board fields and attributes, as an outline, a board, a table, a grid or by age, and set fields on many at once.")
+                } actions: {
+                    Button("New View", action: create)
+                }
+            } else {
+                List {
+                    ForEach(views) { view in
+                        Button {
+                            open(view.id)
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: view.layout.systemImage)
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 20)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(view.name)
+                                    Text(view.dimensions.map(\.title).joined(separator: " › "))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItem {
+                Button(action: create) { Label("New View", systemImage: "plus") }
+            }
+        }
+        .task { await projects.loadBoards(org: org) }
+        .sheet(item: $creating) { draft in
+            FieldViewEditor(org: org, view: draft) { saved in
+                configs.saveFieldView(saved, in: org)
+                creating = nil
+                open(saved.id)
+            } onCancel: {
+                creating = nil
+            }
+        }
+    }
+
+    /// Starts on the investments board when there is one, else the first,
+    /// as a board by Status.
+    private func create() {
+        var number: Int?
+        if case .projectField(let tracked, _, _) = configs.config(for: org).investmentConfig.trackedBy, tracked != 0 { number = tracked }
+        number = number ?? projects.boardLists[org]?.first?.number
+        creating = FieldView(name: "New View", projectNumber: number, dimensions: number == nil ? [.repository] : [.field("Status")], layout: number == nil ? .outline : .board)
+    }
+}
+
+/// Sort: what issues are ordered by and which way, and how groups are
+/// ordered, saved with the view.
+struct FieldSortMenu: View {
+    let view: FieldView
+    /// Fields and the rest that issues can be ordered by.
+    let keys: [FieldKey]
+    let save: (FieldView) -> Void
+
+    var body: some View {
+        Menu {
+            Picker("Issues by", selection: binding(\.sort.by)) {
+                ForEach(FieldSort.By.basics, id: \.self) { Text($0.title).tag($0) }
+                Divider()
+                ForEach(keys, id: \.self) { key in Text(key.title).tag(FieldSort.By.key(key)) }
+            }
+            Picker("Direction", selection: binding(\.sort.descending)) {
+                Text(ascendingTitle(false)).tag(false)
+                Text(ascendingTitle(true)).tag(true)
+            }
+            Divider()
+            Picker("Groups by", selection: binding(\.groupOrder)) {
+                ForEach(FieldGroupOrder.allCases, id: \.self) { order in
+                    Text(order == .measure ? view.measure.rawValue : order.rawValue).tag(order)
+                }
+            }
+        } label: {
+            Label("Sort", systemImage: "arrow.up.arrow.down")
+        }
+        .help("Order issues by \(view.sort.by.title.lowercased()), \(ascendingTitle(view.sort.descending).lowercased())")
+    }
+
+    /// Words for the direction that fit what's being ordered.
+    private func ascendingTitle(_ descending: Bool) -> String {
+        switch view.sort.by {
+        case .created: descending ? "Newest first" : "Oldest first"
+        case .timeInStatus, .inProgress: descending ? "Longest first" : "Shortest first"
+        case .number: descending ? "Highest first" : "Lowest first"
+        case .title: descending ? "Z to A" : "A to Z"
+        case .key: descending ? "Reverse board order" : "Board order"
+        }
+    }
+
+    private func binding<Value>(_ keyPath: WritableKeyPath<FieldView, Value>) -> Binding<Value> {
+        Binding {
+            view[keyPath: keyPath]
+        } set: { value in
+            var changed = view
+            changed[keyPath: keyPath] = value
+            save(changed)
+        }
+    }
+}
+
+/// The view's shown fields on a card or row: small chips, each value in
+/// its option's colour. Fields the issue has no value for are left off.
+struct FieldChips: View {
+    let shown: [(key: FieldKey, values: [FieldValue])]
+    let definition: Board?
+
+    static func values(_ issue: IssueRecord, keys: [FieldKey], context: FieldContext) -> [(key: FieldKey, values: [FieldValue])] {
+        keys.compactMap { key in
+            let values = key.values(of: issue, in: context).filter { $0 != .none }
+            return values.isEmpty ? nil : (key, values)
+        }
+    }
+
+    var body: some View {
+        FlowRow(spacing: 4) {
+            ForEach(shown, id: \.key) { key, values in
+                ForEach(values, id: \.self) { value in
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(FieldColors.color(value, key: key, definition: definition))
+                            .frame(width: 6, height: 6)
+                        Text(value.title).lineLimit(1)
+                    }
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary.opacity(0.6), in: Capsule())
+                    .help("\(key.title): \(value.title)")
+                }
+            }
+        }
+    }
+}
+
+/// Fields: which to show on cards and rows, ticked in the order picked.
+struct FieldShownMenu: View {
+    let view: FieldView
+    let keys: [FieldKey]
+    let save: (FieldView) -> Void
+
+    var body: some View {
+        Menu {
+            let fields = keys.filter { $0.fieldName != nil }
+            if !fields.isEmpty {
+                Section("Board fields") { toggles(fields) }
+            }
+            Section("Issue") { toggles(FieldKey.attributes) }
+            Section("Worked out") { toggles(FieldKey.derived) }
+            if !view.shownFields.isEmpty {
+                Divider()
+                Button("Show None") {
+                    var changed = view
+                    changed.shownFields = []
+                    save(changed)
+                }
+            }
+        } label: {
+            Label("Fields", systemImage: "rectangle.and.text.magnifyingglass")
+        }
+        .help(view.shownFields.isEmpty ? "Show fields on cards and rows" : "Showing \(view.shownFields.map(\.title).joined(separator: ", "))")
+    }
+
+    private func toggles(_ keys: [FieldKey]) -> some View {
+        ForEach(keys, id: \.self) { key in
+            Toggle(key.title, isOn: Binding(
+                get: { view.shownFields.contains(key) },
+                set: { isOn in
+                    var changed = view
+                    changed.shownFields.removeAll { $0 == key }
+                    if isOn { changed.shownFields.append(key) }
+                    save(changed)
+                }
+            ))
+        }
+    }
+}

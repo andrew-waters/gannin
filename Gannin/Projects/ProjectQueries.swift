@@ -15,11 +15,13 @@ extension GitHubAPI {
                   fields(first: 50) {
                     nodes {
                       ... on ProjectV2FieldCommon { id name dataType }
-                      ... on ProjectV2SingleSelectField { options { id name color } }
+                      ... on ProjectV2SingleSelectField { options { id name color description } }
+                      ... on ProjectV2MultiSelectField { multiSelectOptions { id name color description } }
                       ... on ProjectV2IterationField {
                         configuration {
-                          iterations { id title startDate }
-                          completedIterations { id title startDate }
+                          duration
+                          iterations { id title startDate duration }
+                          completedIterations { id title startDate duration }
                         }
                       }
                     }
@@ -76,9 +78,10 @@ extension GitHubAPI {
 
 private struct RawBoard: Decodable {
     struct Field: Decodable {
-        struct Option: Decodable { let id: String; let name: String; let color: String? }
+        struct Option: Decodable { let id: String; let name: String; let color: String?; let description: String? }
         struct Iterations: Decodable {
-            struct Iteration: Decodable { let id: String; let title: String; let startDate: String }
+            struct Iteration: Decodable { let id: String; let title: String; let startDate: String; let duration: Int? }
+            let duration: Int?
             let iterations: [Iteration]
             let completedIterations: [Iteration]?
         }
@@ -86,6 +89,7 @@ private struct RawBoard: Decodable {
         let name: String?
         let dataType: String?
         let options: [Option]?
+        let multiSelectOptions: [Option]?
         let configuration: Iterations?
     }
     struct Named: Decodable { let name: String? }
@@ -129,11 +133,13 @@ private struct RawBoard: Decodable {
             fields: fields.nodes.compactMap(\.value).compactMap { field in
                 guard let id = field.id, let name = field.name, let dataType = field.dataType else { return nil }
                 let iterations = (field.configuration?.iterations ?? []) + (field.configuration?.completedIterations ?? [])
-                let options = (field.options ?? []).map { BoardOption(id: $0.id, name: $0.name, color: $0.color, start: nil) }
+                let options = (field.options ?? field.multiSelectOptions ?? []).map {
+                    BoardOption(id: $0.id, name: $0.name, color: $0.color, start: nil, description: ($0.description ?? "").isEmpty ? nil : $0.description)
+                }
                     + iterations
                         .sorted { $0.startDate < $1.startDate }
-                        .map { BoardOption(id: $0.id, name: $0.title, color: nil, start: try? Date($0.startDate, strategy: .iso8601.year().month().day())) }
-                return BoardField(id: id, name: name, dataType: dataType, options: options)
+                        .map { BoardOption(id: $0.id, name: $0.title, color: nil, start: try? Date($0.startDate, strategy: .iso8601.year().month().day()), duration: $0.duration) }
+                return BoardField(id: id, name: name, dataType: dataType, options: options, iterationDuration: field.configuration?.duration)
             },
             views: views.nodes.compactMap(\.value).map { view in
                 BoardView(
@@ -192,8 +198,11 @@ private struct RawBoardItem: Decodable {
         let optionId: String?
         let title: String?
         let startDate: String?
+        /// A multi-select value's options.
+        let options: [Named]?
         let field: Field?
     }
+    struct Named: Decodable { let name: String }
 
     let id: String
     let type: String
@@ -230,6 +239,7 @@ private struct RawBoardItem: Decodable {
             ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name dataType } } }
             ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { id } } } }
             ... on ProjectV2ItemFieldIterationValue { title startDate field { ... on ProjectV2FieldCommon { name dataType } } }
+            ... on ProjectV2ItemFieldMultiSelectValue { options { name } field { ... on ProjectV2FieldCommon { name dataType } } }
           }
         }
         """
@@ -251,6 +261,8 @@ private struct RawBoardItem: Decodable {
                 if let title = value.title, let start = value.startDate.flatMap({ try? Date($0, strategy: .iso8601.year().month().day()) }) {
                     values[name] = .iteration(title: title, start: start)
                 }
+            case "MULTI_SELECT":
+                if let options = value.options, !options.isEmpty { values[name] = .options(options.map(\.name)) }
             default: break
             }
         }

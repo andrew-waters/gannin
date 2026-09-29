@@ -142,32 +142,17 @@ enum InvestmentWriter {
     }
 
     private static func writeField(_ change: InvestmentChange, org: String, number: Int, title: String, field name: String, projects: [OrgProject], api: GitHubAPI, issues: IssueStore) async throws {
-        var items = try await api.projectItems(issueID: change.issue.id)
-        if !items.contains(where: { $0.projectNumber == number }) {
-            guard change.setOption != nil else { return }
-            guard let project = projects.first(where: { $0.number == number }) else {
-                throw InvestmentWriteError.message("\(title) isn't an open board in \(org)")
-            }
-            try await api.addToProject(projectID: project.id, contentID: change.issue.id)
-            items = try await api.projectItems(issueID: change.issue.id)
-        }
-        guard let item = items.first(where: { $0.projectNumber == number }) else {
-            throw InvestmentWriteError.message("Couldn't find the issue on \(title)")
-        }
-        guard let field = item.fields.first(where: { $0.name.caseInsensitiveCompare(name) == .orderedSame }),
-              case .singleSelect(let options) = field.kind else {
-            throw InvestmentWriteError.message("\(title) has no single-select field called \(name)")
-        }
-        if let target = change.setOption {
-            guard let index = options.firstIndex(where: { $0.name.caseInsensitiveCompare(target) == .orderedSame }) else {
-                throw InvestmentWriteError.message("\(name) on \(title) has no option \(target)")
-            }
-            try await api.setProjectField(projectID: item.projectID, itemID: item.id, field: field, value: .option(options[index].id))
-            issues.recordFieldValue(org: org, issueID: change.issue.id, projectNumber: number, projectTitle: title, field: field.name, value: .option(name: options[index].name, position: index))
-        } else {
-            try await api.setProjectField(projectID: item.projectID, itemID: item.id, field: field, value: nil)
-            issues.recordFieldValue(org: org, issueID: change.issue.id, projectNumber: number, projectTitle: title, field: field.name, value: nil)
-        }
+        try await FieldWriter.set(
+            name,
+            to: change.setOption,
+            on: change.issue,
+            board: number,
+            title: title,
+            boardID: projects.first { $0.number == number }?.id,
+            org: org,
+            api: api,
+            issues: issues
+        )
     }
 }
 

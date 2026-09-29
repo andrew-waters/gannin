@@ -402,3 +402,25 @@ added, removed or created, and the tracked board field set), always confirmed fi
   document's page (`DetailSelection.harnessDocument`) shows its issues and the Markdown
   (`MarkdownText` draws tables). An issue's page lists the documents about or mentioning it.
 
+## Views
+
+- `Gannin/FieldViews/`: Views under Planning, Gannin's own way of looking at issues rather than
+  a copy of GitHub's project views. A `FieldView` (per org, `OrgConfig.fieldViews`) is a board
+  (or every stored issue), a state, filters, and any number of dimensions (`FieldKey`: board
+  fields by name, issue attributes, and worked-out Attention and Time in status), with a layout
+  (Outline, Board, Table, Grid, Aging), a measure (count, median time in status or in progress),
+  an order for issues and groups, and fields shown on cards. Issues come from the issue history.
+- `IssueSignals` (through `FieldContext`) works out time in the board status, time in progress
+  (`IssueTiming`) and Attention flags: quiet in progress, PR merged not done, in review with no
+  open PR, done but open, closed not done.
+- Writes are always confirmed (`FieldWriteSheet` over `BulkWriteSheet`): Set Field on a
+  selection, dragging cards between board columns and lanes, and Fill In (`FieldFillIn`), a
+  queue through issues missing a field. `FieldWriter` sets single-select and iteration values,
+  adding the issue to the board first; the investments board write uses it too.
+- Board Fields (`BoardFieldsEditor`) edits a board's own fields through
+  `updateProjectV2Field`, `createProjectV2Field` and `deleteProjectV2Field`: names, and select
+  options added, renamed, recoloured, described, reordered and removed, each sent back with its
+  ID so issues keep their values. Iterations are read-only (GitHub doesn't keep their identity
+  from outside). Changes are reviewed first, and `IssueStore.rewriteFieldValues` updates stored
+  issues at once. Multi-select values are read (`IssueFieldValue.options`) but not yet written.
+

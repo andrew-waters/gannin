@@ -79,6 +79,7 @@ struct BoardTableView: View {
                 case .iteration(_, let start): .number(start.timeIntervalSince1970)
                 case .date(let d): .number(d.timeIntervalSince1970)
                 case .text(let t): .text(t.lowercased())
+                case .options(let names): .text(names.joined(separator: ", ").lowercased())
                 case nil: .text("\u{10FFFF}")
                 }
             },

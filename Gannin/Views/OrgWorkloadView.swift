@@ -24,6 +24,8 @@ struct OrgWorkloadView: View {
     let issueList: IssueList?
     /// The board picked under Projects in the sidebar.
     @Binding var project: Int?
+    /// The field view picked under Views.
+    @Binding var fieldView: UUID?
     @Binding var selection: DetailSelection?
     let searchText: String
 
@@ -35,6 +37,13 @@ struct OrgWorkloadView: View {
                 ActionsView(org: org, selection: $selection)
             } else if tab == .harness {
                 HarnessView(org: org, selection: $selection)
+            } else if tab == .views {
+                if let fieldView {
+                    FieldViewPage(org: org, id: fieldView, selection: $selection)
+                        .id(fieldView)
+                } else {
+                    FieldViewsLanding(org: org) { fieldView = $0 }
+                }
             } else if tab == .projects {
                 if let project {
                     ProjectBoardView(org: org, number: project)
@@ -173,7 +182,7 @@ struct OrgWorkloadView: View {
         case .repositories: repositoryView(workload)
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
-        case .projects, .actions, .harness, .settings: EmptyView()
+        case .projects, .actions, .harness, .views, .settings: EmptyView()
         }
     }
 
