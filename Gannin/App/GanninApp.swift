@@ -16,6 +16,10 @@ struct GanninApp: App {
     @State private var peopleDates: PeopleDatesStore
     @State private var bankHolidays = BankHolidayStore()
     @State private var activity: SyncActivity
+    @State private var harness: HarnessStore
+    #if os(macOS)
+    @State private var sessions = SessionStore()
+    #endif
 
     init() {
         let auth = AuthStore()
@@ -34,6 +38,7 @@ struct GanninApp: App {
         _issues = State(initialValue: IssueStore(auth: auth, activity: activity))
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))
+        _harness = State(initialValue: HarnessStore(auth: auth))
         #if os(macOS)
         TabMenuRename.shared.install()
         #endif
@@ -55,10 +60,14 @@ struct GanninApp: App {
                 .environment(issues)
                 .environment(projects)
                 .environment(orgConfigs)
+                .environment(harness)
                 .environment(peopleDates)
                 .environment(bankHolidays)
                 .environment(activity)
                 .environment(database)
+                #if os(macOS)
+                .environment(sessions)
+                #endif
         }
         .defaultSize(width: 1280, height: 800)
         .commands {
@@ -83,6 +92,7 @@ struct GanninApp: App {
                     .environment(issues)
                     .environment(projects)
                     .environment(orgConfigs)
+                    .environment(harness)
                     .environment(activity)
             }
         }
@@ -102,11 +112,33 @@ struct GanninApp: App {
                     .environment(issues)
                     .environment(projects)
                     .environment(orgConfigs)
+                    .environment(harness)
                     .environment(activity)
+                    #if os(macOS)
+                    .environment(sessions)
+                    #endif
             }
         }
         .defaultSize(width: 1080, height: 960)
         .windowResizability(.contentMinSize)
+
+        #if os(macOS)
+        // A Claude Code session on an issue: its terminal, and the issue's
+        // board fields beside it. The terminal outlives the window.
+        WindowGroup("Session", for: SessionWindowID.self) { $window in
+            if let window {
+                SessionWindow(id: window.id)
+                    .environment(sessions)
+                    .environment(auth)
+                    .environment(issues)
+                    .environment(details)
+                    .environment(orgConfigs)
+                    .environment(harness)
+                    .environment(projects)
+            }
+        }
+        .defaultSize(width: 1280, height: 820)
+        #endif
 
         #if os(macOS)
         Settings {
@@ -122,6 +154,7 @@ struct GanninApp: App {
                 .environment(bankHolidays)
                 .environment(peopleDates)
                 .environment(orgConfigs)
+                .environment(harness)
                 .environment(hidden)
                 .environment(database)
         }
@@ -136,6 +169,7 @@ struct RootView: View {
     @Environment(IssueStore.self) private var issues
     @Environment(ProjectStore.self) private var projects
     @Environment(ActionsStore.self) private var actions
+    @Environment(HarnessStore.self) private var harness
 
     var body: some View {
         Group {
@@ -153,6 +187,7 @@ struct RootView: View {
                 issues.clear()
                 projects.clear()
                 actions.clear()
+                harness.clear()
             }
         }
     }

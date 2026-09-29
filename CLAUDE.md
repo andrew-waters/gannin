@@ -15,7 +15,9 @@ xcodebuild -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS
 ```
 
 Swift 6 with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so everything is main-actor unless
-marked otherwise. The app is sandboxed with outgoing network access only.
+marked otherwise. The Mac app isn't sandboxed while Claude Code sessions are prototyped: they
+run git, gh and claude as the user, which a sandboxed child process can't (its login, keys and
+toolchains are out of reach). So Application Support is the shared one, not a container.
 
 The target also builds for iPhone and iPad (`supportedDestinations: [macOS, iOS]`), from the
 same sources:
@@ -353,4 +355,43 @@ added, removed or created, and the tracked board field set), always confirmed fi
 - Issues carry their board field values (`IssueRecord.projectFields`), which "In progress now"
   on the Issues page can order by (remembered per org); issues not on the chosen board say
   so rather than being hidden.
+
+## Claude Code sessions
+
+- `Gannin/Sessions/` (Mac only): Work on This on an issue (`StartSessionButton`, the issue
+  page's toolbar) picks a code repo (repos with PRs, so not an issues-only repo; the issue's
+  linked PRs' repos and recent sessions' first) and opens a `SessionWindow`: a SwiftTerm
+  terminal beside the issue, its session state and its board fields (`ProjectFieldsSections`),
+  where the ticket is moved.
+- `SessionStore` keeps sessions (`CodeSession`: issue, code repo, branch `123-short-title`) in
+  Application Support/<bundle ID>/Sessions, and their terminals, so closing a window leaves
+  claude running. Each session's folder holds its brief, settings and `start.zsh`
+  (`SessionScript`), which a login, interactive zsh sources: clone the repo to
+  `<workspace>/<owner>/<name>` (gh, else git), add a worktree at
+  `<owner>/<name>.worktrees/<branch>`, copy the brief into `.gannin/` (excluded from git), then
+  `claude --session-id`, or `--resume` once it has had a prompt. The workspace (`~/Gannin` by
+  default) is set in Settings > General. Inherited `CLAUDE_CODE_*` variables are stripped.
+- Hooks in the session's `--settings` write its state (working, needs you, your turn, exited)
+  to a file `SessionStore` reads every second while a terminal runs, and the URL from a
+  `gh pr create`. claude runs signed in as the user; Gannin never handles that login.
+- `SessionBrief` is what Gannin knows: the issue's facts, board fields, parent, linked PRs,
+  description and comments, and the harness documents about it (in full) or mentioning it.
+
+## Harness
+
+- `Gannin/Harness/`: the org's harness repo (Ctrl Hub's `ctrl-hub/harness`), a repo of plans,
+  requirements, findings and skills beside the code, chosen in the org's Settings
+  (`OrgConfig.harness`). `HarnessStore` indexes it from GitHub, so it's the same for everyone:
+  the branch head (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
+  parsed off the main thread. Cached in Application Support/Harness, fetched again after 10
+  minutes. The fetch is the store's own task, so a view going away doesn't cancel it.
+- The layout (`HarnessKind`): plans under `requirements/<module>/plans/`, requirements the rest
+  of `requirements/`, `findings/`, `skills/`; READMEs and `_templates` left out. A document is
+  about an issue named in its file name (`prd-123`) or its header table's GitHub row
+  (`owner/name#123`, or front matter `github:`); other issues it names are mentions. Bare
+  `PRD-123` means the repo the harness names most (`HarnessIndex.issuesRepo`).
+- The Harness page (sidebar, once set) lists plans, requirements, findings or skills by module
+  with their issues, status and checkbox progress; Not Linked shows those naming no issue. A
+  document's page (`DetailSelection.harnessDocument`) shows its issues and the Markdown
+  (`MarkdownText` draws tables). An issue's page lists the documents about or mentioning it.
 

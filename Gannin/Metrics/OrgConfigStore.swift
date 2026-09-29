@@ -19,6 +19,8 @@ struct OrgConfig: Codable, Hashable {
     var week: WorkWeek { workWeek ?? WorkWeek() }
     /// Holiday allowance and leave year; nil means 25 days from January.
     var leave: LeavePolicy?
+    /// The repo of plans and requirements kept beside the code; nil for none.
+    var harness: HarnessConfig?
 
     var leavePolicy: LeavePolicy { leave ?? LeavePolicy() }
 
@@ -38,9 +40,10 @@ struct OrgConfig: Codable, Hashable {
         issueWorkflow = try container.decodeIfPresent(IssueWorkflow.self, forKey: .issueWorkflow)
         workWeek = try container.decodeIfPresent(WorkWeek.self, forKey: .workWeek)
         leave = try container.decodeIfPresent(LeavePolicy.self, forKey: .leave)
+        harness = try container.decodeIfPresent(HarnessConfig.self, forKey: .harness)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.

@@ -64,7 +64,13 @@ struct IssueWindow: View {
         .frame(minWidth: isEmbedded ? nil : 860, minHeight: isEmbedded ? nil : 480)
         .ownWindowTitle(isEmbedded ? nil : "\(reference.repo)#\(reference.number)", subtitle: reference.title)
         .task(id: reference.id) { await details.load(reference.id) }
+        .loadsHarness(org: reference.org)
         .modifier(OwnInvestmentPrompt(isEnabled: !isEmbedded))
+        #if os(macOS)
+        .toolbar {
+            ToolbarItem { StartSessionButton(reference: reference) }
+        }
+        #endif
     }
 
     /// Full width across the top: the title and the headline facts.
@@ -106,6 +112,7 @@ struct IssueWindow: View {
 
     private func details(record: IssueRecord?, workflow: IssueWorkflow) -> some View {
         List {
+            HarnessIssueSection(reference: reference)
             if let record {
                 let changes = record.statusChanges.filter(workflow.counts)
                 if !changes.isEmpty {

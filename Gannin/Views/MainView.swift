@@ -18,6 +18,8 @@ enum DetailSelection: Hashable {
     case workflowRun(Int)
     /// A job across a workflow's runs, by its name without matrix values.
     case workflowJob(workflow: String, name: String)
+    /// A document in the org's harness, by path.
+    case harnessDocument(String)
 }
 
 /// The sidebar's sections, in sidebar order.
@@ -30,6 +32,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case actions = "Actions"
     case investments = "Investments"
     case projects = "Projects"
+    case harness = "Harness"
     case settings = "Settings"
 
     var id: Self { self }
@@ -44,6 +47,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .actions: "play.circle"
         case .investments: "chart.pie"
         case .projects: "rectangle.3.group"
+        case .harness: "books.vertical"
         case .settings: "gearshape"
         }
     }
@@ -103,6 +107,7 @@ struct MainView: View {
     @State private var windowID = UUID()
     @Environment(ProjectStore.self) private var projectStore
     @Environment(ActionsStore.self) private var actionsStore
+    @Environment(HarnessStore.self) private var harnessStore
     @Environment(\.openWindow) private var openWindow
     @State private var teamID: String?
     @SceneStorage("selectedTab") private var tab: WorkloadTab = .dashboard
@@ -250,7 +255,12 @@ struct MainView: View {
     }
 
     private var titles: PageTitles {
-        PageTitles(workload: workload, metrics: metrics, actions: selectedOrg.flatMap(actionsStore.history(for:)))
+        PageTitles(
+            workload: workload,
+            metrics: metrics,
+            actions: selectedOrg.flatMap(actionsStore.history(for:)),
+            harness: selectedOrg.flatMap { org in orgConfigs.config(for: org).harness.flatMap { harnessStore.index(for: org, repo: $0.repo) } }
+        )
     }
 
     /// The section, or the person, repo, issue list or board picked beneath it.
@@ -355,6 +365,7 @@ struct PageTitles {
     let workload: Workload?
     let metrics: OrgMetrics?
     let actions: ActionsHistory?
+    let harness: HarnessIndex?
 
     func title(_ item: DetailSelection) -> String {
         switch item {
@@ -387,6 +398,8 @@ struct PageTitles {
             return actions?.runs[id].map { "\($0.name) #\($0.runNumber)" } ?? "Run"
         case .workflowJob(_, let name):
             return name
+        case .harnessDocument(let path):
+            return harness?.document(at: path)?.title ?? path.split(separator: "/").last.map(String.init) ?? path
         }
     }
 }
@@ -644,6 +657,8 @@ private struct PageStack: View {
             } else {
                 gone("No runs of this workflow in the last \(windowDays) days.")
             }
+        case .harnessDocument(let path):
+            HarnessDocumentPage(org: org, path: path)
         }
     }
 
@@ -692,11 +707,20 @@ struct OrgSidebar: View {
     @AppStorage("sidebarIssuesExpanded") private var issuesExpanded = true
     @AppStorage("sidebarProjectsExpanded") private var projectsExpanded = true
     @Environment(ProjectStore.self) private var projectStore
+    @Environment(OrgConfigStore.self) private var configs
+    #if os(macOS)
+    @Environment(SessionStore.self) private var sessions
+    #endif
+
+    /// The Harness row only shows once the org names its harness repo.
+    private var hasHarness: Bool {
+        selectedOrg.map { configs.config(for: $0).harness != nil } ?? false
+    }
 
     var body: some View {
         List(selection: $selection) {
             if selectedOrg != nil {
-                ForEach(WorkloadTab.allCases.filter { $0 != .settings }) { tab in
+                ForEach(WorkloadTab.allCases.filter { $0 != .settings && ($0 != .harness || hasHarness) }) { tab in
                     if tab == .people {
                         expandableRow(.people, isExpanded: $peopleExpanded)
                         if peopleExpanded {
@@ -741,6 +765,13 @@ struct OrgSidebar: View {
                             .contextMenu { OpenElsewhereItems(sidebar: .tab(tab)) }
                     }
                 }
+                #if os(macOS)
+                if let selectedOrg, !sessions.sessions(for: selectedOrg).isEmpty {
+                    Section("Claude Code") {
+                        SessionSidebarRows(org: selectedOrg)
+                    }
+                }
+                #endif
                 Section {
                     Label(WorkloadTab.settings.rawValue, systemImage: WorkloadTab.settings.systemImage)
                         .tag(SidebarItem.tab(.settings))
@@ -986,7 +1017,7 @@ struct OrgSidebar: View {
         switch tab {
         case .pullRequests: return workload.openPullRequests.count
         case .issues: return workload.assignedIssues.count
-        case .dashboard, .people, .repositories, .actions, .investments, .projects, .settings: return 0
+        case .dashboard, .people, .repositories, .actions, .investments, .projects, .harness, .settings: return 0
         }
     }
 }

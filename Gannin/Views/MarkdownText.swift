@@ -3,7 +3,7 @@ import SwiftUI
 /// Lightweight markdown renderer for issue and PR bodies.
 ///
 /// Splits the source into block-level chunks (headings, list items, code
-/// fences, paragraphs) and renders each as its own row. Inline formatting
+/// fences, tables, paragraphs) and renders each as its own row. Inline formatting
 /// (bold, italic, code spans, links) is handled by `AttributedString(markdown:)`.
 struct MarkdownText: View {
     let source: String
@@ -25,6 +25,8 @@ struct MarkdownText: View {
         case bullet(text: String, checked: Bool?)
         case ordered(number: String, text: String)
         case code(text: String)
+        /// The header row first.
+        case table(rows: [[String]])
         case paragraph(text: String)
     }
 
@@ -32,7 +34,13 @@ struct MarkdownText: View {
         var result: [Block] = []
         var paragraph: [String] = []
         var code: [String] = []
+        var table: [[String]] = []
         var inCode = false
+
+        func flushTable() {
+            if !table.isEmpty { result.append(.table(rows: table)) }
+            table.removeAll()
+        }
 
         func flushParagraph() {
             let joined = paragraph.joined(separator: "\n")
@@ -54,6 +62,14 @@ struct MarkdownText: View {
                 }
                 continue
             }
+            if trimmed.hasPrefix("|") {
+                flushParagraph()
+                let cells = tableCells(trimmed)
+                // The |---|:---:| row under the header only sets alignment.
+                if !cells.allSatisfy({ $0.wholeMatch(of: /:?-+:?/) != nil }) { table.append(cells) }
+                continue
+            }
+            flushTable()
             if trimmed.hasPrefix("```") {
                 flushParagraph()
                 inCode = true
@@ -75,6 +91,7 @@ struct MarkdownText: View {
         if inCode {
             result.append(.code(text: code.joined(separator: "\n")))
         }
+        flushTable()
         flushParagraph()
         return result
     }
@@ -82,6 +99,12 @@ struct MarkdownText: View {
     /// PR templates are full of `<!-- guidance -->` blocks nobody wants to read.
     private static func strippingHTMLComments(_ text: String) -> String {
         text.replacing(/<!--[\s\S]*?-->/, with: "")
+    }
+
+    private func tableCells(_ line: String) -> [String] {
+        var inner = line.dropFirst()
+        if inner.hasSuffix("|") { inner = inner.dropLast() }
+        return inner.split(separator: "|", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
     private func heading(_ line: String) -> (Int, String)? {
@@ -140,6 +163,21 @@ struct MarkdownText: View {
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+        case .table(let rows):
+            let columns = rows.map(\.count).max() ?? 0
+            Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 16, verticalSpacing: 6) {
+                ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                    GridRow {
+                        ForEach(0..<columns, id: \.self) { column in
+                            inline(column < row.count ? row[column] : "")
+                                .fontWeight(index == 0 ? .semibold : nil)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    if index == 0 { Divider() }
+                }
+            }
+            .padding(.vertical, 4)
         case .paragraph(let text):
             inline(text).frame(maxWidth: .infinity, alignment: .leading)
         }

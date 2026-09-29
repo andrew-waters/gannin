@@ -78,6 +78,9 @@ struct GeneralSettings: View {
             } header: {
                 Text("GitHub Actions")
             }
+            #if os(macOS)
+            SessionSettingsSection()
+            #endif
             #if !os(macOS)
             Section {
                 NavigationLink("Storage") {

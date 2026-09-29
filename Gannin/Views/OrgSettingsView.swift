@@ -31,6 +31,8 @@ struct OrgSettingsView: View {
 
             IssueWorkflowSection(org: org)
 
+            HarnessSettingsSection(org: org)
+
             WorkWeekSection(org: org)
 
             LeavePolicySection(org: org)
