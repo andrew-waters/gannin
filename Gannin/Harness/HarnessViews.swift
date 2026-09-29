@@ -450,29 +450,31 @@ struct HarnessSettingsSection: View {
         let repos = Set(harness.repositories[org] ?? []).union(saved.map { [$0.repo] } ?? [])
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         Section {
-            Picker("Repository", selection: Binding(
-                get: { saved?.repo },
-                // Another repo starts on its default branch.
-                set: { repo in configs.update(org) { $0.harness = repo.map { HarnessConfig(repo: $0) } } }
-            )) {
-                Text("None").tag(String?.none)
-                Divider()
-                ForEach(repos, id: \.self) { repo in
-                    Text(repo).tag(Optional(repo))
+            LabeledContent("Repository") {
+                SearchablePicker(
+                    choices: [SearchableChoice(value: nil, title: "None")] + repos.map { SearchableChoice(value: $0, title: $0) },
+                    selection: saved?.repo,
+                    prompt: "Search repositories",
+                    isLoading: harness.repositories[org] == nil
+                ) { repo in
+                    // Another repo starts on its default branch.
+                    guard repo != saved?.repo else { return }
+                    configs.update(org) { $0.harness = repo.map { HarnessConfig(repo: $0) } }
                 }
             }
             if let saved {
                 let branches = harness.branches[saved.repo]
                 let listed = Set(branches?.all ?? []).union(saved.branch.map { [$0] } ?? [])
                     .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-                Picker("Branch", selection: Binding(
-                    get: { saved.branch },
-                    set: { branch in configs.update(org) { $0.harness?.branch = branch } }
-                )) {
-                    Text(branches?.defaultBranch.map { "Default (\($0))" } ?? "Default").tag(String?.none)
-                    Divider()
-                    ForEach(listed, id: \.self) { branch in
-                        Text(branch).tag(Optional(branch))
+                LabeledContent("Branch") {
+                    SearchablePicker(
+                        choices: [SearchableChoice(value: nil, title: branches?.defaultBranch.map { "Default (\($0))" } ?? "Default")]
+                            + listed.map { SearchableChoice(value: $0, title: $0) },
+                        selection: saved.branch,
+                        prompt: "Search branches",
+                        isLoading: branches == nil
+                    ) { branch in
+                        configs.update(org) { $0.harness?.branch = branch }
                     }
                 }
                 .task(id: saved.repo) { await harness.loadBranches(repo: saved.repo) }

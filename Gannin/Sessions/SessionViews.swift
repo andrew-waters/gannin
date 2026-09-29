@@ -159,6 +159,7 @@ struct StartSessionButton: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(\.openWindow) private var openWindow
     let reference: IssueReference
+    @State private var isPicking = false
 
     var body: some View {
         if let existing = sessions.session(forIssue: reference.id) {
@@ -170,35 +171,24 @@ struct StartSessionButton: View {
             .help("Show this issue's Claude Code session, in \(existing.repo)")
         } else {
             let (suggested, others) = repositories
-            if let first = suggested.first {
-                Menu {
-                    menuItems(suggested: suggested, others: others)
-                } label: {
-                    Label("Work on This", systemImage: "terminal")
-                } primaryAction: {
-                    start(in: first)
-                }
-                .help("Work on this issue with Claude Code in \(first), or pick another repository from the menu")
-            } else {
-                Menu {
-                    menuItems(suggested: suggested, others: others)
-                } label: {
-                    Label("Work on This", systemImage: "terminal")
-                }
-                .help("Pick the repository to work on this issue in with Claude Code")
+            Button {
+                isPicking = true
+            } label: {
+                Label("Work on This", systemImage: "terminal")
             }
-        }
-    }
-
-    @ViewBuilder
-    private func menuItems(suggested: [String], others: [String]) -> some View {
-        if !suggested.isEmpty {
-            Section("Suggested") {
-                ForEach(suggested, id: \.self) { repo in Button(repo) { start(in: repo) } }
+            .help("Work on this issue with Claude Code: pick the repository the code is in")
+            .popover(isPresented: $isPicking, arrowEdge: .bottom) {
+                // The top suggestion is highlighted, so Return starts there.
+                SearchableList(
+                    choices: suggested.map { SearchableChoice(value: $0, title: $0, section: "Suggested") }
+                        + others.map { SearchableChoice(value: $0, title: $0, section: suggested.isEmpty ? "Repositories" : "Other Repositories") },
+                    selection: nil,
+                    prompt: "Search repositories"
+                ) { repo in
+                    isPicking = false
+                    if let repo { start(in: repo) }
+                }
             }
-        }
-        Section(suggested.isEmpty ? "Repositories" : "Other Repositories") {
-            ForEach(others, id: \.self) { repo in Button(repo) { start(in: repo) } }
         }
     }
 
