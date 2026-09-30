@@ -74,8 +74,16 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
     let module: String?
     /// From a `YYYY-MM-DD-` file or folder name.
     let date: Date?
-    /// The header table's Status row.
+    /// The front matter's `status`, else the header table's Status row.
     let status: String?
+    /// From the front matter (`STANDARDS.md` in the harness); nil for a
+    /// document from before it, or one indexed before Gannin read them.
+    let summary: String?
+    let domains: [String]?
+    /// The repos (or `owner/repo:path`) a plan or finding changes.
+    let touches: [String]?
+    /// It has front matter, as the harness's standard asks.
+    let hasFrontMatter: Bool?
     /// Checkboxes: plans tick theirs off as work lands.
     let tasks: Int
     let tasksDone: Int
@@ -84,6 +92,29 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
     var id: String { path }
     var fileName: String { path.split(separator: "/").last.map(String.init) ?? path }
     var subjects: [HarnessReference] { references.filter(\.isSubject) }
+
+    /// Bumped when reading documents changes, so a cached index is read
+    /// again rather than kept.
+    static let parserVersion = 2
+
+    /// The status as a label: `in-progress` as "In progress", and older
+    /// documents' spellings brought together ("Complete" as "Done"), a
+    /// paragraph cut to its start.
+    var statusLabel: String? {
+        guard var text = status?.trimmingCharacters(in: .whitespaces), !text.isEmpty else { return nil }
+        text = text.replacingOccurrences(of: "**", with: "")
+        switch text.lowercased() {
+        case "complete", "completed", "done": return "Done"
+        case "not started": return "Not started"
+        case "wont-fix", "won't fix": return "Won't fix"
+        default: break
+        }
+        if text == text.lowercased(), !text.contains(" ") {
+            text = text.replacingOccurrences(of: "-", with: " ")
+        }
+        text = text.prefix(1).uppercased() + text.dropFirst()
+        return text.count <= 32 ? text : String(text.prefix(30)).trimmingCharacters(in: .whitespaces) + "..."
+    }
 
     /// The text without its front matter, for reading.
     var body: String {
@@ -107,6 +138,8 @@ nonisolated struct HarnessDataFile: Codable, Hashable, Sendable {
 
 /// An org's harness as last fetched.
 nonisolated struct HarnessIndex: Codable, Sendable {
+    /// `HarnessDocument.parserVersion` when indexed; nil before it was kept.
+    var parserVersion: Int?
     let repo: String
     /// The branch asked for; nil for the default. An index made for one
     /// branch isn't shown for another.
@@ -169,6 +202,11 @@ nonisolated extension HarnessDocument {
         date = parts.reversed().lazy.compactMap(Self.leadingDate).first
 
         let lines = text.components(separatedBy: .newlines)
+        let front = HarnessFrontMatter.parse(lines)
+        hasFrontMatter = front != nil
+        summary = front?["summary"]?.text ?? front?["description"]?.text
+        domains = front?["domains"]?.list
+        touches = front?["touches"]?.list
         title = lines.lazy.map { $0.trimmingCharacters(in: .whitespaces) }
             .first { $0.hasPrefix("# ") }
             .map { String($0.dropFirst(2)).trimmingCharacters(in: .whitespaces) }
@@ -196,7 +234,10 @@ nonisolated extension HarnessDocument {
             }
         }
         references += Self.references(in: parts.last ?? "", isSubject: true)
-        self.status = status
+        for issue in front?["issues"]?.list ?? [] {
+            references += Self.references(in: issue, isSubject: true)
+        }
+        self.status = front?["status"]?.text ?? status
         self.tasks = tasks
         tasksDone = done
         // One per issue, marked as the subject if any mention is.
@@ -243,5 +284,80 @@ nonisolated extension HarnessDocument {
         if leadingDate(stem) != nil { stem = String(stem.dropFirst(10)) }
         let words = stem.split(whereSeparator: { $0 == "-" || $0 == "_" }).joined(separator: " ")
         return words.prefix(1).uppercased() + words.dropFirst()
+    }
+}
+
+/// A document's YAML front matter, as far as the harness's templates use it:
+/// `key: value`, `[inline, lists]`, `- item` lists, and `>` or `|` blocks.
+nonisolated enum HarnessFrontMatter {
+    enum Value: Sendable {
+        case text(String)
+        case list([String])
+
+        var text: String? {
+            switch self {
+            case .text(let text): text.isEmpty ? nil : text
+            case .list(let items): items.first
+            }
+        }
+
+        var list: [String] {
+            switch self {
+            case .text(let text): text.isEmpty ? [] : [text]
+            case .list(let items): items
+            }
+        }
+    }
+
+    /// Nil when the text doesn't open with `---` or never closes it.
+    static func parse(_ lines: [String]) -> [String: Value]? {
+        guard lines.first?.trimmingCharacters(in: .whitespaces) == "---" else { return nil }
+        var fields: [String: Value] = [:]
+        var key: String?
+        var block: [String]?
+        func flush() {
+            if let key, let block { fields[key] = .text(block.filter { !$0.isEmpty }.joined(separator: " ")) }
+            block = nil
+        }
+        for line in lines.dropFirst() {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed == "---" {
+                flush()
+                return fields
+            }
+            if block != nil {
+                if line.hasPrefix(" ") || line.hasPrefix("\t") || trimmed.isEmpty {
+                    block?.append(trimmed)
+                    continue
+                }
+                flush()
+            }
+            if trimmed.isEmpty || trimmed.hasPrefix("#") { continue }
+            if trimmed.hasPrefix("- "), let key {
+                fields[key] = .list((fields[key].map { if case .list(let items) = $0 { items } else { [] } } ?? []) + [unquoted(String(trimmed.dropFirst(2)))])
+                continue
+            }
+            guard let colon = line.firstIndex(of: ":"), !line.hasPrefix(" ") else { continue }
+            let name = String(line[..<colon]).trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty, !name.contains(" ") else { continue }
+            let value = String(line[line.index(after: colon)...]).trimmingCharacters(in: .whitespaces)
+            key = name
+            if [">", "|", ">-", "|-"].contains(value) {
+                block = []
+            } else if value.hasPrefix("["), value.hasSuffix("]") {
+                fields[name] = .list(value.dropFirst().dropLast().split(separator: ",").map { unquoted(String($0)) }.filter { !$0.isEmpty })
+            } else {
+                fields[name] = value.isEmpty ? .list([]) : .text(unquoted(value))
+            }
+        }
+        return nil
+    }
+
+    private static func unquoted(_ text: String) -> String {
+        let text = text.trimmingCharacters(in: .whitespaces)
+        if text.count >= 2, let first = text.first, first == text.last, first == "\"" || first == "'" {
+            return String(text.dropFirst().dropLast())
+        }
+        return text
     }
 }

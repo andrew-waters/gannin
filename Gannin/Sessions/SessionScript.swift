@@ -296,7 +296,8 @@ enum SessionBrief {
                 for match in matches {
                     let document = match.document
                     let url = harness.url(for: document)?.absoluteString ?? document.path
-                    lines += ["### \(document.title)", "", "\(document.kind.singular.capitalized), \(match.isSubject ? "about this issue" : "mentions it"): `\(document.path)` (\(url))", ""]
+                    lines += ["### \(document.title)", "", "\(document.kind.singular.capitalized)\(document.statusLabel.map { ", \($0.lowercased())" } ?? ""), \(match.isSubject ? "about this issue" : "mentions it"): `\(document.path)` (\(url))", ""]
+                    if let summary = document.summary { lines += [summary, ""] }
                     if match.isSubject {
                         let body = document.body.trimmingCharacters(in: .whitespacesAndNewlines)
                         lines += [body.count > maxDocumentLength ? String(body.prefix(maxDocumentLength)) + "\n\n(Cut short; the rest is at the link.)" : body, ""]

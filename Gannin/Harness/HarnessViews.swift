@@ -172,6 +172,12 @@ struct HarnessView: View {
                 VStack(alignment: .leading, spacing: 3) {
                     Text(document.title)
                         .lineLimit(2)
+                    if let summary = document.summary {
+                        Text(summary)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
                     Text(document.path)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -186,8 +192,9 @@ struct HarnessView: View {
                     }
                 }
                 Spacer(minLength: 12)
-                if let status = document.status {
+                if let status = document.statusLabel {
                     Pill(text: status, color: .secondary)
+                        .help(document.status ?? status)
                 }
                 if document.tasks > 0 {
                     TaskCount(done: document.tasksDone, total: document.tasks)
@@ -297,7 +304,7 @@ struct HarnessDocumentPage: View {
             HStack(spacing: 10) {
                 Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
                     .foregroundStyle(.secondary)
-                if let status = document.status { Pill(text: status, color: .secondary) }
+                if let status = document.statusLabel { Pill(text: status, color: .secondary).help(document.status ?? status) }
                 if let date = document.date {
                     Text(date.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(.secondary)
                 }
@@ -316,6 +323,22 @@ struct HarnessDocumentPage: View {
                 }
             }
             .font(.callout)
+            if let summary = document.summary {
+                Text(summary)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            let facts = [
+                document.domains.flatMap { $0.isEmpty ? nil : "Domains: " + $0.joined(separator: ", ") },
+                document.touches.flatMap { $0.isEmpty ? nil : "Touches: " + $0.joined(separator: ", ") },
+            ].compactMap { $0 }
+            if !facts.isEmpty {
+                Text(facts.joined(separator: "  ·  "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
             Text(document.path)
                 .font(.caption.monospaced())
                 .foregroundStyle(.secondary)

@@ -446,6 +446,13 @@ added, removed or created, and the tracked board field set), and commits to the 
   about an issue named in its file name (`prd-123`) or its header table's GitHub row
   (`owner/name#123`, or front matter `github:`); other issues it names are mentions. Bare
   `PRD-123` means the repo the harness names most (`HarnessIndex.issuesRepo`).
+- Documents follow the harness's `STANDARDS.md` (YAML front matter: `type`, `status`,
+  `summary`, `domains`, `issues`, `touches` and so on), read by `HarnessFrontMatter`: its
+  `status` and `issues` come first, then the older header table's Status and GitHub rows.
+  `statusLabel` brings older spellings together ("Complete" as "Done"). Summaries show on the
+  Harness page and a document's page, and a session's brief gives the summary of documents that
+  only mention its issue. `HarnessDocument.parserVersion` makes a cached index read its
+  documents again when the reading changes.
 - The Harness page (sidebar, once set) lists plans, requirements, findings or skills by module
   with their issues, status and checkbox progress; Not Linked shows those naming no issue. A
   document's page (`DetailSelection.harnessDocument`) shows its issues and the Markdown

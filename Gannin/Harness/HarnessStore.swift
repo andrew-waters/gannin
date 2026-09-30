@@ -103,13 +103,17 @@ final class HarnessStore {
         let parts = repo.split(separator: "/").map(String.init)
         guard parts.count == 2 else { throw APIError.graphQL(["\(repo) isn't owner/name."]) }
         let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
-        if var previous, previous.commit == head.commit, previous.requestedBranch == setup.branch, previous.dataFiles != nil {
+        // Documents indexed by an older reading of them are read again.
+        let reusable = previous?.parserVersion == HarnessDocument.parserVersion ? previous : previous.map {
+            HarnessIndex(parserVersion: nil, repo: $0.repo, requestedBranch: $0.requestedBranch, branch: $0.branch, commit: $0.commit, fetchedAt: $0.fetchedAt, documents: [], dataFiles: $0.dataFiles)
+        }
+        if var previous = reusable, previous.commit == head.commit, previous.requestedBranch == setup.branch, previous.dataFiles != nil, previous.parserVersion != nil {
             previous.fetchedAt = .now
             return previous
         }
         let tree = try await api.harnessTree(repo: repo, commit: head.commit)
         let wanted = tree.compactMap { entry in HarnessKind(path: entry.path).map { (entry, $0) } }
-        let known = Dictionary((previous?.documents ?? []).map { ($0.sha, $0) }, uniquingKeysWith: { first, _ in first })
+        let known = Dictionary((reusable?.documents ?? []).map { ($0.sha, $0) }, uniquingKeysWith: { first, _ in first })
 
         // The team's data, unchanged files kept from before.
         let knownData = Dictionary((previous?.dataFiles ?? []).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
@@ -144,7 +148,7 @@ final class HarnessStore {
             }.value
         }
         documents.sort { $0.path < $1.path }
-        return HarnessIndex(repo: repo, requestedBranch: setup.branch, branch: head.branch, commit: head.commit, fetchedAt: .now, documents: documents, dataFiles: dataFiles)
+        return HarnessIndex(parserVersion: HarnessDocument.parserVersion, repo: repo, requestedBranch: setup.branch, branch: head.branch, commit: head.commit, fetchedAt: .now, documents: documents, dataFiles: dataFiles)
     }
 
     func clear() {
