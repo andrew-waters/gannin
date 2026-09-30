@@ -92,6 +92,12 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
     let touches: [String]?
     /// It has front matter, as the harness's standard asks.
     let hasFrontMatter: Bool?
+    /// A plan's `requirement` (a path), `branch`, `owner` and `depends-on`
+    /// (paths or issues).
+    let requirement: String?
+    let branch: String?
+    let owner: String?
+    let dependsOn: [String]?
     /// Checkboxes: plans tick theirs off as work lands.
     let tasks: Int
     let tasksDone: Int
@@ -105,7 +111,10 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 3
+    static let parserVersion = 4
+
+    /// It follows the harness's STANDARDS.md: front matter with a summary.
+    var followsStandard: Bool { hasFrontMatter == true && summary != nil }
 
     /// The status as a label: `in-progress` as "In progress", and older
     /// documents' spellings brought together ("Complete" as "Done"), a
@@ -134,6 +143,42 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
               lines[first].trimmingCharacters(in: .whitespaces) == "# \(title)" else { return body }
         lines.remove(at: first)
         return lines.joined(separator: "\n")
+    }
+
+    /// The body with the issues it names (`owner/repo#123`, `#123`,
+    /// `PRD-123`) as links Gannin opens itself (`gannin-issue:`), outside
+    /// code and existing links. `issuesRepo` is what the bare forms mean.
+    func linkedBody(issuesRepo: String?) -> String {
+        var inFence = false
+        return bodyWithoutTitle.components(separatedBy: "\n").map { line in
+            if line.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                inFence.toggle()
+                return line
+            }
+            return inFence ? line : Self.linkingIssues(in: line, issuesRepo: issuesRepo)
+        }
+        .joined(separator: "\n")
+    }
+
+    private static let issuePattern = try! NSRegularExpression(
+        pattern: #"`[^`]*`|\[[^\]]*\]\([^)]*\)|<?https?://[^\s)>]+>?|(?<![\w/#])(?:([A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+))?#(\d+)\b|\b[Pp][Rr][Dd]-(\d+)\b"#
+    )
+
+    private static func linkingIssues(in line: String, issuesRepo: String?) -> String {
+        guard line.contains("#") || line.range(of: "prd-", options: .caseInsensitive) != nil else { return line }
+        let text = line as NSString
+        var result = ""
+        var last = 0
+        for match in issuePattern.matches(in: line, range: NSRange(location: 0, length: text.length)) {
+            let number = [2, 3].lazy.map { match.range(at: $0) }.first { $0.location != NSNotFound }.map { text.substring(with: $0) }
+            let repo = match.range(at: 1).location != NSNotFound ? text.substring(with: match.range(at: 1)) : issuesRepo
+            // Code, links and URLs are left as they are.
+            guard let number, let repo else { continue }
+            result += text.substring(with: NSRange(location: last, length: match.range.location - last))
+            result += "[\(text.substring(with: match.range))](gannin-issue://\(repo)/\(number))"
+            last = match.range.location + match.range.length
+        }
+        return result + text.substring(from: last)
     }
 
     /// The text without its front matter, for reading.
@@ -228,6 +273,10 @@ nonisolated extension HarnessDocument {
         summary = front?["summary"]?.text ?? front?["description"]?.text
         domains = front?["domains"]?.list
         touches = front?["touches"]?.list
+        requirement = front?["requirement"]?.text
+        branch = front?["branch"]?.text
+        owner = front?["owner"]?.text
+        dependsOn = front?["depends-on"]?.list
         title = lines.lazy.map { $0.trimmingCharacters(in: .whitespaces) }
             .first { $0.hasPrefix("# ") }
             .map { String($0.dropFirst(2)).trimmingCharacters(in: .whitespaces) }

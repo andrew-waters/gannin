@@ -463,6 +463,14 @@ added, removed or created, and the tracked board field set), and commits to the 
   Harness page and a document's page, and a session's brief gives the summary of documents that
   only mention its issue. `HarnessDocument.parserVersion` makes a cached index read its
   documents again when the reading changes.
+- The Harness page lists only documents that follow the standard (`followsStandard`: front
+  matter with a summary); older ones are counted at the end, with Show Them
+  (`harnessShowsOlder`). A document's page (`HarnessDocumentPage`) is the text in a reading
+  column (kind, title, summary, then the Markdown, reflowed) with the details beside it, or
+  above it when narrow: status, date and tasks, the issues it's about, its requirement, what it
+  depends on, branch, owner, domains, touches, mentions and the file. Issues named in the text
+  (`owner/repo#123`, `#123`, `PRD-123`) become `gannin-issue:` links (`linkedBody`) that open in
+  a drawer, and relative links to other documents open theirs.
 - The Harness page (sidebar, once set) lists plans, requirements, findings or skills by module
   with their issues, status and checkbox progress; Not Linked shows those naming no issue. A
   document's page (`DetailSelection.harnessDocument`) shows its issues and the Markdown
@@ -492,9 +500,13 @@ added, removed or created, and the tracked board field set), and commits to the 
 
 ## Drawer, timeline and Inbox
 
-- PRs and issues open in a drawer over the page, everywhere in a main window: `PageStack`'s
-  `navigate` sends `.issue`, `.issueReference`, `.pullRequest` and `.pullRequestReference` to
-  its `drawer` instead of pushing them (`openAsPage` still pushes). Issues show `IssueSheet`
+- PRs, issues and harness documents open in a drawer over the page, everywhere in a main
+  window: `PageStack`'s `navigate` sends `.issue`, `.issueReference`, `.pullRequest`,
+  `.pullRequestReference` and `.harnessDocument` to its `drawers` instead of pushing them
+  (`openAsPage` still pushes). Drawers stack: a link inside one opens another on top
+  (`navigateInDrawer`), those beneath show a dimmed edge (up to three) that goes back to them
+  when clicked, a drawer opened from another has Back to it, Esc closes the top one and a click
+  outside closes them all. Issues show `IssueSheet`
   (facts, timeline, plans, linked PRs, description, board fields); PRs show their page under
   Open as Page, Open in Window and Done. A click outside or Esc closes it; links inside it to
   another PR or issue swap it. A view keeps its own drawer, which steps through the view's

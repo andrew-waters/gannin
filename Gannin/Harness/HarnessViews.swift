@@ -47,6 +47,8 @@ struct HarnessView: View {
     @Environment(\.openURL) private var openURL
     @SceneStorage("harnessKind") private var kind: HarnessKind = .plans
     @State private var unlinkedOnly = false
+    /// Documents from before STANDARDS.md, without front matter.
+    @AppStorage("harnessShowsOlder") private var showsOlder = false
     let org: String
     @Binding var selection: DetailSelection?
 
@@ -98,7 +100,9 @@ struct HarnessView: View {
         if let index = harness.index(for: org, setup) {
             let lookup = IssueLookup(history: issueStore.history(for: org))
             let linkable = kind == .plans || kind == .requirements
-            let documents = index.documents(kind).filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
+            let ofKind = index.documents(kind).filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
+            let documents = ofKind.filter { showsOlder || $0.followsStandard }
+            let older = ofKind.count(where: { !$0.followsStandard })
             List {
                 if let error = harness.errors[org] {
                     Banner(message: "Refresh failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
@@ -106,7 +110,7 @@ struct HarnessView: View {
                     }
                 }
                 if documents.isEmpty {
-                    Text(unlinkedOnly ? "Every one names an issue." : "No \(kind.rawValue.lowercased()) in \(repo).")
+                    Text(unlinkedOnly ? "Every one names an issue." : older > 0 ? "No \(kind.rawValue.lowercased()) follow the standard yet." : "No \(kind.rawValue.lowercased()) in \(repo).")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(groups(documents), id: \.title) { group in
@@ -114,6 +118,22 @@ struct HarnessView: View {
                         ForEach(group.documents) { document in
                             row(document, index: index, lookup: lookup, linkable: linkable)
                         }
+                    }
+                }
+                if older > 0 {
+                    Section {
+                        HStack {
+                            Text(showsOlder
+                                 ? "Showing \(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter."
+                                 : "\(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter \(older == 1 ? "isn't" : "aren't") shown.")
+                                .foregroundStyle(.secondary)
+                            Button(showsOlder ? "Hide Them" : "Show Them") { showsOlder.toggle() }
+                                .linkButton()
+                        }
+                        .font(.callout)
+                    } footer: {
+                        Text("Documents written to the harness's STANDARDS.md (front matter with a summary) are listed; older ones appear once they're converted.")
+                            .foregroundStyle(.secondary)
                     }
                 }
             }
@@ -269,26 +289,42 @@ struct HarnessDocumentPage: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
+    @Environment(\.navigate) private var navigate
+    @Environment(\.openURL) private var openURL
     let org: String
     let path: String
+    @State private var width: CGFloat = 1000
 
     var body: some View {
         let setup = configs.config(for: org).harness
         Group {
             if let setup, let index = harness.index(for: org, setup), let document = index.document(at: path) {
+                let lookup = IssueLookup(history: issueStore.history(for: org))
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
-                        header(document, index: index)
-                        if !document.references.isEmpty {
-                            HarnessIssueList(org: org, index: index, references: document.references, lookup: IssueLookup(history: issueStore.history(for: org)))
+                    // The details beside the text when there's room, above it when not.
+                    if width >= 980 {
+                        HStack(alignment: .top, spacing: 32) {
+                            text(document, index: index)
+                                .frame(maxWidth: 760, alignment: .leading)
+                            details(document, index: index, lookup: lookup)
+                                .frame(width: 280, alignment: .leading)
                         }
-                        Divider()
-                        MarkdownText(source: document.bodyWithoutTitle, reflows: true)
+                        .padding(24)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        VStack(alignment: .leading, spacing: 20) {
+                            heading(document)
+                            details(document, index: index, lookup: lookup)
+                            Divider()
+                            MarkdownText(source: document.linkedBody(issuesRepo: index.issuesRepo), reflows: true)
+                        }
+                        .padding(20)
+                        .frame(maxWidth: 760, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .padding(20)
-                    .frame(maxWidth: 900, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+                .environment(\.openURL, OpenURLAction { url in open(url, document: document, index: index, lookup: lookup) })
             } else {
                 ContentUnavailableView("Not in the harness", systemImage: "doc.questionmark", description: Text("\(path) isn't in the harness as last fetched."))
             }
@@ -296,60 +332,196 @@ struct HarnessDocumentPage: View {
         .loadsHarness(org: org)
     }
 
-    private func header(_ document: HarnessDocument, index: HarnessIndex) -> some View {
+    /// Kind, title and summary, then the document.
+    private func text(_ document: HarnessDocument, index: HarnessIndex) -> some View {
+        VStack(alignment: .leading, spacing: 20) {
+            heading(document)
+            Divider()
+            MarkdownText(source: document.linkedBody(issuesRepo: index.issuesRepo), reflows: true)
+        }
+    }
+
+    private func heading(_ document: HarnessDocument) -> some View {
         VStack(alignment: .leading, spacing: 8) {
+            Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
+                .font(.callout)
+                .foregroundStyle(.secondary)
             Text(document.title)
-                .font(.title2.weight(.semibold))
+                .font(.title.weight(.semibold))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 10) {
-                Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
-                    .foregroundStyle(.secondary)
-                if let status = document.statusLabel { Pill(text: status, color: .secondary).help(document.status ?? status) }
-                if let date = document.date {
-                    Text(date.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(.secondary)
-                }
-                if document.tasks > 0 {
-                    ProgressView(value: Double(document.tasksDone), total: Double(document.tasks))
-                        .frame(width: 80)
-                    Text(verbatim: "\(document.tasksDone) of \(document.tasks) tasks")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Spacer()
-                if let url = index.url(for: document) {
-                    Link(destination: url) {
-                        Label("Open on GitHub", systemImage: "arrow.up.right.square")
-                    }
-                }
-            }
-            .font(.callout)
             if let summary = document.summary {
                 Text(summary)
+                    .font(.title3)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            let facts = [
-                document.domains.flatMap { $0.isEmpty ? nil : "Domains: " + $0.joined(separator: ", ") },
-                document.touches.flatMap { $0.isEmpty ? nil : "Touches: " + $0.joined(separator: ", ") },
-            ].compactMap { $0 }
-            if !facts.isEmpty {
-                Text(facts.joined(separator: "  ·  "))
-                    .font(.caption)
+        }
+    }
+
+    /// As GitHub's column beside an issue: status and progress, the issues
+    /// it's about and mentions, what it depends on, and where it lives.
+    private func details(_ document: HarnessDocument, index: HarnessIndex, lookup: IssueLookup) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            detail("Status") {
+                HStack(spacing: 8) {
+                    Pill(text: document.statusLabel ?? "No status", color: .secondary)
+                        .help(document.status ?? "No status")
+                    if let date = document.date {
+                        Text(date.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(.secondary)
+                    }
+                }
+                if document.tasks > 0 {
+                    HStack(spacing: 8) {
+                        ProgressView(value: Double(document.tasksDone), total: Double(document.tasks))
+                        Text(verbatim: "\(document.tasksDone) of \(document.tasks)")
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                }
+            }
+            let subjects = document.references.filter(\.isSubject)
+            let mentions = document.references.filter { !$0.isSubject }
+            if !subjects.isEmpty {
+                detail("Issues") { HarnessIssueList(org: org, index: index, references: subjects, lookup: lookup) }
+            }
+            if let requirement = document.requirement {
+                detail("Requirement") { documentLink(requirement, index: index) }
+            }
+            if let dependsOn = document.dependsOn, !dependsOn.isEmpty {
+                detail("Depends on") {
+                    ForEach(dependsOn, id: \.self) { item in
+                        if item.hasSuffix(".md") {
+                            documentLink(item, index: index)
+                        } else {
+                            HarnessIssueList(org: org, index: index, references: HarnessDocument.references(in: item, isSubject: false), lookup: lookup)
+                        }
+                    }
+                }
+            }
+            if let branch = document.branch {
+                detail("Branch") {
+                    Text(branch).font(.callout.monospaced()).textSelection(.enabled)
+                }
+            }
+            if let owner = document.owner {
+                detail("Owner") { Text("@\(owner)") }
+            }
+            if let domains = document.domains, !domains.isEmpty {
+                detail("Domains") {
+                    FlowChips(items: domains.map(HarnessView.prettify))
+                }
+            }
+            if let touches = document.touches, !touches.isEmpty {
+                detail("Touches") {
+                    ForEach(touches, id: \.self) { item in
+                        Text(item)
+                            .font(.callout.monospaced())
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .help(item)
+                    }
+                }
+            }
+            if !mentions.isEmpty {
+                detail("Mentions") { HarnessIssueList(org: org, index: index, references: mentions, lookup: lookup) }
+            }
+            detail("File") {
+                Text(document.path)
+                    .font(.caption.monospaced())
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let url = index.url(for: document) {
+                    Link(destination: url) {
+                        Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                    }
+                    .font(.callout)
+                }
+                if !document.followsStandard {
+                    Text("Written before the harness's STANDARDS.md, so it has no front matter yet.")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
             }
-            Text(document.path)
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
+        }
+        .font(.callout)
+    }
+
+    private func detail(_ title: String, @ViewBuilder content: () -> some View) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Another harness document by path, opening in a drawer over this one.
+    @ViewBuilder
+    private func documentLink(_ path: String, index: HarnessIndex) -> some View {
+        if let target = index.document(at: path) {
+            Button {
+                navigate?(.harnessDocument(target.path))
+            } label: {
+                Label(target.title, systemImage: target.kind.systemImage)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .linkButton()
+            .help(target.path)
+        } else {
+            Text(path).font(.caption.monospaced()).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Issues named in the text open in a drawer when Gannin has them;
+    /// links to other harness documents open theirs. Anything else goes to
+    /// the browser.
+    private func open(_ url: URL, document: HarnessDocument, index: HarnessIndex, lookup: IssueLookup) -> OpenURLAction.Result {
+        if url.scheme == "gannin-issue", let owner = url.host() {
+            let parts = url.pathComponents.filter { $0 != "/" }
+            guard parts.count == 2, let number = Int(parts[1]) else { return .discarded }
+            let repo = "\(owner)/\(parts[0])"
+            if let record = lookup.record(repo: repo, number: number), let navigate {
+                navigate(.issueReference(IssueReference(org: org, record: record)))
+            } else if let github = URL(string: "https://github.com/\(repo)/issues/\(number)") {
+                openURL(github)
+            }
+            return .handled
+        }
+        if url.scheme == nil, url.path().hasSuffix(".md"), let navigate {
+            let base = URL(filePath: "/" + document.path).deletingLastPathComponent()
+            let resolved = URL(filePath: url.path(), relativeTo: base).standardizedFileURL.path().dropFirst()
+            if index.document(at: String(resolved)) != nil {
+                navigate(.harnessDocument(String(resolved)))
+                return .handled
+            }
+        }
+        return .systemAction
+    }
+}
+
+/// Short labels wrapped onto as many lines as they need.
+private struct FlowChips: View {
+    let items: [String]
+
+    var body: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(items, id: \.self) { item in
+                Text(item)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 3)
+                    .background(.quaternary.opacity(0.7), in: Capsule())
+            }
         }
     }
 }
 
-/// The issues a document is about, then those it mentions; each opens its
-/// page where Gannin has it, else GitHub.
+/// Issues a document names; each opens in a drawer where Gannin has it,
+/// else on GitHub.
 private struct HarnessIssueList: View {
     @Environment(\.navigate) private var navigate
     @Environment(\.openURL) private var openURL
@@ -359,24 +531,14 @@ private struct HarnessIssueList: View {
     let lookup: IssueLookup
 
     var body: some View {
-        let subjects = references.filter(\.isSubject)
-        let mentions = references.filter { !$0.isSubject }
-        VStack(alignment: .leading, spacing: 10) {
-            if !subjects.isEmpty { group("About", subjects) }
-            if !mentions.isEmpty { group("Mentions", mentions) }
-        }
-    }
-
-    private func group(_ title: String, _ references: [HarnessReference]) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             ForEach(references, id: \.self) { reference in
                 let repo = index.repo(of: reference)
                 let record = lookup.record(repo: repo, number: reference.number)
                 Button {
                     open(record: record, repo: repo, number: reference.number)
                 } label: {
-                    HStack(spacing: 6) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Circle()
                             .fill(record.map(IssueStateDot.color) ?? .secondary.opacity(0.4))
                             .frame(width: 8, height: 8)
@@ -384,7 +546,7 @@ private struct HarnessIssueList: View {
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                         if let record {
-                            Text(record.title).lineLimit(1)
+                            Text(record.title).lineLimit(2).multilineTextAlignment(.leading)
                         } else {
                             // A PR, or an issue outside the history: GitHub
                             // has it (issue links redirect to PRs).

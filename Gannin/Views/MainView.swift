@@ -467,8 +467,9 @@ private struct PageStack: View {
     let titles: PageTitles
     let searchText: String
 
-    /// The PR or issue open in the drawer over the page.
-    @State private var drawer: DetailSelection?
+    /// The PRs, issues and harness documents open in drawers over the
+    /// page, the top one last. A link in a drawer opens another on top.
+    @State private var drawers: [DetailSelection] = []
 
     var body: some View {
         Group {
@@ -505,8 +506,8 @@ private struct PageStack: View {
             }
         }
         .overlay(alignment: .trailing) { drawerOverlay }
-        .animation(.snappy(duration: 0.25), value: drawer)
-        .onChange(of: path) { drawer = nil }
+        .animation(.snappy(duration: 0.25), value: drawers)
+        .onChange(of: path) { drawers = [] }
         .toolbar {
             if !path.isEmpty {
                 ToolbarItem(placement: .navigation) { backButton }
@@ -516,8 +517,8 @@ private struct PageStack: View {
             }
         }
         .onEscape {
-            if drawer != nil {
-                drawer = nil
+            if !drawers.isEmpty {
+                drawers.removeLast()
             } else if !path.isEmpty {
                 path.removeLast()
             }
@@ -596,22 +597,39 @@ private struct PageStack: View {
 
     /// Pushes from the level at `depth`; a page already in the trail below
     /// is gone back to instead.
-    /// PRs and issues open in the drawer, everywhere in the app; anything
-    /// else is pushed from `depth` (closing the drawer).
+    /// PRs, issues and harness documents open in a drawer, everywhere in
+    /// the app; anything else is pushed from `depth` (closing the drawers).
     private func navigate(at depth: Int) -> NavigateAction {
         NavigateAction { destination in
             if Self.opensInDrawer(destination) {
-                drawer = destination
+                drawers = [destination]
             } else {
-                drawer = nil
+                drawers = []
                 push(at: depth)(destination)
+            }
+        }
+    }
+
+    /// From the drawer at `level`: another drawer on top of it (or back to
+    /// one below, if it's already open there); a page closes them all.
+    private func navigateInDrawer(at level: Int) -> NavigateAction {
+        NavigateAction { destination in
+            if Self.opensInDrawer(destination) {
+                if let open = drawers.prefix(level + 1).firstIndex(of: destination) {
+                    drawers = Array(drawers.prefix(through: open))
+                } else {
+                    drawers = Array(drawers.prefix(level + 1)) + [destination]
+                }
+            } else {
+                drawers = []
+                push(at: path.count)(destination)
             }
         }
     }
 
     static func opensInDrawer(_ destination: DetailSelection) -> Bool {
         switch destination {
-        case .issue, .issueReference, .pullRequest, .pullRequestReference: true
+        case .issue, .issueReference, .pullRequest, .pullRequestReference, .harnessDocument: true
         default: false
         }
     }
@@ -671,63 +689,107 @@ private struct PageStack: View {
 
     private static let drawerShape = UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12, style: .continuous)
 
-    /// Over the right of the page, as GitHub's drawer: a click outside or
-    /// Esc closes it, and links inside it to another PR or issue swap it.
+    /// How far each drawer below the top one shows past its left edge.
+    private static let drawerPeek: CGFloat = 28
+
+    /// Over the right of the page, as GitHub's drawer: a click outside
+    /// closes them all, Esc the top one. Those underneath show their left
+    /// edge, dimmed; clicking it goes back to that one.
     @ViewBuilder
     private var drawerOverlay: some View {
-        if let item = drawer {
+        if !drawers.isEmpty {
             Color.clear
                 .contentShape(Rectangle())
-                .onTapGesture { drawer = nil }
+                .onTapGesture { drawers = [] }
             GeometryReader { geometry in
-                let width = min(max(700, geometry.size.width * 0.7), max(geometry.size.width - 80, 480))
-                HStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    drawerContent(item, isWide: width >= 900)
-                        .environment(\.navigate, navigate(at: path.count))
-                        .environment(\.openAsPage, NavigateAction { destination in
-                            drawer = nil
-                            push(at: path.count)(destination)
-                        })
-                        .environment(\.openElsewhere, openElsewhere(trail: path))
-                        .frame(width: width)
-                        .frame(maxHeight: .infinity)
-                        .background(Color.windowBackground, in: Self.drawerShape)
-                        .clipShape(Self.drawerShape)
-                        .overlay { Self.drawerShape.strokeBorder(Color.separatorLine) }
-                        .shadow(color: .black.opacity(0.25), radius: 24, x: -4)
+                // Room for the edges of those underneath, up to three.
+                let peeks = CGFloat(min(drawers.count - 1, 3)) * Self.drawerPeek
+                let width = min(max(700, geometry.size.width * 0.7), max(geometry.size.width - 80 - peeks, 480))
+                ZStack(alignment: .trailing) {
+                    ForEach(Array(drawers.enumerated()), id: \.offset) { level, item in
+                        let depth = drawers.count - 1 - level
+                        if depth <= 3 {
+                            drawerContent(item, level: level, isWide: width >= 900)
+                                .environment(\.navigate, navigateInDrawer(at: level))
+                                .environment(\.openAsPage, NavigateAction { destination in
+                                    drawers = []
+                                    push(at: path.count)(destination)
+                                })
+                                .environment(\.openElsewhere, openElsewhere(trail: path))
+                                .frame(width: width)
+                                .frame(maxHeight: .infinity)
+                                .background(Color.windowBackground, in: Self.drawerShape)
+                                .clipShape(Self.drawerShape)
+                                .overlay {
+                                    if depth > 0 {
+                                        // Underneath: dimmed, and a click goes back to it.
+                                        Self.drawerShape.fill(.black.opacity(0.18))
+                                            .contentShape(Self.drawerShape)
+                                            .onTapGesture { drawers = Array(drawers.prefix(through: level)) }
+                                            .help("Back to \(titles.title(item))")
+                                    }
+                                }
+                                .overlay { Self.drawerShape.strokeBorder(Color.separatorLine) }
+                                .shadow(color: .black.opacity(depth == 0 ? 0.25 : 0.12), radius: 24, x: -4)
+                                .offset(x: -CGFloat(depth) * Self.drawerPeek)
+                                .transition(.move(edge: .trailing))
+                        }
+                    }
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
             }
             .transition(.move(edge: .trailing))
         }
     }
 
-    /// An issue as the views' drawer shows it (timeline and board fields
-    /// beside the description); a PR as its page, under Open as Page, Open
-    /// in Window and Done.
+    /// Above a drawer opened from another: back to the one beneath.
     @ViewBuilder
-    private func drawerContent(_ item: DetailSelection, isWide: Bool) -> some View {
-        if let reference = issueReference(item) {
-            let workflow = configs.config(for: org).workflow
-            let history = issueStore.history(for: org)
-            let signals = history?.issues[reference.id].map { FieldContext(board: workflow.projectNumber, workflow: workflow, history: history).signals($0) }
-            IssueSheet(reference: reference, signals: signals, isWide: isWide) { drawer = nil }
-                .id(reference.id)
-        } else {
-            VStack(spacing: 0) {
+    private func drawerBack(_ level: Int) -> some View {
+        if level > 0 {
+            HStack {
+                Button {
+                    drawers = Array(drawers.prefix(level))
+                } label: {
+                    Label("Back to \(titles.title(drawers[level - 1]))", systemImage: "chevron.left")
+                        .lineLimit(1)
+                }
+                .linkButton()
+                Spacer()
+            }
+            .font(.callout)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            Divider()
+        }
+    }
+
+    /// An issue as the views' drawer shows it (timeline and board fields
+    /// beside the description); a PR or harness document as its page, under
+    /// Open as Page, Open in Window and Done.
+    @ViewBuilder
+    private func drawerContent(_ item: DetailSelection, level: Int, isWide: Bool) -> some View {
+        VStack(spacing: 0) {
+            drawerBack(level)
+            if let reference = issueReference(item) {
+                let workflow = configs.config(for: org).workflow
+                let history = issueStore.history(for: org)
+                let signals = history?.issues[reference.id].map { FieldContext(board: workflow.projectNumber, workflow: workflow, history: history).signals($0) }
+                IssueSheet(reference: reference, signals: signals, isWide: isWide) { drawers = [] }
+                    .id(reference.id)
+            } else {
                 HStack(spacing: 10) {
                     Spacer()
                     Button("Open as Page") {
-                        drawer = nil
+                        drawers = []
                         push(at: path.count)(item)
                     }
                     Button("Open in Window") {
-                        drawer = nil
+                        drawers = []
                         if !openOwnWindow(item) {
                             WindowRequest.open(NavigationRequest(org: org, sidebar: sidebar, path: path + [item]), placement: .window, openWindow: openWindow)
                         }
                     }
-                    Button("Done") { drawer = nil }
+                    Button("Done") { drawers = [] }
                         .keyboardShortcut(.cancelAction)
                 }
                 .padding(.horizontal, 16)
