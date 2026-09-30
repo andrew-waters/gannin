@@ -45,6 +45,7 @@ struct HarnessView: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(\.openURL) private var openURL
+    /// Picked under Harness in the sidebar, which writes the same key.
     @SceneStorage("harnessKind") private var kind: HarnessKind = .plans
     @State private var unlinkedOnly = false
     /// Documents from before STANDARDS.md, without front matter.
@@ -67,13 +68,6 @@ struct HarnessView: View {
         }
         .toolbar {
             if let setup {
-                ToolbarItem {
-                    Picker("Kind", selection: $kind) {
-                        ForEach(HarnessKind.allCases) { Text($0.rawValue).tag($0) }
-                    }
-                    .pickerStyle(.segmented)
-                    .fixedSize()
-                }
                 if kind == .plans || kind == .requirements {
                     ToolbarItem {
                         Toggle("Not Linked", isOn: $unlinkedOnly)
@@ -294,33 +288,51 @@ struct HarnessDocumentPage: View {
     let org: String
     let path: String
     @State private var width: CGFloat = 1000
+    /// Folded sections, by heading.
+    @State private var collapsed: Set<Int> = []
+    /// The body's size, as Reader's ⌘+ and ⌘− set it.
+    @AppStorage("harnessReadingSize") private var size: Double = 15
+    @AppStorage("harnessShowsDetails") private var showsDetails = false
+
+    private static let sizes: ClosedRange<Double> = 12...22
 
     var body: some View {
         let setup = configs.config(for: org).harness
         Group {
             if let setup, let index = harness.index(for: org, setup), let document = index.document(at: path) {
                 let lookup = IssueLookup(history: issueStore.history(for: org))
-                ScrollView {
-                    // The details beside the text when there's room, above it when not.
-                    if width >= 980 {
-                        HStack(alignment: .top, spacing: 32) {
-                            text(document, index: index)
-                                .frame(maxWidth: 760, alignment: .leading)
-                            details(document, index: index, lookup: lookup)
-                                .frame(width: 280, alignment: .leading)
+                let source = document.linkedBody(issuesRepo: index.issuesRepo)
+                // About 70 characters a line, as Reader keeps it.
+                let measure = size * 44
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        // The details beside the text when there's room, folded above it when not.
+                        if width >= measure + 360 {
+                            HStack(alignment: .top, spacing: 36) {
+                                text(document, source: source, proxy: proxy)
+                                    .frame(maxWidth: measure, alignment: .leading)
+                                details(document, index: index, lookup: lookup)
+                                    .frame(width: 260, alignment: .leading)
+                            }
+                            .padding(.horizontal, 40)
+                            .padding(.vertical, 28)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            VStack(alignment: .leading, spacing: 18) {
+                                heading(document, source: source, proxy: proxy)
+                                DisclosureGroup("Details", isExpanded: $showsDetails) {
+                                    details(document, index: index, lookup: lookup)
+                                        .padding(.top, 8)
+                                }
+                                .font(.callout)
+                                Divider()
+                                markdown(source)
+                            }
+                            .padding(.horizontal, 40)
+                            .padding(.vertical, 24)
+                            .frame(maxWidth: measure + 80, alignment: .leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .padding(24)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        VStack(alignment: .leading, spacing: 20) {
-                            heading(document)
-                            details(document, index: index, lookup: lookup)
-                            Divider()
-                            MarkdownText(source: document.linkedBody(issuesRepo: index.issuesRepo), reflows: true)
-                        }
-                        .padding(20)
-                        .frame(maxWidth: 760, alignment: .leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
@@ -333,31 +345,102 @@ struct HarnessDocumentPage: View {
     }
 
     /// Kind, title and summary, then the document.
-    private func text(_ document: HarnessDocument, index: HarnessIndex) -> some View {
-        VStack(alignment: .leading, spacing: 20) {
-            heading(document)
+    private func text(_ document: HarnessDocument, source: String, proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 22) {
+            heading(document, source: source, proxy: proxy)
             Divider()
-            MarkdownText(source: document.linkedBody(issuesRepo: index.issuesRepo), reflows: true)
+            markdown(source)
         }
     }
 
-    private func heading(_ document: HarnessDocument) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
-                .font(.callout)
-                .foregroundStyle(.secondary)
+    private func markdown(_ source: String) -> some View {
+        MarkdownText(source: source, reflows: true, reading: size, collapsed: $collapsed)
+    }
+
+    /// The kind, with the reading controls (contents, fold, text size), then
+    /// the title and summary.
+    private func heading(_ document: HarnessDocument, source: String, proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
+                    .foregroundStyle(.secondary)
+                if let status = document.statusLabel {
+                    Pill(text: status, color: .secondary).help(document.status ?? status)
+                }
+                if document.tasks > 0 {
+                    Gauge(value: Double(document.tasksDone), in: 0...Double(document.tasks)) { EmptyView() }
+                        .gaugeStyle(.accessoryCircularCapacity)
+                        .scaleEffect(0.45)
+                        .frame(width: 20, height: 20)
+                    Text(verbatim: "\(document.tasksDone) of \(document.tasks) tasks")
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                Spacer(minLength: 8)
+                readingControls(source: source, proxy: proxy)
+            }
+            .font(.callout)
             Text(document.title)
-                .font(.title.weight(.semibold))
+                .font(.system(size: size * 1.9, weight: .bold))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             if let summary = document.summary {
                 Text(summary)
-                    .font(.title3)
+                    .font(.system(size: size * 1.12))
+                    .lineSpacing(size * 0.25)
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// Contents (jump to a heading), Fold or Show All, and text size.
+    private func readingControls(source: String, proxy: ScrollViewProxy) -> some View {
+        let outline = MarkdownText.outline(source, reflows: true)
+        let foldable = MarkdownText.foldable(source, reflows: true)
+        return HStack(spacing: 4) {
+            if !outline.isEmpty {
+                Menu {
+                    ForEach(outline, id: \.index) { heading in
+                        Button(String(repeating: "    ", count: max(0, heading.level - 2)) + heading.text) {
+                            // Open the section it's in, then go there.
+                            if let section = MarkdownText.section(containing: heading.index, source, reflows: true) {
+                                collapsed.remove(section)
+                            }
+                            withAnimation { proxy.scrollTo(MarkdownText.anchor(heading.index), anchor: .top) }
+                        }
+                    }
+                    if !foldable.isEmpty {
+                        Divider()
+                        Button("Fold All Sections") { withAnimation(.snappy(duration: 0.2)) { collapsed = Set(foldable) } }
+                        Button("Show All Sections") { withAnimation(.snappy(duration: 0.2)) { collapsed = [] } }
+                    }
+                } label: {
+                    Label("Contents", systemImage: "list.bullet.indent")
+                }
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Go to a section")
+            }
+            ControlGroup {
+                Button { size = max(Self.sizes.lowerBound, size - 1) } label: {
+                    Label("Smaller", systemImage: "textformat.size.smaller")
+                }
+                .keyboardShortcut("-", modifiers: .command)
+                .disabled(size <= Self.sizes.lowerBound)
+                .help("Make the text smaller (⌘−)")
+                Button { size = min(Self.sizes.upperBound, size + 1) } label: {
+                    Label("Bigger", systemImage: "textformat.size.larger")
+                }
+                .keyboardShortcut("+", modifiers: .command)
+                .disabled(size >= Self.sizes.upperBound)
+                .help("Make the text bigger (⌘+)")
+            }
+            .fixedSize()
+        }
+        .labelStyle(.iconOnly)
+        .controlSize(.small)
     }
 
     /// As GitHub's column beside an issue: status and progress, the issues

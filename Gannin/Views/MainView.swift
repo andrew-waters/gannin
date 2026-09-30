@@ -65,6 +65,8 @@ enum SidebarItem: Hashable {
     case peopleView(PeopleView)
     case repository(String)
     case issueList(IssueList)
+    /// Plans, requirements, findings or skills, under Harness.
+    case harnessKind(HarnessKind)
     case project(Int)
     /// A saved field view, by ID.
     case fieldView(UUID)
@@ -137,6 +139,9 @@ struct MainView: View {
     @State private var repository: String?
     /// The issue list picked under Issues; nil shows the issue metrics.
     @State private var issueList: IssueList?
+    /// Which of the harness's documents the Harness page lists, picked under
+    /// it in the sidebar; the page reads the same scene storage.
+    @SceneStorage("harnessKind") private var harnessKind: HarnessKind = .plans
     /// The board picked under Projects, by number.
     /// Kept with the window, so a relaunch comes back to the same board.
     @SceneStorage("selectedProject") private var projectNumber = 0
@@ -300,6 +305,8 @@ struct MainView: View {
             return repository.map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? "Repositories"
         case .issues:
             return issueList?.title ?? "Issues"
+        case .harness:
+            return harnessKind.rawValue
         case .projects:
             return project.map { number in projectStore.boardLists[selectedOrg]?.first { $0.number == number }?.title ?? "Project \(number)" } ?? "Projects"
         case .views:
@@ -316,6 +323,8 @@ struct MainView: View {
             if tab == .people, let peopleView { return .peopleView(peopleView) }
             if tab == .repositories, let repository { return .repository(repository) }
             if tab == .issues, let issueList { return .issueList(issueList) }
+            // The Harness row has no page of its own: it's one of its kinds.
+            if tab == .harness { return .harnessKind(harnessKind) }
             if tab == .projects, let project { return .project(project) }
             if tab == .views, let fieldView { return .fieldView(fieldView) }
             return .tab(tab)
@@ -343,6 +352,9 @@ struct MainView: View {
             case .issueList(let list):
                 tab = .issues
                 issueList = list
+            case .harnessKind(let kind):
+                tab = .harness
+                harnessKind = kind
             case .project(let number):
                 tab = .projects
                 project = number
@@ -930,6 +942,8 @@ struct OrgSidebar: View {
     @AppStorage("sidebarExpandedTeams") private var expandedTeamIDs = ""
     @AppStorage("sidebarRepositoriesExpanded") private var repositoriesExpanded = false
     @AppStorage("sidebarIssuesExpanded") private var issuesExpanded = true
+    @AppStorage("sidebarHarnessExpanded") private var harnessExpanded = true
+    @Environment(HarnessStore.self) private var harnessStore
     @AppStorage("sidebarProjectsExpanded") private var projectsExpanded = true
     @AppStorage("sidebarViewsExpanded") private var viewsExpanded = true
     @Environment(ProjectStore.self) private var projectStore
@@ -938,6 +952,14 @@ struct OrgSidebar: View {
     #if os(macOS)
     @Environment(SessionStore.self) private var sessions
     #endif
+
+    /// Documents of the kind that follow the harness's standard, as the page
+    /// lists them.
+    private func harnessCount(_ kind: HarnessKind) -> Int {
+        guard let selectedOrg, let setup = configs.config(for: selectedOrg).harness,
+              let index = harnessStore.index(for: selectedOrg, setup) else { return 0 }
+        return index.documents(kind).count(where: \.followsStandard)
+    }
 
     /// The Harness row only shows once the org names its harness repo.
     private var hasHarness: Bool {
@@ -980,7 +1002,18 @@ struct OrgSidebar: View {
 
                 Section("Planning", isExpanded: $planningExpanded) {
                     row(.investments)
-                    if hasHarness { row(.harness) }
+                    if hasHarness {
+                        DisclosureGroup(isExpanded: $harnessExpanded) {
+                            ForEach(HarnessKind.allCases) { kind in
+                                Label(kind.rawValue, systemImage: kind.systemImage)
+                                    .badge(harnessCount(kind))
+                                    .tag(SidebarItem.harnessKind(kind))
+                                    .contextMenu { OpenElsewhereItems(sidebar: .harnessKind(kind)) }
+                            }
+                        } label: {
+                            row(.harness)
+                        }
+                    }
                     DisclosureGroup(isExpanded: $projectsExpanded) {
                         ForEach(projectStore.boardLists[selectedOrg] ?? []) { board in
                             Label(board.title, systemImage: "rectangle.split.3x1")

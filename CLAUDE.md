@@ -463,11 +463,18 @@ added, removed or created, and the tracked board field set), and commits to the 
   Harness page and a document's page, and a session's brief gives the summary of documents that
   only mention its issue. `HarnessDocument.parserVersion` makes a cached index read its
   documents again when the reading changes.
+- Plans, Requirements, Findings and Skills are rows under Harness in the sidebar
+  (`SidebarItem.harnessKind`, with counts of standard documents), sharing the `harnessKind` scene
+  storage the Harness page reads; the Harness row itself shows the kind last picked.
 - The Harness page lists only documents that follow the standard (`followsStandard`: front
   matter with a summary); older ones are counted at the end, with Show Them
   (`harnessShowsOlder`). A document's page (`HarnessDocumentPage`) is the text in a reading
-  column (kind, title, summary, then the Markdown, reflowed) with the details beside it, or
-  above it when narrow: status, date and tasks, the issues it's about, its requirement, what it
+  column about 70 characters wide (kind, status and tasks with the reading controls, title,
+  summary, then the Markdown in `MarkdownText`'s reading style: a larger body with room between
+  lines, a heading scale, nested lists with hanging indents, code that scrolls, and `##`
+  sections that fold), with a Contents menu to jump to a heading or fold every section and text
+  size buttons (⌘− and ⌘+, `harnessReadingSize`). The details sit beside it, or folded above it
+  when narrow: status, date and tasks, the issues it's about, its requirement, what it
   depends on, branch, owner, domains, touches, mentions and the file. Issues named in the text
   (`owner/repo#123`, `#123`, `PRD-123`) become `gannin-issue:` links (`linkedBody`) that open in
   a drawer, and relative links to other documents open theirs.
