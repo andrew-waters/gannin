@@ -337,6 +337,8 @@ struct MetricPullRequestColumn: View {
 
 /// Each step from first commit to merge, with the time each stage took.
 struct TimelineSection: View {
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(\.currentOrg) private var org
     let pr: MetricPullRequest
 
     var body: some View {
@@ -354,10 +356,17 @@ struct TimelineSection: View {
                 step("Coding", nil, stage: .coding)
                 if let review = pr.firstReviewAt {
                     step("First review" + (pr.firstReviewer.map { " by \($0)" } ?? ""), review, stage: .waiting)
-                } else {
+                } else if org.map({ configs.config(for: $0).needsReview(pr.repo) }) ?? true {
                     GridRow {
                         Image(systemName: "exclamationmark.circle").foregroundStyle(.orange)
                         Text("No review before merge").foregroundStyle(.secondary)
+                        Text("")
+                    }
+                    .help("PRs in \(pr.repo) should have a review. If they don't need one, untick Needs Review for it in the org's Settings, under Repositories.")
+                } else {
+                    GridRow {
+                        Image(systemName: "minus.circle").foregroundStyle(.tertiary)
+                        Text("No review, which \(pr.repo) doesn't need").foregroundStyle(.secondary)
                         Text("")
                     }
                 }

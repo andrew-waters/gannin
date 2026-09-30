@@ -139,7 +139,7 @@ struct InboxView: View {
             )
         }))
         sections.append(("Your pull requests", inbox.pullRequests.map { pr in
-            let standing = Inbox.standing(pr)
+            let standing = Inbox.standing(pr, needsReview: configs.config(for: org).needsReview(pr.repo))
             return InboxRow(
                 id: "pr-\(pr.id)", title: pr.title, reference: Self.number(pr.repo, pr.number),
                 people: pr.requestedReviewers + pr.reviewers.filter { reviewer in !pr.requestedReviewers.contains { $0.login == reviewer.login } },
@@ -276,7 +276,7 @@ struct Inbox {
     }
 
     /// Where a PR of yours stands, in words and a colour.
-    static func standing(_ pr: PullRequest) -> (text: String, color: Color) {
+    static func standing(_ pr: PullRequest, needsReview: Bool = true) -> (text: String, color: Color) {
         if pr.isDraft { return ("Draft", .secondary) }
         switch pr.reviewDecision {
         case .changesRequested: return ("Changes requested", ChartPalette.critical)
@@ -284,6 +284,7 @@ struct Inbox {
         default:
             if Workload.isStale(pr) { return ("Stale", .orange) }
             let waiting = pr.requestedReviewers.map(\.displayName)
+            if waiting.isEmpty, !needsReview { return ("No review needed", .secondary) }
             return (waiting.isEmpty ? "No reviewer" : "Waiting on \(waiting.joined(separator: ", "))", waiting.isEmpty ? .orange : ChartPalette.blue)
         }
     }

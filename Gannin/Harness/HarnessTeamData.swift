@@ -27,7 +27,7 @@ enum TeamFile {
         case workflow: "issue workflow"
         case workingWeek: "working week"
         case leave: "leave policy"
-        case exclusions: "repos and people left out"
+        case exclusions: "repos and people left out, and repos without review"
         default: login(path).map { "dates for \($0)" } ?? path
         }
     }
@@ -40,6 +40,8 @@ struct TeamExclusions: Codable, Hashable {
     var people: [String]
     /// Bot-looking logins counted anyway.
     var includedPeople: [String]
+    /// Repos whose PRs don't need a review.
+    var reposWithoutReview: [String]?
 }
 
 /// The team's data as the harness has it (with what's waiting to be
@@ -79,6 +81,7 @@ struct HarnessTeamData {
         config.excludedRepos = Set(exclusions?.repos ?? [])
         config.excludedAuthors = Set(exclusions?.people ?? [])
         config.includedAuthors = Set(exclusions?.includedPeople ?? [])
+        config.reposWithoutReview = Set(exclusions?.reposWithoutReview ?? [])
         return config
     }
 
@@ -93,7 +96,8 @@ struct HarnessTeamData {
         if before.issueWorkflow != after.issueWorkflow { files[TeamFile.workflow] = after.issueWorkflow.flatMap(TeamCoding.encode) }
         if before.workWeek != after.workWeek { files[TeamFile.workingWeek] = after.workWeek.flatMap(TeamCoding.encode) }
         if before.leave != after.leave { files[TeamFile.leave] = after.leave.flatMap(TeamCoding.encode) }
-        if before.excludedRepos != after.excludedRepos || before.excludedAuthors != after.excludedAuthors || before.includedAuthors != after.includedAuthors {
+        if before.excludedRepos != after.excludedRepos || before.excludedAuthors != after.excludedAuthors || before.includedAuthors != after.includedAuthors
+            || before.reposWithoutReview != after.reposWithoutReview {
             files[TeamFile.exclusions] = exclusionsFile(after)
         }
         return files
@@ -120,8 +124,12 @@ struct HarnessTeamData {
     }
 
     private static func exclusionsFile(_ config: OrgConfig) -> String? {
-        let exclusions = TeamExclusions(repos: config.excludedRepos.sorted(), people: config.excludedAuthors.sorted(), includedPeople: config.includedAuthors.sorted())
-        return exclusions.repos.isEmpty && exclusions.people.isEmpty && exclusions.includedPeople.isEmpty ? nil : TeamCoding.encode(exclusions)
+        let exclusions = TeamExclusions(
+            repos: config.excludedRepos.sorted(), people: config.excludedAuthors.sorted(), includedPeople: config.includedAuthors.sorted(),
+            reposWithoutReview: config.reposWithoutReview.isEmpty ? nil : config.reposWithoutReview.sorted()
+        )
+        return exclusions.repos.isEmpty && exclusions.people.isEmpty && exclusions.includedPeople.isEmpty && exclusions.reposWithoutReview == nil
+            ? nil : TeamCoding.encode(exclusions)
     }
 }
 

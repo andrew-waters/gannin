@@ -9,6 +9,9 @@ struct OrgConfig: Codable, Hashable {
     var excludedAuthors: Set<String> = []
     /// Bot-looking logins the user has chosen to count anyway.
     var includedAuthors: Set<String> = []
+    /// `owner/name` of repos whose PRs don't need a review (docs, config, a
+    /// harness), so merging one unreviewed isn't flagged.
+    var reposWithoutReview: Set<String> = []
     /// Investment categories; nil until edited, meaning the default preset.
     var investments: InvestmentConfig?
     /// How issues move through the org's board; nil means the defaults.
@@ -38,6 +41,7 @@ struct OrgConfig: Codable, Hashable {
         excludedRepos = try container.decodeIfPresent(Set<String>.self, forKey: .excludedRepos) ?? []
         excludedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .excludedAuthors) ?? []
         includedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .includedAuthors) ?? []
+        reposWithoutReview = try container.decodeIfPresent(Set<String>.self, forKey: .reposWithoutReview) ?? []
         investments = try container.decodeIfPresent(InvestmentConfig.self, forKey: .investments)
         issueWorkflow = try container.decodeIfPresent(IssueWorkflow.self, forKey: .issueWorkflow)
         workWeek = try container.decodeIfPresent(WorkWeek.self, forKey: .workWeek)
@@ -46,7 +50,7 @@ struct OrgConfig: Codable, Hashable {
         fieldViews = try container.decodeIfPresent([FieldView].self, forKey: .fieldViews) ?? []
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && fieldViews.isEmpty }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && fieldViews.isEmpty }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.
@@ -54,6 +58,9 @@ struct OrgConfig: Codable, Hashable {
         let lower = login.lowercased()
         return lower.hasSuffix("-bot") || lower.hasSuffix("[bot]")
     }
+
+    /// Whether the repo's PRs should have a review before they merge.
+    func needsReview(_ repo: String) -> Bool { !reposWithoutReview.contains(repo) }
 
     func excludes(_ login: String) -> Bool {
         if excludedAuthors.contains(login) { return true }
@@ -152,6 +159,12 @@ final class OrgConfigStore {
     func toggleRepo(_ repo: String, in org: String) {
         update(org) { config in
             if config.excludedRepos.remove(repo) == nil { config.excludedRepos.insert(repo) }
+        }
+    }
+
+    func toggleReview(_ repo: String, in org: String) {
+        update(org) { config in
+            if config.reposWithoutReview.remove(repo) == nil { config.reposWithoutReview.insert(repo) }
         }
     }
 

@@ -153,7 +153,10 @@ added, removed or created, and the tracked board field set), and commits to the 
   number. Chart colours are categorical slots 1-4 of the dataviz reference palette
   (`ChartPalette`), in order.
 - Per-org config (`OrgConfigStore`, in `UserDefaults`, edited on the Settings page) excludes
-  repos and people from both `Workload` and `OrgMetrics`. Excluded authors lose their PRs and
+  repos and people from both `Workload` and `OrgMetrics`. A repo can also be marked as not
+  needing review (`reposWithoutReview`, the Needs Review checkbox under Repositories): its PRs
+  aren't counted as merged without review, the PR timeline doesn't warn, and the Inbox says No
+  review needed rather than No reviewer. Excluded authors lose their PRs and
   their reviews, which is why
   `MetricPullRequest` stores raw `reviews` and derives first review and approval from them.
   "PRs opened" is a search count and ignores the config.

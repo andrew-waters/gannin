@@ -245,7 +245,8 @@ struct OrgMetrics {
         stages = Dictionary(uniqueKeysWithValues: CycleStage.allCases.map { stage in
             (stage, StageSummary(merged.compactMap { $0.duration(of: stage) }))
         })
-        mergedWithoutReview = merged.filter { $0.firstReviewAt == nil }
+        // Repos that don't need a review aren't counted against.
+        mergedWithoutReview = merged.filter { $0.firstReviewAt == nil && config.needsReview($0.repo) }
 
         // Weekly buckets cover whole weeks, so they use the full stored range.
         let weekly = Dictionary(grouping: coverage) {

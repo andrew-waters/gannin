@@ -55,7 +55,7 @@ struct OrgSettingsView: View {
         case .repositories:
             let repos = Self.repositories(snapshot: snapshot, history: history).filter { matches($0.name) }
             Section {
-                Text("Unticked repositories are left out everywhere in \(orgName): the workload lists, People and the stats.")
+                Text("Unticked repositories are left out everywhere in \(orgName): the workload lists, People and the stats. Untick Needs Review for a repository whose PRs can merge without one (docs, config, the harness), so they aren't flagged as merged without review.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 TextField("Filter repositories", text: $search)
@@ -66,7 +66,22 @@ struct OrgSettingsView: View {
                         .foregroundStyle(.secondary)
                 }
                 ForEach(repos) { repo in
-                    Toggle(isOn: included(repo: repo.name)) {
+                    let isIncluded = !configs.config(for: org).excludedRepos.contains(repo.name)
+                    LabeledContent {
+                        HStack(spacing: 16) {
+                            Toggle("Needs Review", isOn: Binding {
+                                configs.config(for: org).needsReview(repo.name)
+                            } set: { _ in
+                                configs.toggleReview(repo.name, in: org)
+                            })
+                            .checkboxToggle()
+                            .disabled(!isIncluded)
+                            .help("Whether its PRs should have a review before they merge")
+                            Toggle("Included", isOn: included(repo: repo.name))
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                        }
+                    } label: {
                         Text(repo.name)
                         if !repo.summary.isEmpty { Text(repo.summary) }
                     }
