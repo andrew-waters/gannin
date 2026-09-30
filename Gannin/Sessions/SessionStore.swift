@@ -4,14 +4,17 @@ import Foundation
 import Observation
 import SwiftTerm
 
-/// A Claude Code session on one issue: a git worktree of the code repo on a
-/// branch of its own, inside the org's harness checkout, with claude running
-/// in a terminal inside Gannin.
+/// A Claude Code session on one issue, with claude running in a terminal
+/// inside Gannin: in the org's harness checkout, the issue having its own
+/// folder there (`.worktrees/<branch>/`) for a worktree of each repo it
+/// touches, on a branch of its own.
 struct CodeSession: Codable, Identifiable, Hashable {
     let id: UUID
     let issue: IssueReference
     /// `owner/name` of the repo the code is in, which needn't be the
-    /// issue's: an org can keep its issues in a repo of their own.
+    /// issue's: an org can keep its issues in a repo of their own. For a
+    /// session in the harness, the harness itself, and claude works out the
+    /// code repos.
     let repo: String
     /// A var so a name from an older build, with no worktree made yet, can
     /// be worked out again.
@@ -27,8 +30,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// made before they ran in the harness.
     var remoteWorkspace: String? = nil
     /// The harness it runs in: `owner/name`, and its checkout on the box the
-    /// session runs on (`~` allowed). Nil for sessions made before, whose
-    /// worktree is beside a clone in the workspace.
+    /// session runs on (`~` allowed). Nil for sessions made before, which
+    /// have one repo's worktree beside its clone in the workspace.
     var harnessRepo: String? = nil
     var harnessPath: String? = nil
     /// Its folder in the harness (`sessions/product-123`), once its brief
@@ -36,8 +39,7 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var harnessFolder: String? = nil
 
     var isRemote: Bool { connect != nil }
-    /// The code repo's name, its folder under `projects/` and in the worktree.
-    var repoName: String { repo.split(separator: "/").last.map(String.init) ?? repo }
+    var isInHarness: Bool { harnessPath != nil && harnessRepo != nil }
 
     var org: String { issue.org }
     /// Claude Code wants its session IDs in lower case.
@@ -236,25 +238,18 @@ final class SessionStore {
         sessions.values.filter { $0.org == org }.sorted { $0.createdAt > $1.createdAt }
     }
 
-    /// Repos the org's sessions have worked in, most recent first.
-    func recentRepos(for org: String) -> [String] {
-        var seen: Set<String> = []
-        return sessions(for: org).map(\.repo).filter { seen.insert($0).inserted }
-    }
-
     func session(forIssue id: String) -> CodeSession? {
         sessions.values.first { $0.issue.id == id }
     }
 
     func state(_ id: UUID) -> SessionState { states[id] ?? .stopped }
 
-    /// The issue's session, made in `repo` inside the harness checkout at
-    /// `harnessPath` if it has none, with its brief written afresh from what
-    /// Gannin knows now.
-    func start(_ issue: IssueReference, in repo: String, harness: HarnessConfig, harnessPath: String, brief: (CodeSession) -> String) -> CodeSession {
+    /// The issue's session, made in the harness checkout at `harnessPath` if
+    /// it has none, with its brief written afresh from what Gannin knows now.
+    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, brief: (CodeSession) -> String) -> CodeSession {
         let session = session(forIssue: issue.id)
             ?? CodeSession(
-                id: UUID(), issue: issue, repo: repo, branch: Self.branchName(issue), createdAt: .now,
+                id: UUID(), issue: issue, repo: harness.repo, branch: Self.branchName(issue), createdAt: .now,
                 connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath
             )
         sessions[session.id] = session
@@ -283,13 +278,13 @@ final class SessionStore {
         let brief = (try? String(contentsOf: Self.directory(for: id).appending(path: "brief.md"), encoding: .utf8)) ?? ""
         let record = SessionRecord(
             issue: session.issue.reference, title: session.issue.title, url: session.issue.url,
-            repos: [session.repo], branch: session.branch, startedBy: startedBy, startedAt: session.createdAt,
+            repos: session.isInHarness ? [] : [session.repo], branch: session.branch, startedBy: startedBy, startedAt: session.createdAt,
             box: session.connect ?? (Host.current().localizedName ?? "Mac"), pullRequests: session.pullRequest.map { [$0] } ?? []
         )
         do {
             try await harness.commit(org: session.org, setup: HarnessConfig(repo: repo), refreshing: false) { _ in
                 HarnessChange(
-                    message: "Gannin: session on \(session.issue.reference)\n\n\(session.issue.title), in \(session.repo) on \(session.branch).",
+                    message: "Gannin: session on \(session.issue.reference)\n\n\(session.issue.title), on \(session.branch).",
                     files: ["\(folder)/brief.md": brief, "\(folder)/session.json": record.json]
                 )
             }
@@ -483,12 +478,13 @@ final class SessionStore {
         URL(filePath: (path as NSString).expandingTildeInPath, directoryHint: .isDirectory)
     }
 
-    /// Where the session's worktree is on its box, as a path there: in the
-    /// harness, `<harness>/.worktrees/<branch>/<name>`; before that, beside
-    /// the clone, `<workspace>/<owner>/<name>.worktrees/<branch>`.
+    /// Where the session's work is on its box, as a path there: in the
+    /// harness, the issue's folder `<harness>/.worktrees/<branch>`, holding a
+    /// worktree per repo; before that, one repo's worktree beside its clone,
+    /// `<workspace>/<owner>/<name>.worktrees/<branch>`.
     static func worktreePath(for session: CodeSession) -> String {
         if let harness = session.harnessPath {
-            return "\(harness)/.worktrees/\(session.branch)/\(session.repoName)"
+            return "\(harness)/.worktrees/\(session.branch)"
         }
         let workspace = session.remoteWorkspace ?? (UserDefaults.standard.string(forKey: workspaceKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultWorkspace)
         return "\(workspace)/\(session.repo).worktrees/\(session.branch)"

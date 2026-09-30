@@ -10,113 +10,125 @@ enum SessionScript {
     /// state files can't be read.
     static let signalCode = 7777
 
-    /// The bash script a session runs. In the harness: clone it if it isn't
-    /// there, else pull it (fast-forward only, carrying on if it can't),
-    /// clone the code repo into its `projects/` if it isn't yet (or use one
-    /// a folder down, as `projects/v2/<name>`), and add the worktree at
-    /// `.worktrees/<branch>/<name>` on the session's branch (the local
-    /// branch, else origin's, else a new one from origin's default branch),
-    /// with `projects/` and `.worktrees/` kept out of the harness's git.
-    /// Sessions from before the harness keep their clone in the workspace and
-    /// the worktree beside it. Then copy the brief and settings into
-    /// `.gannin/` (excluded from git) and start claude, or resume it once it
-    /// has had a prompt. A shell stays open in the worktree after claude
-    /// exits, or in the harness (or the repo's folder) if a step fails.
-    ///
-    /// `root` is the harness checkout, or for older sessions the workspace,
-    /// as a shell expression.
+    /// The bash script a session runs: claude starts, or resumes once it has
+    /// had a prompt, with a shell left open after it exits (or if a step
+    /// fails). `root` is the harness checkout, or for older sessions the
+    /// workspace, as a shell expression.
     static func start(_ session: CodeSession, root: String, directory: String) -> String {
+        session.isInHarness ? harnessStart(session, harness: root, directory: directory) : repoStart(session, root: root, directory: directory)
+    }
+
+    /// In the harness: clone it if it isn't there, else pull it
+    /// (fast-forward only, carrying on if it can't), with `projects/` and
+    /// `.worktrees/` kept out of its git. The issue gets its folder,
+    /// `.worktrees/<branch>/`, with the brief and settings in its `.gannin/`,
+    /// and claude runs in the harness itself, adding a worktree there for
+    /// each repo the issue touches.
+    private static func harnessStart(_ session: CodeSession, harness: String, directory: String) -> String {
+        let issue = session.issue
+        let folder = ".worktrees/\(session.branch)"
+        let prompt = """
+            You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
+            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos under projects/ \
+            it touches and look through their code, then propose a plan before changing anything. Make the changes in a worktree \
+            per repo under \(folder)/, as the brief says, never in projects/.
+            """
+        // A server session's brief comes from the harness once it's there.
+        let briefSource = session.harnessFolder.map { recorded in
+            #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(recorded) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Restart."\#n"#
+        } ?? ""
+        return """
+            # Written by Gannin for \(issue.reference). Run in the session's terminal.
+            session=\(directory)
+            harness=\(harness)
+            harness_repo=\(quoted(session.harnessRepo ?? session.repo))
+            id=\(quoted(session.claudeID))
+            folder="$harness"/\(quoted(folder))
+
+            note() { printf '\\033[90m%s\\033[0m\\n' "$1"; }
+            warn() { printf '\\033[33mGannin: %s\\033[0m\\n' "$1"; }
+            fail() {
+              printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
+              if [ -d "$harness" ]; then cd "$harness"; else cd; fi
+              exec "${SHELL:-bash}" -l
+            }
+
+            if [ ! -e "$harness/.git" ]; then
+              note "Cloning the harness, $harness_repo, into $harness"
+              mkdir -p "$(dirname "$harness")"
+              if command -v gh >/dev/null 2>&1; then
+                gh repo clone "$harness_repo" "$harness" || fail "Couldn't clone the harness, $harness_repo."
+              else
+                git clone "https://github.com/$harness_repo.git" "$harness" || fail "Couldn't clone the harness, $harness_repo."
+              fi
+            else
+              note "Updating the harness"
+              git -C "$harness" pull --ff-only --quiet || warn "Couldn't fast-forward the harness, so it's as it was. Pull it when you can."
+            fi
+            exclude="$(git -C "$harness" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+            mkdir -p "$(dirname "$exclude")"
+            for kept in projects .worktrees; do
+              git -C "$harness" check-ignore -q "$kept/x" || echo "/$kept/" >> "$exclude"
+            done
+
+            mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
+            \(briefSource)cp "$session/brief.md" "$session/settings.json" "$folder/.gannin/"
+            cd "$harness" || fail "The harness isn't there."
+
+            command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
+            if [ -e "$session/started" ]; then
+              claude --resume "$id" --settings "$folder/.gannin/settings.json"
+            else
+              claude --session-id "$id" --settings "$folder/.gannin/settings.json" \(quoted(prompt))
+            fi
+            printf exited > "$session/state"
+            printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
+            note "Claude Code has exited. This shell is in the harness; run claude --resume $id to go on."
+            exec "${SHELL:-bash}" -l
+            """
+    }
+
+    /// Sessions from before the harness: clone the repo into the workspace
+    /// if it isn't yet, add the worktree beside it on the session's branch
+    /// (the local branch, else origin's, else a new one from origin's
+    /// default branch), copy the brief and settings into its `.gannin/`
+    /// (excluded from git), and run claude there.
+    private static func repoStart(_ session: CodeSession, root: String, directory: String) -> String {
         let issue = session.issue
         let prompt = """
             You're picking up \(issue.reference), "\(issue.title)", in \(session.repo). Read .gannin/brief.md first: it has the \
             issue, its discussion, where it sits on the board and any plans for it. Then look through the code and propose a plan \
             before changing anything.
             """
-        let places: String
-        let prepare: String
-        let addDir: String
-        // A server session's brief comes from the harness once it's there.
-        let briefSource = session.harnessFolder.map { folder in
-            #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(folder) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Restart."\#n"#
-        } ?? ""
-        if let harnessRepo = session.harnessRepo, session.harnessPath != nil {
-            places = """
-                harness=\(root)
-                harness_repo=\(quoted(harnessRepo))
-                name=\(quoted(session.repoName))
-                clone="$harness/projects/$name"
-                worktree="$harness/.worktrees/$branch/$name"
-                home="$harness"
-                """
-            prepare = """
-                if [ ! -e "$harness/.git" ]; then
-                  note "Cloning the harness, $harness_repo, into $harness"
-                  clone_repo "$harness_repo" "$harness" || fail "Couldn't clone the harness, $harness_repo."
-                else
-                  note "Updating the harness"
-                  git -C "$harness" pull --ff-only --quiet || warn "Couldn't fast-forward the harness, so it's as it was. Pull it when you can."
-                fi
-                harness_exclude="$(git -C "$harness" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
-                mkdir -p "$(dirname "$harness_exclude")"
-                for kept in projects .worktrees; do
-                  git -C "$harness" check-ignore -q "$kept/x" || echo "/$kept/" >> "$harness_exclude"
-                done
-                if [ ! -e "$clone/.git" ]; then
-                  for found in "$harness"/projects/*/"$name"; do
-                    if [ -e "$found/.git" ]; then clone="$found"; break; fi
-                  done
-                fi
-
-                """
-            addDir = #" --add-dir "$harness""#
-        } else {
-            places = """
-                clone=\(root)/"$repo"
-                worktree="$clone.worktrees/$branch"
-                home="$(dirname "$clone")"
-                """
-            prepare = ""
-            addDir = ""
-        }
         return """
             # Written by Gannin for \(issue.reference). Run in the session's terminal.
             session=\(directory)
             repo=\(quoted(session.repo))
             branch=\(quoted(session.branch))
             id=\(quoted(session.claudeID))
-            \(places)
+            clone=\(root)/"$repo"
+            worktree="$clone.worktrees/$branch"
 
             note() { printf '\\033[90m%s\\033[0m\\n' "$1"; }
-            warn() { printf '\\033[33mGannin: %s\\033[0m\\n' "$1"; }
             fail() {
               printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
-              if [ -d "$home" ]; then cd "$home"; else cd; fi
+              mkdir -p "$(dirname "$clone")" && cd "$(dirname "$clone")"
               exec "${SHELL:-bash}" -l
             }
-            clone_repo() {
-              mkdir -p "$(dirname "$2")"
-              if command -v gh >/dev/null 2>&1; then
-                gh repo clone "$1" "$2"
-              else
-                git clone "https://github.com/$1.git" "$2"
-              fi
-            }
 
-            \(prepare)if [ ! -e "$clone/.git" ]; then
+            if [ ! -d "$clone/.git" ]; then
               note "Cloning $repo into $clone"
-              clone_repo "$repo" "$clone" || fail "Couldn't clone $repo."
+              mkdir -p "$(dirname "$clone")"
+              if command -v gh >/dev/null 2>&1; then
+                gh repo clone "$repo" "$clone" || fail "Couldn't clone $repo."
+              else
+                git clone "https://github.com/$repo.git" "$clone" || fail "Couldn't clone $repo."
+              fi
             fi
 
-            if git -C "$clone" fetch --quiet origin; then
-              fetched=1
-            else
-              fetched=
-              warn "Couldn't fetch $repo."
-            fi
             if [ ! -d "$worktree" ]; then
-              [ -n "$fetched" ] || fail "Can't make the worktree without fetching $repo."
               note "Making a worktree for $branch"
-              mkdir -p "$(dirname "$worktree")"
+              git -C "$clone" fetch --quiet origin || fail "Couldn't fetch $repo."
               base=$(git -C "$clone" symbolic-ref --quiet --short refs/remotes/origin/HEAD) || base=origin/main
               if git -C "$clone" show-ref --verify --quiet "refs/heads/$branch"; then
                 git -C "$clone" worktree add "$worktree" "$branch" || fail "Couldn't make the worktree."
@@ -129,16 +141,16 @@ enum SessionScript {
 
             cd "$worktree" || fail "The worktree isn't there."
             mkdir -p .gannin
-            \(briefSource)cp "$session/brief.md" "$session/settings.json" .gannin/
+            cp "$session/brief.md" "$session/settings.json" .gannin/
             exclude="$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
             mkdir -p "$(dirname "$exclude")"
             grep -qx '.gannin/' "$exclude" 2>/dev/null || echo '.gannin/' >> "$exclude"
 
             command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
             if [ -e "$session/started" ]; then
-              claude --resume "$id" --settings .gannin/settings.json\(addDir)
+              claude --resume "$id" --settings .gannin/settings.json
             else
-              claude --session-id "$id" --settings .gannin/settings.json\(addDir) \(quoted(prompt))
+              claude --session-id "$id" --settings .gannin/settings.json \(quoted(prompt))
             fi
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
@@ -294,29 +306,52 @@ enum SessionBrief {
         }
 
         var working = ["## Working here", ""]
-        if let harnessPath = session.harnessPath, let harnessRepo = session.harnessRepo {
+        if session.isInHarness, let harnessPath = session.harnessPath, let harnessRepo = session.harnessRepo {
+            let folder = ".worktrees/\(session.branch)"
+            // Where linked PRs were opened: likely where the code is.
+            var seen: Set<String> = []
+            let linkedRepos = (record?.linkedPullRequests ?? []).compactMap { pr -> String? in
+                let parts = pr.url.pathComponents.filter { $0 != "/" }
+                return parts.count >= 2 ? "\(parts[0])/\(parts[1])" : nil
+            }
+            .filter { seen.insert($0).inserted }
             working += [
-                "- This folder is a git worktree of \(session.repo) on branch `\(session.branch)`, made from origin's default branch. It sits in the team's harness, \(harnessRepo), checked out at `\(harnessPath)`: the worktree is `.worktrees/\(session.branch)/\(session.repoName)` there, and `projects/\(session.repoName)` stays on the default branch as the shared clone. The harness's CLAUDE.md is loaded as well as this repo's.",
-                "- If the work spans another repo, add its worktree beside this one: `git -C <harness>/projects/<name> worktree add <harness>/.worktrees/\(session.branch)/<name> -b \(session.branch)` (clone it into `projects/` first if it isn't there).",
+                "- You're in the team's harness, \(harnessRepo), checked out at `\(harnessPath)`. Its CLAUDE.md lists the projects and how work goes here.",
+                "- The code repos are shared clones under `projects/<name>` (some a folder further down, as `projects/v2/<name>`), kept on their default branch. Don't work in them. This issue's folder is `\(folder)/`: give each repo it touches a worktree there, on the branch `\(session.branch)`, from the harness root:",
+                "",
+                "  ```bash",
+                "  git -C projects/<name> fetch origin",
+                "  git -C projects/<name> worktree add \"$PWD/\(folder)/<name>\" -b \(session.branch) origin/HEAD",
+                "  ```",
+                "",
+                "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
+            ]
+            if !linkedRepos.isEmpty {
+                working.append("- The issue's linked pull requests are in \(linkedRepos.map { "`\($0)`" }.joined(separator: ", ")), so start there.")
+            }
+            if reference.repo != harnessRepo {
+                working.append("- The issue lives in \(reference.repo).")
+            }
+            working += [
+                "- Commit in each worktree, and open a pull request per repo with `gh pr create`, putting \"Closes \(reference.reference)\" in its body so it links to the issue.",
+                "- A plan for this issue goes in the harness under `requirements/<module>/plans/`, with `| GitHub | \(reference.reference) |` in its header table so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land.",
+                "- `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` and `projects/` are kept out of the harness's git.",
+                "",
             ]
         } else {
             working.append("- This folder is a git worktree of \(session.repo) on branch `\(session.branch)`, made from origin's default branch.")
+            if session.repo != reference.repo {
+                working.append("- The issue lives in \(reference.repo), which holds issues rather than code.")
+            }
+            working.append("- When the change is ready, open a pull request with `gh pr create` and put \"Closes \(session.closingReference)\" in its body so it links to the issue.")
+            if let harness {
+                working.append("- A plan's checkboxes are ticked off as its tasks land. The plan is in \(harness.repo), not this worktree.")
+            }
+            working += [
+                "- `.gannin/` is Gannin's (this brief and the session's hooks) and is excluded from git.",
+                "",
+            ]
         }
-        if session.repo != reference.repo {
-            working.append("- The issue lives in \(reference.repo), which holds issues rather than code.")
-        }
-        working += [
-            "- When the change is ready, open a pull request with `gh pr create` and put \"Closes \(session.closingReference)\" in its body so it links to the issue.",
-        ]
-        if session.harnessPath != nil {
-            working.append("- A plan for this issue goes in the harness under `requirements/<module>/plans/`, with `| GitHub | \(reference.reference) |` in its header table so Gannin links it to the issue. Commit and push it in the harness checkout (not this worktree), and tick its checkboxes off as tasks land.")
-        } else if let harness {
-            working.append("- A plan's checkboxes are ticked off as its tasks land. The plan is in \(harness.repo), not this worktree.")
-        }
-        working += [
-            "- `.gannin/` is Gannin's (this brief and the session's hooks) and is excluded from git.",
-            "",
-        ]
         lines += working
         return lines.joined(separator: "\n")
     }

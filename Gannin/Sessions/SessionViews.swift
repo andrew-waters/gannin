@@ -111,7 +111,7 @@ private struct SessionPanel: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
-                LabeledContent(session.isRemote ? "Worktree on the server" : "Worktree") {
+                LabeledContent(session.isInHarness ? (session.isRemote ? "Folder on the server" : "Folder") : (session.isRemote ? "Worktree on the server" : "Worktree")) {
                     Text(worktreePath)
                         .font(.callout.monospaced())
                         .textSelection(.enabled)
@@ -166,28 +166,25 @@ private struct SessionPanel: View {
         .confirmationDialog("Remove this session?", isPresented: $confirmingRemove) {
             Button("Remove Session", role: .destructive) { sessions.remove(session.id) }
         } message: {
-            Text("Claude is ended and Gannin forgets the session. The worktree stays at \(worktreePath)\(session.isRemote ? " on the server" : "") for you to remove with git worktree remove.")
+            Text("Claude is ended and Gannin forgets the session. \(session.isInHarness ? "Its folder and worktrees stay" : "The worktree stays") at \(worktreePath)\(session.isRemote ? " on the server" : "") for you to remove with git worktree remove.")
         }
     }
 }
 
-/// Work on This: make (or open) the issue's session, in a code repo picked
-/// from the org's (those with PRs, so not an issues-only repo), with a brief
-/// written from what Gannin knows about the issue and its plans now.
+/// Work on This: make (or open) the issue's session in the org's harness,
+/// with a brief written from what Gannin knows about the issue and its plans
+/// now. Claude works out which repos it touches.
 struct StartSessionButton: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(IssueStore.self) private var issues
     @Environment(DetailStore.self) private var details
-    @Environment(OrgStore.self) private var orgs
-    @Environment(MetricsStore.self) private var metrics
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HarnessStore.self) private var harness
     @Environment(AuthStore.self) private var auth
     @Environment(\.openWindow) private var openWindow
     let reference: IssueReference
-    @State private var isPicking = false
-    /// The repo picked, while the harness commit is confirmed.
-    @State private var confirming: String?
+    /// While the harness commit is confirmed.
+    @State private var confirming = false
     @AppStorage private var recordWithoutAsking: Bool
 
     init(reference: IssueReference) {
@@ -204,40 +201,22 @@ struct StartSessionButton: View {
             }
             .help("Show this issue's Claude Code session, in \(existing.repo)")
         } else {
-            let (suggested, others) = repositories
             let blocked = unavailable
             Button {
-                isPicking = true
+                if recordWithoutAsking { start(recording: true) } else { confirming = true }
             } label: {
                 Label("Work on This", systemImage: "terminal")
             }
             .disabled(blocked != nil)
-            .help(blocked ?? "Work on this issue with Claude Code in the harness: pick the repository the code is in")
-            .popover(isPresented: $isPicking, arrowEdge: .bottom) {
-                // The top suggestion is highlighted, so Return starts there.
-                SearchableList(
-                    choices: suggested.map { SearchableChoice(value: $0, title: $0, section: "Suggested") }
-                        + others.map { SearchableChoice(value: $0, title: $0, section: suggested.isEmpty ? "Repositories" : "Other Repositories") },
-                    selection: nil,
-                    prompt: "Search repositories"
-                ) { repo in
-                    isPicking = false
-                    guard let repo else { return }
-                    if recordWithoutAsking { start(in: repo, recording: true) } else { confirming = repo }
-                }
-            }
-            .confirmationDialog(
-                "Record this session in the harness?",
-                isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
-                presenting: confirming
-            ) { repo in
-                Button("Commit to Harness") { start(in: repo, recording: true) }
+            .help(blocked ?? "Work on this issue with Claude Code, in the org's harness")
+            .confirmationDialog("Record this session in the harness?", isPresented: $confirming) {
+                Button("Commit to Harness") { start(recording: true) }
                 Button("Don't Record") {
                     recordWithoutAsking = false
-                    start(in: repo, recording: false)
+                    start(recording: false)
                 }
                 Button("Cancel", role: .cancel) { recordWithoutAsking = false }
-            } message: { _ in
+            } message: {
                 let harnessRepo = configs.config(for: reference.org).harness?.repo ?? "the harness"
                 Text("Gannin commits \(SessionStore.harnessFolder(for: reference))/brief.md and session.json to \(harnessRepo), on its default branch, so the team can see the session and any box can start it. When Claude opens a pull request, it's added to session.json.")
             }
@@ -257,28 +236,7 @@ struct StartSessionButton: View {
         return nil
     }
 
-    /// Suggested: where the issue's linked PRs were opened, then repos the
-    /// org's sessions have used. Others: every repo with PRs, less excluded
-    /// ones and the harness.
-    private var repositories: (suggested: [String], others: [String]) {
-        let config = configs.config(for: reference.org)
-        let code = OrgSettingsView.repositories(snapshot: orgs.snapshot(for: reference.org), history: metrics.history(for: reference.org))
-            .filter { $0.openPullRequests + $0.merged > 0 }
-            .map(\.name)
-            .filter { !config.excludedRepos.contains($0) && $0 != config.harness?.repo }
-        let linked = (issues.history(for: reference.org)?.issues[reference.id]?.linkedPullRequests ?? [])
-            .compactMap { pr -> String? in
-                let parts = pr.url.pathComponents.filter { $0 != "/" }
-                return parts.count >= 2 ? "\(parts[0])/\(parts[1])" : nil
-            }
-        var seen: Set<String> = []
-        let suggested = (linked + sessions.recentRepos(for: reference.org).filter(code.contains))
-            .filter { seen.insert($0).inserted }
-            .prefix(3)
-        return (Array(suggested), code.filter { !suggested.contains($0) })
-    }
-
-    private func start(in repo: String, recording: Bool) {
+    private func start(recording: Bool) {
         let history = issues.history(for: reference.org)
         let record = history?.issues[reference.id]
         let parent = record?.parentID.flatMap { history?.issues[$0] }
@@ -286,7 +244,7 @@ struct StartSessionButton: View {
         guard let setup = configs.config(for: reference.org).harness,
               let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return }
         let index = harness.index(for: reference.org, setup)
-        let session = sessions.start(reference, in: repo, harness: setup, harnessPath: path) { session in
+        let session = sessions.start(reference, harness: setup, harnessPath: path) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index)
         }
         guard recording else {
