@@ -393,7 +393,7 @@ private struct FlowLegend<Content: View>: View {
     }
 }
 
-struct FlowLayout: Layout {
+private struct FlowLayout: Layout {
     let spacing: CGFloat
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {

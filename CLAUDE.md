@@ -471,14 +471,13 @@ added, removed or created, and the tracked board field set), and commits to the 
   storage the Harness page reads; the Harness row itself shows the kind last picked.
 - The Harness page lists only documents that follow the standard (`followsStandard`: front
   matter with a summary); older ones are counted at the end, with Show Them
-  (`harnessShowsOlder`). A document's page (`HarnessDocumentPage`) is the text in a reading
-  column about 70 characters wide (kind, status and tasks with the reading controls, title,
-  summary, then the Markdown in `MarkdownText`'s reading style: a larger body with room between
-  lines, a heading scale, nested lists with hanging indents, code that scrolls, and `##`
-  sections that fold), with a Contents menu to jump to a heading or fold every section and text
-  size buttons (⌘− and ⌘+, `harnessReadingSize`). The details sit beside it, or folded above it
-  when narrow: status, date and tasks, the issues it's about, its requirement, what it
-  depends on, branch, owner, domains, touches, mentions and the file. Issues named in the text
+  (`harnessShowsOlder`). A document's page (`HarnessDocumentPage`, also its drawer, with Done) is laid out as the
+  issue drawer: a header (title, status, kind, the file, Contents, text size, Open as Page and
+  Open in Window, and facts: tasks, date, owner, branch, domains), then a grouped Form of the
+  summary and a section per `##` heading (`HarnessDocumentSection`, each folding from its
+  header, Contents jumping between them), in `MarkdownText`'s reading style, beside a Form of
+  the issues it's about, its requirement and what it depends on, touches, mentions and the
+  file; one Form when narrow. Issues named in the text
   (`owner/repo#123`, `#123`, `PRD-123`) become `gannin-issue:` links (`linkedBody`) that open in
   a drawer, and relative links to other documents open theirs.
 - The Harness page (sidebar, once set) lists plans, requirements, findings or skills by module

@@ -788,6 +788,10 @@ private struct PageStack: View {
                 let signals = history?.issues[reference.id].map { FieldContext(board: workflow.projectNumber, workflow: workflow, history: history).signals($0) }
                 IssueSheet(reference: reference, signals: signals, isWide: isWide) { drawers = [] }
                     .id(reference.id)
+            } else if case .harnessDocument(let path) = item {
+                // Its own header, as an issue's.
+                HarnessDocumentPage(org: org, path: path) { drawers = [] }
+                    .id(path)
             } else {
                 HStack(spacing: 10) {
                     Spacer()

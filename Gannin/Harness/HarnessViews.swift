@@ -279,266 +279,311 @@ enum IssueStateDot {
 // MARK: - A document
 
 /// One harness document: what it's about, then the document itself.
+/// A harness document as the issue drawer shows an issue: a header with its
+/// title, status and facts, then its text as sections (one per `##`
+/// heading, each folding, with Contents to jump between them) beside a
+/// column of what it's about and where it lives; one column when narrow.
+/// Also the page Open as Page pushes, where `onClose` is nil.
 struct HarnessDocumentPage: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
+    @Environment(OrgStore.self) private var orgs
     @Environment(\.navigate) private var navigate
+    @Environment(\.openAsPage) private var openAsPage
+    @Environment(\.openElsewhere) private var openElsewhere
     @Environment(\.openURL) private var openURL
     let org: String
     let path: String
-    @State private var width: CGFloat = 1000
-    /// Folded sections, by heading.
-    @State private var collapsed: Set<Int> = []
-    /// The body's size, as Reader's ⌘+ and ⌘− set it.
-    @AppStorage("harnessReadingSize") private var size: Double = 15
-    @AppStorage("harnessShowsDetails") private var showsDetails = false
+    var onClose: (() -> Void)? = nil
 
-    private static let sizes: ClosedRange<Double> = 12...22
+    @State private var width: CGFloat = 1000
+    /// Folded sections, by index.
+    @State private var folded: Set<Int> = []
+    @AppStorage("harnessReadingSize") private var size: Double = 14
+
+    private static let sizes: ClosedRange<Double> = 11...20
 
     var body: some View {
         let setup = configs.config(for: org).harness
         Group {
             if let setup, let index = harness.index(for: org, setup), let document = index.document(at: path) {
                 let lookup = IssueLookup(history: issueStore.history(for: org))
-                let source = document.linkedBody(issuesRepo: index.issuesRepo)
-                // About 70 characters a line, as Reader keeps it.
-                let measure = size * 44
+                let sections = HarnessDocumentSection.split(document.linkedBody(issuesRepo: index.issuesRepo))
                 ScrollViewReader { proxy in
-                    ScrollView {
-                        // The details beside the text when there's room, folded above it when not.
-                        if width >= measure + 360 {
-                            HStack(alignment: .top, spacing: 36) {
-                                text(document, source: source, proxy: proxy)
-                                    .frame(maxWidth: measure, alignment: .leading)
-                                details(document, index: index, lookup: lookup)
-                                    .frame(width: 260, alignment: .leading)
-                            }
-                            .padding(.horizontal, 40)
-                            .padding(.vertical, 28)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        } else {
-                            VStack(alignment: .leading, spacing: 18) {
-                                heading(document, source: source, proxy: proxy)
-                                DisclosureGroup("Details", isExpanded: $showsDetails) {
-                                    details(document, index: index, lookup: lookup)
-                                        .padding(.top, 8)
-                                }
-                                .font(.callout)
+                    VStack(spacing: 0) {
+                        header(document, index: index, sections: sections, proxy: proxy)
+                        Divider()
+                        if width >= 900 {
+                            HStack(spacing: 0) {
+                                Form { textSections(document, sections: sections) }
+                                    .formStyle(.grouped)
+                                    .frame(minWidth: 480, maxWidth: .infinity)
                                 Divider()
-                                markdown(source)
+                                Form { detailSections(document, index: index, lookup: lookup) }
+                                    .formStyle(.grouped)
+                                    .frame(width: 340)
                             }
-                            .padding(.horizontal, 40)
-                            .padding(.vertical, 24)
-                            .frame(maxWidth: measure + 80, alignment: .leading)
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Form {
+                                textSections(document, sections: sections)
+                                detailSections(document, index: index, lookup: lookup)
+                            }
+                            .formStyle(.grouped)
                         }
                     }
                 }
-                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
                 .environment(\.openURL, OpenURLAction { url in open(url, document: document, index: index, lookup: lookup) })
             } else {
                 ContentUnavailableView("Not in the harness", systemImage: "doc.questionmark", description: Text("\(path) isn't in the harness as last fetched."))
             }
         }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
         .loadsHarness(org: org)
     }
 
-    /// Kind, title and summary, then the document.
-    private func text(_ document: HarnessDocument, source: String, proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: 22) {
-            heading(document, source: source, proxy: proxy)
-            Divider()
-            markdown(source)
-        }
-    }
+    // MARK: Header
 
-    private func markdown(_ source: String) -> some View {
-        MarkdownText(source: source, reflows: true, reading: size, collapsed: $collapsed)
-    }
-
-    /// The kind, with the reading controls (contents, fold, text size), then
-    /// the title and summary.
-    private func heading(_ document: HarnessDocument, source: String, proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+    private func header(_ document: HarnessDocument, index: HarnessIndex, sections: [HarnessDocumentSection], proxy: ScrollViewProxy) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top) {
+                Text(document.title)
+                    .font(.title2.weight(.semibold))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 12)
+                if let onClose {
+                    Button("Done", action: onClose)
+                        .keyboardShortcut(.cancelAction)
+                        .help("Close (Esc)")
+                }
+            }
             HStack(spacing: 10) {
+                Pill(text: document.statusLabel ?? "No status", color: .secondary)
+                    .help(document.status ?? "No status")
                 Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
                     .foregroundStyle(.secondary)
-                if let status = document.statusLabel {
-                    Pill(text: status, color: .secondary).help(document.status ?? status)
-                }
-                if document.tasks > 0 {
-                    Gauge(value: Double(document.tasksDone), in: 0...Double(document.tasks)) { EmptyView() }
-                        .gaugeStyle(.accessoryCircularCapacity)
-                        .scaleEffect(0.45)
-                        .frame(width: 20, height: 20)
-                    Text(verbatim: "\(document.tasksDone) of \(document.tasks) tasks")
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-                Spacer(minLength: 8)
-                readingControls(source: source, proxy: proxy)
-            }
-            .font(.callout)
-            Text(document.title)
-                .font(.system(size: size * 1.9, weight: .bold))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
-            if let summary = document.summary {
-                Text(summary)
-                    .font(.system(size: size * 1.12))
-                    .lineSpacing(size * 0.25)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-    }
-
-    /// Contents (jump to a heading), Fold or Show All, and text size.
-    private func readingControls(source: String, proxy: ScrollViewProxy) -> some View {
-        let outline = MarkdownText.outline(source, reflows: true)
-        let foldable = MarkdownText.foldable(source, reflows: true)
-        return HStack(spacing: 4) {
-            if !outline.isEmpty {
-                Menu {
-                    ForEach(outline, id: \.index) { heading in
-                        Button(String(repeating: "    ", count: max(0, heading.level - 2)) + heading.text) {
-                            // Open the section it's in, then go there.
-                            if let section = MarkdownText.section(containing: heading.index, source, reflows: true) {
-                                collapsed.remove(section)
-                            }
-                            withAnimation { proxy.scrollTo(MarkdownText.anchor(heading.index), anchor: .top) }
-                        }
-                    }
-                    if !foldable.isEmpty {
-                        Divider()
-                        Button("Fold All Sections") { withAnimation(.snappy(duration: 0.2)) { collapsed = Set(foldable) } }
-                        Button("Show All Sections") { withAnimation(.snappy(duration: 0.2)) { collapsed = [] } }
-                    }
-                } label: {
-                    Label("Contents", systemImage: "list.bullet.indent")
-                }
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Go to a section")
-            }
-            ControlGroup {
-                Button { size = max(Self.sizes.lowerBound, size - 1) } label: {
-                    Label("Smaller", systemImage: "textformat.size.smaller")
-                }
-                .keyboardShortcut("-", modifiers: .command)
-                .disabled(size <= Self.sizes.lowerBound)
-                .help("Make the text smaller (⌘−)")
-                Button { size = min(Self.sizes.upperBound, size + 1) } label: {
-                    Label("Bigger", systemImage: "textformat.size.larger")
-                }
-                .keyboardShortcut("+", modifiers: .command)
-                .disabled(size >= Self.sizes.upperBound)
-                .help("Make the text bigger (⌘+)")
-            }
-            .fixedSize()
-        }
-        .labelStyle(.iconOnly)
-        .controlSize(.small)
-    }
-
-    /// As GitHub's column beside an issue: status and progress, the issues
-    /// it's about and mentions, what it depends on, and where it lives.
-    private func details(_ document: HarnessDocument, index: HarnessIndex, lookup: IssueLookup) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            detail("Status") {
-                HStack(spacing: 8) {
-                    Pill(text: document.statusLabel ?? "No status", color: .secondary)
-                        .help(document.status ?? "No status")
-                    if let date = document.date {
-                        Text(date.formatted(date: .abbreviated, time: .omitted)).foregroundStyle(.secondary)
-                    }
-                }
-                if document.tasks > 0 {
-                    HStack(spacing: 8) {
-                        ProgressView(value: Double(document.tasksDone), total: Double(document.tasks))
-                        Text(verbatim: "\(document.tasksDone) of \(document.tasks)")
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                }
-            }
-            let subjects = document.references.filter(\.isSubject)
-            let mentions = document.references.filter { !$0.isSubject }
-            if !subjects.isEmpty {
-                detail("Issues") { HarnessIssueList(org: org, index: index, references: subjects, lookup: lookup) }
-            }
-            if let requirement = document.requirement {
-                detail("Requirement") { documentLink(requirement, index: index) }
-            }
-            if let dependsOn = document.dependsOn, !dependsOn.isEmpty {
-                detail("Depends on") {
-                    ForEach(dependsOn, id: \.self) { item in
-                        if item.hasSuffix(".md") {
-                            documentLink(item, index: index)
-                        } else {
-                            HarnessIssueList(org: org, index: index, references: HarnessDocument.references(in: item, isSubject: false), lookup: lookup)
-                        }
-                    }
-                }
-            }
-            if let branch = document.branch {
-                detail("Branch") {
-                    Text(branch).font(.callout.monospaced()).textSelection(.enabled)
-                }
-            }
-            if let owner = document.owner {
-                detail("Owner") { Text("@\(owner)") }
-            }
-            if let domains = document.domains, !domains.isEmpty {
-                detail("Domains") {
-                    FlowChips(items: domains.map(HarnessView.prettify))
-                }
-            }
-            if let touches = document.touches, !touches.isEmpty {
-                detail("Touches") {
-                    ForEach(touches, id: \.self) { item in
-                        Text(item)
-                            .font(.callout.monospaced())
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .help(item)
-                    }
-                }
-            }
-            if !mentions.isEmpty {
-                detail("Mentions") { HarnessIssueList(org: org, index: index, references: mentions, lookup: lookup) }
-            }
-            detail("File") {
-                Text(document.path)
-                    .font(.caption.monospaced())
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
                 if let url = index.url(for: document) {
                     Link(destination: url) {
-                        Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                        Text(document.fileName).lineLimit(1).truncationMode(.middle)
                     }
-                    .font(.callout)
+                    .help("\(document.path) on GitHub")
                 }
-                if !document.followsStandard {
-                    Text("Written before the harness's STANDARDS.md, so it has no front matter yet.")
-                        .font(.caption)
-                        .foregroundStyle(.orange)
-                        .fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                contents(sections, proxy: proxy)
+                textSize
+                if onClose != nil, let openAsPage {
+                    Button("Open as Page") {
+                        onClose?()
+                        openAsPage(.harnessDocument(document.path))
+                    }
+                }
+                if let openElsewhere {
+                    Button("Open in Window") {
+                        onClose?()
+                        openElsewhere.open(.harnessDocument(document.path), .window)
+                    }
+                }
+            }
+            facts(document)
+        }
+        .padding(20)
+    }
+
+    private func facts(_ document: HarnessDocument) -> some View {
+        LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 16, alignment: .topLeading)], alignment: .leading, spacing: 10) {
+            if document.tasks > 0 {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Tasks").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        ProgressView(value: Double(document.tasksDone), total: Double(document.tasks))
+                            .frame(width: 60)
+                        Text(verbatim: "\(document.tasksDone) of \(document.tasks)").monospacedDigit()
+                    }
+                }
+            }
+            if let date = document.date { fact("Date", date.formatted(date: .abbreviated, time: .omitted)) }
+            if let owner = document.owner {
+                let person = orgs.snapshot(for: org)?.members.first { $0.login == owner }
+                    ?? Person(login: owner, name: nil, avatarUrl: URL(string: "https://github.com/\(owner).png?size=64"))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Owner").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 6) {
+                        Avatar(url: person.avatarUrl, size: 20)
+                        Text(person.displayName).lineLimit(1)
+                    }
+                    .help(owner)
+                }
+            }
+            if let branch = document.branch { fact("Branch", branch, monospaced: true) }
+            if let domains = document.domains, !domains.isEmpty {
+                fact(domains.count == 1 ? "Domain" : "Domains", domains.map(HarnessView.prettify).joined(separator: ", "))
+            }
+        }
+    }
+
+    private func fact(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(value)
+                .font(monospaced ? .callout.monospaced() : nil)
+                .lineLimit(2)
+                .textSelection(.enabled)
+        }
+    }
+
+    /// Jump to a section (opening it), or fold or open them all.
+    @ViewBuilder
+    private func contents(_ sections: [HarnessDocumentSection], proxy: ScrollViewProxy) -> some View {
+        let titled = sections.filter { $0.title != nil }
+        if titled.count > 1 {
+            Menu {
+                ForEach(titled) { section in
+                    Button(section.title ?? "") {
+                        folded.remove(section.id)
+                        withAnimation { proxy.scrollTo(section.anchor, anchor: .top) }
+                    }
+                }
+                Divider()
+                Button("Fold All Sections") { withAnimation(.snappy(duration: 0.2)) { folded = Set(titled.map(\.id)) } }
+                Button("Open All Sections") { withAnimation(.snappy(duration: 0.2)) { folded = [] } }
+            } label: {
+                Label("Contents", systemImage: "list.bullet.indent")
+            }
+            .fixedSize()
+            .help("Go to a section")
+        }
+    }
+
+    private var textSize: some View {
+        ControlGroup {
+            Button { size = max(Self.sizes.lowerBound, size - 1) } label: {
+                Label("Smaller", systemImage: "textformat.size.smaller")
+            }
+            .disabled(size <= Self.sizes.lowerBound)
+            .help("Make the text smaller")
+            Button { size = min(Self.sizes.upperBound, size + 1) } label: {
+                Label("Bigger", systemImage: "textformat.size.larger")
+            }
+            .disabled(size >= Self.sizes.upperBound)
+            .help("Make the text bigger")
+        }
+        .labelStyle(.iconOnly)
+        .fixedSize()
+    }
+
+    // MARK: Text
+
+    /// The summary, then a section per `##` heading, each folding from its
+    /// header.
+    @ViewBuilder
+    private func textSections(_ document: HarnessDocument, sections: [HarnessDocumentSection]) -> some View {
+        if let summary = document.summary {
+            Section("Summary") {
+                Text(summary)
+                    .font(.system(size: size))
+                    .lineSpacing(size * 0.3)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        ForEach(sections) { section in
+            let isFolded = folded.contains(section.id)
+            Section {
+                if !isFolded {
+                    MarkdownText(source: section.body, reflows: true, reading: size)
+                        .padding(.vertical, 4)
+                }
+            } header: {
+                Button {
+                    withAnimation(.snappy(duration: 0.2)) {
+                        if isFolded { folded.remove(section.id) } else { folded.insert(section.id) }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.tertiary)
+                            .rotationEffect(.degrees(isFolded ? 0 : 90))
+                        Text(section.title ?? "Overview")
+                        Spacer()
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isFolded ? "Open this section" : "Fold this section")
+            }
+            .id(section.anchor)
+        }
+    }
+
+    // MARK: Details
+
+    /// What it's about and depends on, the code it touches, what it
+    /// mentions, and the file.
+    @ViewBuilder
+    private func detailSections(_ document: HarnessDocument, index: HarnessIndex, lookup: IssueLookup) -> some View {
+        let subjects = document.references.filter(\.isSubject)
+        let mentions = document.references.filter { !$0.isSubject }
+        Section(header: SectionHeader(title: "Issues", count: subjects.count)) {
+            if subjects.isEmpty {
+                Text(document.kind == .plans || document.kind == .requirements ? "Not linked to an issue" : "None")
+                    .foregroundStyle(document.kind == .plans || document.kind == .requirements ? .orange : .secondary)
+            }
+            HarnessIssueList(org: org, index: index, references: subjects, lookup: lookup)
+        }
+        if document.requirement != nil || !(document.dependsOn ?? []).isEmpty {
+            Section("Plan") {
+                if let requirement = document.requirement {
+                    LabeledContent("Requirement") { documentLink(requirement, index: index) }
+                }
+                ForEach(document.dependsOn ?? [], id: \.self) { item in
+                    LabeledContent("Depends on") {
+                        if item.hasSuffix(".md") {
+                            documentLink(item, index: index)
+                        } else if let reference = HarnessDocument.references(in: item, isSubject: false).first {
+                            HarnessIssueList(org: org, index: index, references: [reference], lookup: lookup)
+                        } else {
+                            Text(item)
+                        }
+                    }
                 }
             }
         }
-        .font(.callout)
-    }
-
-    private func detail(_ title: String, @ViewBuilder content: () -> some View) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            content()
+        if let touches = document.touches, !touches.isEmpty {
+            Section(header: SectionHeader(title: "Touches", count: touches.count)) {
+                ForEach(touches, id: \.self) { item in
+                    Text(item)
+                        .font(.callout.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(item)
+                }
+            }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        if !mentions.isEmpty {
+            Section(header: SectionHeader(title: "Mentions", count: mentions.count)) {
+                HarnessIssueList(org: org, index: index, references: mentions, lookup: lookup)
+            }
+        }
+        Section("File") {
+            Text(document.path)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            if let url = index.url(for: document) {
+                Link(destination: url) {
+                    Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                }
+            }
+            if !document.followsStandard {
+                Text("Written before the harness's STANDARDS.md, so it has no front matter yet.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
     }
 
     /// Another harness document by path, opening in a drawer over this one.
@@ -548,9 +593,9 @@ struct HarnessDocumentPage: View {
             Button {
                 navigate?(.harnessDocument(target.path))
             } label: {
-                Label(target.title, systemImage: target.kind.systemImage)
+                Text(target.title)
                     .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+                    .multilineTextAlignment(.trailing)
             }
             .linkButton()
             .help(target.path)
@@ -586,20 +631,48 @@ struct HarnessDocumentPage: View {
     }
 }
 
-/// Short labels wrapped onto as many lines as they need.
-private struct FlowChips: View {
-    let items: [String]
+/// A document's text cut at its `##` (and `#`) headings, outside code: what
+/// comes before the first is untitled.
+struct HarnessDocumentSection: Identifiable {
+    let id: Int
+    let title: String?
+    let body: String
 
-    var body: some View {
-        FlowLayout(spacing: 6) {
-            ForEach(items, id: \.self) { item in
-                Text(item)
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(.quaternary.opacity(0.7), in: Capsule())
+    var anchor: String { "harness-section-\(id)" }
+
+    static func split(_ text: String) -> [HarnessDocumentSection] {
+        var sections: [HarnessDocumentSection] = []
+        var title: String?
+        var lines: [String] = []
+        var inFence = false
+        func flush() {
+            let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            if title != nil || !body.isEmpty {
+                sections.append(HarnessDocumentSection(id: sections.count, title: title.map(plain), body: body))
+            }
+            lines = []
+        }
+        for line in text.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            if trimmed.hasPrefix("```") { inFence.toggle() }
+            if !inFence, trimmed.hasPrefix("## ") || trimmed.hasPrefix("# ") {
+                flush()
+                title = String(trimmed.drop { $0 == "#" }).trimmingCharacters(in: .whitespaces)
+            } else if !inFence, trimmed == "---", lines.allSatisfy({ $0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+                // A rule straight under a heading only separates.
+                continue
+            } else {
+                lines.append(line)
             }
         }
+        flush()
+        return sections
+    }
+
+    /// A heading without its Markdown (bold, links, code).
+    private static func plain(_ text: String) -> String {
+        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        return (try? AttributedString(markdown: text, options: options)).map { String($0.characters) } ?? text
     }
 }
 
@@ -613,8 +686,9 @@ private struct HarnessIssueList: View {
     let references: [HarnessReference]
     let lookup: IssueLookup
 
+    /// A row each, for a Form section.
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        Group {
             ForEach(references, id: \.self) { reference in
                 let repo = index.repo(of: reference)
                 let record = lookup.record(repo: repo, number: reference.number)
