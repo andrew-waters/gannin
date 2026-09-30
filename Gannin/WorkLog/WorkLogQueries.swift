@@ -23,6 +23,32 @@ extension GitHubAPI {
         )
         return nodes.compactMap { $0.value?.model }
     }
+
+    /// Particular PRs by URL, with their commits and reviews, in one query
+    /// (an issue's linked PRs, when the work log hasn't got them).
+    func workLogPullRequests(urls: [URL]) async throws -> [WorkLogPullRequest] {
+        guard !urls.isEmpty else { return [] }
+        struct Response: Decodable {
+            let values: [String: Lossy<RawWorkLogPullRequest>?]
+            init(from decoder: Decoder) throws {
+                values = try [String: Lossy<RawWorkLogPullRequest>?](from: decoder)
+            }
+        }
+        var variables: [String: String] = [:]
+        var declarations: [String] = []
+        var selections: [String] = []
+        for (index, url) in urls.enumerated() {
+            variables["u\(index)"] = url.absoluteString
+            declarations.append("$u\(index): URI!")
+            selections.append("p\(index): resource(url: $u\(index)) { \(RawWorkLogPullRequest.fields) }")
+        }
+        let response: Response = try await query("""
+            query(\(declarations.joined(separator: ", "))) {
+              \(selections.joined(separator: "\n  "))
+            }
+            """, variables: variables)
+        return urls.indices.compactMap { response.values["p\($0)"].flatMap { $0 }?.value?.model }
+    }
 }
 
 private struct RawWorkLogPullRequest: Decodable {

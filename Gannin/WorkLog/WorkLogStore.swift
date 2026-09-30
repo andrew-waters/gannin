@@ -25,6 +25,26 @@ final class WorkLogStore {
 
     func history(for org: String) -> WorkLogHistory? { histories[org] }
 
+    /// PRs fetched one by one for an issue's timeline, by URL; in memory.
+    private(set) var linked: [URL: WorkLogPullRequest] = [:]
+    @ObservationIgnored private var fetchingLinked: Set<URL> = []
+
+    /// The PR as the work log has it, else as fetched for a timeline.
+    func pullRequest(org: String, url: URL) -> WorkLogPullRequest? {
+        histories[org]?.pullRequests.values.first { $0.url == url } ?? linked[url]
+    }
+
+    /// Fetches the PRs neither the work log nor an earlier call has.
+    func loadLinked(org: String, urls: [URL]) async {
+        let missing = urls.filter { pullRequest(org: org, url: $0) == nil && !fetchingLinked.contains($0) }
+        guard let api = auth.api, !missing.isEmpty else { return }
+        fetchingLinked.formUnion(missing)
+        defer { fetchingLinked.subtract(missing) }
+        for pr in (try? await api.workLogPullRequests(urls: missing)) ?? [] {
+            linked[pr.url] = pr
+        }
+    }
+
     /// Whether this org's log has been loaded, so Refresh includes it.
     func isTracking(_ org: String) -> Bool { histories[org] != nil }
 

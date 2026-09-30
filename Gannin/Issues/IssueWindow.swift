@@ -52,8 +52,11 @@ struct IssueWindow: View {
                 Divider()
                 // Board fields on the right, like GitHub's issue sidebar.
                 Form {
-                    Section("Investment") {
-                        CategoriseMenu(issueID: reference.id, org: reference.org)
+                    // Tracked in a board field, it's among the fields below.
+                    if !configs.config(for: reference.org).investmentConfig.trackedBy.isBoardField {
+                        Section("Investment") {
+                            CategoriseMenu(issueID: reference.id, org: reference.org)
+                        }
                     }
                     ProjectFieldsSections(org: reference.org, issueID: reference.id)
                 }
@@ -113,6 +116,7 @@ struct IssueWindow: View {
     private func details(record: IssueRecord?, workflow: IssueWorkflow) -> some View {
         List {
             HarnessIssueSection(reference: reference)
+            IssueTimelineSection(reference: reference)
             if let record {
                 let changes = record.statusChanges.filter(workflow.counts)
                 if !changes.isEmpty {

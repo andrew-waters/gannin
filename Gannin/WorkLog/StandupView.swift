@@ -536,6 +536,12 @@ struct StandupItem: Identifiable {
         case issueOpened
         case moved(String)
         case issueClosed
+        /// On an issue's own timeline: assigned, reopened, a sub-issue
+        /// added, and a comment (its first line).
+        case assigned
+        case reopened
+        case subIssueAdded
+        case comment(String)
     }
 
     enum Subject {
@@ -562,8 +568,8 @@ struct StandupItem: Identifiable {
     static func rank(_ kind: Kind) -> Int {
         switch kind {
         case .opened, .issueOpened: 0
-        case .commits: 1
-        case .review, .moved: 2
+        case .commits, .assigned, .subIssueAdded, .comment: 1
+        case .review, .moved, .reopened: 2
         case .merged, .closed, .issueClosed: 3
         }
     }
@@ -588,8 +594,11 @@ struct StandupItem: Identifiable {
             if work.closed, let at = work.record.closedAt { items.append(StandupItem(at: at, kind: .issueClosed, subject: subject, person: entry.person)) }
         }
         items.sort { ($0.at, rank($0.kind)) < ($1.at, rank($1.kind)) }
+        return folded(items)
+    }
 
-        // Runs of commits on one PR fold into one item.
+    /// Runs of commits on one PR fold into one item; `items` in time order.
+    static func folded(_ items: [StandupItem]) -> [StandupItem] {
         var folded: [StandupItem] = []
         for item in items {
             if case .commits(let new) = item.kind, let last = folded.last, last.subject.id == item.subject.id,
@@ -611,7 +620,7 @@ struct StandupItem: Identifiable {
 
 /// One person's day across the page: who and how much on the left, then
 /// their day strip and a timeline of what they did.
-private struct StandupRow: View {
+struct StandupRow: View {
     @Environment(\.navigate) private var navigate
     let org: String
     let day: DateInterval
@@ -692,6 +701,10 @@ private struct StandupRow: View {
         case .issueOpened: "Opened issue"
         case .moved(let status): "To \(status)"
         case .issueClosed: "Closed"
+        case .assigned: "Assigned"
+        case .reopened: "Reopened"
+        case .subIssueAdded: "Sub-issue added"
+        case .comment: "Commented"
         }
     }
 
@@ -711,6 +724,10 @@ private struct StandupRow: View {
         case .issueOpened: ("plus.circle.fill", issueColor, "Issue opened")
         case .moved: ("arrow.right.circle.fill", issueColor, "Issue moved on the board")
         case .issueClosed: ("checkmark.circle", issueColor, "Issue closed")
+        case .assigned: ("person.crop.circle.badge.plus", issueColor, "Assigned")
+        case .reopened: ("arrow.uturn.backward.circle.fill", issueColor, "Reopened")
+        case .subIssueAdded: ("list.bullet.indent", issueColor, "Sub-issue added")
+        case .comment: ("text.bubble", ChartPalette.neutral, "Commented")
         }
     }
 
@@ -783,7 +800,7 @@ private struct StandupLegend: View {
 /// A timeline of standup items: the time (after the person's avatar, on
 /// the team timeline), the action's icon on a rail, and the title with its
 /// context. Runs of commits unfold under their item.
-private struct StandupTimelineList: View {
+struct StandupTimelineList: View {
     @Environment(\.navigate) private var navigate
     @Environment(\.openURL) private var openURL
     let org: String
@@ -905,6 +922,8 @@ private struct StandupTimelineList: View {
         if case .commits(let commits) = item.kind, commits.count == 1, !showAllCommits, let message = commits[0].message {
             return message
         }
+        // A comment reads as what it said.
+        if case .comment(let text) = item.kind { return text }
         switch item.subject {
         case .pullRequest(let pr): return pr.title
         case .issue(let record): return record.title

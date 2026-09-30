@@ -16,6 +16,7 @@ struct FieldViewPage: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(ProjectStore.self) private var projects
+    @Environment(HarnessStore.self) private var harness
     @Environment(\.navigate) private var navigate
     @Environment(\.openWindow) private var openWindow
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
@@ -32,41 +33,55 @@ struct FieldViewPage: View {
     /// The grid's picked cell: its row and column values.
     @State private var cell: [FieldValue]?
     @State private var editingFields: BoardFieldsRequest?
+    /// The org's harness, for the Plan and Requirement fields.
+    private var harnessIndex: HarnessIndex? {
+        configs.config(for: org).harness.flatMap { harness.index(for: org, $0) }
+    }
+
+    /// The issue open in the drawer.
+    @State private var inspected: IssueReference?
 
     var body: some View {
         if let view = configs.fieldView(id, in: org) {
-            let context = view.context(workflow: configs.config(for: org).workflow, history: issueStore.history(for: org))
+            let context = view.context(workflow: configs.config(for: org).workflow, history: issueStore.history(for: org), harness: harnessIndex)
             let issues = view.issues(in: issueStore.history(for: org), context: context)
-            content(view, issues: issues, context: context)
-                .toolbar { toolbar(view, issues: issues) }
-                .task(id: view.projectNumber) {
-                    await projects.loadBoards(org: org)
-                    if let number = view.projectNumber { await projects.loadDefinition(org: org, number: number) }
+            VStack(spacing: 0) {
+                controlBar(view, issues: issues)
+                Divider()
+                content(view, issues: issues, context: context)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .trailing) { drawer(context: context, order: navigationOrder(view, issues: issues, context: context)) }
+                    .animation(.snappy(duration: 0.25), value: inspected?.id)
+            }
+            .task(id: view.projectNumber) {
+                await projects.loadBoards(org: org)
+                if let number = view.projectNumber { await projects.loadDefinition(org: org, number: number) }
+            }
+            .task(id: org) { await issueStore.sync(org, windowDays: windowDays) }
+            .loadsHarness(org: org)
+            .sheet(item: $editing) { draft in
+                FieldViewEditor(org: org, view: draft) { saved in
+                    configs.saveFieldView(saved, in: org)
+                    editing = nil
+                } onCancel: {
+                    editing = nil
                 }
-                .task(id: org) { await issueStore.sync(org, windowDays: windowDays) }
-                .sheet(item: $editing) { draft in
-                    FieldViewEditor(org: org, view: draft) { saved in
-                        configs.saveFieldView(saved, in: org)
-                        editing = nil
-                    } onCancel: {
-                        editing = nil
-                    }
+            }
+            .sheet(item: $writing) { pending in
+                FieldWriteSheet(org: org, changes: pending.changes, board: board(view)) {
+                    writing = nil
+                    selected = []
                 }
-                .sheet(item: $writing) { pending in
-                    FieldWriteSheet(org: org, changes: pending.changes, board: board(view)) {
-                        writing = nil
-                        selected = []
-                    }
+            }
+            .sheet(item: $fillIn) { request in
+                FieldFillIn(org: org, request: request, board: board(view)) {
+                    fillIn = nil
                 }
-                .sheet(item: $fillIn) { request in
-                    FieldFillIn(org: org, request: request, board: board(view)) {
-                        fillIn = nil
-                    }
-                }
-                .sheet(item: $editingFields) { request in
-                    BoardFieldsEditor(org: org, number: request.number) { editingFields = nil }
-                }
-                .onChange(of: view) { cell = nil }
+            }
+            .sheet(item: $editingFields) { request in
+                BoardFieldsEditor(org: org, number: request.number) { editingFields = nil }
+            }
+            .onChange(of: view) { cell = nil }
         } else {
             ContentUnavailableView("No such view", systemImage: WorkloadTab.views.systemImage, description: Text("It was deleted."))
         }
@@ -138,12 +153,67 @@ struct FieldViewPage: View {
         }
     }
 
-    private func open(_ issue: IssueRecord) {
-        if let navigate {
-            navigate(.issueReference(IssueReference(org: org, record: issue)))
-        } else {
-            openWindow(value: IssueReference(org: org, record: issue))
+    /// A drawer over the right of the view, as GitHub's. A click outside it
+    /// closes it; the arrow keys step through the issues.
+    @ViewBuilder
+    private func drawer(context: FieldContext, order: [IssueRecord]) -> some View {
+        if let reference = inspected {
+            let index = order.firstIndex { $0.id == reference.id }
+            // A click anywhere outside the drawer closes it.
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { inspected = nil }
+            GeometryReader { geometry in
+                let width = min(max(700, geometry.size.width * 0.7), max(geometry.size.width - 80, 480))
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    IssueSheet(
+                        reference: reference,
+                        signals: issueStore.history(for: org)?.issues[reference.id].map(context.signals),
+                        isWide: width >= 900,
+                        position: index.map { ($0 + 1, order.count) },
+                        onPrevious: index.flatMap { current in current > 0 ? { open(order[current - 1]) } : nil },
+                        onNext: index.flatMap { current in current + 1 < order.count ? { open(order[current + 1]) } : nil }
+                    ) {
+                        inspected = nil
+                    }
+                    .frame(width: width)
+                    .frame(maxHeight: .infinity)
+                    // Its leading corners rounded.
+                    .background(Color.windowBackground, in: Self.drawerShape)
+                    .clipShape(Self.drawerShape)
+                    .overlay { Self.drawerShape.strokeBorder(Color.separatorLine) }
+                    .shadow(color: .black.opacity(0.25), radius: 24, x: -4)
+                }
+            }
+            .transition(.move(edge: .trailing))
         }
+    }
+
+    /// The issues as the layout shows them, for stepping through in the
+    /// drawer: column by column on the board, group by group in the outline
+    /// and grid, the view's order otherwise.
+    private func navigationOrder(_ view: FieldView, issues: [IssueRecord], context: FieldContext) -> [IssueRecord] {
+        switch view.layout {
+        case .table, .aging:
+            return issues
+        case .outline, .board, .grid:
+            let dimensions = view.layout == .board ? Array(view.dimensions.prefix(1)) : view.dimensions
+            var seen: Set<String> = []
+            func leaves(_ groups: [FieldGroup]) -> [IssueRecord] {
+                groups.flatMap { $0.children.isEmpty ? $0.issues : leaves($0.children) }
+            }
+            let groups = FieldGroup.groups(issues, by: dimensions, context: context, order: view.layout == .outline ? view.groupOrder : .value, measure: view.measure)
+            return leaves(groups).filter { seen.insert($0.id).inserted }
+        }
+    }
+
+    private static let drawerShape = UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12, style: .continuous)
+
+    /// Shows the issue in the drawer; Open as Page and Open in Window are
+    /// in there.
+    private func open(_ issue: IssueRecord) {
+        inspected = IssueReference(org: org, record: issue)
     }
 
     /// The issues grouped by `dimensions`, or flat when there are none left,
@@ -312,9 +382,11 @@ struct FieldViewPage: View {
         view.projectNumber.flatMap { projects.cache(org: org, number: $0)?.board }
     }
 
-    @ToolbarContentBuilder
-    private func toolbar(_ view: FieldView, issues: [IssueRecord]) -> some ToolbarContent {
-        ToolbarItem {
+    /// The view's own controls, across the top of it rather than in the
+    /// window's toolbar: layout, sort, fields and measure, the filters as
+    /// chips (each opens Edit View), then Fill In, Board Fields and Edit View.
+    private func controlBar(_ view: FieldView, issues: [IssueRecord]) -> some View {
+        HStack(spacing: 10) {
             Picker("Layout", selection: Binding(get: { view.layout }, set: { layout in
                 var changed = view
                 changed.layout = layout
@@ -326,16 +398,13 @@ struct FieldViewPage: View {
             }
             .pickerStyle(.segmented)
             .labelStyle(.iconOnly)
+            .labelsHidden()
             .fixedSize()
             .help("Outline, Board, Table, Grid (the first two groupings) or Aging")
-        }
-        ToolbarItem {
             FieldSortMenu(view: view, keys: sortKeys(view)) { changed in configs.saveFieldView(changed, in: org) }
-        }
-        ToolbarItem {
+                .fixedSize()
             FieldShownMenu(view: view, keys: sortKeys(view)) { changed in configs.saveFieldView(changed, in: org) }
-        }
-        ToolbarItem {
+                .fixedSize()
             Picker("Measure", selection: Binding(get: { view.measure }, set: { measure in
                 var changed = view
                 changed.measure = measure
@@ -343,15 +412,19 @@ struct FieldViewPage: View {
             })) {
                 ForEach(FieldMeasure.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
+            .labelsHidden()
             .fixedSize()
             .help("What each group shows beside its count")
-        }
-        if let definition = board(view) {
-            let missing = FieldColors.settableFields(definition).compactMap { field -> (String, [IssueRecord])? in
-                let without = issues.filter { $0.fields(onProject: definition.number)?.values[field.name] == nil }
-                return without.isEmpty ? nil : (field.name, without)
-            }
-            ToolbarItem {
+            filterChips(view)
+            Spacer(minLength: 8)
+            Text(issues.count == 1 ? "1 issue" : "\(issues.count) issues")
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+            if let definition = board(view) {
+                let missing = FieldColors.settableFields(definition).compactMap { field -> (String, [IssueRecord])? in
+                    let without = issues.filter { $0.fields(onProject: definition.number)?.values[field.name] == nil }
+                    return without.isEmpty ? nil : (field.name, without)
+                }
                 Menu {
                     ForEach(missing, id: \.0) { field, without in
                         Button("\(field) (\(without.count))") {
@@ -361,12 +434,11 @@ struct FieldViewPage: View {
                 } label: {
                     Label("Fill In", systemImage: "rectangle.and.pencil.and.ellipsis")
                 }
+                .fixedSize()
                 .disabled(missing.isEmpty)
                 .help("Go through the issues here missing a field, one at a time")
             }
-        }
-        if let number = view.projectNumber {
-            ToolbarItem {
+            if let number = view.projectNumber {
                 Button {
                     editingFields = BoardFieldsRequest(number: number)
                 } label: {
@@ -374,14 +446,37 @@ struct FieldViewPage: View {
                 }
                 .help("Add, rename and reorder the board's fields and their options")
             }
-        }
-        ToolbarItem {
             Button {
                 editing = view
             } label: {
                 Label("Edit View", systemImage: "slider.horizontal.3")
             }
             .help("Change what this view groups and filters by")
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// "Horizon: Now, Next" for each filter, opening Edit View.
+    private func filterChips(_ view: FieldView) -> some View {
+        ForEach(view.filters) { filter in
+            let values = filter.values.map { $0 ?? "No value" }.sorted().joined(separator: ", ")
+            Button {
+                editing = view
+            } label: {
+                HStack(spacing: 4) {
+                    Text(filter.key.title).foregroundStyle(.secondary)
+                    Text(values).lineLimit(1)
+                }
+                .font(.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(.quaternary.opacity(0.7), in: Capsule())
+                .contentShape(Capsule())
+            }
+            .buttonStyle(.plain)
+            .help("Only issues where \(filter.key.title) is \(values). Click to change.")
         }
     }
 }
@@ -664,10 +759,17 @@ struct FieldChips: View {
             ForEach(shown, id: \.key) { key, values in
                 ForEach(values, id: \.self) { value in
                     HStack(spacing: 4) {
-                        Circle()
-                            .fill(FieldColors.color(value, key: key, definition: definition))
-                            .frame(width: 6, height: 6)
-                        Text(value.title).lineLimit(1)
+                        switch key {
+                        case .plan, .requirement:
+                            // Just whether there is one.
+                            Image(systemName: key == .plan ? HarnessKind.plans.systemImage : HarnessKind.requirements.systemImage)
+                                .foregroundStyle(.secondary)
+                        default:
+                            Circle()
+                                .fill(FieldColors.color(value, key: key, definition: definition))
+                                .frame(width: 6, height: 6)
+                            Text(value.title).lineLimit(1)
+                        }
                     }
                     .font(.caption2)
                     .padding(.horizontal, 6)

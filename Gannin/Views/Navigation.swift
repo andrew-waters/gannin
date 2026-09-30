@@ -41,6 +41,9 @@ extension EnvironmentValues {
     /// Set on every page of a main window; nil in the PR and issue windows,
     /// which open items in windows of their own instead.
     @Entry var navigate: NavigateAction?
+    /// Pushes a page even for a PR or issue, which `navigate` opens in the
+    /// drawer: the drawer's own Open as Page.
+    @Entry var openAsPage: NavigateAction?
     @Entry var openElsewhere: OpenElsewhereAction?
 }
 

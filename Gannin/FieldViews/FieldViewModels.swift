@@ -193,9 +193,12 @@ enum FieldKey: Codable, Hashable {
     case closed
     case attention
     case ageInStatus
+    /// The harness's plans and requirements about the issue.
+    case plan
+    case requirement
 
     static let attributes: [FieldKey] = [.repository, .issueType, .assignee, .label, .milestone, .author, .linkedPullRequest, .parent, .subIssues, .created, .closed]
-    static let derived: [FieldKey] = [.attention, .ageInStatus]
+    static let derived: [FieldKey] = [.attention, .ageInStatus, .plan, .requirement]
 
     var title: String {
         switch self {
@@ -213,6 +216,8 @@ enum FieldKey: Codable, Hashable {
         case .closed: "Closed"
         case .attention: "Attention"
         case .ageInStatus: "Time in status"
+        case .plan: "Plan"
+        case .requirement: "Requirement"
         }
     }
 
@@ -266,6 +271,10 @@ enum FieldKey: Codable, Hashable {
             found = context.signals(issue).flags.map { FieldValue(name: $0.rawValue, order: Double($0.order)) }
         case .ageInStatus:
             found = context.signals(issue).timeInStatus.map { [AgeBucket(seconds: $0).value] } ?? []
+        case .plan:
+            found = context.documents(about: issue, kind: .plans)
+        case .requirement:
+            found = context.documents(about: issue, kind: .requirements)
         }
         return found.isEmpty ? [.none] : found
     }
@@ -352,13 +361,25 @@ final class FieldContext {
     let now: Date
     /// For naming parent issues.
     private let history: IssueHistory?
+    /// For the plans and requirements about each issue.
+    private let harness: HarnessIndex?
     private var cache: [String: IssueSignals] = [:]
 
-    init(board: Int?, workflow: IssueWorkflow, history: IssueHistory? = nil, now: Date = .now) {
+    init(board: Int?, workflow: IssueWorkflow, history: IssueHistory? = nil, harness: HarnessIndex? = nil, now: Date = .now) {
         self.board = board
         self.workflow = workflow
         self.history = history
+        self.harness = harness
         self.now = now
+    }
+
+    /// Whether the harness has a document of this kind about the issue (not
+    /// one that only mentions it): "Has plan", or nothing.
+    func documents(about issue: IssueRecord, kind: HarnessKind) -> [FieldValue] {
+        guard let harness else { return [] }
+        let has = harness.matches(repo: issue.repo, number: issue.number)
+            .contains { $0.isSubject && $0.document.kind == kind }
+        return has ? [FieldValue(name: "Has \(kind.singular)")] : []
     }
 
     /// "#12 Title" when the history has the parent, else "Another issue".
@@ -493,8 +514,8 @@ struct FieldGroup: Identifiable {
 }
 
 extension FieldView {
-    func context(workflow: IssueWorkflow, history: IssueHistory?) -> FieldContext {
-        FieldContext(board: projectNumber, workflow: workflow, history: history)
+    func context(workflow: IssueWorkflow, history: IssueHistory?, harness: HarnessIndex? = nil) -> FieldContext {
+        FieldContext(board: projectNumber, workflow: workflow, history: history, harness: harness)
     }
 
     /// The stored issues the view covers: in its state, on its board when it

@@ -6,6 +6,7 @@ struct FieldViewEditor: View {
     @Environment(IssueStore.self) private var issueStore
     @Environment(ProjectStore.self) private var projects
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(HarnessStore.self) private var harness
 
     let org: String
     let onSave: (FieldView) -> Void
@@ -191,7 +192,7 @@ struct FieldViewEditor: View {
     private func valuesMenu(_ filter: Binding<FieldFilter>) -> some View {
         var base = draft
         base.filters = []
-        let context = base.context(workflow: configs.config(for: org).workflow, history: issueStore.history(for: org))
+        let context = base.context(workflow: configs.config(for: org).workflow, history: issueStore.history(for: org), harness: configs.config(for: org).harness.flatMap { harness.index(for: org, $0) })
         let values = FieldView.values(of: filter.wrappedValue.key, in: base.issues(in: issueStore.history(for: org), context: context), context: context)
         let picked = filter.wrappedValue.values
         let label = picked.isEmpty ? "Anything" : values.filter { picked.contains($0.name) }.map(\.title).joined(separator: ", ")

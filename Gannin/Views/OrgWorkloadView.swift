@@ -51,7 +51,7 @@ struct OrgWorkloadView: View {
                 } else {
                     ProjectsLandingView(org: org) { project = $0 }
                 }
-            } else if tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && (issueList == nil || issueList == .notOnBoard)), let workload {
+            } else if tab == .inbox || tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && (issueList == nil || issueList == .notOnBoard)), let workload {
                 // Investments and the people and repo stats pages: no
                 // counts bar.
                 list(workload)
@@ -167,6 +167,8 @@ struct OrgWorkloadView: View {
     @ViewBuilder
     private func list(_ workload: Workload) -> some View {
         switch tab {
+        case .inbox:
+            InboxView(org: org, workload: workload)
         case .dashboard:
             OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
         case .people: personView(workload)

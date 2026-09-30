@@ -115,6 +115,13 @@ enum InvestmentTracking: Codable, Hashable {
 
     var writesToGitHub: Bool { self != .gannin }
 
+    /// Tracked in a board field, which the issue's board fields already
+    /// show, so a separate category picker would be a second way to set it.
+    var isBoardField: Bool {
+        if case .projectField = self { return true }
+        return false
+    }
+
     var summary: String {
         switch self {
         case .gannin: "In Gannin"

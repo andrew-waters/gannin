@@ -24,6 +24,7 @@ enum DetailSelection: Hashable {
 
 /// The sidebar's sections, in sidebar order.
 enum WorkloadTab: String, CaseIterable, Identifiable {
+    case inbox = "Inbox"
     case dashboard = "Dashboard"
     case issues = "Issues"
     case pullRequests = "Pull Requests"
@@ -40,6 +41,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .inbox: "tray"
         case .dashboard: "square.grid.2x2"
         case .issues: "smallcircle.filled.circle"
         case .pullRequests: "arrow.triangle.pull"
@@ -434,6 +436,7 @@ struct PageTitles {
 private struct PageStack: View {
     @Environment(ActionsStore.self) private var actionsStore
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(IssueStore.self) private var issueStore
     @Environment(\.openWindow) private var openWindow
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
 
@@ -455,6 +458,9 @@ private struct PageStack: View {
     let titles: PageTitles
     let searchText: String
 
+    /// The PR or issue open in the drawer over the page.
+    @State private var drawer: DetailSelection?
+
     var body: some View {
         Group {
             if let last = path.last {
@@ -465,6 +471,7 @@ private struct PageStack: View {
                         .id(last)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .environment(\.navigate, navigate(at: path.count))
+                        .environment(\.openAsPage, push(at: path.count))
                         .environment(\.openElsewhere, openElsewhere(trail: path))
                 }
             } else {
@@ -484,9 +491,13 @@ private struct PageStack: View {
                     searchText: searchText
                 )
                 .environment(\.navigate, navigate(at: 0))
+                .environment(\.openAsPage, push(at: 0))
                 .environment(\.openElsewhere, openElsewhere(trail: []))
             }
         }
+        .overlay(alignment: .trailing) { drawerOverlay }
+        .animation(.snappy(duration: 0.25), value: drawer)
+        .onChange(of: path) { drawer = nil }
         .toolbar {
             if !path.isEmpty {
                 ToolbarItem(placement: .navigation) { backButton }
@@ -496,7 +507,11 @@ private struct PageStack: View {
             }
         }
         .onEscape {
-            if !path.isEmpty { path.removeLast() }
+            if drawer != nil {
+                drawer = nil
+            } else if !path.isEmpty {
+                path.removeLast()
+            }
         }
         .environment(\.currentOrg, org)
     }
@@ -572,7 +587,29 @@ private struct PageStack: View {
 
     /// Pushes from the level at `depth`; a page already in the trail below
     /// is gone back to instead.
+    /// PRs and issues open in the drawer, everywhere in the app; anything
+    /// else is pushed from `depth` (closing the drawer).
     private func navigate(at depth: Int) -> NavigateAction {
+        NavigateAction { destination in
+            if Self.opensInDrawer(destination) {
+                drawer = destination
+            } else {
+                drawer = nil
+                push(at: depth)(destination)
+            }
+        }
+    }
+
+    static func opensInDrawer(_ destination: DetailSelection) -> Bool {
+        switch destination {
+        case .issue, .issueReference, .pullRequest, .pullRequestReference: true
+        default: false
+        }
+    }
+
+    /// Pushes from the level at `depth`; a page already in the trail below
+    /// is gone back to instead.
+    private func push(at depth: Int) -> NavigateAction {
         NavigateAction { destination in
             if let index = path.prefix(depth).firstIndex(of: destination) {
                 path = Array(path.prefix(through: index))
@@ -619,6 +656,93 @@ private struct PageStack: View {
             return false
         }
         return true
+    }
+
+    // MARK: Drawer
+
+    private static let drawerShape = UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 12, style: .continuous)
+
+    /// Over the right of the page, as GitHub's drawer: a click outside or
+    /// Esc closes it, and links inside it to another PR or issue swap it.
+    @ViewBuilder
+    private var drawerOverlay: some View {
+        if let item = drawer {
+            Color.clear
+                .contentShape(Rectangle())
+                .onTapGesture { drawer = nil }
+            GeometryReader { geometry in
+                let width = min(max(700, geometry.size.width * 0.7), max(geometry.size.width - 80, 480))
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    drawerContent(item, isWide: width >= 900)
+                        .environment(\.navigate, navigate(at: path.count))
+                        .environment(\.openAsPage, NavigateAction { destination in
+                            drawer = nil
+                            push(at: path.count)(destination)
+                        })
+                        .environment(\.openElsewhere, openElsewhere(trail: path))
+                        .frame(width: width)
+                        .frame(maxHeight: .infinity)
+                        .background(Color.windowBackground, in: Self.drawerShape)
+                        .clipShape(Self.drawerShape)
+                        .overlay { Self.drawerShape.strokeBorder(Color.separatorLine) }
+                        .shadow(color: .black.opacity(0.25), radius: 24, x: -4)
+                }
+            }
+            .transition(.move(edge: .trailing))
+        }
+    }
+
+    /// An issue as the views' drawer shows it (timeline and board fields
+    /// beside the description); a PR as its page, under Open as Page, Open
+    /// in Window and Done.
+    @ViewBuilder
+    private func drawerContent(_ item: DetailSelection, isWide: Bool) -> some View {
+        if let reference = issueReference(item) {
+            let workflow = configs.config(for: org).workflow
+            let history = issueStore.history(for: org)
+            let signals = history?.issues[reference.id].map { FieldContext(board: workflow.projectNumber, workflow: workflow, history: history).signals($0) }
+            IssueSheet(reference: reference, signals: signals, isWide: isWide) { drawer = nil }
+                .id(reference.id)
+        } else {
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    Spacer()
+                    Button("Open as Page") {
+                        drawer = nil
+                        push(at: path.count)(item)
+                    }
+                    Button("Open in Window") {
+                        drawer = nil
+                        if !openOwnWindow(item) {
+                            WindowRequest.open(NavigationRequest(org: org, sidebar: sidebar, path: path + [item]), placement: .window, openWindow: openWindow)
+                        }
+                    }
+                    Button("Done") { drawer = nil }
+                        .keyboardShortcut(.cancelAction)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                Divider()
+                page(for: item, index: path.count)
+                    .id(item)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+    }
+
+    /// The issue behind a drawer item, when it's one.
+    private func issueReference(_ item: DetailSelection) -> IssueReference? {
+        switch item {
+        case .issueReference(let reference):
+            return reference
+        case .issue(let id):
+            if let record = issueStore.history(for: org)?.issues[id] { return IssueReference(org: org, record: record) }
+            guard let issue = workload?.issue(id: id) else { return nil }
+            return IssueReference(org: org, id: issue.id, number: issue.number, title: issue.title, repo: issue.repo, url: issue.url)
+        default:
+            return nil
+        }
     }
 
     // MARK: Pages
@@ -739,6 +863,7 @@ struct OrgSidebar: View {
     @AppStorage("sidebarViewsExpanded") private var viewsExpanded = true
     @Environment(ProjectStore.self) private var projectStore
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(AuthStore.self) private var auth
     #if os(macOS)
     @Environment(SessionStore.self) private var sessions
     #endif
@@ -752,6 +877,7 @@ struct OrgSidebar: View {
         List(selection: $selection) {
             if let selectedOrg {
                 Section {
+                    row(.inbox)
                     row(.dashboard)
                     DisclosureGroup(isExpanded: $issuesExpanded) {
                         ForEach(IssueList.allCases, id: \.self) { list in
@@ -995,6 +1121,9 @@ struct OrgSidebar: View {
         guard let workload else { return 0 }
         switch tab {
         case .pullRequests: return workload.openPullRequests.count
+        case .inbox:
+            guard let login = auth.viewer?.login else { return 0 }
+            return Inbox(login: login, workload: workload, history: nil, workflow: IssueWorkflow()).count
         // Issues' lists under it have their own counts.
         case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .settings: return 0
         }
