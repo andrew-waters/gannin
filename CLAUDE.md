@@ -438,11 +438,15 @@ added, removed or created, and the tracked board field set), and commits to the 
   Approve in its row and context menu, committed like any other change.
 - Settings > Harness offers Create Harness when there's none (`CreateHarnessSheet`): REST
   `POST /orgs/{org}/repos` (private, `auto_init` so there's a branch), then one commit of
-  `HarnessSkeleton` (README, a starter CLAUDE.md listing the org's busiest repos, requirements
-  with its template, findings, skills, sessions, `.gannin/`, and a `.gitignore` keeping out
+  `HarnessSkeleton` (README, a starter CLAUDE.md listing the org's busiest repos, a generic
+  `STANDARDS.md`, requirements, plans and findings with front matter templates, skills,
+  sessions, `.gannin/`, and a `.gitignore` keeping out
   `projects/` and `.worktrees/`), and it's picked as the org's harness.
-- The layout (`HarnessKind`): plans under `requirements/<module>/plans/`, requirements the rest
-  of `requirements/`, `findings/`, `skills/`; READMEs and `_templates` left out. A document is
+- The layout (`HarnessKind`): plans in a flat `plans/` (and, until they're moved, under
+  `requirements/<module>/plans/`), requirements the rest of `requirements/`, `findings/`,
+  `skills/`; READMEs and `_templates` left out. A front matter `type` overrides the folder, and
+  plans and requirements are grouped by their first domain, else their module folder
+  (`HarnessDocument.area`). A document is
   about an issue named in its file name (`prd-123`) or its header table's GitHub row
   (`owner/name#123`, or front matter `github:`); other issues it names are mentions. Bare
   `PRD-123` means the repo the harness names most (`HarnessIndex.issuesRepo`).

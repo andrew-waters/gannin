@@ -137,7 +137,8 @@ struct HarnessView: View {
         }
     }
 
-    /// Plans and requirements by module, skills by folder, findings newest
+    /// Plans and requirements by domain (from front matter) or module
+    /// folder, skills by folder, findings newest
     /// first; the newest first within each.
     private func groups(_ documents: [HarnessDocument]) -> [(title: String, documents: [HarnessDocument])] {
         let newestFirst: (HarnessDocument, HarnessDocument) -> Bool = { a, b in
@@ -146,7 +147,7 @@ struct HarnessView: View {
         }
         let grouped = Dictionary(grouping: documents) { document -> String in
             switch document.kind {
-            case .plans, .requirements: return document.module.map(Self.prettify) ?? "Other"
+            case .plans, .requirements: return document.area.map(Self.prettify) ?? "Other"
             case .findings: return "Findings"
             case .skills:
                 let parts = document.path.split(separator: "/")

@@ -60,16 +60,24 @@ enum HarnessSkeleton {
 
                 1. **Understand.** Read the issue, its discussion and any requirement or plan for it here.
                 2. **Scout.** Explore the affected repos and read their guides.
-                3. **Plan.** Write the plan in `requirements/<module>/plans/`, with the issue in its header
-                   table (`| GitHub | owner/repo#123 |`), and present it for review.
+                3. **Plan.** Write the plan in `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md`, with
+                   the issue in its front matter, and present it for review.
                 4. **Agree.** Nothing is implemented until the plan is agreed.
                 5. **Implement.** Work through the plan, ticking `- [ ]` to `- [x]` as each task lands, so an
                    interrupted session can pick up where it left off.
                 6. **PR.** Open a PR per repo with `Closes owner/repo#123` in its body.
 
+                ## Documents
+
+                Every requirement, plan, finding and skill starts with YAML front matter (`type`, `status`,
+                `summary`, `domains`, `issues`, and for plans `touches`), as `STANDARDS.md` sets out. Scout
+                by front matter first: read the summaries, and open a document only when one says it
+                matters.
+
                 ## Folders
 
-                - `requirements/<module>/`: what a feature must do (`_template.md`), and its `plans/`.
+                - `requirements/<module>/`: what a feature must do (`_template.md`).
+                - `plans/`: every plan, dated (`YYYY-MM-DD-slug.md`), from `_template.md`.
                 - `findings/`: investigations and what they found, dated (`YYYY-MM-DD-topic.md`).
                 - `skills/`: reusable workflows for Claude Code (`skills/README.md`).
                 - `sessions/`: Gannin's record of each Claude Code session, with the brief it started from.
@@ -82,27 +90,78 @@ enum HarnessSkeleton {
                 - One concern per commit and PR, each tracing back to an issue.
 
                 """,
+            "STANDARDS.md": """
+                # Document standards
+
+                Every requirement, plan, finding and skill starts with YAML front matter: the facts about
+                it that people, scouts and tools (Gannin) read without opening the whole document. GitHub
+                shows it as a table at the top of the file.
+
+                ```yaml
+                ---
+                type: plan
+                status: in-progress
+                summary: >
+                  One or two sentences: what it changes or found, and why.
+                domains: [billing]
+                issues: [\(org)/{repo}#123]
+                touches: [\(org)/{repo}]
+                ---
+                ```
+
+                | Field | For | What it holds |
+                | ----- | --- | ------------- |
+                | `type` | all | `requirement`, `plan`, `finding` or `skill` |
+                | `status` | all but skills | One value from the list below, never a sentence |
+                | `summary` | all | A sentence or two for deciding whether to open it, as a `>` block |
+                | `domains` | all | The product areas it belongs to, from the list below, the main one first |
+                | `issues` | when there is one | The issues it's about, as `owner/repo#123` |
+                | `touches` | plans, findings | The code it changes, as `owner/repo` or `owner/repo:path` |
+                | `owner` | optional | The GitHub login driving it |
+
+                Statuses:
+
+                - Requirements: `draft`, `in-progress`, `done`
+                - Plans: `draft`, `agreed`, `in-progress`, `blocked`, `done`, `abandoned`
+                - Findings: `open`, `investigating`, `fixing`, `fixed`, `wont-fix`, with a `severity` of
+                  `low`, `medium`, `high` or `critical`
+
+                ## Where documents go
+
+                ```
+                requirements/<module>/<feature>.md
+                plans/YYYY-MM-DD-<slug>.md
+                findings/YYYY-MM-DD-<slug>.md
+                skills/<name>.md
+                ```
+
+                ## Domains
+
+                List the product's domains here, in lower case with hyphens, so everyone uses the same
+                names.
+
+                """,
             "requirements/README.md": """
                 # Requirements
 
-                One folder per module, each requirement a Markdown file from `_template.md`. Plans for
-                implementing them go in the module's `plans/` folder.
-
-                Put the issue in the header table's GitHub row (`owner/repo#123`) so Gannin links the
-                document to it: the issue's page lists its plans, and a session's brief includes them.
+                One folder per module, each requirement a Markdown file from `_template.md`, with the front
+                matter `STANDARDS.md` sets out. Plans for implementing them go in `plans/`, pointing back
+                with `requirement:`.
 
                 """,
             "requirements/_template.md": """
+                ---
+                type: requirement
+                status: draft
+                summary: >
+                  {One or two sentences: what the feature lets people do, and why.}
+                domains: [{domain}]
+                issues: [\(org)/{repo}#{number}]
+                ---
+
                 # {Feature name}
 
-                | Field       | Value                         |
-                | ----------- | ----------------------------- |
-                | Module      | {Module}                      |
-                | GitHub      | {owner/repo#123}              |
-                | Status      | {Draft, Agreed, In progress, Done} |
-                | Description | {One line on what it's for}   |
-
-                ---
+                {What it's for.}
 
                 ## Requirements
 
@@ -113,6 +172,57 @@ enum HarnessSkeleton {
                 #### Acceptance criteria
 
                 - [ ] {A check that shows it's done}
+
+                """,
+            "plans/_template.md": """
+                ---
+                type: plan
+                status: draft
+                summary: >
+                  {One or two sentences: what this changes, and why.}
+                domains: [{domain}]
+                issues: [\(org)/{repo}#{number}]
+                touches: [\(org)/{repo}]
+                requirement: requirements/{module}/{feature}.md
+                branch: {number}-{short-title}
+                ---
+
+                # {Plan title}
+
+                ## Context
+
+                {What prompted it, and what's already there.}
+
+                ## Approach
+
+                {The change, repo by repo, and the decisions made along the way.}
+
+                ## Tasks
+
+                Tick each off as it lands, so an interrupted session can pick up where it left off.
+
+                - [ ] {Task}
+
+                """,
+            "findings/_template.md": """
+                ---
+                type: finding
+                status: open
+                severity: low
+                summary: >
+                  {One or two sentences: what behaves unexpectedly, and the mechanism behind it.}
+                domains: [{domain}]
+                issues: [\(org)/{repo}#{number}]
+                touches: [\(org)/{repo}]
+                ---
+
+                # {What was seen, as a sentence}
+
+                ## Summary
+
+                ## Mechanism
+
+                ## Blast radius
 
                 """,
             "findings/README.md": """
@@ -130,6 +240,7 @@ enum HarnessSkeleton {
 
                 ```markdown
                 ---
+                type: skill
                 name: skill-name
                 description: What it does, in a line
                 repos: all
@@ -225,7 +336,7 @@ struct CreateHarnessSheet: View {
             .frame(height: taken ? 96 : 70)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Gannin creates \(org)/\(name) as a private repo, then commits:")
-                Text("README.md, a starter CLAUDE.md\(projects.isEmpty ? "" : " listing \(projects.count) of the org's repos"), requirements with its template, findings, skills, sessions, .gannin, and a .gitignore keeping out projects/ and .worktrees/.")
+                Text("README.md, a starter CLAUDE.md\(projects.isEmpty ? "" : " listing \(projects.count) of the org's repos"), STANDARDS.md for documents' front matter, requirements, plans and findings with their templates, skills, sessions, .gannin, and a .gitignore keeping out projects/ and .worktrees/.")
                     .foregroundStyle(.secondary)
             }
             .font(.callout)

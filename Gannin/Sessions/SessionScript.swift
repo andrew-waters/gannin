@@ -335,7 +335,7 @@ enum SessionBrief {
             }
             working += [
                 "- Commit in each worktree, and open a pull request per repo with `gh pr create`, putting \"Closes \(reference.reference)\" in its body so it links to the issue.",
-                "- A plan for this issue goes in the harness under `requirements/<module>/plans/`, with `| GitHub | \(reference.reference) |` in its header table so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land.",
+                "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land.",
                 "- `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` and `projects/` are kept out of the harness's git.",
                 "",
             ]

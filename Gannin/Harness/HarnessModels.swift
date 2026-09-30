@@ -28,6 +28,12 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         }
     }
 
+    /// A front matter `type`: `plan`, `requirement`, `finding`, `skill`.
+    init?(type: String) {
+        guard let kind = Self.allCases.first(where: { $0.singular == type.lowercased() }) else { return nil }
+        self = kind
+    }
+
     var singular: String {
         switch self {
         case .plans: "plan"
@@ -37,14 +43,16 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         }
     }
 
-    /// The harness's layout: `requirements/<module>/plans/` for plans, the
-    /// rest of `requirements/` for requirements, `findings/` and `skills/`.
-    /// READMEs and templates describe the layout rather than being part of it.
+    /// The harness's layout: `plans/` for plans (and, until they're moved,
+    /// `requirements/<module>/plans/`), the rest of `requirements/` for
+    /// requirements, `findings/` and `skills/`. READMEs and templates
+    /// describe the layout rather than being part of it.
     init?(path: String) {
         let parts = path.split(separator: "/")
         guard path.hasSuffix(".md"), let top = parts.first, let file = parts.last,
               file != "README.md", !file.hasPrefix("_") else { return nil }
         switch top {
+        case "plans": self = .plans
         case "requirements": self = parts.contains("plans") ? .plans : .requirements
         case "findings": self = .findings
         case "skills": self = .skills
@@ -90,12 +98,14 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
     let references: [HarnessReference]
 
     var id: String { path }
+    /// What it's grouped under: its main domain, else its module folder.
+    var area: String? { domains?.first ?? module }
     var fileName: String { path.split(separator: "/").last.map(String.init) ?? path }
     var subjects: [HarnessReference] { references.filter(\.isSubject) }
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 2
+    static let parserVersion = 3
 
     /// The status as a label: `in-progress` as "In progress", and older
     /// documents' spellings brought together ("Complete" as "Done"), a
@@ -195,7 +205,6 @@ nonisolated extension HarnessDocument {
     init(path: String, sha: String, kind: HarnessKind, text: String) {
         self.path = path
         self.sha = sha
-        self.kind = kind
         self.text = text
         let parts = path.split(separator: "/").map(String.init)
         module = parts.first == "requirements" && parts.count > 2 ? parts[1] : nil
@@ -204,6 +213,8 @@ nonisolated extension HarnessDocument {
         let lines = text.components(separatedBy: .newlines)
         let front = HarnessFrontMatter.parse(lines)
         hasFrontMatter = front != nil
+        // Its front matter says what it is, wherever it sits.
+        self.kind = front?["type"]?.text.flatMap(HarnessKind.init(type:)) ?? kind
         summary = front?["summary"]?.text ?? front?["description"]?.text
         domains = front?["domains"]?.list
         touches = front?["touches"]?.list
