@@ -51,9 +51,9 @@ struct OrgWorkloadView: View {
                 } else {
                     ProjectsLandingView(org: org) { project = $0 }
                 }
-            } else if tab == .inbox || tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || tab == .issues, let workload {
-                // Investments, the people and repo stats pages and every
-                // issue page: no counts bar.
+            } else if tab == .inbox || tab == .investments || tab == .pullRequests || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || tab == .issues, let workload {
+                // Investments, the people and repo stats pages, Pull
+                // Requests and every issue page: no counts bar.
                 list(workload)
             } else {
                 VStack(spacing: 0) {
@@ -172,7 +172,7 @@ struct OrgWorkloadView: View {
         case .dashboard:
             OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
         case .people: personView(workload)
-        case .pullRequests: pullRequestList(workload)
+        case .pullRequests: PullRequestsView(workload: workload, selection: $selection)
         case .issues:
             if issueList == .notOnBoard {
                 OffBoardIssuesView(org: org, team: workload.team)
@@ -227,40 +227,6 @@ struct OrgWorkloadView: View {
         } else {
             PeopleStatsView(org: org, workload: workload, metrics: metrics, selection: $selection)
         }
-    }
-
-    private func pullRequestList(_ workload: Workload) -> some View {
-        let open = workload.openPullRequests.filter(matches)
-        let merged = workload.mergedPullRequests.filter(matches)
-        return List(selection: $selection) {
-            Section("Open (\(open.count))") {
-                ForEach(open) { pr in
-                    PullRequestRow(pr: pr).tag(DetailSelection.pullRequest(pr.id))
-                }
-            }
-            Section("Merged in the last \(workload.snapshot.lookbackDays) days (\(merged.count))") {
-                ForEach(merged) { pr in
-                    PullRequestRow(pr: pr).tag(DetailSelection.pullRequest(pr.id))
-                }
-            }
-        }
-    }
-
-    // MARK: Filtering
-
-    private var query: String { searchText.trimmingCharacters(in: .whitespaces) }
-
-    private func matches(_ text: String) -> Bool {
-        text.localizedCaseInsensitiveContains(query)
-    }
-
-    private func matches(_ person: Person) -> Bool {
-        query.isEmpty || matches(person.login) || matches(person.displayName)
-    }
-
-    private func matches(_ pr: PullRequest) -> Bool {
-        query.isEmpty || matches(pr.title) || matches(pr.repo) || matches("#\(pr.number)")
-            || pr.workers.contains(where: matches) || pr.requestedReviewers.contains(where: matches)
     }
 }
 

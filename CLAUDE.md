@@ -339,7 +339,11 @@ added, removed or created, and the tracked board field set), and commits to the 
   no board. Both have `IssueFilterBar` at the top of the page, as Views has: search, Assignee (Me,
   Anyone assigned, Unassigned, people), Repository and Label as menus with counts (several values
   each), and Open, Closed or All; Not on a board puts its board picker first. The filters
-  (`IssueFilters`) are kept per window (`StoredIssueFilters`). The search (`IssueSearch`) needs
+  (`IssueFilters`) are kept per window (`StoredIssueFilters`). Pull Requests (`PullRequestsView`)
+  has the same bar: search, Author and Reviewer (Me first, No Reviewer), Status (draft, needs
+  review, changes requested, approved, merged) and Repository, and Open, Merged or All over the
+  open PRs and those merged in the lookback. Both bars build on `FilterMenu`,
+  `FilterSearchField` and `StoredSet` (`IssueFilterBar.swift`). The search (`IssueSearch`) needs
   every word typed in the title, repo, number, a person's login or name, or a label. `IssueStore` keeps issues closed since
   the window's starting Monday plus every open issue, with project board status changes
   (`ProjectV2ItemStatusChangedEvent`), assignments, reopenings, sub-issues added and the PRs
