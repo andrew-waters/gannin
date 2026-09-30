@@ -369,14 +369,28 @@ added, removed or created, and the tracked board field set), always confirmed fi
   linked PRs' repos and recent sessions' first) and opens a `SessionWindow`: a SwiftTerm
   terminal beside the issue, its session state and its board fields (`ProjectFieldsSections`),
   where the ticket is moved.
-- `SessionStore` keeps sessions (`CodeSession`: issue, code repo, branch `123-short-title`) in
-  Application Support/<bundle ID>/Sessions, and their terminals, so closing a window leaves
-  claude running. Each session's folder holds its brief, settings and `start.zsh`
-  (`SessionScript`), which a login, interactive zsh sources: clone the repo to
-  `<workspace>/<owner>/<name>` (gh, else git), add a worktree at
-  `<owner>/<name>.worktrees/<branch>`, copy the brief into `.gannin/` (excluded from git), then
-  `claude --session-id`, or `--resume` once it has had a prompt. The workspace (`~/Gannin` by
-  default) is set in Settings > General. Inherited `CLAUDE_CODE_*` variables are stripped.
+- `SessionStore` keeps sessions (`CodeSession`: issue, code repo, branch `123-short-title`, the
+  harness repo and its checkout path on the box it runs on) in Application Support/<bundle
+  ID>/Sessions, and their terminals, so closing a window leaves claude running. Sessions run in
+  the org's harness, so Work on This needs one set. Each session's folder holds its brief,
+  settings and `start.sh` (`SessionScript`), which a login, interactive shell runs: clone the
+  harness (gh, else git) or `git pull --ff-only` it (warning, not failing, when it can't), keep
+  `projects/` and `.worktrees/` out of its git (`info/exclude`), clone the code repo to
+  `projects/<name>` (or use `projects/*/<name>`), add a worktree at
+  `.worktrees/<branch>/<name>`, copy the brief into `.gannin/` (excluded from git), then
+  `claude --session-id` (or `--resume` once it has had a prompt) with `--add-dir` for the
+  harness. Claude Code loads `CLAUDE.md` from every folder above the worktree, so the harness's
+  guide loads with the repo's. Sessions from before keep the old layout (a clone in the
+  workspace, the worktree beside it). Inherited `CLAUDE_CODE_*` variables are stripped.
+- The harness checkout on this Mac is set per org in Settings > Harness
+  (`HarnessCheckoutSection`, `sessionsHarnessPath.<org>`): by default a checkout already in a
+  usual place (`~/Code/<owner>/<name>` and the like, found by its origin), else
+  `<workspace>/<org>-harness`. The workspace (`~/Gannin` by default) is set in Settings >
+  General, with Connect with (`sessionsConnect`, such as `ssh -t devbox`): sessions then run
+  on that server, their script, brief and settings packed into one command
+  (`SessionScript.remoteCommand`), in the harness checkout set for the server
+  (`sessionsRemoteHarnessPath.<org>`, no default). Hook state reaches Gannin from a server as
+  an escape code (OSC 7777) read by `SessionTerminal`.
 - Hooks in the session's `--settings` write its state (working, needs you, your turn, exited)
   to a file `SessionStore` reads every second while a terminal runs, and the URL from a
   `gh pr create`. claude runs signed in as the user; Gannin never handles that login.

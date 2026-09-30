@@ -4,8 +4,9 @@ import Foundation
 import Observation
 import SwiftTerm
 
-/// A Claude Code session on one issue: a git worktree of the issue's repo on
-/// a branch of its own, with claude running in a terminal inside Gannin.
+/// A Claude Code session on one issue: a git worktree of the code repo on a
+/// branch of its own, inside the org's harness checkout, with claude running
+/// in a terminal inside Gannin.
 struct CodeSession: Codable, Identifiable, Hashable {
     let id: UUID
     let issue: IssueReference
@@ -22,10 +23,18 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// nil for this Mac. Kept from when it was made, since that's where its
     /// worktree is.
     var connect: String? = nil
-    /// The server's workspace, as a path there (`~/Gannin`).
+    /// The server's workspace, as a path there (`~/Gannin`), for sessions
+    /// made before they ran in the harness.
     var remoteWorkspace: String? = nil
+    /// The harness it runs in: `owner/name`, and its checkout on the box the
+    /// session runs on (`~` allowed). Nil for sessions made before, whose
+    /// worktree is beside a clone in the workspace.
+    var harnessRepo: String? = nil
+    var harnessPath: String? = nil
 
     var isRemote: Bool { connect != nil }
+    /// The code repo's name, its folder under `projects/` and in the worktree.
+    var repoName: String { repo.split(separator: "/").last.map(String.init) ?? repo }
 
     var org: String { issue.org }
     /// Claude Code wants its session IDs in lower case.
@@ -47,6 +56,8 @@ extension CodeSession {
         pullRequest = try container.decodeIfPresent(URL.self, forKey: .pullRequest)
         connect = try container.decodeIfPresent(String.self, forKey: .connect)
         remoteWorkspace = try container.decodeIfPresent(String.self, forKey: .remoteWorkspace)
+        harnessRepo = try container.decodeIfPresent(String.self, forKey: .harnessRepo)
+        harnessPath = try container.decodeIfPresent(String.self, forKey: .harnessPath)
     }
 }
 
@@ -92,29 +103,72 @@ enum SessionState: String {
 ///
 /// Each session has a folder holding its brief, the hooks claude reports
 /// through (they write its state to a file, read here every second while
-/// anything runs) and the script its terminal runs: clone the repo if it
-/// isn't yet, add the worktree, copy the brief in, then start or resume
+/// anything runs) and the script its terminal runs: clone or pull the
+/// harness, clone the repo into its `projects/` if it isn't yet, add the
+/// worktree under `.worktrees/`, copy the brief in, then start or resume
 /// claude.
 @Observable
 final class SessionStore {
-    /// Where repos are cloned and worktrees made, as a path (`~` allowed).
+    /// Where Gannin clones a harness that isn't checked out on this Mac yet,
+    /// as a path (`~` allowed).
     static let workspaceKey = "sessionsWorkspace"
     static let defaultWorkspace = "~/Gannin"
     /// Run sessions on a server: the command that gets there, such as
     /// `ssh -t devbox`, with `{command}` where the rest goes (else at the
     /// end). Empty runs them on this Mac.
     static let connectKey = "sessionsConnect"
-    /// The workspace on that server.
-    static let remoteWorkspaceKey = "sessionsRemoteWorkspace"
 
     static var connectCommand: String? {
         let command = (UserDefaults.standard.string(forKey: connectKey) ?? "").trimmingCharacters(in: .whitespaces)
         return command.isEmpty ? nil : command
     }
 
-    static var remoteWorkspace: String {
-        let path = (UserDefaults.standard.string(forKey: remoteWorkspaceKey) ?? "").trimmingCharacters(in: .whitespaces)
-        return path.isEmpty ? defaultWorkspace : path
+    /// The org's harness checkout on this Mac, as set in its Settings.
+    static func harnessPathKey(_ org: String) -> String { "sessionsHarnessPath.\(org)" }
+    /// And on the server, which has no default: only you know that box.
+    static func remoteHarnessPathKey(_ org: String) -> String { "sessionsRemoteHarnessPath.\(org)" }
+
+    /// The harness checkout on this Mac: the one set, else a checkout you
+    /// already have, else `<workspace>/<org>-harness` for Gannin to clone.
+    static func localHarnessPath(org: String, repo: String) -> String {
+        let saved = (UserDefaults.standard.string(forKey: harnessPathKey(org)) ?? "").trimmingCharacters(in: .whitespaces)
+        if !saved.isEmpty { return saved }
+        return existingCheckout(of: repo) ?? defaultHarnessPath(org: org)
+    }
+
+    static func defaultHarnessPath(org: String) -> String {
+        let workspace = UserDefaults.standard.string(forKey: workspaceKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultWorkspace
+        return workspace + "/\(org)-harness"
+    }
+
+    static func remoteHarnessPath(org: String) -> String? {
+        let path = (UserDefaults.standard.string(forKey: remoteHarnessPathKey(org)) ?? "").trimmingCharacters(in: .whitespaces)
+        return path.isEmpty ? nil : path
+    }
+
+    /// Where new sessions for the org run their harness: on the server when
+    /// there's a Connect with command, else on this Mac. Nil when that's the
+    /// server and its checkout hasn't been set.
+    static func harnessPath(org: String, repo: String) -> String? {
+        connectCommand == nil ? localHarnessPath(org: org, repo: repo) : remoteHarnessPath(org: org)
+    }
+
+    /// A checkout of the repo in one of the usual places, found by its
+    /// origin: `~/Code/<owner>/<name>` (as Ctrl Hub keeps its harness), and
+    /// the like.
+    static func existingCheckout(of repo: String) -> String? {
+        let parts = repo.split(separator: "/").map(String.init)
+        guard parts.count == 2 else { return nil }
+        let (owner, name) = (parts[0], parts[1])
+        let candidates = ["Code", "Developer", "Projects", "src", "code", "dev"]
+            .flatMap { ["~/\($0)/\(owner)/\(name)", "~/\($0)/\(name)"] }
+            + ["~/\(owner)/\(name)", "~/\(name)", defaultWorkspace + "/\(owner)/\(name)"]
+        return candidates.first { candidate in
+            let config = URL(filePath: (candidate as NSString).expandingTildeInPath).appending(path: ".git/config")
+            guard let text = (try? String(contentsOf: config, encoding: .utf8))?.lowercased() else { return false }
+            let target = "\(owner)/\(name)".lowercased()
+            return text.contains("github.com/\(target)") || text.contains("github.com:\(target)")
+        }
     }
 
     private(set) var sessions: [UUID: CodeSession] = [:]
@@ -127,7 +181,7 @@ final class SessionStore {
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
                 var session = session
-                if !FileManager.default.fileExists(atPath: Self.worktree(for: session).path) {
+                if !session.isRemote, let worktree = Self.worktree(for: session), !FileManager.default.fileExists(atPath: worktree.path) {
                     session.branch = Self.branchName(session.issue)
                 }
                 return (session.id, session)
@@ -151,13 +205,14 @@ final class SessionStore {
 
     func state(_ id: UUID) -> SessionState { states[id] ?? .stopped }
 
-    /// The issue's session, made in `repo` if it has none, with its brief
-    /// written afresh from what Gannin knows now.
-    func start(_ issue: IssueReference, in repo: String, brief: (CodeSession) -> String) -> CodeSession {
+    /// The issue's session, made in `repo` inside the harness checkout at
+    /// `harnessPath` if it has none, with its brief written afresh from what
+    /// Gannin knows now.
+    func start(_ issue: IssueReference, in repo: String, harness: HarnessConfig, harnessPath: String, brief: (CodeSession) -> String) -> CodeSession {
         let session = session(forIssue: issue.id)
             ?? CodeSession(
                 id: UUID(), issue: issue, repo: repo, branch: Self.branchName(issue), createdAt: .now,
-                connect: Self.connectCommand, remoteWorkspace: Self.connectCommand == nil ? nil : Self.remoteWorkspace
+                connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath
             )
         sessions[session.id] = session
         save()
@@ -217,17 +272,19 @@ final class SessionStore {
             let brief = (try? String(contentsOf: directory.appending(path: "brief.md"), encoding: .utf8)) ?? ""
             let remote = SessionScript.remoteCommand(
                 directory: remoteDirectory,
-                script: SessionScript.start(session, root: SessionScript.shellPath(session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
+                script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
                 settings: SessionScript.settings(directory: remoteDirectory)
             )
             command = SessionScript.connecting(connect, to: remote)
         } else {
-            try? fm.createDirectory(at: Self.workspaceRoot, withIntermediateDirectories: true)
+            let root = session.harnessPath.map(Self.expanded) ?? Self.workspaceRoot
+            // The harness is cloned into it, when it isn't there yet.
+            try? fm.createDirectory(at: session.harnessPath == nil ? root : root.deletingLastPathComponent(), withIntermediateDirectories: true)
             let local = SessionScript.quoted(directory.path)
             try? Data(SessionScript.settings(directory: local).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
-            try? Data(SessionScript.start(session, root: SessionScript.quoted(Self.workspaceRoot.path), directory: local).utf8).write(to: script)
+            try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"
         }
 
@@ -248,7 +305,7 @@ final class SessionStore {
             executable: shell,
             args: ["-l", "-i", "-c", command],
             environment: environment.map { "\($0.key)=\($0.value)" },
-            directory: session.isRemote ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
+            directory: session.isRemote || session.harnessPath != nil ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
         )
         startPolling()
     }
@@ -305,22 +362,33 @@ final class SessionStore {
     // MARK: Places
 
     static var workspaceRoot: URL {
-        let path = UserDefaults.standard.string(forKey: workspaceKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultWorkspace
-        return URL(filePath: (path as NSString).expandingTildeInPath, directoryHint: .isDirectory)
+        expanded(UserDefaults.standard.string(forKey: workspaceKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultWorkspace)
     }
 
-    /// The repo's clone: `<root>/<owner>/<name>`.
-    static func clone(of repo: String) -> URL {
-        workspaceRoot.appending(path: repo, directoryHint: .isDirectory)
+    /// A folder as a path to keep: under your home as `~/Code/x`.
+    static func tildePath(_ url: URL) -> String {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
     }
 
-    /// The session's worktree, beside the clone rather than inside it:
-    /// `<root>/<owner>/<name>.worktrees/<branch>`.
-    static func worktree(for session: CodeSession) -> URL {
-        let clone = clone(of: session.repo)
-        return clone.deletingLastPathComponent()
-            .appending(path: "\(clone.lastPathComponent).worktrees", directoryHint: .isDirectory)
-            .appending(path: session.branch, directoryHint: .isDirectory)
+    static func expanded(_ path: String) -> URL {
+        URL(filePath: (path as NSString).expandingTildeInPath, directoryHint: .isDirectory)
+    }
+
+    /// Where the session's worktree is on its box, as a path there: in the
+    /// harness, `<harness>/.worktrees/<branch>/<name>`; before that, beside
+    /// the clone, `<workspace>/<owner>/<name>.worktrees/<branch>`.
+    static func worktreePath(for session: CodeSession) -> String {
+        if let harness = session.harnessPath {
+            return "\(harness)/.worktrees/\(session.branch)/\(session.repoName)"
+        }
+        let workspace = session.remoteWorkspace ?? (UserDefaults.standard.string(forKey: workspaceKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultWorkspace)
+        return "\(workspace)/\(session.repo).worktrees/\(session.branch)"
+    }
+
+    /// The worktree on this Mac; nil for a session on a server.
+    static func worktree(for session: CodeSession) -> URL? {
+        session.isRemote ? nil : expanded(worktreePath(for: session))
     }
 
     /// `123-short-title`, from the issue's number and title.

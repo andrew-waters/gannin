@@ -85,6 +85,7 @@ private struct SessionPanel: View {
     var body: some View {
         let state = sessions.state(session.id)
         let worktree = SessionStore.worktree(for: session)
+        let worktreePath = SessionStore.worktreePath(for: session)
         Form {
             Section("Issue") {
                 Text(session.issue.title)
@@ -110,6 +111,14 @@ private struct SessionPanel: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                 }
+                LabeledContent(session.isRemote ? "Worktree on the server" : "Worktree") {
+                    Text(worktreePath)
+                        .font(.callout.monospaced())
+                        .textSelection(.enabled)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                        .help(worktreePath)
+                }
                 if let pullRequest = session.pullRequest {
                     LabeledContent("Pull request") {
                         Link(pullRequest.lastPathComponent.isEmpty ? "Open" : "#\(pullRequest.lastPathComponent)", destination: pullRequest)
@@ -120,10 +129,12 @@ private struct SessionPanel: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
-                    Button("Show in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([worktree])
+                    if let worktree {
+                        Button("Show in Finder") {
+                            NSWorkspace.shared.activateFileViewerSelecting([worktree])
+                        }
+                        .disabled(!FileManager.default.fileExists(atPath: worktree.path))
                     }
-                    .disabled(!FileManager.default.fileExists(atPath: worktree.path))
                     Spacer()
                     if sessions.isRunning(session.id) {
                         Button("End") { sessions.end(session.id) }
@@ -141,7 +152,7 @@ private struct SessionPanel: View {
         .confirmationDialog("Remove this session?", isPresented: $confirmingRemove) {
             Button("Remove Session", role: .destructive) { sessions.remove(session.id) }
         } message: {
-            Text("Claude is ended and Gannin forgets the session. The worktree stays at \(worktree.path) for you to remove with git worktree remove.")
+            Text("Claude is ended and Gannin forgets the session. The worktree stays at \(worktreePath)\(session.isRemote ? " on the server" : "") for you to remove with git worktree remove.")
         }
     }
 }
@@ -171,12 +182,14 @@ struct StartSessionButton: View {
             .help("Show this issue's Claude Code session, in \(existing.repo)")
         } else {
             let (suggested, others) = repositories
+            let blocked = unavailable
             Button {
                 isPicking = true
             } label: {
                 Label("Work on This", systemImage: "terminal")
             }
-            .help("Work on this issue with Claude Code: pick the repository the code is in")
+            .disabled(blocked != nil)
+            .help(blocked ?? "Work on this issue with Claude Code in the harness: pick the repository the code is in")
             .popover(isPresented: $isPicking, arrowEdge: .bottom) {
                 // The top suggestion is highlighted, so Return starts there.
                 SearchableList(
@@ -190,6 +203,18 @@ struct StartSessionButton: View {
                 }
             }
         }
+    }
+
+    /// Why a session can't start, if it can't: sessions run in the org's
+    /// harness, and on a server only once its checkout there is set.
+    private var unavailable: String? {
+        guard configs.config(for: reference.org).harness != nil else {
+            return "Sessions run in the org's harness. Pick or create it in the org's Settings, under Harness."
+        }
+        if SessionStore.connectCommand != nil, SessionStore.remoteHarnessPath(org: reference.org) == nil {
+            return "Sessions run on your server. Set where the harness is checked out there in the org's Settings, under Harness."
+        }
+        return nil
     }
 
     /// Suggested: where the issue's linked PRs were opened, then repos the
@@ -218,8 +243,10 @@ struct StartSessionButton: View {
         let record = history?.issues[reference.id]
         let parent = record?.parentID.flatMap { history?.issues[$0] }
         let detail = details.detail(for: reference.id)
-        let index = configs.config(for: reference.org).harness.flatMap { harness.index(for: reference.org, $0) }
-        let session = sessions.start(reference, in: repo) { session in
+        guard let setup = configs.config(for: reference.org).harness,
+              let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return }
+        let index = harness.index(for: reference.org, setup)
+        let session = sessions.start(reference, in: repo, harness: setup, harnessPath: path) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index)
         }
         openWindow(value: SessionWindowID(id: session.id))
@@ -253,9 +280,11 @@ struct SessionSidebarRows: View {
     }
 }
 
-/// Settings > General: where sessions clone repos.
+/// Settings > General: where Gannin clones a harness, and the server
+/// sessions run on.
 struct SessionSettingsSection: View {
     @AppStorage(SessionStore.workspaceKey) private var workspace = SessionStore.defaultWorkspace
+    @AppStorage(SessionStore.connectKey) private var connect = ""
 
     var body: some View {
         Section {
@@ -267,7 +296,11 @@ struct SessionSettingsSection: View {
                     Button("Choose", action: choose)
                 }
             }
-            Text("Work on This clones an issue's repo here (as owner/name) the first time, then gives each issue a git worktree beside it. Clones use gh if it's installed, else git with your credentials, and claude runs signed in as you.")
+            Text("Sessions run in the org's harness, with each issue's code in a git worktree under its .worktrees folder. When the harness isn't checked out on this Mac, Work on This clones it here. Clones use gh if it's installed, else git with your credentials, and claude runs signed in as you.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Connect with", text: $connect, prompt: Text("ssh -t devbox"))
+            Text("To run sessions on a server, the command that reaches it, with {command} where the rest goes (else it goes at the end). Empty runs them on this Mac. Set where each org's harness is checked out there in the org's Settings. Sessions stay where they were made.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {
@@ -282,8 +315,69 @@ struct SessionSettingsSection: View {
         panel.canCreateDirectories = true
         panel.directoryURL = SessionStore.workspaceRoot
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        let home = FileManager.default.homeDirectoryForCurrentUser.path
-        workspace = url.path.hasPrefix(home) ? "~" + url.path.dropFirst(home.count) : url.path
+        workspace = SessionStore.tildePath(url)
+    }
+}
+
+/// The org's Settings › Harness, on the Mac: where its harness is checked out
+/// here and on the server, for sessions to run in.
+struct HarnessCheckoutSection: View {
+    @AppStorage(SessionStore.connectKey) private var connect = ""
+    @AppStorage private var localPath: String
+    @AppStorage private var remotePath: String
+    let org: String
+    let repo: String
+
+    init(org: String, repo: String) {
+        self.org = org
+        self.repo = repo
+        _localPath = AppStorage(wrappedValue: "", SessionStore.harnessPathKey(org))
+        _remotePath = AppStorage(wrappedValue: "", SessionStore.remoteHarnessPathKey(org))
+    }
+
+    var body: some View {
+        let found = SessionStore.existingCheckout(of: repo)
+        let local = localPath.isEmpty ? SessionStore.localHarnessPath(org: org, repo: repo) : localPath
+        let exists = FileManager.default.fileExists(atPath: SessionStore.expanded(local).appending(path: ".git").path)
+        Section {
+            LabeledContent("On this Mac") {
+                HStack {
+                    Text(local)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .help(local)
+                    Button("Choose", action: choose)
+                    if !localPath.isEmpty {
+                        Button("Default") { localPath = "" }
+                            .help(found.map { "Use the checkout found at \($0)" } ?? "Clone it into the workspace, set in Settings")
+                    }
+                }
+            }
+            Text(exists
+                 ? "Claude Code sessions for this org run here: each issue's code is a git worktree under .worktrees, beside the shared clones in projects."
+                 : "Not checked out here yet. The first session clones \(repo) here.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !connect.trimmingCharacters(in: .whitespaces).isEmpty {
+                TextField("On the server", text: $remotePath, prompt: Text("~/\(org)-harness"))
+                Text("Sessions run on the server Settings connects to (\(connect)). Where the harness is checked out there, as a path on that box; the first session clones it if it isn't there.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("Checkout")
+        }
+    }
+
+    private func choose() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.canCreateDirectories = true
+        panel.message = "Choose \(repo)'s checkout, or the folder to clone it into"
+        panel.directoryURL = SessionStore.expanded(SessionStore.localHarnessPath(org: org, repo: repo)).deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        localPath = SessionStore.tildePath(url)
     }
 }
 #endif
