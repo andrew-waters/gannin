@@ -300,7 +300,11 @@ struct HarnessView: View {
                         sortKey: { .text(($0.statusLabel ?? "").lowercased()) },
                         cell: { document in
                             AnyView(Group {
-                                if let status = document.statusLabel { Pill(text: status, color: .secondary).help(document.status ?? status) }
+                                if let status = document.shortStatus {
+                                    Pill(text: status, color: .secondary)
+                                        .lineLimit(1)
+                                        .help(document.status ?? status)
+                                }
                             })
                         }),
             StatsColumn(id: "domain", title: "Domain", help: "Its main domain, else its folder", width: 120,

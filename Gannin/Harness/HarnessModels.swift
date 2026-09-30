@@ -116,6 +116,14 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
     /// again rather than kept.
     static let parserVersion = 5
 
+    /// The status in a word or two, for a table: an older document's
+    /// sentence cut at its first clause.
+    var shortStatus: String? {
+        guard let label = statusLabel else { return nil }
+        let clause = label.split(whereSeparator: { ".,;:(".contains($0) }).first.map { $0.trimmingCharacters(in: .whitespaces) } ?? label
+        return clause.count <= 16 ? clause : String(clause.prefix(15)).trimmingCharacters(in: .whitespaces) + "..."
+    }
+
     /// It follows the harness's STANDARDS.md: front matter with a summary.
     var followsStandard: Bool { hasFrontMatter == true && summary != nil }
 

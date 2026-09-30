@@ -83,7 +83,9 @@ struct StatsTable<Row: Identifiable>: View {
     @ViewBuilder
     private func sized<Content: View>(_ column: StatsColumn<Row>, width: CGFloat? = nil, @ViewBuilder _ content: () -> Content) -> some View {
         if let fixed = width ?? columnWidth(of: column) {
-            content().frame(width: fixed, alignment: column.alignment)
+            // Clipped, so a cell too wide for its column can't push the
+            // columns after it along.
+            content().frame(width: fixed, alignment: column.alignment).clipped()
         } else {
             content().frame(minWidth: column.minWidth, maxWidth: .infinity, alignment: column.alignment)
         }
