@@ -435,12 +435,16 @@ struct FieldViewPage: View {
                             fillIn = FieldFillIn.Request(field: field, issues: without)
                         }
                     }
+                    Divider()
+                    // No fields: the sheet asks which, and for which issues.
+                    Button("Several Fields") {
+                        fillIn = FieldFillIn.Request(fields: [], issues: issues)
+                    }
                 } label: {
                     Label("Fill In", systemImage: "rectangle.and.pencil.and.ellipsis")
                 }
                 .fixedSize()
-                .disabled(missing.isEmpty)
-                .help("Go through the issues here missing a field, one at a time")
+                .help("Go through the issues here missing a field (or several), one at a time")
             }
             if let number = view.projectNumber {
                 Button {

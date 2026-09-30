@@ -520,10 +520,20 @@ private struct RawPullRequest: Decodable {
     let latestReviews: Connection<Review>?
     let closingIssuesReferences: Connection<RawLinked>?
     let timelineItems: Connection<Lossy<RequestedEvent>>?
+    let commits: Connection<CommitNode>?
+
+    struct CommitNode: Decodable {
+        struct Commit: Decodable {
+            struct Rollup: Decodable { let state: String }
+            let statusCheckRollup: Rollup?
+        }
+        let commit: Commit
+    }
 
     static let fields = """
         ... on PullRequest {
           id number title url isDraft state createdAt updatedAt mergedAt reviewDecision additions deletions
+          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
           repository { nameWithOwner }
           author { login avatarUrl }
           assignees(first: 10) { nodes { login avatarUrl } }
@@ -561,7 +571,8 @@ private struct RawPullRequest: Decodable {
             requestedReviewers: (reviewRequests?.nodes ?? []).compactMap { $0.requestedReviewer?.person },
             reviewRequestedAt: requestedAt,
             reviewers: (latestReviews?.nodes ?? []).compactMap { $0.author?.person },
-            linkedIssues: (closingIssuesReferences?.nodes ?? []).map(\.model)
+            linkedIssues: (closingIssuesReferences?.nodes ?? []).map(\.model),
+            checks: commits?.nodes.first?.commit.statusCheckRollup.flatMap { ItemDetail.CheckState(rawValue: $0.state) }
         )
     }
 }

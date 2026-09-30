@@ -1037,7 +1037,7 @@ private struct DayStrip: View {
 }
 
 /// "+243 -14", added in green and removed in red.
-private struct LinesText: View {
+struct LinesText: View {
     let added: Int
     let removed: Int
 

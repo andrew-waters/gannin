@@ -81,6 +81,9 @@ struct PullRequest: Codable, Hashable, Identifiable {
     let reviewRequestedAt: [String: Date]
     let reviewers: [Person]
     let linkedIssues: [LinkedItem]
+    /// The latest commit's checks, as of the fetch (checks finishing don't
+    /// touch `updatedAt`, so the detail store has fresher ones for pending).
+    var checks: ItemDetail.CheckState? = nil
 
     var isMerged: Bool { mergedAt != nil }
 

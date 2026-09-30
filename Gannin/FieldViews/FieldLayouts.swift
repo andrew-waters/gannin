@@ -189,12 +189,23 @@ struct FieldTable: View {
     let context: FieldContext
     @Binding var selected: Set<String>
     let actions: FieldActions
+    /// Column order, widths and which are hidden, per view, on this Mac.
+    @AppStorage private var storedColumns: Data
+
+    init(issues: [IssueRecord], view: FieldView, context: FieldContext, selected: Binding<Set<String>>, actions: FieldActions) {
+        self.issues = issues
+        self.view = view
+        self.context = context
+        _selected = selected
+        self.actions = actions
+        _storedColumns = AppStorage(wrappedValue: Data(), "fieldViewColumns.\(view.id.uuidString)")
+    }
 
     var body: some View {
         // The groupings, then the shown fields not already among them.
         let keys = view.dimensions + view.shownFields.filter { !view.dimensions.contains($0) }
         let columns = keys.enumerated().map { Column(id: $0, key: $1) }
-        Table(issues, selection: $selected) {
+        Table(issues, selection: $selected, columnCustomization: TableColumnStore.binding($storedColumns)) {
             TableColumn("Issue") { issue in
                 VStack(alignment: .leading, spacing: 1) {
                     Text(issue.title).lineLimit(1)
@@ -202,6 +213,7 @@ struct FieldTable: View {
                 }
             }
             .width(min: 220, ideal: 360)
+            .customizationID("issue")
             TableColumnForEach(columns) { column in
                 TableColumn(column.key.title) { issue in
                     Text(column.key.values(of: issue, in: context).map(\.title).joined(separator: ", "))
@@ -209,15 +221,18 @@ struct FieldTable: View {
                         .lineLimit(1)
                 }
                 .width(min: 80, ideal: 120)
+                .customizationID("field.\(column.key.title)")
             }
             TableColumn("In status") { issue in
                 Text(context.signals(issue).timeInStatus?.compactDuration ?? "").monospacedDigit()
             }
             .width(min: 60, ideal: 80)
+            .customizationID("inStatus")
             TableColumn("In progress") { issue in
                 Text(context.signals(issue).inProgress?.compactDuration ?? "").monospacedDigit()
             }
             .width(min: 60, ideal: 80)
+            .customizationID("inProgress")
             TableColumn("Attention") { issue in
                 let flags = context.signals(issue).flags
                 HStack(spacing: 4) {
@@ -226,10 +241,12 @@ struct FieldTable: View {
                 }
             }
             .width(min: 80, ideal: 160)
+            .customizationID("attention")
             TableColumn("Assignees") { issue in
                 AvatarStack(people: issue.assignees.map { Person(login: $0, name: nil, avatarUrl: URL(string: "https://github.com/\($0).png?size=64")) })
             }
             .width(min: 60, ideal: 90)
+            .customizationID("assignees")
         }
         .contextMenu(forSelectionType: String.self) { ids in
             actions.setMenu(issues.filter { ids.contains($0.id) })
@@ -517,6 +534,18 @@ struct FieldWriteSheet: View {
             )
         } onClose: {
             onClose()
+        }
+    }
+}
+
+/// A table's column customisation (order, widths, hidden columns) kept as
+/// JSON in `@AppStorage`, so it survives a relaunch.
+enum TableColumnStore {
+    static func binding<Row>(_ data: Binding<Data>) -> Binding<TableColumnCustomization<Row>> {
+        Binding {
+            (try? JSONDecoder().decode(TableColumnCustomization<Row>.self, from: data.wrappedValue)) ?? TableColumnCustomization()
+        } set: { customization in
+            data.wrappedValue = (try? JSONEncoder().encode(customization)) ?? Data()
         }
     }
 }
