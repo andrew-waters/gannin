@@ -335,15 +335,19 @@ struct HarnessDocumentPage: View {
                         Divider()
                         if width >= 900 {
                             HStack(spacing: 0) {
-                                Form { textSections(document, sections: sections) }
-                                    .formStyle(.grouped)
-                                    .frame(minWidth: 480, maxWidth: .infinity)
+                                VStack(spacing: 0) {
+                                    readingBar(sections, proxy: proxy)
+                                    Form { textSections(document, sections: sections) }
+                                        .formStyle(.grouped)
+                                }
+                                .frame(minWidth: 480, maxWidth: .infinity)
                                 Divider()
                                 Form { detailSections(document, index: index, lookup: lookup) }
                                     .formStyle(.grouped)
                                     .frame(width: 340)
                             }
                         } else {
+                            readingBar(sections, proxy: proxy)
                             Form {
                                 textSections(document, sections: sections)
                                 detailSections(document, index: index, lookup: lookup)
@@ -389,8 +393,6 @@ struct HarnessDocumentPage: View {
                     .help("\(document.path) on GitHub")
                 }
                 Spacer()
-                contents(sections, proxy: proxy)
-                textSize
                 if onClose != nil, let openAsPage {
                     Button("Open as Page") {
                         onClose?()
@@ -449,6 +451,18 @@ struct HarnessDocumentPage: View {
                 .lineLimit(2)
                 .textSelection(.enabled)
         }
+    }
+
+    /// Over the text: Contents, and the text size.
+    private func readingBar(_ sections: [HarnessDocumentSection], proxy: ScrollViewProxy) -> some View {
+        HStack(spacing: 8) {
+            contents(sections, proxy: proxy)
+            Spacer(minLength: 0)
+            textSize
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 20)
+        .padding(.top, 12)
     }
 
     /// Jump to a section (opening it), or fold or open them all.
