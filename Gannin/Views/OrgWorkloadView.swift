@@ -176,8 +176,8 @@ struct OrgWorkloadView: View {
         case .issues:
             if issueList == .notOnBoard {
                 OffBoardIssuesView(org: org, team: workload.team)
-            } else if issueList == .open {
-                OpenIssuesView(workload: workload, selection: $selection)
+            } else if issueList == .all {
+                OpenIssuesView(org: org, workload: workload, selection: $selection)
             } else {
                 IssuesStatsView(org: org, workload: workload, selection: $selection)
             }

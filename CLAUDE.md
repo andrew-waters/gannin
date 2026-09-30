@@ -331,11 +331,13 @@ added, removed or created, and the tracked board field set), and commits to the 
 ## Issue metrics
 
 - `Gannin/Issues/`: the Issues page (`IssuesStatsView`) is issue metrics, with a search over its
-  In progress now list. Under Issues in the sidebar, Open (`OpenIssuesView`) is every open issue,
-  assigned or not, with a search field and Assignee (anyone, assigned, unassigned or a person),
-  Repository and Label filters in the toolbar (kept per window). Not on a board has the same
-  search. The search (`IssueSearch`) needs every word typed in the title, repo, number, a
-  person's login or name, or a label. `IssueStore` keeps issues closed since
+  In progress now list. Under Issues in the sidebar, All (`OpenIssuesView`) is the issue history's
+  issues (every open one, and those closed since the window's start), and Not on a board those on
+  no board. Both have `IssueFilterBar` at the top of the page, as Views has: search, Assignee (Me,
+  Anyone assigned, Unassigned, people), Repository and Label as menus with counts (several values
+  each), and Open, Closed or All; Not on a board puts its board picker first. The filters
+  (`IssueFilters`) are kept per window (`StoredIssueFilters`). The search (`IssueSearch`) needs
+  every word typed in the title, repo, number, a person's login or name, or a label. `IssueStore` keeps issues closed since
   the window's starting Monday plus every open issue, with project board status changes
   (`ProjectV2ItemStatusChangedEvent`), assignments, reopenings, sub-issues added and the PRs
   that close them (with their commit and review dates). Closed weeks are fetched as parallel

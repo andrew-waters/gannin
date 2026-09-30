@@ -4,12 +4,6 @@ import SwiftUI
 /// one), open, closed or both, from the stored issue history. Select some
 /// (⌘A for all) and add them to a board in one go, confirmed first.
 struct OffBoardIssuesView: View {
-    enum StateFilter: String, CaseIterable {
-        case open = "Open"
-        case closed = "Closed"
-        case all = "All"
-    }
-
     /// Issues about to be added to a board.
     private struct Adding: Identifiable {
         let id = UUID()
@@ -24,7 +18,9 @@ struct OffBoardIssuesView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.navigate) private var navigate
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
-    @AppStorage("offBoardState") private var state: StateFilter = .open
+    @AppStorage("showHidden") private var showHidden = false
+    @Environment(HiddenStore.self) private var hidden
+    private var stored = StoredIssueFilters("offBoard")
 
     let org: String
     let team: Team?
@@ -34,60 +30,60 @@ struct OffBoardIssuesView: View {
     @State private var choseBoard = false
     @State private var selection: Set<String> = []
     @State private var adding: Adding?
-    @State private var search = ""
+
+    init(org: String, team: Team?) {
+        self.org = org
+        self.team = team
+    }
+
+    private var state: IssueFilters.State { stored.wrappedValue.state }
 
     var body: some View {
-        let issues = issues
-        List(selection: $selection) {
-            Section {
-                if issues.isEmpty {
-                    Text(store.history(for: org) == nil ? "Loading issues." : !search.isEmpty ? "No issues match." : "Nothing here: every \(state == .all ? "" : state.rawValue.lowercased() + " ")issue is on \(boardName ?? "a board").")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(issues) { issue in
-                    row(issue).tag(issue.id)
-                }
-            } header: {
-                Text("\(issues.count) \(issues.count == 1 ? "issue" : "issues") not on \(boardName ?? "any board")")
-            } footer: {
-                if let history = store.history(for: org), state != .open {
-                    Text("Closed issues since \(history.coveredFrom.formatted(date: .abbreviated, time: .omitted)), as far back as the issue history goes (Investments' All time fetches everything).")
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-        .contextMenu(forSelectionType: String.self) { ids in
-            addMenu(ids)
-        } primaryAction: { ids in
-            let picked = issues.filter { ids.contains($0.id) }
-            if picked.count == 1, let issue = picked.first, let navigate {
-                navigate(.issueReference(IssueReference(org: org, record: issue)))
-            } else {
-                // Several at once get a window each.
-                for issue in picked { openWindow(value: IssueReference(org: org, record: issue)) }
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if !selection.isEmpty { selectionBar(issues) }
-        }
-        .searchable(text: $search, placement: .toolbar, prompt: "Title, number, repo, label or person")
-        .toolbar {
-            ToolbarItem {
+        let pool = pool
+        let issues = pool.filter { stored.wrappedValue.matches($0, names: { $0 }) }
+        VStack(spacing: 0) {
+            IssueFilterBar(filters: stored.projectedValue, pool: pool, names: { $0 }) {
                 Picker("Not on", selection: $board) {
-                    Text("Any board").tag(Int?.none)
+                    Text("Not on any board").tag(Int?.none)
                     Divider()
                     ForEach(boards) { Text("Not on \($0.title)").tag(Optional($0.number)) }
                 }
+                .labelsHidden()
                 .fixedSize()
                 .help("Issues on no board, or not on one board")
             }
-            ToolbarItem {
-                Picker("State", selection: $state) {
-                    ForEach(StateFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            Divider()
+            List(selection: $selection) {
+                Section {
+                    if issues.isEmpty {
+                        Text(store.history(for: org) == nil ? "Loading issues." : stored.wrappedValue.isNarrowed ? "No issues match." : "Nothing here: every \(state == .all ? "" : state.rawValue.lowercased() + " ")issue is on \(boardName ?? "a board").")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(issues) { issue in
+                        row(issue).tag(issue.id)
+                    }
+                } header: {
+                    Text("\(issues.count) \(issues.count == 1 ? "issue" : "issues") not on \(boardName ?? "any board")")
+                } footer: {
+                    if let history = store.history(for: org), state != .open {
+                        Text("Closed issues since \(history.coveredFrom.formatted(date: .abbreviated, time: .omitted)), as far back as the issue history goes (Investments' All time fetches everything).")
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+            }
+            .contextMenu(forSelectionType: String.self) { ids in
+                addMenu(ids)
+            } primaryAction: { ids in
+                let picked = issues.filter { ids.contains($0.id) }
+                if picked.count == 1, let issue = picked.first, let navigate {
+                    navigate(.issueReference(IssueReference(org: org, record: issue)))
+                } else {
+                    // Several at once get a window each.
+                    for issue in picked { openWindow(value: IssueReference(org: org, record: issue)) }
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !selection.isEmpty { selectionBar(issues) }
             }
         }
         .task(id: org) {
@@ -130,8 +126,15 @@ struct OffBoardIssuesView: View {
         board.map { number in boards.first { $0.number == number }?.title ?? "project \(number)" }
     }
 
-    /// Newest first: open by when they were opened, closed by when they closed.
+    /// The page's issues after its own filters and every other one.
     private var issues: [IssueRecord] {
+        pool.filter { stored.wrappedValue.matches($0, names: { $0 }) }
+    }
+
+    /// Not on the board, in the state picked, less hidden ones and (with a
+    /// team) those not assigned to its members: what the bar's menus count.
+    /// Newest first: open by when they were opened, closed by when they closed.
+    private var pool: [IssueRecord] {
         guard let history = store.history(for: org) else { return [] }
         let members = team.map { Set($0.members) }
         return history.issues.values
@@ -146,7 +149,7 @@ struct OffBoardIssuesView: View {
                 board.map { number in issue.fields(onProject: number) == nil } ?? issue.projectFields.isEmpty
             }
             .filter { issue in members.map { team in issue.assignees.contains(where: team.contains) } ?? true }
-            .filter { IssueSearch.matches(search, record: $0) }
+            .filter { showHidden || !hidden.keys.contains($0.id) }
             .sorted { ($0.closedAt ?? $0.createdAt) > ($1.closedAt ?? $1.createdAt) }
     }
 

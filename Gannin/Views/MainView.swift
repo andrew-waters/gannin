@@ -84,20 +84,20 @@ extension EnvironmentValues {
 
 /// The issue lists under Issues in the sidebar.
 enum IssueList: String, CaseIterable {
-    /// Assigned or not, with filters for which.
-    case open = "Open"
+    /// Open or closed, assigned or not, with filters for which.
+    case all = "All"
     case notOnBoard = "Not on a board"
 
     var systemImage: String {
         switch self {
-        case .open: "smallcircle.filled.circle"
+        case .all: "list.bullet"
         case .notOnBoard: "rectangle.dashed"
         }
     }
 
     var title: String {
         switch self {
-        case .open: "Open issues"
+        case .all: "All issues"
         case .notOnBoard: "Issues not on a board"
         }
     }
@@ -1000,7 +1000,8 @@ struct OrgSidebar: View {
 
     private func issueCount(_ list: IssueList) -> Int {
         switch list {
-        case .open: (workload?.assignedIssues.count ?? 0) + (workload?.unassignedIssues.count ?? 0)
+        // Open ones.
+        case .all: (workload?.assignedIssues.count ?? 0) + (workload?.unassignedIssues.count ?? 0)
         // Open ones on no board, once the issue history has loaded.
         case .notOnBoard: selectedOrg.flatMap { issueStore.history(for: $0) }?.issues.values.filter { $0.isOpen && $0.projectFields.isEmpty }.count ?? 0
         }
