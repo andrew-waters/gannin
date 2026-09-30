@@ -16,6 +16,7 @@ struct StorageSettings: View {
     @Environment(DetailStore.self) private var details
     @Environment(BankHolidayStore.self) private var bankHolidays
     @Environment(PeopleDatesStore.self) private var peopleDates
+    @Environment(HarnessTeamStore.self) private var team
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HiddenStore.self) private var hidden
     @Environment(UserDatabase.self) private var database
@@ -158,7 +159,7 @@ struct StorageSettings: View {
             case .caches:
                 Text("Everything fetched from GitHub is fetched again as it's needed.")
             case .yourData:
-                Text("Removes \(peopleSummary.lowercased()), every org's settings, \(hidden.keys.count) hidden items and \(orgs.starred.count) stars. This can't be undone.")
+                Text("Removes \(peopleSummary.lowercased()), every org's settings, \(hidden.keys.count) hidden items and \(orgs.starred.count) stars, and changes not yet committed to a harness. What's in a harness stays there. This can't be undone.")
             case .everything:
                 Text("Removes every cache and everything you've entered, and signs you out. This can't be undone.")
             }
@@ -208,6 +209,7 @@ struct StorageSettings: View {
     }
 
     private func deleteYourData() {
+        team.discardAll()
         peopleDates.clear()
         configs.clear()
         hidden.clear()

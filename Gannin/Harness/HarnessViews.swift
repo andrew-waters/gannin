@@ -498,6 +498,9 @@ struct HarnessSettingsSection: View {
         .task { await harness.loadRepositories(org: org) }
         .loadsHarness(org: org)
         .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org) }
+        if let saved {
+            TeamDataSection(org: org, setup: saved)
+        }
         #if os(macOS)
         if let saved {
             HarnessCheckoutSection(org: org, repo: saved.repo)

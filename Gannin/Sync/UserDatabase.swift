@@ -40,6 +40,8 @@ final class AbsenceRecord {
     var end: Date = Date.distantPast
     var half: String?
     var note: String = ""
+    /// `requested` while waiting to be approved; nil once booked.
+    var approval: String?
     var updatedAt: Date = Date.distantPast
     var person: PersonRecord?
 
@@ -54,11 +56,15 @@ final class AbsenceRecord {
         end = absence.end
         half = absence.half?.rawValue
         note = absence.note
+        approval = absence.approval?.rawValue
         updatedAt = .now
     }
 
     var absence: Absence {
-        Absence(id: id, kind: Absence.Kind(rawValue: kind) ?? .holiday, start: start, end: end, note: note, half: half.flatMap(Absence.HalfDay.init(rawValue:)))
+        Absence(
+            id: id, kind: Absence.Kind(rawValue: kind) ?? .holiday, start: start, end: end, note: note,
+            half: half.flatMap(Absence.HalfDay.init(rawValue:)), approval: approval.flatMap(Absence.Approval.init(rawValue:))
+        )
     }
 }
 

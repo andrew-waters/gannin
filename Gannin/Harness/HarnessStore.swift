@@ -22,6 +22,14 @@ final class HarnessStore {
 
     init(auth: AuthStore) {
         self.auth = auth
+        // Every cached index at once: the team's data in them is the org's
+        // settings, needed before any page asks for the harness.
+        let files = (try? FileManager.default.contentsOfDirectory(at: Self.directory, includingPropertiesForKeys: nil)) ?? []
+        for file in files where file.pathExtension == "json" {
+            if let data = try? Data(contentsOf: file), let index = try? Self.decoder.decode(HarnessIndex.self, from: data) {
+                indexes[file.deletingPathExtension().lastPathComponent] = index
+            }
+        }
     }
 
     /// The org's index for its harness; nil until loaded, or when the repo
@@ -39,7 +47,13 @@ final class HarnessStore {
         if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge { return }
         if let running = fetches[org] {
             await running.value
-            return
+            // A forced fetch (after a commit, say) wants what's there now,
+            // which the running one may have started before.
+            guard force else { return }
+            if let again = fetches[org] {
+                await again.value
+                return
+            }
         }
         guard let api = auth.api else { return }
         // Unchanged blobs are kept from whatever was indexed before, even
@@ -89,13 +103,27 @@ final class HarnessStore {
         let parts = repo.split(separator: "/").map(String.init)
         guard parts.count == 2 else { throw APIError.graphQL(["\(repo) isn't owner/name."]) }
         let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
-        if var previous, previous.commit == head.commit, previous.requestedBranch == setup.branch {
+        if var previous, previous.commit == head.commit, previous.requestedBranch == setup.branch, previous.dataFiles != nil {
             previous.fetchedAt = .now
             return previous
         }
         let tree = try await api.harnessTree(repo: repo, commit: head.commit)
         let wanted = tree.compactMap { entry in HarnessKind(path: entry.path).map { (entry, $0) } }
         let known = Dictionary((previous?.documents ?? []).map { ($0.sha, $0) }, uniquingKeysWith: { first, _ in first })
+
+        // The team's data, unchanged files kept from before.
+        let knownData = Dictionary((previous?.dataFiles ?? []).map { ($0.path, $0) }, uniquingKeysWith: { first, _ in first })
+        var dataFiles: [HarnessDataFile] = []
+        var missingData: [HarnessTreeEntry] = []
+        for entry in tree where HarnessDataFile.isData(entry.path) {
+            if let file = knownData[entry.path], file.sha == entry.sha { dataFiles.append(file) } else { missingData.append(entry) }
+        }
+        for start in stride(from: 0, to: missingData.count, by: Self.batchSize) {
+            let batch = Array(missingData[start..<min(start + Self.batchSize, missingData.count)])
+            let texts = try await api.harnessTexts(owner: parts[0], name: parts[1], expressions: batch.map { "\(head.commit):\($0.path)" })
+            dataFiles += zip(batch, texts).compactMap { entry, text in text.map { HarnessDataFile(path: entry.path, sha: entry.sha, text: $0) } }
+        }
+        dataFiles.sort { $0.path < $1.path }
 
         var documents: [HarnessDocument] = []
         var missing: [(HarnessTreeEntry, HarnessKind)] = []
@@ -116,7 +144,7 @@ final class HarnessStore {
             }.value
         }
         documents.sort { $0.path < $1.path }
-        return HarnessIndex(repo: repo, requestedBranch: setup.branch, branch: head.branch, commit: head.commit, fetchedAt: .now, documents: documents)
+        return HarnessIndex(repo: repo, requestedBranch: setup.branch, branch: head.branch, commit: head.commit, fetchedAt: .now, documents: documents, dataFiles: dataFiles)
     }
 
     func clear() {

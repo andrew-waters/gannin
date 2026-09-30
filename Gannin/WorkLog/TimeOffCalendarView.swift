@@ -611,6 +611,10 @@ struct TimeOffCalendarView: View {
                     }
                     .clipShape(shape)
                     shape.strokeBorder(absence.kind.color.opacity(0.6), lineWidth: 1)
+                } else if absence.isRequested {
+                    // Requested, not yet approved: pale and dashed.
+                    shape.fill(absence.kind.color.opacity(0.12))
+                    shape.strokeBorder(absence.kind.color.opacity(0.7), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
                 } else {
                     shape.fill(absence.kind.color.opacity(0.35))
                 }
@@ -623,6 +627,13 @@ struct TimeOffCalendarView: View {
         }
         .contextMenu {
             Button("Edit") { adding = NewTimeOff(person: span.person, absence: absence, choosable: false) }
+            if absence.isRequested {
+                Button("Approve") {
+                    peopleDates.update(span.person.login, in: org) { dates in
+                        if let index = dates.absences.firstIndex(where: { $0.id == absence.id }) { dates.absences[index].approval = nil }
+                    }
+                }
+            }
             Button("Remove", role: .destructive) {
                 peopleDates.update(span.person.login, in: org) { $0.absences.removeAll { $0.id == absence.id } }
             }

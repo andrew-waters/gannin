@@ -92,6 +92,19 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// One of the team's data files under `.gannin/`, as JSON text.
+nonisolated struct HarnessDataFile: Codable, Hashable, Sendable {
+    let path: String
+    let sha: String
+    let text: String
+
+    /// `.gannin/views.json`, `.gannin/people/ian.json`: what the index keeps
+    /// beside the documents.
+    static func isData(_ path: String) -> Bool {
+        path.hasPrefix(".gannin/") && path.hasSuffix(".json")
+    }
+}
+
 /// An org's harness as last fetched.
 nonisolated struct HarnessIndex: Codable, Sendable {
     let repo: String
@@ -104,6 +117,9 @@ nonisolated struct HarnessIndex: Codable, Sendable {
     let commit: String
     var fetchedAt: Date
     let documents: [HarnessDocument]
+    /// The team's data under `.gannin/`; nil in an index cached before it
+    /// was read, which is fetched again.
+    var dataFiles: [HarnessDataFile]?
 
     func documents(_ kind: HarnessKind) -> [HarnessDocument] { documents.filter { $0.kind == kind } }
 

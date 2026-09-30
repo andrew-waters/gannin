@@ -284,9 +284,9 @@ added, removed or created, and the tracked board field set), and commits to the 
 - The org's working week (`WorkWeek`, in `OrgConfig.workWeek`, Settings) sets working days
   and hours: the work log and threads shade days off, the punchcards shade working hours and
   count what falls outside. Weeks still start on Monday everywhere.
-- People's dates (`PeopleDates.swift`, `PeopleDatesStore` in `UserDefaults`, per org and login):
-  start and end dates and time off (holiday or sick, inclusive day ranges with a note), entered
-  by hand and never sent anywhere. The Time off part of the person view (`PersonColumn`, Work
+- People's dates (`PeopleDates.swift`, `PeopleDatesStore`, per org and login): start and end
+  dates and time off (holiday or sick, inclusive day ranges with a note), entered by hand, kept
+  in iCloud or, for an org that keeps its team data there, in the harness. The Time off part of the person view (`PersonColumn`, Work
   or Time off) has Calendar (`TimeOffCalendarView` with `fixedPerson`), Report
   (`PersonLeaveReport`: allowance tiles, holiday and sick by month, the year's entries, past
   leave years) and Details, where they're edited, from a person's context menu on the work log, threads or
@@ -418,6 +418,25 @@ added, removed or created, and the tracked board field set), and commits to the 
   commit (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
   parsed off the main thread. Cached in Application Support/Harness, fetched again after 10
   minutes. The fetch is the store's own task, so a view going away doesn't cancel it.
+- Team data in the harness (`HarnessTeamData.swift`): an org can keep its views, investments,
+  issue workflow, working week, leave policy, exclusions and people's dates (time off with sick
+  days included) as JSON under `.gannin/` (`TeamFile`: `views.json`, `investments.json`,
+  `workflow.json`, `working-week.json`, `leave.json`, `exclusions.json`,
+  `people/<login>.json`), keys sorted and calendar days as `2026-10-03` (`TeamCoding`). The
+  index reads `.gannin/*.json` beside the documents (`HarnessIndex.dataFiles`), and every
+  cached index loads at launch. Once any is there (Settings > Harness > Move to Harness,
+  `TeamDataSection`, one commit from what's in iCloud), `OrgConfigStore.config(for:)` and
+  `PeopleDatesStore` read the team's parts from `HarnessTeamStore` instead; stars, hidden
+  items, app settings and which harness it is stay the user's own, in iCloud.
+- Edits to that data apply at once and wait as pending changes (`HarnessTeamStore.pending`,
+  kept on disk in Application Support/<bundle ID>/HarnessPending) until reviewed: the sidebar
+  shows "N changes to commit" above the sync row (`HarnessPendingRow`), whose Review
+  (`HarnessCommitSheet`) commits them together (`Gannin: time off for ian, 3 to 5 Oct`) or
+  discards them. The commit merges each file three ways (`TeamCoding.merge`: objects by key,
+  lists of objects by `id`, ours winning a clash) onto the harness's copy at the head, so
+  changes made there since survive. What was written shows until the index catches up.
+- Time off can be requested (`Absence.approval`, holiday only): drawn pale and dashed, with
+  Approve in its row and context menu, committed like any other change.
 - Settings > Harness offers Create Harness when there's none (`CreateHarnessSheet`): REST
   `POST /orgs/{org}/repos` (private, `auto_init` so there's a branch), then one commit of
   `HarnessSkeleton` (README, a starter CLAUDE.md listing the org's busiest repos, requirements

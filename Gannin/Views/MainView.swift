@@ -977,7 +977,9 @@ struct OrgSidebar: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
                 if let selectedOrg {
+                    HarnessPendingRow(org: selectedOrg)
                     SyncFooter(org: selectedOrg)
+                        .loadsHarness(org: selectedOrg)
                 }
                 SidebarFooter(selectedOrg: $selectedOrg, selection: $selection)
             }

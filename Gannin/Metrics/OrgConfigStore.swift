@@ -63,10 +63,16 @@ struct OrgConfig: Codable, Hashable {
 
 /// Each org's settings, in memory and written through to the synced
 /// `UserDatabase`; loaded again when another device's changes arrive.
+///
+/// An org that keeps its team data in its harness (`HarnessTeamStore`) has
+/// its views, investments, issue workflow, working week, leave policy and
+/// exclusions from there instead, and changes to them wait to be committed
+/// there. Which harness it is stays the user's own.
 @Observable
 final class OrgConfigStore {
     private(set) var configs: [String: OrgConfig]
     @ObservationIgnored private let database: UserDatabase
+    @ObservationIgnored var team: HarnessTeamStore?
 
     init(database: UserDatabase) {
         self.database = database
@@ -78,7 +84,13 @@ final class OrgConfigStore {
         }
     }
 
-    func config(for org: String) -> OrgConfig { configs[org] ?? OrgConfig() }
+    func config(for org: String) -> OrgConfig {
+        let own = configs[org] ?? OrgConfig()
+        return team?.data(for: org)?.applied(to: own) ?? own
+    }
+
+    /// The org's harness, from the user's own settings.
+    func harness(for org: String) -> HarnessConfig? { configs[org]?.harness }
 
     /// Every org back to the defaults.
     func clear() {
@@ -91,6 +103,16 @@ final class OrgConfigStore {
         var config = before
         change(&config)
         guard config != before else { return }
+        if let team, team.keepsData(org) {
+            team.stage(org: org, HarnessTeamData.changedFiles(from: before, to: config))
+            // Only which harness is the user's own here.
+            guard config.harness != before.harness else { return }
+            var own = configs[org] ?? OrgConfig()
+            own.harness = config.harness
+            configs[org] = own.isEmpty ? nil : own
+            database.saveConfig(org: org, own.isEmpty ? nil : own)
+            return
+        }
         configs[org] = config.isEmpty ? nil : config
         database.saveConfig(org: org, config.isEmpty ? nil : config)
     }

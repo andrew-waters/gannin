@@ -24,6 +24,7 @@ struct SyncFooter: View {
     @Environment(ProjectStore.self) private var projects
     @Environment(ActionsStore.self) private var actions
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(HarnessStore.self) private var harness
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     let org: String
 
@@ -196,6 +197,10 @@ struct SyncFooter: View {
         return []
     }
 
+    private func refreshHarness() async {
+        if let setup = configs.harness(for: org) { await harness.load(org: org, setup: setup, force: true) }
+    }
+
     private func refresh(_ mode: OrgStore.RefreshMode) {
         Task {
             async let workload: Void = orgs.refresh(org, mode: mode)
@@ -209,7 +214,9 @@ struct SyncFooter: View {
                 : ()
             // Boards, and the board investments are tracked on.
             async let boards: Void = projects.refresh(org: org, definitions: trackedBoards)
-            _ = await (workload, metrics, log, issues, runs, boards)
+            // The harness, whose .gannin may hold the team's settings.
+            async let harnessIndex: Void = refreshHarness()
+            _ = await (workload, metrics, log, issues, runs, boards, harnessIndex)
         }
     }
 }

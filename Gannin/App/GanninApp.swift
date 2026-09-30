@@ -17,6 +17,7 @@ struct GanninApp: App {
     @State private var bankHolidays = BankHolidayStore()
     @State private var activity: SyncActivity
     @State private var harness: HarnessStore
+    @State private var team: HarnessTeamStore
     #if os(macOS)
     @State private var sessions: SessionStore
     #endif
@@ -29,8 +30,10 @@ struct GanninApp: App {
         let database = UserDatabase()
         _database = State(initialValue: database)
         _hidden = State(initialValue: HiddenStore(database: database))
-        _orgConfigs = State(initialValue: OrgConfigStore(database: database))
-        _peopleDates = State(initialValue: PeopleDatesStore(database: database))
+        let orgConfigs = OrgConfigStore(database: database)
+        let peopleDates = PeopleDatesStore(database: database)
+        _orgConfigs = State(initialValue: orgConfigs)
+        _peopleDates = State(initialValue: peopleDates)
         _orgs = State(initialValue: OrgStore(auth: auth, activity: activity, database: database))
         _details = State(initialValue: DetailStore(auth: auth))
         _metrics = State(initialValue: MetricsStore(auth: auth, activity: activity))
@@ -40,6 +43,12 @@ struct GanninApp: App {
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))
         let harness = HarnessStore(auth: auth)
         _harness = State(initialValue: harness)
+        // Team data from the harness, for orgs that keep it there.
+        let team = HarnessTeamStore(harness: harness)
+        team.setup = { [weak orgConfigs] org in orgConfigs?.harness(for: org) }
+        orgConfigs.team = team
+        peopleDates.team = team
+        _team = State(initialValue: team)
         #if os(macOS)
         _sessions = State(initialValue: SessionStore(harness: harness))
         TabMenuRename.shared.install()
@@ -63,6 +72,7 @@ struct GanninApp: App {
                 .environment(projects)
                 .environment(orgConfigs)
                 .environment(harness)
+                .environment(team)
                 .environment(peopleDates)
                 .environment(bankHolidays)
                 .environment(activity)
@@ -95,6 +105,7 @@ struct GanninApp: App {
                     .environment(projects)
                     .environment(orgConfigs)
                     .environment(harness)
+                    .environment(team)
                     .environment(activity)
             }
         }
@@ -115,6 +126,7 @@ struct GanninApp: App {
                     .environment(projects)
                     .environment(orgConfigs)
                     .environment(harness)
+                    .environment(team)
                     .environment(activity)
                     #if os(macOS)
                     .environment(sessions)
@@ -136,6 +148,7 @@ struct GanninApp: App {
                     .environment(details)
                     .environment(orgConfigs)
                     .environment(harness)
+                    .environment(team)
                     .environment(projects)
             }
         }
@@ -157,6 +170,7 @@ struct GanninApp: App {
                 .environment(peopleDates)
                 .environment(orgConfigs)
                 .environment(harness)
+                .environment(team)
                 .environment(hidden)
                 .environment(database)
         }

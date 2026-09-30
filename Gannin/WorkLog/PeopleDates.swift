@@ -2,7 +2,8 @@ import Observation
 import SwiftUI
 
 /// Dates GitHub doesn't know about a person: when they started and left,
-/// and days off (holiday or sick). Recorded by hand, kept only in this app.
+/// and days off (holiday or sick). Recorded by hand, kept in iCloud, or in
+/// the org's harness once it keeps the team's data there.
 struct PersonDates: Codable, Hashable {
     var startDate: Date?
     var endDate: Date?
@@ -96,6 +97,14 @@ struct Absence: Codable, Hashable, Identifiable {
     /// Set for half a day off; only applies when `start` and `end` are the
     /// same day.
     var half: HalfDay?
+    /// Requested and not yet approved; nil once booked.
+    var approval: Approval?
+
+    enum Approval: String, Codable {
+        case requested
+    }
+
+    var isRequested: Bool { approval == .requested }
 
     /// The half day off, if this is one.
     func halfDay(calendar: Calendar = .current) -> HalfDay? {
@@ -127,7 +136,8 @@ struct Absence: Codable, Hashable, Identifiable {
     }
 
     var label: String {
-        let base = halfDay().map { "\(kind.rawValue) \($0.short)" } ?? kind.rawValue
+        var base = halfDay().map { "\(kind.rawValue) \($0.short)" } ?? kind.rawValue
+        if isRequested { base += " (requested)" }
         return note.isEmpty ? base : "\(base): \(note)"
     }
 }
@@ -152,6 +162,9 @@ enum DayStatus: Hashable {
 final class PeopleDatesStore {
     private(set) var dates: [String: [String: PersonDates]]
     @ObservationIgnored private let database: UserDatabase
+    /// For orgs that keep people's dates in their harness, which are read
+    /// from there, and changed there once committed.
+    @ObservationIgnored var team: HarnessTeamStore?
 
     init(database: UserDatabase) {
         self.database = database
@@ -164,10 +177,17 @@ final class PeopleDatesStore {
     }
 
     func dates(for login: String, in org: String) -> PersonDates {
-        dates[org]?[login] ?? PersonDates()
+        if let team = team?.data(for: org) { return team.people[login] ?? PersonDates() }
+        return dates[org]?[login] ?? PersonDates()
     }
 
-    func all(in org: String) -> [String: PersonDates] { dates[org] ?? [:] }
+    func all(in org: String) -> [String: PersonDates] {
+        team?.data(for: org)?.people ?? dates[org] ?? [:]
+    }
+
+    /// What's synced through iCloud, whichever the org reads: for moving it
+    /// into the harness.
+    func own(in org: String) -> [String: PersonDates] { dates[org] ?? [:] }
 
     func clear() {
         dates = [:]
@@ -179,6 +199,10 @@ final class PeopleDatesStore {
         var person = before
         change(&person)
         guard person != before else { return }
+        if let team, team.keepsData(org) {
+            team.stage(org: org, [TeamFile.person(login): HarnessTeamData.personFile(person)])
+            return
+        }
         dates[org, default: [:]][login] = person.isEmpty ? nil : person
         database.savePerson(org: org, login: login, person)
     }
@@ -378,14 +402,25 @@ struct PersonDatesSections: View {
     private func absenceRow(_ absence: Absence) -> some View {
         let days = dayCount(absence)
         return HStack(spacing: 8) {
-            Circle().fill(absence.kind.color).frame(width: 8, height: 8)
+            Circle()
+                .strokeBorder(absence.kind.color, lineWidth: absence.isRequested ? 1.5 : 0)
+                .background(Circle().fill(absence.isRequested ? .clear : absence.kind.color))
+                .frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 1) {
                 Text("\(absence.kind.rawValue), \(Self.range(absence))")
-                Text([Absence.days(days), absence.note].filter { !$0.isEmpty }.joined(separator: " · "))
+                Text([Absence.days(days), absence.isRequested ? "Requested" : "", absence.note].filter { !$0.isEmpty }.joined(separator: " · "))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             Spacer()
+            if absence.isRequested {
+                Button("Approve") {
+                    store.update(person.login, in: org) { dates in
+                        if let index = dates.absences.firstIndex(where: { $0.id == absence.id }) { dates.absences[index].approval = nil }
+                    }
+                }
+                .help("Book this time off")
+            }
             Button("Edit") { draft = absence }
             Button {
                 store.update(person.login, in: org) { $0.absences.removeAll { $0.id == absence.id } }
@@ -722,6 +757,7 @@ struct AbsenceSheet: View {
     @State private var length: AbsenceLength
     @State private var days = 5
     @State private var note: String
+    @State private var requested: Bool
     @State private var countedDays = false
 
     init(org: String, person: Person, absence: Absence, choosable: [Person] = []) {
@@ -733,6 +769,7 @@ struct AbsenceSheet: View {
         _start = State(initialValue: absence.start)
         _length = State(initialValue: AbsenceLength(absence))
         _note = State(initialValue: absence.note)
+        _requested = State(initialValue: absence.isRequested)
     }
 
     private var isNew: Bool {
@@ -808,6 +845,9 @@ struct AbsenceSheet: View {
                         .foregroundStyle(.orange)
                 }
                 TextField("Note", text: $note, prompt: Text("Optional"))
+                if kind == .holiday {
+                    Toggle("Requested, not yet approved", isOn: $requested)
+                }
             }
             .formStyle(.grouped)
             HStack {
@@ -847,6 +887,7 @@ struct AbsenceSheet: View {
         saved.kind = kind
         saved.start = calendar.startOfDay(for: start)
         saved.note = note.trimmingCharacters(in: .whitespaces)
+        saved.approval = kind == .holiday && requested ? .requested : nil
         switch length {
         case .fullDay, .morning, .afternoon:
             saved.end = saved.start
