@@ -473,8 +473,12 @@ added, removed or created, and the tracked board field set), and commits to the 
 - Plans, Requirements, Findings and Skills are rows under Harness in the sidebar
   (`SidebarItem.harnessKind`, with counts of standard documents), sharing the `harnessKind` scene
   storage the Harness page reads; the Harness row itself shows the kind last picked.
-- The Harness page has a bar at the top (search over title, summary, path, domains and issues,
-  and Not Linked for plans and requirements); the sidebar's Refresh fetches the harness again.
+- The Harness page has a bar at the top: search over title, summary, path, domains and issues;
+  a menu for each front matter field whose values two or more documents share (Status,
+  Domains, Owner, Touches by repo, Severity, then any others; not prose, links or branches,
+  `HarnessDocument.frontMatter`), with counts; and Not Linked for plans and requirements. The
+  documents are a `StatsTable` (title with summary, status, domain, issues, tasks, owner, date;
+  newest first until a column is sorted). The sidebar's Refresh fetches the harness again.
   It lists only documents that follow the standard (`followsStandard`: front
   matter with a summary); older ones are counted at the end, with Show Them
   (`harnessShowsOlder`). A document's page (`HarnessDocumentPage`, also its drawer, with Done) is laid out as the

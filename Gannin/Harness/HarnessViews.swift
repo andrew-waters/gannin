@@ -44,11 +44,16 @@ struct HarnessView: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
+    @Environment(OrgStore.self) private var orgs
     @Environment(\.openURL) private var openURL
     /// Picked under Harness in the sidebar, which writes the same key.
     @SceneStorage("harnessKind") private var kind: HarnessKind = .plans
     @State private var unlinkedOnly = false
     @State private var search = ""
+    /// Front matter values picked, by field; any of a field's values matches.
+    @State private var picked: [String: Set<String>] = [:]
+    /// Nil is newest first.
+    @State private var sort: StatsSort?
     /// Documents from before STANDARDS.md, without front matter.
     @AppStorage("harnessShowsOlder") private var showsOlder = false
     let org: String
@@ -76,13 +81,14 @@ struct HarnessView: View {
         if let index = harness.index(for: org, setup) {
             let lookup = IssueLookup(history: issueStore.history(for: org))
             let linkable = kind == .plans || kind == .requirements
-            let ofKind = index.documents(kind)
+            let pool = index.documents(kind)
                 .filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
                 .filter { matches($0) }
+            let ofKind = pool.filter { matchesPicked($0) }
             let documents = ofKind.filter { showsOlder || $0.followsStandard }
             let older = ofKind.count(where: { !$0.followsStandard })
             VStack(spacing: 0) {
-                bar(linkable: linkable)
+                bar(linkable: linkable, pool: pool)
                 Divider()
                 list(documents: documents, older: older, index: index, lookup: lookup, linkable: linkable, setup: setup)
             }
@@ -106,21 +112,107 @@ struct HarnessView: View {
         }
     }
 
-    /// Search, and Not Linked for plans and requirements.
-    private func bar(linkable: Bool) -> some View {
+    /// Search, a menu for each front matter field the documents share
+    /// values in, and Not Linked for plans and requirements.
+    private func bar(linkable: Bool, pool: [HarnessDocument]) -> some View {
         HStack(spacing: 8) {
             FilterSearchField(text: $search, prompt: "Title, summary, path or issue")
+            ForEach(Self.filterFields(pool), id: \.self) { field in
+                fieldMenu(field, pool: pool)
+            }
             if linkable {
                 Toggle("Not Linked", isOn: $unlinkedOnly)
                     .toggleStyle(.button)
                     .help("Only the \(kind.rawValue.lowercased()) that name no issue")
             }
             Spacer(minLength: 0)
+            if !search.isEmpty || picked.values.contains(where: { !$0.isEmpty }) || unlinkedOnly {
+                Button("Clear All") {
+                    search = ""
+                    picked = [:]
+                    unlinkedOnly = false
+                }
+                .linkButton()
+            }
         }
+        .onChange(of: kind) { picked = [:] }
         .controlSize(.small)
         .font(.callout)
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+    }
+
+    /// Fields that differ for every document, or are prose or links, make
+    /// no filter.
+    private static let unfilterable: Set<String> = [
+        "type", "summary", "description", "title", "name", "branch", "issues", "prs", "depends-on", "requirement", "notion", "github", "issue",
+    ]
+
+    /// Known fields first, in the standard's order, then the rest by name.
+    private static let fieldOrder = ["status", "domains", "owner", "touches", "severity", "repos"]
+
+    /// Front matter fields with a value that two or more documents share.
+    static func filterFields(_ documents: [HarnessDocument]) -> [String] {
+        var counts: [String: [String: Int]] = [:]
+        for document in documents {
+            for (field, values) in document.frontMatter ?? [:] where !unfilterable.contains(field) {
+                for value in Set(values.map { filterValue($0, field: field) }) where !value.isEmpty {
+                    counts[field, default: [:]][value, default: 0] += 1
+                }
+            }
+        }
+        return counts.filter { $0.value.values.contains { $0 > 1 } }.keys.sorted { a, b in
+            let (i, j) = (fieldOrder.firstIndex(of: a) ?? Int.max, fieldOrder.firstIndex(of: b) ?? Int.max)
+            return i != j ? i < j : a < b
+        }
+    }
+
+    /// A value as it's filtered by: a repo for `owner/repo:path`, the rest as written.
+    private static func filterValue(_ value: String, field: String) -> String {
+        field == "touches" ? String(value.split(separator: ":").first ?? "") : value.lowercased()
+    }
+
+    private func values(_ document: HarnessDocument, field: String) -> Set<String> {
+        Set((document.frontMatter?[field] ?? []).map { Self.filterValue($0, field: field) })
+    }
+
+    private func matchesPicked(_ document: HarnessDocument, except field: String? = nil) -> Bool {
+        picked.allSatisfy { key, chosen in
+            key == field || chosen.isEmpty || !values(document, field: key).isDisjoint(with: chosen)
+        }
+    }
+
+    /// A field's values across the documents (as they'd be without this
+    /// field's filter), with counts.
+    private func fieldMenu(_ field: String, pool: [HarnessDocument]) -> some View {
+        var counts: [String: Int] = [:]
+        for document in pool where matchesPicked(document, except: field) {
+            for value in values(document, field: field) where !value.isEmpty { counts[value, default: 0] += 1 }
+        }
+        let options = counts.keys.map { value in
+            FilterOption(value: value, title: title(value, field: field), count: counts[value] ?? 0)
+        }
+        // Statuses in the standard's order; the rest by name.
+        let ordered = field == "status"
+            ? options.sorted { (Self.statusOrder.firstIndex(of: $0.value) ?? 99, $0.title) < (Self.statusOrder.firstIndex(of: $1.value) ?? 99, $1.title) }
+            : options.sorted(byCount: field == "owner")
+        return FilterMenu(
+            title: field.replacingOccurrences(of: "-", with: " ").capitalized,
+            options: ordered,
+            picked: Binding(get: { picked[field] ?? [] }, set: { picked[field] = $0 })
+        )
+    }
+
+    private static let statusOrder = ["draft", "agreed", "open", "investigating", "in-progress", "fixing", "blocked", "done", "fixed", "abandoned", "wont-fix"]
+
+    private func title(_ value: String, field: String) -> String {
+        switch field {
+        case "owner": orgs.snapshot(for: org)?.members.first { $0.login.lowercased() == value }?.displayName ?? value
+        case "touches": value.split(separator: "/").last.map(String.init) ?? value
+        case "domains": Self.prettify(value)
+        default:
+            value.prefix(1).uppercased() + value.dropFirst().replacingOccurrences(of: "-", with: " ")
+        }
     }
 
     /// Every word typed in its title, summary, path or an issue it names.
@@ -134,61 +226,123 @@ struct HarnessView: View {
 
     private func list(documents: [HarnessDocument], older: Int, index: HarnessIndex, lookup: IssueLookup, linkable: Bool, setup: HarnessConfig) -> some View {
         let repo = setup.repo
-        return List {
-            if let error = harness.errors[org] {
-                Banner(message: "Refresh failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
-                    Task { await harness.load(org: org, setup: setup, force: true) }
-                }
-            }
-            if documents.isEmpty {
-                Text(!search.isEmpty ? "Nothing matches." : unlinkedOnly ? "Every one names an issue." : older > 0 ? "No \(kind.rawValue.lowercased()) follow the standard yet." : "No \(kind.rawValue.lowercased()) in \(repo).")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(groups(documents), id: \.title) { group in
-                Section(header: SectionHeader(title: group.title, count: group.documents.count)) {
-                    ForEach(group.documents) { document in
-                        row(document, index: index, lookup: lookup, linkable: linkable)
-                    }
-                }
-            }
-            if older > 0 {
-                Section {
-                    HStack {
-                        Text(showsOlder
-                             ? "Showing \(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter."
-                             : "\(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter \(older == 1 ? "isn't" : "aren't") shown.")
-                            .foregroundStyle(.secondary)
-                        Button(showsOlder ? "Hide Them" : "Show Them") { showsOlder.toggle() }
-                            .linkButton()
-                    }
-                    .font(.callout)
-                } footer: {
-                    Text("Documents written to the harness's STANDARDS.md (front matter with a summary) are listed; older ones appear once they're converted.")
-                        .foregroundStyle(.secondary)
-                }
-            }
-        }
-    }
-
-    /// Plans and requirements by domain (from front matter) or module
-    /// folder, skills by folder, findings newest
-    /// first; the newest first within each.
-    private func groups(_ documents: [HarnessDocument]) -> [(title: String, documents: [HarnessDocument])] {
-        let newestFirst: (HarnessDocument, HarnessDocument) -> Bool = { a, b in
+        let newestFirst = documents.sorted { a, b in
             if a.date != b.date { return (a.date ?? .distantPast) > (b.date ?? .distantPast) }
             return a.title.localizedStandardCompare(b.title) == .orderedAscending
         }
-        let grouped = Dictionary(grouping: documents) { document -> String in
-            switch document.kind {
-            case .plans, .requirements: return document.area.map(Self.prettify) ?? "Other"
-            case .findings: return "Findings"
-            case .skills:
-                let parts = document.path.split(separator: "/")
-                return parts.count > 2 ? Self.prettify(String(parts[1])) : "Skills"
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                if let error = harness.errors[org] {
+                    Banner(message: "Refresh failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
+                        Task { await harness.load(org: org, setup: setup, force: true) }
+                    }
+                    .padding(.horizontal, 14)
+                }
+                if documents.isEmpty {
+                    Text(!search.isEmpty || picked.values.contains(where: { !$0.isEmpty }) ? "Nothing matches." : unlinkedOnly ? "Every one names an issue." : older > 0 ? "No \(kind.rawValue.lowercased()) follow the standard yet." : "No \(kind.rawValue.lowercased()) in \(repo).")
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 14)
+                } else {
+                    StatsTable(
+                        rows: newestFirst,
+                        columns: columns(index: index, lookup: lookup, linkable: linkable),
+                        sort: $sort,
+                        selectedID: nil,
+                        onSelect: { selection = .harnessDocument($0.path) },
+                        contextMenu: { document in
+                            AnyView(Group {
+                                if let url = index.url(for: document) {
+                                    Button("Open on GitHub") { openURL(url) }
+                                }
+                            })
+                        },
+                        destination: { .harnessDocument($0.path) }
+                    )
+                }
+                if older > 0 {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(showsOlder
+                                 ? "Showing \(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter."
+                                 : "\(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter \(older == 1 ? "isn't" : "aren't") shown.")
+                                .foregroundStyle(.secondary)
+                            Button(showsOlder ? "Hide Them" : "Show Them") { showsOlder.toggle() }
+                                .linkButton()
+                        }
+                        Text("Documents written to the harness's STANDARDS.md (front matter with a summary) are listed; older ones appear once they're converted.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 14)
+                }
             }
+            .padding(.vertical, 12)
         }
-        return grouped.map { ($0.key, $0.value.sorted(by: newestFirst)) }
-            .sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+    }
+
+    /// Title with its summary, status, domain, issues, tasks, owner and date.
+    private func columns(index: HarnessIndex, lookup: IssueLookup, linkable: Bool) -> [StatsColumn<HarnessDocument>] {
+        var columns: [StatsColumn<HarnessDocument>] = [
+            StatsColumn(id: "title", title: kind.singular.capitalized, help: "Its title, with its summary", width: nil, minWidth: 320,
+                        sortKey: { .text($0.title.lowercased()) },
+                        cell: { document in
+                            AnyView(VStack(alignment: .leading, spacing: 2) {
+                                Text(document.title).lineLimit(1)
+                                if let summary = document.summary {
+                                    Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }
+                            .padding(.vertical, 4)
+                            .help(document.path))
+                        }),
+            StatsColumn(id: "status", title: "Status", help: "Its front matter status", width: 110,
+                        sortKey: { .text(($0.statusLabel ?? "").lowercased()) },
+                        cell: { document in
+                            AnyView(Group {
+                                if let status = document.statusLabel { Pill(text: status, color: .secondary).help(document.status ?? status) }
+                            })
+                        }),
+            StatsColumn(id: "domain", title: "Domain", help: "Its main domain, else its folder", width: 120,
+                        sortKey: { .text(($0.area ?? "").lowercased()) },
+                        cell: { AnyView(Text($0.area.map(Self.prettify) ?? "").lineLimit(1).help(($0.domains ?? []).joined(separator: ", "))) }),
+        ]
+        if linkable || kind == .findings {
+            columns.append(StatsColumn(id: "issues", title: "Issues", help: "The issues it's about", width: 200,
+                                       sortKey: { .number(Double($0.subjects.first?.number ?? 0)) },
+                                       cell: { document in
+                                           AnyView(Group {
+                                               if document.subjects.isEmpty {
+                                                   Text(linkable ? "Not linked" : "").font(.caption).foregroundStyle(.orange)
+                                               } else {
+                                                   issueLine(document.subjects, index: index, lookup: lookup)
+                                               }
+                                           })
+                                       }))
+        }
+        if kind == .plans {
+            columns.append(StatsColumn(id: "tasks", title: "Tasks", help: "Checkboxes ticked of those in it", width: 80,
+                                       sortKey: { .number($0.tasks == 0 ? -1 : Double($0.tasksDone) / Double($0.tasks)) },
+                                       cell: { document in
+                                           AnyView(Group {
+                                               if document.tasks > 0 { TaskCount(done: document.tasksDone, total: document.tasks) }
+                                           })
+                                       }))
+        }
+        columns.append(StatsColumn(id: "owner", title: "Owner", help: "Who's driving it", width: 130,
+                                   sortKey: { .text(($0.owner ?? "").lowercased()) },
+                                   cell: { document in
+                                       AnyView(Text(document.owner.map { login in orgs.snapshot(for: org)?.members.first { $0.login == login }?.displayName ?? login } ?? "")
+                                           .lineLimit(1))
+                                   }))
+        columns.append(StatsColumn(id: "date", title: "Date", help: "From its file name", width: 100,
+                                   sortKey: { .number($0.date?.timeIntervalSince1970 ?? 0) },
+                                   cell: { document in
+                                       AnyView(Text(document.date?.formatted(date: .abbreviated, time: .omitted) ?? "")
+                                           .foregroundStyle(.secondary)
+                                           .monospacedDigit())
+                                   }))
+        return columns
     }
 
     /// `data-capture` as "Data capture"; short names like `cdm` in capitals.
@@ -196,60 +350,6 @@ struct HarnessView: View {
         if name.count <= 3 { return name.uppercased() }
         let words = name.replacingOccurrences(of: "-", with: " ")
         return words.prefix(1).uppercased() + words.dropFirst()
-    }
-
-    private func row(_ document: HarnessDocument, index: HarnessIndex, lookup: IssueLookup, linkable: Bool) -> some View {
-        Button {
-            selection = .harnessDocument(document.path)
-        } label: {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(document.title)
-                        .lineLimit(2)
-                    if let summary = document.summary {
-                        Text(summary)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
-                    }
-                    Text(document.path)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if !document.subjects.isEmpty {
-                        issueLine(document.subjects, index: index, lookup: lookup)
-                    } else if linkable {
-                        Text("Not linked to an issue")
-                            .font(.caption)
-                            .foregroundStyle(.orange)
-                    }
-                }
-                Spacer(minLength: 12)
-                if let status = document.statusLabel {
-                    Pill(text: status, color: .secondary)
-                        .help(document.status ?? status)
-                }
-                if document.tasks > 0 {
-                    TaskCount(done: document.tasksDone, total: document.tasks)
-                }
-                if let date = document.date {
-                    Text(date.formatted(date: .abbreviated, time: .omitted))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .monospacedDigit()
-                }
-            }
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .contextMenu {
-            OpenElsewhereItems(.harnessDocument(document.path))
-            if let url = index.url(for: document) {
-                Button("Open on GitHub") { openURL(url) }
-            }
-        }
     }
 
     /// "#2369 Show equipment certificate history · #2370", in the issue's

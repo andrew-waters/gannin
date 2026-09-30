@@ -98,6 +98,9 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
     let branch: String?
     let owner: String?
     let dependsOn: [String]?
+    /// Every front matter field, each as a list of values, for filtering by
+    /// whatever fields the harness's documents use.
+    let frontMatter: [String: [String]]?
     /// Checkboxes: plans tick theirs off as work lands.
     let tasks: Int
     let tasksDone: Int
@@ -111,7 +114,7 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 4
+    static let parserVersion = 5
 
     /// It follows the harness's STANDARDS.md: front matter with a summary.
     var followsStandard: Bool { hasFrontMatter == true && summary != nil }
@@ -277,6 +280,7 @@ nonisolated extension HarnessDocument {
         branch = front?["branch"]?.text
         owner = front?["owner"]?.text
         dependsOn = front?["depends-on"]?.list
+        frontMatter = front?.mapValues(\.list)
         title = lines.lazy.map { $0.trimmingCharacters(in: .whitespaces) }
             .first { $0.hasPrefix("# ") }
             .map { String($0.dropFirst(2)).trimmingCharacters(in: .whitespaces) }
