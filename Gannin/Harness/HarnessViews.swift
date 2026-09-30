@@ -283,7 +283,7 @@ struct HarnessDocumentPage: View {
                             HarnessIssueList(org: org, index: index, references: document.references, lookup: IssueLookup(history: issueStore.history(for: org)))
                         }
                         Divider()
-                        MarkdownText(source: document.body)
+                        MarkdownText(source: document.bodyWithoutTitle, reflows: true)
                     }
                     .padding(20)
                     .frame(maxWidth: 900, alignment: .leading)
@@ -383,13 +383,20 @@ private struct HarnessIssueList: View {
                         Text(verbatim: repo == index.issuesRepo ? "#\(reference.number)" : "\(repo ?? "")#\(reference.number)")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
-                        Text(record?.title ?? "Not in Gannin's issue history")
-                            .foregroundStyle(record == nil ? .secondary : .primary)
-                            .lineLimit(1)
+                        if let record {
+                            Text(record.title).lineLimit(1)
+                        } else {
+                            // A PR, or an issue outside the history: GitHub
+                            // has it (issue links redirect to PRs).
+                            Image(systemName: "arrow.up.right.square")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help(record == nil ? "Open on GitHub" : "Open the issue")
             }
         }
     }

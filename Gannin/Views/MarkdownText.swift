@@ -7,6 +7,11 @@ import SwiftUI
 /// (bold, italic, code spans, links) is handled by `AttributedString(markdown:)`.
 struct MarkdownText: View {
     let source: String
+    /// A single line break is a space, as in a Markdown file wrapped at a
+    /// width (the harness's documents), rather than a break, as GitHub
+    /// shows issue and PR bodies. A line ending in two spaces or a
+    /// backslash still breaks.
+    var reflows = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -43,7 +48,7 @@ struct MarkdownText: View {
         }
 
         func flushParagraph() {
-            let joined = paragraph.joined(separator: "\n")
+            let joined = join(paragraph)
             if !joined.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 result.append(.paragraph(text: joined))
             }
@@ -84,6 +89,13 @@ struct MarkdownText: View {
             } else if let (number, text) = ordered(trimmed) {
                 flushParagraph()
                 result.append(.ordered(number: number, text: text))
+            } else if paragraph.isEmpty, line.first?.isWhitespace == true, let last = result.last {
+                // An indented line under a list item carries it on.
+                switch last {
+                case .bullet(let text, let checked): result[result.count - 1] = .bullet(text: join([text, trimmed]), checked: checked)
+                case .ordered(let number, let text): result[result.count - 1] = .ordered(number: number, text: join([text, trimmed]))
+                default: paragraph.append(line)
+                }
             } else {
                 paragraph.append(line)
             }
@@ -94,6 +106,21 @@ struct MarkdownText: View {
         flushTable()
         flushParagraph()
         return result
+    }
+
+    /// Lines of one paragraph or list item: spaces between them when the
+    /// text reflows, except after a hard break.
+    private func join(_ lines: [String]) -> String {
+        guard reflows else { return lines.joined(separator: "\n") }
+        var text = ""
+        for (index, line) in lines.enumerated() {
+            let breaks = line.hasSuffix("  ") || line.hasSuffix("\\")
+            var part = line.trimmingCharacters(in: .whitespaces)
+            if part.hasSuffix("\\") { part.removeLast() }
+            text += part
+            if index < lines.count - 1 { text += breaks ? "\n" : " " }
+        }
+        return text
     }
 
     /// PR templates are full of `<!-- guidance -->` blocks nobody wants to read.

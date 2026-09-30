@@ -126,6 +126,16 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
         return text.count <= 32 ? text : String(text.prefix(30)).trimmingCharacters(in: .whitespaces) + "..."
     }
 
+    /// The body less its first heading when that's the title, which the
+    /// document's page already shows.
+    var bodyWithoutTitle: String {
+        var lines = body.components(separatedBy: "\n")
+        guard let first = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+              lines[first].trimmingCharacters(in: .whitespaces) == "# \(title)" else { return body }
+        lines.remove(at: first)
+        return lines.joined(separator: "\n")
+    }
+
     /// The text without its front matter, for reading.
     var body: String {
         guard text.hasPrefix("---\n"), let end = text.range(of: "\n---\n", range: text.index(text.startIndex, offsetBy: 4)..<text.endIndex) else { return text }
