@@ -48,6 +48,7 @@ struct HarnessView: View {
     /// Picked under Harness in the sidebar, which writes the same key.
     @SceneStorage("harnessKind") private var kind: HarnessKind = .plans
     @State private var unlinkedOnly = false
+    @State private var search = ""
     /// Documents from before STANDARDS.md, without front matter.
     @AppStorage("harnessShowsOlder") private var showsOlder = false
     let org: String
@@ -66,25 +67,6 @@ struct HarnessView: View {
                 )
             }
         }
-        .toolbar {
-            if let setup {
-                if kind == .plans || kind == .requirements {
-                    ToolbarItem {
-                        Toggle("Not Linked", isOn: $unlinkedOnly)
-                            .help("Only the \(kind.rawValue.lowercased()) that name no issue in their file name or header table")
-                    }
-                }
-                ToolbarItem {
-                    Button {
-                        Task { await harness.load(org: org, setup: setup, force: true) }
-                    } label: {
-                        Label("Refresh", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(harness.loading.contains(org))
-                    .help("Fetch \(setup.repo) again")
-                }
-            }
-        }
         .loadsHarness(org: org)
     }
 
@@ -94,42 +76,15 @@ struct HarnessView: View {
         if let index = harness.index(for: org, setup) {
             let lookup = IssueLookup(history: issueStore.history(for: org))
             let linkable = kind == .plans || kind == .requirements
-            let ofKind = index.documents(kind).filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
+            let ofKind = index.documents(kind)
+                .filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
+                .filter { matches($0) }
             let documents = ofKind.filter { showsOlder || $0.followsStandard }
             let older = ofKind.count(where: { !$0.followsStandard })
-            List {
-                if let error = harness.errors[org] {
-                    Banner(message: "Refresh failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
-                        Task { await harness.load(org: org, setup: setup, force: true) }
-                    }
-                }
-                if documents.isEmpty {
-                    Text(unlinkedOnly ? "Every one names an issue." : older > 0 ? "No \(kind.rawValue.lowercased()) follow the standard yet." : "No \(kind.rawValue.lowercased()) in \(repo).")
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(groups(documents), id: \.title) { group in
-                    Section(header: SectionHeader(title: group.title, count: group.documents.count)) {
-                        ForEach(group.documents) { document in
-                            row(document, index: index, lookup: lookup, linkable: linkable)
-                        }
-                    }
-                }
-                if older > 0 {
-                    Section {
-                        HStack {
-                            Text(showsOlder
-                                 ? "Showing \(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter."
-                                 : "\(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter \(older == 1 ? "isn't" : "aren't") shown.")
-                                .foregroundStyle(.secondary)
-                            Button(showsOlder ? "Hide Them" : "Show Them") { showsOlder.toggle() }
-                                .linkButton()
-                        }
-                        .font(.callout)
-                    } footer: {
-                        Text("Documents written to the harness's STANDARDS.md (front matter with a summary) are listed; older ones appear once they're converted.")
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            VStack(spacing: 0) {
+                bar(linkable: linkable)
+                Divider()
+                list(documents: documents, older: older, index: index, lookup: lookup, linkable: linkable, setup: setup)
             }
         } else if let error = harness.errors[org] {
             ContentUnavailableView {
@@ -147,6 +102,70 @@ struct HarnessView: View {
                 Label("Not indexed yet", systemImage: "text.book.closed")
             } actions: {
                 Button("Index Now") { Task { await harness.load(org: org, setup: setup, force: true) } }
+            }
+        }
+    }
+
+    /// Search, and Not Linked for plans and requirements.
+    private func bar(linkable: Bool) -> some View {
+        HStack(spacing: 8) {
+            FilterSearchField(text: $search, prompt: "Title, summary, path or issue")
+            if linkable {
+                Toggle("Not Linked", isOn: $unlinkedOnly)
+                    .toggleStyle(.button)
+                    .help("Only the \(kind.rawValue.lowercased()) that name no issue")
+            }
+            Spacer(minLength: 0)
+        }
+        .controlSize(.small)
+        .font(.callout)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// Every word typed in its title, summary, path or an issue it names.
+    private func matches(_ document: HarnessDocument) -> Bool {
+        let words = search.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return true }
+        let fields = [document.title, document.summary ?? "", document.path] + (document.domains ?? [])
+            + document.references.map { "\($0.repo ?? "")#\($0.number)" }
+        return words.allSatisfy { word in fields.contains { $0.localizedCaseInsensitiveContains(word) } }
+    }
+
+    private func list(documents: [HarnessDocument], older: Int, index: HarnessIndex, lookup: IssueLookup, linkable: Bool, setup: HarnessConfig) -> some View {
+        let repo = setup.repo
+        return List {
+            if let error = harness.errors[org] {
+                Banner(message: "Refresh failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
+                    Task { await harness.load(org: org, setup: setup, force: true) }
+                }
+            }
+            if documents.isEmpty {
+                Text(!search.isEmpty ? "Nothing matches." : unlinkedOnly ? "Every one names an issue." : older > 0 ? "No \(kind.rawValue.lowercased()) follow the standard yet." : "No \(kind.rawValue.lowercased()) in \(repo).")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(groups(documents), id: \.title) { group in
+                Section(header: SectionHeader(title: group.title, count: group.documents.count)) {
+                    ForEach(group.documents) { document in
+                        row(document, index: index, lookup: lookup, linkable: linkable)
+                    }
+                }
+            }
+            if older > 0 {
+                Section {
+                    HStack {
+                        Text(showsOlder
+                             ? "Showing \(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter."
+                             : "\(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter \(older == 1 ? "isn't" : "aren't") shown.")
+                            .foregroundStyle(.secondary)
+                        Button(showsOlder ? "Hide Them" : "Show Them") { showsOlder.toggle() }
+                            .linkButton()
+                    }
+                    .font(.callout)
+                } footer: {
+                    Text("Documents written to the harness's STANDARDS.md (front matter with a summary) are listed; older ones appear once they're converted.")
+                        .foregroundStyle(.secondary)
+                }
             }
         }
     }
