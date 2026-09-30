@@ -34,13 +34,14 @@ struct OffBoardIssuesView: View {
     @State private var choseBoard = false
     @State private var selection: Set<String> = []
     @State private var adding: Adding?
+    @State private var search = ""
 
     var body: some View {
         let issues = issues
         List(selection: $selection) {
             Section {
                 if issues.isEmpty {
-                    Text(store.history(for: org) == nil ? "Loading issues." : "Nothing here: every \(state == .all ? "" : state.rawValue.lowercased() + " ")issue is on \(boardName ?? "a board").")
+                    Text(store.history(for: org) == nil ? "Loading issues." : !search.isEmpty ? "No issues match." : "Nothing here: every \(state == .all ? "" : state.rawValue.lowercased() + " ")issue is on \(boardName ?? "a board").")
                         .foregroundStyle(.secondary)
                 }
                 ForEach(issues) { issue in
@@ -69,6 +70,7 @@ struct OffBoardIssuesView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if !selection.isEmpty { selectionBar(issues) }
         }
+        .searchable(text: $search, placement: .toolbar, prompt: "Title, number, repo, label or person")
         .toolbar {
             ToolbarItem {
                 Picker("Not on", selection: $board) {
@@ -144,6 +146,7 @@ struct OffBoardIssuesView: View {
                 board.map { number in issue.fields(onProject: number) == nil } ?? issue.projectFields.isEmpty
             }
             .filter { issue in members.map { team in issue.assignees.contains(where: team.contains) } ?? true }
+            .filter { IssueSearch.matches(search, record: $0) }
             .sorted { ($0.closedAt ?? $0.createdAt) > ($1.closedAt ?? $1.createdAt) }
     }
 

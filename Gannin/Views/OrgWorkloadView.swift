@@ -176,8 +176,8 @@ struct OrgWorkloadView: View {
         case .issues:
             if issueList == .notOnBoard {
                 OffBoardIssuesView(org: org, team: workload.team)
-            } else if let issueList {
-                issueListView(workload, list: issueList)
+            } else if issueList == .open {
+                OpenIssuesView(workload: workload, selection: $selection)
             } else {
                 IssuesStatsView(org: org, workload: workload, selection: $selection)
             }
@@ -246,18 +246,6 @@ struct OrgWorkloadView: View {
         }
     }
 
-    private func issueListView(_ workload: Workload, list: IssueList) -> some View {
-        let issues = (list == .assigned ? workload.assignedIssues : workload.unassignedIssues).filter(matches)
-        return List(selection: $selection) {
-            Section("\(list.rawValue) (\(issues.count))") {
-                ForEach(issues) { issue in
-                    IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
-                        .tag(DetailSelection.issue(issue.id))
-                }
-            }
-        }
-    }
-
     // MARK: Filtering
 
     private var query: String { searchText.trimmingCharacters(in: .whitespaces) }
@@ -273,11 +261,6 @@ struct OrgWorkloadView: View {
     private func matches(_ pr: PullRequest) -> Bool {
         query.isEmpty || matches(pr.title) || matches(pr.repo) || matches("#\(pr.number)")
             || pr.workers.contains(where: matches) || pr.requestedReviewers.contains(where: matches)
-    }
-
-    private func matches(_ issue: Issue) -> Bool {
-        query.isEmpty || matches(issue.title) || matches(issue.repo) || matches("#\(issue.number)")
-            || issue.assignees.contains(where: matches) || issue.labels.contains { matches($0.name) }
     }
 }
 

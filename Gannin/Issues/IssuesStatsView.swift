@@ -16,6 +16,8 @@ struct IssuesStatsView: View {
     /// time in progress. Remembered per org.
     @State private var order = ""
     @State private var descending = false
+    /// Narrows the In progress now list.
+    @State private var search = ""
 
     let org: String
     let workload: Workload?
@@ -170,6 +172,11 @@ struct IssuesStatsView: View {
         let options = orderOptions(metrics)
         return HStack(spacing: 12) {
             SectionHeader(title: "In progress now", count: metrics.inProgress.count)
+            TextField("Search", text: $search, prompt: Text("Search in progress"))
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 220)
+                .font(.body)
+                .controlSize(.small)
             Spacer(minLength: 8)
             Group {
                 Picker("Order by", selection: $order) {
@@ -215,6 +222,7 @@ struct IssuesStatsView: View {
     /// Ordered by the chosen field: values in order, then empty on the
     /// board, then not on it; time in progress breaks ties.
     private func ordered(_ issues: [IssueTiming]) -> [IssueTiming] {
+        let issues = issues.filter { IssueSearch.matches(search, record: $0.record) }
         let byTime = issues.sorted { ($0.start ?? .now) < ($1.start ?? .now) }
         let timeOrder = descending ? Array(byTime.reversed()) : byTime
         guard !order.isEmpty else { return timeOrder }
@@ -257,8 +265,8 @@ struct IssuesStatsView: View {
 
     private func inProgressList(_ metrics: IssueMetrics) -> some View {
         VStack(spacing: 0) {
-            if metrics.inProgress.isEmpty {
-                Text("Nothing in progress.").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            if metrics.inProgress.isEmpty || ordered(metrics.inProgress).isEmpty {
+                Text(metrics.inProgress.isEmpty ? "Nothing in progress." : "Nothing in progress matches.").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
             }
             ForEach(ordered(metrics.inProgress)) { timing in
                 Button { open(timing.record) } label: {
