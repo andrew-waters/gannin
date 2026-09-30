@@ -35,6 +35,10 @@ enum SessionScript {
         let places: String
         let prepare: String
         let addDir: String
+        // A server session's brief comes from the harness once it's there.
+        let briefSource = session.harnessFolder.map { folder in
+            #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(folder) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Restart."\#n"#
+        } ?? ""
         if let harnessRepo = session.harnessRepo, session.harnessPath != nil {
             places = """
                 harness=\(root)
@@ -125,7 +129,7 @@ enum SessionScript {
 
             cd "$worktree" || fail "The worktree isn't there."
             mkdir -p .gannin
-            cp "$session/brief.md" "$session/settings.json" .gannin/
+            \(briefSource)cp "$session/brief.md" "$session/settings.json" .gannin/
             exclude="$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
             mkdir -p "$(dirname "$exclude")"
             grep -qx '.gannin/' "$exclude" 2>/dev/null || echo '.gannin/' >> "$exclude"
@@ -180,7 +184,9 @@ enum SessionScript {
     /// settings into the session's folder there, then run the script in the
     /// server's login shell, so its PATH and claude's login are the box's.
     /// Everything travels as base64 inside the command, stdin left to claude.
-    static func remoteCommand(directory: String, script: String, brief: String, settings: String) -> String {
+    /// The brief is left out (nil) once it's in the harness, which the
+    /// script pulls.
+    static func remoteCommand(directory: String, script: String, brief: String?, settings: String) -> String {
         func unpack(_ text: String, _ file: String) -> String {
             "printf %s \(Data(text.utf8).base64EncodedString()) | base64 -d > \"$d/\(file)\""
         }
@@ -188,7 +194,7 @@ enum SessionScript {
             d=\(directory)
             mkdir -p "$d"
             \(unpack(script, "start.sh"))
-            \(unpack(brief, "brief.md"))
+            \(brief.map { unpack($0, "brief.md") } ?? "rm -f \"$d/brief.md\"")
             \(unpack(settings, "settings.json"))
             printf starting > "$d/state"
             exec "${SHELL:-bash}" -lic 'exec bash "$0"' "$d/start.sh"

@@ -18,7 +18,7 @@ final class HarnessStore {
     private(set) var repositories: [String: [String]] = [:]
 
     @ObservationIgnored private var fetches: [String: Task<Void, Never>] = [:]
-    private let auth: AuthStore
+    let auth: AuthStore
 
     init(auth: AuthStore) {
         self.auth = auth

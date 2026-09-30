@@ -31,6 +31,9 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// worktree is beside a clone in the workspace.
     var harnessRepo: String? = nil
     var harnessPath: String? = nil
+    /// Its folder in the harness (`sessions/product-123`), once its brief
+    /// and `session.json` are committed there; nil when they weren't.
+    var harnessFolder: String? = nil
 
     var isRemote: Bool { connect != nil }
     /// The code repo's name, its folder under `projects/` and in the worktree.
@@ -58,12 +61,44 @@ extension CodeSession {
         remoteWorkspace = try container.decodeIfPresent(String.self, forKey: .remoteWorkspace)
         harnessRepo = try container.decodeIfPresent(String.self, forKey: .harnessRepo)
         harnessPath = try container.decodeIfPresent(String.self, forKey: .harnessPath)
+        harnessFolder = try container.decodeIfPresent(String.self, forKey: .harnessFolder)
     }
 }
 
 extension IssueReference {
     /// `owner/name#123`, as a plain string so the number isn't grouped.
     var reference: String { "\(repo)#\(number)" }
+}
+
+/// A session as the harness keeps it, in `sessions/<repo>-<number>/session.json`
+/// beside its brief, so the team can see who's working on what, where.
+struct SessionRecord: Codable {
+    var issue: String
+    var title: String
+    var url: URL
+    /// The code repos it has worktrees for.
+    var repos: [String]
+    var branch: String
+    var startedBy: String?
+    var startedAt: Date
+    /// Where it runs: this Mac's name, or the Connect with command.
+    var box: String
+    var pullRequests: [URL]
+
+    static let encoder: JSONEncoder = {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }()
+
+    static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
+    }()
+
+    var json: String { String(decoding: (try? Self.encoder.encode(self)) ?? Data(), as: UTF8.self) + "\n" }
 }
 
 /// A session's own window, by ID.
@@ -171,12 +206,20 @@ final class SessionStore {
         }
     }
 
+    /// Whether Work on This asks before committing a session's brief and
+    /// record to the org's harness; off once "Don't ask again" is ticked.
+    static func asksBeforeRecordingKey(_ org: String) -> String { "sessionsRecordWithoutAsking.\(org)" }
+
     private(set) var sessions: [UUID: CodeSession] = [:]
     private(set) var states: [UUID: SessionState] = [:]
+    /// Why a session's last commit to the harness failed, to show on it.
+    private(set) var recordErrors: [UUID: String] = [:]
     @ObservationIgnored private var terminals: [UUID: SessionTerminal] = [:]
     @ObservationIgnored private var polling: Task<Void, Never>?
+    @ObservationIgnored private let harness: HarnessStore
 
-    init() {
+    init(harness: HarnessStore) {
+        self.harness = harness
         if let data = try? Data(contentsOf: Self.fileURL),
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
@@ -220,6 +263,64 @@ final class SessionStore {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(brief(session).utf8).write(to: directory.appending(path: "brief.md"))
         return session
+    }
+
+    // MARK: In the harness
+
+    /// `sessions/<repo>-<number>`, by the issue's repo, whose number it is.
+    static func harnessFolder(for issue: IssueReference) -> String {
+        let name = issue.repo.split(separator: "/").last.map(String.init) ?? issue.repo
+        return "sessions/\(name)-\(issue.number)"
+    }
+
+    /// Commits the session's brief and `session.json` to the harness's
+    /// default branch, so its checkout on any box has them. Confirmed by the
+    /// caller. The session keeps where they went, so its PR is added later
+    /// and a server session reads its brief from the harness.
+    func record(_ id: UUID, startedBy: String?) async {
+        guard let session = sessions[id], let repo = session.harnessRepo else { return }
+        let folder = Self.harnessFolder(for: session.issue)
+        let brief = (try? String(contentsOf: Self.directory(for: id).appending(path: "brief.md"), encoding: .utf8)) ?? ""
+        let record = SessionRecord(
+            issue: session.issue.reference, title: session.issue.title, url: session.issue.url,
+            repos: [session.repo], branch: session.branch, startedBy: startedBy, startedAt: session.createdAt,
+            box: session.connect ?? (Host.current().localizedName ?? "Mac"), pullRequests: session.pullRequest.map { [$0] } ?? []
+        )
+        do {
+            try await harness.commit(org: session.org, setup: HarnessConfig(repo: repo), refreshing: false) { _ in
+                HarnessChange(
+                    message: "Gannin: session on \(session.issue.reference)\n\n\(session.issue.title), in \(session.repo) on \(session.branch).",
+                    files: ["\(folder)/brief.md": brief, "\(folder)/session.json": record.json]
+                )
+            }
+            sessions[id]?.harnessFolder = folder
+            recordErrors[id] = nil
+            save()
+        } catch {
+            recordErrors[id] = error.localizedDescription
+        }
+    }
+
+    /// Adds the PR claude opened to the session's `session.json`, on top of
+    /// whatever the harness has now.
+    private func recordPullRequest(_ url: URL, for id: UUID) {
+        guard let session = sessions[id], let repo = session.harnessRepo, let folder = session.harnessFolder else { return }
+        let setup = HarnessConfig(repo: repo)
+        let path = "\(folder)/session.json"
+        Task {
+            do {
+                try await harness.commit(org: session.org, setup: setup, refreshing: false) { head in
+                    let text = try await self.harness.files(setup: setup, at: head, paths: [path])[path] ?? nil
+                    guard let text, var record = try? SessionRecord.decoder.decode(SessionRecord.self, from: Data(text.utf8)) else { return nil }
+                    guard !record.pullRequests.contains(url) else { return nil }
+                    record.pullRequests.append(url)
+                    return HarnessChange(message: "Gannin: \(session.issue.reference) has a pull request\n\n\(url.absoluteString)", files: [path: record.json])
+                }
+                recordErrors[id] = nil
+            } catch {
+                recordErrors[id] = error.localizedDescription
+            }
+        }
     }
 
     // MARK: Terminals
@@ -269,7 +370,9 @@ final class SessionStore {
         let command: String
         if let connect = session.connect {
             let remoteDirectory = #""$HOME"/.gannin/sessions/"# + session.id.uuidString
-            let brief = (try? String(contentsOf: directory.appending(path: "brief.md"), encoding: .utf8)) ?? ""
+            // A brief in the harness comes with its pull; only one that
+            // isn't travels in the command.
+            let brief = session.harnessFolder == nil ? (try? String(contentsOf: directory.appending(path: "brief.md"), encoding: .utf8)) ?? "" : nil
             let remote = SessionScript.remoteCommand(
                 directory: remoteDirectory,
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
@@ -316,9 +419,15 @@ final class SessionStore {
             if states[id] != state { states[id] = state }
         } else if signal.hasPrefix("pr:"), sessions[id]?.pullRequest == nil,
                   let url = URL(string: String(signal.dropFirst(3))), url.scheme == "https" {
-            sessions[id]?.pullRequest = url
-            save()
+            opened(url, for: id)
         }
+    }
+
+    /// Claude's `gh pr create`, spotted by a hook.
+    private func opened(_ url: URL, for id: UUID) {
+        sessions[id]?.pullRequest = url
+        save()
+        recordPullRequest(url, for: id)
     }
 
     private func terminated(_ id: UUID) {
@@ -352,8 +461,7 @@ final class SessionStore {
             if sessions[id]?.pullRequest == nil,
                let raw = try? String(contentsOf: directory.appending(path: "pr"), encoding: .utf8),
                let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme == "https" {
-                sessions[id]?.pullRequest = url
-                save()
+                opened(url, for: id)
             }
         }
         return anyRunning

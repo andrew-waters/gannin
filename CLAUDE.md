@@ -58,8 +58,9 @@ report inside a person's view, which are one column of several.
 - `Gannin/GitHub/`: GraphQL client (`GitHubAPI`) and the queries (`Queries.swift`). All calls are
   reads except the project board writes in `ProjectFields.swift` (adding an issue to or
   removing it from a board, and saving its fields, from the issue window's
-  `ProjectFieldsSections`), which need the `project` scope, and the investment writes in `InvestmentWrites.swift` (labels
-added, removed or created, and the tracked board field set), always confirmed first. Mutations skip the injected
+  `ProjectFieldsSections`), which need the `project` scope, the investment writes in `InvestmentWrites.swift` (labels
+added, removed or created, and the tracked board field set), and commits to the harness
+(`HarnessWrites.swift`), always confirmed first. Mutations skip the injected
   `rateLimit` field. Raw GraphQL shapes are private to `Queries.swift` and mapped onto the models.
 - `Gannin/Workload/`: models (`Models.swift`), `OrgStore` (org list, stars, per-org snapshots
   cached as JSON in Application Support) and `Workload`, which derives per-person load from a
@@ -391,6 +392,17 @@ added, removed or created, and the tracked board field set), always confirmed fi
   (`SessionScript.remoteCommand`), in the harness checkout set for the server
   (`sessionsRemoteHarnessPath.<org>`, no default). Hook state reaches Gannin from a server as
   an escape code (OSC 7777) read by `SessionTerminal`.
+- Work on This records the session in the harness (`SessionStore.record`): one commit of
+  `sessions/<issue repo>-<number>/brief.md` and `session.json` (`SessionRecord`: issue, repos,
+  branch, who started it, when, which box, its PRs) before the terminal starts, so the pull
+  brings them; a server session then reads its brief from there instead of the command. The
+  PR claude reports is added to `session.json` on top of the harness's copy. Confirmed with a
+  "Don't ask again" per org (`sessionsRecordWithoutAsking.<org>`), undone in Settings >
+  Harness.
+- Harness writes (`Harness/HarnessWrites.swift`, `HarnessStore.commit`) are commits through
+  GraphQL `createCommitOnBranch` (`GitHubAPI.mutate` takes object variables), several files
+  at once with `expectedHeadOid`; when the branch moved, the change is planned again on the new
+  head and retried once.
 - Hooks in the session's `--settings` write its state (working, needs you, your turn, exited)
   to a file `SessionStore` reads every second while a terminal runs, and the URL from a
   `gh pr create`. claude runs signed in as the user; Gannin never handles that login.

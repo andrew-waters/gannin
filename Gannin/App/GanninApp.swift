@@ -18,7 +18,7 @@ struct GanninApp: App {
     @State private var activity: SyncActivity
     @State private var harness: HarnessStore
     #if os(macOS)
-    @State private var sessions = SessionStore()
+    @State private var sessions: SessionStore
     #endif
 
     init() {
@@ -38,8 +38,10 @@ struct GanninApp: App {
         _issues = State(initialValue: IssueStore(auth: auth, activity: activity))
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))
-        _harness = State(initialValue: HarnessStore(auth: auth))
+        let harness = HarnessStore(auth: auth)
+        _harness = State(initialValue: harness)
         #if os(macOS)
+        _sessions = State(initialValue: SessionStore(harness: harness))
         TabMenuRename.shared.install()
         #endif
     }

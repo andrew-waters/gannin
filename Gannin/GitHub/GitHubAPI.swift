@@ -41,10 +41,11 @@ nonisolated struct RateLimit: Decodable, Equatable, Sendable {
     var isLow: Bool { remaining < max(250, limit / 10) && resetAt > .now }
 }
 
-/// Thin GitHub GraphQL client. Every call is a read, except adding an issue
-/// to or removing it from a project board and setting its fields there,
-/// from the issue window (`ProjectFields.swift`). Actions runs and jobs are
-/// REST only (`ActionsQueries.swift`).
+/// Thin GitHub GraphQL client. Every call is a read, except the confirmed
+/// writes: project boards (`ProjectFields.swift`), investments
+/// (`InvestmentWrites.swift`) and commits to the harness
+/// (`HarnessWrites.swift`). Actions runs and jobs are REST only
+/// (`ActionsQueries.swift`).
 struct GitHubAPI {
     let token: String
     /// Told the budget after every query.
@@ -79,7 +80,13 @@ struct GitHubAPI {
         }
     }
 
-    private func send<T: Decodable>(_ query: String, variables: [String: String]) async throws -> T {
+    /// A mutation whose variables aren't all strings (an input object, a
+    /// list). A write: not retried, since it may have gone through.
+    func mutate<T: Decodable>(_ query: String, variables: [String: Any], as type: T.Type = T.self) async throws -> T {
+        try await send(query, variables: variables)
+    }
+
+    private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> T {
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")

@@ -119,6 +119,20 @@ private struct SessionPanel: View {
                         .truncationMode(.head)
                         .help(worktreePath)
                 }
+                if let folder = session.harnessFolder, let repo = session.harnessRepo,
+                   let url = URL(string: "https://github.com/\(repo)/tree/HEAD/\(folder)") {
+                    LabeledContent("In the harness") {
+                        Link(folder, destination: url)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
+                }
+                if let error = sessions.recordErrors[session.id] {
+                    Text("Couldn't commit to the harness: \(error)")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let pullRequest = session.pullRequest {
                     LabeledContent("Pull request") {
                         Link(pullRequest.lastPathComponent.isEmpty ? "Open" : "#\(pullRequest.lastPathComponent)", destination: pullRequest)
@@ -168,9 +182,18 @@ struct StartSessionButton: View {
     @Environment(MetricsStore.self) private var metrics
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HarnessStore.self) private var harness
+    @Environment(AuthStore.self) private var auth
     @Environment(\.openWindow) private var openWindow
     let reference: IssueReference
     @State private var isPicking = false
+    /// The repo picked, while the harness commit is confirmed.
+    @State private var confirming: String?
+    @AppStorage private var recordWithoutAsking: Bool
+
+    init(reference: IssueReference) {
+        self.reference = reference
+        _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(reference.org))
+    }
 
     var body: some View {
         if let existing = sessions.session(forIssue: reference.id) {
@@ -199,9 +222,26 @@ struct StartSessionButton: View {
                     prompt: "Search repositories"
                 ) { repo in
                     isPicking = false
-                    if let repo { start(in: repo) }
+                    guard let repo else { return }
+                    if recordWithoutAsking { start(in: repo, recording: true) } else { confirming = repo }
                 }
             }
+            .confirmationDialog(
+                "Record this session in the harness?",
+                isPresented: Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } }),
+                presenting: confirming
+            ) { repo in
+                Button("Commit to Harness") { start(in: repo, recording: true) }
+                Button("Don't Record") {
+                    recordWithoutAsking = false
+                    start(in: repo, recording: false)
+                }
+                Button("Cancel", role: .cancel) { recordWithoutAsking = false }
+            } message: { _ in
+                let harnessRepo = configs.config(for: reference.org).harness?.repo ?? "the harness"
+                Text("Gannin commits \(SessionStore.harnessFolder(for: reference))/brief.md and session.json to \(harnessRepo), on its default branch, so the team can see the session and any box can start it. When Claude opens a pull request, it's added to session.json.")
+            }
+            .dialogSuppressionToggle("Don't ask again for \(reference.org)", isSuppressed: $recordWithoutAsking)
         }
     }
 
@@ -238,7 +278,7 @@ struct StartSessionButton: View {
         return (Array(suggested), code.filter { !suggested.contains($0) })
     }
 
-    private func start(in repo: String) {
+    private func start(in repo: String, recording: Bool) {
         let history = issues.history(for: reference.org)
         let record = history?.issues[reference.id]
         let parent = record?.parentID.flatMap { history?.issues[$0] }
@@ -249,7 +289,16 @@ struct StartSessionButton: View {
         let session = sessions.start(reference, in: repo, harness: setup, harnessPath: path) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index)
         }
-        openWindow(value: SessionWindowID(id: session.id))
+        guard recording else {
+            openWindow(value: SessionWindowID(id: session.id))
+            return
+        }
+        // Committed before the terminal starts, so its pull brings the brief.
+        let login = auth.viewer?.login
+        Task {
+            await sessions.record(session.id, startedBy: login)
+            openWindow(value: SessionWindowID(id: session.id))
+        }
     }
 }
 
@@ -325,6 +374,7 @@ struct HarnessCheckoutSection: View {
     @AppStorage(SessionStore.connectKey) private var connect = ""
     @AppStorage private var localPath: String
     @AppStorage private var remotePath: String
+    @AppStorage private var recordWithoutAsking: Bool
     let org: String
     let repo: String
 
@@ -333,6 +383,7 @@ struct HarnessCheckoutSection: View {
         self.repo = repo
         _localPath = AppStorage(wrappedValue: "", SessionStore.harnessPathKey(org))
         _remotePath = AppStorage(wrappedValue: "", SessionStore.remoteHarnessPathKey(org))
+        _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(org))
     }
 
     var body: some View {
@@ -364,8 +415,12 @@ struct HarnessCheckoutSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Toggle("Ask before recording a session", isOn: Binding(get: { !recordWithoutAsking }, set: { recordWithoutAsking = !$0 }))
+            Text("Work on This commits the session's brief and a session.json to \(repo)'s sessions folder, and adds its pull request later. Off, it does so without asking.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } header: {
-            Text("Checkout")
+            Text("Claude Code")
         }
     }
 
