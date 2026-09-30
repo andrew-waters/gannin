@@ -59,7 +59,7 @@ struct HarnessView: View {
                 ContentUnavailableView(
                     "No harness",
                     systemImage: "text.book.closed",
-                    description: Text("Name the repo the org keeps its plans and requirements in, in Settings.")
+                    description: Text("Pick the repo the org keeps its plans and requirements in, or create one, in Settings.")
                 )
             }
         }
@@ -442,6 +442,7 @@ struct HarnessSettingsSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     let org: String
+    @State private var isCreating = false
 
     var body: some View {
         let saved = configs.config(for: org).harness
@@ -483,12 +484,20 @@ struct HarnessSettingsSection: View {
                 if let error = harness.errors[org] {
                     Text(error).font(.caption).foregroundStyle(.red)
                 }
+            } else {
+                LabeledContent {
+                    Button("Create Harness") { isCreating = true }
+                } label: {
+                    Text("No harness yet?")
+                    Text("Make a private repo in \(org) with the layout Gannin and Claude Code sessions use.")
+                }
             }
         } header: {
             Text("Harness")
         }
         .task { await harness.loadRepositories(org: org) }
         .loadsHarness(org: org)
+        .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org) }
         #if os(macOS)
         if let saved {
             HarnessCheckoutSection(org: org, repo: saved.repo)

@@ -163,6 +163,36 @@ extension GitHubAPI {
         }
     }
 
+    /// A write through the REST API (creating a repo), with a JSON body. Not
+    /// retried, since it may have gone through.
+    func restWrite<T: Decodable>(_ method: String, _ path: String, body: [String: Any]) async throws -> T {
+        var request = URLRequest(url: Self.restBase.appending(path: path))
+        request.httpMethod = method
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response): (Data, URLResponse)
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw APIError.network(error.localizedDescription)
+        }
+        let http = response as? HTTPURLResponse
+        let status = http?.statusCode ?? 0
+        if let http, let budget = Self.restRateLimit(http) { onRESTRateLimit?(budget) }
+        if status == 401 { throw APIError.unauthorized }
+        guard (200..<300).contains(status) else {
+            throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
+        }
+        do {
+            return try Self.restDecoder.decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding(String(describing: error))
+        }
+    }
+
     private static func restRateLimit(_ response: HTTPURLResponse) -> RateLimit? {
         guard let remaining = response.value(forHTTPHeaderField: "X-RateLimit-Remaining").flatMap(Int.init),
               let limit = response.value(forHTTPHeaderField: "X-RateLimit-Limit").flatMap(Int.init),

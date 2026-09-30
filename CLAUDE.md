@@ -418,6 +418,11 @@ added, removed or created, and the tracked board field set), and commits to the 
   commit (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
   parsed off the main thread. Cached in Application Support/Harness, fetched again after 10
   minutes. The fetch is the store's own task, so a view going away doesn't cancel it.
+- Settings > Harness offers Create Harness when there's none (`CreateHarnessSheet`): REST
+  `POST /orgs/{org}/repos` (private, `auto_init` so there's a branch), then one commit of
+  `HarnessSkeleton` (README, a starter CLAUDE.md listing the org's busiest repos, requirements
+  with its template, findings, skills, sessions, `.gannin/`, and a `.gitignore` keeping out
+  `projects/` and `.worktrees/`), and it's picked as the org's harness.
 - The layout (`HarnessKind`): plans under `requirements/<module>/plans/`, requirements the rest
   of `requirements/`, `findings/`, `skills/`; READMEs and `_templates` left out. A document is
   about an issue named in its file name (`prd-123`) or its header table's GitHub row
