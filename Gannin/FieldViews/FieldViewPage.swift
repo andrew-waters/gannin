@@ -17,6 +17,8 @@ struct FieldViewPage: View {
     @Environment(IssueStore.self) private var issueStore
     @Environment(ProjectStore.self) private var projects
     @Environment(HarnessStore.self) private var harness
+    @Environment(AuthStore.self) private var auth
+    @Environment(OrgStore.self) private var orgs
     @Environment(\.navigate) private var navigate
     @Environment(\.openWindow) private var openWindow
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
@@ -40,13 +42,16 @@ struct FieldViewPage: View {
 
     /// The issue open in the drawer.
     @State private var inspected: IssueReference?
+    /// Titles and numbers, for this window only.
+    @State private var search = ""
 
     var body: some View {
         if let view = configs.fieldView(id, in: org) {
             let context = view.context(workflow: configs.config(for: org).workflow, history: issueStore.history(for: org), harness: harnessIndex)
-            let issues = view.issues(in: issueStore.history(for: org), context: context)
+            let issues = Self.searched(view.issues(in: issueStore.history(for: org), context: context), for: search)
             VStack(spacing: 0) {
                 controlBar(view, issues: issues)
+                filterBar(view, context: context)
                 Divider()
                 content(view, issues: issues, context: context)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -415,7 +420,6 @@ struct FieldViewPage: View {
             .labelsHidden()
             .fixedSize()
             .help("What each group shows beside its count")
-            filterChips(view)
             Spacer(minLength: 8)
             Text(issues.count == 1 ? "1 issue" : "\(issues.count) issues")
                 .foregroundStyle(.secondary)
@@ -458,26 +462,156 @@ struct FieldViewPage: View {
         .padding(.vertical, 8)
     }
 
-    /// "Horizon: Now, Next" for each filter, opening Edit View.
-    private func filterChips(_ view: FieldView) -> some View {
-        ForEach(view.filters) { filter in
-            let values = filter.values.map { $0 ?? "No value" }.sorted().joined(separator: ", ")
-            Button {
-                editing = view
-            } label: {
-                HStack(spacing: 4) {
-                    Text(filter.key.title).foregroundStyle(.secondary)
-                    Text(values).lineLimit(1)
+    // MARK: Filters
+
+    /// Filtered from the bar rather than Edit View, saved with the view.
+    private static let quickKeys: [FieldKey] = [.assignee, .repository, .issueType, .label]
+
+    /// Search, then Assignee, Repository, Type and Label as menus of the
+    /// values the view's issues have, then any other filters as chips.
+    private func filterBar(_ view: FieldView, context: FieldContext) -> some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search", text: $search, prompt: Text("Title or number"))
+                    .textFieldStyle(.plain)
+                    .frame(width: 160)
+                if !search.isEmpty {
+                    Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.tertiary)
                 }
-                .font(.caption)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(.quaternary.opacity(0.7), in: Capsule())
-                .contentShape(Capsule())
             }
-            .buttonStyle(.plain)
-            .help("Only issues where \(filter.key.title) is \(values). Click to change.")
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.quaternary.opacity(0.7), in: Capsule())
+            ForEach(Self.quickKeys, id: \.self) { key in
+                quickFilter(key, view: view, context: context)
+            }
+            filterChips(view)
+            Spacer(minLength: 0)
+            if !view.filters.isEmpty {
+                Button("Clear All") {
+                    var changed = view
+                    changed.filters = []
+                    configs.saveFieldView(changed, in: org)
+                }
+                .linkButton()
+            }
         }
+        .controlSize(.small)
+        .font(.callout)
+        .padding(.horizontal, 14)
+        .padding(.bottom, 8)
+    }
+
+    /// A menu of the key's values across the view's issues (as they'd be
+    /// without this filter), each with its count; Me first for Assignee.
+    private func quickFilter(_ key: FieldKey, view: FieldView, context: FieldContext) -> some View {
+        var base = view
+        base.filters.removeAll { $0.key == key }
+        let pool = base.issues(in: issueStore.history(for: org), context: context)
+        var counts: [FieldValue: Int] = [:]
+        for issue in pool {
+            for value in Set(key.values(of: issue, in: context)) { counts[value, default: 0] += 1 }
+        }
+        let values = counts.keys.sorted { key == .assignee ? (counts[$0] ?? 0) > (counts[$1] ?? 0) : $0 < $1 }
+        let picked = view.filters.first { $0.key == key }?.values ?? []
+        let me = auth.viewer?.login
+        return Menu {
+            if key == .assignee, let me {
+                Toggle("Me", isOn: filterBinding(key, value: me, view: view))
+                Divider()
+            }
+            ForEach(values, id: \.self) { value in
+                Toggle("\(title(value, key: key)) (\(counts[value] ?? 0))", isOn: filterBinding(key, value: value.name, view: view))
+            }
+            if !picked.isEmpty {
+                Divider()
+                Button("Clear") {
+                    var changed = view
+                    changed.filters.removeAll { $0.key == key }
+                    configs.saveFieldView(changed, in: org)
+                }
+            }
+        } label: {
+            Text(picked.isEmpty ? key.title : "\(key.title): \(summary(picked, key: key))")
+                .lineLimit(1)
+        }
+        .fixedSize()
+        .tint(picked.isEmpty ? nil : .accentColor)
+        .help(picked.isEmpty ? "Only issues with some values of \(key.title)" : "Only issues where \(key.title) is \(summary(picked, key: key, limit: 10))")
+    }
+
+    /// Names for the picked values: "Me, Ian Wood", or "Me and 3 more".
+    private func summary(_ values: Set<String?>, key: FieldKey, limit: Int = 2) -> String {
+        let me = auth.viewer?.login
+        let names = values.map { value -> String in
+            guard let value else { return "No value" }
+            if key == .assignee, value == me { return "Me" }
+            return title(FieldValue(name: value), key: key)
+        }
+        .sorted { a, b in a == "Me" ? true : b == "Me" ? false : a.localizedStandardCompare(b) == .orderedAscending }
+        return names.count > limit ? "\(names.prefix(limit).joined(separator: ", ")) and \(names.count - limit) more" : names.joined(separator: ", ")
+    }
+
+    /// People by name; everything else as it is.
+    private func title(_ value: FieldValue, key: FieldKey) -> String {
+        guard key == .assignee, let login = value.name else { return value.title }
+        return orgs.snapshot(for: org)?.members.first { $0.login == login }?.displayName ?? login
+    }
+
+    private func filterBinding(_ key: FieldKey, value: String?, view: FieldView) -> Binding<Bool> {
+        Binding {
+            view.filters.first { $0.key == key }?.values.contains(value) ?? false
+        } set: { isOn in
+            var changed = view
+            var values = changed.filters.first { $0.key == key }?.values ?? []
+            if isOn { values.insert(value) } else { values.remove(value) }
+            changed.filters.removeAll { $0.key == key }
+            if !values.isEmpty { changed.filters.append(FieldFilter(key: key, values: values)) }
+            configs.saveFieldView(changed, in: org)
+        }
+    }
+
+    /// Other filters, from Edit View, as chips: click to edit, × to drop.
+    private func filterChips(_ view: FieldView) -> some View {
+        ForEach(view.filters.filter { !Self.quickKeys.contains($0.key) }) { filter in
+            let values = filter.values.map { $0 ?? "No value" }.sorted().joined(separator: ", ")
+            HStack(spacing: 4) {
+                Button {
+                    editing = view
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(filter.key.title).foregroundStyle(.secondary)
+                        Text(values).lineLimit(1)
+                    }
+                }
+                .buttonStyle(.plain)
+                .help("Only issues where \(filter.key.title) is \(values). Click to change.")
+                Button {
+                    var changed = view
+                    changed.filters.removeAll { $0.id == filter.id }
+                    configs.saveFieldView(changed, in: org)
+                } label: {
+                    Image(systemName: "xmark").font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Remove this filter")
+            }
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(.quaternary.opacity(0.7), in: Capsule())
+        }
+    }
+
+    /// The issues whose title holds the search, or whose number is it.
+    static func searched(_ issues: [IssueRecord], for search: String) -> [IssueRecord] {
+        let query = search.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "#"))
+        guard !query.isEmpty else { return issues }
+        return issues.filter { $0.title.localizedCaseInsensitiveContains(query) || String($0.number) == query }
     }
 }
 

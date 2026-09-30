@@ -139,9 +139,19 @@ struct MainView: View {
     /// The issue list picked under Issues; nil shows the issue metrics.
     @State private var issueList: IssueList?
     /// The board picked under Projects, by number.
-    @State private var project: Int?
+    /// Kept with the window, so a relaunch comes back to the same board.
+    @SceneStorage("selectedProject") private var projectNumber = 0
+    private var project: Int? {
+        get { projectNumber == 0 ? nil : projectNumber }
+        nonmutating set { projectNumber = newValue ?? 0 }
+    }
     /// The field view picked under Views.
-    @State private var fieldView: UUID?
+    /// Kept with the window, so a relaunch comes back to the same view.
+    @SceneStorage("selectedFieldView") private var fieldViewID = ""
+    private var fieldView: UUID? {
+        get { UUID(uuidString: fieldViewID) }
+        nonmutating set { fieldViewID = newValue?.uuidString ?? "" }
+    }
     /// No search field for now; the list filtering is kept for when it returns.
     @State private var searchText = ""
 
@@ -162,8 +172,8 @@ struct MainView: View {
                     peopleView: peopleView,
                     repository: repository,
                     issueList: issueList,
-                    project: $project,
-                    fieldView: $fieldView,
+                    project: Binding(get: { project }, set: { project = $0 }),
+                    fieldView: Binding(get: { fieldView }, set: { fieldView = $0 }),
                     path: $path,
                     sidebar: sidebarSelection.wrappedValue ?? .tab(tab),
                     rootTitle: rootTitle,
