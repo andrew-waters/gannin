@@ -18,6 +18,14 @@ struct CodeSession: Codable, Identifiable, Hashable {
     let createdAt: Date
     /// The PR claude opened, spotted in its `gh pr create`.
     var pullRequest: URL?
+    /// The command that reaches the server it runs on (`ssh -t devbox`);
+    /// nil for this Mac. Kept from when it was made, since that's where its
+    /// worktree is.
+    var connect: String? = nil
+    /// The server's workspace, as a path there (`~/Gannin`).
+    var remoteWorkspace: String? = nil
+
+    var isRemote: Bool { connect != nil }
 
     var org: String { issue.org }
     /// Claude Code wants its session IDs in lower case.
@@ -37,6 +45,8 @@ extension CodeSession {
         branch = try container.decode(String.self, forKey: .branch)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
         pullRequest = try container.decodeIfPresent(URL.self, forKey: .pullRequest)
+        connect = try container.decodeIfPresent(String.self, forKey: .connect)
+        remoteWorkspace = try container.decodeIfPresent(String.self, forKey: .remoteWorkspace)
     }
 }
 
@@ -90,6 +100,22 @@ final class SessionStore {
     /// Where repos are cloned and worktrees made, as a path (`~` allowed).
     static let workspaceKey = "sessionsWorkspace"
     static let defaultWorkspace = "~/Gannin"
+    /// Run sessions on a server: the command that gets there, such as
+    /// `ssh -t devbox`, with `{command}` where the rest goes (else at the
+    /// end). Empty runs them on this Mac.
+    static let connectKey = "sessionsConnect"
+    /// The workspace on that server.
+    static let remoteWorkspaceKey = "sessionsRemoteWorkspace"
+
+    static var connectCommand: String? {
+        let command = (UserDefaults.standard.string(forKey: connectKey) ?? "").trimmingCharacters(in: .whitespaces)
+        return command.isEmpty ? nil : command
+    }
+
+    static var remoteWorkspace: String {
+        let path = (UserDefaults.standard.string(forKey: remoteWorkspaceKey) ?? "").trimmingCharacters(in: .whitespaces)
+        return path.isEmpty ? defaultWorkspace : path
+    }
 
     private(set) var sessions: [UUID: CodeSession] = [:]
     private(set) var states: [UUID: SessionState] = [:]
@@ -129,7 +155,10 @@ final class SessionStore {
     /// written afresh from what Gannin knows now.
     func start(_ issue: IssueReference, in repo: String, brief: (CodeSession) -> String) -> CodeSession {
         let session = session(forIssue: issue.id)
-            ?? CodeSession(id: UUID(), issue: issue, repo: repo, branch: Self.branchName(issue), createdAt: .now)
+            ?? CodeSession(
+                id: UUID(), issue: issue, repo: repo, branch: Self.branchName(issue), createdAt: .now,
+                connect: Self.connectCommand, remoteWorkspace: Self.connectCommand == nil ? nil : Self.remoteWorkspace
+            )
         sessions[session.id] = session
         save()
         let directory = Self.directory(for: session.id)
@@ -143,7 +172,11 @@ final class SessionStore {
     /// The view the session's terminal draws in, launching it if nothing is
     /// running. Call from an event or `onAppear`, not from a view's body.
     func open(_ session: CodeSession) -> NSView {
-        let terminal = terminals[session.id] ?? SessionTerminal { [weak self] in self?.terminated(session.id) }
+        let terminal = terminals[session.id] ?? SessionTerminal { [weak self] in
+            self?.terminated(session.id)
+        } onSignal: { [weak self] signal in
+            self?.received(signal, for: session.id)
+        }
         terminals[session.id] = terminal
         if !terminal.isRunning { launch(session, in: terminal) }
         return terminal.container
@@ -173,12 +206,30 @@ final class SessionStore {
         let directory = Self.directory(for: session.id)
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
-        try? fm.createDirectory(at: Self.workspaceRoot, withIntermediateDirectories: true)
-        try? Data(SessionScript.settings(directory: directory).utf8).write(to: directory.appending(path: "settings.json"))
-        let script = directory.appending(path: "start.zsh")
-        try? Data(SessionScript.start(session, root: Self.workspaceRoot, directory: directory).utf8).write(to: script)
         try? Data(SessionState.starting.rawValue.utf8).write(to: directory.appending(path: "state"))
         states[session.id] = .starting
+
+        // What the login shell runs: the script here, or the Connect with
+        // command carrying it to the server.
+        let command: String
+        if let connect = session.connect {
+            let remoteDirectory = #""$HOME"/.gannin/sessions/"# + session.id.uuidString
+            let brief = (try? String(contentsOf: directory.appending(path: "brief.md"), encoding: .utf8)) ?? ""
+            let remote = SessionScript.remoteCommand(
+                directory: remoteDirectory,
+                script: SessionScript.start(session, root: SessionScript.shellPath(session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
+                brief: brief,
+                settings: SessionScript.settings(directory: remoteDirectory)
+            )
+            command = SessionScript.connecting(connect, to: remote)
+        } else {
+            try? fm.createDirectory(at: Self.workspaceRoot, withIntermediateDirectories: true)
+            let local = SessionScript.quoted(directory.path)
+            try? Data(SessionScript.settings(directory: local).utf8).write(to: directory.appending(path: "settings.json"))
+            let script = directory.appending(path: "start.sh")
+            try? Data(SessionScript.start(session, root: SessionScript.quoted(Self.workspaceRoot.path), directory: local).utf8).write(to: script)
+            command = "bash \(SessionScript.quoted(script.path))"
+        }
 
         var environment = ProcessInfo.processInfo.environment
         environment["TERM"] = "xterm-256color"
@@ -190,14 +241,27 @@ final class SessionStore {
         for key in environment.keys where key == "CLAUDECODE" || key.hasPrefix("CLAUDE_CODE_") {
             environment[key] = nil
         }
-        // A login, interactive zsh, so the PATH and tools are yours.
+        // Your login, interactive shell, so the PATH, ssh config and tools
+        // are yours.
+        let shell = environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
         terminal.launch(
-            executable: "/bin/zsh",
-            args: ["-l", "-i", "-c", "source \(SessionScript.quoted(script.path))"],
+            executable: shell,
+            args: ["-l", "-i", "-c", command],
             environment: environment.map { "\($0.key)=\($0.value)" },
-            directory: Self.workspaceRoot.path
+            directory: session.isRemote ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
         )
         startPolling()
+    }
+
+    /// What a hook sent through the terminal: `state:working`, `pr:<url>`.
+    private func received(_ signal: String, for id: UUID) {
+        if signal.hasPrefix("state:"), let state = SessionState(rawValue: String(signal.dropFirst(6))) {
+            if states[id] != state { states[id] = state }
+        } else if signal.hasPrefix("pr:"), sessions[id]?.pullRequest == nil,
+                  let url = URL(string: String(signal.dropFirst(3))), url.scheme == "https" {
+            sessions[id]?.pullRequest = url
+            save()
+        }
     }
 
     private func terminated(_ id: UUID) {
@@ -302,9 +366,11 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     private(set) var view: LocalProcessTerminalView?
     private(set) var isRunning = false
     private let onTerminate: () -> Void
+    private let onSignal: (String) -> Void
 
-    init(onTerminate: @escaping () -> Void) {
+    init(onTerminate: @escaping () -> Void, onSignal: @escaping (String) -> Void) {
         self.onTerminate = onTerminate
+        self.onSignal = onSignal
     }
 
     func launch(executable: String, args: [String], environment: [String], directory: String) {
@@ -315,6 +381,13 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
         view.nativeBackgroundColor = .textBackgroundColor
         view.nativeForegroundColor = .textColor
         view.processDelegate = self
+        // The hooks' state, sent as an escape code so it reaches here from
+        // a server too. SwiftTerm parses on the main queue.
+        let onSignal = onSignal
+        view.terminal.registerOscHandler(code: SessionScript.signalCode) { data in
+            let text = String(decoding: data, as: UTF8.self)
+            MainActor.assumeIsolated { onSignal(text) }
+        }
         container.addSubview(view)
         self.view = view
         isRunning = true

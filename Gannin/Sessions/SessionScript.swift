@@ -2,14 +2,21 @@
 import Foundation
 
 /// What a session's terminal runs, and the hooks claude reports through.
+/// Paths are shell expressions (`"$HOME"/'Gannin'`), so the same script
+/// runs on this Mac or on a server reached with the Connect with command.
 enum SessionScript {
-    /// The zsh script a session's terminal sources: clone the repo if it
-    /// isn't yet, add the worktree on the session's branch (the local branch,
-    /// else origin's, else a new one from origin's default branch), copy the
-    /// brief and settings into `.gannin/` (excluded from git), then start
-    /// claude, or resume it once it has had a prompt. A shell stays open in
-    /// the worktree after claude exits, or in the repo's folder if a step fails.
-    static func start(_ session: CodeSession, root: URL, directory: URL) -> String {
+    /// The escape code the hooks send through the terminal (OSC 7777):
+    /// `state:working`, `pr:<url>`. It travels back over SSH, where the
+    /// state files can't be read.
+    static let signalCode = 7777
+
+    /// The bash script a session runs: clone the repo if it isn't yet, add
+    /// the worktree on the session's branch (the local branch, else origin's,
+    /// else a new one from origin's default branch), copy the brief and
+    /// settings into `.gannin/` (excluded from git), then start claude, or
+    /// resume it once it has had a prompt. A shell stays open in the worktree
+    /// after claude exits, or in the repo's folder if a step fails.
+    static func start(_ session: CodeSession, root: String, directory: String) -> String {
         let issue = session.issue
         let prompt = """
             You're picking up \(issue.reference), "\(issue.title)", in \(session.repo). Read .gannin/brief.md first: it has the \
@@ -18,70 +25,76 @@ enum SessionScript {
             """
         return """
             # Written by Gannin for \(issue.reference). Run in the session's terminal.
+            root=\(root)
+            session=\(directory)
             repo=\(quoted(session.repo))
-            clone=\(quoted(SessionStore.clone(of: session.repo).path))
-            worktree=\(quoted(SessionStore.worktree(for: session).path))
             branch=\(quoted(session.branch))
-            session=\(quoted(directory.path))
             id=\(quoted(session.claudeID))
+            clone="$root/$repo"
+            worktree="$root/$repo.worktrees/$branch"
 
-            gannin_fail() {
-              print -P "%F{red}Gannin: $1%f"
-              mkdir -p "${clone:h}" && cd "${clone:h}"
-              exec zsh -l
+            note() { printf '\\033[90m%s\\033[0m\\n' "$1"; }
+            fail() {
+              printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
+              mkdir -p "$(dirname "$clone")" && cd "$(dirname "$clone")"
+              exec "${SHELL:-bash}" -l
             }
 
-            if [[ ! -d "$clone/.git" ]]; then
-              print -P "%F{8}Cloning $repo into $clone%f"
-              mkdir -p "${clone:h}"
-              if (( $+commands[gh] )); then
-                gh repo clone "$repo" "$clone" || gannin_fail "Couldn't clone $repo."
+            if [ ! -d "$clone/.git" ]; then
+              note "Cloning $repo into $clone"
+              mkdir -p "$(dirname "$clone")"
+              if command -v gh >/dev/null 2>&1; then
+                gh repo clone "$repo" "$clone" || fail "Couldn't clone $repo."
               else
-                git clone "https://github.com/$repo.git" "$clone" || gannin_fail "Couldn't clone $repo."
+                git clone "https://github.com/$repo.git" "$clone" || fail "Couldn't clone $repo."
               fi
             fi
 
-            if [[ ! -d "$worktree" ]]; then
-              print -P "%F{8}Making a worktree for $branch%f"
-              git -C "$clone" fetch --quiet origin || gannin_fail "Couldn't fetch $repo."
+            if [ ! -d "$worktree" ]; then
+              note "Making a worktree for $branch"
+              git -C "$clone" fetch --quiet origin || fail "Couldn't fetch $repo."
               base=$(git -C "$clone" symbolic-ref --quiet --short refs/remotes/origin/HEAD) || base=origin/main
               if git -C "$clone" show-ref --verify --quiet "refs/heads/$branch"; then
-                git -C "$clone" worktree add "$worktree" "$branch"
+                git -C "$clone" worktree add "$worktree" "$branch" || fail "Couldn't make the worktree."
               elif git -C "$clone" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
-                git -C "$clone" worktree add --track -b "$branch" "$worktree" "origin/$branch"
+                git -C "$clone" worktree add --track -b "$branch" "$worktree" "origin/$branch" || fail "Couldn't make the worktree."
               else
-                git -C "$clone" worktree add --no-track -b "$branch" "$worktree" "$base"
-              fi || gannin_fail "Couldn't make the worktree."
+                git -C "$clone" worktree add --no-track -b "$branch" "$worktree" "$base" || fail "Couldn't make the worktree."
+              fi
             fi
 
-            cd "$worktree" || gannin_fail "The worktree isn't there."
+            cd "$worktree" || fail "The worktree isn't there."
             mkdir -p .gannin
             cp "$session/brief.md" "$session/settings.json" .gannin/
             exclude="$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
-            mkdir -p "${exclude:h}"
-            grep -qx '.gannin/' "$exclude" 2>/dev/null || print '.gannin/' >> "$exclude"
+            mkdir -p "$(dirname "$exclude")"
+            grep -qx '.gannin/' "$exclude" 2>/dev/null || echo '.gannin/' >> "$exclude"
 
-            (( $+commands[claude] )) || gannin_fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
-            if [[ -e "$session/started" ]]; then
+            command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
+            if [ -e "$session/started" ]; then
               claude --resume "$id" --settings .gannin/settings.json
             else
               claude --session-id "$id" --settings .gannin/settings.json \(quoted(prompt))
             fi
             printf exited > "$session/state"
-            print -P "%F{8}Claude Code has exited. This shell is in the worktree; run claude --resume $id to go on.%f"
-            exec zsh -l
+            printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
+            note "Claude Code has exited. This shell is in the worktree; run claude --resume $id to go on."
+            exec "${SHELL:-bash}" -l
             """
     }
 
     /// Claude Code settings for the session: hooks that write its state to
-    /// the session's folder, and the PR it opens.
-    static func settings(directory: URL) -> String {
-        let dir = quoted(directory.path)
+    /// the session's folder and send it through the terminal, and the PR
+    /// it opens.
+    static func settings(directory dir: String) -> String {
+        func signal(_ payload: String) -> String {
+            #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
+        }
         func write(_ state: SessionState) -> [String: Any] {
-            ["type": "command", "command": "printf \(state.rawValue) > \(dir)/state"] as [String: Any]
+            ["type": "command", "command": "printf \(state.rawValue) > \(dir)/state 2>/dev/null; \(signal("state:" + state.rawValue)); exit 0"] as [String: Any]
         }
         // `gh pr create` prints the new PR's URL; keep the last one seen.
-        let pullRequest = #"input=$(cat); case "$input" in *'gh pr create'*) printf '%s' "$input" | grep -Eo 'https://github\.com/[^"\\ ]+/pull/[0-9]+' | tail -n 1 > \#(dir)/pr.tmp && [ -s \#(dir)/pr.tmp ] && mv \#(dir)/pr.tmp \#(dir)/pr ;; esac; exit 0"#
+        let pullRequest = #"input=$(cat); case "$input" in *'gh pr create'*) url=$(printf '%s' "$input" | grep -Eo 'https://github\.com/[^"\\ ]+/pull/[0-9]+' | tail -n 1); if [ -n "$url" ]; then printf '%s' "$url" > \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$url" > /dev/tty 2>/dev/null; fi ;; esac; exit 0"#
         func command(_ command: String) -> [String: Any] { ["type": "command", "command": command] }
         func group(_ hooks: [[String: Any]], matcher: String? = nil) -> [String: Any] {
             var group: [String: Any] = ["hooks": hooks]
@@ -101,6 +114,40 @@ enum SessionScript {
         ]
         let data = (try? JSONSerialization.data(withJSONObject: ["hooks": hooks], options: [.prettyPrinted, .sortedKeys])) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// What the terminal runs on a server: unpack the script, brief and
+    /// settings into the session's folder there, then run the script in the
+    /// server's login shell, so its PATH and claude's login are the box's.
+    /// Everything travels as base64 inside the command, stdin left to claude.
+    static func remoteCommand(directory: String, script: String, brief: String, settings: String) -> String {
+        func unpack(_ text: String, _ file: String) -> String {
+            "printf %s \(Data(text.utf8).base64EncodedString()) | base64 -d > \"$d/\(file)\""
+        }
+        let bootstrap = """
+            d=\(directory)
+            mkdir -p "$d"
+            \(unpack(script, "start.sh"))
+            \(unpack(brief, "brief.md"))
+            \(unpack(settings, "settings.json"))
+            printf starting > "$d/state"
+            exec "${SHELL:-bash}" -lic 'exec bash "$0"' "$d/start.sh"
+            """
+        return #"bash -c "$(printf %s \#(Data(bootstrap.utf8).base64EncodedString()) | base64 -d)""#
+    }
+
+    /// The Connect with command around the remote command: in place of
+    /// `{command}` when it has one, else after it.
+    static func connecting(_ connect: String, to remote: String) -> String {
+        let argument = quoted(remote)
+        return connect.contains("{command}") ? connect.replacingOccurrences(of: "{command}", with: argument) : "\(connect) \(argument)"
+    }
+
+    /// A path for the shell: `~/x` as `"$HOME"/'x'`, anything else quoted.
+    static func shellPath(_ path: String) -> String {
+        if path == "~" { return #""$HOME""# }
+        if path.hasPrefix("~/") { return #""$HOME"/"# + quoted(String(path.dropFirst(2))) }
+        return quoted(path)
     }
 
     /// Single-quoted for the shell.
