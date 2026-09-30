@@ -51,9 +51,9 @@ struct OrgWorkloadView: View {
                 } else {
                     ProjectsLandingView(org: org) { project = $0 }
                 }
-            } else if tab == .inbox || tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || (tab == .issues && (issueList == nil || issueList == .notOnBoard)), let workload {
-                // Investments and the people and repo stats pages: no
-                // counts bar.
+            } else if tab == .inbox || tab == .investments || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || tab == .issues, let workload {
+                // Investments, the people and repo stats pages and every
+                // issue page: no counts bar.
                 list(workload)
             } else {
                 VStack(spacing: 0) {
