@@ -722,6 +722,8 @@ private struct PageStack: View {
                         let depth = drawers.count - 1 - level
                         if depth <= 3 {
                             drawerContent(item, level: level, isWide: width >= 900)
+                                // Only the top one takes Esc and other shortcuts.
+                                .disabled(depth > 0)
                                 .environment(\.navigate, navigateInDrawer(at: level))
                                 .environment(\.openAsPage, NavigateAction { destination in
                                     drawers = []
@@ -752,6 +754,12 @@ private struct PageStack: View {
             }
             .transition(.move(edge: .trailing))
         }
+    }
+
+    /// Done (or Esc) in a drawer closes it and any above it, back to the
+    /// one beneath.
+    private func closeDrawer(_ level: Int) {
+        drawers = Array(drawers.prefix(level))
     }
 
     /// Above a drawer opened from another: back to the one beneath.
@@ -786,11 +794,11 @@ private struct PageStack: View {
                 let workflow = configs.config(for: org).workflow
                 let history = issueStore.history(for: org)
                 let signals = history?.issues[reference.id].map { FieldContext(board: workflow.projectNumber, workflow: workflow, history: history).signals($0) }
-                IssueSheet(reference: reference, signals: signals, isWide: isWide) { drawers = [] }
+                IssueSheet(reference: reference, signals: signals, isWide: isWide) { closeDrawer(level) }
                     .id(reference.id)
             } else if case .harnessDocument(let path) = item {
                 // Its own header, as an issue's.
-                HarnessDocumentPage(org: org, path: path) { drawers = [] }
+                HarnessDocumentPage(org: org, path: path) { closeDrawer(level) }
                     .id(path)
             } else {
                 HStack(spacing: 10) {
@@ -805,7 +813,7 @@ private struct PageStack: View {
                             WindowRequest.open(NavigationRequest(org: org, sidebar: sidebar, path: path + [item]), placement: .window, openWindow: openWindow)
                         }
                     }
-                    Button("Done") { drawers = [] }
+                    Button("Done") { closeDrawer(level) }
                         .keyboardShortcut(.cancelAction)
                 }
                 .padding(.horizontal, 16)

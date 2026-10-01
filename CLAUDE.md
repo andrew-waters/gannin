@@ -524,8 +524,8 @@ added, removed or created, and the tracked board field set), and commits to the 
   `.pullRequestReference` and `.harnessDocument` to its `drawers` instead of pushing them
   (`openAsPage` still pushes). Drawers stack: a link inside one opens another on top
   (`navigateInDrawer`), those beneath show a dimmed edge (up to three) that goes back to them
-  when clicked, a drawer opened from another has Back to it, Esc closes the top one and a click
-  outside closes them all. Issues show `IssueSheet`
+  when clicked, a drawer opened from another has Back to it, Done or Esc closes the top one (those
+  beneath are disabled, so their shortcuts don't fire) and a click outside closes them all. Issues show `IssueSheet`
   (facts, timeline, plans, linked PRs, description, board fields); PRs show their page under
   Open as Page, Open in Window and Done. A click outside or Esc closes it; links inside it to
   another PR or issue swap it. A view keeps its own drawer, which steps through the view's
