@@ -75,11 +75,23 @@ struct InboxView: View {
     /// The sections turned on, as raw values, comma separated; empty for
     /// those on by default.
     @AppStorage private var storedSections: String
+    /// Every section in the order you've put them, comma separated; empty
+    /// for the usual order.
+    @AppStorage private var storedOrder: String
+    @State private var search = ""
+    @State private var isArranging = false
 
     init(org: String, workload: Workload) {
         self.org = org
         self.workload = workload
         _storedSections = AppStorage(wrappedValue: "", "inboxSections.\(org)")
+        _storedOrder = AppStorage(wrappedValue: "", "inboxSectionOrder.\(org)")
+    }
+
+    /// The sections in your order, any added since at the end.
+    private var order: [InboxSection] {
+        let saved = storedOrder.split(separator: ",").compactMap { InboxSection(rawValue: String($0)) }.filter(InboxSection.available.contains)
+        return saved + InboxSection.available.filter { !saved.contains($0) }
     }
 
     private var shown: Set<InboxSection> {
@@ -97,86 +109,12 @@ struct InboxView: View {
         if let login = auth.viewer?.login {
             let inbox = Inbox(login: login, workload: workload, history: issueStore.history(for: org), workflow: configs.config(for: org).workflow)
             let sections = sections(inbox)
-            Table(of: InboxRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: TableColumnStore.binding($storedColumns)) {
-                TableColumn("Title", value: \.title) { row in
-                    HStack(spacing: 8) {
-                        Circle().fill(row.tint).frame(width: 8, height: 8)
-                        Text(row.title).lineLimit(1)
-                    }
-                    .help(row.title)
-                }
-                .width(min: 220, ideal: 420)
-                .customizationID("title")
-                TableColumn("Number", value: \.reference) { row in
-                    Text(verbatim: row.reference).foregroundStyle(.secondary).monospacedDigit()
-                }
-                .width(min: 80, ideal: 110)
-                .customizationID("number")
-                TableColumn("Who", value: \.whoSort) { row in
-                    AvatarStack(people: row.people)
-                        .help(row.people.map(\.displayName).joined(separator: ", "))
-                }
-                .width(min: 50, ideal: 70)
-                .customizationID("who")
-                TableColumn("Checks", value: \.checksSort) { row in
-                    if let checks = row.checks { ChecksBadge(state: checks) }
-                }
-                .width(min: 60, ideal: 90)
-                .customizationID("checks")
-                TableColumn("State", value: \.state) { row in
-                    HStack(spacing: 4) {
-                        FlagBadge(flags: row.flags)
-                        Text(row.state).foregroundStyle(row.stateColor).lineLimit(1)
-                    }
-                    .help(row.state)
-                }
-                .width(min: 100, ideal: 200)
-                .customizationID("state")
-                TableColumn("Since", value: \.sinceSort) { row in
-                    SinceCell(row: row)
-                }
-                .width(min: 70, ideal: 100)
-                .customizationID("since")
-                TableColumn("Size", value: \.sizeSort) { row in
-                    if let size = row.size {
-                        LinesText(added: size.added, removed: size.removed)
-                    }
-                }
-                .width(min: 70, ideal: 90)
-                .customizationID("size")
-            } rows: {
-                ForEach(sections, id: \.title) { section in
-                    Section("\(section.title) (\(section.rows.count))") {
-                        // Sorted within the section, so they stay apart.
-                        ForEach(sortOrder.isEmpty ? section.rows : section.rows.sorted(using: sortOrder)) { TableRow($0) }
-                    }
-                }
-            }
-            .contextMenu(forSelectionType: String.self) { ids in
-                if let row = sections.flatMap(\.rows).first(where: { ids.contains($0.id) }), let page = row.page {
-                    OpenElsewhereItems(page)
-                }
-            } primaryAction: { ids in
-                guard let row = sections.flatMap(\.rows).first(where: { ids.contains($0.id) }) else { return }
-                open(row)
+            VStack(spacing: 0) {
+                bar
+                Divider()
+                table(sections)
             }
             .task(id: org) { await issueStore.sync(org, windowDays: windowDays) }
-            .toolbar {
-                ToolbarItem {
-                    Menu {
-                        ForEach(InboxSection.available) { section in
-                            Toggle(section.rawValue, isOn: Binding(get: { shown.contains(section) }, set: { show(section, $0) }))
-                                .help(section.help)
-                        }
-                        Divider()
-                        Button("Show the Usual Sections") { storedSections = "" }
-                            .disabled(storedSections.isEmpty)
-                    } label: {
-                        Label("Show", systemImage: "line.3.horizontal.decrease.circle")
-                    }
-                    .help("Choose which sections the Inbox shows")
-                }
-            }
             // Checks finishing don't touch a PR's updatedAt, so running or
             // unknown ones are asked for; the detail store re-asks pending
             // ones after a couple of minutes.
@@ -187,6 +125,138 @@ struct InboxView: View {
             }
         } else {
             ContentUnavailableView("Not signed in", systemImage: "tray")
+        }
+    }
+
+    /// Search across the sections, and which sections show, in what order.
+    private var bar: some View {
+        HStack(spacing: 8) {
+            FilterSearchField(text: $search, prompt: "Title, number, state or person")
+            Spacer(minLength: 0)
+            Button {
+                isArranging = true
+            } label: {
+                Label("Sections", systemImage: "list.bullet.rectangle")
+            }
+            .help("Choose which sections show, and their order")
+            .popover(isPresented: $isArranging, arrowEdge: .bottom) { arrangement }
+        }
+        .controlSize(.small)
+        .font(.callout)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    /// Every section with a tick to show it; drag to reorder.
+    private var arrangement: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Sections").font(.headline)
+            List {
+                ForEach(order) { section in
+                    HStack(spacing: 8) {
+                        Toggle(isOn: Binding(get: { shown.contains(section) }, set: { show(section, $0) })) {
+                            Text(section.rawValue)
+                        }
+                        .checkboxToggle()
+                        .help(section.help)
+                        Spacer(minLength: 8)
+                        Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
+                    }
+                }
+                .onMove { from, to in
+                    var sections = order
+                    sections.move(fromOffsets: from, toOffset: to)
+                    storedOrder = sections.map(\.rawValue).joined(separator: ",")
+                }
+            }
+            .listStyle(.plain)
+            .frame(height: CGFloat(order.count) * 30 + 8)
+            HStack {
+                Text("Drag to reorder.").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Usual Sections") {
+                    storedSections = ""
+                    storedOrder = ""
+                }
+                .disabled(storedSections.isEmpty && storedOrder.isEmpty)
+            }
+        }
+        .padding(14)
+        .frame(width: 320)
+    }
+
+    /// Rows matching the search, every word in the title, number, state or a
+    /// person's name.
+    private func matches(_ row: InboxRow) -> Bool {
+        let words = search.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return true }
+        let fields = [row.title, row.reference, row.state] + row.people.flatMap { [$0.login, $0.displayName] }
+        return words.allSatisfy { word in fields.contains { $0.localizedCaseInsensitiveContains(word) } }
+    }
+
+    private func table(_ sections: [(title: String, rows: [InboxRow])]) -> some View {
+        Table(of: InboxRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: TableColumnStore.binding($storedColumns)) {
+            TableColumn("Title", value: \.title) { row in
+                HStack(spacing: 8) {
+                    Circle().fill(row.tint).frame(width: 8, height: 8)
+                    Text(row.title).lineLimit(1)
+                }
+                .help(row.title)
+            }
+            .width(min: 220, ideal: 420)
+            .customizationID("title")
+            TableColumn("Number", value: \.reference) { row in
+                Text(verbatim: row.reference).foregroundStyle(.secondary).monospacedDigit()
+            }
+            .width(min: 80, ideal: 110)
+            .customizationID("number")
+            TableColumn("Who", value: \.whoSort) { row in
+                AvatarStack(people: row.people)
+                    .help(row.people.map(\.displayName).joined(separator: ", "))
+            }
+            .width(min: 50, ideal: 70)
+            .customizationID("who")
+            TableColumn("Checks", value: \.checksSort) { row in
+                if let checks = row.checks { ChecksBadge(state: checks) }
+            }
+            .width(min: 60, ideal: 90)
+            .customizationID("checks")
+            TableColumn("State", value: \.state) { row in
+                HStack(spacing: 4) {
+                    FlagBadge(flags: row.flags)
+                    Text(row.state).foregroundStyle(row.stateColor).lineLimit(1)
+                }
+                .help(row.state)
+            }
+            .width(min: 100, ideal: 200)
+            .customizationID("state")
+            TableColumn("Since", value: \.sinceSort) { row in
+                SinceCell(row: row)
+            }
+            .width(min: 70, ideal: 100)
+            .customizationID("since")
+            TableColumn("Size", value: \.sizeSort) { row in
+                if let size = row.size {
+                    LinesText(added: size.added, removed: size.removed)
+                }
+            }
+            .width(min: 70, ideal: 90)
+            .customizationID("size")
+        } rows: {
+            ForEach(sections, id: \.title) { section in
+                Section("\(section.title) (\(section.rows.count))") {
+                    // Sorted within the section, so they stay apart.
+                    ForEach(sortOrder.isEmpty ? section.rows : section.rows.sorted(using: sortOrder)) { TableRow($0) }
+                }
+            }
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let row = sections.flatMap(\.rows).first(where: { ids.contains($0.id) }), let page = row.page {
+                OpenElsewhereItems(page)
+            }
+        } primaryAction: { ids in
+            guard let row = sections.flatMap(\.rows).first(where: { ids.contains($0.id) }) else { return }
+            open(row)
         }
     }
 
@@ -250,7 +320,14 @@ struct InboxView: View {
         if shown.contains(.opened) { sections.append((InboxSection.opened.rawValue, opened.map(issueRow))) }
         if shown.contains(.plans) { sections.append((InboxSection.plans.rawValue, plans)) }
         if shown.contains(.uncategorised) { sections.append((InboxSection.uncategorised.rawValue, uncategorised.map(issueRow))) }
+        // In your order, narrowed by the search (empty ones go while searching).
+        let order = order
         return sections
+            .map { ($0.title, $0.rows.filter(matches)) }
+            .filter { search.isEmpty || !$0.1.isEmpty }
+            .sorted { a, b in
+                (InboxSection(rawValue: a.0).flatMap(order.firstIndex) ?? 99) < (InboxSection(rawValue: b.0).flatMap(order.firstIndex) ?? 99)
+            }
     }
 
     // MARK: Sections you can turn on

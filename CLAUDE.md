@@ -543,8 +543,9 @@ added, removed or created, and the tracked board field set), and commits to the 
   comments, and each linked PR's commits (every one, with message and lines), reviews and
   merge. PRs the work log hasn't got are fetched by URL (`WorkLogStore.loadLinked`, in memory).
 - Inbox (`InboxView`, first in the sidebar) is the signed-in person's share of the workload, in
-  sections each turned on or off from the Show menu in its toolbar (`InboxSection`, per org on
-  this Mac, `inboxSections.<org>`): Claude Code sessions waiting on them (the Mac's), reviews
+  sections under a bar like the issue pages' (a search across them, and Sections: a popover to
+  tick which show and drag them into order, `InboxSection`, per org on this Mac,
+  `inboxSections.<org>` and `inboxSectionOrder.<org>`): Claude Code sessions waiting on them (the Mac's), reviews
   requested of them (longest waiting first), their open PRs and where each stands, their
   assigned issues (in progress first, with status, time in status and Attention flags), all on
   by default; and, off until wanted, issues they opened, their harness plans (owner, not done)
