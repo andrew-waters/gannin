@@ -3,6 +3,7 @@ import AppKit
 import Foundation
 import Observation
 import SwiftTerm
+import UserNotifications
 
 /// A Claude Code session on one issue, with claude running in a terminal
 /// inside Gannin: in the org's harness checkout, the issue having its own
@@ -20,8 +21,9 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// be worked out again.
     var branch: String
     let createdAt: Date
-    /// The PR claude opened, spotted in its `gh pr create`.
-    var pullRequest: URL?
+    /// The PRs claude opened, spotted in its `gh pr create`: one per repo
+    /// the issue touches. GitHub is also searched for the branch's.
+    var pullRequests: [URL] = []
     /// The command that reaches the server it runs on (`ssh -t devbox`);
     /// nil for this Mac. Kept from when it was made, since that's where its
     /// worktree is.
@@ -37,8 +39,26 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// Its folder in the harness (`sessions/product-123`), once its brief
     /// and `session.json` are committed there; nil when they weren't.
     var harnessFolder: String? = nil
+    /// A helper on another's issue (writing tests, reviewing): the session
+    /// it helps, in the same folder and branch with its own conversation.
+    var parentID: UUID? = nil
+    /// What the helper is for, as its tab says ("Tests", "Review").
+    var role: String? = nil
+    /// The helper's first prompt, in place of the issue's.
+    var prompt: String? = nil
+    /// A reviewer reads and reports but can't edit files.
+    var isReviewer = false
+    /// When its claude last did something, for spotting stale sessions.
+    var lastActiveAt: Date? = nil
+    /// The PR a review session reviews; `issue` then names the PR, so tabs
+    /// and rows read the same.
+    var reviewOf: PullRequestReference? = nil
 
     var isRemote: Bool { connect != nil }
+    var isHelper: Bool { parentID != nil }
+    var isPullRequestReview: Bool { reviewOf != nil }
+    /// As a tab or row names it.
+    var title: String { role.map { "\($0): \(issue.title)" } ?? issue.title }
     var isInHarness: Bool { harnessPath != nil && harnessRepo != nil }
 
     var org: String { issue.org }
@@ -50,6 +70,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
 }
 
 extension CodeSession {
+    private enum LegacyKeys: String, CodingKey { case pullRequest }
+
     /// Sessions saved before `repo` worked in the issue's repo.
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
@@ -58,12 +80,21 @@ extension CodeSession {
         repo = try container.decodeIfPresent(String.self, forKey: .repo) ?? issue.repo
         branch = try container.decode(String.self, forKey: .branch)
         createdAt = try container.decode(Date.self, forKey: .createdAt)
-        pullRequest = try container.decodeIfPresent(URL.self, forKey: .pullRequest)
+        // Sessions saved when there was one PR at most.
+        pullRequests = try container.decodeIfPresent([URL].self, forKey: .pullRequests)
+            ?? (try decoder.container(keyedBy: LegacyKeys.self).decodeIfPresent(URL.self, forKey: .pullRequest)).map { [$0] }
+            ?? []
         connect = try container.decodeIfPresent(String.self, forKey: .connect)
         remoteWorkspace = try container.decodeIfPresent(String.self, forKey: .remoteWorkspace)
         harnessRepo = try container.decodeIfPresent(String.self, forKey: .harnessRepo)
         harnessPath = try container.decodeIfPresent(String.self, forKey: .harnessPath)
         harnessFolder = try container.decodeIfPresent(String.self, forKey: .harnessFolder)
+        parentID = try container.decodeIfPresent(UUID.self, forKey: .parentID)
+        role = try container.decodeIfPresent(String.self, forKey: .role)
+        prompt = try container.decodeIfPresent(String.self, forKey: .prompt)
+        isReviewer = try container.decodeIfPresent(Bool.self, forKey: .isReviewer) ?? false
+        lastActiveAt = try container.decodeIfPresent(Date.self, forKey: .lastActiveAt)
+        reviewOf = try container.decodeIfPresent(PullRequestReference.self, forKey: .reviewOf)
     }
 }
 
@@ -86,6 +117,8 @@ struct SessionRecord: Codable {
     /// Where it runs: this Mac's name, or the Connect with command.
     var box: String
     var pullRequests: [URL]
+    /// Set when Gannin finished it: its PRs merged and its worktrees gone.
+    var finishedAt: Date?
 
     static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -101,11 +134,6 @@ struct SessionRecord: Codable {
     }()
 
     var json: String { String(decoding: (try? Self.encoder.encode(self)) ?? Data(), as: UTF8.self) + "\n" }
-}
-
-/// A session's own window, by ID.
-struct SessionWindowID: Codable, Hashable {
-    let id: UUID
 }
 
 /// What a session's claude is doing, as its hooks last said.
@@ -212,13 +240,68 @@ final class SessionStore {
     /// record to the org's harness; off once "Don't ask again" is ticked.
     static func asksBeforeRecordingKey(_ org: String) -> String { "sessionsRecordWithoutAsking.\(org)" }
 
+    /// The one window sessions open in, each a tab.
+    static let windowID = "sessions"
+    /// The open tabs, in order, kept across launches.
+    static let tabsKey = "sessionsTabs"
+
     private(set) var sessions: [UUID: CodeSession] = [:]
+    /// The sessions window's tabs, in order, and the one showing.
+    private(set) var tabs: [UUID] = []
+    var selectedTab: UUID? {
+        didSet { if selectedTab != oldValue { looked() } }
+    }
+    /// Whether the sessions window is key, as it says, so the tab you're
+    /// looking at isn't flagged.
+    var windowIsKey = false {
+        didSet { if windowIsKey != oldValue { looked() } }
+    }
+    /// Sessions that finished a turn or want an answer since you last looked
+    /// at them, and since when: tabs marked, the Dock badge, a notification.
+    private(set) var attention: [UUID: Date] = [:]
+    /// Comments on a session's diff, not yet sent to claude.
+    private(set) var drafts: [UUID: [DiffComment]] = [:]
+    /// Review comments and checks already sent to a session's claude, by
+    /// their URL, so they aren't offered again. For this launch only.
+    private(set) var sent: [UUID: Set<String>] = [:]
+    /// What you've made of a review's findings, and comments of your own.
+    var reviewDrafts: [UUID: ReviewDraft] = [:]
     private(set) var states: [UUID: SessionState] = [:]
+    /// Bumped each time a session's hooks say claude edited a file or ran
+    /// a command, so its Changes pane reads them again.
+    private(set) var changeCounts: [UUID: Int] = [:]
     /// Why a session's last commit to the harness failed, to show on it.
     private(set) var recordErrors: [UUID: String] = [:]
-    @ObservationIgnored private var terminals: [UUID: SessionTerminal] = [:]
+    @ObservationIgnored var terminals: [UUID: SessionTerminal] = [:]
     @ObservationIgnored private var polling: Task<Void, Never>?
+    /// The last `changed` value each session's hook wrote.
+    @ObservationIgnored private var lastChanged: [UUID: String] = [:]
+    /// Server sessions whose hook files are being read over ssh now.
+    @ObservationIgnored private var readingRemote: Set<UUID> = []
+    @ObservationIgnored private var pollTick = 0
+    /// What each session's transcript says, read while its terminal runs.
+    var transcripts: [UUID: SessionTranscript] = [:]
+    @ObservationIgnored var readers: [UUID: TranscriptReader] = [:]
+    @ObservationIgnored var transcriptFiles: [UUID: URL] = [:]
+    @ObservationIgnored var readingTranscript: Set<UUID> = []
+    /// Each session's PRs, watched in the background so failing checks and
+    /// new reviews flag it like a question would.
+    var pullRequestInfo: [UUID: [SessionPullRequest]] = [:]
+    var pullRequestErrors: [UUID: String] = [:]
+    @ObservationIgnored var pullRequestsSeen: [UUID: Set<String>] = [:]
+    @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
+    /// GitHub, once signed in; set by the app.
+    @ObservationIgnored var api: () -> GitHubAPI? = { nil }
+    /// Every session at once instead of a tab.
+    var showingOverview = false
+    /// A second tab shown beside the selected one.
+    var besideTab: UUID?
+    /// Each server's home folder, for paths an editor opens there.
+    @ObservationIgnored var remoteHomes: [String: String] = [:]
+    @ObservationIgnored var notificationCategories: [String: UNNotificationCategory] = [:]
     @ObservationIgnored private let harness: HarnessStore
+
+    var harnessStore: HarnessStore { harness }
 
     init(harness: HarnessStore) {
         self.harness = harness
@@ -232,14 +315,83 @@ final class SessionStore {
                 return (session.id, session)
             })
         }
+        tabs = (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? [])
+            .compactMap(UUID.init(uuidString:))
+            .filter { sessions[$0] != nil }
+        selectedTab = tabs.first
+    }
+
+    // MARK: Tabs
+
+    /// Shows the session's tab, adding it after the one showing if it isn't
+    /// open.
+    func reveal(_ id: UUID) {
+        guard sessions[id] != nil else { return }
+        if !tabs.contains(id) {
+            let index = selectedTab.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
+            tabs.insert(id, at: index)
+            saveTabs()
+        }
+        selectedTab = id
+    }
+
+    /// Closes the tab; claude keeps running, as when a window closed.
+    func closeTab(_ id: UUID) {
+        guard let index = tabs.firstIndex(of: id) else { return }
+        tabs.remove(at: index)
+        if selectedTab == id {
+            selectedTab = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)]
+        }
+        saveTabs()
+    }
+
+    func moveTab(_ id: UUID, to target: UUID) {
+        guard id != target, let from = tabs.firstIndex(of: id), let to = tabs.firstIndex(of: target) else { return }
+        tabs.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
+        saveTabs()
+    }
+
+    /// The tab `offset` along from the one showing, wrapping round.
+    func selectTab(offset: Int) {
+        guard !tabs.isEmpty else { return }
+        let index = selectedTab.flatMap { tabs.firstIndex(of: $0) } ?? 0
+        selectedTab = tabs[((index + offset) % tabs.count + tabs.count) % tabs.count]
+    }
+
+    private func saveTabs() {
+        UserDefaults.standard.set(tabs.map(\.uuidString), forKey: Self.tabsKey)
     }
 
     func sessions(for org: String) -> [CodeSession] {
         sessions.values.filter { $0.org == org }.sorted { $0.createdAt > $1.createdAt }
     }
 
+    /// The issue's own session, not a helper's or a review's.
     func session(forIssue id: String) -> CodeSession? {
-        sessions.values.first { $0.issue.id == id }
+        sessions.values.first { $0.issue.id == id && !$0.isHelper && !$0.isPullRequestReview }
+    }
+
+    /// The review of a PR, by its node ID.
+    func review(of pullRequestID: String) -> CodeSession? {
+        sessions.values.first { $0.reviewOf?.id == pullRequestID }
+    }
+
+    /// Changes a session as kept, and saves.
+    func update(_ id: UUID, _ change: (inout CodeSession) -> Void) {
+        guard var session = sessions[id] else { return }
+        change(&session)
+        sessions[id] = session
+        save()
+    }
+
+    /// Adds a session made elsewhere (a helper), and saves.
+    func add(_ session: CodeSession) {
+        sessions[session.id] = session
+        save()
+    }
+
+    func helpers(of id: UUID) -> [CodeSession] {
+        sessions.values.filter { $0.parentID == id }.sorted { $0.createdAt < $1.createdAt }
     }
 
     func state(_ id: UUID) -> SessionState { states[id] ?? .stopped }
@@ -279,7 +431,7 @@ final class SessionStore {
         let record = SessionRecord(
             issue: session.issue.reference, title: session.issue.title, url: session.issue.url,
             repos: session.isInHarness ? [] : [session.repo], branch: session.branch, startedBy: startedBy, startedAt: session.createdAt,
-            box: session.connect ?? (Host.current().localizedName ?? "Mac"), pullRequests: session.pullRequest.map { [$0] } ?? []
+            box: session.connect ?? (Host.current().localizedName ?? "Mac"), pullRequests: session.pullRequests
         )
         do {
             try await harness.commit(org: session.org, setup: HarnessConfig(repo: repo), refreshing: false) { _ in
@@ -338,6 +490,11 @@ final class SessionStore {
 
     func isRunning(_ id: UUID) -> Bool { terminals[id]?.isRunning == true }
 
+    /// Sessions with a terminal running, which quitting would end.
+    var running: [CodeSession] {
+        terminals.filter(\.value.isRunning).compactMap { sessions[$0.key] }.sorted { $0.createdAt < $1.createdAt }
+    }
+
     /// Ends claude and the shell it runs in. The worktree stays.
     func end(_ id: UUID) {
         terminals[id]?.terminate()
@@ -345,20 +502,31 @@ final class SessionStore {
 
     /// Ends the session and forgets it. The clone and worktree stay on disk.
     func remove(_ id: UUID) {
+        // Helpers work in its folder, so they go with it.
+        for helper in helpers(of: id) { remove(helper.id) }
         terminals[id]?.terminate()
         terminals[id] = nil
+        unflag(id)
         sessions[id] = nil
         states[id] = nil
+        drafts[id] = nil
+        transcripts[id] = nil
+        readers[id] = nil
+        transcriptFiles[id] = nil
+        pullRequestInfo[id] = nil
+        if besideTab == id { besideTab = nil }
+        closeTab(id)
         save()
         try? FileManager.default.removeItem(at: Self.directory(for: id))
     }
 
-    private func launch(_ session: CodeSession, in terminal: SessionTerminal) {
+    func launch(_ session: CodeSession, in terminal: SessionTerminal) {
         let directory = Self.directory(for: session.id)
         let fm = FileManager.default
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(SessionState.starting.rawValue.utf8).write(to: directory.appending(path: "state"))
-        states[session.id] = .starting
+        setState(.starting, for: session.id)
+        askToNotify()
 
         // What the login shell runs: the script here, or the Connect with
         // command carrying it to the server.
@@ -408,11 +576,135 @@ final class SessionStore {
         startPolling()
     }
 
-    /// What a hook sent through the terminal: `state:working`, `pr:<url>`.
+    func changeCount(_ id: UUID) -> Int { changeCounts[id] ?? 0 }
+
+    // MARK: Attention
+
+    /// Notify when a session needs you or has finished its turn.
+    static let notifiesKey = "sessionsNotify"
+
+    /// The session waiting on you longest.
+    var nextWaiting: UUID? {
+        attention.filter { sessions[$0.key] != nil }.min { $0.value < $1.value }?.key
+    }
+
+    private func setState(_ state: SessionState, for id: UUID) {
+        let old = states[id]
+        guard old != state else { return }
+        states[id] = state
+        if [.needsYou, .idle, .exited].contains(state), sessions[id] != nil {
+            sessions[id]?.lastActiveAt = .now
+            save()
+        }
+        switch state {
+        case .needsYou:
+            let asking = transcripts[id]?.question != nil
+            flag(id, title: "Claude needs you", body: asking ? (transcripts[id]?.question?.items.first?.question ?? "") : "It's asking for permission to go on.", replies: true)
+        case .idle where old == .working:
+            flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false)
+        case .working, .starting, .stopped:
+            unflag(id)
+        default:
+            break
+        }
+    }
+
+    /// Marks the session as waiting on you and, unless you're looking at
+    /// it, notifies: with quick replies when claude is asking something.
+    func flag(_ id: UUID, title: String, body: String, replies: Bool) {
+        // Already in front of you.
+        if windowIsKey, selectedTab == id, NSApp.isActive { return }
+        attention[id] = attention[id] ?? .now
+        updateBadge()
+        guard UserDefaults.standard.object(forKey: Self.notifiesKey) as? Bool ?? true, let session = sessions[id] else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.subtitle = "#\(session.issue.number) \(session.title)"
+        content.body = body
+        content.sound = .default
+        content.threadIdentifier = id.uuidString
+        content.userInfo = ["session": id.uuidString]
+        if replies {
+            content.categoryIdentifier = registerReplies(for: id)
+        }
+        // One per session: a newer one replaces it.
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id.uuidString, content: content, trigger: nil))
+    }
+
+    /// The quick replies a notification offers, as keys to send: the
+    /// options of the question claude is asking, else Allow and Deny for a
+    /// permission prompt. Categories are app-wide, so one per session.
+    private func registerReplies(for id: UUID) -> String {
+        let identifier = "session.\(id.uuidString)"
+        let actions: [UNNotificationAction] = quickReplies(for: id).prefix(4).map { reply in
+            UNNotificationAction(identifier: "keys:" + reply.keys, title: reply.title, options: reply.isDestructive ? [.destructive] : [])
+        }
+        notificationCategories[identifier] = UNNotificationCategory(identifier: identifier, actions: actions, intentIdentifiers: [])
+        UNUserNotificationCenter.current().setNotificationCategories(Set(notificationCategories.values))
+        return identifier
+    }
+
+    private func unflag(_ id: UUID) {
+        guard attention[id] != nil else { return }
+        attention[id] = nil
+        updateBadge()
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id.uuidString])
+    }
+
+    /// The tab showing in the key window has been seen.
+    private func looked() {
+        if windowIsKey, let selectedTab { unflag(selectedTab) }
+    }
+
+    private func updateBadge() {
+        let count = attention.keys.filter { sessions[$0] != nil }.count
+        NSApp.dockTile.badgeLabel = count == 0 ? nil : "\(count)"
+    }
+
+    private static var askedToNotify = false
+
+    private func askToNotify() {
+        guard !Self.askedToNotify else { return }
+        Self.askedToNotify = true
+        Task { _ = try? await UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) }
+    }
+
+    // MARK: Talking to claude
+
+    /// Types the text into claude's prompt as a paste and submits it. Claude
+    /// queues it if it's in the middle of something. False when the
+    /// terminal isn't running.
+    @discardableResult
+    func submit(_ text: String, to id: UUID) -> Bool {
+        guard let terminal = terminals[id], terminal.isRunning else { return false }
+        terminal.submit(text)
+        return true
+    }
+
+    func addDraft(_ comment: DiffComment, to id: UUID) {
+        drafts[id, default: []].append(comment)
+    }
+
+    func removeDraft(_ comment: DiffComment.ID, from id: UUID) {
+        drafts[id]?.removeAll { $0.id == comment }
+    }
+
+    func clearDrafts(_ id: UUID) {
+        drafts[id] = nil
+    }
+
+    func markSent(_ keys: some Sequence<String>, for id: UUID) {
+        sent[id, default: []].formUnion(keys)
+    }
+
+    /// What a hook sent through the terminal: `state:working`, `pr:<url>`,
+    /// `changed`.
     private func received(_ signal: String, for id: UUID) {
-        if signal.hasPrefix("state:"), let state = SessionState(rawValue: String(signal.dropFirst(6))) {
-            if states[id] != state { states[id] = state }
-        } else if signal.hasPrefix("pr:"), sessions[id]?.pullRequest == nil,
+        if signal == "changed" {
+            changeCounts[id, default: 0] += 1
+        } else if signal.hasPrefix("state:"), let state = SessionState(rawValue: String(signal.dropFirst(6))) {
+            setState(state, for: id)
+        } else if signal.hasPrefix("pr:"),
                   let url = URL(string: String(signal.dropFirst(3))), url.scheme == "https" {
             opened(url, for: id)
         }
@@ -420,16 +712,113 @@ final class SessionStore {
 
     /// Claude's `gh pr create`, spotted by a hook.
     private func opened(_ url: URL, for id: UUID) {
-        sessions[id]?.pullRequest = url
+        guard sessions[id]?.pullRequests.contains(url) == false else { return }
+        sessions[id]?.pullRequests.append(url)
         save()
         recordPullRequest(url, for: id)
     }
 
     private func terminated(_ id: UUID) {
-        states[id] = .stopped
+        setState(.stopped, for: id)
     }
 
     // MARK: Hook state
+
+    /// What a session's hooks last wrote, as read from its folder.
+    private func apply(state: String?, pullRequest: String?, changed: String?, for id: UUID) {
+        if let state = state.flatMap(SessionState.init(rawValue:)) {
+            setState(state, for: id)
+        }
+        if let url = pullRequest.flatMap(URL.init(string:)), url.scheme == "https" {
+            opened(url, for: id)
+        }
+        if let changed, !changed.isEmpty, lastChanged[id] != changed {
+            // The first read only learns where it was.
+            if lastChanged[id] != nil { changeCounts[id, default: 0] += 1 }
+            lastChanged[id] = changed
+        }
+    }
+
+    /// The server session's state, PR and last change, one line each.
+    /// The server session's state, PR and last change, one line each, then
+    /// its transcript's size and whatever's been added to it since the last
+    /// read: one call over the shared connection.
+    private func readRemote(_ session: CodeSession) {
+        guard !readingRemote.contains(session.id), let connect = session.connect,
+              let arguments = SessionChanges.sshArguments(connect) else { return }
+        readingRemote.insert(session.id)
+        let reader = readers[session.id] ?? TranscriptReader()
+        let script = #"d="$HOME"/.gannin/sessions/"# + session.id.uuidString + "\n"
+            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(cat "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)""# + "\n"
+            + #"f=$(ls "$HOME"/.claude/projects/*/"# + session.claudeID + #".jsonl 2>/dev/null | head -n 1)"# + "\n"
+            + #"if [ -n "$f" ]; then s=$(wc -c < "$f" | tr -d ' '); echo "$s"; [ "$s" -gt "# + "\(reader.offset)"
+            + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c 4000000; else echo -1; fi; exit 0"#
+        let id = session.id
+        Task {
+            let result = await Task.detached { () -> (SessionChanges.ShellResult, TranscriptReader?) in
+                let result = SessionChanges.run(script, .ssh(arguments))
+                // After four lines (state, PR, change, size), the new bytes.
+                var newlines = 0
+                var index = result.data.startIndex
+                while newlines < 4, let next = result.data[index...].firstIndex(of: 10) {
+                    newlines += 1
+                    index = result.data.index(after: next)
+                }
+                guard newlines == 4, result.data.count > index else { return (result, nil) }
+                var reader = reader
+                reader.consume(result.data[index...])
+                return (result, reader)
+            }.value
+            readingRemote.remove(id)
+            // Ended while it was read: the terminal's end is the truth.
+            guard result.0.ok, terminals[id]?.isRunning == true, sessions[id] != nil else { return }
+            if let reader = result.1 { store(reader, for: id) }
+            let lines = result.0.data.prefix(4096).split(separator: 10, maxSplits: 4, omittingEmptySubsequences: false)
+                .prefix(3).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
+            func line(_ index: Int) -> String? { index < lines.count && !lines[index].isEmpty ? lines[index] : nil }
+            apply(state: line(0), pullRequest: line(1), changed: line(2), for: id)
+        }
+    }
+
+    /// Reads what's been added to a local session's transcript, off the
+    /// main thread.
+    private func readLocalTranscript(_ id: UUID, then done: (() -> Void)? = nil) {
+        guard !readingTranscript.contains(id), let session = sessions[id] else { return }
+        if transcriptFiles[id] == nil { transcriptFiles[id] = Self.findTranscript(session.claudeID) }
+        guard let file = transcriptFiles[id] else {
+            done?()
+            return
+        }
+        readingTranscript.insert(id)
+        let reader = readers[id] ?? TranscriptReader()
+        Task {
+            let updated = await Task.detached { () -> TranscriptReader? in
+                guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
+                defer { try? handle.close() }
+                try? handle.seek(toOffset: UInt64(reader.offset))
+                guard let data = try? handle.read(upToCount: 4_000_000), !data.isEmpty else { return nil }
+                var reader = reader
+                reader.consume(data)
+                return reader
+            }.value
+            readingTranscript.remove(id)
+            if let updated, sessions[id] != nil { store(updated, for: id) }
+            done?()
+        }
+    }
+
+    private func store(_ reader: TranscriptReader, for id: UUID) {
+        readers[id] = reader
+        if transcripts[id] != reader.summary { transcripts[id] = reader.summary }
+    }
+
+    /// `~/.claude/projects/<folder>/<id>.jsonl`, whichever folder claude
+    /// filed it under.
+    private static func findTranscript(_ claudeID: String) -> URL? {
+        let projects = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)
+        let folders = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
+        return folders.lazy.map { $0.appending(path: "\(claudeID).jsonl") }.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
 
     private func startPolling() {
         guard polling == nil else { return }
@@ -442,22 +831,34 @@ final class SessionStore {
         }
     }
 
-    /// Reads what the running sessions' hooks wrote. False once nothing runs.
+    /// Reads what the running sessions' hooks wrote: here every second, on
+    /// a server every two over the shared ssh connection. False once
+    /// nothing runs.
     private func poll() -> Bool {
         var anyRunning = false
+        pollTick += 1
         for (id, terminal) in terminals where terminal.isRunning {
             anyRunning = true
+            guard let session = sessions[id] else { continue }
+            if session.isRemote {
+                if pollTick % 2 == 0 { readRemote(session) }
+                continue
+            }
             let directory = Self.directory(for: id)
-            if let raw = try? String(contentsOf: directory.appending(path: "state"), encoding: .utf8),
-               let state = SessionState(rawValue: raw.trimmingCharacters(in: .whitespacesAndNewlines)),
-               states[id] != state {
-                states[id] = state
+            func read(_ name: String) -> String? {
+                (try? String(contentsOf: directory.appending(path: name), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            if sessions[id]?.pullRequest == nil,
-               let raw = try? String(contentsOf: directory.appending(path: "pr"), encoding: .utf8),
-               let url = URL(string: raw.trimmingCharacters(in: .whitespacesAndNewlines)), url.scheme == "https" {
-                opened(url, for: id)
+            let state = read("state"), pullRequest = read("pr"), changed = read("changed")
+            if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
+                // What it's asking is in the transcript: read it first, so
+                // the notification can offer the answers.
+                readLocalTranscript(id) { [weak self] in
+                    self?.apply(state: state, pullRequest: pullRequest, changed: changed, for: id)
+                }
+                continue
             }
+            if pollTick % 2 == 0 { readLocalTranscript(id) }
+            apply(state: state, pullRequest: pullRequest, changed: changed, for: id)
         }
         return anyRunning
     }
@@ -522,7 +923,7 @@ final class SessionStore {
 
     private static var fileURL: URL { baseDirectory.appending(path: "Sessions.json") }
 
-    private func save() {
+    func save() {
         try? FileManager.default.createDirectory(at: Self.baseDirectory, withIntermediateDirectories: true)
         let ordered = sessions.values.sorted { $0.createdAt < $1.createdAt }
         if let data = try? JSONEncoder().encode(ordered) {
@@ -570,6 +971,42 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     func terminate() {
         guard isRunning else { return }
         view?.terminate()
+    }
+
+    /// Pastes the text at claude's prompt and presses Return: bracketed, so
+    /// its lines stay one prompt, then Return a moment later, once the
+    /// paste has landed.
+    func submit(_ text: String) {
+        guard let view else { return }
+        let clean = text.replacingOccurrences(of: "\u{1B}", with: "")
+        if view.terminal.bracketedPasteMode {
+            view.send(txt: "\u{1B}[200~" + clean + "\u{1B}[201~")
+        } else {
+            view.send(txt: clean.replacingOccurrences(of: "\n", with: " "))
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(150))
+            self?.press("\r")
+        }
+        focus()
+    }
+
+    /// Keys as a key press would send them. Claude Code turns on the kitty
+    /// keyboard protocol, under which Esc is `CSI 27 u` (a bare Esc reads
+    /// as the start of a sequence and is dropped), and, when every key is
+    /// reported, Return and the rest are too.
+    func press(_ keys: String) {
+        guard let view else { return }
+        let flags = view.terminal.keyboardEnhancementFlags
+        var encoded = keys
+        if !flags.isEmpty {
+            if keys == "\u{1B}" {
+                encoded = "\u{1B}[27u"
+            } else if flags.contains(.reportAllKeys), keys.unicodeScalars.count == 1, let scalar = keys.unicodeScalars.first, scalar.value != 0x1B {
+                encoded = "\u{1B}[\(scalar.value)u"
+            }
+        }
+        view.send(txt: encoded)
     }
 
     /// Puts the keyboard in the terminal.

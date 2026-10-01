@@ -37,6 +37,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case views = "Views"
     /// The morning session with CS, under Meetings.
     case prioritisation = "Prioritisation"
+    /// What the Claude Code agents want from you (the Mac's).
+    case agents = "Agents"
     case settings = "Settings"
 
     var id: Self { self }
@@ -55,6 +57,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .harness: "text.book.closed"
         case .views: "square.grid.3x3"
         case .prioritisation: "list.number"
+        case .agents: "questionmark.bubble"
         case .settings: "gearshape"
         }
     }
@@ -805,6 +808,11 @@ private struct PageStack: View {
                     .id(path)
             } else {
                 HStack(spacing: 10) {
+                    #if os(macOS)
+                    if let reference = pullRequestReference(item) {
+                        ReviewWithClaudeButton(reference: reference)
+                    }
+                    #endif
                     Spacer()
                     Button("Open as Page") {
                         drawers = []
@@ -826,6 +834,19 @@ private struct PageStack: View {
                     .id(item)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+    }
+
+    /// The PR behind a drawer item, when it's one.
+    private func pullRequestReference(_ item: DetailSelection) -> PullRequestReference? {
+        switch item {
+        case .pullRequestReference(let reference):
+            return reference
+        case .pullRequest(let id):
+            guard let pr = workload?.openPullRequests.first(where: { $0.id == id }) else { return nil }
+            return PullRequestReference(org: org, id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url)
+        default:
+            return nil
         }
     }
 
@@ -1071,6 +1092,7 @@ struct OrgSidebar: View {
                 #if os(macOS)
                 if !sessions.sessions(for: selectedOrg).isEmpty {
                     Section("Claude Code", isExpanded: $sessionsExpanded) {
+                        row(.agents)
                         SessionSidebarRows(org: selectedOrg)
                     }
                 }
@@ -1251,6 +1273,13 @@ struct OrgSidebar: View {
             guard let login = auth.viewer?.login else { return 0 }
             return Inbox(login: login, workload: workload, history: nil, workflow: IssueWorkflow()).count
         // Issues' lists under it have their own counts.
+        case .agents:
+            #if os(macOS)
+            guard let selectedOrg else { return 0 }
+            return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
+            #else
+            return 0
+            #endif
         case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .settings: return 0
         }
     }

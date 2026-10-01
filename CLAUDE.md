@@ -390,9 +390,77 @@ added, removed or created, and the tracked board field set), and commits to the 
 ## Claude Code sessions
 
 - `Gannin/Sessions/` (Mac only): Work on This on an issue (`StartSessionButton`, the issue
-  page's toolbar) starts the issue's session in the org's harness, no repo to pick, and opens a
-  `SessionWindow`: a SwiftTerm terminal beside the issue, its session state and its board fields
-  (`ProjectFieldsSections`), where the ticket is moved.
+  page's toolbar) starts the issue's session in the org's harness, no repo to pick, and opens it
+  as a tab in the one Claude Code window (`SessionsWindow`, `SessionStore.tabs`, kept across
+  launches; + opens a session already started, ⌘W closes a tab, claude keeps running). Each tab
+  is a SwiftTerm terminal beside the issue (its session state, and its plans and requirements
+  from the harness, `HarnessIssueSection`, opening in a sheet) or its Changes: every worktree
+  under the issue's folder diffed against its merge base with `origin/HEAD`, committed or not,
+  new files included (`SessionChanges`). One bash script reads them all, git taking no optional
+  locks, run here or, for a session on a server, through its Connect with command when that's
+  ssh (`-T`, `BatchMode`, one shared connection, `ControlPath=/tmp/gannin-ssh-%C`). A
+  PostToolUse hook on edits and Bash writes `changed`, which reads them again; else
+  every 10 seconds, 30 over ssh.
+- A session going to Needs you, or from working to Your turn, while you aren't looking at its
+  tab is flagged (`SessionStore.attention`): its tab is marked, the Dock icon counts them, a
+  notification (Settings > General > Agent) opens its tab, and the tab bar's "N waiting" or
+  Window > Next Session Waiting on You (⇧⌘J) goes to the longest waiting.
+- Gannin talks to claude by pasting at its prompt (`SessionStore.submit`, bracketed paste then
+  Return; claude queues it while working). The PRs pane (`SessionPullRequests.swift`) finds the
+  session's PRs by `head:<branch>` across the org plus the URLs its hooks caught
+  (`CodeSession.pullRequests`), with state, review, conflicts and checks, read again every 30
+  seconds while checks run, else 2 minutes. Send Failures to Claude passes the failed checks
+  with `gh run view --log-failed`; open review threads and reviews with words are ticked and
+  sent as one prompt (`SessionPrompts`). In Changes, clicking a line's number leaves a comment
+  (`DiffComment`, `SessionStore.drafts`), sent together from the bar under the list.
+- Settings > General > Agent picks the provider (Anthropic only, `AIProvider`) and the model
+  sessions start with (`--model`, `SessionStore.model`; empty leaves it to Claude Code).
+- Claude's transcript (`~/.claude/projects/*/<id>.jsonl` on its box) is read as it grows
+  (`TranscriptReader`, `SessionTranscript`): locally from disk, on a server in the same ssh
+  call as the hook files (`tail -c` from the last offset). It gives the Activity pane (events,
+  cost from `cost-state` records, time working against waiting, files edited, the last
+  test or build, context used of 200k or 1M), the question being asked (AskUserQuestion's
+  options), plans written under `plans/` (Read, Approve Plan, Request Changes) and a
+  reviewer's findings (a fenced JSON list in its last reply, Add to Comments).
+- What claude asks (`SessionQuestionCard`: every question with its options as tiles and an
+  Other field, or a permission prompt with the command) floats over the terminal, and shows on Claude
+  Code › Agents (`AgentsPage`, `WorkloadTab.agents`) with what claude said and did before it;
+  sessions whose turn it is get a reply box there. Questions aren't answered by driving
+  claude's menu: `SessionStore.answer` closes it (Esc) and sends the answers as one message,
+  each question with its answer. Permission prompts are Return (Yes), down and Return, or Esc,
+  sent through
+  `SessionTerminal.press`, which encodes them for the kitty keyboard protocol Claude Code turns
+  on (Esc as `CSI 27 u`), as notification actions are (`keys:` in `GanninAppDelegate`).
+- Under the terminal, `SessionComposer`: a prompt box, saved prompts (`PromptSnippet`, Settings, ⌃1 to ⌃9), Esc
+  to interrupt, the context gauge with /compact, and the last test result. The `Notification`
+  hook only marks permission prompts and dialogs; a `PreToolUse` hook marks AskUserQuestion.
+- `SessionStore.watchPullRequests` fetches every running session's PRs (and any with one open)
+  every 90 seconds, 30 while checks run, and flags new failures and new review feedback.
+- Helpers (`CodeSession.parentID`, `role`, `prompt`): more agents on an issue's folder and
+  branch, each with its own settings file in `.gannin/`; Review the Changes starts one with
+  edits disallowed (`isReviewer`, `--disallowedTools`) and `SessionStore.reviewPrompt`.
+  Removing a session removes its helpers.
+- Changes has Branch and Uncommitted modes; Uncommitted stages, unstages, discards (a file or a
+  hunk, `git apply -R`), commits and pushes. Each worktree says what isn't pushed. Files and
+  lines open in the chosen editor (`CodeEditor`: VS Code, Cursor and Zed also over SSH remote).
+- The tab bar's grid shows every session (`SessionOverview`); Show Beside puts two tabs side by
+  side (`besideTab`). Sessions idle three days are stale; once every PR is merged, or stale,
+  Finish Session removes the worktrees on its box, marks `finishedAt` in the harness's
+  `session.json` and forgets it (`SessionStore.finish`).
+- Review with Claude (`ReviewWithClaudeButton`, on a PR's drawer and window) starts a review
+  session (`CodeSession.reviewOf`, `SessionStore.startReview`): in the harness, edits
+  disallowed, told to read the PR with `gh`, check it out in `.worktrees/review-<repo>-<n>/` if
+  it needs to, and end with a JSON object (summary, verdict, findings with path, line,
+  severity, comment and an optional suggestion; `SessionTranscript.review`). Its tab is
+  `PullRequestReviewView`, not a terminal and panel: the PR's files and diff from REST
+  (`reviewedPullRequest`), findings on their lines (Keep, Edit, Dismiss; `ReviewDraft`),
+  comments of your own on any line, the summary and verdict, Review Again, and the
+  conversation beneath. Post Review (`PostReviewSheet`) sends one review through REST:
+  Approve, Comment or Request Changes, inline comments on lines the diff shows (a suggestion
+  as a GitHub suggestion block), and the rest in the body.
+- Quitting with sessions running asks first (`GanninAppDelegate.applicationShouldTerminate`,
+  `Sessions/QuitGuard.swift`): which are running and in what state, that working ones stop
+  mid-task, that server sessions end with their ssh connection, and that conversations resume.
 - `SessionStore` keeps sessions (`CodeSession`: issue, branch `123-short-title`, the harness
   repo and its checkout path on the box it runs on) in Application Support/<bundle
   ID>/Sessions, and their terminals, so closing a window leaves claude running. Work on This
@@ -413,8 +481,9 @@ added, removed or created, and the tracked board field set), and commits to the 
   General, with Connect with (`sessionsConnect`, such as `ssh -t devbox`): sessions then run
   on that server, their script, brief and settings packed into one command
   (`SessionScript.remoteCommand`), in the harness checkout set for the server
-  (`sessionsRemoteHarnessPath.<org>`, no default). Hook state reaches Gannin from a server as
-  an escape code (OSC 7777) read by `SessionTerminal`.
+  (`sessionsRemoteHarnessPath.<org>`, no default). Claude Code runs hooks with no terminal, so their
+  escape codes (OSC 7777) rarely arrive: `SessionStore.poll` reads the files they write (state, pr,
+  changed), every second here and every two over the shared ssh connection for a server.
 - Work on This records the session in the harness (`SessionStore.record`): one commit of
   `sessions/<issue repo>-<number>/brief.md` and `session.json` (`SessionRecord`: issue, repos,
   branch, who started it, when, which box, its PRs) before the terminal starts, so the pull

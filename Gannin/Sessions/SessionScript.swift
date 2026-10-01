@@ -5,10 +5,30 @@ import Foundation
 /// Paths are shell expressions (`"$HOME"/'Gannin'`), so the same script
 /// runs on this Mac or on a server reached with the Connect with command.
 enum SessionScript {
-    /// The escape code the hooks send through the terminal (OSC 7777):
-    /// `state:working`, `pr:<url>`. It travels back over SSH, where the
+    /// The escape code the hooks send through the terminal (OSC 7777).
+    /// Claude Code runs hooks with no terminal, so from a hook it rarely
+    /// arrives; the files they write are what Gannin reads, over ssh for a
+    /// server (`SessionStore.poll`). The start script's own do arrive:
+    /// `state:working`, `pr:<url>`, and `changed` after claude edits a file
+    /// or runs a command. It travels back over SSH, where the
     /// state files can't be read.
     static let signalCode = 7777
+
+    /// A helper's settings (its hooks) beside the issue's own, in the
+    /// folder they share.
+    private static func settingsName(_ session: CodeSession) -> String {
+        session.isHelper ? "settings-\(session.id.uuidString.prefix(8)).json" : "settings.json"
+    }
+
+    /// `--model` with the model picked in Settings, applied on each start
+    /// and resume (nothing when it's left to Claude Code), and a reviewer's
+    /// tools taken away.
+    private static func options(_ session: CodeSession) -> String {
+        var options = SessionStore.model.map { " --model \(quoted($0))" } ?? ""
+        // A reviewer reads and reports; it can't change the code.
+        if session.isReviewer { options += " --disallowedTools 'Edit,MultiEdit,Write,NotebookEdit'" }
+        return options
+    }
 
     /// The bash script a session runs: claude starts, or resumes once it has
     /// had a prompt, with a shell left open after it exits (or if a step
@@ -27,7 +47,7 @@ enum SessionScript {
     private static func harnessStart(_ session: CodeSession, harness: String, directory: String) -> String {
         let issue = session.issue
         let folder = ".worktrees/\(session.branch)"
-        let prompt = """
+        let prompt = session.prompt ?? """
             You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
             it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos under projects/ \
             it touches and look through their code, then propose a plan before changing anything. Make the changes in a worktree \
@@ -72,14 +92,15 @@ enum SessionScript {
             done
 
             mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
-            \(briefSource)cp "$session/brief.md" "$session/settings.json" "$folder/.gannin/"
+            \(briefSource)cp "$session/brief.md" "$folder/.gannin/"
+            cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
             cd "$harness" || fail "The harness isn't there."
 
             command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
             if [ -e "$session/started" ]; then
-              claude --resume "$id" --settings "$folder/.gannin/settings.json"
+              claude --resume "$id"\(options(session)) --settings "$folder/.gannin/\(settingsName(session))"
             else
-              claude --session-id "$id" --settings "$folder/.gannin/settings.json" \(quoted(prompt))
+              claude --session-id "$id"\(options(session)) --settings "$folder/.gannin/\(settingsName(session))" \(quoted(prompt))
             fi
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
@@ -95,7 +116,7 @@ enum SessionScript {
     /// (excluded from git), and run claude there.
     private static func repoStart(_ session: CodeSession, root: String, directory: String) -> String {
         let issue = session.issue
-        let prompt = """
+        let prompt = session.prompt ?? """
             You're picking up \(issue.reference), "\(issue.title)", in \(session.repo). Read .gannin/brief.md first: it has the \
             issue, its discussion, where it sits on the board and any plans for it. Then look through the code and propose a plan \
             before changing anything.
@@ -141,16 +162,17 @@ enum SessionScript {
 
             cd "$worktree" || fail "The worktree isn't there."
             mkdir -p .gannin
-            cp "$session/brief.md" "$session/settings.json" .gannin/
+            cp "$session/brief.md" .gannin/
+            cp "$session/settings.json" .gannin/\(settingsName(session))
             exclude="$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
             mkdir -p "$(dirname "$exclude")"
             grep -qx '.gannin/' "$exclude" 2>/dev/null || echo '.gannin/' >> "$exclude"
 
             command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
             if [ -e "$session/started" ]; then
-              claude --resume "$id" --settings .gannin/settings.json
+              claude --resume "$id"\(options(session)) --settings .gannin/\(settingsName(session))
             else
-              claude --session-id "$id" --settings .gannin/settings.json \(quoted(prompt))
+              claude --session-id "$id"\(options(session)) --settings .gannin/\(settingsName(session)) \(quoted(prompt))
             fi
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
@@ -183,8 +205,16 @@ enum SessionScript {
             "PostToolUse": [
                 group([write(.working)], matcher: "*"),
                 group([command(pullRequest)], matcher: "Bash"),
+                // So the Changes pane reads the worktrees now, not on its
+                // next slow look.
+                // A new value each time, for Gannin to compare.
+                group([command("printf %s \"$(date +%s)-$$\" > \(dir)/changed 2>/dev/null; \(signal("changed")); exit 0")], matcher: "Edit|MultiEdit|Write|NotebookEdit|Bash"),
             ],
-            "Notification": [group([write(.needsYou)])],
+            // A permission prompt or a dialog, not the reminder after a
+            // minute idle, which is still your turn.
+            "Notification": [group([write(.needsYou)], matcher: "permission_prompt|elicitation_dialog")],
+            // Its questions, as they're shown.
+            "PreToolUse": [group([write(.needsYou)], matcher: "AskUserQuestion")],
             "Stop": [group([write(.idle)])],
             "SessionEnd": [group([write(.exited)])],
         ]

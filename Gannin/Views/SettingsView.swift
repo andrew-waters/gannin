@@ -80,6 +80,7 @@ struct GeneralSettings: View {
             }
             #if os(macOS)
             SessionSettingsSection()
+            SessionPromptSettingsSection()
             #endif
             #if !os(macOS)
             Section {

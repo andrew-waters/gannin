@@ -13,33 +13,844 @@ extension SessionState {
     }
 }
 
-/// A session's window: the terminal claude runs in, and beside it the issue
-/// with its board fields, so the ticket can be moved without leaving.
-struct SessionWindow: View {
+extension SessionStore {
+    /// Shows the session as a tab in the sessions window, opening the window
+    /// if it isn't.
+    func show(_ id: UUID, with openWindow: OpenWindowAction) {
+        reveal(id)
+        openWindow(id: Self.windowID)
+    }
+}
+
+/// The sessions window: a tab per issue's session, each its terminal beside
+/// the issue or the changes in its worktrees. Closing a tab or the window
+/// leaves claude running.
+struct SessionsWindow: View {
     @Environment(SessionStore.self) private var sessions
-    let id: UUID
+    @Environment(\.dismissWindow) private var dismissWindow
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
-        if let session = sessions.sessions[id] {
-            HStack(spacing: 0) {
-                TerminalHost(session: session)
-                    .frame(minWidth: 560, maxWidth: .infinity, maxHeight: .infinity)
-                Divider()
-                SessionPanel(session: session)
-                    .frame(width: 340)
+        let selected = sessions.selectedTab.flatMap { sessions.sessions[$0] }
+        VStack(spacing: 0) {
+            SessionTabBar()
+            Divider()
+            if sessions.showingOverview {
+                SessionOverview()
+            } else if let selected {
+                if let beside = sessions.besideTab.flatMap({ sessions.sessions[$0] }), beside.id != selected.id {
+                    HSplitView {
+                        content(selected, compact: true)
+                        content(beside, compact: true)
+                    }
+                } else {
+                    content(selected, compact: false)
+                }
+            } else {
+                ContentUnavailableView("No sessions open", systemImage: "terminal", description: Text("Work on This on an issue opens its session here, or + opens one already started."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(minHeight: 480)
-            .navigationTitle(session.issue.reference)
-            .windowSubtitle(session.issue.title)
+        }
+        .frame(minWidth: 900, minHeight: 480)
+        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected?.issue.reference ?? "Claude Code")
+        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? "")
+        .background { shortcuts }
+        .onChange(of: activeState, initial: true) { sessions.windowIsKey = activeState == .key }
+        .onDisappear { sessions.windowIsKey = false }
+    }
+
+    /// A review's own layout, else the session's terminal and panel.
+    @ViewBuilder
+    private func content(_ session: CodeSession, compact: Bool) -> some View {
+        if session.isPullRequestReview {
+            PullRequestReviewView(session: session)
+                .id(session.id)
         } else {
-            ContentUnavailableView("No session", systemImage: "terminal", description: Text("It was removed."))
-                .frame(minWidth: 480, minHeight: 320)
+            SessionTab(session: session, compact: compact)
+                .id(session.id)
+        }
+    }
+
+    /// ⌘W closes the tab rather than the window, until it's the last.
+    private var shortcuts: some View {
+        Group {
+            Button("Close Tab") {
+                if let id = sessions.selectedTab { sessions.closeTab(id) }
+                if sessions.tabs.isEmpty { dismissWindow(id: SessionStore.windowID) }
+            }
+            .keyboardShortcut("w", modifiers: .command)
+            Button("Next Tab") { sessions.selectTab(offset: 1) }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+            Button("Previous Tab") { sessions.selectTab(offset: -1) }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+        }
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+}
+
+private struct SessionTabBar: View {
+    @Environment(SessionStore.self) private var sessions
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 0) {
+                    ForEach(sessions.tabs, id: \.self) { id in
+                        if let session = sessions.sessions[id] {
+                            SessionTabItem(session: session, isSelected: sessions.selectedTab == id && !sessions.showingOverview)
+                            Divider()
+                        }
+                    }
+                }
+            }
+            .scrollIndicators(.never)
+            waiting
+            Button {
+                sessions.showingOverview.toggle()
+            } label: {
+                Image(systemName: "square.grid.2x2")
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(sessions.showingOverview ? Color.accentColor : .secondary)
+            .padding(.leading, 8)
+            .help(sessions.showingOverview ? "Back to the tab" : "Every session at once")
+            addMenu
+                .padding(.horizontal, 8)
+        }
+        .frame(height: 30)
+        .background(.bar)
+    }
+
+    /// Jumps to the session waiting on you longest.
+    @ViewBuilder
+    private var waiting: some View {
+        let count = sessions.attention.keys.filter { sessions.sessions[$0] != nil }.count
+        if let next = sessions.nextWaiting {
+            Button {
+                sessions.reveal(next)
+            } label: {
+                Label(count == 1 ? "1 waiting" : "\(count) waiting", systemImage: "bell.badge")
+                    .font(.callout)
+            }
+            .buttonStyle(.borderless)
+            .foregroundStyle(.orange)
+            .padding(.leading, 8)
+            .help("Go to the session waiting on you longest (⇧⌘J)")
+        }
+    }
+
+    /// Sessions already started that have no tab open.
+    private var addMenu: some View {
+        let closed = sessions.sessions.values
+            .filter { !sessions.tabs.contains($0.id) }
+            .sorted { $0.createdAt > $1.createdAt }
+        return Menu {
+            if closed.isEmpty {
+                Text("Every session is open")
+            }
+            ForEach(closed) { session in
+                Button("#\(session.issue.number) \(session.title)\(sessions.isStale(session) ? " (stale)" : "")") { sessions.reveal(session.id) }
+            }
+        } label: {
+            Image(systemName: "plus")
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Open another session in a tab. Work on This on an issue starts a new one.")
+    }
+}
+
+private struct SessionTabItem: View {
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
+    let session: CodeSession
+    let isSelected: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        let state = sessions.state(session.id)
+        let waiting = sessions.attention[session.id] != nil
+        HStack(spacing: 6) {
+            Circle().fill(state.color).frame(width: 7, height: 7)
+                .overlay {
+                    if waiting { Circle().stroke(state.color, lineWidth: 1.5).frame(width: 13, height: 13) }
+                }
+            Text("#\(session.issue.number)")
+                .foregroundStyle(.secondary)
+            if session.isHelper || session.isPullRequestReview {
+                Image(systemName: session.isReviewer ? "eye" : "person.2")
+                    .foregroundStyle(.secondary)
+            }
+            Text(session.title)
+                .fontWeight(waiting ? .semibold : .regular)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            Spacer(minLength: 0)
+            Button {
+                sessions.closeTab(session.id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.borderless)
+            .opacity(hovering || isSelected ? 1 : 0)
+            .help("Close the tab. Claude keeps running.")
+        }
+        .font(.callout)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(width: 210)
+        .frame(maxHeight: .infinity)
+        .background(isSelected ? Color(nsColor: .controlBackgroundColor) : .clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            sessions.showingOverview = false
+            sessions.selectedTab = session.id
+        }
+        .onHover { hovering = $0 }
+        .help("\(session.issue.reference): \(session.issue.title). \(state.label).")
+        .draggable(session.id.uuidString)
+        .dropDestination(for: String.self) { items, _ in
+            guard let dragged = items.first.flatMap(UUID.init(uuidString:)) else { return false }
+            sessions.moveTab(dragged, to: session.id)
+            return true
+        }
+        .contextMenu {
+            Button("Close Tab") { sessions.closeTab(session.id) }
+            Button("Close Other Tabs") {
+                for id in sessions.tabs where id != session.id { sessions.closeTab(id) }
+            }
+            .disabled(sessions.tabs.count < 2)
+            Divider()
+            Button("Show Beside") {
+                sessions.showingOverview = false
+                sessions.besideTab = session.id
+            }
+            .disabled(isSelected || sessions.tabs.count < 2)
+            Button("Open Issue") { openWindow(value: session.issue) }
+        }
+    }
+}
+
+/// What the side of a session's tab shows.
+private enum SessionPane: String {
+    case issue, changes, pullRequests, activity
+}
+
+/// One session's tab: the terminal claude runs in with a bar beneath for
+/// talking to it, and beside it the issue with its plans and requirements,
+/// the changes in its worktrees, its PRs, or what claude has been doing.
+/// Changes are read again a moment after claude edits a file or runs a
+/// command (its hooks say so), and otherwise every so often while the tab
+/// shows. Shown beside another, the side panel starts hidden.
+struct SessionTab: View {
+    @Environment(SessionStore.self) private var sessions
+    let session: CodeSession
+    var compact = false
+    @State private var changes = SessionChanges()
+    @State private var panelShown: Bool?
+    /// The question put away to answer in the terminal, by its ID (or the
+    /// permission prompt's tool).
+    @State private var hiddenAsk: String?
+    @AppStorage("sessionsPane") private var pane: SessionPane = .issue
+
+    var body: some View {
+        let shown = panelShown ?? !compact
+        HSplitView {
+            VStack(spacing: 0) {
+                if compact {
+                    SessionTabHeader(session: session, panelShown: Binding(get: { shown }, set: { panelShown = $0 }))
+                    Divider()
+                }
+                TerminalHost(session: session)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .overlay(alignment: .bottom) { askOverlay }
+                Divider()
+                SessionComposer(session: session, panelShown: compact ? nil : Binding(get: { shown }, set: { panelShown = $0 }))
+            }
+            .frame(minWidth: compact ? 360 : 480, maxWidth: .infinity, maxHeight: .infinity)
+            if shown {
+                VStack(spacing: 0) {
+                    Picker("Show", selection: $pane) {
+                        Text("Issue").tag(SessionPane.issue)
+                        Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
+                        Text(pullRequestsLabel).tag(SessionPane.pullRequests)
+                        Text("Activity").tag(SessionPane.activity)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .padding(8)
+                    Divider()
+                    switch pane {
+                    case .issue: SessionPanel(session: session)
+                    case .changes: SessionChangesPane(session: session, changes: changes)
+                    case .pullRequests: SessionPullRequestsPane(session: session)
+                    case .activity: SessionActivityPane(session: session)
+                    }
+                }
+                .frame(minWidth: 340, idealWidth: 440, maxWidth: 900, maxHeight: .infinity)
+            }
+        }
+        // Each change signal starts this again: a short wait lets a burst of
+        // edits settle into one read.
+        .task(id: sessions.changeCount(session.id)) {
+            do {
+                try await Task.sleep(for: .milliseconds(400))
+                while true {
+                    await changes.refresh(session)
+                    // For edits made outside claude, and sessions from
+                    // before the hook, slower over ssh.
+                    try await Task.sleep(for: .seconds(session.isRemote ? 30 : 10))
+                }
+            } catch {}
+        }
+        // At once on opening, and again when claude opens one; the store
+        // watches them in the background otherwise.
+        .task(id: session.pullRequests) {
+            await sessions.refreshPullRequests(session.parentID ?? session.id)
+        }
+    }
+
+    /// What claude is asking, floating over the terminal; put away, a
+    /// small button brings it back.
+    @ViewBuilder
+    private var askOverlay: some View {
+        let transcript = sessions.transcripts[session.id]
+        let key = transcript?.question?.id ?? transcript?.pendingTool?.id ?? "permission"
+        if SessionQuestionCard.isAsking(session, in: sessions) {
+            if hiddenAsk == key {
+                Button {
+                    hiddenAsk = nil
+                } label: {
+                    Label("Claude is asking", systemImage: "questionmark.bubble.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.orange)
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
+                SessionQuestionCard(session: session) { hiddenAsk = key }
+                    .frame(maxWidth: 820)
+                    .padding(16)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+    }
+
+    private var pullRequestsLabel: String {
+        let pullRequests = sessions.pullRequestInfo[session.parentID ?? session.id] ?? []
+        guard !pullRequests.isEmpty else { return "PRs" }
+        let failed = pullRequests.filter { $0.state == "OPEN" }.reduce(0) { $0 + $1.failed.count }
+        return failed > 0 ? "PRs \(pullRequests.count) ✕\(failed)" : "PRs \(pullRequests.count)"
+    }
+}
+
+/// A tab's own header when it's one of two side by side.
+private struct SessionTabHeader: View {
+    @Environment(SessionStore.self) private var sessions
+    let session: CodeSession
+    @Binding var panelShown: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle().fill(sessions.state(session.id).color).frame(width: 7, height: 7)
+            Text("#\(session.issue.number)").foregroundStyle(.secondary)
+            Text(session.title).lineLimit(1)
+            Spacer()
+            Button {
+                panelShown.toggle()
+            } label: {
+                Image(systemName: "sidebar.right")
+            }
+            .buttonStyle(.borderless)
+            .help(panelShown ? "Hide the side panel" : "Show the side panel")
+            if sessions.besideTab == session.id {
+                Button {
+                    sessions.besideTab = nil
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .help("Stop showing this beside")
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .frame(height: 26)
+        .background(.bar)
+    }
+}
+
+/// The files the session has changed, per worktree, against where its
+/// branch left the default branch (committed or not, and new files), and the
+/// picked one's diff.
+private struct SessionChangesPane: View {
+    @Environment(SessionStore.self) private var sessions
+    let session: CodeSession
+    @Bindable var changes: SessionChanges
+    @State private var discarding: ChangedFile?
+    @State private var committing: WorktreeChanges?
+    @State private var actionError: String?
+
+    private func worktreeHeader(_ worktree: WorktreeChanges) -> some View {
+        HStack(spacing: 8) {
+            Text(worktree.name)
+            Spacer()
+            Group {
+                if let unpushed = worktree.unpushed, unpushed > 0 {
+                    Text(unpushed == 1 ? "1 not pushed" : "\(unpushed) not pushed").foregroundStyle(.orange)
+                } else if worktree.hasUpstream {
+                    Text("Pushed")
+                } else {
+                    Text("Not pushed yet")
+                }
+            }
+            .fontWeight(.regular)
+            .help("Commits on this branch that aren't on GitHub yet")
+            if changes.mode == .uncommitted {
+                if worktree.files.contains(where: \.isStaged) {
+                    Button("Commit") { committing = worktree }
+                        .controlSize(.mini)
+                }
+                if (worktree.unpushed ?? 0) > 0 || !worktree.hasUpstream {
+                    Button("Push") { Task { actionError = await changes.push(worktree, session: session) } }
+                        .controlSize(.mini)
+                }
+            } else {
+                Text("against \(worktree.baseLabel)")
+                    .fontWeight(.regular)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func fileMenu(_ file: ChangedFile) -> some View {
+        if changes.mode == .uncommitted {
+            if file.isStaged {
+                Button("Unstage") { Task { actionError = await changes.unstage(file, session: session) } }
+            } else {
+                Button("Stage") { Task { actionError = await changes.stage(file, session: session) } }
+            }
+            Button(file.status == .untracked ? "Delete File" : "Discard Changes", role: .destructive) { discarding = file }
+            Divider()
+        }
+        Button("Open in \(CodeEditor.chosen.name)") {
+            sessions.openInEditor(session, worktree: file.worktree, path: file.path, line: nil)
+        }
+        .disabled(session.isRemote && !CodeEditor.chosen.opensRemote)
+        Button("Copy Path") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(file.worktree + "/" + file.path, forType: .string)
+        }
+    }
+
+    /// The comments waiting to go to claude, across files.
+    @ViewBuilder
+    private var commentsBar: some View {
+        let drafts = sessions.drafts[session.id] ?? []
+        if !drafts.isEmpty {
+            let running = sessions.isRunning(session.id)
+            HStack {
+                Label(drafts.count == 1 ? "1 comment" : "\(drafts.count) comments", systemImage: "text.bubble")
+                Spacer()
+                Button("Discard") { sessions.clearDrafts(session.id) }
+                Button("Send to Claude") {
+                    if sessions.submit(SessionPrompts.diffComments(drafts, in: session), to: session.id) {
+                        sessions.clearDrafts(session.id)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!running)
+                .help(running ? "Paste the comments into claude's prompt. If it's working, it reads them when it's done." : "Start the session first")
+            }
+            .padding(8)
+            .background(.bar)
+            Divider()
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Changes", selection: $changes.mode) {
+                ForEach(SessionChanges.Mode.allCases) { Text($0.title).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .help("Branch: everything since it left the default branch. Uncommitted: what isn't committed yet, to stage, discard and commit.")
+            Divider()
+            content
+        }
+        .onChange(of: changes.mode) {
+            Task { await changes.refresh(session) }
+        }
+        .confirmationDialog("Discard the changes to \(discarding.map { ($0.path as NSString).lastPathComponent } ?? "the file")?", isPresented: Binding(get: { discarding != nil }, set: { if !$0 { discarding = nil } }), presenting: discarding) { file in
+            Button(file.status == .untracked ? "Delete File" : "Discard Changes", role: .destructive) {
+                Task { actionError = await changes.discard(file, session: session) }
+            }
+        } message: { file in
+            Text(file.status == .untracked ? "It's new and not in git, so it's deleted." : "It goes back to its last commit, staged changes included. Claude isn't told.")
+        }
+        .sheet(item: $committing) { worktree in
+            CommitSheet(session: session, changes: changes, worktree: worktree)
+        }
+        .alert("Couldn't do that", isPresented: Binding(get: { actionError != nil }, set: { if !$0 { actionError = nil } })) {
+            Button("OK") {}
+        } message: {
+            Text(actionError ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let error = changes.error, changes.worktrees.isEmpty {
+            ContentUnavailableView {
+                Label("Couldn't read the changes", systemImage: session.isRemote ? "server.rack" : "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { Task { await changes.refresh(session) } }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !changes.loaded {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if changes.worktrees.isEmpty {
+            ContentUnavailableView("No worktrees yet", systemImage: "arrow.triangle.branch", description: Text("Claude adds a worktree for each repo the issue touches, and what it changes shows here as it works."))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            VSplitView {
+                List(selection: $changes.selected) {
+                    ForEach(changes.worktrees) { worktree in
+                        Section {
+                            if worktree.files.isEmpty {
+                                Text("No changes")
+                                    .foregroundStyle(.secondary)
+                            }
+                            ForEach(worktree.files) { file in
+                                ChangedFileRow(file: file, showsStaged: changes.mode == .uncommitted)
+                                    .tag(file.id)
+                                    .contextMenu { fileMenu(file) }
+                            }
+                        } header: {
+                            worktreeHeader(worktree)
+                        }
+                    }
+                }
+                .frame(minHeight: 120, idealHeight: 240)
+                DiffPane(session: session, changes: changes)
+                    .frame(minHeight: 120, maxHeight: .infinity)
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                VStack(spacing: 0) {
+                    commentsBar
+                    // Still showing what was read last.
+                    if let error = changes.error {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(.bar)
+                    }
+                }
+            }
+            .onChange(of: changes.selected) {
+                Task { await changes.refresh(session) }
+            }
+        }
+    }
+}
+
+private struct ChangedFileRow: View {
+    let file: ChangedFile
+    var showsStaged = false
+
+    var body: some View {
+        let name = (file.path as NSString).lastPathComponent
+        let folder = (file.path as NSString).deletingLastPathComponent
+        HStack(spacing: 6) {
+            Text(file.status == .untracked ? "A" : file.status.rawValue)
+                .font(.caption.monospaced().weight(.semibold))
+                .foregroundStyle(statusColor)
+                .frame(width: 12)
+            Text(name)
+                .lineLimit(1)
+            if !folder.isEmpty {
+                Text(folder)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            Spacer(minLength: 4)
+            if showsStaged, file.isStaged {
+                Text("staged")
+                    .font(.caption)
+                    .foregroundStyle(ChartPalette.good)
+            }
+            if let added = file.added, let removed = file.removed {
+                if added > 0 { Text("+\(added)").foregroundStyle(ChartPalette.good) }
+                if removed > 0 { Text("-\(removed)").foregroundStyle(ChartPalette.critical) }
+            } else {
+                Text("binary").foregroundStyle(.secondary)
+            }
+        }
+        .font(.callout)
+        .monospacedDigit()
+        .help(file.status == .untracked ? "\(file.path), new and not yet added" : file.path)
+    }
+
+    private var statusColor: Color {
+        switch file.status {
+        case .added, .untracked: ChartPalette.good
+        case .deleted: ChartPalette.critical
+        case .modified: .orange
+        }
+    }
+}
+
+/// The picked file's diff, numbered, with comments: hover a line and click
+/// its bubble (or click the number) to leave one for claude.
+private struct DiffPane: View {
+    @Environment(SessionStore.self) private var sessions
+    let session: CodeSession
+    let changes: SessionChanges
+    @State private var hovered: DiffLine.ID?
+    @State private var commenting: DiffLine.ID?
+
+    var body: some View {
+        if let file = changes.selectedFile {
+            let worktreeName = changes.worktrees.first { $0.path == file.worktree }?.name ?? ""
+            let drafts = (sessions.drafts[session.id] ?? []).filter { $0.worktree == file.worktree && $0.path == file.path }
+            VStack(spacing: 0) {
+                Text(file.path)
+                    .font(.callout.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                Divider()
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(changes.diff) { line in
+                            row(line, file: file, worktreeName: worktreeName)
+                            ForEach(drafts.filter { $0.matches(file, line) }) { comment in
+                                DraftCommentView(comment: comment) {
+                                    sessions.removeDraft(comment.id, from: session.id)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            ContentUnavailableView("No file selected", systemImage: "doc.text.magnifyingglass", description: Text("Pick a file to see its diff."))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func row(_ line: DiffLine, file: ChangedFile, worktreeName: String) -> some View {
+        let anchor = line.anchor
+        return HStack(alignment: .firstTextBaseline, spacing: 0) {
+            ZStack(alignment: .trailing) {
+                Text(anchor.map { "\($0.line)" } ?? "")
+                    .foregroundStyle(.tertiary)
+                    .opacity(hovered == line.id && anchor != nil ? 0 : 1)
+                if hovered == line.id, anchor != nil {
+                    Image(systemName: "plus.bubble.fill")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .frame(width: 34, alignment: .trailing)
+            .padding(.trailing, 6)
+            .contentShape(Rectangle())
+            .onTapGesture { if anchor != nil { commenting = line.id } }
+            .help(anchor != nil ? "Comment on this line for claude" : "")
+            Text(line.text.isEmpty ? " " : line.text)
+                .foregroundStyle(foreground(line.kind))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+            if line.kind == .hunk, changes.mode == .uncommitted, file.status != .untracked {
+                Button("Discard") {
+                    Task { _ = await changes.discardHunk(at: line.id, session: session) }
+                }
+                .buttonStyle(.borderless)
+                .font(.caption)
+                .help("Undo this part of the change in the file. Claude isn't told.")
+            }
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .padding(.trailing, 6)
+        .background(background(line.kind))
+        .onHover { inside in
+            if inside { hovered = line.id } else if hovered == line.id { hovered = nil }
+        }
+        .contextMenu {
+            if let anchor, !anchor.isOld {
+                Button("Open in \(CodeEditor.chosen.name)") {
+                    sessions.openInEditor(session, worktree: file.worktree, path: file.path, line: anchor.line)
+                }
+            }
+            if anchor != nil {
+                Button("Comment on This Line") { commenting = line.id }
+            }
+        }
+        .popover(isPresented: Binding(get: { commenting == line.id }, set: { if !$0 { commenting = nil } }), arrowEdge: .leading) {
+            if let anchor {
+                CommentEditor(location: "\(file.path):\(anchor.line)") { body in
+                    sessions.addDraft(DiffComment(
+                        worktree: file.worktree, worktreeName: worktreeName, path: file.path,
+                        line: anchor.line, isOld: anchor.isOld, code: String(line.text.dropFirst()), body: body
+                    ), to: session.id)
+                    commenting = nil
+                } cancel: {
+                    commenting = nil
+                }
+            }
+        }
+    }
+
+    private func foreground(_ kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .hunk, .note: .secondary
+        default: .primary
+        }
+    }
+
+    private func background(_ kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: ChartPalette.good.opacity(0.14)
+        case .removed: ChartPalette.critical.opacity(0.14)
+        case .hunk: Color.secondary.opacity(0.1)
+        case .context, .note: .clear
+        }
+    }
+}
+
+private struct CommentEditor: View {
+    let location: String
+    let add: (String) -> Void
+    let cancel: () -> Void
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(location)
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+            TextEditor(text: $text)
+                .font(.body)
+                .frame(width: 320, height: 90)
+                .focused($focused)
+            HStack {
+                Text("Sent with the others when you Send to Claude")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancel", action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                Button("Add") { add(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(12)
+        .onAppear { focused = true }
+    }
+}
+
+private struct DraftCommentView: View {
+    let comment: DiffComment
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "text.bubble.fill")
+                .foregroundStyle(Color.accentColor)
+            Text(comment.body)
+                .font(.callout)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(action: remove) {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(.borderless)
+            .help("Remove this comment")
+        }
+        .padding(8)
+        .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        .padding(.leading, 40)
+        .padding(.trailing, 8)
+        .padding(.vertical, 4)
+    }
+}
+
+/// Commit what's staged in a worktree, with a message of your own or one
+/// claude writes.
+private struct CommitSheet: View {
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.dismiss) private var dismiss
+    let session: CodeSession
+    let changes: SessionChanges
+    let worktree: WorktreeChanges
+    @State private var message = ""
+    @State private var error: String?
+
+    var body: some View {
+        let staged = worktree.files.filter(\.isStaged)
+        Form {
+            Section {
+                TextField("Message", text: $message, axis: .vertical)
+                    .lineLimit(3...8)
+            } header: {
+                Text("Commit \(staged.count == 1 ? "1 file" : "\(staged.count) files") in \(worktree.name)")
+            } footer: {
+                if let error {
+                    Text(error).foregroundStyle(.red)
+                } else {
+                    Text(staged.map(\.path).joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 480)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem {
+                Button("Ask Claude to Commit") {
+                    sessions.submit("Commit what's staged in \(session.isInHarness ? ".worktrees/\(session.branch)/\(worktree.name)" : "this worktree") with a clear message. Don't add anything else to the commit.", to: session.id)
+                    dismiss()
+                }
+                .disabled(!sessions.isRunning(session.id))
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Commit") {
+                    Task {
+                        error = await changes.commit(worktree, message: message, session: session)
+                        if error == nil { dismiss() }
+                    }
+                }
+                .disabled(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
         }
     }
 }
 
 /// Hosts the store's terminal view, launching it when first shown.
-private struct TerminalHost: View {
+struct TerminalHost: View {
     @Environment(SessionStore.self) private var sessions
     let session: CodeSession
     @State private var view: NSView?
@@ -76,11 +887,20 @@ private struct TerminalRepresentable: NSViewRepresentable {
     func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
+/// A harness document open over the session.
+private struct HarnessReading: Identifiable {
+    let path: String
+    var id: String { path }
+}
+
 private struct SessionPanel: View {
     @Environment(SessionStore.self) private var sessions
+    @Environment(HarnessStore.self) private var harness
+    @Environment(OrgConfigStore.self) private var configs
     @Environment(\.openWindow) private var openWindow
     let session: CodeSession
     @State private var confirmingRemove = false
+    @State private var reading: HarnessReading?
 
     var body: some View {
         let state = sessions.state(session.id)
@@ -133,14 +953,11 @@ private struct SessionPanel: View {
                         .foregroundStyle(.red)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if let pullRequest = session.pullRequest {
+                ForEach(session.pullRequests, id: \.self) { pullRequest in
+                    let parts = pullRequest.pathComponents
                     LabeledContent("Pull request") {
-                        Link(pullRequest.lastPathComponent.isEmpty ? "Open" : "#\(pullRequest.lastPathComponent)", destination: pullRequest)
+                        Link(parts.count >= 5 ? "\(parts[2])#\(parts[4])" : "Open", destination: pullRequest)
                     }
-                    Text("Claude opened a pull request. Move the issue along on its board below.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack {
                     if let worktree {
@@ -160,9 +977,29 @@ private struct SessionPanel: View {
                     Button("Remove", role: .destructive) { confirmingRemove = true }
                 }
             }
-            ProjectFieldsSections(org: session.org, issueID: session.issue.id)
+            SessionFinishSection(session: session)
+            HarnessIssueSection(reference: session.issue, showsEmpty: true)
         }
         .formStyle(.grouped)
+        // Documents open over the session; issues and PRs they name, in
+        // windows of their own.
+        .environment(\.navigate, NavigateAction { selection in
+            switch selection {
+            case .harnessDocument(let path): reading = HarnessReading(path: path)
+            case .issueReference(let reference): openWindow(value: reference)
+            case .pullRequestReference(let reference): openWindow(value: reference)
+            default: break
+            }
+        })
+        .sheet(item: $reading) { reading in
+            HarnessDocumentPage(org: session.org, path: reading.path) { self.reading = nil }
+                .frame(minWidth: 760, idealWidth: 900, minHeight: 560, idealHeight: 760)
+        }
+        .task {
+            if let setup = configs.config(for: session.org).harness {
+                await harness.load(org: session.org, setup: setup)
+            }
+        }
         .confirmationDialog("Remove this session?", isPresented: $confirmingRemove) {
             Button("Remove Session", role: .destructive) { sessions.remove(session.id) }
         } message: {
@@ -195,7 +1032,7 @@ struct StartSessionButton: View {
     var body: some View {
         if let existing = sessions.session(forIssue: reference.id) {
             Button {
-                openWindow(value: SessionWindowID(id: existing.id))
+                sessions.show(existing.id, with: openWindow)
             } label: {
                 Label("Open Session", systemImage: "terminal")
             }
@@ -248,19 +1085,19 @@ struct StartSessionButton: View {
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index)
         }
         guard recording else {
-            openWindow(value: SessionWindowID(id: session.id))
+            sessions.show(session.id, with: openWindow)
             return
         }
         // Committed before the terminal starts, so its pull brings the brief.
         let login = auth.viewer?.login
         Task {
             await sessions.record(session.id, startedBy: login)
-            openWindow(value: SessionWindowID(id: session.id))
+            sessions.show(session.id, with: openWindow)
         }
     }
 }
 
-/// The org's sessions, for the sidebar: each opens its window.
+/// The org's sessions, for the sidebar: each opens its tab.
 struct SessionSidebarRows: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
@@ -270,7 +1107,7 @@ struct SessionSidebarRows: View {
         ForEach(sessions.sessions(for: org)) { session in
             let state = sessions.state(session.id)
             Button {
-                openWindow(value: SessionWindowID(id: session.id))
+                sessions.show(session.id, with: openWindow)
             } label: {
                 Label {
                     Text(session.issue.title).lineLimit(1)
@@ -292,8 +1129,46 @@ struct SessionSidebarRows: View {
 struct SessionSettingsSection: View {
     @AppStorage(SessionStore.workspaceKey) private var workspace = SessionStore.defaultWorkspace
     @AppStorage(SessionStore.connectKey) private var connect = ""
+    @AppStorage(SessionStore.providerKey) private var provider: AIProvider = .anthropic
+    @AppStorage(SessionStore.modelKey) private var model = ""
+    @AppStorage(SessionStore.notifiesKey) private var notifies = true
+    /// Typing a model ID of your own, rather than picking one.
+    @State private var customModel = false
+
+    private static let custom = "\u{0}custom"
 
     var body: some View {
+        Section {
+            Picker("Provider", selection: $provider) {
+                ForEach(AIProvider.allCases) { Text($0.name).tag($0) }
+            }
+            let known = provider.models.contains { $0.id == model }
+            Picker("Model", selection: Binding(
+                get: { customModel || (!model.isEmpty && !known) ? Self.custom : model },
+                set: { picked in
+                    customModel = picked == Self.custom
+                    if !customModel { model = picked }
+                }
+            )) {
+                Text("Claude Code's default").tag("")
+                Divider()
+                ForEach(provider.models) { Text($0.name).tag($0.id) }
+                Divider()
+                Text("Other").tag(Self.custom)
+            }
+            if customModel || (!model.isEmpty && !known) {
+                TextField("Model ID", text: $model, prompt: Text("claude-opus-5-5"))
+            }
+            Text("Sessions run Claude Code with this model (--model), from their next start or Restart. Its default is what Claude Code's own settings say; /model in a session changes it there.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Notify when a session needs you", isOn: $notifies)
+            Text("When claude asks something or finishes its turn and you aren't looking at its tab. Its tab is marked and the Dock icon counts them either way.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("Agent")
+        }
         Section {
             LabeledContent("Workspace") {
                 HStack {

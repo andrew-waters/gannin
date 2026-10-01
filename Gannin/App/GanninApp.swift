@@ -21,6 +21,7 @@ struct GanninApp: App {
     @State private var team: HarnessTeamStore
     #if os(macOS)
     @State private var sessions: SessionStore
+    @NSApplicationDelegateAdaptor private var appDelegate: GanninAppDelegate
     #endif
 
     init() {
@@ -51,7 +52,11 @@ struct GanninApp: App {
         peopleDates.team = team
         _team = State(initialValue: team)
         #if os(macOS)
-        _sessions = State(initialValue: SessionStore(harness: harness))
+        let sessions = SessionStore(harness: harness)
+        _sessions = State(initialValue: sessions)
+        GanninAppDelegate.sessions = sessions
+        sessions.api = { [weak auth] in auth?.api }
+        sessions.watchPullRequests()
         TabMenuRename.shared.install()
         #endif
     }
@@ -62,6 +67,9 @@ struct GanninApp: App {
         WindowGroup(id: "main") {
             RootView()
                 .joinsRequestedTab()
+                #if os(macOS)
+                .capturesOpenWindow()
+                #endif
                 .environment(fieldNotes)
                 .environment(actions)
                 .environment(auth)
@@ -91,12 +99,18 @@ struct GanninApp: App {
                 #endif
                 RenameTabCommand()
             }
+            #if os(macOS)
+            SessionCommands(sessions: sessions)
+            #endif
         }
 
         // A PR opened from the work log; one window per PR.
         WindowGroup("Pull Request", for: PullRequestReference.self) { $reference in
             if let reference {
                 PullRequestWindow(reference: reference)
+                    #if os(macOS)
+                    .environment(sessions)
+                    #endif
                     .environment(auth)
                     .environment(orgs)
                     .environment(details)
@@ -139,20 +153,21 @@ struct GanninApp: App {
         .windowResizability(.contentMinSize)
 
         #if os(macOS)
-        // A Claude Code session on an issue: its terminal, and the issue's
-        // board fields beside it. The terminal outlives the window.
-        WindowGroup("Session", for: SessionWindowID.self) { $window in
-            if let window {
-                SessionWindow(id: window.id)
-                    .environment(sessions)
-                    .environment(auth)
-                    .environment(issues)
-                    .environment(details)
-                    .environment(orgConfigs)
-                    .environment(harness)
-                    .environment(team)
-                    .environment(projects)
-            }
+        // Claude Code sessions, a tab each: the terminal, and the issue's
+        // board fields or the worktrees' changes beside it. The terminals
+        // outlive their tabs and the window.
+        Window("Claude Code", id: SessionStore.windowID) {
+            SessionsWindow()
+                .capturesOpenWindow()
+                .environment(sessions)
+                .environment(orgs)
+                .environment(auth)
+                .environment(issues)
+                .environment(details)
+                .environment(orgConfigs)
+                .environment(harness)
+                .environment(team)
+                .environment(projects)
         }
         .defaultSize(width: 1280, height: 820)
         #endif

@@ -969,16 +969,25 @@ struct HarnessIssueSection: View {
     @Environment(\.navigate) private var navigate
     @Environment(\.openURL) private var openURL
     let reference: IssueReference
+    /// Shows the section with nothing in it yet, saying so, as a session
+    /// does while claude writes the plan.
+    var showsEmpty = false
 
     var body: some View {
         if let setup = configs.config(for: reference.org).harness,
            let index = harness.index(for: reference.org, setup) {
             // As the Harness page lists them: only those that follow the standard.
             let matches = index.matches(repo: reference.repo, number: reference.number).filter(\.document.followsStandard)
-            if !matches.isEmpty {
+            if !matches.isEmpty || showsEmpty {
                 Section(header: SectionHeader(title: "Plans and requirements", count: matches.count)) {
                     ForEach(matches) { match in
                         row(match, index: index)
+                    }
+                    if matches.isEmpty {
+                        Text("None in \(index.repo) yet. A plan claude commits there shows here once the harness is fetched again.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
@@ -1014,6 +1023,11 @@ struct HarnessIssueSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let url = index.url(for: document) {
+                Link("Open on GitHub", destination: url)
+            }
+        }
     }
 }
 

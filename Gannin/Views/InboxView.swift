@@ -263,7 +263,7 @@ struct InboxView: View {
     private func open(_ row: InboxRow) {
         #if os(macOS)
         if let session = row.session {
-            openWindow(value: SessionWindowID(id: session))
+            sessions.show(session, with: openWindow)
             return
         }
         #endif
