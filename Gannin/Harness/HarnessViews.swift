@@ -433,8 +433,9 @@ struct HarnessDocumentPage: View {
                         } else {
                             readingBar(sections, proxy: proxy)
                             Form {
+                                overview(document)
                                 textSections(document, sections: sections)
-                                detailSections(document, index: index, lookup: lookup)
+                                detailSections(document, index: index, lookup: lookup, includesOverview: false)
                             }
                             .formStyle(.grouped)
                         }
@@ -451,89 +452,78 @@ struct HarnessDocumentPage: View {
 
     // MARK: Header
 
+    /// The title and what can be done with it; its facts are atop the
+    /// details column.
     private func header(_ document: HarnessDocument, index: HarnessIndex, sections: [HarnessDocumentSection], proxy: ScrollViewProxy) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                Text(document.title)
-                    .font(.title2.weight(.semibold))
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 12)
-                if let onClose {
-                    Button("Done", action: onClose)
-                        .keyboardShortcut(.cancelAction)
-                        .help("Close (Esc)")
+        HStack(alignment: .top, spacing: 10) {
+            Text(document.title)
+                .font(.title2.weight(.semibold))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 12)
+            if onClose != nil, let openAsPage {
+                Button("Open as Page") {
+                    onClose?()
+                    openAsPage(.harnessDocument(document.path))
                 }
             }
-            HStack(spacing: 10) {
-                Pill(text: document.statusLabel ?? "No status", color: .secondary)
-                    .help(document.status ?? "No status")
-                Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
-                    .foregroundStyle(.secondary)
-                if let url = index.url(for: document) {
-                    Link(destination: url) {
-                        Text(document.fileName).lineLimit(1).truncationMode(.middle)
-                    }
-                    .help("\(document.path) on GitHub")
-                }
-                Spacer()
-                if onClose != nil, let openAsPage {
-                    Button("Open as Page") {
-                        onClose?()
-                        openAsPage(.harnessDocument(document.path))
-                    }
-                }
-                if let openElsewhere {
-                    Button("Open in Window") {
-                        onClose?()
-                        openElsewhere.open(.harnessDocument(document.path), .window)
-                    }
+            if let openElsewhere {
+                Button("Open in Window") {
+                    onClose?()
+                    openElsewhere.open(.harnessDocument(document.path), .window)
                 }
             }
-            facts(document)
+            if let onClose {
+                Button("Done", action: onClose)
+                    .keyboardShortcut(.cancelAction)
+                    .help("Close (Esc)")
+            }
         }
         .padding(20)
     }
 
-    private func facts(_ document: HarnessDocument) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 16, alignment: .topLeading)], alignment: .leading, spacing: 10) {
+    /// Status, kind, tasks, date, owner, branch and domains, a row each.
+    @ViewBuilder
+    private func overview(_ document: HarnessDocument) -> some View {
+        Section {
+            LabeledContent("Status") {
+                Pill(text: document.statusLabel ?? "No status", color: .secondary)
+                    .help(document.status ?? "No status")
+            }
+            LabeledContent("Kind") {
+                Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
+            }
             if document.tasks > 0 {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Tasks").font(.caption).foregroundStyle(.secondary)
+                LabeledContent("Tasks") {
                     HStack(spacing: 6) {
                         ProgressView(value: Double(document.tasksDone), total: Double(document.tasks))
-                            .frame(width: 60)
+                            .frame(width: 70)
                         Text(verbatim: "\(document.tasksDone) of \(document.tasks)").monospacedDigit()
                     }
                 }
             }
-            if let date = document.date { fact("Date", date.formatted(date: .abbreviated, time: .omitted)) }
+            if let date = document.date {
+                LabeledContent("Date", value: date.formatted(date: .abbreviated, time: .omitted))
+            }
             if let owner = document.owner {
                 let person = orgs.snapshot(for: org)?.members.first { $0.login == owner }
                     ?? Person(login: owner, name: nil, avatarUrl: URL(string: "https://github.com/\(owner).png?size=64"))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Owner").font(.caption).foregroundStyle(.secondary)
+                LabeledContent("Owner") {
                     HStack(spacing: 6) {
-                        Avatar(url: person.avatarUrl, size: 20)
+                        Avatar(url: person.avatarUrl, size: 18)
                         Text(person.displayName).lineLimit(1)
                     }
                     .help(owner)
                 }
             }
-            if let branch = document.branch { fact("Branch", branch, monospaced: true) }
-            if let domains = document.domains, !domains.isEmpty {
-                fact(domains.count == 1 ? "Domain" : "Domains", domains.map(HarnessView.prettify).joined(separator: ", "))
+            if let branch = document.branch {
+                LabeledContent("Branch") {
+                    Text(branch).font(.callout.monospaced()).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
+                }
             }
-        }
-    }
-
-    private func fact(_ label: String, _ value: String, monospaced: Bool = false) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(value)
-                .font(monospaced ? .callout.monospaced() : nil)
-                .lineLimit(2)
-                .textSelection(.enabled)
+            if let domains = document.domains, !domains.isEmpty {
+                LabeledContent(domains.count == 1 ? "Domain" : "Domains", value: domains.map(HarnessView.prettify).joined(separator: ", "))
+            }
         }
     }
 
@@ -636,10 +626,11 @@ struct HarnessDocumentPage: View {
 
     // MARK: Details
 
-    /// What it's about and depends on, the code it touches, what it
-    /// mentions, and the file.
+    /// Its facts, what it's about and depends on, the code it touches, what
+    /// it mentions, and the file.
     @ViewBuilder
-    private func detailSections(_ document: HarnessDocument, index: HarnessIndex, lookup: IssueLookup) -> some View {
+    private func detailSections(_ document: HarnessDocument, index: HarnessIndex, lookup: IssueLookup, includesOverview: Bool = true) -> some View {
+        if includesOverview { overview(document) }
         let subjects = document.references.filter(\.isSubject)
         let mentions = document.references.filter { !$0.isSubject }
         Section(header: SectionHeader(title: "Issues", count: subjects.count)) {

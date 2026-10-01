@@ -482,11 +482,10 @@ added, removed or created, and the tracked board field set), and commits to the 
   It lists only documents that follow the standard (`followsStandard`: front matter with a
   summary), and so do an issue's plans and requirements; older ones aren't shown (session briefs
   still include them). A document's page (`HarnessDocumentPage`, also its drawer, with Done) is laid out as the
-  issue drawer: a header (title, status, kind, the file, Contents, text size, Open as Page and
-  Open in Window, and facts: tasks, date, owner, branch, domains), then a grouped Form of the
+  issue drawer: a header (the title, Open as Page, Open in Window and Done), then a grouped Form of the
   summary and a section per `##` heading (`HarnessDocumentSection`, each folding from its
   header, Contents jumping between them), in `MarkdownText`'s reading style, beside a Form of
-  the issues it's about, its requirement and what it depends on, touches, mentions and the
+  its facts at the top (status, kind, tasks, date, owner, branch, domains), the issues it's about, its requirement and what it depends on, touches, mentions and the
   file; one Form when narrow. Issues named in the text
   (`owner/repo#123`, `#123`, `PRD-123`) become `gannin-issue:` links (`linkedBody`) that open in
   a drawer, and relative links to other documents open theirs.
