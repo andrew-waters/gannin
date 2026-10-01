@@ -479,9 +479,9 @@ added, removed or created, and the tracked board field set), and commits to the 
   `HarnessDocument.frontMatter`), with counts; and Not Linked for plans and requirements. The
   documents are a `StatsTable` (title with summary, status, domain, issues, tasks, owner, date;
   newest first until a column is sorted). The sidebar's Refresh fetches the harness again.
-  It lists only documents that follow the standard (`followsStandard`: front
-  matter with a summary); older ones are counted at the end, with Show Them
-  (`harnessShowsOlder`). A document's page (`HarnessDocumentPage`, also its drawer, with Done) is laid out as the
+  It lists only documents that follow the standard (`followsStandard`: front matter with a
+  summary), and so do an issue's plans and requirements; older ones aren't shown (session briefs
+  still include them). A document's page (`HarnessDocumentPage`, also its drawer, with Done) is laid out as the
   issue drawer: a header (title, status, kind, the file, Contents, text size, Open as Page and
   Open in Window, and facts: tasks, date, owner, branch, domains), then a grouped Form of the
   summary and a section per `##` heading (`HarnessDocumentSection`, each folding from its

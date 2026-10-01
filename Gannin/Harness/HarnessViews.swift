@@ -54,8 +54,6 @@ struct HarnessView: View {
     @State private var picked: [String: Set<String>] = [:]
     /// Nil is newest first.
     @State private var sort: StatsSort?
-    /// Documents from before STANDARDS.md, without front matter.
-    @AppStorage("harnessShowsOlder") private var showsOlder = false
     let org: String
     @Binding var selection: DetailSelection?
 
@@ -81,16 +79,15 @@ struct HarnessView: View {
         if let index = harness.index(for: org, setup) {
             let lookup = IssueLookup(history: issueStore.history(for: org))
             let linkable = kind == .plans || kind == .requirements
-            let pool = index.documents(kind)
+            let pool = index.documents(kind).filter(\.followsStandard)
                 .filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
                 .filter { matches($0) }
-            let ofKind = pool.filter { matchesPicked($0) }
-            let documents = ofKind.filter { showsOlder || $0.followsStandard }
-            let older = ofKind.count(where: { !$0.followsStandard })
+            // Only what follows the standard; older documents aren't listed.
+            let documents = pool.filter { $0.followsStandard && matchesPicked($0) }
             VStack(spacing: 0) {
                 bar(linkable: linkable, pool: pool)
                 Divider()
-                list(documents: documents, older: older, index: index, lookup: lookup, linkable: linkable, setup: setup)
+                list(documents: documents, index: index, lookup: lookup, linkable: linkable, setup: setup)
             }
         } else if let error = harness.errors[org] {
             ContentUnavailableView {
@@ -224,7 +221,7 @@ struct HarnessView: View {
         return words.allSatisfy { word in fields.contains { $0.localizedCaseInsensitiveContains(word) } }
     }
 
-    private func list(documents: [HarnessDocument], older: Int, index: HarnessIndex, lookup: IssueLookup, linkable: Bool, setup: HarnessConfig) -> some View {
+    private func list(documents: [HarnessDocument], index: HarnessIndex, lookup: IssueLookup, linkable: Bool, setup: HarnessConfig) -> some View {
         let repo = setup.repo
         let newestFirst = documents.sorted { a, b in
             if a.date != b.date { return (a.date ?? .distantPast) > (b.date ?? .distantPast) }
@@ -239,7 +236,7 @@ struct HarnessView: View {
                     .padding(.horizontal, 14)
                 }
                 if documents.isEmpty {
-                    Text(!search.isEmpty || picked.values.contains(where: { !$0.isEmpty }) ? "Nothing matches." : unlinkedOnly ? "Every one names an issue." : older > 0 ? "No \(kind.rawValue.lowercased()) follow the standard yet." : "No \(kind.rawValue.lowercased()) in \(repo).")
+                    Text(!search.isEmpty || picked.values.contains(where: { !$0.isEmpty }) ? "Nothing matches." : unlinkedOnly ? "Every one names an issue." : "No \(kind.rawValue.lowercased()) in \(repo).")
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 14)
                 } else {
@@ -258,23 +255,6 @@ struct HarnessView: View {
                         },
                         destination: { .harnessDocument($0.path) }
                     )
-                }
-                if older > 0 {
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(showsOlder
-                                 ? "Showing \(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter."
-                                 : "\(older) older \(older == 1 ? kind.singular : kind.rawValue.lowercased()) without front matter \(older == 1 ? "isn't" : "aren't") shown.")
-                                .foregroundStyle(.secondary)
-                            Button(showsOlder ? "Hide Them" : "Show Them") { showsOlder.toggle() }
-                                .linkButton()
-                        }
-                        Text("Documents written to the harness's STANDARDS.md (front matter with a summary) are listed; older ones appear once they're converted.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .font(.callout)
-                    .padding(.horizontal, 14)
                 }
             }
             .padding(.vertical, 12)
@@ -879,7 +859,8 @@ struct HarnessIssueSection: View {
     var body: some View {
         if let setup = configs.config(for: reference.org).harness,
            let index = harness.index(for: reference.org, setup) {
-            let matches = index.matches(repo: reference.repo, number: reference.number)
+            // As the Harness page lists them: only those that follow the standard.
+            let matches = index.matches(repo: reference.repo, number: reference.number).filter(\.document.followsStandard)
             if !matches.isEmpty {
                 Section(header: SectionHeader(title: "Plans and requirements", count: matches.count)) {
                     ForEach(matches) { match in
