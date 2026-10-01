@@ -71,28 +71,34 @@ struct InvestmentBalance {
     enum Scope: String, CaseIterable, Identifiable {
         case completed = "Completed"
         case inProgress = "In progress"
-        /// Both: completed in the range, and in progress at its end.
+        /// Open at the range's end and not in progress: the backlog.
+        case backlog = "Backlog"
+        /// Everything: completed in the range, and in progress or in the
+        /// backlog at its end.
         case all = "All"
 
         var id: Self { self }
 
         /// Its issues include those completed, so the chart applies.
-        var hasCompleted: Bool { self != .inProgress }
+        var hasCompleted: Bool { self == .completed || self == .all }
     }
 
-    /// The scope's issues by category. For All, those completed and those in
-    /// progress, each once; a period picked on the chart narrows it to what
-    /// was completed in that period.
+    /// The scope's issues by category. For All, those completed, in progress
+    /// and in the backlog, each once; a period picked on the chart narrows it
+    /// to what was completed in that period.
     func shares(_ scope: Scope, bucket: Date?) -> [Share] {
         switch scope {
         case .completed: return completed(in: bucket)
         case .inProgress: return inProgress
+        case .backlog: return backlog
         case .all:
             guard bucket == nil else { return completed(in: bucket) }
-            return zip(completed(), inProgress).map { done, going in
-                var share = done
-                let ids = Set(done.issues.map(\.id))
-                share.issues += going.issues.filter { !ids.contains($0.id) }
+            return zip(zip(completed(), inProgress), backlog).map { pair, waiting in
+                var share = pair.0
+                var ids = Set(share.issues.map(\.id))
+                for issue in pair.1.issues + waiting.issues where ids.insert(issue.id).inserted {
+                    share.issues.append(issue)
+                }
                 return share
             }
         }
@@ -124,6 +130,8 @@ struct InvestmentBalance {
     let buckets: [Bucket]
     /// In progress at the range's end, by category.
     let inProgress: [Share]
+    /// Open at the range's end but not in progress, by category.
+    let backlog: [Share]
     /// Why each issue landed where it did.
     let placements: [String: (key: Key, source: InvestmentConfig.Source?)]
 
@@ -169,12 +177,20 @@ struct InvestmentBalance {
         let at = min(range.end, now)
         var inProgress = categories.map { Share(key: $0.key, name: $0.name, slot: $0.slot) }
         let index = Dictionary(uniqueKeysWithValues: inProgress.enumerated().map { ($1.key, $0) })
+        var backlog = inProgress
         for record in records {
             let timing = IssueTiming(record, workflow: config.workflow, now: now)
             let isInProgress = at >= now ? timing.isInProgress : timing.intervals.contains { $0.contains(at) }
-            if isInProgress, let i = index[key(record)] { inProgress[i].issues.append(record) }
+            guard let i = index[key(record)] else { continue }
+            if isInProgress {
+                inProgress[i].issues.append(record)
+            } else if record.createdAt <= at, (record.closedAt.map { $0 > at } ?? true) {
+                // Open then, and not being worked on.
+                backlog[i].issues.append(record)
+            }
         }
         self.inProgress = inProgress
+        self.backlog = backlog
     }
 
     /// Completed issues by category, over the whole range or one bucket.

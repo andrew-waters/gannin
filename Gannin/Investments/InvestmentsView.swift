@@ -110,7 +110,7 @@ struct InvestmentsView: View {
                         } header: {
                             PinnedHeader {
                                 HStack(spacing: 12) {
-                                    Text("\(share.name) · \(scope == .all ? "completed or in progress" : scope.rawValue.lowercased())")
+                                    Text("\(share.name) · \(scope == .all ? "everything" : scope == .backlog ? "in the backlog" : scope.rawValue.lowercased())")
                                     Text("\(share.issues.count)").foregroundStyle(.secondary).fontWeight(.regular)
                                     Spacer(minLength: 8)
                                     Group {
@@ -168,7 +168,7 @@ struct InvestmentsView: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
-        .help("Issues completed in the range, in progress at its end, or both")
+        .help("Issues completed in the range, in progress or in the backlog at its end, or all of them")
         Picker("Range", selection: $rangePreset) {
             ForEach(InvestmentRange.allCases) { Text($0.rawValue).tag($0) }
         }
@@ -243,13 +243,17 @@ struct InvestmentsView: View {
         case .inProgress:
             let isNow = balance.range.end >= Date.now.addingTimeInterval(-60)
             return "\(issues) in progress \(isNow ? "now" : "on \(balance.range.end.formatted(date: .abbreviated, time: .omitted))")"
+        case .backlog:
+            let isNow = balance.range.end >= Date.now.addingTimeInterval(-60)
+            return "\(issues) in the backlog \(isNow ? "now" : "on \(balance.range.end.formatted(date: .abbreviated, time: .omitted))")"
         case .all:
             if let selectedBucket, let bucket = balance.buckets.first(where: { $0.start == selectedBucket }) {
                 return "\(issues) completed in \(InvestmentChart.label(bucket, period: period))"
             }
             let completed = balance.completed().map(\.issues.count).reduce(0, +)
+            let going = balance.inProgress.map(\.issues.count).reduce(0, +)
             let isNow = balance.range.end >= Date.now.addingTimeInterval(-60)
-            return "\(issues): \(completed) completed \(balance.range.start.formatted(date: .abbreviated, time: .omitted)) to \(balance.range.end.formatted(date: .abbreviated, time: .omitted)), \(total - completed) in progress \(isNow ? "now" : "then")"
+            return "\(issues): \(completed) completed \(balance.range.start.formatted(date: .abbreviated, time: .omitted)) to \(balance.range.end.formatted(date: .abbreviated, time: .omitted)), \(going) in progress and \(total - completed - going) in the backlog \(isNow ? "now" : "then")"
         }
     }
 

@@ -196,7 +196,8 @@ added, removed or created, and the tracked board field set), and commits to the 
   marked; GitHub-tracked choices collect until Review and Write. The Investments page lists a
   category's issues on the page (no drill-down column).
 - The Investments page's controls sit in a bar at the top of the page (completed, in
-  progress or All, both of them with each issue once (`InvestmentBalance.shares`), the range,
+  progress, Backlog (open at the range's end and not in progress) or All, every one of them
+  with each issue once (`InvestmentBalance.shares`), the range,
   the chart's buckets); it has no metrics window picker, its range covers
   that.
 - `InvestmentBalance` counts issues completed in a range (Last 30 or 90 days, this or last
