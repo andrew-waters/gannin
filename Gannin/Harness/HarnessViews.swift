@@ -787,7 +787,7 @@ private struct HarnessIssueList: View {
     var body: some View {
         ForEach(references, id: \.self) { reference in
             if let repo = index.repo(of: reference) {
-                HarnessReferenceRow(org: org, repo: repo, number: reference.number, record: lookup.record(repo: repo, number: reference.number), showsRepo: repo != index.issuesRepo)
+                HarnessReferenceRow(org: org, repo: repo, number: reference.number, record: lookup.record(repo: repo, number: reference.number))
             }
         }
     }
@@ -804,7 +804,6 @@ private struct HarnessReferenceRow: View {
     let repo: String
     let number: Int
     let record: IssueRecord?
-    let showsRepo: Bool
 
     var body: some View {
         let looked = HarnessReferences.shared.item(repo: repo, number: number)
@@ -819,13 +818,19 @@ private struct HarnessReferenceRow: View {
                 Circle()
                     .fill(record.map(IssueStateDot.color) ?? looked?.color ?? .secondary.opacity(0.4))
                     .frame(width: 8, height: 8)
-                Text(verbatim: showsRepo ? "\(repo)#\(number)" : "#\(number)")
-                    .monospacedDigit()
-                    .foregroundStyle(.secondary)
-                    .fixedSize()
-                Text(record?.title ?? looked?.title ?? "")
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
+                // The number then the title, wrapping the full width, with
+                // the repo as a caption beneath.
+                VStack(alignment: .leading, spacing: 2) {
+                    (Text(verbatim: "#\(number)").foregroundStyle(.secondary).monospacedDigit()
+                        + Text(verbatim: "  ")
+                        + Text(record?.title ?? looked?.title ?? ""))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                    Text(looked?.isPullRequest == true ? "\(repo) · pull request" : repo)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 0)
             }
             .contentShape(Rectangle())
