@@ -141,11 +141,12 @@ struct OrgWorkloadView: View {
         .lineLimit(1)
     }
 
-    /// Pages on the metrics window: Dashboard, Investments, and the People,
+    /// Pages on the metrics window: Dashboard, Actions, and the People,
     /// Repositories and Issues stats (not a person, repo or list in them).
     private var hasWindowPicker: Bool {
         switch tab {
-        case .dashboard, .investments, .actions: true
+        // Investments has its own range.
+        case .dashboard, .actions: true
         case .people: person == nil && peopleView == nil
         case .repositories: repository == nil
         case .issues: issueList == nil

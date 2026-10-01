@@ -44,6 +44,30 @@ struct InvestmentsView: View {
 
     var body: some View {
         let range = range
+        VStack(spacing: 0) {
+            bar
+            Divider()
+            page(range)
+        }
+        .sheet(item: $triage) { queue in
+            InvestmentTriage(org: org, queue: queue)
+        }
+        .task(id: "\(org) \(Int(range.start.timeIntervalSince1970))") {
+            let days = max(1, Int(Date.now.timeIntervalSince(range.start) / 86_400) + 1)
+            await store.sync(org, windowDays: days)
+        }
+        .task(id: "\(org) \(rangePreset.rawValue)") {
+            if rangePreset == .allTime { await store.loadEarliestIssue(org) }
+        }
+        .onChange(of: rangePreset) {
+            // Years only make sense over all time; weeks don't.
+            if !periods.contains(period) { period = rangePreset == .allTime ? .quarter : .week }
+        }
+        .onChange(of: period) { selectedBucket = nil }
+        .onChange(of: rangePreset) { selectedBucket = nil }
+    }
+
+    private func page(_ range: DateInterval) -> some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 if let history = store.history(for: org), history.coveredFrom <= range.start || !store.syncing.contains(org) {
@@ -113,38 +137,31 @@ struct InvestmentsView: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .toolbar {
-            ToolbarItemGroup { controls }
-        }
-        .sheet(item: $triage) { queue in
-            InvestmentTriage(org: org, queue: queue)
-        }
-        .task(id: "\(org) \(Int(range.start.timeIntervalSince1970))") {
-            let days = max(1, Int(Date.now.timeIntervalSince(range.start) / 86_400) + 1)
-            await store.sync(org, windowDays: days)
-        }
-        .task(id: "\(org) \(rangePreset.rawValue)") {
-            if rangePreset == .allTime { await store.loadEarliestIssue(org) }
-        }
-        .onChange(of: rangePreset) {
-            // Years only make sense over all time; weeks don't.
-            if !periods.contains(period) { period = rangePreset == .allTime ? .quarter : .week }
-        }
-        .onChange(of: period) { selectedBucket = nil }
-        .onChange(of: rangePreset) { selectedBucket = nil }
     }
 
     // MARK: Header
 
-    /// In the toolbar, beside the window's title.
-    @ViewBuilder
-    private var controls: some View {
-        if store.syncing.contains(org) {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.small)
-                Text("Updating").font(.callout).foregroundStyle(.secondary)
+    /// At the top of the page, as the issue pages have: completed or in
+    /// progress, the range (All time among them) and the chart's buckets.
+    private var bar: some View {
+        HStack(spacing: 8) {
+            controls
+            Spacer(minLength: 0)
+            if store.syncing.contains(org) {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Updating").foregroundStyle(.secondary)
+                }
             }
         }
+        .controlSize(.small)
+        .font(.callout)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var controls: some View {
         Picker("Show", selection: $scope) {
             ForEach(InvestmentBalance.Scope.allCases) { Text($0.rawValue).tag($0) }
         }
