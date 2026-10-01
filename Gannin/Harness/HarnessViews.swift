@@ -392,6 +392,7 @@ struct HarnessDocumentPage: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(OrgStore.self) private var orgs
+    @Environment(AuthStore.self) private var auth
     @Environment(\.navigate) private var navigate
     @Environment(\.openAsPage) private var openAsPage
     @Environment(\.openElsewhere) private var openElsewhere
@@ -722,8 +723,8 @@ struct HarnessDocumentPage: View {
             let repo = "\(owner)/\(parts[0])"
             if let record = lookup.record(repo: repo, number: number), let navigate {
                 navigate(.issueReference(IssueReference(org: org, record: record)))
-            } else if let github = URL(string: "https://github.com/\(repo)/issues/\(number)") {
-                openURL(github)
+            } else {
+                Task { await HarnessReferences.open(repo: repo, number: number, org: org, auth: auth, navigate: navigate, openURL: openURL) }
             }
             return .handled
         }
@@ -789,6 +790,7 @@ struct HarnessDocumentSection: Identifiable {
 private struct HarnessIssueList: View {
     @Environment(\.navigate) private var navigate
     @Environment(\.openURL) private var openURL
+    @Environment(AuthStore.self) private var auth
     let org: String
     let index: HarnessIndex
     let references: [HarnessReference]
@@ -831,9 +833,60 @@ private struct HarnessIssueList: View {
     private func open(record: IssueRecord?, repo: String?, number: Int) {
         if let record, let navigate {
             navigate(.issueReference(IssueReference(org: org, record: record)))
-        } else if let url = record?.url ?? repo.flatMap({ URL(string: "https://github.com/\($0)/issues/\(number)") }) {
+        } else if let repo {
+            Task { await HarnessReferences.open(repo: repo, number: number, org: org, auth: auth, navigate: navigate, openURL: openURL) }
+        }
+    }
+}
+
+/// Opens an issue or PR a document names that the issue history hasn't
+/// got: looked up by number, then in a drawer as any other; GitHub if the
+/// lookup fails. Lookups are kept for the launch.
+enum HarnessReferences {
+    private static var found: [String: DetailSelection] = [:]
+
+    static func open(repo: String, number: Int, org: String, auth: AuthStore, navigate: NavigateAction?, openURL: OpenURLAction) async {
+        let key = "\(repo)#\(number)"
+        if found[key] == nil, let api = auth.api, let item = try? await api.issueOrPullRequest(repo: repo, number: number) {
+            found[key] = item.isPullRequest
+                ? .pullRequestReference(PullRequestReference(org: org, id: item.id, number: number, title: item.title, repo: repo, url: item.url))
+                : .issueReference(IssueReference(org: org, id: item.id, number: number, title: item.title, repo: repo, url: item.url))
+        }
+        if let selection = found[key], let navigate {
+            navigate(selection)
+        } else if let url = URL(string: "https://github.com/\(repo)/issues/\(number)") {
             openURL(url)
         }
+    }
+}
+
+extension GitHubAPI {
+    /// The issue or PR with this number in the repo: its node ID, title and URL.
+    func issueOrPullRequest(repo: String, number: Int) async throws -> (id: String, title: String, url: URL, isPullRequest: Bool)? {
+        struct Item: Decodable {
+            let __typename: String
+            let id: String
+            let title: String
+            let url: URL
+        }
+        struct Response: Decodable {
+            struct Repository: Decodable { let issueOrPullRequest: Item? }
+            let repository: Repository?
+        }
+        let parts = repo.split(separator: "/").map(String.init)
+        guard parts.count == 2 else { return nil }
+        let response: Response = try await query("""
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                issueOrPullRequest(number: $number) {
+                  __typename
+                  ... on Issue { id title url }
+                  ... on PullRequest { id title url }
+                }
+              }
+            }
+            """, values: ["owner": parts[0], "name": parts[1], "number": number])
+        return response.repository?.issueOrPullRequest.map { ($0.id, $0.title, $0.url, $0.__typename == "PullRequest") }
     }
 }
 

@@ -80,6 +80,11 @@ struct GitHubAPI {
         }
     }
 
+    /// A read whose variables aren't all strings (an `Int!` number, say).
+    func query<T: Decodable>(_ query: String, values: [String: Any], as type: T.Type = T.self) async throws -> T {
+        try await send(query, variables: values)
+    }
+
     /// A mutation whose variables aren't all strings (an input object, a
     /// list). A write: not retried, since it may have gone through.
     func mutate<T: Decodable>(_ query: String, variables: [String: Any], as type: T.Type = T.self) async throws -> T {
