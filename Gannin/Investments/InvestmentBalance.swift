@@ -65,15 +65,37 @@ struct InvestmentBalance {
 
     /// The issues a drill shows, as things stand.
     func issues(for drill: Drill) -> [IssueRecord] {
-        let shares = drill.scope == .completed ? completed(in: drill.bucket) : inProgress
-        return shares.first { $0.key == drill.key }?.issues ?? []
+        shares(drill.scope, bucket: drill.bucket).first { $0.key == drill.key }?.issues ?? []
     }
 
     enum Scope: String, CaseIterable, Identifiable {
         case completed = "Completed"
         case inProgress = "In progress"
+        /// Both: completed in the range, and in progress at its end.
+        case all = "All"
 
         var id: Self { self }
+
+        /// Its issues include those completed, so the chart applies.
+        var hasCompleted: Bool { self != .inProgress }
+    }
+
+    /// The scope's issues by category. For All, those completed and those in
+    /// progress, each once; a period picked on the chart narrows it to what
+    /// was completed in that period.
+    func shares(_ scope: Scope, bucket: Date?) -> [Share] {
+        switch scope {
+        case .completed: return completed(in: bucket)
+        case .inProgress: return inProgress
+        case .all:
+            guard bucket == nil else { return completed(in: bucket) }
+            return zip(completed(), inProgress).map { done, going in
+                var share = done
+                let ids = Set(done.issues.map(\.id))
+                share.issues += going.issues.filter { !ids.contains($0.id) }
+                return share
+            }
+        }
     }
 
     struct Share: Identifiable {

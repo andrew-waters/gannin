@@ -75,7 +75,7 @@ struct InvestmentsView: View {
                     Section {
                         summary(balance).sectionContent()
                     }
-                    if scope == .completed {
+                    if scope.hasCompleted {
                         Section {
                             InvestmentChart(balance: balance, period: period, asShare: chartValues == .share, selected: $selectedBucket)
                                 .sectionContent()
@@ -96,7 +96,7 @@ struct InvestmentsView: View {
                             }
                         }
                     }
-                    let shares = scope == .completed ? balance.completed(in: selectedBucket) : balance.inProgress
+                    let shares = balance.shares(scope, bucket: selectedBucket)
                     if let uncategorised = shares.last, !uncategorised.issues.isEmpty {
                         Section {
                             uncategorisedGroups(uncategorised, balance: balance).sectionContent()
@@ -110,7 +110,7 @@ struct InvestmentsView: View {
                         } header: {
                             PinnedHeader {
                                 HStack(spacing: 12) {
-                                    Text("\(share.name) · \(scope.rawValue.lowercased())")
+                                    Text("\(share.name) · \(scope == .all ? "completed or in progress" : scope.rawValue.lowercased())")
                                     Text("\(share.issues.count)").foregroundStyle(.secondary).fontWeight(.regular)
                                     Spacer(minLength: 8)
                                     Group {
@@ -168,7 +168,7 @@ struct InvestmentsView: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
-        .help("Issues completed in the range, or in progress at its end")
+        .help("Issues completed in the range, in progress at its end, or both")
         Picker("Range", selection: $rangePreset) {
             ForEach(InvestmentRange.allCases) { Text($0.rawValue).tag($0) }
         }
@@ -181,7 +181,7 @@ struct InvestmentsView: View {
             DatePicker("To", selection: date($customTo), in: ...Date.now, displayedComponents: .date)
                 .labelsHidden()
         }
-        if scope == .completed {
+        if scope.hasCompleted {
             Picker("Per", selection: $period) {
                 ForEach(periods) { Text($0.rawValue).tag($0) }
             }
@@ -202,7 +202,7 @@ struct InvestmentsView: View {
     // MARK: Summary
 
     private func summary(_ balance: InvestmentBalance) -> some View {
-        let shares = scope == .completed ? balance.completed(in: selectedBucket) : balance.inProgress
+        let shares = balance.shares(scope, bucket: selectedBucket)
         let total = shares.map(\.issues.count).reduce(0, +)
         let uncategorised = shares.last?.issues.count ?? 0
         let categorised = total == 0 ? 0 : Double(total - uncategorised) / Double(total)
@@ -216,7 +216,7 @@ struct InvestmentsView: View {
                     Text("· aim for 80% or more").font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer()
-                if selectedBucket != nil && scope == .completed {
+                if selectedBucket != nil && scope.hasCompleted {
                     Button("Whole Range") { selectedBucket = nil }
                         .controlSize(.small)
                 }
@@ -243,6 +243,13 @@ struct InvestmentsView: View {
         case .inProgress:
             let isNow = balance.range.end >= Date.now.addingTimeInterval(-60)
             return "\(issues) in progress \(isNow ? "now" : "on \(balance.range.end.formatted(date: .abbreviated, time: .omitted))")"
+        case .all:
+            if let selectedBucket, let bucket = balance.buckets.first(where: { $0.start == selectedBucket }) {
+                return "\(issues) completed in \(InvestmentChart.label(bucket, period: period))"
+            }
+            let completed = balance.completed().map(\.issues.count).reduce(0, +)
+            let isNow = balance.range.end >= Date.now.addingTimeInterval(-60)
+            return "\(issues): \(completed) completed \(balance.range.start.formatted(date: .abbreviated, time: .omitted)) to \(balance.range.end.formatted(date: .abbreviated, time: .omitted)), \(total - completed) in progress \(isNow ? "now" : "then")"
         }
     }
 
