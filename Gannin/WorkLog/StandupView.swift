@@ -133,8 +133,9 @@ struct Standup {
     }
 }
 
-/// People › Standup: everything each person did on one day (today by
-/// default, the arrows stepping through working days), on one page, with the PRs, commits and issues
+/// Meetings › Standup: everything each person did on one day (the last
+/// working day by default, as a standup looks back; Today previews today so
+/// far, and the arrows step through working days), on one page, with the PRs, commits and issues
 /// behind it. People who did nothing recorded, or were off, are listed at
 /// the end.
 struct StandupPage: View {
@@ -147,7 +148,7 @@ struct StandupPage: View {
 
     let org: String
     let workload: Workload?
-    /// The day picked with the arrows; nil is today.
+    /// The day picked with the arrows or Today; nil is the last working day.
     @State private var chosenDay: Date?
     /// Every PR's commits listed, rather than folded under it.
     @AppStorage("standupShowCommits") private var showCommits = false
@@ -183,9 +184,14 @@ struct StandupPage: View {
 
     private var week: WorkWeek { configs.config(for: org).week }
 
-    /// The chosen day, or today.
+    /// The chosen day, or the last working day before today.
     private var dayStart: Date {
-        chosenDay ?? Calendar.current.startOfDay(for: .now)
+        chosenDay ?? lastWorkingDay
+    }
+
+    /// Yesterday, or Friday on a Monday, under the org's week.
+    private var lastWorkingDay: Date {
+        Self.workingDay(before: Calendar.current.startOfDay(for: .now), week: week)
     }
 
     private var dayInterval: DateInterval {
@@ -236,8 +242,13 @@ struct StandupPage: View {
                     Label("Earlier", systemImage: "chevron.left")
                 }
                 .help("The working day before")
-                Button("Today") { chosenDay = nil }
-                    .disabled(chosenDay == nil)
+                let last = lastWorkingDay
+                Button(Calendar.current.isDateInYesterday(last) ? "Yesterday" : last.formatted(.dateTime.weekday(.wide))) { chosenDay = nil }
+                    .disabled(dayStart == last)
+                    .help("The last working day, which the standup looks back on")
+                Button("Today") { chosenDay = Calendar.current.startOfDay(for: .now) }
+                    .disabled(Calendar.current.isDateInToday(dayStart))
+                    .help("Today so far")
                 Button { chosenDay = workingDay(after: dayStart) } label: {
                     Label("Later", systemImage: "chevron.right")
                 }

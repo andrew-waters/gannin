@@ -272,9 +272,9 @@ added, removed or created, and the tracked board field set), and commits to the 
   Weeks only). Commits keep the offset from their git timestamp (`GitTimestamp`); other
   events use the person's most common commit offset. Merges are left out of the punchcards
   (merge queues land them whenever CI finishes).
-- Standup (`StandupView.swift`, People › Standup) is everyone's activity on one day, today
-  by default, with arrows stepping back and forward through the org's working days (Friday
-  before a Monday) up to today. By Person, Team or Changelog (a toolbar control, `StandupLayout`). Changelog
+- Standup (`StandupView.swift`, People › Standup) is everyone's activity on one day, the last
+  working day by default (Friday on a Monday), with Today to preview today so far, and arrows
+  stepping back and forward through the org's working days up to today. By Person, Team or Changelog (a toolbar control, `StandupLayout`). Changelog
   (`StandupChangelog`) is the issues closed that day from the issue history alone: completed
   ones by investment category (as `InvestmentConfig.categorise` places them), then those
   closed as not planned. By Person is a row
