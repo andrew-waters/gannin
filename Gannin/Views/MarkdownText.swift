@@ -82,6 +82,10 @@ struct MarkdownText: View {
         /// The header row first.
         case table(rows: [[String]])
         case paragraph(text: String)
+        /// `<details>` with its `<summary>`: what's inside, as Markdown, folds.
+        case details(summary: String, body: String)
+        /// `---`, `***` or `___` on a line of its own.
+        case rule
     }
 
     private static func blocks(_ source: String, reflows: Bool) -> [Block] {
@@ -104,7 +108,49 @@ struct MarkdownText: View {
             paragraph.removeAll()
         }
 
-        for line in strippingHTMLComments(source).components(separatedBy: .newlines) {
+        var details: (summary: String?, lines: [String], depth: Int)?
+
+        for rawLine in strippingHTMLComments(source).components(separatedBy: .newlines) {
+            let rawTrimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            // Inside a <details>: gather it whole, nested ones and all.
+            if var open = details, !inCode {
+                let opens = rawTrimmed.ranges(of: /(?i)<details\b/).count
+                let closes = rawTrimmed.ranges(of: /(?i)<\/details>/).count
+                open.depth += opens - closes
+                var line = rawLine
+                if open.summary == nil, let summary = Self.summary(in: line) {
+                    open.summary = summary.text
+                    line = summary.rest
+                }
+                if open.depth <= 0 {
+                    line = line.replacing(/(?i)<\/details>/, with: "")
+                    open.lines.append(line)
+                    result.append(.details(summary: open.summary ?? "Details", body: open.lines.joined(separator: "\n")))
+                    details = nil
+                } else {
+                    open.lines.append(line)
+                    details = open
+                }
+                continue
+            }
+            if !inCode, rawTrimmed.range(of: "<details", options: .caseInsensitive) != nil, rawTrimmed.lowercased().hasPrefix("<details") {
+                flushParagraph()
+                flushTable()
+                var rest = String(rawTrimmed.drop { $0 != ">" }.dropFirst())
+                var summary: String?
+                if let found = Self.summary(in: rest) {
+                    summary = found.text
+                    rest = found.rest
+                }
+                let closes = rest.range(of: "</details>", options: .caseInsensitive) != nil
+                if closes {
+                    result.append(.details(summary: summary ?? "Details", body: rest.replacing(/(?i)<\/details>/, with: "")))
+                } else {
+                    details = (summary, [rest], 1)
+                }
+                continue
+            }
+            let line = inCode ? rawLine : Self.markdown(fromHTML: rawLine)
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             if inCode {
                 if trimmed.hasPrefix("```") {
@@ -131,6 +177,10 @@ struct MarkdownText: View {
                 inCode = true
             } else if trimmed.isEmpty {
                 flushParagraph()
+            } else if trimmed.count >= 3, ["-", "*", "_"].contains(where: { mark in trimmed.allSatisfy { String($0) == mark || $0 == " " } }),
+                      trimmed.filter({ $0 != " " }).count >= 3 {
+                flushParagraph()
+                result.append(.rule)
             } else if let (level, text) = heading(trimmed) {
                 flushParagraph()
                 result.append(.heading(level: level, text: text))
@@ -156,9 +206,67 @@ struct MarkdownText: View {
         if inCode {
             result.append(.code(text: code.joined(separator: "\n")))
         }
+        if let open = details {
+            result.append(.details(summary: open.summary ?? "Details", body: open.lines.joined(separator: "\n")))
+        }
         flushTable()
         flushParagraph()
         return result
+    }
+
+    /// A `<summary>…</summary>` in the line: its text, and what's left.
+    private static func summary(in line: String) -> (text: String, rest: String)? {
+        guard let match = line.firstMatch(of: /(?i)<summary>(.*?)<\/summary>/) else { return nil }
+        let text = markdown(fromHTML: String(match.1)).trimmingCharacters(in: .whitespaces)
+        return (text, line.replacingCharacters(in: match.range, with: ""))
+    }
+
+    /// The HTML GitHub allows in Markdown, as Markdown: bold, italic, code,
+    /// links, images (as links) and line breaks; tags with no Markdown of
+    /// their own (`<sub>`, `<div>`, `<p>`) are dropped, keeping their text.
+    /// Only HTML's tag names are touched, so `<unsigned base64>` and the
+    /// like stay, and code spans are left alone.
+    static func markdown(fromHTML line: String) -> String {
+        guard line.contains("<") else { return line }
+        var result = ""
+        // Outside `code spans` only.
+        for (index, part) in line.components(separatedBy: "`").enumerated() {
+            if index > 0 { result += "`" }
+            result += index.isMultiple(of: 2) ? convertingHTML(part) : part
+        }
+        return result
+    }
+
+    private static let droppedTags = "sub|sup|small|div|span|p|center|font|picture|source|section|article|ins|u|mark|kbd|ul|ol|li|table|thead|tbody|tr|td|th|blockquote|pre|h[1-6]|dl|dt|dd|abbr|cite|figure|figcaption"
+
+    private static func convertingHTML(_ text: String) -> String {
+        var text = text
+        text = text.replacing(/(?i)<br\s*\/?>/, with: "\n")
+        text = text.replacing(/(?i)<hr\s*\/?>/, with: "")
+        text = text.replacing(/(?i)<\/?(strong|b)>/, with: "**")
+        text = text.replacing(/(?i)<\/?(em|i)>/, with: "*")
+        text = text.replacing(/(?i)<\/?(del|s|strike)>/, with: "~~")
+        text = text.replacing(/(?i)<\/?code>/, with: "`")
+        text = text.replacing(/(?i)<a\s[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/) { match in
+            "[\(match.2)](\(match.1))"
+        }
+        text = text.replacing(/(?i)<img\s[^>]*>/) { match in
+            let tag = String(match.0)
+            let source = tag.firstMatch(of: /(?i)src="([^"]*)"/).map { String($0.1) }
+            let alt = tag.firstMatch(of: /(?i)alt="([^"]*)"/).map { String($0.1) }
+            guard let source else { return "" }
+            return "[\(alt.flatMap { $0.isEmpty ? nil : $0 } ?? "image")](\(source))"
+        }
+        if let tags = try? Regex("(?i)</?(\(droppedTags)|a)(\\s[^>]*)?>") {
+            text = text.replacing(tags, with: "")
+        }
+        return text
+            .replacingOccurrences(of: "&nbsp;", with: " ")
+            .replacingOccurrences(of: "&amp;", with: "&")
+            .replacingOccurrences(of: "&lt;", with: "<")
+            .replacingOccurrences(of: "&gt;", with: ">")
+            .replacingOccurrences(of: "&quot;", with: "\"")
+            .replacingOccurrences(of: "&#39;", with: "'")
     }
 
     /// Lines of one paragraph or list item: spaces between them when the
@@ -255,6 +363,15 @@ struct MarkdownText: View {
             table(rows)
         case .paragraph(let text):
             inline(text).frame(maxWidth: .infinity, alignment: .leading)
+        case .details(let summary, let body):
+            DisclosureGroup {
+                MarkdownText(source: body, reflows: reflows)
+                    .padding(.top, 4)
+            } label: {
+                inline(summary).fontWeight(.medium)
+            }
+        case .rule:
+            Divider().padding(.vertical, 4)
         }
     }
 
@@ -304,7 +421,7 @@ struct MarkdownText: View {
             case .bullet, .ordered: return size * 0.4
             default: return size * 0.7
             }
-        case .code, .table:
+        case .code, .table, .details, .rule:
             return size * 0.9
         case .paragraph:
             if case .heading = previous { return size * 0.5 }
@@ -400,6 +517,15 @@ struct MarkdownText: View {
                 .font(.system(size: size))
                 .lineSpacing(lineSpacing)
                 .frame(maxWidth: .infinity, alignment: .leading)
+        case .details(let summary, let body):
+            DisclosureGroup {
+                MarkdownText(source: body, reflows: reflows, reading: size)
+                    .padding(.top, size * 0.5)
+            } label: {
+                inline(summary).font(.system(size: size, weight: .medium))
+            }
+        case .rule:
+            Divider().padding(.vertical, size * 0.4)
         }
     }
 

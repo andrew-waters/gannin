@@ -350,6 +350,11 @@ added, removed or created, and the tracked board field set), and commits to the 
   that close them (with their commit and review dates). Closed weeks are fetched as parallel
   searches, changes by `updated:`, and open issues in full hourly, because board moves don't
   touch `updatedAt`. Reading boards needs the `project` scope.
+- `MarkdownText` renders the HTML GitHub allows in Markdown: `<details>`/`<summary>` fold (a
+  `DisclosureGroup`, its contents as Markdown), `<b>`, `<i>`, `<code>`, `<a>`, `<img>` (as a
+  link) and `<br>` become Markdown, tags with no Markdown of their own (`<sub>`, `<div>`, `<p>`)
+  are dropped keeping their text, and `---` is a rule. Only HTML's tag names are touched, never
+  inside code.
 - Issues › Not on a board (`OffBoardIssuesView`) lists stored issues on no board, or not on a
   chosen one (starting from the investments board), open, closed or all. Select them and add
   them to a board in bulk through `BulkWriteSheet` (confirm, then each ticked off, open until
