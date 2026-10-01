@@ -1,15 +1,62 @@
 import SwiftUI
 
-/// What's waiting on you in the org, as one table in sections: on the Mac
-/// the Claude Code sessions waiting on you, then PRs you've been asked to
-/// review (longest waiting first), your own open PRs and where each
-/// stands, and the issues assigned to you (in progress first). PRs show
-/// their checks; clicking a row opens it in the drawer.
+/// A section of the Inbox, each turned on or off from its Show menu (per org,
+/// on this Mac). The first four are on until turned off; the rest are there
+/// for those who want them.
+enum InboxSection: String, CaseIterable, Identifiable {
+    case sessions = "Claude Code"
+    case reviews = "Needs your review"
+    case pullRequests = "Your pull requests"
+    case issues = "Your issues"
+    case opened = "Issues you opened"
+    case plans = "Your harness plans"
+    case uncategorised = "Uncategorised investments"
+
+    var id: Self { self }
+
+    var isOnByDefault: Bool {
+        switch self {
+        case .sessions, .reviews, .pullRequests, .issues: true
+        case .opened, .plans, .uncategorised: false
+        }
+    }
+
+    var help: String {
+        switch self {
+        case .sessions: "Claude Code sessions waiting on you"
+        case .reviews: "PRs you've been asked to review, longest waiting first"
+        case .pullRequests: "Your open PRs and where each stands"
+        case .issues: "Open issues assigned to you, in progress first"
+        case .opened: "Open issues you opened that aren't assigned to you"
+        case .plans: "Harness plans you own that aren't done"
+        case .uncategorised: "Open issues, and those completed in the window, with no investment category"
+        }
+    }
+
+    /// Those on the Mac only (Claude Code) left out elsewhere.
+    static var available: [InboxSection] {
+        #if os(macOS)
+        allCases
+        #else
+        allCases.filter { $0 != .sessions }
+        #endif
+    }
+}
+
+/// What's waiting on you in the org, as one table in sections, those you've
+/// turned on (`InboxSection`): on the Mac the Claude Code sessions waiting on
+/// you, then PRs you've been asked to review (longest waiting first), your
+/// own open PRs and where each stands, the issues assigned to you (in
+/// progress first), and if you want them, issues you opened, your harness
+/// plans and the uncategorised investments. PRs show their checks; clicking
+/// a row opens it in the drawer.
 struct InboxView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(IssueStore.self) private var issueStore
     @Environment(DetailStore.self) private var details
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(HarnessStore.self) private var harness
+    @Environment(HiddenStore.self) private var hidden
     @Environment(\.navigate) private var navigate
     @Environment(\.openWindow) private var openWindow
     #if os(macOS)
@@ -21,15 +68,37 @@ struct InboxView: View {
     let workload: Workload
 
     @State private var selection: Set<String> = []
+    /// Applied within each section; empty keeps each section's own order.
+    @State private var sortOrder: [KeyPathComparator<InboxRow>] = []
     /// Column order, widths and which are hidden, on this Mac.
     @AppStorage("inboxColumns") private var storedColumns = Data()
+    /// The sections turned on, as raw values, comma separated; empty for
+    /// those on by default.
+    @AppStorage private var storedSections: String
+
+    init(org: String, workload: Workload) {
+        self.org = org
+        self.workload = workload
+        _storedSections = AppStorage(wrappedValue: "", "inboxSections.\(org)")
+    }
+
+    private var shown: Set<InboxSection> {
+        guard !storedSections.isEmpty else { return Set(InboxSection.allCases.filter(\.isOnByDefault)) }
+        return Set(storedSections.split(separator: ",").compactMap { InboxSection(rawValue: String($0)) })
+    }
+
+    private func show(_ section: InboxSection, _ isOn: Bool) {
+        var sections = shown
+        if isOn { sections.insert(section) } else { sections.remove(section) }
+        storedSections = InboxSection.allCases.filter(sections.contains).map(\.rawValue).joined(separator: ",")
+    }
 
     var body: some View {
         if let login = auth.viewer?.login {
             let inbox = Inbox(login: login, workload: workload, history: issueStore.history(for: org), workflow: configs.config(for: org).workflow)
             let sections = sections(inbox)
-            Table(of: InboxRow.self, selection: $selection, columnCustomization: TableColumnStore.binding($storedColumns)) {
-                TableColumn("Title") { row in
+            Table(of: InboxRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: TableColumnStore.binding($storedColumns)) {
+                TableColumn("Title", value: \.title) { row in
                     HStack(spacing: 8) {
                         Circle().fill(row.tint).frame(width: 8, height: 8)
                         Text(row.title).lineLimit(1)
@@ -38,23 +107,23 @@ struct InboxView: View {
                 }
                 .width(min: 220, ideal: 420)
                 .customizationID("title")
-                TableColumn("Number") { row in
+                TableColumn("Number", value: \.reference) { row in
                     Text(verbatim: row.reference).foregroundStyle(.secondary).monospacedDigit()
                 }
                 .width(min: 80, ideal: 110)
                 .customizationID("number")
-                TableColumn("Who") { row in
+                TableColumn("Who", value: \.whoSort) { row in
                     AvatarStack(people: row.people)
                         .help(row.people.map(\.displayName).joined(separator: ", "))
                 }
                 .width(min: 50, ideal: 70)
                 .customizationID("who")
-                TableColumn("Checks") { row in
+                TableColumn("Checks", value: \.checksSort) { row in
                     if let checks = row.checks { ChecksBadge(state: checks) }
                 }
                 .width(min: 60, ideal: 90)
                 .customizationID("checks")
-                TableColumn("State") { row in
+                TableColumn("State", value: \.state) { row in
                     HStack(spacing: 4) {
                         FlagBadge(flags: row.flags)
                         Text(row.state).foregroundStyle(row.stateColor).lineLimit(1)
@@ -63,12 +132,12 @@ struct InboxView: View {
                 }
                 .width(min: 100, ideal: 200)
                 .customizationID("state")
-                TableColumn("Since") { row in
+                TableColumn("Since", value: \.sinceSort) { row in
                     SinceCell(row: row)
                 }
                 .width(min: 70, ideal: 100)
                 .customizationID("since")
-                TableColumn("Size") { row in
+                TableColumn("Size", value: \.sizeSort) { row in
                     if let size = row.size {
                         LinesText(added: size.added, removed: size.removed)
                     }
@@ -78,7 +147,8 @@ struct InboxView: View {
             } rows: {
                 ForEach(sections, id: \.title) { section in
                     Section("\(section.title) (\(section.rows.count))") {
-                        ForEach(section.rows) { TableRow($0) }
+                        // Sorted within the section, so they stay apart.
+                        ForEach(sortOrder.isEmpty ? section.rows : section.rows.sorted(using: sortOrder)) { TableRow($0) }
                     }
                 }
             }
@@ -91,6 +161,22 @@ struct InboxView: View {
                 open(row)
             }
             .task(id: org) { await issueStore.sync(org, windowDays: windowDays) }
+            .toolbar {
+                ToolbarItem {
+                    Menu {
+                        ForEach(InboxSection.available) { section in
+                            Toggle(section.rawValue, isOn: Binding(get: { shown.contains(section) }, set: { show(section, $0) }))
+                                .help(section.help)
+                        }
+                        Divider()
+                        Button("Show the Usual Sections") { storedSections = "" }
+                            .disabled(storedSections.isEmpty)
+                    } label: {
+                        Label("Show", systemImage: "line.3.horizontal.decrease.circle")
+                    }
+                    .help("Choose which sections the Inbox shows")
+                }
+            }
             // Checks finishing don't touch a PR's updatedAt, so running or
             // unknown ones are asked for; the detail store re-asks pending
             // ones after a couple of minutes.
@@ -116,9 +202,10 @@ struct InboxView: View {
 
     private func sections(_ inbox: Inbox) -> [(title: String, rows: [InboxRow])] {
         var sections: [(title: String, rows: [InboxRow])] = []
+        let shown = shown
         #if os(macOS)
         let waiting = sessions.sessions(for: org).filter { [.needsYou, .idle].contains(sessions.state($0.id)) }
-        if !waiting.isEmpty {
+        if shown.contains(.sessions), !waiting.isEmpty {
             sections.append(("Claude Code", waiting.map { session in
                 let state = sessions.state(session.id)
                 return InboxRow(
@@ -129,7 +216,7 @@ struct InboxView: View {
             }))
         }
         #endif
-        sections.append(("Needs your review", inbox.reviews.map { item in
+        if shown.contains(.reviews) { sections.append((InboxSection.reviews.rawValue, inbox.reviews.map { item in
             InboxRow(
                 id: "review-\(item.pr.id)", title: item.pr.title, reference: Self.number(item.pr.repo, item.pr.number),
                 people: item.pr.author.map { [$0] } ?? [], checks: checks(item.pr),
@@ -137,8 +224,8 @@ struct InboxView: View {
                 tint: ChartPalette.blue, since: item.askedAt, sinceLabel: "Asked", size: (item.pr.additions, item.pr.deletions),
                 page: .pullRequest(item.pr.id)
             )
-        }))
-        sections.append(("Your pull requests", inbox.pullRequests.map { pr in
+        })) }
+        if shown.contains(.pullRequests) { sections.append((InboxSection.pullRequests.rawValue, inbox.pullRequests.map { pr in
             let standing = Inbox.standing(pr, needsReview: configs.config(for: org).needsReview(pr.repo))
             return InboxRow(
                 id: "pr-\(pr.id)", title: pr.title, reference: Self.number(pr.repo, pr.number),
@@ -147,8 +234,8 @@ struct InboxView: View {
                 tint: standing.color, since: pr.updatedAt, sinceLabel: "Last updated", size: (pr.additions, pr.deletions),
                 page: .pullRequest(pr.id)
             )
-        }))
-        sections.append(("Your issues", inbox.issues.map { item in
+        })) }
+        if shown.contains(.issues) { sections.append((InboxSection.issues.rawValue, inbox.issues.map { item in
             let status = item.signals.status ?? (item.record.isOpen ? "Open" : "Closed")
             return InboxRow(
                 id: "issue-\(item.record.id)", title: item.record.title, reference: Self.number(item.record.repo, item.record.number),
@@ -159,8 +246,75 @@ struct InboxView: View {
                 since: item.record.statusChanges.last?.at ?? item.record.createdAt, sinceLabel: "Last moved",
                 size: nil, page: .issueReference(IssueReference(org: org, record: item.record)), flags: item.signals.flags
             )
-        }))
+        })) }
+        if shown.contains(.opened) { sections.append((InboxSection.opened.rawValue, opened.map(issueRow))) }
+        if shown.contains(.plans) { sections.append((InboxSection.plans.rawValue, plans)) }
+        if shown.contains(.uncategorised) { sections.append((InboxSection.uncategorised.rawValue, uncategorised.map(issueRow))) }
         return sections
+    }
+
+    // MARK: Sections you can turn on
+
+    /// The issue history's issues as the workload sees them: excluded repos
+    /// and hidden ones left out.
+    private var historyIssues: [IssueRecord] {
+        let excluded = configs.config(for: org).excludedRepos
+        return (issueStore.history(for: org).map { Array($0.issues.values) } ?? [])
+            .filter { !excluded.contains($0.repo) && !hidden.keys.contains($0.id) }
+    }
+
+    /// Open issues you opened, newest first, less those assigned to you
+    /// (they're under Your issues).
+    private var opened: [IssueRecord] {
+        guard let login = auth.viewer?.login else { return [] }
+        return historyIssues
+            .filter { $0.isOpen && $0.author == login && !$0.assignees.contains(login) }
+            .sorted { $0.createdAt > $1.createdAt }
+    }
+
+    /// Open issues, and those completed in the window, that no investment
+    /// category takes, as the Investments page counts them: open ones first.
+    private var uncategorised: [IssueRecord] {
+        let config = configs.config(for: org).investmentConfig
+        let issues = issueStore.history(for: org)?.issues ?? [:]
+        let since = Calendar.current.date(byAdding: .day, value: -windowDays, to: .now) ?? .now
+        return historyIssues
+            .filter { $0.isOpen || (!$0.isNotPlanned && ($0.closedAt ?? .distantPast) >= since) }
+            .filter { config.categorise($0, parent: $0.parentID.flatMap { issues[$0] }) == nil }
+            .sorted { a, b in
+                if a.isOpen != b.isOpen { return a.isOpen }
+                return (a.closedAt ?? a.createdAt) > (b.closedAt ?? b.createdAt)
+            }
+    }
+
+    /// Plans in the harness you own that aren't done or abandoned, newest first.
+    private var plans: [InboxRow] {
+        guard let login = auth.viewer?.login, let setup = configs.config(for: org).harness,
+              let index = harness.index(for: org, setup) else { return [] }
+        return index.documents(.plans)
+            .filter { $0.followsStandard && $0.owner?.lowercased() == login.lowercased() }
+            .filter { !["done", "abandoned"].contains(($0.status ?? "").lowercased()) }
+            .sorted { ($0.date ?? .distantPast) > ($1.date ?? .distantPast) }
+            .map { plan in
+                InboxRow(
+                    id: "plan-\(plan.path)", title: plan.title, reference: "Plan",
+                    people: [], checks: nil,
+                    state: [plan.statusLabel, plan.tasks > 0 ? "\(plan.tasksDone) of \(plan.tasks) tasks" : nil].compactMap { $0 }.joined(separator: ", "),
+                    stateColor: .secondary, tint: ChartPalette.violet, since: plan.date, sinceLabel: "Dated",
+                    size: nil, page: .harnessDocument(plan.path)
+                )
+            }
+    }
+
+    private func issueRow(_ record: IssueRecord) -> InboxRow {
+        InboxRow(
+            id: "issue-\(record.id)", title: record.title, reference: Self.number(record.repo, record.number),
+            people: [], checks: nil,
+            state: record.isOpen ? (record.statusChanges.last?.status ?? "Open") : "Closed",
+            stateColor: .secondary, tint: record.isOpen ? .green : .purple,
+            since: record.closedAt ?? record.createdAt, sinceLabel: record.isOpen ? "Opened" : "Closed",
+            size: nil, page: .issueReference(IssueReference(org: org, record: record))
+        )
     }
 
     /// Fresher from the detail store when it has them.
@@ -189,6 +343,20 @@ struct InboxRow: Identifiable {
     let page: DetailSelection?
     var session: UUID? = nil
     var flags: [IssueSignals.Flag] = []
+
+    // What the columns sort by.
+    var whoSort: String { people.first?.displayName.lowercased() ?? "" }
+    var sinceSort: Date { since ?? .distantPast }
+    var sizeSort: Int { size.map { $0.added + $0.removed } ?? -1 }
+    /// Failing first, then running, then passing, then none.
+    var checksSort: Int {
+        switch checks {
+        case .failure, .error: 0
+        case .pending, .expected: 1
+        case .success: 2
+        case nil: 3
+        }
+    }
 }
 
 /// When the row last moved, relative, with the full date on hover.

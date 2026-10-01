@@ -542,9 +542,12 @@ added, removed or created, and the tracked board field set), and commits to the 
   Standup's `StandupTimelineList`: opened, assigned, board moves, sub-issues, reopened, closed,
   comments, and each linked PR's commits (every one, with message and lines), reviews and
   merge. PRs the work log hasn't got are fetched by URL (`WorkLogStore.loadLinked`, in memory).
-- Inbox (`InboxView`, first in the sidebar) is the signed-in person's share of the workload:
-  reviews requested of them (longest waiting first), their open PRs and where each stands, their
-  assigned issues (in progress first, with status, time in status and Attention flags), and on
-  the Mac their Claude Code sessions waiting on them. Its count is reviews waiting plus their
-  PRs with changes requested.
-
+- Inbox (`InboxView`, first in the sidebar) is the signed-in person's share of the workload, in
+  sections each turned on or off from the Show menu in its toolbar (`InboxSection`, per org on
+  this Mac, `inboxSections.<org>`): Claude Code sessions waiting on them (the Mac's), reviews
+  requested of them (longest waiting first), their open PRs and where each stands, their
+  assigned issues (in progress first, with status, time in status and Attention flags), all on
+  by default; and, off until wanted, issues they opened, their harness plans (owner, not done)
+  and uncategorised investments (open issues and those completed in the window that
+  `InvestmentConfig.categorise` places nowhere). Columns sort, within each section. Its count is
+  reviews waiting plus their PRs with changes requested.
