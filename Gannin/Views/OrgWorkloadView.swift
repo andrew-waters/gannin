@@ -37,6 +37,8 @@ struct OrgWorkloadView: View {
                 ActionsView(org: org, selection: $selection)
             } else if tab == .harness {
                 HarnessView(org: org, selection: $selection)
+            } else if tab == .prioritisation, let workload {
+                PrioritisationView(org: org, workload: workload, selection: $selection)
             } else if tab == .views {
                 if let fieldView {
                     FieldViewPage(org: org, id: fieldView, selection: $selection)
@@ -185,7 +187,7 @@ struct OrgWorkloadView: View {
         case .repositories: repositoryView(workload)
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
-        case .projects, .actions, .harness, .views, .settings: EmptyView()
+        case .projects, .actions, .harness, .views, .prioritisation, .settings: EmptyView()
         }
     }
 

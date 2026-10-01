@@ -15,6 +15,7 @@ struct GanninApp: App {
     @State private var orgConfigs: OrgConfigStore
     @State private var peopleDates: PeopleDatesStore
     @State private var bankHolidays = BankHolidayStore()
+    @State private var fieldNotes = FieldNotesStore()
     @State private var activity: SyncActivity
     @State private var harness: HarnessStore
     @State private var team: HarnessTeamStore
@@ -61,6 +62,7 @@ struct GanninApp: App {
         WindowGroup(id: "main") {
             RootView()
                 .joinsRequestedTab()
+                .environment(fieldNotes)
                 .environment(actions)
                 .environment(auth)
                 .environment(orgs)

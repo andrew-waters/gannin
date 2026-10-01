@@ -35,6 +35,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case projects = "Projects"
     case harness = "Harness"
     case views = "Views"
+    /// The morning session with CS, under Meetings.
+    case prioritisation = "Prioritisation"
     case settings = "Settings"
 
     var id: Self { self }
@@ -52,6 +54,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .projects: "rectangle.split.3x1"
         case .harness: "text.book.closed"
         case .views: "square.grid.3x3"
+        case .prioritisation: "list.number"
         case .settings: "gearshape"
         }
     }
@@ -948,6 +951,7 @@ struct OrgSidebar: View {
     let workload: Workload?
     @AppStorage("sidebarPeopleExpanded") private var peopleExpanded = true
     @AppStorage("sidebarPlanningExpanded") private var planningExpanded = true
+    @AppStorage("sidebarMeetingsExpanded") private var meetingsExpanded = true
     @AppStorage("sidebarSessionsExpanded") private var sessionsExpanded = true
     @AppStorage("sidebarAllExpanded") private var allExpanded = false
     /// Team IDs opened under People, comma separated.
@@ -1007,9 +1011,13 @@ struct OrgSidebar: View {
 
                 Section("People", isExpanded: $peopleExpanded) {
                     peopleViewRow(.activity)
-                    peopleViewRow(.standup)
                     peopleViewRow(.timeOff)
                     peopleRows
+                }
+
+                Section("Meetings", isExpanded: $meetingsExpanded) {
+                    peopleViewRow(.standup)
+                    row(.prioritisation)
                 }
 
                 Section("Planning", isExpanded: $planningExpanded) {
@@ -1243,7 +1251,7 @@ struct OrgSidebar: View {
             guard let login = auth.viewer?.login else { return 0 }
             return Inbox(login: login, workload: workload, history: nil, workflow: IssueWorkflow()).count
         // Issues' lists under it have their own counts.
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .settings: return 0
         }
     }
 }

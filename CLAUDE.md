@@ -87,9 +87,10 @@ added, removed or created, and the tracked board field set), and commits to the 
   then People, Planning (Investments, Harness, Projects) and Claude Code as collapsible
   `Section`s, with what's under a row in a `DisclosureGroup` so the system draws the triangles and
   indents. Rows are single-line `Label`s with counts as badges and breakdowns in tooltips. The org
-  switcher and account menu sit in its footer. Under People: Activity, Standup, Time off, Everyone
+  switcher and account menu sit in its footer. Under People: Activity, Time off, Everyone
   (the people stats table, opening to everyone), then each org team and No team opening to their
-  members. Picking a person shows their `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
+  members. Then Meetings: Standup and Prioritisation. Picking a person shows their
+  `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
   by the cog beside the account menu in the sidebar's footer, are panes picked from a segmented
   control in the toolbar: Repositories and People (exclusions, which apply to the workload and
   the stats alike), Working Time, Issues, Investments, Harness and Hidden. The first
@@ -529,6 +530,17 @@ added, removed or created, and the tracked board field set), and commits to the 
   ID so issues keep their values. Iterations are read-only (GitHub doesn't keep their identity
   from outside). Changes are reviewed first, and `IssueStore.rewriteFieldValues` updates stored
   issues at once. Multi-select values are read (`IssueFieldValue.options`) but not yet written.
+
+## Meetings
+
+- Under Meetings in the sidebar: Standup (`StandupView`, as before) and Prioritisation
+  (`Gannin/Meetings/PrioritisationView.swift`), for the morning session with CS. Under a bar (a
+  search, and which of the board's date fields is the committed date, `Committed` by default,
+  `prioritisationDateField.<org>`): Triage, the open issues with no Status on the workflow board
+  or not on it, newest first; From the field, points raised in the meeting (`FieldNotesStore`,
+  per org on this Mac), ticked off when dealt with, those still open carrying over; and the
+  open issues with the committed date set, soonest first, red once overdue and orange within
+  the week. Issues open in the drawer, where their Status and fields are set.
 
 ## Drawer, timeline and Inbox
 
