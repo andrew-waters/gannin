@@ -489,7 +489,10 @@ added, removed or created, and the tracked board field set), and commits to the 
   file; one Form when narrow. Issues named in the text
   (`owner/repo#123`, `#123`, `PRD-123`) become `gannin-issue:` links (`linkedBody`) that open in
   a drawer (an issue or PR outside the history is looked up by number first,
-  `HarnessReferences`, `GitHubAPI.issueOrPullRequest`; GitHub if that fails), and relative links to other documents open theirs.
+  `HarnessReferences`, `GitHubAPI.issueOrPullRequest`, for its title and state too; GitHub if
+  that fails). The details' issues, mentions and dependencies are rows alike: a state dot,
+  number and title for issues and PRs (`HarnessReferenceRow`), the kind's icon, title and status
+  for documents (`HarnessDocumentRow`), and relative links to other documents open theirs.
 - The Harness page (sidebar, once set) lists plans, requirements, findings or skills by module
   with their issues, status and checkbox progress; Not Linked shows those naming no issue. A
   document's page (`DetailSelection.harnessDocument`) shows its issues and the Markdown

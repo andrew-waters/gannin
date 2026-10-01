@@ -381,7 +381,6 @@ enum IssueStateDot {
 
 // MARK: - A document
 
-/// One harness document: what it's about, then the document itself.
 /// A harness document as the issue drawer shows an issue: a header with its
 /// title, status and facts, then its text as sections (one per `##`
 /// heading, each folding, with Contents to jump between them) beside a
@@ -641,20 +640,16 @@ struct HarnessDocumentPage: View {
             }
             HarnessIssueList(org: org, index: index, references: subjects, lookup: lookup)
         }
-        if document.requirement != nil || !(document.dependsOn ?? []).isEmpty {
-            Section("Plan") {
-                if let requirement = document.requirement {
-                    LabeledContent("Requirement") { documentLink(requirement, index: index) }
-                }
-                ForEach(document.dependsOn ?? [], id: \.self) { item in
-                    LabeledContent("Depends on") {
-                        if item.hasSuffix(".md") {
-                            documentLink(item, index: index)
-                        } else if let reference = HarnessDocument.references(in: item, isSubject: false).first {
-                            HarnessIssueList(org: org, index: index, references: [reference], lookup: lookup)
-                        } else {
-                            Text(item)
-                        }
+        if let requirement = document.requirement {
+            Section("Requirement") { documentRow(requirement, index: index) }
+        }
+        if let dependsOn = document.dependsOn, !dependsOn.isEmpty {
+            Section(header: SectionHeader(title: "Depends on", count: dependsOn.count)) {
+                ForEach(dependsOn, id: \.self) { item in
+                    if item.hasSuffix(".md") {
+                        documentRow(item, index: index)
+                    } else {
+                        HarnessIssueList(org: org, index: index, references: HarnessDocument.references(in: item, isSubject: false), lookup: lookup)
                     }
                 }
             }
@@ -697,19 +692,11 @@ struct HarnessDocumentPage: View {
 
     /// Another harness document by path, opening in a drawer over this one.
     @ViewBuilder
-    private func documentLink(_ path: String, index: HarnessIndex) -> some View {
+    private func documentRow(_ path: String, index: HarnessIndex) -> some View {
         if let target = index.document(at: path) {
-            Button {
-                navigate?(.harnessDocument(target.path))
-            } label: {
-                Text(target.title)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.trailing)
-            }
-            .linkButton()
-            .help(target.path)
+            HarnessDocumentRow(document: target)
         } else {
-            Text(path).font(.caption.monospaced()).foregroundStyle(.secondary)
+            Text(path).font(.callout.monospaced()).foregroundStyle(.secondary)
         }
     }
 
@@ -724,7 +711,7 @@ struct HarnessDocumentPage: View {
             if let record = lookup.record(repo: repo, number: number), let navigate {
                 navigate(.issueReference(IssueReference(org: org, record: record)))
             } else {
-                Task { await HarnessReferences.open(repo: repo, number: number, org: org, auth: auth, navigate: navigate, openURL: openURL) }
+                Task { await HarnessReferences.shared.open(repo: repo, number: number, org: org, auth: auth, navigate: navigate, openURL: openURL) }
             }
             return .handled
         }
@@ -798,62 +785,136 @@ private struct HarnessIssueList: View {
 
     /// A row each, for a Form section.
     var body: some View {
-        Group {
-            ForEach(references, id: \.self) { reference in
-                let repo = index.repo(of: reference)
-                let record = lookup.record(repo: repo, number: reference.number)
-                Button {
-                    open(record: record, repo: repo, number: reference.number)
-                } label: {
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Circle()
-                            .fill(record.map(IssueStateDot.color) ?? .secondary.opacity(0.4))
-                            .frame(width: 8, height: 8)
-                        Text(verbatim: repo == index.issuesRepo ? "#\(reference.number)" : "\(repo ?? "")#\(reference.number)")
-                            .monospacedDigit()
-                            .foregroundStyle(.secondary)
-                        if let record {
-                            Text(record.title).lineLimit(2).multilineTextAlignment(.leading)
-                        } else {
-                            // A PR, or an issue outside the history: GitHub
-                            // has it (issue links redirect to PRs).
-                            Image(systemName: "arrow.up.right.square")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help(record == nil ? "Open on GitHub" : "Open the issue")
+        ForEach(references, id: \.self) { reference in
+            if let repo = index.repo(of: reference) {
+                HarnessReferenceRow(org: org, repo: repo, number: reference.number, record: lookup.record(repo: repo, number: reference.number), showsRepo: repo != index.issuesRepo)
             }
-        }
-    }
-
-    private func open(record: IssueRecord?, repo: String?, number: Int) {
-        if let record, let navigate {
-            navigate(.issueReference(IssueReference(org: org, record: record)))
-        } else if let repo {
-            Task { await HarnessReferences.open(repo: repo, number: number, org: org, auth: auth, navigate: navigate, openURL: openURL) }
         }
     }
 }
 
-/// Opens an issue or PR a document names that the issue history hasn't
-/// got: looked up by number, then in a drawer as any other; GitHub if the
-/// lookup fails. Lookups are kept for the launch.
-enum HarnessReferences {
-    private static var found: [String: DetailSelection] = [:]
+/// An issue or PR as the document's details list it: its state's dot, its
+/// number and its title, opening in a drawer. One the issue history hasn't
+/// got is looked up by number for its title and state.
+private struct HarnessReferenceRow: View {
+    @Environment(\.navigate) private var navigate
+    @Environment(\.openURL) private var openURL
+    @Environment(AuthStore.self) private var auth
+    let org: String
+    let repo: String
+    let number: Int
+    let record: IssueRecord?
+    let showsRepo: Bool
 
-    static func open(repo: String, number: Int, org: String, auth: AuthStore, navigate: NavigateAction?, openURL: OpenURLAction) async {
-        let key = "\(repo)#\(number)"
-        if found[key] == nil, let api = auth.api, let item = try? await api.issueOrPullRequest(repo: repo, number: number) {
-            found[key] = item.isPullRequest
-                ? .pullRequestReference(PullRequestReference(org: org, id: item.id, number: number, title: item.title, repo: repo, url: item.url))
-                : .issueReference(IssueReference(org: org, id: item.id, number: number, title: item.title, repo: repo, url: item.url))
+    var body: some View {
+        let looked = HarnessReferences.shared.item(repo: repo, number: number)
+        Button {
+            if let record, let navigate {
+                navigate(.issueReference(IssueReference(org: org, record: record)))
+            } else {
+                Task { await HarnessReferences.shared.open(repo: repo, number: number, org: org, auth: auth, navigate: navigate, openURL: openURL) }
+            }
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Circle()
+                    .fill(record.map(IssueStateDot.color) ?? looked?.color ?? .secondary.opacity(0.4))
+                    .frame(width: 8, height: 8)
+                Text(verbatim: showsRepo ? "\(repo)#\(number)" : "#\(number)")
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
+                Text(record?.title ?? looked?.title ?? "")
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
         }
-        if let selection = found[key], let navigate {
-            navigate(selection)
+        .buttonStyle(.plain)
+        .help(record?.title ?? looked?.title ?? "\(repo)#\(number)")
+        .task(id: "\(repo)#\(number)") {
+            if record == nil { await HarnessReferences.shared.resolve(repo: repo, number: number, auth: auth) }
+        }
+    }
+}
+
+/// Another harness document as the details list it: its kind's icon and
+/// title, opening in a drawer.
+private struct HarnessDocumentRow: View {
+    @Environment(\.navigate) private var navigate
+    let document: HarnessDocument
+
+    var body: some View {
+        Button {
+            navigate?(.harnessDocument(document.path))
+        } label: {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: document.kind.systemImage)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
+                Text(document.title)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                Spacer(minLength: 0)
+                if let status = document.shortStatus {
+                    Pill(text: status, color: .secondary).lineLimit(1)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(document.path)
+    }
+}
+
+/// Issues and PRs a document names that the issue history hasn't got,
+/// looked up by number for their title, state and ID, so they show and open
+/// as any other. Kept for the launch.
+@Observable
+final class HarnessReferences {
+    static let shared = HarnessReferences()
+
+    struct Item {
+        let id: String
+        let title: String
+        let url: URL
+        let isPullRequest: Bool
+        /// `OPEN`, `CLOSED` or `MERGED`.
+        let state: String
+        let notPlanned: Bool
+
+        /// As the issue history's dots: open green, done purple, the rest grey.
+        var color: Color {
+            switch state {
+            case "OPEN": .green
+            case "MERGED": .purple
+            default: isPullRequest || notPlanned ? .secondary : .purple
+            }
+        }
+    }
+
+    private(set) var items: [String: Item] = [:]
+    @ObservationIgnored private var asked: Set<String> = []
+
+    func item(repo: String, number: Int) -> Item? { items["\(repo)#\(number)"] }
+
+    /// Looks it up once a launch.
+    func resolve(repo: String, number: Int, auth: AuthStore) async {
+        let key = "\(repo)#\(number)"
+        guard !asked.contains(key), let api = auth.api else { return }
+        asked.insert(key)
+        if let item = try? await api.issueOrPullRequest(repo: repo, number: number) {
+            items[key] = item
+        }
+    }
+
+    /// In a drawer once looked up; GitHub if it can't be.
+    func open(repo: String, number: Int, org: String, auth: AuthStore, navigate: NavigateAction?, openURL: OpenURLAction) async {
+        await resolve(repo: repo, number: number, auth: auth)
+        if let item = item(repo: repo, number: number), let navigate {
+            navigate(item.isPullRequest
+                ? .pullRequestReference(PullRequestReference(org: org, id: item.id, number: number, title: item.title, repo: repo, url: item.url))
+                : .issueReference(IssueReference(org: org, id: item.id, number: number, title: item.title, repo: repo, url: item.url)))
         } else if let url = URL(string: "https://github.com/\(repo)/issues/\(number)") {
             openURL(url)
         }
@@ -862,12 +923,14 @@ enum HarnessReferences {
 
 extension GitHubAPI {
     /// The issue or PR with this number in the repo: its node ID, title and URL.
-    func issueOrPullRequest(repo: String, number: Int) async throws -> (id: String, title: String, url: URL, isPullRequest: Bool)? {
+    func issueOrPullRequest(repo: String, number: Int) async throws -> HarnessReferences.Item? {
         struct Item: Decodable {
             let __typename: String
             let id: String
             let title: String
             let url: URL
+            let state: String
+            let stateReason: String?
         }
         struct Response: Decodable {
             struct Repository: Decodable { let issueOrPullRequest: Item? }
@@ -880,13 +943,15 @@ extension GitHubAPI {
               repository(owner: $owner, name: $name) {
                 issueOrPullRequest(number: $number) {
                   __typename
-                  ... on Issue { id title url }
-                  ... on PullRequest { id title url }
+                  ... on Issue { id title url state stateReason }
+                  ... on PullRequest { id title url state }
                 }
               }
             }
             """, values: ["owner": parts[0], "name": parts[1], "number": number])
-        return response.repository?.issueOrPullRequest.map { ($0.id, $0.title, $0.url, $0.__typename == "PullRequest") }
+        return response.repository?.issueOrPullRequest.map {
+            HarnessReferences.Item(id: $0.id, title: $0.title, url: $0.url, isPullRequest: $0.__typename == "PullRequest", state: $0.state, notPlanned: $0.stateReason == "NOT_PLANNED")
+        }
     }
 }
 
