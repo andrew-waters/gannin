@@ -21,7 +21,7 @@ struct MeasurableEditor: View {
         let members = (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
         Form {
             Section {
-                Picker("Measures", selection: Binding(get: { draft.metric }, set: pick)) {
+                Picker("Measures", selection: Binding(get: { draft.metric }, set: { pick($0) })) {
                     Text("A number entered by hand").tag(ScorecardMetric?.none)
                     Divider()
                     ForEach(ScorecardMetric.allCases) { Text($0.title).tag(Optional($0)) }

@@ -560,7 +560,7 @@ struct ScorecardView: View {
             .help("Each cadence has its own measurables and targets")
         }
         ToolbarItem {
-            Picker("Range", selection: Binding(get: { range }, set: setRange)) {
+            Picker("Range", selection: Binding(get: { range }, set: { setRange($0) })) {
                 ForEach(cadence.ranges, id: \.self) { Text(cadence.rangeTitle($0)).tag($0) }
             }
             .fixedSize()
