@@ -60,11 +60,11 @@ final class HarnessStore {
         let loaded = harnesses.compactMap { index(for: org, $0) }
         guard let first = loaded.first else { return nil }
         guard loaded.count > 1 else { return first }
-        let key = loaded.map { "\($0.repo)@\($0.commit)@\($0.fetchedAt.timeIntervalSince1970)" }.joined(separator: ",")
-        if let cached = combinedCache[org], cached.key == key { return cached.index }
-        let index = first.combined(with: Array(loaded.dropFirst()))
-        combinedCache[org] = (key, index)
-        return index
+        let cacheKey = loaded.map { "\($0.repo)@\($0.commit)@\($0.fetchedAt.timeIntervalSince1970)" }.joined(separator: ",")
+        if let cached = combinedCache[org], cached.key == cacheKey { return cached.index }
+        let merged = first.combined(with: Array(loaded.dropFirst()))
+        combinedCache[org] = (cacheKey, merged)
+        return merged
     }
 
     /// From disk at once, then from GitHub when stale (or `force`). The
