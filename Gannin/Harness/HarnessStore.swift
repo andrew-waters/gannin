@@ -32,8 +32,8 @@ final class HarnessStore {
                 // `org@owner~name.json`, or `org.json` from when an org had one.
                 let name = file.deletingPathExtension().lastPathComponent
                 let org = name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name
-                let key = Self.key(org, index.repo)
-                if indexes[key] == nil || name.contains("@") { indexes[key] = index }
+                let indexKey = Self.key(org, index.repo)
+                if indexes[indexKey] == nil || name.contains("@") { indexes[indexKey] = index }
             }
         }
     }
@@ -72,15 +72,15 @@ final class HarnessStore {
     /// redraws once a harness is picked) mustn't cancel it half done, and a
     /// second caller waits on the fetch already running.
     func load(org: String, setup: HarnessConfig, force: Bool = false) async {
-        let key = Self.key(org, setup.repo)
+        let indexKey = Self.key(org, setup.repo)
         loadCached(org, repo: setup.repo)
         if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge { return }
-        if let running = fetches[key] {
+        if let running = fetches[indexKey] {
             await running.value
             // A forced fetch (after a commit, say) wants what's there now,
             // which the running one may have started before.
             guard force else { return }
-            if let again = fetches[key] {
+            if let again = fetches[indexKey] {
                 await again.value
                 return
             }
@@ -88,24 +88,24 @@ final class HarnessStore {
         guard let api = auth.api else { return }
         // Unchanged blobs are kept from whatever was indexed before, even
         // another branch.
-        let previous = indexes[key]
-        loading.insert(key)
+        let previous = indexes[indexKey]
+        loading.insert(indexKey)
         let task = Task {
             defer {
-                loading.remove(key)
-                fetches[key] = nil
+                loading.remove(indexKey)
+                fetches[indexKey] = nil
             }
             do {
-                indexes[key] = try await Self.fetch(setup: setup, previous: previous, api: api)
-                errors[key] = nil
+                indexes[indexKey] = try await Self.fetch(setup: setup, previous: previous, api: api)
+                errors[indexKey] = nil
                 save(org, repo: setup.repo)
             } catch APIError.unauthorized {
                 auth.signOut()
             } catch {
-                errors[key] = error.localizedDescription
+                errors[indexKey] = error.localizedDescription
             }
         }
-        fetches[key] = task
+        fetches[indexKey] = task
         await task.value
     }
 
@@ -207,11 +207,11 @@ final class HarnessStore {
     }
 
     private func loadCached(_ org: String, repo: String) {
-        let key = Self.key(org, repo)
-        guard indexes[key] == nil,
+        let indexKey = Self.key(org, repo)
+        guard indexes[indexKey] == nil,
               let data = try? Data(contentsOf: Self.fileURL(org, repo: repo)),
               let index = try? Self.decoder.decode(HarnessIndex.self, from: data) else { return }
-        indexes[key] = index
+        indexes[indexKey] = index
     }
 
     private func save(_ org: String, repo: String) {

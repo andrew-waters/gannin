@@ -78,10 +78,7 @@ struct EpicsView: View {
             let text = "\(issue.title) \(issue.repo) \(issue.number)".lowercased()
             guard words.allSatisfy({ text.contains($0) }) else { return nil }
             let everything = [issue] + kids
-            let moments = everything.flatMap { record in
-                record.statusChanges.map(\.at) + [record.closedAt, record.createdAt].compactMap { $0 }
-                    + record.linkedPullRequests.flatMap { $0.activityAt + [$0.createdAt] + [$0.mergedAt].compactMap { $0 } }
-            }
+            let moments = everything.flatMap(Self.moments)
             let inProgress = kids.filter { kid in
                 kid.isOpen && (kid.statusChanges.last.map { workflow.isInProgress($0.status) } ?? false)
             }.count
@@ -93,6 +90,20 @@ struct EpicsView: View {
             )
         }
         .sorted { ($0.issue.isOpen ? 0 : 1, -$0.lastMoved.timeIntervalSince1970) < ($1.issue.isOpen ? 0 : 1, -$1.lastMoved.timeIntervalSince1970) }
+    }
+
+    /// When an issue last moved: board moves, opening and closing, and its
+    /// PRs' activity.
+    private static func moments(_ record: IssueRecord) -> [Date] {
+        var dates: [Date] = record.statusChanges.map(\.at)
+        dates.append(record.createdAt)
+        if let closed = record.closedAt { dates.append(closed) }
+        for pr in record.linkedPullRequests {
+            dates += pr.activityAt
+            dates.append(pr.createdAt)
+            if let merged = pr.mergedAt { dates.append(merged) }
+        }
+        return dates
     }
 
     private func epicRow(_ epic: Epic) -> some View {
