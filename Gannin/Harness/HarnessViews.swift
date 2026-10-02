@@ -401,6 +401,8 @@ struct HarnessDocumentPage: View {
     var onClose: (() -> Void)? = nil
 
     @State private var width: CGFloat = 1000
+    @State private var draftingIssues = false
+    @State private var planning = false
     /// Folded sections, by index.
     @State private var folded: Set<Int> = []
     @AppStorage("harnessReadingSize") private var size: Double = 14
@@ -416,6 +418,14 @@ struct HarnessDocumentPage: View {
                 ScrollViewReader { proxy in
                     VStack(spacing: 0) {
                         header(document, index: index, sections: sections, proxy: proxy)
+                            #if os(macOS)
+                            .sheet(isPresented: $draftingIssues) {
+                                DraftIssuesSheet(org: org, document: document, index: index)
+                            }
+                            .sheet(isPresented: $planning) {
+                                NewPlanningSheet(org: org, documentPath: document.path, topic: document.title)
+                            }
+                            #endif
                         Divider()
                         if width >= 900 {
                             HStack(spacing: 0) {
@@ -461,6 +471,14 @@ struct HarnessDocumentPage: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
+            #if os(macOS)
+            if document.kind == .plans || document.kind == .requirements {
+                Button("Draft Issues") { draftingIssues = true }
+                    .help("Claude breaks it into issues for you to edit, then makes them on GitHub")
+            }
+            Button("Plan with Claude") { planning = true }
+                .help("Start a planning session in the harness from this document")
+            #endif
             if onClose != nil, let openAsPage {
                 Button("Open as Page") {
                     onClose?()

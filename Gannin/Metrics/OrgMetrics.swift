@@ -165,11 +165,85 @@ nonisolated struct RepoMetrics: Identifiable, Hashable {
     var id: String { repo }
 }
 
+/// The headline numbers for a span, to compare the window with the period
+/// before it.
+struct DeliverySummary: Hashable {
+    let merged: Int
+    let cycleTime: DurationStat
+    let timeToFirstReview: DurationStat
+    let stages: [CycleStage: StageSummary]
+    let reworkShare: Double?
+    let unreviewedShare: Double?
+    let prSizeMedian: Int?
+    let answeredShare: Double?
+    let opened: Int?
+    /// By repo and by author, for explaining a change.
+    let repos: [String: (count: Int, cycleTime: TimeInterval?)]
+    let authors: [String: (count: Int, cycleTime: TimeInterval?)]
+
+    static func == (lhs: DeliverySummary, rhs: DeliverySummary) -> Bool {
+        lhs.merged == rhs.merged && lhs.cycleTime == rhs.cycleTime && lhs.timeToFirstReview == rhs.timeToFirstReview
+    }
+
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(merged)
+        hasher.combine(cycleTime)
+    }
+}
+
+/// PR sizes in a span: lines added and deleted.
+struct SizeStat: Hashable {
+    /// Lines changed above which a PR counts as large.
+    static let largeLines = 400
+
+    let median: Int?
+    let p75: Int?
+    /// Large PRs, biggest first.
+    let large: [MetricPullRequest]
+
+    init(_ prs: [MetricPullRequest]) {
+        let sizes = prs.map(\.size).sorted()
+        median = sizes.isEmpty ? nil : sizes[sizes.count / 2]
+        p75 = sizes.isEmpty ? nil : sizes[min(sizes.count - 1, sizes.count * 3 / 4)]
+        large = prs.filter { $0.size > Self.largeLines }.sorted { $0.size > $1.size }
+    }
+}
+
+extension MetricPullRequest {
+    var size: Int { additions + deletions }
+
+    /// A large PR approved quickly with no changes asked for, or merged
+    /// without review: more change than its review could have covered.
+    var isRushed: Bool {
+        guard size > SizeStat.largeLines else { return false }
+        guard let first = firstReviewAt else { return true }
+        let quick = first.timeIntervalSince(reviewableAt) < 15 * 60
+        let approvedFirst = reviewsBeforeMerge.first?.state == "APPROVED"
+        return quick && approvedFirst
+    }
+}
+
+/// A repo's large PRs and how many were rushed through review.
+struct RepoRisk: Identifiable, Hashable {
+    let repo: String
+    let large: Int
+    let rushed: [MetricPullRequest]
+    let medianSize: Int
+
+    var id: String { repo }
+}
+
 /// Metrics for one window over an org's merged-PR history, optionally
 /// scoped to a team. Bot-authored PRs are left out.
 struct OrgMetrics {
-    let windowDays: Int
+    let window: MetricsWindow
+    let interval: DateInterval
     let windowStart: Date
+    /// The period before, when the history reaches back that far.
+    let previous: DeliverySummary?
+    let prSize: SizeStat
+    let repoRisks: [RepoRisk]
+    let answeredShare: Double?
     let syncedAt: Date
     let merged: [MetricPullRequest]
     /// PRs opened across the org; search can't scope this to a team.
@@ -193,7 +267,7 @@ struct OrgMetrics {
 
     init(
         history: MetricsHistory,
-        windowDays: Int,
+        window: MetricsWindow,
         team: Team?,
         members: [Person],
         hidden: Set<String>,
@@ -201,8 +275,12 @@ struct OrgMetrics {
         openPullRequests: [PullRequest] = [],
         now: Date = .now
     ) {
-        let windowStart = Calendar.metrics.date(byAdding: .day, value: -windowDays, to: now) ?? now
-        self.windowDays = windowDays
+        let interval = window.interval(now: now)
+        let previousInterval = window.previous(now: now)
+        let windowStart = interval.start
+        let now = interval.end
+        self.window = window
+        self.interval = interval
         self.windowStart = windowStart
         syncedAt = history.syncedAt
         isTeamScoped = team != nil
@@ -213,12 +291,13 @@ struct OrgMetrics {
             return login.map(teamLogins.contains) ?? false
         }
 
-        let coverageStart = MetricsStore.coverageStart(windowDays: windowDays, now: now)
+        let coverageStart = Calendar.metrics.startOfWeek(for: windowStart)
         // Excluded authors lose their PRs and their reviews, so a review by
         // an excluded account never counts as a PR's first review.
-        let inRange = history.pullRequests.values
+        let considered = history.pullRequests.values
             .filter {
-                !$0.authorIsBot && !hidden.contains($0.id) && $0.mergedAt >= coverageStart
+                !$0.authorIsBot && !hidden.contains($0.id) && $0.mergedAt >= min(coverageStart, previousInterval.start)
+                    && $0.mergedAt < now
                     && !config.excludedRepos.contains($0.repo)
                     && !config.excludes($0.author?.login ?? "")
             }
@@ -228,6 +307,7 @@ struct OrgMetrics {
                 pr.reviewRequests.removeAll { config.excludes($0.login) }
                 return pr
             }
+        let inRange = considered.filter { $0.mergedAt >= coverageStart }
         let merged = inRange
             .filter { $0.mergedAt >= windowStart && inTeam($0.author?.login) }
             .sorted { $0.mergedAt > $1.mergedAt }
@@ -237,7 +317,7 @@ struct OrgMetrics {
         byID = Dictionary(coverage.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         opened = history.openedPerWeek
-            .filter { $0.key >= Calendar.metrics.startOfWeek(for: windowStart) }
+            .filter { $0.key >= Calendar.metrics.startOfWeek(for: windowStart) && $0.key < now }
             .map(\.value)
             .reduce(0, +)
         cycleTime = DurationStat(merged.map(\.cycleTime))
@@ -340,6 +420,71 @@ struct OrgMetrics {
         repos = Dictionary(grouping: merged, by: \.repo)
             .map { RepoMetrics(repo: $0.key, merged: $0.value.count, cycleTime: DurationStat($0.value.map(\.cycleTime))) }
             .sorted { ($0.merged, $1.repo) > ($1.merged, $0.repo) }
+
+        prSize = SizeStat(merged)
+        repoRisks = Dictionary(grouping: merged.filter { $0.size > SizeStat.largeLines }, by: \.repo)
+            .map { repo, large in
+                let sizes = (merged.filter { $0.repo == repo }.map(\.size)).sorted()
+                return RepoRisk(repo: repo, large: large.count, rushed: large.filter(\.isRushed), medianSize: sizes.isEmpty ? 0 : sizes[sizes.count / 2])
+            }
+            .sorted { ($0.rushed.count, $0.large) > ($1.rushed.count, $1.large) }
+        answeredShare = outcomes.isEmpty ? nil : Double(outcomes.filter { $0.respondedAt != nil }.count) / Double(outcomes.count)
+
+        // The period before, from what the history holds, when it reaches
+        // back that far.
+        if history.coveredFrom <= previousInterval.start {
+            let before = considered.filter { previousInterval.contains($0.mergedAt) && $0.mergedAt < previousInterval.end && inTeam($0.author?.login) }
+            var requests = 0
+            var answered = 0
+            for pr in considered where previousInterval.contains(pr.mergedAt) {
+                for request in pr.reviewRequests where inTeam(request.login) {
+                    let deadline = request.removedAt ?? pr.mergedAt
+                    let response = pr.reviews.first { $0.login == request.login && $0.submittedAt >= request.requestedAt && $0.submittedAt <= deadline }
+                    if response == nil && request.removedAt != nil { continue }
+                    requests += 1
+                    if response != nil { answered += 1 }
+                }
+            }
+            let rework = StageSummary(before.compactMap { $0.duration(of: .rework) })
+            let sizes = before.map(\.size).sorted()
+            func breakdown(_ key: (MetricPullRequest) -> String) -> [String: (count: Int, cycleTime: TimeInterval?)] {
+                Dictionary(grouping: before, by: key).mapValues { ($0.count, DurationStat($0.map(\.cycleTime)).median) }
+            }
+            previous = DeliverySummary(
+                merged: before.count,
+                cycleTime: DurationStat(before.map(\.cycleTime)),
+                timeToFirstReview: DurationStat(before.compactMap(\.timeToFirstReview)),
+                stages: Dictionary(uniqueKeysWithValues: CycleStage.allCases.map { stage in
+                    (stage, StageSummary(before.compactMap { $0.duration(of: stage) }))
+                }),
+                reworkShare: before.isEmpty ? nil : rework.share,
+                unreviewedShare: before.isEmpty ? nil : Double(before.filter { $0.firstReviewAt == nil && config.needsReview($0.repo) }.count) / Double(before.count),
+                prSizeMedian: sizes.isEmpty ? nil : sizes[sizes.count / 2],
+                answeredShare: requests == 0 ? nil : Double(answered) / Double(requests),
+                opened: {
+                    let weeks = history.openedPerWeek.filter { $0.key >= Calendar.metrics.startOfWeek(for: previousInterval.start) && $0.key < Calendar.metrics.startOfWeek(for: windowStart) }
+                    return weeks.isEmpty ? nil : weeks.values.reduce(0, +)
+                }(),
+                repos: breakdown(\.repo),
+                authors: breakdown { $0.author?.login ?? "" }
+            )
+        } else {
+            previous = nil
+        }
+    }
+
+    /// Now, as the summary for comparing with `previous`.
+    var current: DeliverySummary {
+        func breakdown(_ key: (MetricPullRequest) -> String) -> [String: (count: Int, cycleTime: TimeInterval?)] {
+            Dictionary(grouping: merged, by: key).mapValues { ($0.count, DurationStat($0.map(\.cycleTime)).median) }
+        }
+        return DeliverySummary(
+            merged: merged.count, cycleTime: cycleTime, timeToFirstReview: timeToFirstReview, stages: stages,
+            reworkShare: merged.isEmpty ? nil : stages[.rework]?.share,
+            unreviewedShare: merged.isEmpty ? nil : Double(mergedWithoutReview.count) / Double(merged.count),
+            prSizeMedian: prSize.median, answeredShare: answeredShare, opened: opened,
+            repos: breakdown(\.repo), authors: breakdown { $0.author?.login ?? "" }
+        )
     }
 
     func pullRequest(id: String) -> MetricPullRequest? { byID[id] }

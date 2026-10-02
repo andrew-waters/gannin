@@ -41,6 +41,14 @@ struct OrgWorkloadView: View {
                 #if os(macOS)
                 AgentsPage(org: org)
                 #endif
+            } else if tab == .ask {
+                #if os(macOS)
+                AskOrgPage(org: org, workload: workload)
+                #endif
+            } else if tab == .epics {
+                EpicsView(org: org)
+            } else if tab == .hygiene {
+                BoardHygieneView(org: org)
             } else if tab == .prioritisation, let workload {
                 PrioritisationView(org: org, workload: workload, selection: $selection)
             } else if tab == .views {
@@ -57,7 +65,7 @@ struct OrgWorkloadView: View {
                 } else {
                     ProjectsLandingView(org: org) { project = $0 }
                 }
-            } else if tab == .inbox || tab == .investments || tab == .pullRequests || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || tab == .issues, let workload {
+            } else if tab == .inbox || tab == .delivery || tab == .issueFlow || tab == .investments || tab == .pullRequests || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || tab == .issues, let workload {
                 // Investments, the people and repo stats pages, Pull
                 // Requests and every issue page: no counts bar.
                 list(workload)
@@ -84,7 +92,7 @@ struct OrgWorkloadView: View {
                 await projects.loadDefinition(org: org, number: number)
             }
         }
-        .task(id: windowDays) { await metricsStore.sync(org, windowDays: windowDays) }
+        .task(id: windowDays) { await metricsStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
     }
 
     @ViewBuilder
@@ -110,14 +118,14 @@ struct OrgWorkloadView: View {
     /// The counts on the list pages, and any refresh error or warning.
     /// Exclude Drafts and Show Hidden are in Settings.
     private var hasHeader: Bool {
-        (workload != nil && tab != .dashboard && tab != .people)
+        (workload != nil && tab != .dashboard && tab != .delivery && tab != .issueFlow && tab != .people)
             || (orgs.errors[org] != nil && workload != nil)
             || !(workload?.snapshot.warnings ?? []).isEmpty
     }
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let workload, tab != .dashboard, tab != .people {
+            if let workload, tab != .dashboard, tab != .delivery, tab != .issueFlow, tab != .people {
                 summary(workload)
             }
             if let error = orgs.errors[org], workload != nil {
@@ -152,21 +160,15 @@ struct OrgWorkloadView: View {
     private var hasWindowPicker: Bool {
         switch tab {
         // Investments has its own range.
-        case .dashboard, .actions: true
+        case .dashboard, .delivery, .issueFlow, .actions: true
         case .people: person == nil && peopleView == nil
         case .repositories: repository == nil
-        case .issues: issueList == nil
         default: false
         }
     }
 
     private var windowPicker: some View {
-        Picker("Window", selection: $windowDays) {
-            ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .fixedSize()
-        .help("Window for the delivery and people stats")
+        MetricsWindowPicker(code: $windowDays)
     }
 
     // MARK: Lists
@@ -178,20 +180,23 @@ struct OrgWorkloadView: View {
             InboxView(org: org, workload: workload)
         case .dashboard:
             OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
+        case .delivery:
+            OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection, part: .delivery)
+        case .issueFlow:
+            IssuesStatsView(org: org, workload: workload, selection: $selection)
         case .people: personView(workload)
         case .pullRequests: PullRequestsView(workload: workload, selection: $selection)
         case .issues:
             if issueList == .notOnBoard {
                 OffBoardIssuesView(org: org, team: workload.team)
-            } else if issueList == .all {
-                OpenIssuesView(org: org, workload: workload, selection: $selection)
             } else {
-                IssuesStatsView(org: org, workload: workload, selection: $selection)
+                // The Issues row itself is every issue, as All is.
+                OpenIssuesView(org: org, workload: workload, selection: $selection)
             }
         case .repositories: repositoryView(workload)
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
-        case .projects, .actions, .harness, .views, .prioritisation, .agents, .settings: EmptyView()
+        case .projects, .actions, .harness, .views, .prioritisation, .agents, .ask, .epics, .hygiene, .settings: EmptyView()
         }
     }
 

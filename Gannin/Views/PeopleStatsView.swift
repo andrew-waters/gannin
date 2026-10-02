@@ -28,12 +28,12 @@ struct PeopleStatsView: View {
                         } else if store.syncing.contains(org) {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
-                                Text("Fetching merged PRs for the last \(windowDays) days. The first sync of a large org can take a minute.")
+                                Text("Fetching merged PRs for \(MetricsWindow(code: windowDays).span). The first sync of a large org can take a minute.")
                                     .foregroundStyle(.secondary)
                             }
                         } else if let error = store.errors[org] {
                             Banner(message: "Metrics sync failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
-                                Task { await store.sync(org, windowDays: windowDays, force: true) }
+                                Task { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true) }
                             }
                         } else {
                             Text("No metrics yet.").foregroundStyle(.secondary)
@@ -73,7 +73,7 @@ struct RepositoryStatsView: View {
                         } else if store.syncing.contains(org) {
                             HStack(spacing: 8) {
                                 ProgressView().controlSize(.small)
-                                Text("Fetching merged PRs for the last \(windowDays) days.").foregroundStyle(.secondary)
+                                Text("Fetching merged PRs for \(MetricsWindow(code: windowDays).span).").foregroundStyle(.secondary)
                             }
                         } else {
                             Text("No metrics yet.").foregroundStyle(.secondary)

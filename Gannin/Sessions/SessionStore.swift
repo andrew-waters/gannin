@@ -53,6 +53,14 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// The PR a review session reviews; `issue` then names the PR, so tabs
     /// and rows read the same.
     var reviewOf: PullRequestReference? = nil
+    /// A planning session's topic and shared documents.
+    var planning: PlanningInfo? = nil
+    /// A review's result, kept from its transcript so it can be read again
+    /// without starting claude; and what you made of it.
+    var reviewResult: SessionTranscript.ReviewResult? = nil
+    var reviewDraft: ReviewDraft? = nil
+    /// Finished: in the history, its claude ended and worktrees gone.
+    var archivedAt: Date? = nil
 
     var isRemote: Bool { connect != nil }
     var isHelper: Bool { parentID != nil }
@@ -95,6 +103,10 @@ extension CodeSession {
         isReviewer = try container.decodeIfPresent(Bool.self, forKey: .isReviewer) ?? false
         lastActiveAt = try container.decodeIfPresent(Date.self, forKey: .lastActiveAt)
         reviewOf = try container.decodeIfPresent(PullRequestReference.self, forKey: .reviewOf)
+        planning = try container.decodeIfPresent(PlanningInfo.self, forKey: .planning)
+        reviewResult = try container.decodeIfPresent(SessionTranscript.ReviewResult.self, forKey: .reviewResult)
+        reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
+        archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
     }
 }
 
@@ -264,8 +276,18 @@ final class SessionStore {
     /// Review comments and checks already sent to a session's claude, by
     /// their URL, so they aren't offered again. For this launch only.
     private(set) var sent: [UUID: Set<String>] = [:]
-    /// What you've made of a review's findings, and comments of your own.
-    var reviewDrafts: [UUID: ReviewDraft] = [:]
+    /// What you've made of a review's findings, and comments of your own;
+    /// kept with the session.
+    var reviewDrafts: [UUID: ReviewDraft] = [:] {
+        didSet {
+            var changed = false
+            for (id, draft) in reviewDrafts where sessions[id] != nil && sessions[id]?.reviewDraft != draft {
+                sessions[id]?.reviewDraft = draft
+                changed = true
+            }
+            if changed { save() }
+        }
+    }
     private(set) var states: [UUID: SessionState] = [:]
     /// Bumped each time a session's hooks say claude edited a file or ran
     /// a command, so its Changes pane reads them again.
@@ -315,6 +337,7 @@ final class SessionStore {
                 return (session.id, session)
             })
         }
+        reviewDrafts = sessions.compactMapValues(\.reviewDraft)
         tabs = (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? [])
             .compactMap(UUID.init(uuidString:))
             .filter { sessions[$0] != nil }
@@ -368,7 +391,7 @@ final class SessionStore {
 
     /// The issue's own session, not a helper's or a review's.
     func session(forIssue id: String) -> CodeSession? {
-        sessions.values.first { $0.issue.id == id && !$0.isHelper && !$0.isPullRequestReview }
+        sessions.values.first { $0.issue.id == id && !$0.isHelper && !$0.isPullRequestReview && $0.planning == nil }
     }
 
     /// The review of a PR, by its node ID.
@@ -640,7 +663,13 @@ final class SessionStore {
             UNNotificationAction(identifier: "keys:" + reply.keys, title: reply.title, options: reply.isDestructive ? [.destructive] : [])
         }
         notificationCategories[identifier] = UNNotificationCategory(identifier: identifier, actions: actions, intentIdentifiers: [])
-        UNUserNotificationCenter.current().setNotificationCategories(Set(notificationCategories.values))
+        // Categories are app-wide: keep the review watch's.
+        let ours = Set(notificationCategories.values)
+        Task {
+            let center = UNUserNotificationCenter.current()
+            let others = await center.notificationCategories().filter { !$0.identifier.hasPrefix("session.") }
+            center.setNotificationCategories(others.union(ours))
+        }
         return identifier
     }
 
@@ -810,6 +839,11 @@ final class SessionStore {
     private func store(_ reader: TranscriptReader, for id: UUID) {
         readers[id] = reader
         if transcripts[id] != reader.summary { transcripts[id] = reader.summary }
+        // A review's result is kept with it, for the history.
+        if sessions[id]?.isPullRequestReview == true, let review = reader.summary.review, sessions[id]?.reviewResult != review {
+            sessions[id]?.reviewResult = review
+            save()
+        }
     }
 
     /// `~/.claude/projects/<folder>/<id>.jsonl`, whichever folder claude

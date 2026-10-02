@@ -50,7 +50,7 @@ struct OpenIssuesView: View {
                 }
             }
         }
-        .task(id: org) { await store.sync(org, windowDays: windowDays) }
+        .task(id: org) { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
     }
 
     private func noun(_ filters: IssueFilters) -> String {

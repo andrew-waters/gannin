@@ -8,7 +8,7 @@ struct SessionOverview: View {
     @Environment(SessionStore.self) private var sessions
 
     var body: some View {
-        let all = sessions.sessions.values.sorted { order($0) < order($1) }
+        let all = sessions.sessions.values.filter { $0.archivedAt == nil }.sorted { order($0) < order($1) }
         ScrollView {
             if all.isEmpty {
                 ContentUnavailableView("No sessions", systemImage: "terminal", description: Text("Work on This on an issue starts one."))
@@ -57,7 +57,7 @@ private struct SessionCard: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("#\(session.issue.number) \(session.title)")
+                Text("#\(String(session.issue.number)) \(session.title)")
                     .font(.headline)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)
@@ -89,7 +89,7 @@ private struct SessionCard: View {
                     }
                     ForEach(pullRequests) { pr in
                         let failing = pr.state == "OPEN" && !pr.failed.isEmpty
-                        Label("#\(pr.number)", systemImage: failing ? "xmark.circle.fill" : pr.state == "MERGED" ? "arrow.triangle.merge" : "arrow.triangle.pull")
+                        Label("#\(String(pr.number))", systemImage: failing ? "xmark.circle.fill" : pr.state == "MERGED" ? "arrow.triangle.merge" : "arrow.triangle.pull")
                             .foregroundStyle(failing ? ChartPalette.critical : pr.stateColor)
                             .help("\(pr.repo)#\(pr.number): \(pr.stateLabel)\(failing ? ", checks failing" : "")")
                     }

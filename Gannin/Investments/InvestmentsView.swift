@@ -222,6 +222,7 @@ struct InvestmentsView: View {
                 }
             }
             ShareBar(shares: shares)
+            drift(shares, total: total)
             VStack(spacing: 0) {
                 // Uncategorised only when something is.
                 ForEach(shares.filter { $0.key != .uncategorised || !$0.issues.isEmpty }) { share in
@@ -257,6 +258,32 @@ struct InvestmentsView: View {
         }
     }
 
+    /// More than this many percentage points from a target is drift.
+    static let driftPoints = 0.1
+
+    private func target(_ share: InvestmentBalance.Share) -> Double? {
+        guard case .category(let id) = share.key else { return nil }
+        return configs.config(for: org).investmentConfig.category(id: id)?.target
+    }
+
+    /// Categories more than ten points from their target share.
+    @ViewBuilder
+    private func drift(_ shares: [InvestmentBalance.Share], total: Int) -> some View {
+        let off = shares.compactMap { share -> (String, Int)? in
+            guard total > 0, let target = target(share) else { return nil }
+            let gap = Double(share.issues.count) / Double(total) - target
+            return abs(gap) > Self.driftPoints ? (share.name, Int((gap * 100).rounded())) : nil
+        }
+        if !off.isEmpty {
+            Label {
+                Text("Off target: " + off.map { "\($0.0) \($0.1 > 0 ? "+" : "")\($0.1) points" }.joined(separator: ", "))
+            } icon: {
+                Image(systemName: "scope").foregroundStyle(.orange)
+            }
+            .font(.callout)
+        }
+    }
+
     private func shareRow(_ share: InvestmentBalance.Share, total: Int, balance: InvestmentBalance) -> some View {
         let isSelected = shown == share.key
         return Button {
@@ -274,6 +301,15 @@ struct InvestmentsView: View {
                 Text(total > 0 ? (Double(share.issues.count) / Double(total)).formatted(.percent.precision(.fractionLength(0))) : "-")
                     .monospacedDigit()
                     .frame(width: 48, alignment: .trailing)
+                if let target = target(share) {
+                    let gap = total > 0 ? Double(share.issues.count) / Double(total) - target : 0
+                    Text("target \(target.formatted(.percent.precision(.fractionLength(0))))")
+                        .font(.callout)
+                        .foregroundStyle(abs(gap) > Self.driftPoints ? Color.orange : .secondary)
+                        .monospacedDigit()
+                        .frame(width: 90, alignment: .trailing)
+                        .help(abs(gap) > Self.driftPoints ? "\(Int((gap * 100).rounded()) > 0 ? "+" : "")\(Int((gap * 100).rounded())) points from its target" : "Within \(Int(Self.driftPoints * 100)) points of its target")
+                }
                 Image(systemName: isSelected ? "chevron.down" : "chevron.right")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.tertiary)

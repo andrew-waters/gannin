@@ -15,7 +15,7 @@ struct IssueWorkflowSection: View {
 
     var body: some View {
         let workflow = configs.config(for: org).workflow
-        let metrics = store.history(for: org).map { IssueMetrics(history: $0, windowDays: windowDays, team: nil, config: configs.config(for: org)) }
+        let metrics = store.history(for: org).map { IssueMetrics(history: $0, window: MetricsWindow(code: windowDays), team: nil, config: configs.config(for: org)) }
         let seen = metrics?.statusesSeen ?? []
         let options = workflow.projectNumber.flatMap { projects.cache(org: org, number: $0)?.board.field(named: "Status")?.options } ?? []
         let statuses = statuses(options: options, seen: seen, workflow: workflow)

@@ -4,10 +4,59 @@ import SwiftUI
 /// A point raised in the prioritisation meeting that isn't in GitHub yet:
 /// something CS heard from the field. Kept until it's dealt with.
 struct FieldNote: Codable, Identifiable, Hashable {
+    enum Kind: String, Codable, CaseIterable {
+        case bug = "Bug"
+        case request = "Request"
+        case question = "Question"
+        case feedback = "Feedback"
+
+        var systemImage: String {
+            switch self {
+            case .bug: "ladybug"
+            case .request: "lightbulb"
+            case .question: "questionmark.circle"
+            case .feedback: "bubble.left"
+            }
+        }
+    }
+
+    enum Urgency: String, Codable, CaseIterable, Comparable {
+        case urgent = "Urgent"
+        case soon = "Soon"
+        case whenever = "Whenever"
+
+        var rank: Int { Self.allCases.firstIndex(of: self) ?? 0 }
+        static func < (a: Urgency, b: Urgency) -> Bool { a.rank < b.rank }
+
+        var color: Color {
+            switch self {
+            case .urgent: ChartPalette.critical
+            case .soon: ChartPalette.warning
+            case .whenever: .secondary
+            }
+        }
+    }
+
+    /// An issue the note's dealt with in, linked by hand or raised from it.
+    struct LinkedIssue: Codable, Hashable {
+        let id: String
+        let repo: String
+        let number: Int
+        let title: String
+        let url: URL
+    }
+
     var id = UUID()
     var text: String
     var raisedAt: Date
     var doneAt: Date?
+    /// Who raised it ("Sam"), the customer it's about, what kind of thing
+    /// and how soon: all optional, so notes from before load.
+    var from: String?
+    var customer: String?
+    var kind: Kind?
+    var urgency: Urgency?
+    var issue: LinkedIssue?
 }
 
 /// What's been heard from the field, per org, on this Mac.
@@ -29,6 +78,24 @@ final class FieldNotesStore {
         guard !text.isEmpty else { return }
         notes[org, default: []].append(FieldNote(text: text, raisedAt: .now))
         save()
+    }
+
+    func add(_ note: FieldNote, in org: String) {
+        guard !note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        notes[org, default: []].append(note)
+        save()
+    }
+
+    func update(_ id: UUID, in org: String, _ change: (inout FieldNote) -> Void) {
+        guard let index = notes[org]?.firstIndex(where: { $0.id == id }) else { return }
+        change(&notes[org]![index])
+        save()
+    }
+
+    /// Customers named before, most used first, for suggestions.
+    func customers(in org: String) -> [String] {
+        let counts = Dictionary(grouping: notes(for: org).compactMap { $0.customer?.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }, by: { $0 })
+        return counts.sorted { $0.value.count > $1.value.count }.map(\.key)
     }
 
     func setDone(_ id: UUID, _ isDone: Bool, in org: String) {
@@ -65,9 +132,11 @@ struct PrioritisationView: View {
 
     /// The board's date field that says an issue's committed to.
     @AppStorage private var dateField: String
-    @State private var note = ""
+    @State private var triaging: [IssueRecord]?
+    /// On screen in the meeting: the summary larger, capture and search
+    /// put away.
+    @AppStorage("prioritisationPresenting") private var presenting = false
     @State private var search = ""
-    @FocusState private var isNoting: Bool
 
     init(org: String, workload: Workload, selection: Binding<DetailSelection?>) {
         self.org = org
@@ -79,14 +148,42 @@ struct PrioritisationView: View {
     var body: some View {
         let workflow = configs.config(for: org).workflow
         VStack(spacing: 0) {
-            bar(board: workflow.projectNumber)
-            Divider()
+            if !presenting {
+                bar(board: workflow.projectNumber)
+                Divider()
+            }
             if let board = workflow.projectNumber {
-                List(selection: $selection) {
-                    triage(board: board)
-                    field
-                    committed(board: board)
+                #if os(macOS)
+                HSplitView {
+                    List(selection: $selection) {
+                        Section {
+                            PrioritisationOverview(org: org, workload: workload, board: board, dateField: dateField, presenting: presenting, selection: $selection)
+                                .listRowSeparator(.hidden)
+                        }
+                        triage(board: board)
+                        committed(board: board)
+                    }
+                    .frame(minWidth: 420, maxWidth: .infinity)
+                    if !presenting {
+                        FieldCapturePanel(org: org, workload: workload, selection: $selection)
+                            .frame(minWidth: 340, idealWidth: 440, maxWidth: 640)
+                    }
                 }
+                #else
+                VStack(spacing: 0) {
+                    FieldCapturePanel(org: org, workload: workload, selection: $selection)
+                        .frame(maxHeight: 420)
+                    Divider()
+                    List(selection: $selection) {
+                        Section {
+                            PrioritisationOverview(org: org, workload: workload, board: board, dateField: dateField, presenting: presenting, selection: $selection)
+                                .listRowSeparator(.hidden)
+                        }
+                        triage(board: board)
+                        committed(board: board)
+                    }
+                }
+                #endif
             } else {
                 ContentUnavailableView(
                     "No board",
@@ -95,14 +192,30 @@ struct PrioritisationView: View {
                 )
             }
         }
-        .task(id: org) { await issueStore.sync(org, windowDays: windowDays) }
+        .toolbar {
+            ToolbarItem {
+                Toggle(isOn: $presenting) {
+                    Label("Present", systemImage: "rectangle.on.rectangle")
+                }
+                .help(presenting ? "Back to working: capture and search" : "For sharing on screen: the summary larger, capture and search put away")
+            }
+        }
+        .task(id: org) {
+            await issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays())
+            // Descriptions and comments, for the search.
+            await issueStore.deepSync(org)
+        }
+        #if os(macOS)
+        .sheet(isPresented: Binding(get: { triaging != nil }, set: { if !$0 { triaging = nil } })) {
+            TriageWithClaudeSheet(org: org, issues: triaging ?? [])
+        }
+        #endif
     }
 
     // MARK: Bar
 
     private func bar(board: Int?) -> some View {
         HStack(spacing: 8) {
-            FilterSearchField(text: $search, prompt: "Title, number or person")
             Spacer(minLength: 0)
             if let board {
                 let fields = dateFields(board: board)
@@ -156,13 +269,29 @@ struct PrioritisationView: View {
                 return fields.values["Status"] == nil
             }
             .sorted { $0.createdAt > $1.createdAt }
-        Section(header: SectionHeader(title: "Triage", count: issues.count)) {
+        Section {
             if issues.isEmpty {
                 Text(issueStore.history(for: org) == nil ? "Loading issues." : "Nothing to triage: every open issue has a Status.")
                     .foregroundStyle(.secondary)
             }
             ForEach(issues) { issue in
                 row(issue, detail: issue.fields(onProject: board) == nil ? "Not on the board" : "No status", since: issue.createdAt, sinceLabel: "Opened")
+            }
+        } header: {
+            HStack {
+                SectionHeader(title: "Triage", count: issues.count)
+                Spacer()
+                #if os(macOS)
+                if !issues.isEmpty {
+                    Button {
+                        triaging = Array(issues.prefix(20))
+                    } label: {
+                        Label("Triage", systemImage: "sparkle")
+                    }
+                    .controlSize(.small)
+                    .help("Claude suggests the board fields, investment category and whether it suits an agent, for the newest \(min(issues.count, 20)); you pick what to apply")
+                }
+                #endif
             }
         }
     }
@@ -227,54 +356,5 @@ struct PrioritisationView: View {
             .font(.callout.monospacedDigit())
             .foregroundStyle(color)
             .help(date.formatted(date: .complete, time: .omitted))
-    }
-
-    // MARK: From the field
-
-    /// Points CS raise, ticked off when dealt with. Those still open carry
-    /// over to the next meeting; ticked ones show for the day they're ticked.
-    @ViewBuilder
-    private var field: some View {
-        let today = Calendar.current.startOfDay(for: .now)
-        let notes = fieldNotes.notes(for: org).filter { note in note.doneAt.map { $0 >= today } ?? true }
-        let open = notes.filter { $0.doneAt == nil }.count
-        Section(header: SectionHeader(title: "From the field", count: open)) {
-            HStack(spacing: 8) {
-                TextField("Something heard from the field", text: $note)
-                    .textFieldStyle(.roundedBorder)
-                    .focused($isNoting)
-                    .onSubmit(add)
-                Button("Add", action: add)
-                    .disabled(note.trimmingCharacters(in: .whitespaces).isEmpty)
-            }
-            ForEach(notes) { item in
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Toggle(isOn: Binding(get: { item.doneAt != nil }, set: { fieldNotes.setDone(item.id, $0, in: org) })) {
-                        Text(item.text)
-                            .strikethrough(item.doneAt != nil)
-                            .foregroundStyle(item.doneAt != nil ? .secondary : .primary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                    .checkboxToggle()
-                    Spacer(minLength: 8)
-                    Text(Calendar.current.isDateInToday(item.raisedAt) ? "Today" : item.raisedAt.formatted(.dateTime.day().month(.abbreviated)))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Button {
-                        fieldNotes.remove(item.id, in: org)
-                    } label: {
-                        Image(systemName: "minus.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Remove")
-                }
-            }
-        }
-    }
-
-    private func add() {
-        fieldNotes.add(note, in: org)
-        note = ""
-        isNoting = true
     }
 }

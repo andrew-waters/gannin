@@ -143,6 +143,18 @@ private struct InvestmentCategoryEditor: View {
                 Section {
                     TextField("Name", text: $category.name)
                     TextField("Description", text: $category.details, axis: .vertical)
+                    LabeledContent("Target share") {
+                        HStack(spacing: 4) {
+                            TextField("none", value: Binding(
+                                get: { category.target.map { ($0 * 100).rounded() } },
+                                set: { category.target = $0.flatMap { $0 > 0 ? min($0, 100) / 100 : nil } }
+                            ), format: .number)
+                            .frame(width: 60)
+                            .multilineTextAlignment(.trailing)
+                            Text("%").foregroundStyle(.secondary)
+                        }
+                    }
+                    .help("How much of the work this category should be. The Investments page shows how far each is from its target.")
                     LabeledContent("Colour") {
                         HStack(spacing: 6) {
                             ForEach(0..<InvestmentCategory.slotCount, id: \.self) { slot in

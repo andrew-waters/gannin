@@ -65,6 +65,8 @@ final class SyncRun: Identifiable {
         case metrics = "Metrics"
         case workLog = "Work log"
         case issues = "Issues"
+        /// Issues' descriptions and comments, for search, after the issues.
+        case issueText = "Issue text"
         case projects = "Project"
         case actions = "Actions"
     }

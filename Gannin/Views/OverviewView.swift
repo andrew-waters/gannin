@@ -1,34 +1,67 @@
 import Charts
 import SwiftUI
 
-/// The org landing page: the state of work right now, delivery metrics for
-/// the chosen window, and summaries of investment balance and GitHub
-/// Actions linking to their pages. Every number opens the items behind it.
-/// The breakdowns by person and repo are on People and Repositories.
+/// Two pages. Overview, the org landing page: the state of work right now,
+/// and summaries of delivery, investment balance and CI for the window,
+/// each linking to its page. PR flow (Delivery): the window's delivery
+/// metrics in full, against the period before and the goals. Every number
+/// opens the items behind it. The breakdowns by person and repo are on Team
+/// and Repositories.
 struct OverviewView: View {
+    enum Part { case overview, delivery }
+
     @Environment(MetricsStore.self) private var store
+    @Environment(OrgConfigStore.self) private var configs
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
+    @State private var showsDigest = false
 
     let org: String
     let workload: Workload
     let metrics: OrgMetrics?
     @Binding var selection: DetailSelection?
+    var part: Part = .overview
 
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                Section {
-                    rightNow.sectionContent()
-                } header: {
-                    PinnedHeader { Text("Right now") }
-                }
+                if part == .overview {
+                    Section {
+                        rightNow.sectionContent()
+                    } header: {
+                        PinnedHeader { Text("Right now") }
+                    }
+                    Section {
+                        VStack(alignment: .leading, spacing: 16) {
+                            notices
+                            if let metrics {
+                                deliverySummary(metrics)
+                            } else if store.syncing.contains(org) {
+                                loading
+                            }
+                        }
+                        .sectionContent()
+                    } header: {
+                        PinnedHeader { SummaryHeader(title: "Delivery · \(MetricsWindow(code: windowDays).phrase)", link: "PR flow", item: .tab(.delivery)) }
+                    }
+                } else {
                 Section {
                     VStack(alignment: .leading, spacing: 28) {
                         notices
                         if let metrics {
                             Group {
                                 delivery(metrics)
+                                let goals = configs.config(for: org).goals?.targets(for: workload.team).results(for: metrics) ?? []
+                                if !goals.isEmpty {
+                                    GoalsSection(results: goals, selection: $selection)
+                                }
+                                if let previous = metrics.previous {
+                                    WhatChangedSection(
+                                        explanation: DeliveryExplanation(current: metrics.current, previous: previous, members: Dictionary(workload.people.map { ($0.person.login, $0.person) }, uniquingKeysWith: { a, _ in a })),
+                                        previousPhrase: metrics.window.previousPhrase
+                                    )
+                                }
                                 stageBreakdown(metrics)
+                                SizeRiskSection(metrics: metrics, selection: $selection)
                                 charts(metrics)
                             }
                             .updating(store.syncing.contains(org))
@@ -42,25 +75,83 @@ struct OverviewView: View {
                 } header: {
                     PinnedHeader {
                         HStack(spacing: 12) {
-                            Text("Delivery · last \(windowDays) days")
+                            Text("Delivery · \(MetricsWindow(code: windowDays).phrase)")
                             MetricsSyncIndicator(org: org)
+                            Spacer()
+                            if let metrics, metrics.previous == nil {
+                                Text("No history for \(metrics.window.previousPhrase) yet")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                Text("Changes against \(MetricsWindow(code: windowDays).previousPhrase)")
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Button("Weekly Digest") { showsDigest = true }
+                                .help("The week in a page: delivery, what shipped, CI and who's off next, to copy or commit to the harness")
                         }
                     }
                 }
+                }
+                if part == .overview {
                 Section {
                     InvestmentsSummary(org: org, windowDays: windowDays, selection: $selection)
                         .sectionContent()
                 } header: {
-                    PinnedHeader { SummaryHeader(title: "Investments · last \(windowDays) days", link: "Investments", item: .tab(.investments)) }
+                    PinnedHeader { SummaryHeader(title: "Investments · \(MetricsWindow(code: windowDays).phrase)", link: "Investments", item: .tab(.investments)) }
                 }
                 Section {
                     ActionsSummary(org: org, windowDays: windowDays, selection: $selection)
                         .sectionContent()
                 } header: {
-                    PinnedHeader { SummaryHeader(title: "GitHub Actions · last \(windowDays) days", link: "Actions", item: .tab(.actions)) }
+                    PinnedHeader { SummaryHeader(title: "CI · \(MetricsWindow(code: windowDays).phrase)", link: "CI", item: .tab(.actions)) }
+                }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .sheet(isPresented: $showsDigest) {
+            DigestSheet(org: org, team: workload.team)
+        }
+    }
+
+    // MARK: Delivery, in short
+
+    /// The headline numbers with their changes, and how the goals stand;
+    /// the rest is on PR flow.
+    private func deliverySummary(_ metrics: OrgMetrics) -> some View {
+        let previous = metrics.previous
+        let goals = configs.config(for: org).goals?.targets(for: workload.team).results(for: metrics) ?? []
+        return VStack(alignment: .leading, spacing: 12) {
+            TileGrid {
+                StatTile(
+                    title: "PRs merged", value: "\(metrics.merged.count)",
+                    detail: perWeek(metrics.merged.count, days: metrics.window.lengthInDays()),
+                    drill: .merged, selection: $selection,
+                    change: previous.flatMap { StatChange.percent(Double(metrics.merged.count), Double($0.merged), higherIsWorse: false) }
+                )
+                StatTile(
+                    title: "Cycle time", value: metrics.cycleTime.median?.compactDuration ?? "-", detail: "Median",
+                    drill: .cycleTime, selection: $selection,
+                    change: change(metrics.cycleTime.median, previous?.cycleTime.median)
+                )
+                StatTile(
+                    title: "Time to first review", value: metrics.timeToFirstReview.median?.compactDuration ?? "-", detail: "Median",
+                    drill: .timeToFirstReview, selection: $selection,
+                    change: change(metrics.timeToFirstReview.median, previous?.timeToFirstReview.median)
+                )
+                StatTile(
+                    title: "Merged without review", value: "\(metrics.mergedWithoutReview.count)",
+                    detail: metrics.merged.isEmpty ? nil : percent(metrics.mergedWithoutReview.count, of: metrics.merged.count),
+                    drill: .mergedWithoutReview, selection: $selection
+                )
+            }
+            if !goals.isEmpty {
+                let met = goals.filter { $0.onTrack == true }.count
+                Label("\(met) of \(goals.count) goals on track", systemImage: met == goals.count ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                    .foregroundStyle(met == goals.count ? ChartPalette.good : ChartPalette.warning)
+                    .font(.callout)
+            }
         }
     }
 
@@ -109,7 +200,7 @@ struct OverviewView: View {
             VStack(alignment: .leading, spacing: 6) {
                 if let error = store.errors[org] {
                     Banner(message: "Metrics sync failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
-                        Task { await store.sync(org, windowDays: windowDays, force: true) }
+                        Task { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true) }
                     }
                 }
                 if metrics?.isTeamScoped == true {
@@ -124,7 +215,7 @@ struct OverviewView: View {
     private var loading: some View {
         HStack(spacing: 8) {
             ProgressView().controlSize(.small)
-            Text("Fetching merged PRs for the last \(windowDays) days. The first sync of a large org can take a minute.")
+            Text("Fetching merged PRs for \(MetricsWindow(code: windowDays).span). The first sync of a large org can take a minute.")
                 .foregroundStyle(.secondary)
         }
     }
@@ -133,43 +224,58 @@ struct OverviewView: View {
 
     private func delivery(_ metrics: OrgMetrics) -> some View {
         TileGrid {
-            StatTile(title: "PRs opened", value: "\(metrics.opened)", detail: "Whole weeks, org-wide")
+            let previous = metrics.previous
+            StatTile(
+                title: "PRs opened", value: "\(metrics.opened)", detail: "Whole weeks, org-wide",
+                change: previous?.opened.flatMap { StatChange.percent(Double(metrics.opened), Double($0), higherIsWorse: nil) }
+            )
             StatTile(
                 title: "PRs merged",
                 value: "\(metrics.merged.count)",
-                detail: perWeek(metrics.merged.count, days: metrics.windowDays),
+                detail: perWeek(metrics.merged.count, days: metrics.window.lengthInDays()),
                 drill: .merged,
-                selection: $selection
+                selection: $selection,
+                change: previous.flatMap { StatChange.percent(Double(metrics.merged.count), Double($0.merged), higherIsWorse: false) }
             )
             StatTile(
                 title: "Cycle time",
                 value: metrics.cycleTime.median?.compactDuration ?? "-",
                 detail: metrics.cycleTime.p75.map { "Median · p75 \($0.compactDuration)" },
                 drill: .cycleTime,
-                selection: $selection
+                selection: $selection,
+                change: change(metrics.cycleTime.median, previous?.cycleTime.median)
             )
             StatTile(
                 title: "Time to first review",
                 value: metrics.timeToFirstReview.median?.compactDuration ?? "-",
                 detail: metrics.timeToFirstReview.p75.map { "Median · p75 \($0.compactDuration)" },
                 drill: .timeToFirstReview,
-                selection: $selection
+                selection: $selection,
+                change: change(metrics.timeToFirstReview.median, previous?.timeToFirstReview.median)
             )
             StatTile(
                 title: "Review requests answered",
                 value: answeredRate(metrics),
                 detail: "\(metrics.reviewOutcomes.filter { $0.respondedAt == nil }.count) unanswered of \(metrics.reviewOutcomes.count)",
                 drill: .unansweredRequests,
-                selection: $selection
+                selection: $selection,
+                change: StatChange.points(metrics.answeredShare, previous?.answeredShare, higherIsWorse: false)
             )
             StatTile(
                 title: "Merged without review",
                 value: "\(metrics.mergedWithoutReview.count)",
                 detail: metrics.merged.isEmpty ? nil : percent(metrics.mergedWithoutReview.count, of: metrics.merged.count),
                 drill: .mergedWithoutReview,
-                selection: $selection
+                selection: $selection,
+                change: StatChange.points(metrics.merged.isEmpty ? nil : Double(metrics.mergedWithoutReview.count) / Double(metrics.merged.count), previous?.unreviewedShare, higherIsWorse: true)
             )
         }
+    }
+
+    /// A duration's change on the period before; longer is worse.
+    private func change(_ now: TimeInterval?, _ before: TimeInterval?) -> StatChange? {
+        guard let now, let before else { return nil }
+        return StatChange.percent(now, before, higherIsWorse: true)
     }
 
     private func answeredRate(_ metrics: OrgMetrics) -> String {
@@ -178,8 +284,8 @@ struct OverviewView: View {
         return (Double(answered) / Double(metrics.reviewOutcomes.count)).formatted(.percent.precision(.fractionLength(0)))
     }
 
-    private func perWeek(_ count: Int, days: Int) -> String {
-        let weekly = Double(count) / (Double(days) / 7)
+    private func perWeek(_ count: Int, days: Double) -> String {
+        let weekly = Double(count) / (days / 7)
         return weekly.formatted(.number.precision(.fractionLength(weekly < 10 ? 1 : 0))) + " a week"
     }
 
@@ -311,7 +417,7 @@ extension View {
 
 // MARK: - Tiles
 
-private struct TileGrid<Content: View>: View {
+struct TileGrid<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {

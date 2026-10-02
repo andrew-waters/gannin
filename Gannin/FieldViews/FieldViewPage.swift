@@ -62,7 +62,7 @@ struct FieldViewPage: View {
                 await projects.loadBoards(org: org)
                 if let number = view.projectNumber { await projects.loadDefinition(org: org, number: number) }
             }
-            .task(id: org) { await issueStore.sync(org, windowDays: windowDays) }
+            .task(id: org) { await issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
             .loadsHarness(org: org)
             .sheet(item: $editing) { draft in
                 FieldViewEditor(org: org, view: draft) { saved in

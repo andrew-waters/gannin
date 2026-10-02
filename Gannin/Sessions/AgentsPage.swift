@@ -10,6 +10,7 @@ struct AgentsPage: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
     let org: String
+    @State private var planning = false
 
     var body: some View {
         let all = sessions.sessions(for: org)
@@ -18,6 +19,7 @@ struct AgentsPage: View {
         let working = all.filter { !isWaiting($0) && sessions.isRunning($0.id) }
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
+                ReviewRequestsSection(org: org)
                 if waiting.isEmpty {
                     ContentUnavailableView(
                         "Nothing waiting on you",
@@ -47,6 +49,17 @@ struct AgentsPage: View {
             .frame(maxWidth: 980, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
+        .toolbar {
+            ToolbarItem {
+                Button {
+                    planning = true
+                } label: {
+                    Label("New Planning Session", systemImage: "list.bullet.clipboard")
+                }
+                .help("Plan something with Claude in the harness, sharing documents as you go")
+            }
+        }
+        .sheet(isPresented: $planning) { NewPlanningSheet(org: org) }
     }
 
     private func isWaiting(_ session: CodeSession) -> Bool {
@@ -121,7 +134,7 @@ private struct WaitingAgent: View {
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             Circle().fill(state.color).frame(width: 9, height: 9)
             VStack(alignment: .leading, spacing: 2) {
-                Text("#\(session.issue.number) \(session.title)")
+                Text("#\(String(session.issue.number)) \(session.title)")
                     .font(.title3.weight(.semibold))
                     .lineLimit(2)
                 HStack(spacing: 8) {
@@ -204,7 +217,7 @@ private struct WorkingAgentRow: View {
         } label: {
             HStack(spacing: 8) {
                 Circle().fill(state.color).frame(width: 8, height: 8)
-                Text("#\(session.issue.number) \(session.title)")
+                Text("#\(String(session.issue.number)) \(session.title)")
                     .lineLimit(1)
                 Spacer()
                 if let last = transcript?.events.last {

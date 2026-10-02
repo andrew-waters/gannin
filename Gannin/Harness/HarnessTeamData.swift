@@ -10,6 +10,7 @@ enum TeamFile {
     static let workingWeek = ".gannin/working-week.json"
     static let leave = ".gannin/leave.json"
     static let exclusions = ".gannin/exclusions.json"
+    static let goals = ".gannin/goals.json"
     static let peoplePrefix = ".gannin/people/"
 
     static func person(_ login: String) -> String { "\(peoplePrefix)\(login).json" }
@@ -28,6 +29,7 @@ enum TeamFile {
         case workingWeek: "working week"
         case leave: "leave policy"
         case exclusions: "repos and people left out, and repos without review"
+        case goals: "delivery goals"
         default: login(path).map { "dates for \($0)" } ?? path
         }
     }
@@ -53,6 +55,7 @@ struct HarnessTeamData {
     var workWeek: WorkWeek?
     var leave: LeavePolicy?
     var exclusions: TeamExclusions?
+    var goals: MetricGoals?
     var people: [String: PersonDates] = [:]
 
     init(files: [String: String]) {
@@ -62,6 +65,7 @@ struct HarnessTeamData {
         workWeek = files[TeamFile.workingWeek].flatMap { TeamCoding.decode(WorkWeek.self, $0) }
         leave = files[TeamFile.leave].flatMap { TeamCoding.decode(LeavePolicy.self, $0) }
         exclusions = files[TeamFile.exclusions].flatMap { TeamCoding.decode(TeamExclusions.self, $0) }
+        goals = files[TeamFile.goals].flatMap { TeamCoding.decode(MetricGoals.self, $0) }
         for (path, text) in files {
             if let login = TeamFile.login(path), let dates = TeamCoding.decode(PersonDates.self, text) {
                 people[login] = dates
@@ -82,6 +86,7 @@ struct HarnessTeamData {
         config.excludedAuthors = Set(exclusions?.people ?? [])
         config.includedAuthors = Set(exclusions?.includedPeople ?? [])
         config.reposWithoutReview = Set(exclusions?.reposWithoutReview ?? [])
+        config.goals = goals
         return config
     }
 
@@ -95,6 +100,7 @@ struct HarnessTeamData {
         if before.investments != after.investments { files[TeamFile.investments] = after.investments.flatMap(TeamCoding.encode) }
         if before.issueWorkflow != after.issueWorkflow { files[TeamFile.workflow] = after.issueWorkflow.flatMap(TeamCoding.encode) }
         if before.workWeek != after.workWeek { files[TeamFile.workingWeek] = after.workWeek.flatMap(TeamCoding.encode) }
+        if before.goals != after.goals { files[TeamFile.goals] = after.goals.flatMap(TeamCoding.encode) }
         if before.leave != after.leave { files[TeamFile.leave] = after.leave.flatMap(TeamCoding.encode) }
         if before.excludedRepos != after.excludedRepos || before.excludedAuthors != after.excludedAuthors || before.includedAuthors != after.includedAuthors
             || before.reposWithoutReview != after.reposWithoutReview {
@@ -112,6 +118,7 @@ struct HarnessTeamData {
             TeamFile.workingWeek: TeamCoding.encode(config.week),
             TeamFile.leave: TeamCoding.encode(config.leavePolicy),
             TeamFile.exclusions: exclusionsFile(config),
+            TeamFile.goals: config.goals.flatMap(TeamCoding.encode),
         ]
         for (login, dates) in people where !dates.isEmpty {
             files[TeamFile.person(login)] = TeamCoding.encode(dates)

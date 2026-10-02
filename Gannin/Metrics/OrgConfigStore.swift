@@ -26,6 +26,8 @@ struct OrgConfig: Codable, Hashable {
     var harness: HarnessConfig?
     /// Saved field views, in sidebar order.
     var fieldViews: [FieldView] = []
+    /// Delivery targets, for the org and its teams; nil for none.
+    var goals: MetricGoals?
 
     var leavePolicy: LeavePolicy { leave ?? LeavePolicy() }
 
@@ -48,9 +50,10 @@ struct OrgConfig: Codable, Hashable {
         leave = try container.decodeIfPresent(LeavePolicy.self, forKey: .leave)
         harness = try container.decodeIfPresent(HarnessConfig.self, forKey: .harness)
         fieldViews = try container.decodeIfPresent([FieldView].self, forKey: .fieldViews) ?? []
+        goals = try container.decodeIfPresent(MetricGoals.self, forKey: .goals)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && fieldViews.isEmpty }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && fieldViews.isEmpty && goals == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.

@@ -5,11 +5,13 @@ import SwiftUI
 
 /// What you've made of a review: each finding kept as claude wrote it,
 /// edited, or dismissed, and comments of your own.
-struct ReviewDraft: Equatable {
-    enum Decision: Equatable { case dismissed, edited(String) }
+struct ReviewDraft: Hashable, Codable {
+    enum Decision: Hashable, Codable {
+        case dismissed, edited(String)
+    }
 
-    struct Comment: Identifiable, Equatable {
-        let id = UUID()
+    struct Comment: Identifiable, Hashable, Codable {
+        var id = UUID()
         let path: String
         let line: Int
         /// On a removed line, numbered as the file was.
@@ -19,8 +21,9 @@ struct ReviewDraft: Equatable {
 
     var decisions: [String: Decision] = [:]
     var comments: [Comment] = []
-    /// The review posted to GitHub, once it has been.
+    /// The review posted to GitHub, once it has been, and when.
     var posted: URL?
+    var postedAt: Date?
 }
 
 extension SessionTranscript.Finding {
@@ -226,14 +229,18 @@ struct PullRequestReviewView: View {
     @State private var pullRequest: ReviewedPullRequest?
     @State private var error: String?
     @State private var selectedFile: String?
-    @State private var showsConversation = true
+    /// Nil until toggled: shown while claude runs or hasn't reviewed yet,
+    /// so a review read from the history doesn't start claude.
+    @State private var conversation: Bool?
+    @State private var confirmingFinish = false
     @State private var posting = false
 
     private var reference: PullRequestReference { session.reviewOf! }
 
     var body: some View {
         let transcript = sessions.transcripts[session.id]
-        let review = transcript?.review
+        let review = transcript?.review ?? session.reviewResult
+        let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
         VStack(spacing: 0) {
             header(review: review, transcript: transcript)
             Divider()
@@ -257,6 +264,11 @@ struct PullRequestReviewView: View {
             }
         }
         .task(id: session.id) { await load() }
+        .confirmationDialog("Finish this review?", isPresented: $confirmingFinish) {
+            Button("Finish Review") { Task { await sessions.archiveReview(session.id) } }
+        } message: {
+            Text("The reviewer is ended and its checkout removed. The review, your decisions and comments stay in Agents › Reviews, to read again or resume.")
+        }
         .sheet(isPresented: $posting) {
             if let pullRequest {
                 PostReviewSheet(session: session, pullRequest: pullRequest, review: review)
@@ -284,11 +296,19 @@ struct PullRequestReviewView: View {
         return VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(reference.title)
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(2)
+                    Link(destination: reference.url) {
+                        Text(reference.title)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                            .multilineTextAlignment(.leading)
+                    }
+                    .help("Open the pull request on GitHub")
                     HStack(spacing: 8) {
-                        Link("\(reference.repo)#\(reference.number)", destination: reference.url)
+                        Link(destination: reference.url) {
+                            Label(reference.repo + "#" + String(reference.number), systemImage: "arrow.up.right.square")
+                        }
+                        .help("Open the pull request on GitHub")
                         if let pullRequest {
                             if let author = pullRequest.author { Text("by \(author)") }
                             Text("+\(pullRequest.additions)").foregroundStyle(ChartPalette.good)
@@ -302,12 +322,19 @@ struct PullRequestReviewView: View {
                 }
                 Spacer()
                 status(state: state, transcript: transcript, hasReview: review != nil)
-                Button {
-                    showsConversation.toggle()
-                } label: {
-                    Label("Conversation", systemImage: showsConversation ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
+                let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
+                if session.archivedAt == nil {
+                    Button {
+                        conversation = !showsConversation
+                    } label: {
+                        Label("Conversation", systemImage: showsConversation ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
+                    }
+                    .help(showsConversation ? "Hide the conversation with the reviewer" : "Ask the reviewer more (resumes claude)")
                 }
-                .help(showsConversation ? "Hide the conversation with the reviewer" : "Ask the reviewer more")
+                Link(destination: reference.url) {
+                    Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.bordered)
                 Button("Review Again") {
                     sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block.", to: session.id)
                     Task { await load() }
@@ -315,7 +342,20 @@ struct PullRequestReviewView: View {
                 .disabled(!sessions.isRunning(session.id) || state == .working)
                 .help("Ask claude to review the PR again, as it is now")
                 if let posted = draft.posted {
-                    Link("Posted", destination: posted)
+                    Link(destination: posted) {
+                        Label(draft.postedAt.map { "Posted \($0.formatted(.relative(presentation: .named)))" } ?? "Posted", systemImage: "checkmark.circle.fill")
+                    }
+                    .foregroundStyle(ChartPalette.good)
+                }
+                if session.archivedAt != nil {
+                    Button("Resume") {
+                        sessions.resumeReview(session.id)
+                        conversation = true
+                    }
+                    .help("Take it out of the history and pick the conversation back up")
+                } else {
+                    Button("Finish") { confirmingFinish = true }
+                        .help("End the reviewer and keep the review in your history")
                 }
                 Button("Post Review") { posting = true }
                     .buttonStyle(.borderedProminent)
@@ -338,7 +378,11 @@ struct PullRequestReviewView: View {
 
     @ViewBuilder
     private func status(state: SessionState, transcript: SessionTranscript?, hasReview: Bool) -> some View {
-        if !sessions.isRunning(session.id) {
+        if let archived = session.archivedAt {
+            Label("Finished \(archived.formatted(.relative(presentation: .named)))", systemImage: "archivebox").foregroundStyle(.secondary)
+        } else if sessions.reviewDrafts[session.id]?.posted != nil, !(sessions.isRunning(session.id) && (state == .working || state == .starting)) {
+            Label("Posted", systemImage: "checkmark.circle.fill").foregroundStyle(ChartPalette.good)
+        } else if !sessions.isRunning(session.id) {
             Label("Not running", systemImage: "pause.circle").foregroundStyle(.secondary)
         } else if state == .working || state == .starting {
             HStack(spacing: 6) {
@@ -489,7 +533,9 @@ private struct ReviewDiff: View {
                             .padding(8)
                     }
                     if file.lines.isEmpty {
-                        Text("No diff to show: a binary file, or too big for GitHub to send.")
+                        Text(file.status == "renamed" && file.additions == 0 && file.deletions == 0
+                             ? "Renamed, with no changes to its contents."
+                             : "No diff to show: a binary file, or too big for GitHub to send.")
                             .foregroundStyle(.secondary)
                             .padding(16)
                     }
@@ -826,11 +872,59 @@ private struct PostReviewSheet: View {
             do {
                 let url = try await api.postReview(repo: reference.repo, number: reference.number, commit: pullRequest.headSHA, event: event, body: body, comments: inline)
                 sessions.reviewDrafts[session.id, default: ReviewDraft()].posted = url ?? reference.url
+                sessions.reviewDrafts[session.id, default: ReviewDraft()].postedAt = .now
                 dismiss()
             } catch {
                 self.error = "GitHub didn't take it: \(error.localizedDescription)"
             }
             sending = false
+        }
+    }
+}
+#endif
+
+#if os(macOS)
+/// Beside a PR in a list, when Claude has a review of it: what the review's
+/// doing, and a click to its tab. The store is passed in rather than read
+/// from the environment: a table's cells, rebuilt when it sorts, don't
+/// always get the page's environment objects.
+struct ClaudeReviewBadge: View {
+    @Environment(\.openWindow) private var openWindow
+    let sessions: SessionStore
+    let pullRequestID: String
+
+    var body: some View {
+        if let review = sessions.review(of: pullRequestID) {
+            let (text, color) = label(review)
+            Button {
+                sessions.show(review.id, with: openWindow)
+            } label: {
+                Label(text, systemImage: "eye")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(color)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(color.opacity(0.14), in: Capsule())
+                    .fixedSize()
+            }
+            .buttonStyle(.plain)
+            .help("Open Claude's review of this PR")
+        }
+    }
+
+    private func label(_ review: CodeSession) -> (String, Color) {
+        let state = sessions.state(review.id)
+        let working = sessions.isRunning(review.id) && (state == .working || state == .starting)
+        if !working, sessions.reviewDrafts[review.id]?.posted != nil || review.reviewDraft?.posted != nil {
+            return ("Posted", ChartPalette.good)
+        }
+        guard sessions.isRunning(review.id) else {
+            return sessions.transcripts[review.id]?.review != nil ? ("Review ready", ChartPalette.good) : ("Review", .secondary)
+        }
+        switch state {
+        case .needsYou: return ("Needs you", .orange)
+        case .starting, .working: return ("Reviewing", ChartPalette.blue)
+        default: return sessions.transcripts[review.id]?.review != nil ? ("Review ready", ChartPalette.good) : ("Review", .secondary)
         }
     }
 }

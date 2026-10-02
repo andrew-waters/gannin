@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 @main
 struct GanninApp: App {
@@ -22,6 +25,7 @@ struct GanninApp: App {
     #if os(macOS)
     @State private var sessions: SessionStore
     @NSApplicationDelegateAdaptor private var appDelegate: GanninAppDelegate
+    @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
     #endif
 
     init() {
@@ -57,6 +61,20 @@ struct GanninApp: App {
         GanninAppDelegate.sessions = sessions
         sessions.api = { [weak auth] in auth?.api }
         sessions.watchPullRequests()
+        let watch = EngineerWatch.shared
+        watch.api = { [weak auth] in auth?.api }
+        // Review with Claude from the menu bar or a notification: in the
+        // PR's org's harness, else the PR on GitHub.
+        watch.startReview = { [weak sessions, weak orgConfigs] reference in
+            guard let sessions, let setup = orgConfigs?.config(for: reference.org).harness,
+                  let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else {
+                NSWorkspace.shared.open(reference.url)
+                return
+            }
+            let session = sessions.startReview(of: reference, harness: setup, harnessPath: path)
+            if let openWindow = GanninAppDelegate.openWindow { sessions.show(session.id, with: openWindow) }
+        }
+        watch.start()
         TabMenuRename.shared.install()
         #endif
     }
@@ -173,6 +191,16 @@ struct GanninApp: App {
         #endif
 
         #if os(macOS)
+        // What you need to act on, from the menu bar.
+        MenuBarExtra(isInserted: $showsMenuBar) {
+            EngineerMenu()
+                .environment(sessions)
+                .environment(orgConfigs)
+        } label: {
+            MenuBarLabel(sessions: sessions)
+        }
+        .menuBarExtraStyle(.window)
+
         Settings {
             SettingsView()
                 .environment(actions)

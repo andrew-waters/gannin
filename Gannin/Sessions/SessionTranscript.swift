@@ -49,7 +49,7 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
     }
 
     /// A review's finding, from the fenced JSON a reviewer ends with.
-    nonisolated struct Finding: Sendable, Equatable, Codable {
+    nonisolated struct Finding: Sendable, Hashable, Codable {
         let path: String
         let line: Int?
         let comment: String
@@ -60,7 +60,7 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
     }
 
     /// A PR review's result: its summary, verdict and findings.
-    nonisolated struct ReviewResult: Sendable, Equatable, Codable {
+    nonisolated struct ReviewResult: Sendable, Hashable, Codable {
         let summary: String
         /// `approve`, `comment` or `request_changes`.
         let verdict: String?

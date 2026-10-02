@@ -20,6 +20,7 @@ struct OrgSettingsView: View {
         case workingTime = "Working Time"
         case issues = "Issues"
         case investments = "Investments"
+        case goals = "Goals"
         case harness = "Harness"
         case hidden = "Hidden"
 
@@ -130,6 +131,8 @@ struct OrgSettingsView: View {
             IssueWorkflowSection(org: org)
         case .investments:
             InvestmentCategoriesSection(org: org)
+        case .goals:
+            GoalsSettingsSection(org: org, teams: snapshot?.teams ?? [])
         case .harness:
             HarnessSettingsSection(org: org)
         case .hidden:

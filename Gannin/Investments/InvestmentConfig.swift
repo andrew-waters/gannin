@@ -98,6 +98,9 @@ struct InvestmentCategory: Codable, Hashable, Identifiable {
     /// Its label, or its option on the tracked board field, when the org
     /// tracks investments in GitHub.
     var githubValue: String?
+    /// The share of completed work it should have, 0 to 1, for showing
+    /// drift; nil for no target.
+    var target: Double?
 
     func matches(_ item: InvestmentItem) -> Bool {
         rules.contains { $0.matches(item) }

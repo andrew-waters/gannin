@@ -277,7 +277,7 @@ nonisolated struct ActionsAttention: Identifiable, Hashable {
 /// Actions insights for an org over the metrics window: per workflow, per
 /// week and per trigger, from the stored runs.
 struct ActionsMetrics {
-    let windowDays: Int
+    let window: MetricsWindow
     let windowStart: Date
     /// The start of the period before the window, as long as it.
     let previousStart: Date
@@ -306,22 +306,27 @@ struct ActionsMetrics {
     var runCount: Int { counts.ran + counts.skipped }
     var red: [WorkflowStats] { workflows.filter { $0.defaultBranch?.isRed == true } }
 
-    init(history: ActionsHistory, windowDays: Int, config: OrgConfig, now: Date = .now) {
-        self.windowDays = windowDays
-        let windowStart = Calendar.metrics.date(byAdding: .day, value: -windowDays, to: now) ?? now
+    init(history: ActionsHistory, window: MetricsWindow, config: OrgConfig, now: Date = .now) {
+        self.window = window
+        let interval = window.interval(now: now)
+        let previousInterval = window.previous(now: now)
+        let now = interval.end
+        let windowStart = interval.start
         self.windowStart = windowStart
 
-        let previousStart = Calendar.metrics.date(byAdding: .day, value: -windowDays, to: windowStart) ?? windowStart
+        let previousStart = previousInterval.start
+        let previousEnd = previousInterval.end
         self.previousStart = previousStart
-        let included = history.runs.values.filter { !config.excludedRepos.contains($0.repo) }
+        // A whole period in the past leaves out what came after it.
+        let included = history.runs.values.filter { !config.excludedRepos.contains($0.repo) && $0.createdAt < now }
         let inWindow = included.filter { $0.createdAt >= windowStart }
-        let before = included.filter { $0.createdAt >= previousStart && $0.createdAt < windowStart }
+        let before = included.filter { $0.createdAt >= previousStart && $0.createdAt < previousEnd }
         let byWorkflow = Dictionary(grouping: included, by: \.workflowKey)
         let halfway = windowStart.addingTimeInterval(now.timeIntervalSince(windowStart) / 2)
 
         var workflows: [WorkflowStats] = []
         for (key, all) in byWorkflow {
-            let runs = all.filter { $0.createdAt >= windowStart }.sorted { $0.createdAt > $1.createdAt }
+            let runs = all.filter { $0.createdAt >= windowStart && $0.createdAt < now }.sorted { $0.createdAt > $1.createdAt }
             guard let latest = runs.first else { continue }
             let durations = runs.compactMap(\.duration)
             let early = runs.filter { $0.createdAt < halfway }.compactMap(\.duration)
@@ -351,7 +356,7 @@ struct ActionsMetrics {
                 mixedCommits: mixed,
                 defaultBranch: defaultBranch.flatMap { Self.health(all, branch: $0, windowStart: windowStart) },
                 durationChange: change,
-                previous: PeriodSummary(all.filter { $0.createdAt >= previousStart && $0.createdAt < windowStart }),
+                previous: PeriodSummary(all.filter { $0.createdAt >= previousStart && $0.createdAt < previousEnd }),
                 histogram: DurationHistogram(durations),
                 weeks: ActionsBucket.buckets(runs, .week, from: windowStart, to: now)
             ))

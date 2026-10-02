@@ -83,13 +83,16 @@ added, removed or created, and the tracked board field set), and commits to the 
   `WindowTabs.swift` joins to the current window). Preferences like chart granularity stay
   `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
-  (`OrgSidebar`) is laid out as Mail's: Dashboard, Issues, Pull Requests, Repositories and Actions,
-  then People, Planning (Investments, Harness, Projects) and Claude Code as collapsible
-  `Section`s, with what's under a row in a `DisclosureGroup` so the system draws the triangles and
-  indents. Rows are single-line `Label`s with counts as badges and breakdowns in tooltips. The org
-  switcher and account menu sit in its footer. Under People: Activity, Time off, Everyone
-  (the people stats table, opening to everyone), then each org team and No team opening to their
-  members. Then Meetings: Standup and Prioritisation. Picking a person shows their
+  (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Inbox, Ask (the
+  Mac's) and Overview at the top; Work (Pull Requests, Issues with All and Not on a board,
+  Epics, Boards, Views); Delivery (PR flow, Issue flow, Investments, CI, Repositories); Team
+  (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
+  Prioritisation, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, once set);
+  and Agents (Waiting on You, then sessions grouped as working on issues, reviews and
+  planning). `WorkloadTab.title` is the name shown (Overview, Boards, CI, Waiting on You);
+  raw values stay as windows saved them. The Dashboard is two pages (`OverviewView.Part`):
+  Overview (right now, and delivery, investments and CI in short) and PR flow (delivery in
+  full). The Issues row is the issue lists; Issue flow is the metrics. Picking a person shows their
   `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
   by the cog beside the account menu in the sidebar's footer, are panes picked from a segmented
   control in the toolbar: Repositories and People (exclusions, which apply to the workload and
@@ -168,6 +171,25 @@ added, removed or created, and the tracked board field set), and commits to the 
   `PullRequest.reviewRequestedAt` from the open-PR snapshot. The team filter applies to the
   reviewer, not the PR author.
 
+- The metrics window (`MetricsWindow`, kept in scene storage as a number: days when positive,
+  -1 to -6 for this or last month, quarter or year) is a date range and the period before
+  it: as many days before, last month (or quarter, year) to the same day for one so far, the
+  whole one before for a whole one. `OrgMetrics`, `ActionsMetrics` and `IssueMetrics` take it
+  and leave out what's after a closed period's end; stores sync `syncDays()` back so the
+  period before is covered. `MetricsWindowPicker` is the menu.
+- `OrgMetrics.previous` (`DeliverySummary`) is the period before, when the history reaches it:
+  the Dashboard's tiles show changes on it, `DeliveryExplanation` (What changed) says which
+  stages, repos and people moved cycle time and throughput, `SizeRiskSection` shows PR size
+  (`SizeStat`, large over 400 lines) and rushed large PRs (approved within 15 minutes with
+  nothing asked, or unreviewed) by repo.
+- Goals (`MetricGoals`, in `OrgConfig.goals` and the harness's `.gannin/goals.json`, Settings ›
+  Goals) are targets for the org and per team (cycle time, first review, rework, unreviewed,
+  PR size, requests answered), shown on the Dashboard as on track or not.
+- Weekly Digest (`WeeklyDigest`, `DigestSheet` on `NotesSheet`) is the week as Markdown:
+  delivery against the week before and goals, what shipped by investment category, notable
+  PRs, CI and who's off next week, to copy, rewrite with Claude, or commit to the harness as
+  `digests/<date>.md`. Standup's Notes (`StandupNotes`) do the same as `standups/<date>.md`.
+
 ## Investments
 
 - `Gannin/Investments/`: investment balance, in the spirit of Swarmia's investment categories,
@@ -209,6 +231,8 @@ added, removed or created, and the tracked board field set), and commits to the 
   (`InvestmentCategoriesSection`); issues get Categorise in their context menu and window.
 - Category colours are palette slots 1-8 in fixed order, stored on the category so reordering
   never repaints; uncategorised is a neutral grey.
+- A category can have a target share (`InvestmentCategory.target`); the Investments page shows
+  each against it and calls out those more than ten points off.
 
 ## Actions
 
@@ -458,6 +482,28 @@ added, removed or created, and the tracked board field set), and commits to the 
   conversation beneath. Post Review (`PostReviewSheet`) sends one review through REST:
   Approve, Comment or Request Changes, inline comments on lines the diff shows (a suggestion
   as a GitHub suggestion block), and the rest in the body.
+- `ClaudeRunner` asks Claude Code one-off questions (`claude -p`), on this Mac when claude is
+  installed here, else on the Connect with server: a bash script on standard input writes the
+  prompt and any files into a folder and runs claude there with only the tools given. It
+  drafts issues and triage, rewrites notes, and answers Ask (`AskOrgPage`, under Claude Code:
+  `OrgContext` writes workload, issues, delivery, harness and time off as JSON; follow-ups
+  resume the conversation).
+- Planning sessions (`CodeSession.planning`, `PlanningInfo`, `NewPlanningSheet`, from Agents,
+  the + menu or a harness document) plan a topic in the harness. Documents dropped on the
+  terminal or picked in the panel are each confirmed (`ShareDocumentsSheet`: share, and
+  separately whether it may be committed), copied to `.worktrees/plan-<slug>/docs/` (Word and
+  RTF with a textutil `.txt`), and claude is told which may go in `plans/assets/<slug>/`.
+- `EngineerWatch` checks every few minutes (Settings, `reviewCheckMinutes`) for PRs your review
+  is requested on, your open PRs (checks, review, conflicts) and your issues, in one query
+  (`engineerWork`). New requests notify with Review with Claude (`startReview`, wired in
+  `GanninApp`); your PRs notify when they start failing, get changes requested or are
+  approved. The menu bar extra (`EngineerMenu`, `MenuBarLabel`) and Agents show them.
+- Reviews keep a history: the result (`CodeSession.reviewResult`, from the transcript), your
+  decisions and comments and when it was posted (`reviewDraft`) are saved with the session.
+  Finish (`SessionStore.archiveReview`) ends the reviewer and removes its checkout but keeps it
+  (`archivedAt`); it shows under Agents › Reviews after the active ones, opens read-only from
+  the saved result without starting claude, and Resume brings it back. `ClaudeReviewBadge`
+  marks PRs with a review in the Pull Requests table and the Inbox, opening its tab.
 - Quitting with sessions running asks first (`GanninAppDelegate.applicationShouldTerminate`,
   `Sessions/QuitGuard.swift`): which are running and in what state, that working ones stop
   mid-task, that server sessions end with their ssh connection, and that conversations resume.
@@ -600,6 +646,18 @@ added, removed or created, and the tracked board field set), and commits to the 
   from outside). Changes are reviewed first, and `IssueStore.rewriteFieldValues` updates stored
   issues at once. Multi-select values are read (`IssueFieldValue.options`) but not yet written.
 
+## Planning
+
+- `Gannin/Planning/`: Board Hygiene (`BoardHygieneView`) lists issues by Attention flag, with
+  fixes ticked and written together (Done on the workflow board for "PR merged, not done" and
+  "Closed, not done", closing the issue for "Done, still open"). Epics (`EpicsView`) are issues
+  with sub-issues in the history: progress, in progress, plans, PRs, last movement (quiet after
+  two weeks). `PlanningWrites.swift` has `closeIssue`, `createIssue` and `addSubIssue`, each
+  confirmed by its caller.
+- Draft Issues on a plan or requirement (`DraftIssuesSheet`) has Claude break it into issues to
+  edit, then makes them as sub-issues of the issue it's about (or a new parent) and puts them
+  on the workflow board. Plan with Claude starts a planning session from it.
+
 ## Meetings
 
 - Under Meetings in the sidebar: Standup (`StandupView`, as before) and Prioritisation
@@ -610,6 +668,12 @@ added, removed or created, and the tracked board field set), and commits to the 
   per org on this Mac), ticked off when dealt with, those still open carrying over; and the
   open issues with the committed date set, soonest first, red once overdue and orange within
   the week. Issues open in the drawer, where their Status and fields are set.
+- Capture (`FieldCapturePanel`, beside the lists on the Mac) takes what CS raises as they say
+  it: text, who (remembered), customer, kind and urgency (`FieldNote`), ⌘↩ to add. Notes are
+  linked to an issue, or raised as one (`WriteIssueSheet`: Claude drafts the repo, title,
+  description and labels, then `createIssue` and onto the board for triage).
+- Triage with Claude (`TriageWithClaudeSheet`) suggests board fields, investment category and
+  whether an issue suits an agent, for ticking and writing through `FieldWriteSheet`.
 
 ## Drawer, timeline and Inbox
 

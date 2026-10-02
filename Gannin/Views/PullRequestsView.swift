@@ -115,9 +115,17 @@ struct StoredPullRequestFilters: DynamicProperty {
 /// as the issue pages are.
 struct PullRequestsView: View {
     @Environment(AuthStore.self) private var auth
+    @Environment(HiddenStore.self) private var hidden
+    #if os(macOS)
+    @Environment(SessionStore.self) private var sessions
+    #endif
+    @Environment(\.openURL) private var openURL
     let workload: Workload
     @Binding var selection: DetailSelection?
     private var stored = StoredPullRequestFilters()
+    @State private var tableSelection: Set<String> = []
+    @State private var sortOrder: [KeyPathComparator<PullRequestTableRow>] = []
+    @AppStorage("pullRequestColumns") private var storedColumns = Data()
 
     init(workload: Workload, selection: Binding<DetailSelection?>) {
         self.workload = workload
@@ -128,27 +136,122 @@ struct PullRequestsView: View {
         let filters = stored.wrappedValue
         let pool = (workload.openPullRequests + workload.mergedPullRequests).filter(filters.inState)
         let shown = pool.filter { filters.matches($0) }
-        let open = shown.filter { !$0.isMerged }.sorted { $0.updatedAt > $1.updatedAt }
-        let merged = shown.filter(\.isMerged).sorted { ($0.mergedAt ?? $0.updatedAt) > ($1.mergedAt ?? $1.updatedAt) }
-        VStack(spacing: 0) {
+        let open = shown.filter { !$0.isMerged }.sorted { $0.updatedAt > $1.updatedAt }.map(PullRequestTableRow.init)
+        let merged = shown.filter(\.isMerged).sorted { ($0.mergedAt ?? $0.updatedAt) > ($1.mergedAt ?? $1.updatedAt) }.map(PullRequestTableRow.init)
+        var sections: [(title: String, rows: [PullRequestTableRow])] = []
+        if filters.state != .merged, !open.isEmpty { sections.append(("Open", open)) }
+        if filters.state != .open, !merged.isEmpty { sections.append(("Merged in the last \(workload.snapshot.lookbackDays) days", merged)) }
+        return VStack(spacing: 0) {
             bar(filters, pool: pool)
             Divider()
-            List(selection: $selection) {
-                if shown.isEmpty {
-                    Text(pool.isEmpty ? "No pull requests." : "No pull requests match.")
-                        .foregroundStyle(.secondary)
+            if shown.isEmpty {
+                ContentUnavailableView(pool.isEmpty ? "No pull requests" : "No pull requests match", systemImage: "arrow.triangle.pull")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                table(sections)
+            }
+        }
+        // A row picked opens in the drawer, as a list row did.
+        .onChange(of: tableSelection) {
+            if tableSelection.count == 1, let id = tableSelection.first { selection = .pullRequest(id) }
+        }
+    }
+
+    private func table(_ sections: [(title: String, rows: [PullRequestTableRow])]) -> some View {
+        Table(of: PullRequestTableRow.self, selection: $tableSelection, sortOrder: $sortOrder, columnCustomization: TableColumnStore.binding($storedColumns)) {
+            TableColumn("Title", value: \.title) { row in
+                HStack(spacing: 8) {
+                    Circle().fill(row.pr.statusColor).frame(width: 8, height: 8)
+                    Text(row.title).lineLimit(1)
                 }
-                if filters.state != .merged, !open.isEmpty {
-                    Section(header: SectionHeader(title: "Open", count: open.count)) {
-                        ForEach(open) { PullRequestRow(pr: $0).tag(DetailSelection.pullRequest($0.id)) }
+                .opacity(hidden.isHidden(row.id) ? 0.45 : 1)
+                .help(row.title)
+            }
+            .width(min: 220, ideal: 440)
+            .customizationID("title")
+            #if os(macOS)
+            TableColumn("Claude") { row in
+                ClaudeReviewBadge(sessions: sessions, pullRequestID: row.id)
+            }
+            .width(min: 60, ideal: 110)
+            .customizationID("claude")
+            #endif
+            TableColumn("Repository", value: \.repoName) { row in
+                Text(verbatim: row.repoName).foregroundStyle(.secondary)
+            }
+            .width(min: 60, ideal: 100)
+            .customizationID("repository")
+            TableColumn("Number", value: \.number) { row in
+                Text(verbatim: "#\(row.number)").foregroundStyle(.secondary).monospacedDigit()
+            }
+            .width(min: 50, ideal: 70)
+            .customizationID("number")
+            TableColumn("Author", value: \.authorSort) { row in
+                if let author = row.pr.author {
+                    HStack(spacing: 6) {
+                        Avatar(url: author.avatarUrl, size: 18)
+                        Text(author.displayName).lineLimit(1)
                     }
+                    .help(author.displayName)
                 }
-                if filters.state != .open, !merged.isEmpty {
-                    Section(header: SectionHeader(title: "Merged in the last \(workload.snapshot.lookbackDays) days", count: merged.count)) {
-                        ForEach(merged) { PullRequestRow(pr: $0).tag(DetailSelection.pullRequest($0.id)) }
+            }
+            .width(min: 80, ideal: 140)
+            .customizationID("author")
+            TableColumn("Reviewers", value: \.reviewerSort) { row in
+                AvatarStack(people: row.reviewers)
+                    .help(row.reviewers.map(\.displayName).joined(separator: ", "))
+            }
+            .width(min: 60, ideal: 90)
+            .customizationID("reviewers")
+            TableColumn("Status", value: \.status) { row in
+                HStack(spacing: 4) {
+                    Text(row.status).foregroundStyle(row.pr.statusColor).lineLimit(1)
+                    if Workload.isStale(row.pr) {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .foregroundStyle(.orange)
+                            .help("No activity for \(Workload.staleAfterDays) days")
                     }
                 }
             }
+            .width(min: 90, ideal: 150)
+            .customizationID("status")
+            TableColumn("Linked", value: \.linkedCount) { row in
+                if row.linkedCount > 0 {
+                    Label("\(row.linkedCount)", systemImage: "link")
+                        .foregroundStyle(.secondary)
+                        .help(row.pr.linkedIssues.map { "#\($0.number)" }.joined(separator: ", "))
+                }
+            }
+            .width(min: 50, ideal: 60)
+            .customizationID("linked")
+            TableColumn("Updated", value: \.when) { row in
+                RelativeDate(date: row.when)
+                    .foregroundStyle(.secondary)
+                    .help(row.pr.isMerged ? "Merged" : "Last updated")
+            }
+            .width(min: 70, ideal: 100)
+            .customizationID("updated")
+            TableColumn("Size", value: \.size) { row in
+                LinesText(added: row.pr.additions, removed: row.pr.deletions)
+            }
+            .width(min: 70, ideal: 90)
+            .customizationID("size")
+        } rows: {
+            ForEach(sections, id: \.title) { section in
+                Section("\(section.title) (\(section.rows.count))") {
+                    // Sorted within the section, so open and merged stay apart.
+                    ForEach(sortOrder.isEmpty ? section.rows : section.rows.sorted(using: sortOrder)) { TableRow($0) }
+                }
+            }
+        }
+        .contextMenu(forSelectionType: String.self) { ids in
+            if let row = sections.flatMap(\.rows).first(where: { ids.contains($0.id) }) {
+                OpenElsewhereItems(.pullRequest(row.id))
+                Button(hidden.isHidden(row.id) ? "Unhide" : "Hide") { hidden.toggle(row.id) }
+                Button("Open on GitHub") { openURL(row.pr.url) }
+            }
+        } primaryAction: { ids in
+            if let id = ids.first { selection = .pullRequest(id) }
         }
     }
 
@@ -226,4 +329,25 @@ struct PullRequestsView: View {
             picked: Binding(get: { filters.values[key] ?? [] }, set: { stored.wrappedValue.values[key] = $0 })
         )
     }
+}
+
+/// A PR as the Pull Requests table shows it, with what its columns sort by.
+struct PullRequestTableRow: Identifiable {
+    let pr: PullRequest
+
+    var id: String { pr.id }
+    var title: String { pr.title }
+    var repoName: String { pr.repo.split(separator: "/").last.map(String.init) ?? pr.repo }
+    var number: Int { pr.number }
+    var authorSort: String { pr.author?.displayName.lowercased() ?? "" }
+    /// Asked for a review, then those who've given one.
+    var reviewers: [Person] {
+        var seen: Set<String> = []
+        return (pr.requestedReviewers + pr.reviewers).filter { seen.insert($0.login).inserted }
+    }
+    var reviewerSort: Int { reviewers.count }
+    var status: String { pr.statusText }
+    var linkedCount: Int { pr.linkedIssues.count }
+    var when: Date { pr.mergedAt ?? pr.updatedAt }
+    var size: Int { pr.additions + pr.deletions }
 }

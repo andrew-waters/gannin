@@ -64,7 +64,7 @@ struct PeopleStatsTable: View {
     }
 
     private func columns(_ rows: [PersonStatsRow]) -> [StatsColumn<PersonStatsRow>] {
-        let days = metrics.windowDays
+        let days = metrics.window.lengthInDays()
         let cycleScale = BarScale(rows.compactMap { $0.author?.cycleTime.median })
         let ttfrScale = BarScale(rows.compactMap { $0.author?.timeToFirstReview.median })
         let responseScale = BarScale(rows.compactMap { $0.reviewer?.responseTime.median })
@@ -198,7 +198,7 @@ struct RepoStatsTable: View {
                     sortKey: { .number(Double($0.merged)) },
                     cell: { repo in
                         AnyView(NumberCell(text: "\(repo.merged)", dimmed: false)
-                            .help("\(repo.merged) PRs merged in the last \(metrics.windowDays) days"))
+                            .help("\(repo.merged) PRs merged in the last \(metrics.window.lengthInDays()) days"))
                     }
                 ),
                 StatsColumn(

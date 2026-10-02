@@ -92,6 +92,7 @@ struct SessionsWindow: View {
 
 private struct SessionTabBar: View {
     @Environment(SessionStore.self) private var sessions
+    @State private var planningOrg: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -121,6 +122,9 @@ private struct SessionTabBar: View {
         }
         .frame(height: 30)
         .background(.bar)
+        .sheet(isPresented: Binding(get: { planningOrg != nil }, set: { if !$0 { planningOrg = nil } })) {
+            if let planningOrg { NewPlanningSheet(org: planningOrg) }
+        }
     }
 
     /// Jumps to the session waiting on you longest.
@@ -144,14 +148,19 @@ private struct SessionTabBar: View {
     /// Sessions already started that have no tab open.
     private var addMenu: some View {
         let closed = sessions.sessions.values
-            .filter { !sessions.tabs.contains($0.id) }
+            .filter { !sessions.tabs.contains($0.id) && $0.archivedAt == nil }
             .sorted { $0.createdAt > $1.createdAt }
+        let org = sessions.selectedTab.flatMap { sessions.sessions[$0]?.org } ?? sessions.sessions.values.first?.org
         return Menu {
+            if let org {
+                Button("New Planning Session") { planningOrg = org }
+                Divider()
+            }
             if closed.isEmpty {
                 Text("Every session is open")
             }
             ForEach(closed) { session in
-                Button("#\(session.issue.number) \(session.title)\(sessions.isStale(session) ? " (stale)" : "")") { sessions.reveal(session.id) }
+                Button("\(session.issue.number > 0 ? "#\(session.issue.number) " : "")\(session.title)\(sessions.isStale(session) ? " (stale)" : "")") { sessions.reveal(session.id) }
             }
         } label: {
             Image(systemName: "plus")
@@ -179,9 +188,14 @@ private struct SessionTabItem: View {
                 .overlay {
                     if waiting { Circle().stroke(state.color, lineWidth: 1.5).frame(width: 13, height: 13) }
                 }
-            Text("#\(session.issue.number)")
-                .foregroundStyle(.secondary)
-            if session.isHelper || session.isPullRequestReview {
+            if session.issue.number > 0 {
+                Text("#\(String(session.issue.number))")
+                    .foregroundStyle(.secondary)
+            }
+            if session.isPlanning {
+                Image(systemName: "list.bullet.clipboard")
+                    .foregroundStyle(.secondary)
+            } else if session.isHelper || session.isPullRequestReview {
                 Image(systemName: session.isReviewer ? "eye" : "person.2")
                     .foregroundStyle(.secondary)
             }
@@ -257,6 +271,8 @@ struct SessionTab: View {
     /// The question put away to answer in the terminal, by its ID (or the
     /// permission prompt's tool).
     @State private var hiddenAsk: String?
+    /// Documents dropped on a planning session, being confirmed.
+    @State private var sharing: [URL]?
     @AppStorage("sessionsPane") private var pane: SessionPane = .issue
 
     var body: some View {
@@ -270,6 +286,16 @@ struct SessionTab: View {
                 TerminalHost(session: session)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .overlay(alignment: .bottom) { askOverlay }
+                    // A planning session takes documents dropped on it,
+                    // each confirmed before claude sees it.
+                    .dropDestination(for: URL.self) { urls, _ in
+                        guard session.isPlanning, !urls.isEmpty else { return false }
+                        sharing = urls.filter(\.isFileURL)
+                        return true
+                    }
+                    .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } })) {
+                        ShareDocumentsSheet(session: session, files: sharing ?? [])
+                    }
                 Divider()
                 SessionComposer(session: session, panelShown: compact ? nil : Binding(get: { shown }, set: { panelShown = $0 }))
             }
@@ -359,7 +385,7 @@ private struct SessionTabHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(sessions.state(session.id).color).frame(width: 7, height: 7)
-            Text("#\(session.issue.number)").foregroundStyle(.secondary)
+            Text("#\(String(session.issue.number))").foregroundStyle(.secondary)
             Text(session.title).lineLimit(1)
             Spacer()
             Button {
@@ -907,6 +933,8 @@ private struct SessionPanel: View {
         let worktree = SessionStore.worktree(for: session)
         let worktreePath = SessionStore.worktreePath(for: session)
         Form {
+            PlanningSection(session: session)
+            if !session.isPlanning {
             Section("Issue") {
                 Text(session.issue.title)
                     .fontWeight(.semibold)
@@ -916,6 +944,7 @@ private struct SessionPanel: View {
                     Spacer()
                     Button("Open Issue") { openWindow(value: session.issue) }
                 }
+            }
             }
             Section("Claude Code") {
                 LabeledContent("State") {
@@ -978,7 +1007,9 @@ private struct SessionPanel: View {
                 }
             }
             SessionFinishSection(session: session)
-            HarnessIssueSection(reference: session.issue, showsEmpty: true)
+            if !session.isPlanning {
+                HarnessIssueSection(reference: session.issue, showsEmpty: true)
+            }
         }
         .formStyle(.grouped)
         // Documents open over the session; issues and PRs they name, in
@@ -1102,25 +1133,70 @@ struct SessionSidebarRows: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
     let org: String
+    @AppStorage("sidebarSessionsIssues") private var issuesExpanded = true
+    @AppStorage("sidebarSessionsReviews") private var reviewsExpanded = true
+    @AppStorage("sidebarSessionsPlanning") private var planningExpanded = true
 
     var body: some View {
-        ForEach(sessions.sessions(for: org)) { session in
-            let state = sessions.state(session.id)
-            Button {
-                sessions.show(session.id, with: openWindow)
-            } label: {
-                Label {
-                    Text(session.issue.title).lineLimit(1)
-                } icon: {
-                    Image(systemName: "circle.fill")
-                        .font(.system(size: 8))
-                        .foregroundStyle(state.color)
+        let all = sessions.sessions(for: org)
+        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning }, expanded: $issuesExpanded)
+        // Active reviews, newest first, then the history.
+        let reviews = all.filter(\.isPullRequestReview)
+        let active = reviews.filter { $0.archivedAt == nil }
+        let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
+        group("Reviews", symbol: "eye", sessions: active + finished, expanded: $reviewsExpanded)
+        group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter(\.isPlanning), expanded: $planningExpanded)
+    }
+
+    /// A kind of session, with how many are waiting on you; empty kinds
+    /// aren't shown.
+    @ViewBuilder
+    private func group(_ title: String, symbol: String, sessions list: [CodeSession], expanded: Binding<Bool>) -> some View {
+        if !list.isEmpty {
+            let waiting = list.filter { sessions.attention[$0.id] != nil }.count
+            DisclosureGroup(isExpanded: expanded) {
+                ForEach(list) { session in
+                    row(session)
                 }
+            } label: {
+                Label(title, systemImage: symbol)
+                    .badge(waiting > 0 ? Text("\(waiting) waiting") : Text("\(list.count)"))
             }
-            .buttonStyle(.plain)
-            .badge(Text(state.label))
-            .help("\(session.issue.reference): \(state.label)")
         }
+    }
+
+    private func row(_ session: CodeSession) -> some View {
+        let state = sessions.state(session.id)
+        let finished = session.archivedAt != nil
+        let posted = (sessions.reviewDrafts[session.id]?.posted ?? session.reviewDraft?.posted) != nil
+        let working = sessions.isRunning(session.id) && (state == .working || state == .starting)
+        return Button {
+            sessions.show(session.id, with: openWindow)
+        } label: {
+            Label {
+                Text(session.title).lineLimit(1)
+                    .foregroundStyle(finished ? .secondary : .primary)
+            } icon: {
+                Image(systemName: finished ? (posted ? "checkmark.circle.fill" : "archivebox") : "circle.fill")
+                    .font(.system(size: finished ? 10 : 8))
+                    .foregroundStyle(finished ? (posted ? ChartPalette.good : .secondary) : state.color)
+            }
+        }
+        .buttonStyle(.plain)
+        .badge(Text(finished ? (posted ? "Posted" : "Done") : posted && !working ? "Posted" : state.label))
+        .contextMenu {
+            if finished {
+                Button("Resume Review") {
+                    sessions.resumeReview(session.id)
+                    sessions.show(session.id, with: openWindow)
+                }
+                Button("Remove from History", role: .destructive) { sessions.remove(session.id) }
+            }
+            if let url = session.reviewOf?.url {
+                Link("Open on GitHub", destination: url)
+            }
+        }
+        .help("\(session.issue.number > 0 ? session.issue.reference + ": " : "")\(state.label)")
     }
 }
 
@@ -1132,6 +1208,8 @@ struct SessionSettingsSection: View {
     @AppStorage(SessionStore.providerKey) private var provider: AIProvider = .anthropic
     @AppStorage(SessionStore.modelKey) private var model = ""
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
+    @AppStorage(EngineerWatch.intervalKey) private var reviewCheck = 5
+    @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
     /// Typing a model ID of your own, rather than picking one.
     @State private var customModel = false
 
@@ -1162,12 +1240,27 @@ struct SessionSettingsSection: View {
             Text("Sessions run Claude Code with this model (--model), from their next start or Restart. Its default is what Claude Code's own settings say; /model in a session changes it there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Picker("Check for review requests", selection: $reviewCheck) {
+                Text("Every minute").tag(1)
+                Text("Every 5 minutes").tag(5)
+                Text("Every 15 minutes").tag(15)
+                Text("Every 30 minutes").tag(30)
+                Text("Never").tag(0)
+            }
+            Text("Looks for PRs your review is asked on, and on your own PRs' checks and reviews. A new request notifies, with Review with Claude to start a review when you choose.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Show in the menu bar", isOn: $showsMenuBar)
             Toggle("Notify when a session needs you", isOn: $notifies)
             Text("When claude asks something or finishes its turn and you aren't looking at its tab. Its tab is marked and the Dock icon counts them either way.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {
             Text("Agent")
+        } footer: {
+            Text("Claude runs through the claude CLI installed and signed in here (or on the server below), as you, on your own seat, and only when you ask. Gannin never handles your Claude login. Use a work seat for work data, and don't share a login between people.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         Section {
             LabeledContent("Workspace") {

@@ -29,6 +29,7 @@ struct StorageSettings: View {
         case snapshots = "Workload snapshots"
         case metrics = "Merged PR history"
         case issues = "Issue history"
+        case issueText = "Issue search index"
         case workLog = "Work log"
         case projects = "Project boards"
         case actions = "Actions runs"
@@ -42,6 +43,7 @@ struct StorageSettings: View {
             case .snapshots: "Members, teams, open and recently merged PRs, and open issues, per org"
             case .metrics: "Merged PRs with their review timings, behind the delivery and people stats"
             case .issues: "Issues with their board history, behind the issue metrics and investments"
+            case .issueText: "Issues' descriptions and recent comments, for searching them"
             case .workLog: "PRs with their commits and reviews, behind Activity"
             case .projects: "Project board definitions and items"
             case .actions: "Workflow runs and the jobs of those opened, behind Actions"
@@ -55,6 +57,7 @@ struct StorageSettings: View {
             case .snapshots: OrgStore.cacheDirectory
             case .metrics: MetricsStore.cacheDirectory
             case .issues: IssueStore.cacheDirectory
+            case .issueText: IssueTextIndex.file
             case .workLog: WorkLogStore.cacheDirectory
             case .projects: ProjectStore.cacheDirectory
             case .actions: ActionsStore.cacheDirectory
@@ -195,6 +198,7 @@ struct StorageSettings: View {
         case .snapshots: orgs.clearSnapshots()
         case .metrics: metrics.clear()
         case .issues: issues.clear()
+        case .issueText: Task { await IssueTextIndex.shared.clear() }
         case .workLog: workLog.clear()
         case .projects: projects.clear()
         case .actions: actions.clear()

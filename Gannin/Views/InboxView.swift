@@ -114,7 +114,7 @@ struct InboxView: View {
                 Divider()
                 table(sections)
             }
-            .task(id: org) { await issueStore.sync(org, windowDays: windowDays) }
+            .task(id: org) { await issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
             // Checks finishing don't touch a PR's updatedAt, so running or
             // unknown ones are asked for; the detail store re-asks pending
             // ones after a couple of minutes.
@@ -205,10 +205,24 @@ struct InboxView: View {
             }
             .width(min: 220, ideal: 420)
             .customizationID("title")
-            TableColumn("Number", value: \.reference) { row in
-                Text(verbatim: row.reference).foregroundStyle(.secondary).monospacedDigit()
+            #if os(macOS)
+            TableColumn("Claude") { row in
+                if case .pullRequest(let id) = row.page {
+                    ClaudeReviewBadge(sessions: sessions, pullRequestID: id)
+                }
             }
-            .width(min: 80, ideal: 110)
+            .width(min: 60, ideal: 110)
+            .customizationID("claude")
+            #endif
+            TableColumn("Repository", value: \.repoName) { row in
+                Text(verbatim: row.repoName).foregroundStyle(.secondary)
+            }
+            .width(min: 60, ideal: 100)
+            .customizationID("repository")
+            TableColumn("Number", value: \.numberSort) { row in
+                Text(verbatim: row.number.map { "#\($0)" } ?? "").foregroundStyle(.secondary).monospacedDigit()
+            }
+            .width(min: 50, ideal: 70)
             .customizationID("number")
             TableColumn("Who", value: \.whoSort) { row in
                 AvatarStack(people: row.people)
@@ -354,7 +368,7 @@ struct InboxView: View {
     private var uncategorised: [IssueRecord] {
         let config = configs.config(for: org).investmentConfig
         let issues = issueStore.history(for: org)?.issues ?? [:]
-        let since = Calendar.current.date(byAdding: .day, value: -windowDays, to: .now) ?? .now
+        let since = MetricsWindow(code: windowDays).interval().start
         return historyIssues
             .filter { $0.isOpen || (!$0.isNotPlanned && ($0.closedAt ?? .distantPast) >= since) }
             .filter { config.categorise($0, parent: $0.parentID.flatMap { issues[$0] }) == nil }
@@ -421,7 +435,20 @@ struct InboxRow: Identifiable {
     var session: UUID? = nil
     var flags: [IssueSignals.Flag] = []
 
+    /// The repo, from the reference: "product" from "product#3129", the
+    /// last part of "ctrl-hub/harness", or "Plan".
+    var repoName: String {
+        let repo = reference.split(separator: "#", maxSplits: 1).first.map(String.init) ?? reference
+        return repo.split(separator: "/").last.map(String.init) ?? repo
+    }
+
+    var number: Int? {
+        let parts = reference.split(separator: "#", maxSplits: 1)
+        return parts.count == 2 ? Int(parts[1]) : nil
+    }
+
     // What the columns sort by.
+    var numberSort: Int { number ?? -1 }
     var whoSort: String { people.first?.displayName.lowercased() ?? "" }
     var sinceSort: Date { since ?? .distantPast }
     var sizeSort: Int { size.map { $0.added + $0.removed } ?? -1 }

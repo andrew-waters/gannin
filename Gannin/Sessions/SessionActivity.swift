@@ -141,7 +141,7 @@ struct SessionActivityPane: View {
     private var helpers: some View {
         let parent = session.parentID.flatMap { sessions.sessions[$0] } ?? session
         let others = ([parent] + sessions.helpers(of: parent.id)).filter { $0.id != session.id }
-        return Section("Agents on #\(session.issue.number)") {
+        return Section("Agents on #\(String(session.issue.number))") {
             ForEach(others) { other in
                 Button {
                     sessions.reveal(other.id)

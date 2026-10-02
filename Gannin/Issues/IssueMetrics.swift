@@ -179,10 +179,12 @@ struct IssueMetrics {
     private let all: [IssueTiming]
     private let records: [IssueRecord]
 
-    init(history: IssueHistory, windowDays: Int, team: Team?, config: OrgConfig, now: Date = .now) {
+    init(history: IssueHistory, window: MetricsWindow, team: Team?, config: OrgConfig, now: Date = .now) {
         let workflow = config.workflow
         let calendar = Calendar.current
-        let windowStart = calendar.date(byAdding: .day, value: -windowDays, to: now) ?? now
+        let interval = window.interval(now: now)
+        let windowStart = interval.start
+        let end = interval.end
         self.windowStart = windowStart
         let teamLogins = team.map { Set($0.members) }
 
@@ -195,10 +197,10 @@ struct IssueMetrics {
         self.records = records
 
         completed = all
-            .filter { $0.record.isCompleted && ($0.record.closedAt ?? .distantPast) >= windowStart }
+            .filter { $0.record.isCompleted && interval.contains($0.record.closedAt ?? .distantPast) && ($0.record.closedAt ?? .distantPast) < end }
             .sorted { ($0.record.closedAt ?? .distantPast) > ($1.record.closedAt ?? .distantPast) }
-        notPlanned = records.filter { $0.isNotPlanned && ($0.closedAt ?? .distantPast) >= windowStart }
-        reopened = records.flatMap(\.reopenedAt).filter { $0 >= windowStart }.count
+        notPlanned = records.filter { $0.isNotPlanned && interval.contains($0.closedAt ?? .distantPast) && ($0.closedAt ?? .distantPast) < end }
+        reopened = records.flatMap(\.reopenedAt).filter { $0 >= windowStart && $0 < end }.count
         inProgress = all.filter(\.isInProgress).sorted { ($0.start ?? now) < ($1.start ?? now) }
         cycleTime = DurationStat(completed.compactMap(\.cycleTime))
         leadTime = DurationStat(completed.compactMap(\.leadTime))
@@ -208,7 +210,7 @@ struct IssueMetrics {
 
         var wip: [(Date, Int)] = []
         var day = calendar.startOfDay(for: windowStart)
-        while day <= now {
+        while day <= end {
             let noon = day.addingTimeInterval(12 * 60 * 60)
             wip.append((day, all.filter { $0.intervals.contains { $0.contains(noon) } }.count))
             guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }

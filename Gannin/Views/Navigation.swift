@@ -77,9 +77,11 @@ struct OpenElsewhereItems: View {
     @Environment(\.openElsewhere) private var openElsewhere
     @Environment(\.supportsMultipleWindows) private var supportsMultipleWindows
     private let open: (OpenElsewhereAction, OpenPlacement) -> Void
+    private var destination: DetailSelection?
 
     init(_ destination: DetailSelection) {
         open = { action, placement in action.open(destination, placement) }
+        self.destination = destination
     }
 
     init(sidebar item: SidebarItem) {
@@ -94,8 +96,45 @@ struct OpenElsewhereItems: View {
             Button("Open in New Window") { open(openElsewhere, .window) }
             Divider()
         }
+        #if os(macOS)
+        if let destination {
+            ReviewMenuItem(destination: destination)
+        }
+        #endif
     }
 }
+
+#if os(macOS)
+/// Review with Claude (or Open Review) in a PR's right-click menu, wherever
+/// the PR is listed.
+private struct ReviewMenuItem: View {
+    @Environment(OrgStore.self) private var orgs
+    let destination: DetailSelection
+
+    var body: some View {
+        if let reference {
+            ReviewWithClaudeButton(reference: reference)
+        }
+    }
+
+    /// The PR the row is, from the reference or the open PRs synced.
+    private var reference: PullRequestReference? {
+        switch destination {
+        case .pullRequestReference(let reference):
+            return reference
+        case .pullRequest(let id):
+            for (org, snapshot) in orgs.snapshots {
+                if let pr = snapshot.openPullRequests.first(where: { $0.id == id }) ?? snapshot.mergedPullRequests.first(where: { $0.id == id }) {
+                    return PullRequestReference(org: org, id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url)
+                }
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+}
+#endif
 
 extension View {
     /// Adds Open in New Tab and Open in New Window as the row's context menu.

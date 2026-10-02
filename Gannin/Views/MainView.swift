@@ -39,9 +39,29 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case prioritisation = "Prioritisation"
     /// What the Claude Code agents want from you (the Mac's).
     case agents = "Agents"
+    /// Questions about the org, answered by Claude from Gannin's data.
+    case ask = "Ask"
+    case epics = "Epics"
+    case hygiene = "Board Hygiene"
+    /// The Dashboard's delivery half: PR metrics for the window.
+    case delivery = "PR flow"
+    /// Issue metrics; the Issues row is the lists.
+    case issueFlow = "Issue flow"
     case settings = "Settings"
 
     var id: Self { self }
+
+    /// As the sidebar and the window's title name it. Raw values stay as
+    /// they were, since windows keep the tab they show by them.
+    var title: String {
+        switch self {
+        case .dashboard: "Overview"
+        case .projects: "Boards"
+        case .actions: "CI"
+        case .agents: "Waiting on You"
+        default: rawValue
+        }
+    }
 
     var systemImage: String {
         switch self {
@@ -58,6 +78,11 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .views: "square.grid.3x3"
         case .prioritisation: "list.number"
         case .agents: "questionmark.bubble"
+        case .ask: "sparkle.magnifyingglass"
+        case .epics: "square.stack.3d.up"
+        case .hygiene: "wand.and.sparkles"
+        case .delivery: "chart.line.uptrend.xyaxis"
+        case .issueFlow: "chart.bar.doc.horizontal"
         case .settings: "gearshape"
         }
     }
@@ -318,7 +343,7 @@ struct MainView: View {
         case .views:
             return fieldView.flatMap { orgConfigs.fieldView($0, in: selectedOrg)?.name } ?? "Views"
         default:
-            return tab.rawValue
+            return tab.title
         }
     }
 
@@ -400,7 +425,7 @@ struct MainView: View {
         let team = teamID.flatMap { id in snapshot?.teams.first { $0.id == id } }
         return OrgMetrics(
             history: history,
-            windowDays: windowDays,
+            window: MetricsWindow(code: windowDays),
             team: team,
             members: snapshot?.members ?? [],
             hidden: showHidden ? [] : hidden.keys,
@@ -589,12 +614,7 @@ private struct PageStack: View {
     }
 
     private var windowPicker: some View {
-        Picker("Window", selection: $windowDays) {
-            ForEach(MetricsStore.windowOptions, id: \.self) { Text("\($0) days").tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .fixedSize()
-        .help("Window for the stats")
+        MetricsWindowPicker(code: $windowDays)
     }
 
     // MARK: Navigation
@@ -867,7 +887,7 @@ private struct PageStack: View {
     // MARK: Pages
 
     private var actions: ActionsMetrics? {
-        actionsStore.history(for: org).map { ActionsMetrics(history: $0, windowDays: windowDays, config: configs.config(for: org)) }
+        actionsStore.history(for: org).map { ActionsMetrics(history: $0, window: MetricsWindow(code: windowDays), config: configs.config(for: org)) }
     }
 
     @ViewBuilder
@@ -905,13 +925,13 @@ private struct PageStack: View {
             if let actions, let repo = actions.repo(name) {
                 ActionsRepositoryPage(org: org, repo: repo, metrics: actions, navigate: push.perform)
             } else {
-                gone("No workflow runs in this repository in the last \(windowDays) days.")
+                gone("No workflow runs in this repository in \(MetricsWindow(code: windowDays).span).")
             }
         case .workflow(let key):
             if let actions, let workflow = actions.workflow(key) {
                 WorkflowPage(org: org, workflow: workflow, windowStart: actions.windowStart, hasPrevious: actions.hasPrevious, navigate: push.perform)
             } else {
-                gone("No runs of this workflow in the last \(windowDays) days.")
+                gone("No runs of this workflow in \(MetricsWindow(code: windowDays).span).")
             }
         case .workflowRun(let id):
             if let run = actionsStore.history(for: org)?.runs[id] {
@@ -923,7 +943,7 @@ private struct PageStack: View {
             if let workflow = actions?.workflow(key) {
                 JobPage(org: org, workflow: workflow, name: name, navigate: push.perform)
             } else {
-                gone("No runs of this workflow in the last \(windowDays) days.")
+                gone("No runs of this workflow in \(MetricsWindow(code: windowDays).span).")
             }
         case .harnessDocument(let path):
             HarnessDocumentPage(org: org, path: path)
@@ -971,15 +991,16 @@ struct OrgSidebar: View {
     @Binding var selection: SidebarItem?
     let workload: Workload?
     @AppStorage("sidebarPeopleExpanded") private var peopleExpanded = true
-    @AppStorage("sidebarPlanningExpanded") private var planningExpanded = true
-    @AppStorage("sidebarMeetingsExpanded") private var meetingsExpanded = true
+    @AppStorage("sidebarWorkExpanded") private var workExpanded = true
+    @AppStorage("sidebarDeliveryExpanded") private var deliveryExpanded = true
+    @AppStorage("sidebarRitualsExpanded") private var meetingsExpanded = false
     @AppStorage("sidebarSessionsExpanded") private var sessionsExpanded = true
     @AppStorage("sidebarAllExpanded") private var allExpanded = false
     /// Team IDs opened under People, comma separated.
     @AppStorage("sidebarExpandedTeams") private var expandedTeamIDs = ""
     @AppStorage("sidebarRepositoriesExpanded") private var repositoriesExpanded = false
     @AppStorage("sidebarIssuesExpanded") private var issuesExpanded = true
-    @AppStorage("sidebarHarnessExpanded") private var harnessExpanded = true
+    @AppStorage("sidebarHarnessSectionExpanded") private var harnessExpanded = false
     @Environment(HarnessStore.self) private var harnessStore
     @AppStorage("sidebarProjectsExpanded") private var projectsExpanded = true
     @AppStorage("sidebarViewsExpanded") private var viewsExpanded = true
@@ -1006,9 +1027,18 @@ struct OrgSidebar: View {
     var body: some View {
         List(selection: $selection) {
             if let selectedOrg {
+                // What needs me, and quick answers.
                 Section {
                     row(.inbox)
+                    #if os(macOS)
+                    row(.ask)
+                    #endif
                     row(.dashboard)
+                }
+
+                // What's in flight and what's next.
+                Section("Work", isExpanded: $workExpanded) {
+                    row(.pullRequests)
                     DisclosureGroup(isExpanded: $issuesExpanded) {
                         ForEach(IssueList.allCases, id: \.self) { list in
                             Label(list.rawValue, systemImage: list.systemImage)
@@ -1019,42 +1049,7 @@ struct OrgSidebar: View {
                     } label: {
                         row(.issues)
                     }
-                    row(.pullRequests)
-                    DisclosureGroup(isExpanded: $repositoriesExpanded) {
-                        ForEach(repositories) { repository in
-                            repositoryRow(repository)
-                        }
-                    } label: {
-                        row(.repositories)
-                    }
-                    row(.actions)
-                }
-
-                Section("People", isExpanded: $peopleExpanded) {
-                    peopleViewRow(.activity)
-                    peopleViewRow(.timeOff)
-                    peopleRows
-                }
-
-                Section("Meetings", isExpanded: $meetingsExpanded) {
-                    peopleViewRow(.standup)
-                    row(.prioritisation)
-                }
-
-                Section("Planning", isExpanded: $planningExpanded) {
-                    row(.investments)
-                    if hasHarness {
-                        DisclosureGroup(isExpanded: $harnessExpanded) {
-                            ForEach(HarnessKind.allCases) { kind in
-                                Label(kind.rawValue, systemImage: kind.systemImage)
-                                    .badge(harnessCount(kind))
-                                    .tag(SidebarItem.harnessKind(kind))
-                                    .contextMenu { OpenElsewhereItems(sidebar: .harnessKind(kind)) }
-                            }
-                        } label: {
-                            row(.harness)
-                        }
-                    }
+                    row(.epics)
                     DisclosureGroup(isExpanded: $projectsExpanded) {
                         ForEach(projectStore.boardLists[selectedOrg] ?? []) { board in
                             Label(board.title, systemImage: "rectangle.split.3x1")
@@ -1089,12 +1084,51 @@ struct OrgSidebar: View {
                     }
                 }
 
-                #if os(macOS)
-                if !sessions.sessions(for: selectedOrg).isEmpty {
-                    Section("Claude Code", isExpanded: $sessionsExpanded) {
-                        row(.agents)
-                        SessionSidebarRows(org: selectedOrg)
+                // How it's going.
+                Section("Delivery", isExpanded: $deliveryExpanded) {
+                    row(.delivery)
+                    row(.issueFlow)
+                    row(.investments)
+                    row(.actions)
+                    DisclosureGroup(isExpanded: $repositoriesExpanded) {
+                        ForEach(repositories) { repository in
+                            repositoryRow(repository)
+                        }
+                    } label: {
+                        row(.repositories)
                     }
+                }
+
+                // Who's doing what.
+                Section("Team", isExpanded: $peopleExpanded) {
+                    peopleRows
+                    peopleViewRow(.activity)
+                    peopleViewRow(.timeOff)
+                }
+
+                // The meetings Gannin runs.
+                Section("Rituals", isExpanded: $meetingsExpanded) {
+                    peopleViewRow(.standup)
+                    row(.prioritisation)
+                    row(.hygiene)
+                }
+
+                // The team's knowledge.
+                if hasHarness {
+                    Section("Harness", isExpanded: $harnessExpanded) {
+                        ForEach(HarnessKind.allCases) { kind in
+                            Label(kind.rawValue, systemImage: kind.systemImage)
+                                .badge(harnessCount(kind))
+                                .tag(SidebarItem.harnessKind(kind))
+                                .contextMenu { OpenElsewhereItems(sidebar: .harnessKind(kind)) }
+                        }
+                    }
+                }
+
+                #if os(macOS)
+                Section("Agents", isExpanded: $sessionsExpanded) {
+                    row(.agents)
+                    SessionSidebarRows(org: selectedOrg)
                 }
                 #endif
 
@@ -1119,17 +1153,15 @@ struct OrgSidebar: View {
                 }
                 SidebarFooter(selectedOrg: $selectedOrg, selection: $selection)
             }
-            #if !os(macOS)
-            // The Mac's sidebar gives the footer its own material; iPad's
-            // lets the rows show through, so it needs one.
+            // Its own material, so rows scrolled under it (and the sync
+            // panel sliding up over them) don't show through.
             .background(.bar)
-            #endif
         }
     }
 
     /// A section's own row: its page, with its count.
     private func row(_ tab: WorkloadTab) -> some View {
-        Label(tab.rawValue, systemImage: tab.systemImage)
+        Label(tab.title, systemImage: tab.systemImage)
             .badge(badge(for: tab))
             .tag(SidebarItem.tab(tab))
             .contextMenu { OpenElsewhereItems(sidebar: .tab(tab)) }
@@ -1280,7 +1312,7 @@ struct OrgSidebar: View {
             #else
             return 0
             #endif
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .ask, .epics, .hygiene, .delivery, .issueFlow, .settings: return 0
         }
     }
 }

@@ -153,6 +153,7 @@ struct StandupPage: View {
     /// Every PR's commits listed, rather than folded under it.
     @AppStorage("standupShowCommits") private var showCommits = false
     @AppStorage("standupLayout") private var layout: StandupLayout = .people
+    @State private var showsNotes = false
 
     var body: some View {
         let day = dayInterval
@@ -168,6 +169,15 @@ struct StandupPage: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .toolbar { toolbar }
+        .sheet(isPresented: $showsNotes) {
+            let date = day.start.formatted(.iso8601.year().month().day())
+            NotesSheet(
+                title: "Standup notes, \(day.start.formatted(.dateTime.weekday(.wide).day().month(.wide)))",
+                org: org, path: "standups/\(date).md", message: "Gannin: standup notes, \(date)",
+                rewrite: "Rewrite these standup notes as a short summary per person of what they got done and what's in flight, then anything the team should know.",
+                build: { standup(day).map(StandupNotes.markdown) ?? "The work log hasn't loaded yet." }
+            )
+        }
         .task(id: "\(org) \(day.start.timeIntervalSince1970)") {
             async let log: Void = workLog.sync(org, from: Calendar.current.date(byAdding: .day, value: -1, to: day.start))
             let days = max(14, Int(Date.now.timeIntervalSince(day.start) / 86_400) + 2)
@@ -219,8 +229,31 @@ struct StandupPage: View {
         return min(day, today)
     }
 
+    /// The day's standup, once the work log has loaded.
+    private func standup(_ day: DateInterval) -> Standup? {
+        guard let history = workLog.history(for: org) else { return nil }
+        let config = configs.config(for: org)
+        return Standup(
+            day: day,
+            people: people,
+            pullRequests: history.pullRequests(config: config, hidden: hidden.keys),
+            issues: issueStore.history(for: org).map { Array($0.issues.values) } ?? [],
+            config: config,
+            marks: marks(day, calendars: calendars(day))
+        )
+    }
+
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
+        ToolbarItem {
+            Button {
+                showsNotes = true
+            } label: {
+                Label("Notes", systemImage: "note.text")
+            }
+            .help("The day as notes, per person, to copy, rewrite with Claude, or commit to the harness")
+            .disabled(layout == .changelog)
+        }
         ToolbarItem {
             Picker("Layout", selection: $layout) {
                 ForEach(StandupLayout.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -325,17 +358,8 @@ struct StandupPage: View {
                     Text("Fetching the issue history.").foregroundStyle(.secondary)
                 }
             }
-        } else if let history = workLog.history(for: org) {
-            let config = configs.config(for: org)
+        } else if let standup = standup(day) {
             let calendars = calendars(day)
-            let standup = Standup(
-                day: day,
-                people: people,
-                pullRequests: history.pullRequests(config: config, hidden: hidden.keys),
-                issues: issueStore.history(for: org).map { Array($0.issues.values) } ?? [],
-                config: config,
-                marks: marks(day, calendars: calendars)
-            )
             let active = standup.entries.filter { !$0.isEmpty }
             let quiet = standup.entries.filter(\.isEmpty)
             VStack(alignment: .leading, spacing: 20) {
@@ -908,6 +932,17 @@ struct StandupTimelineList: View {
             if case .commits(let commits) = item.kind {
                 LinesText(added: commits.reduce(0) { $0 + $1.additions }, removed: commits.reduce(0) { $0 + $1.deletions })
             }
+            if let badge = reviewBadge(item) {
+                Label(badge.text, systemImage: badge.symbol)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(badge.color)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(badge.color.opacity(0.14), in: Capsule())
+                    .lineLimit(1)
+                    .fixedSize()
+                    .help(badge.help)
+            }
             if case .commits(let commits) = item.kind, commits.count > 1, !showAllCommits {
                 Button {
                     if unfolded.remove(item.id) == nil { unfolded.insert(item.id) }
@@ -963,6 +998,41 @@ struct StandupTimelineList: View {
             if case .issueClosed = item.kind, !record.isCompleted { parts.append("not planned") }
         }
         return parts.joined(separator: " · ")
+    }
+
+    /// Where a PR's review stands, on its opening: approved (by whom and
+    /// when) or changes requested. A merged PR counts the reviews before it
+    /// merged; an open one, its reviews now. Each reviewer's latest say
+    /// counts.
+    private func reviewBadge(_ item: StandupItem) -> (text: String, symbol: String, color: Color, help: String)? {
+        guard case .pullRequest(let pr) = item.subject else { return nil }
+        guard case .opened = item.kind else { return nil }
+        let until = pr.mergedAt ?? .distantFuture
+        var latest: [String: WorkLogReview] = [:]
+        for review in pr.reviews.sorted(by: { $0.submittedAt < $1.submittedAt })
+        where review.submittedAt <= until && review.author != pr.author && (review.state == "APPROVED" || review.state == "CHANGES_REQUESTED") {
+            latest[review.author] = review
+        }
+        let approvals = latest.values.filter { $0.state == "APPROVED" }.sorted { $0.submittedAt < $1.submittedAt }
+        let changes = latest.values.filter { $0.state == "CHANGES_REQUESTED" }.sorted { $0.submittedAt < $1.submittedAt }
+        func when(_ date: Date) -> String {
+            Calendar.current.isDate(date, inSameDayAs: item.at)
+                ? StandupRow.clock(date)
+                : date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        }
+        func names(_ reviews: [WorkLogReview]) -> String {
+            reviews.count <= 2 ? reviews.map { "@\($0.author)" }.joined(separator: ", ") : "@\(reviews[0].author) and \(reviews.count - 1) more"
+        }
+        func full(_ reviews: [WorkLogReview]) -> String {
+            reviews.map { "@\($0.author), \($0.submittedAt.formatted(date: .abbreviated, time: .shortened))" }.joined(separator: "\n")
+        }
+        if !changes.isEmpty {
+            return ("Changes requested by \(names(changes))", "arrow.uturn.backward.circle.fill", .orange, "Changes requested:\n" + full(changes))
+        }
+        if let last = approvals.last {
+            return ("Approved by \(names(approvals)) \(when(last.submittedAt))", "checkmark.seal.fill", ChartPalette.good, "Approved:\n" + full(approvals))
+        }
+        return nil
     }
 
     private func page(_ subject: StandupItem.Subject) -> DetailSelection {
@@ -1203,5 +1273,55 @@ private struct StandupChangelog: View {
         }
         .font(.callout)
         .padding(.vertical, 6)
+    }
+}
+
+/// A standup as notes: each person's day in a few lines (what merged,
+/// opened, was worked on and reviewed, and the issues closed and moved),
+/// then who was off or quiet.
+enum StandupNotes {
+    static func markdown(_ standup: Standup) -> String {
+        let day = standup.day.start.formatted(.dateTime.weekday(.wide).day().month(.wide))
+        var lines = ["# Standup, \(day)", ""]
+        func ref(_ repo: String, _ number: Int) -> String { "\(repo.split(separator: "/").last ?? "")#\(number)" }
+        for entry in standup.entries where !entry.isEmpty {
+            lines.append("## \(entry.person.displayName)")
+            lines.append("")
+            for work in entry.pullRequests {
+                let pr = work.pr
+                let link = "[\(ref(pr.repo, pr.number))](\(pr.url.absoluteString)) \(pr.title)"
+                if work.merged {
+                    lines.append("- Merged \(link)")
+                } else if work.opened {
+                    lines.append("- Opened \(link)\(work.commits.isEmpty ? "" : ", \(work.commits.count) commit\(work.commits.count == 1 ? "" : "s")")")
+                } else if work.closedUnmerged {
+                    lines.append("- Closed \(link) without merging")
+                } else if !work.commits.isEmpty {
+                    lines.append("- Worked on \(link), \(work.commits.count) commit\(work.commits.count == 1 ? "" : "s")")
+                }
+            }
+            for work in entry.reviews {
+                let verdicts = Set(work.reviews.map(\.state))
+                let verdict = verdicts.contains("APPROVED") ? "approved" : verdicts.contains("CHANGES_REQUESTED") ? "asked for changes on" : "reviewed"
+                lines.append("- \(verdict.prefix(1).uppercased() + verdict.dropFirst()) [\(ref(work.pr.repo, work.pr.number))](\(work.pr.url.absoluteString)) \(work.pr.title)")
+            }
+            for work in entry.issues {
+                let issue = work.record
+                let link = "[\(ref(issue.repo, issue.number))](\(issue.url.absoluteString)) \(issue.title)"
+                if work.closed {
+                    lines.append("- Closed \(link)")
+                } else if let move = work.moves.last {
+                    lines.append("- Moved \(link) to \(move.status)")
+                } else if work.opened {
+                    lines.append("- Opened \(link)")
+                }
+            }
+            lines.append("")
+        }
+        let quiet = standup.entries.filter(\.isEmpty).map(\.person.displayName)
+        if !quiet.isEmpty {
+            lines += ["Off, or nothing recorded: " + quiet.joined(separator: ", "), ""]
+        }
+        return lines.joined(separator: "\n")
     }
 }

@@ -125,7 +125,8 @@ extension SessionStore {
     }
 
     private func needsWatching(_ session: CodeSession) -> Bool {
-        isRunning(session.id) || (pullRequestInfo[session.id] ?? []).contains { $0.state == "OPEN" }
+        guard session.archivedAt == nil else { return false }
+        return isRunning(session.id) || (pullRequestInfo[session.id] ?? []).contains { $0.state == "OPEN" }
             || (pullRequestInfo[session.id] == nil && !session.pullRequests.isEmpty)
     }
 
@@ -247,6 +248,30 @@ extension SessionStore {
         guard let session = sessions[id] else { return }
         for helper in helpers(of: id) { end(helper.id) }
         end(id)
+        try await removeWorktrees(session)
+        await recordFinished(id)
+        remove(id)
+    }
+
+    /// Finishes a review but keeps it, in the history: claude is ended and
+    /// its worktree removed (best effort), and its result, your decisions
+    /// and comments stay, to read again or resume.
+    func archiveReview(_ id: UUID) async {
+        guard let session = sessions[id] else { return }
+        end(id)
+        try? await removeWorktrees(session)
+        update(id) { $0.archivedAt = .now }
+        closeTab(id)
+    }
+
+    /// Back from the history: claude resumes when its tab next shows.
+    func resumeReview(_ id: UUID) {
+        update(id) { $0.archivedAt = nil }
+        reveal(id)
+    }
+
+    /// The session's worktrees, and the issue's folder, removed on its box.
+    private func removeWorktrees(_ session: CodeSession) async throws {
         let folder = SessionScript.shellPath(Self.worktreePath(for: session))
         let script = session.isInHarness ? """
             cd \(folder) 2>/dev/null || exit 0
@@ -273,8 +298,6 @@ extension SessionStore {
         }
         let result = await Task.detached { SessionChanges.run(script, runner) }.value
         guard result.ok else { throw SessionError.message(result.error.isEmpty ? "Couldn't remove the worktrees." : result.error) }
-        await recordFinished(id)
-        remove(id)
     }
 
     /// Adds `finishedAt` to the session's `session.json` in the harness.

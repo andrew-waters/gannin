@@ -88,7 +88,7 @@ struct OffBoardIssuesView: View {
         }
         .task(id: org) {
             await projects.loadBoards(org: org)
-            await store.sync(org, windowDays: windowDays)
+            await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays())
         }
         .onAppear {
             // Start from the board investments are tracked on, if any.

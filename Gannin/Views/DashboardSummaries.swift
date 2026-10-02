@@ -33,7 +33,7 @@ struct InvestmentsSummary: View {
     /// redraws.
     private var range: DateInterval {
         let now = Date(timeIntervalSince1970: (Date.now.timeIntervalSince1970 / 60).rounded(.down) * 60)
-        return DateInterval(start: Calendar.current.date(byAdding: .day, value: -windowDays, to: now) ?? now, end: now)
+        return MetricsWindow(code: windowDays).interval(now: now)
     }
 
     var body: some View {
@@ -45,16 +45,16 @@ struct InvestmentsSummary: View {
                     .updating(store.syncing.contains(org))
             } else if let error = store.errors[org] {
                 Banner(message: "Couldn't load issues: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
-                    Task { await store.sync(org, windowDays: windowDays, force: true) }
+                    Task { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true) }
                 }
             } else {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Fetching issues for the last \(windowDays) days.").foregroundStyle(.secondary)
+                    Text("Fetching issues for \(MetricsWindow(code: windowDays).span).").foregroundStyle(.secondary)
                 }
             }
         }
-        .task(id: "\(org) \(windowDays)") { await store.sync(org, windowDays: windowDays) }
+        .task(id: "\(org) \(windowDays)") { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
     }
 
     private func content(_ balance: InvestmentBalance, range: DateInterval) -> some View {
@@ -132,7 +132,7 @@ struct ActionsSummary: View {
     var body: some View {
         Group {
             if let history = store.history(for: org) {
-                let metrics = ActionsMetrics(history: history, windowDays: windowDays, config: configs.config(for: org))
+                let metrics = ActionsMetrics(history: history, window: MetricsWindow(code: windowDays), config: configs.config(for: org))
                 content(metrics)
                     .updating(store.syncing.contains(org))
             } else if let error = store.errors[org] {
@@ -150,13 +150,13 @@ struct ActionsSummary: View {
     }
 
     private func sync(force: Bool) async {
-        await store.sync(org, windowDays: windowDays, excluding: configs.config(for: org).excludedRepos, force: force)
+        await store.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).excludedRepos, force: force)
     }
 
     @ViewBuilder
     private func content(_ metrics: ActionsMetrics) -> some View {
         if metrics.workflows.isEmpty {
-            Text("No workflow runs in the last \(windowDays) days.").foregroundStyle(.secondary)
+            Text("No workflow runs in \(MetricsWindow(code: windowDays).span).").foregroundStyle(.secondary)
         } else {
             let previous = metrics.hasPrevious ? metrics.previous : nil
             VStack(alignment: .leading, spacing: 16) {

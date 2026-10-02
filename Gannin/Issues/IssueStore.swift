@@ -12,6 +12,8 @@ final class IssueStore {
     private static let concurrency = 4
 
     private(set) var histories: [String: IssueHistory] = [:]
+    /// Orgs whose descriptions and comments are being fetched.
+    private(set) var deepSyncing: Set<String> = []
     private(set) var syncing: Set<String> = []
     private(set) var errors: [String: String] = [:]
     private var earliest: [String: Date] = [:]
@@ -100,6 +102,8 @@ final class IssueStore {
             errors[org] = nil
             save(updated)
             run.finish()
+            // Then, in the background, their descriptions and comments.
+            Task { await self.deepSync(org) }
         } catch is CancellationError {
             run.finish()
         } catch APIError.unauthorized {
@@ -264,5 +268,93 @@ private final class IssueTally {
     func set(_ index: Int, _ fetched: Int) {
         counts[index] = fetched
         report(counts.values.reduce(0, +), nil)
+    }
+}
+
+// MARK: - Deep sync
+
+extension IssueStore {
+    /// After the issues: their descriptions and last 20 comments, into the
+    /// search index (`IssueTextIndex`). The first time, every issue in the
+    /// history not yet indexed; after that, those updated since (a comment
+    /// bumps an issue's `updatedAt`), found with one cheap search. Fifty
+    /// issues a query; it stops when the budget runs low and carries on
+    /// next time.
+    func deepSync(_ org: String) async {
+        guard let api = auth.api, let history = histories[org], !deepSyncing.contains(org), !auth.shouldHoldOff else { return }
+        deepSyncing.insert(org)
+        defer { deepSyncing.remove(org) }
+        let index = IssueTextIndex.shared
+        let started = Date.now
+        let indexed = await index.indexed(org: org)
+        var ids = Set(history.issues.keys).subtracting(indexed)
+        if let last = await index.lastSync(org: org) {
+            let since = Self.stamp(last.addingTimeInterval(-Self.overlap))
+            if let changed: [Lossy<ChangedIssue>] = try? await api.search("org:\(org) archived:false is:issue updated:>=\(since)", fields: "... on Issue { id }") {
+                ids.formUnion(changed.compactMap { $0.value?.id }.filter { history.issues[$0] != nil })
+            }
+        }
+        guard !ids.isEmpty else {
+            await index.setLastSync(org: org, started)
+            return
+        }
+        let run = activity.begin(.issueText, org: org)
+        run.add("text", title: "Descriptions and comments", detail: ids.count == 1 ? "1 issue" : "\(ids.count) issues")
+        run.setTotal(ids.count, for: "text")
+        let all = Array(ids)
+        do {
+            let finished = try await run.track("text", count: { $0.done }) { progress in
+                var done = 0
+                for start in stride(from: 0, to: all.count, by: 50) {
+                    try Task.checkCancellation()
+                    if auth.rateLimit?.isLow == true { return (done: done, complete: false) }
+                    let batch = Array(all[start..<min(start + 50, all.count)])
+                    let texts = try await api.issueTexts(ids: batch)
+                    let rows = texts.compactMap { text -> IssueText? in
+                        guard let record = history.issues[text.id] else { return nil }
+                        return IssueText(id: text.id, org: org, repo: record.repo, number: record.number, title: record.title,
+                                         body: text.body, comments: text.comments, updatedAt: text.updatedAt)
+                    }
+                    await index.upsert(rows)
+                    done += batch.count
+                    progress(done, all.count)
+                }
+                return (done: done, complete: true)
+            }
+            // Only once everything changed is in, else the next run would
+            // skip what this one didn't get to.
+            if finished.complete { await index.setLastSync(org: org, started) }
+            run.finish()
+        } catch {
+            run.finish(error: error)
+        }
+    }
+}
+
+private struct ChangedIssue: Decodable { let id: String }
+
+extension GitHubAPI {
+    /// Issues' descriptions and last 20 comments, by node ID.
+    func issueTexts(ids: [String]) async throws -> [(id: String, body: String, comments: String, updatedAt: Date)] {
+        struct Comment: Decodable {
+            struct Author: Decodable { let login: String }
+            let author: Author?
+            let body: String
+        }
+        struct Node: Decodable {
+            let id: String
+            let updatedAt: Date
+            let body: String
+            let comments: Connection<Comment>
+        }
+        struct Response: Decodable { let nodes: [Lossy<Node>] }
+        let response: Response = try await query("""
+            query($ids: [ID!]!) {
+              nodes(ids: $ids) { ... on Issue { id updatedAt body comments(last: 20) { nodes { author { login } body } } } }
+            }
+            """, values: ["ids": ids])
+        return response.nodes.compactMap(\.value).map { node in
+            (node.id, node.body, node.comments.nodes.map { "@\($0.author?.login ?? "someone"): \($0.body)" }.joined(separator: "\n\n"), node.updatedAt)
+        }
     }
 }

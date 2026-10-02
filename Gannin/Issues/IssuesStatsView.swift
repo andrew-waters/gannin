@@ -27,7 +27,7 @@ struct IssuesStatsView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 if let history = store.history(for: org) {
-                    let metrics = IssueMetrics(history: history, windowDays: windowDays, team: workload?.team, config: configs.config(for: org))
+                    let metrics = IssueMetrics(history: history, window: MetricsWindow(code: windowDays), team: workload?.team, config: configs.config(for: org))
                     Section {
                         VStack(alignment: .leading, spacing: 16) {
                             notices(metrics, history: history)
@@ -93,12 +93,12 @@ struct IssuesStatsView: View {
                         Group {
                             if let error = store.errors[org] {
                                 Banner(message: "Couldn't load issues: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
-                                    Task { await store.sync(org, windowDays: windowDays, force: true) }
+                                    Task { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true) }
                                 }
                             } else {
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    Text("Fetching issues for the last \(windowDays) days, with their board history.").foregroundStyle(.secondary)
+                                    Text("Fetching issues for \(MetricsWindow(code: windowDays).span), with their board history.").foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -111,7 +111,7 @@ struct IssuesStatsView: View {
         .toolbar {
             ToolbarItem { syncIndicator }
         }
-        .task(id: "\(org) \(windowDays)") { await store.sync(org, windowDays: windowDays) }
+        .task(id: "\(org) \(windowDays)") { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
         .onAppear {
             order = UserDefaults.standard.string(forKey: "inProgressOrder.\(org)") ?? ""
             descending = UserDefaults.standard.bool(forKey: "inProgressDescending.\(org)")

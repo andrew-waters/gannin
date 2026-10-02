@@ -204,13 +204,13 @@ struct SyncFooter: View {
     private func refresh(_ mode: OrgStore.RefreshMode) {
         Task {
             async let workload: Void = orgs.refresh(org, mode: mode)
-            async let metrics: Void = metricsStore.sync(org, windowDays: windowDays, force: true)
+            async let metrics: Void = metricsStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true)
             // The work log only once it's been opened for this org.
             async let log: Void = workLog.isTracking(org) ? workLog.sync(org, force: true) : ()
-            async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: windowDays, force: true) : ()
+            async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true) : ()
             // Actions runs likewise, once the Actions page has been opened.
             async let runs: Void = actions.isTracking(org)
-                ? actions.sync(org, windowDays: windowDays, excluding: configs.config(for: org).excludedRepos, force: true)
+                ? actions.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).excludedRepos, force: true)
                 : ()
             // Boards, and the board investments are tracked on.
             async let boards: Void = projects.refresh(org: org, definitions: trackedBoards)

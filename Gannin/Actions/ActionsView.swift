@@ -30,7 +30,7 @@ struct ActionsView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 if let history = store.history(for: org) {
-                    let metrics = ActionsMetrics(history: history, windowDays: windowDays, config: configs.config(for: org))
+                    let metrics = ActionsMetrics(history: history, window: MetricsWindow(code: windowDays), config: configs.config(for: org))
                     content(metrics)
                 } else {
                     Section {
@@ -42,7 +42,7 @@ struct ActionsView: View {
                             } else {
                                 HStack(spacing: 8) {
                                     ProgressView().controlSize(.small)
-                                    Text("Fetching workflow runs for the last \(windowDays) days, repo by repo.").foregroundStyle(.secondary)
+                                    Text("Fetching workflow runs for \(MetricsWindow(code: windowDays).span), repo by repo.").foregroundStyle(.secondary)
                                 }
                             }
                         }
@@ -59,7 +59,7 @@ struct ActionsView: View {
     }
 
     private func sync(force: Bool) async {
-        await store.sync(org, windowDays: windowDays, excluding: configs.config(for: org).excludedRepos, force: force)
+        await store.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).excludedRepos, force: force)
     }
 
     @ViewBuilder
@@ -82,7 +82,7 @@ struct ActionsView: View {
                     }
                 }
                 if metrics.workflows.isEmpty {
-                    Text("No workflow runs in the last \(windowDays) days.").foregroundStyle(.secondary)
+                    Text("No workflow runs in \(MetricsWindow(code: windowDays).span).").foregroundStyle(.secondary)
                 } else {
                     tiles(metrics)
                 }
@@ -144,7 +144,7 @@ struct ActionsView: View {
     /// Run time, runs, failure rate and the typical run first, each against
     /// the period before, then the default branches and re-runs.
     private func tiles(_ metrics: ActionsMetrics) -> some View {
-        let perDay = Double(metrics.runCount) / Double(max(metrics.windowDays, 1))
+        let perDay = Double(metrics.runCount) / Double(max(metrics.window.lengthInDays(), 1))
         let previous = metrics.hasPrevious ? metrics.previous : nil
         return LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], alignment: .leading, spacing: 12) {
             StatTile(

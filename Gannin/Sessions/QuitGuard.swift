@@ -19,9 +19,21 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        let id = (response.notification.request.content.userInfo["session"] as? String).flatMap(UUID.init(uuidString:))
+        let info = response.notification.request.content.userInfo
+        let id = (info["session"] as? String).flatMap(UUID.init(uuidString:))
         let action = response.actionIdentifier
+        let review = info["review"] as? String
+        let mine = info["mine"] as? String
         await MainActor.run {
+            // A review request, or one of your PRs.
+            if review != nil || mine != nil {
+                var keys: [String: String] = [:]
+                if let review { keys["review"] = review }
+                if let mine { keys["mine"] = mine }
+                EngineerWatch.shared.handle(action: action == UNNotificationDefaultActionIdentifier ? "review:open" : action, info: keys)
+                if action == "review:claude" { NSApp.activate() }
+                return
+            }
             guard let id, let sessions = Self.sessions else { return }
             // A quick reply: answer without coming to Gannin.
             if action.hasPrefix("keys:") {

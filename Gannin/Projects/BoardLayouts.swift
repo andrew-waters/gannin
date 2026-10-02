@@ -333,7 +333,7 @@ struct BoardInsightsView: View {
         let scale = BarScale(rows.compactMap(\.time.median))
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                Text("Time in each status over the last \(windowDays) days, from the issues' board history, and how many of this view's items sit in each status now. Spells still running aren't counted in the time.")
+                Text("Time in each status over \(MetricsWindow(code: windowDays).span), from the issues' board history, and how many of this view's items sit in each status now. Spells still running aren't counted in the time.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if issueStore.history(for: org) == nil {
@@ -369,12 +369,12 @@ struct BoardInsightsView: View {
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .task { await issueStore.sync(org, windowDays: windowDays) }
+        .task { await issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
     }
 
     private func rows() -> [Row] {
         let status = board.field(named: "Status")
-        let windowStart = Calendar.current.date(byAdding: .day, value: -windowDays, to: .now) ?? .now
+        let windowStart = MetricsWindow(code: windowDays).interval().start
         var spells: [String: [TimeInterval]] = [:]
         for record in issueStore.history(for: org)?.issues.values.map({ $0 }) ?? [] {
             let changes = record.statusChanges.filter { $0.projectNumber == board.number }
