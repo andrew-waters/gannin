@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gannin: your team, your work and your agents, in one place</title>
+<meta name="description" content="Gannin shows who has which pull requests, reviews and issues in flight across your GitHub orgs, measures how work flows, and runs Claude Code on the issues, all from one native Mac app.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&amp;family=Geist+Mono:wght@400;500&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#FFFFFF}
+a{color:#0B6B5C}a:hover{color:#084F44}
+.g-grid{background-image:linear-gradient(#1A2028 1px,transparent 1px),linear-gradient(90deg,#1A2028 1px,transparent 1px);background-size:72px 72px;animation:g-drift 60s linear infinite}
+.g-hatch{background:repeating-linear-gradient(45deg,#1A2028 0 1px,transparent 1px 8px);animation:g-fadeout 1.2s ease 0.5s forwards}
+.g-reveal{opacity:0;animation:g-rise .8s cubic-bezier(.2,.7,.2,1) forwards}
+.g-build{opacity:0;clip-path:inset(0 100% 0 0);animation:g-build 1.1s cubic-bezier(.65,0,.35,1) forwards}
+.g-pop{opacity:0;animation:g-pop .6s cubic-bezier(.2,.9,.3,1.2) forwards}
+.g-marquee{animation:g-scroll 40s linear infinite}
+.g-marquee-mask{-webkit-mask-image:linear-gradient(to right,transparent,#000 10%,#000 90%,transparent);mask-image:linear-gradient(to right,transparent,#000 10%,#000 90%,transparent)}
+.g-logo{display:inline-flex;align-items:center;justify-content:center;height:40px;width:140px;border:1px dashed #36404C;border-radius:6px;color:#8D98A6;font-family:'Geist Mono',monospace;font-size:12px}
+@keyframes g-drift{from{background-position:0 0}to{background-position:72px 72px}}
+@keyframes g-fadeout{to{opacity:0}}
+@keyframes g-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes g-build{0%{opacity:1;clip-path:inset(0 100% 0 0)}100%{opacity:1;clip-path:inset(0 0 0 0)}}
+@keyframes g-pop{from{opacity:0;transform:translateY(8px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes g-scroll{from{transform:translateX(0)}to{transform:translateX(calc(-100% - 64px))}}
+.g-drum-mask{-webkit-mask-image:linear-gradient(to bottom,transparent 0%,rgba(0,0,0,.18) 14%,rgba(0,0,0,.45) 30%,#000 50%,rgba(0,0,0,.45) 70%,rgba(0,0,0,.18) 86%,transparent 100%);mask-image:linear-gradient(to bottom,transparent 0%,rgba(0,0,0,.18) 14%,rgba(0,0,0,.45) 30%,#000 50%,rgba(0,0,0,.45) 70%,rgba(0,0,0,.18) 86%,transparent 100%)}
+.g-drum-line{height:96px;line-height:96px;font-size:76px;letter-spacing:-0.045em;font-weight:400;white-space:nowrap;text-align:center}
+@media (max-width: 700px){.g-drum-line{font-size:44px}}
+@media (prefers-reduced-motion: reduce){.g-grid,.g-marquee{animation:none}.g-hatch{animation:none;opacity:0}.g-reveal,.g-build,.g-pop{animation:none;opacity:1;clip-path:none;transform:none}}
+</style>
+</head>
+<body>
+<div style="font-family: 'Geist', system-ui, sans-serif; color: #0E1726; background: #FFFFFF; width: 100%;">
+
+<!-- Top: dark hero on a blueprint grid, building in -->
+<section class="g-hero" style="background: #0A0E13; color: #E8ECF1; position: relative; overflow: hidden;">
+<div class="g-grid" aria-hidden="true" style="position: absolute; inset: 0; z-index: 0;"></div>
+<div class="g-hatch" aria-hidden="true" style="position: absolute; inset: 0; z-index: 1;"></div>
+
+<!-- Announcement bar -->
+<div class="g-reveal" style="position: relative; z-index: 3; background: #141B24; border-bottom: 1px solid #262F3A; font-size: 14px; padding: 10px 24px; display: flex; justify-content: center; align-items: center; gap: 12px; flex-wrap: wrap; animation-delay: 0ms;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #7FD4C4;">New</span>
+<span style="color: #C9D1DB;">[ANNOUNCEMENT: a report, launch or changelog headline]</span>
+<a href="#" style="color: #FFFFFF; font-weight: 500;">Read it</a>
+</div>
+
+<!-- Navigation -->
+<header style="position: relative; z-index: 2;">
+<nav aria-label="Main" style="max-width: 1200px; margin: 0 auto; padding: 18px 24px; display: flex; align-items: center; gap: 32px; flex-wrap: wrap;">
+<a href="#" style="display: flex; align-items: center; gap: 10px; color: #FFFFFF; text-decoration: none; font-weight: 600; font-size: 20px; letter-spacing: -0.02em;">
+<span style="width: 26px; height: 26px; border-radius: 6px; background: #0B6B5C; display: inline-block;"></span>
+Gannin
+</a>
+<div style="display: flex; gap: 24px; flex-wrap: wrap; flex-grow: 1; font-size: 15px;">
+<a href="#product" style="color: #C9D1DB; text-decoration: none;">Product</a>
+<a href="#uses" style="color: #C9D1DB; text-decoration: none;">Use cases</a>
+<a href="#how" style="color: #C9D1DB; text-decoration: none;">How it works</a>
+<a href="#trust" style="color: #C9D1DB; text-decoration: none;">Security</a>
+<a href="#" style="color: #C9D1DB; text-decoration: none;">Docs</a>
+<a href="#" style="color: #C9D1DB; text-decoration: none;">[PRICING]</a>
+</div>
+<div style="display: flex; gap: 8px; align-items: center;">
+<a href="#" style="color: #FFFFFF; text-decoration: none; font-weight: 500; font-size: 15px; padding: 12px 16px;">Sign in</a>
+<a href="#" style="background: #FFFFFF; color: #0A0E13; text-decoration: none; font-weight: 500; font-size: 15px; padding: 12px 20px; border-radius: 999px;">Download for Mac</a>
+</div>
+</nav>
+</header>
+
+<!-- Hero -->
+<div style="position: relative; z-index: 2; max-width: 1200px; margin: 0 auto; padding: 88px 24px 72px; display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 56px; align-items: center;">
+<div style="display: flex; flex-direction: column; align-items: flex-start; gap: 28px;">
+<span class="g-reveal" style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #7FD4C4; animation-delay: 120ms;">For engineering leads and their teams</span>
+<h1 class="g-reveal" style="margin: 0; font-size: 80px; line-height: 1.0; letter-spacing: -0.04em; font-weight: 500; color: #FFFFFF; animation-delay: 240ms;">Your team, your work and your agents, in one place</h1>
+<p class="g-reveal" style="margin: 0; font-size: 20px; line-height: 1.5; color: #AEB8C4; max-width: 560px; animation-delay: 420ms;">Gannin shows who has which pull requests, reviews and issues in flight across your GitHub orgs, measures how work flows, and runs Claude Code on the issues, all from one native Mac app.</p>
+<div class="g-reveal" style="display: flex; gap: 12px; flex-wrap: wrap; animation-delay: 600ms;">
+<a href="#" style="background: #FFFFFF; color: #0A0E13; text-decoration: none; font-weight: 500; font-size: 16px; padding: 14px 24px; border-radius: 999px;">Download for Mac</a>
+<a href="#" style="background: transparent; color: #FFFFFF; text-decoration: none; font-weight: 500; font-size: 16px; padding: 14px 24px; border-radius: 999px; border: 1px solid #36404C;">Book a demo</a>
+</div>
+<p class="g-reveal" style="margin: 0; font-size: 14px; color: #8D98A6; animation-delay: 720ms;">Sign in with GitHub. Bring your own Claude seat.</p>
+</div>
+<div style="position: relative; min-height: 520px;">
+<div class="g-build" style="position: absolute; inset: 24px 0 24px 32px; border: 1px solid #2A333E; background: #121820; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-family: 'Geist Mono', monospace; font-size: 14px; color: #8D98A6; text-align: center; padding: 24px; animation-delay: 300ms;">[PRODUCT SCREENSHOT: Claude Code window or Dashboard]</div>
+<div class="g-pop" style="position: absolute; left: 0; top: 64px; background: #0A0E13; border: 1px solid #36404C; border-radius: 10px; padding: 12px 14px; display: flex; gap: 10px; align-items: center; font-size: 14px; animation-delay: 900ms;">
+<span style="width: 8px; height: 8px; border-radius: 50%; background: #F59E0B; display: inline-block;"></span>
+<span style="color: #FFFFFF;">Claude needs you</span>
+<span style="color: #8D98A6; font-family: 'Geist Mono', monospace; font-size: 12px;">[ISSUE]</span>
+</div>
+<div class="g-pop" style="position: absolute; right: 16px; top: 8px; background: #0A0E13; border: 1px solid #36404C; border-radius: 10px; padding: 12px 14px; display: flex; gap: 10px; align-items: center; font-size: 14px; animation-delay: 1100ms;">
+<span style="width: 8px; height: 8px; border-radius: 50%; background: #60A5FA; display: inline-block;"></span>
+<span style="color: #FFFFFF;">Review requested</span>
+<span style="color: #8D98A6; font-family: 'Geist Mono', monospace; font-size: 12px;">[PR]</span>
+</div>
+<div class="g-pop" style="position: absolute; left: 56px; bottom: 0; background: #0A0E13; border: 1px solid #36404C; border-radius: 10px; padding: 12px 14px; display: flex; gap: 10px; align-items: center; font-size: 14px; animation-delay: 1300ms;">
+<span style="width: 8px; height: 8px; border-radius: 50%; background: #34D399; display: inline-block;"></span>
+<span style="color: #FFFFFF;">Cycle time</span>
+<span style="color: #8D98A6; font-family: 'Geist Mono', monospace; font-size: 12px;">[VALUE] against last quarter</span>
+</div>
+</div>
+</div>
+
+<!-- Logo marquee -->
+<div class="g-reveal" style="position: relative; z-index: 2; border-top: 1px solid #1E252E; padding: 28px 0 32px; display: flex; flex-direction: column; gap: 18px; animation-delay: 900ms;">
+<p style="margin: 0 auto; max-width: 1200px; width: 100%; box-sizing: border-box; padding: 0 24px; font-family: 'Geist Mono', monospace; font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: #8D98A6;">Used by engineering teams at</p>
+<div class="g-marquee-mask" style="overflow: hidden;">
+<div style="display: flex; gap: 64px; width: max-content;">
+<div class="g-marquee" style="display: flex; gap: 64px; flex-shrink: 0;"><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span></div>
+<div class="g-marquee" aria-hidden="true" style="display: flex; gap: 64px; flex-shrink: 0;"><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span><span class="g-logo">[LOGO]</span></div>
+</div>
+</div>
+</div>
+</section>
+
+<!-- Problem -->
+<section style="background: #F4F6F8; border-top: 1px solid #E3E7EC; border-bottom: 1px solid #E3E7EC;">
+<div style="max-width: 1200px; margin: 0 auto; padding: 96px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 56px; align-items: start;">
+<div style="display: flex; flex-direction: column; gap: 20px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #0B6B5C;">The problem</span>
+<h2 style="margin: 0; font-size: 52px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 500;">Agents write code at one speed. Everything around it runs at another.</h2>
+</div>
+<div style="display: flex; flex-direction: column; gap: 20px; font-size: 18px; line-height: 1.6; color: #2B3442;">
+<p style="margin: 0;">Coding agents can turn an issue into a pull request in an afternoon. But knowing who's overloaded, which reviews are stuck, whether the board matches the code, and what shipped this week still means clicking through GitHub, boards, spreadsheets and chat.</p>
+<p style="margin: 0;">Gannin puts the team's work, its delivery and its agents in the same window, so the bottleneck is never the part nobody can see.</p>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; margin-top: 8px;">
+<div style="background: #FFFFFF; border: 1px solid #E3E7EC; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 6px;">
+<span style="font-size: 32px; font-weight: 500; letter-spacing: -0.03em;">[STAT]</span>
+<span style="font-size: 14px; color: #4B5563;">[What the number measures, and its source]</span>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E7EC; border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 6px;">
+<span style="font-size: 32px; font-weight: 500; letter-spacing: -0.03em;">[STAT]</span>
+<span style="font-size: 14px; color: #4B5563;">[What the number measures, and its source]</span>
+</div>
+</div>
+</div>
+</div>
+</section>
+
+<!-- Value: three pillars -->
+<section id="product" style="max-width: 1200px; margin: 0 auto; padding: 112px 24px 96px; display: flex; flex-direction: column; gap: 48px;">
+<div style="display: flex; flex-direction: column; gap: 16px; max-width: 760px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #0B6B5C;">What Gannin does</span>
+<h2 style="margin: 0; font-size: 52px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 500;">See the work. Ship it with agents. Plan with the whole picture.</h2>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px;">
+<article style="border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 16px;">
+<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#0B6B5C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="9" cy="8" r="3.2"></circle><path d="M3.5 19c.8-3 3-4.6 5.5-4.6s4.7 1.6 5.5 4.6"></path><circle cx="17" cy="9" r="2.4"></circle><path d="M16 14.5c2.2 0 3.9 1.3 4.5 3.8"></path></svg>
+<h3 style="margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.015em;">See who's doing what</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #4B5563;">Every open PR, review request and assigned issue, per person and per team, across your orgs. An Inbox for your own queue, a standup for yesterday, time off on the calendar.</p>
+</article>
+<article style="border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 16px;">
+<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#0B6B5C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="2.5"></rect><path d="M7 10l3 2.5L7 15"></path><path d="M12.5 15H17"></path></svg>
+<h3 style="margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.015em;">Ship with Claude Code</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #4B5563;">Work on This turns an issue into a Claude Code session, tabbed beside the others, with a live diff, its questions answered in a click, and its PRs and checks watched for you.</p>
+</article>
+<article style="border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 16px;">
+<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#0B6B5C" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 4h8l3 3v13H5V4h3"></path><path d="M9 4v3h6V4"></path><path d="M8.5 12h7M8.5 15.5h5"></path></svg>
+<h3 style="margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.015em;">Plan with context</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #4B5563;">Plans, requirements and findings in your team's harness repo, linked to the issues they're about. Plan with Claude, break a requirement into issues, and keep the board in step.</p>
+</article>
+</div>
+</section>
+
+<!-- Built for: a drum of roles and work, stepping up -->
+<section style="max-width: 1200px; margin: 0 auto; padding: 96px 24px; display: flex; justify-content: center;">
+<div class="g-drum-mask" style="height: 672px; overflow: hidden; width: 100%; color: #0E1726;" aria-label="Engineering Leads, Code Review, Agent Workflows, Delivery Reporting, Sprint Planning, Platform Teams, Standups, Customer Triage" role="img">
+<div id="drum" style="transform: translateY(-96px); will-change: transform;"></div>
+</div>
+</section>
+
+<!-- Use cases grid -->
+<section id="uses" style="background: #0A0E13; color: #E6EAF0;">
+<div style="max-width: 1200px; margin: 0 auto; padding: 104px 24px; display: flex; flex-direction: column; gap: 48px;">
+<div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; flex-wrap: wrap;">
+<div style="display: flex; flex-direction: column; gap: 16px; max-width: 680px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #7FD4C4;">Where it helps</span>
+<h2 style="margin: 0; font-size: 52px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 500; color: #FFFFFF;">One app for the whole engineering week</h2>
+</div>
+<a href="#" style="color: #FFFFFF; text-decoration: none; font-weight: 500; font-size: 16px; padding: 12px 20px; border-radius: 999px; border: 1px solid #36404C;">Explore the product</a>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px;">
+<div style="background: #162131; border: 1px solid #263345; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; color: #FFFFFF;">Workload and Inbox</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B4BFCC;">Who has what in flight, and your own reviews, PRs and issues in one queue.</p>
+</div>
+<div style="background: #162131; border: 1px solid #263345; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; color: #FFFFFF;">Delivery metrics</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B4BFCC;">Cycle time by stage, first review, rework and PR size, by month or quarter, against goals.</p>
+</div>
+<div style="background: #162131; border: 1px solid #263345; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; color: #FFFFFF;">Code review with Claude</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B4BFCC;">Findings on the diff to keep, edit or dismiss, posted to GitHub as one review.</p>
+</div>
+<div style="background: #162131; border: 1px solid #263345; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; color: #FFFFFF;">Claude Code sessions</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B4BFCC;">Agents on issues, in tabs, on your Mac or your server, with live diffs and quick replies.</p>
+</div>
+<div style="background: #162131; border: 1px solid #263345; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; color: #FFFFFF;">Planning and the harness</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B4BFCC;">Plans and requirements beside the code, epics, and a board kept honest.</p>
+</div>
+<div style="background: #162131; border: 1px solid #263345; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; color: #FFFFFF;">Investment balance</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B4BFCC;">Where the effort goes, by category, against the mix you're aiming for.</p>
+</div>
+<div style="background: #162131; border: 1px solid #263345; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; color: #FFFFFF;">Standup and prioritisation</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B4BFCC;">Yesterday per person, and live capture of what customers are raising.</p>
+</div>
+<div style="background: #162131; border: 1px solid #263345; border-radius: 14px; padding: 24px; display: flex; flex-direction: column; gap: 10px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em; color: #FFFFFF;">GitHub Actions</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.55; color: #B4BFCC;">Run time, failures, flaky workflows and red default branches, repo by repo.</p>
+</div>
+</div>
+</div>
+</section>
+
+<!-- Feature deep dives -->
+<section style="max-width: 1200px; margin: 0 auto; padding: 112px 24px; display: flex; flex-direction: column; gap: 112px;">
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 56px; align-items: center;">
+<div style="display: flex; flex-direction: column; gap: 18px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #0B6B5C;">Agents</span>
+<h2 style="margin: 0; font-size: 40px; line-height: 1.08; letter-spacing: -0.03em; font-weight: 500;">Run five agents without losing the thread</h2>
+<p style="margin: 0; font-size: 18px; line-height: 1.6; color: #4B5563;">Each issue gets its own Claude Code session in a tab. Gannin tells you which one needs you, shows the question with its options, keeps a live diff of every worktree, and resumes the conversation after a restart.</p>
+<ul style="margin: 0; padding-left: 20px; font-size: 16px; line-height: 1.8; color: #2B3442;">
+<li>Questions and permission prompts answered in a click</li>
+<li>Comment on the diff and send it back to Claude</li>
+<li>Failing checks and review feedback flagged as they land</li>
+</ul>
+</div>
+<div style="height: 460px; border-radius: 16px; border: 1.5px dashed #9AA4B2; background: #EEF1F4; display: flex; align-items: center; justify-content: center; font-family: 'Geist Mono', monospace; font-size: 15px; color: #4A5565; text-align: center; padding: 24px;">[SCREENSHOT: Claude Code window, tabs, question card, Changes pane]</div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 56px; align-items: center;">
+<div style="height: 460px; border-radius: 16px; border: 1.5px dashed #9AA4B2; background: #EEF1F4; display: flex; align-items: center; justify-content: center; font-family: 'Geist Mono', monospace; font-size: 15px; color: #4A5565; text-align: center; padding: 24px;">[SCREENSHOT: Dashboard delivery tiles, goals and What changed]</div>
+<div style="display: flex; flex-direction: column; gap: 18px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #0B6B5C;">Delivery</span>
+<h2 style="margin: 0; font-size: 40px; line-height: 1.08; letter-spacing: -0.03em; font-weight: 500;">Know why the numbers moved</h2>
+<p style="margin: 0; font-size: 18px; line-height: 1.6; color: #4B5563;">Cycle time split into coding, waiting, rework and merging, by month, quarter or year, against the period before and your goals. Gannin says which stages, repos and people moved it, and writes the weekly digest.</p>
+<ul style="margin: 0; padding-left: 20px; font-size: 16px; line-height: 1.8; color: #2B3442;">
+<li>Goals per team, on track or not</li>
+<li>PR size, and large PRs rushed through review</li>
+<li>Weekly digest, ready to share or commit</li>
+</ul>
+</div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 56px; align-items: center;">
+<div style="display: flex; flex-direction: column; gap: 18px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #0B6B5C;">Review</span>
+<h2 style="margin: 0; font-size: 40px; line-height: 1.08; letter-spacing: -0.03em; font-weight: 500;">Review faster, without handing over the decision</h2>
+<p style="margin: 0; font-size: 18px; line-height: 1.6; color: #4B5563;">When a review lands on you, start Claude on it from the notification or the menu bar. Its findings sit on the PR's diff by severity. Keep, edit or dismiss each, add your own, and post one review to GitHub.</p>
+<ul style="margin: 0; padding-left: 20px; font-size: 16px; line-height: 1.8; color: #2B3442;">
+<li>Review requests checked every few minutes</li>
+<li>Suggestions posted as one-click GitHub suggestions</li>
+<li>Nothing posted until you say so</li>
+</ul>
+</div>
+<div style="height: 460px; border-radius: 16px; border: 1.5px dashed #9AA4B2; background: #EEF1F4; display: flex; align-items: center; justify-content: center; font-family: 'Geist Mono', monospace; font-size: 15px; color: #4A5565; text-align: center; padding: 24px;">[SCREENSHOT: PR review tab, findings on the diff, Post Review sheet]</div>
+</div>
+
+</section>
+
+<!-- How it works -->
+<section id="how" style="background: #F4F6F8; border-top: 1px solid #E3E7EC; border-bottom: 1px solid #E3E7EC;">
+<div style="max-width: 1200px; margin: 0 auto; padding: 104px 24px; display: flex; flex-direction: column; gap: 48px;">
+<div style="display: flex; flex-direction: column; gap: 16px; max-width: 720px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #0B6B5C;">How it works</span>
+<h2 style="margin: 0; font-size: 52px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 500;">Up and running before standup</h2>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px;">
+<div style="background: #FFFFFF; border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 14px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 15px; color: #0B6B5C; font-weight: 500;">01</span>
+<h3 style="margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.015em;">Sign in with GitHub</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #4B5563;">Pick the orgs you look after. Gannin reads your PRs, issues, boards and Actions; everything you enter syncs through your own iCloud.</p>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 14px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 15px; color: #0B6B5C; font-weight: 500;">02</span>
+<h3 style="margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.015em;">Point it at your harness</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #4B5563;">Choose the repo where plans and standards live, or create one. The team's settings can live there too, reviewed like code.</p>
+</div>
+<div style="background: #FFFFFF; border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 14px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 15px; color: #0B6B5C; font-weight: 500;">03</span>
+<h3 style="margin: 0; font-size: 22px; font-weight: 500; letter-spacing: -0.015em;">Work on an issue</h3>
+<p style="margin: 0; font-size: 16px; line-height: 1.6; color: #4B5563;">Click Work on This. Claude Code starts in the harness with the issue's brief, on your Mac or your server, signed in as you.</p>
+</div>
+</div>
+</div>
+</section>
+
+<!-- Results -->
+<section style="max-width: 1200px; margin: 0 auto; padding: 112px 24px; display: flex; flex-direction: column; gap: 48px;">
+<div style="display: flex; flex-direction: column; gap: 16px; max-width: 720px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #0B6B5C;">Results</span>
+<h2 style="margin: 0; font-size: 52px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 500;">[RESULTS HEADLINE, once there are numbers to stand behind]</h2>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 24px;">
+<div style="border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 8px;">
+<span style="font-size: 52px; font-weight: 500; letter-spacing: -0.035em; color: #0B6B5C;">[RESULT]</span>
+<span style="font-size: 16px; color: #2B3442;">[What improved, e.g. median cycle time]</span>
+<span style="font-size: 14px; color: #5B6575;">[CUSTOMER, period measured]</span>
+</div>
+<div style="border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 8px;">
+<span style="font-size: 52px; font-weight: 500; letter-spacing: -0.035em; color: #0B6B5C;">[RESULT]</span>
+<span style="font-size: 16px; color: #2B3442;">[What improved, e.g. time to first review]</span>
+<span style="font-size: 14px; color: #5B6575;">[CUSTOMER, period measured]</span>
+</div>
+<div style="border: 1px solid #E3E7EC; border-radius: 16px; padding: 32px; display: flex; flex-direction: column; gap: 8px;">
+<span style="font-size: 52px; font-weight: 500; letter-spacing: -0.035em; color: #0B6B5C;">[RESULT]</span>
+<span style="font-size: 16px; color: #2B3442;">[What improved, e.g. issues shipped per engineer]</span>
+<span style="font-size: 14px; color: #5B6575;">[CUSTOMER, period measured]</span>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 24px;">
+<figure style="margin: 0; background: #F4F6F8; border-radius: 16px; padding: 36px; display: flex; flex-direction: column; gap: 24px;">
+<blockquote style="margin: 0; font-size: 22px; line-height: 1.45; letter-spacing: -0.01em;">[TESTIMONIAL: a sentence or two from an engineering lead, in their words]</blockquote>
+<figcaption style="display: flex; align-items: center; gap: 14px;">
+<div style="width: 48px; height: 48px; border-radius: 50%; border: 1.5px dashed #9AA4B2; background: #E6EAEE; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #4A5565; font-family: 'Geist Mono', monospace;">[PHOTO]</div>
+<div style="display: flex; flex-direction: column; gap: 2px;">
+<span style="font-weight: 600; font-size: 16px;">[NAME]</span>
+<span style="font-size: 14px; color: #4B5563;">[ROLE, COMPANY]</span>
+</div>
+</figcaption>
+</figure>
+<figure style="margin: 0; background: #F4F6F8; border-radius: 16px; padding: 36px; display: flex; flex-direction: column; gap: 24px;">
+<blockquote style="margin: 0; font-size: 22px; line-height: 1.45; letter-spacing: -0.01em;">[TESTIMONIAL: a sentence or two from an engineer using the agents]</blockquote>
+<figcaption style="display: flex; align-items: center; gap: 14px;">
+<div style="width: 48px; height: 48px; border-radius: 50%; border: 1.5px dashed #9AA4B2; background: #E6EAEE; display: flex; align-items: center; justify-content: center; font-size: 10px; color: #4A5565; font-family: 'Geist Mono', monospace;">[PHOTO]</div>
+<div style="display: flex; flex-direction: column; gap: 2px;">
+<span style="font-weight: 600; font-size: 16px;">[NAME]</span>
+<span style="font-size: 14px; color: #4B5563;">[ROLE, COMPANY]</span>
+</div>
+</figcaption>
+</figure>
+</div>
+</section>
+
+<!-- Trust -->
+<section id="trust" style="background: #F4F6F8; border-top: 1px solid #E3E7EC; border-bottom: 1px solid #E3E7EC;">
+<div style="max-width: 1200px; margin: 0 auto; padding: 104px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 56px; align-items: start;">
+<div style="display: flex; flex-direction: column; gap: 16px;">
+<span style="font-family: 'Geist Mono', monospace; font-size: 13px; letter-spacing: 0.08em; text-transform: uppercase; color: #0B6B5C;">Security and trust</span>
+<h2 style="margin: 0; font-size: 52px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 500;">Your code stays in GitHub. Your seat stays yours.</h2>
+<div style="display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px;">
+<div style="height: 64px; width: 120px; border: 1.5px dashed #9AA4B2; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #4A5565; font-family: 'Geist Mono', monospace;">[BADGE]</div>
+<div style="height: 64px; width: 120px; border: 1.5px dashed #9AA4B2; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #4A5565; font-family: 'Geist Mono', monospace;">[BADGE]</div>
+<div style="height: 64px; width: 120px; border: 1.5px dashed #9AA4B2; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #4A5565; font-family: 'Geist Mono', monospace;">[BADGE]</div>
+</div>
+</div>
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 20px;">
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em;">Native, on your Mac</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #4B5563;">A SwiftUI app talking straight to GitHub. No Gannin server in the middle.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em;">Your data, your iCloud</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #4B5563;">What you enter syncs through your private iCloud, or lives in your team's own harness repo.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em;">Claude, as you</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #4B5563;">Claude runs through your own Claude Code login, only when you ask. Gannin never handles your Claude credentials.</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 8px;">
+<h3 style="margin: 0; font-size: 18px; font-weight: 500; letter-spacing: -0.01em;">Every write confirmed</h3>
+<p style="margin: 0; font-size: 15px; line-height: 1.6; color: #4B5563;">Board moves, labels, issues and reviews are shown to you before anything is written to GitHub.</p>
+</div>
+</div>
+</div>
+</section>
+
+<!-- Final CTA -->
+<section style="max-width: 1200px; margin: 0 auto; padding: 112px 24px;">
+<div style="background: #0A0E13; border-radius: 4px; padding: 72px 56px; display: flex; flex-direction: column; align-items: flex-start; gap: 24px;">
+<h2 style="margin: 0; font-size: 52px; line-height: 1.05; letter-spacing: -0.035em; font-weight: 500; color: #FFFFFF; max-width: 760px;">See your whole engineering week in one window</h2>
+<p style="margin: 0; font-size: 19px; line-height: 1.5; color: #B4BFCC; max-width: 600px;">Download Gannin for Mac, sign in with GitHub, and pick an org.</p>
+<div style="display: flex; gap: 12px; flex-wrap: wrap;">
+<a href="#" style="background: #FFFFFF; color: #0A0E13; text-decoration: none; font-weight: 500; font-size: 16px; padding: 14px 24px; border-radius: 999px;">Download for Mac</a>
+<a href="#" style="background: transparent; color: #FFFFFF; text-decoration: none; font-weight: 500; font-size: 16px; padding: 14px 24px; border-radius: 999px; border: 1px solid #36404C;">Book a demo</a>
+</div>
+<p style="margin: 0; font-size: 14px; color: #8E9AAA;">macOS [VERSION] or later · [PRICING NOTE]</p>
+</div>
+</section>
+
+<!-- Footer -->
+<footer style="border-top: 1px solid #E3E7EC;">
+<div style="max-width: 1200px; margin: 0 auto; padding: 56px 24px; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 32px;">
+<div style="display: flex; flex-direction: column; gap: 12px;">
+<a href="#" style="display: flex; align-items: center; gap: 10px; color: #0E1726; text-decoration: none; font-weight: 600; font-size: 18px; letter-spacing: -0.02em;">
+<span style="width: 24px; height: 24px; border-radius: 6px; background: #0B6B5C; display: inline-block;"></span>
+Gannin
+</a>
+<p style="margin: 0; font-size: 14px; line-height: 1.6; color: #5B6575;">[ONE-LINE COMPANY DESCRIPTION]</p>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px; font-size: 15px;">
+<span style="font-weight: 600;">Product</span>
+<a href="#" style="color: #4B5563; text-decoration: none;">Workload</a>
+<a href="#" style="color: #4B5563; text-decoration: none;">Delivery</a>
+<a href="#" style="color: #4B5563; text-decoration: none;">Agents</a>
+<a href="#" style="color: #4B5563; text-decoration: none;">Planning</a>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px; font-size: 15px;">
+<span style="font-weight: 600;">Resources</span>
+<a href="#" style="color: #4B5563; text-decoration: none;">Docs</a>
+<a href="#" style="color: #4B5563; text-decoration: none;">Changelog</a>
+<a href="#" style="color: #4B5563; text-decoration: none;">[BLOG]</a>
+</div>
+<div style="display: flex; flex-direction: column; gap: 10px; font-size: 15px;">
+<span style="font-weight: 600;">Company</span>
+<a href="#" style="color: #4B5563; text-decoration: none;">Security</a>
+<a href="#" style="color: #4B5563; text-decoration: none;">Privacy</a>
+<a href="#" style="color: #4B5563; text-decoration: none;">Terms</a>
+<a href="#" style="color: #4B5563; text-decoration: none;">Contact</a>
+</div>
+</div>
+<div style="max-width: 1200px; margin: 0 auto; padding: 20px 24px 40px; font-size: 13px; color: #5B6575; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+<span>[COPYRIGHT LINE]</span>
+<span>[COMPANY REGISTRATION OR ADDRESS]</span>
+</div>
+</footer>
+
+</div>
+<script>
+// The "built for" list: moves up one line, then the lines shift along and
+// it returns to where it started, so it never loops visibly.
+(function () {
+  var items = ['Engineering Leads', 'Code Review', 'Agent Workflows', 'Delivery Reporting', 'Sprint Planning', 'Platform Teams', 'Standups', 'Customer Triage'];
+  var drum = document.getElementById('drum');
+  if (!drum) return;
+  var index = 0;
+  function render() {
+    var html = '';
+    for (var offset = -4; offset <= 4; offset++) {
+      var i = (((index + offset) % items.length) + items.length) % items.length;
+      html += '<div class="g-drum-line">' + items[i] + '</div>';
+    }
+    drum.innerHTML = html;
+  }
+  render();
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  setInterval(function () {
+    drum.style.transition = 'transform 520ms cubic-bezier(.65,0,.35,1)';
+    drum.style.transform = 'translateY(-192px)';
+    setTimeout(function () {
+      index = (index + 1) % items.length;
+      drum.style.transition = 'none';
+      drum.style.transform = 'translateY(-96px)';
+      render();
+    }, 520);
+  }, 1200);
+})();
+</script>
+</body>
+</html>
