@@ -1165,6 +1165,11 @@ struct SessionSidebarRows: View {
         }
     }
 
+    /// Approved, Changes requested or Commented, as posted.
+    private func postedText(_ session: CodeSession) -> String {
+        (sessions.reviewDrafts[session.id] ?? session.reviewDraft)?.postedLabel?.text ?? "Posted"
+    }
+
     private func row(_ session: CodeSession) -> some View {
         let state = sessions.state(session.id)
         let finished = session.archivedAt != nil
@@ -1183,7 +1188,7 @@ struct SessionSidebarRows: View {
             }
         }
         .buttonStyle(.plain)
-        .badge(Text(finished ? (posted ? "Posted" : "Done") : posted && !working ? "Posted" : state.label))
+        .badge(Text(finished ? (posted ? postedText(session) : "Done") : posted && !working ? postedText(session) : state.label))
         .contextMenu {
             if finished {
                 Button("Resume Review") {

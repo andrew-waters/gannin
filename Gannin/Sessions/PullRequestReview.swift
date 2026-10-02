@@ -21,9 +21,22 @@ struct ReviewDraft: Hashable, Codable {
 
     var decisions: [String: Decision] = [:]
     var comments: [Comment] = []
-    /// The review posted to GitHub, once it has been, and when.
+    /// The review posted to GitHub, once it has been, when, and which
+    /// kind: `APPROVE`, `REQUEST_CHANGES` or `COMMENT`.
     var posted: URL?
     var postedAt: Date?
+    var postedEvent: String?
+
+    /// What was posted, as a list shows it: nil before it's posted.
+    var postedLabel: (text: String, symbol: String, color: Color)? {
+        guard posted != nil else { return nil }
+        switch postedEvent {
+        case "APPROVE": return ("Approved", "checkmark.circle.fill", ChartPalette.good)
+        case "REQUEST_CHANGES": return ("Changes requested", "arrow.uturn.backward.circle.fill", .orange)
+        case "COMMENT": return ("Commented", "text.bubble.fill", ChartPalette.blue)
+        default: return ("Posted", "checkmark.circle.fill", ChartPalette.good)
+        }
+    }
 }
 
 extension SessionTranscript.Finding {
@@ -343,9 +356,11 @@ struct PullRequestReviewView: View {
                 .help("Ask claude to review the PR again, as it is now")
                 if let posted = draft.posted {
                     Link(destination: posted) {
-                        Label(draft.postedAt.map { "Posted \($0.formatted(.relative(presentation: .named)))" } ?? "Posted", systemImage: "checkmark.circle.fill")
+                        let label = draft.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
+                        Label(draft.postedAt.map { "\(label.text) \($0.formatted(.relative(presentation: .named)))" } ?? label.text, systemImage: label.symbol)
+                            .foregroundStyle(label.color)
                     }
-                    .foregroundStyle(ChartPalette.good)
+                    .help("Open the review on GitHub")
                 }
                 if session.archivedAt != nil {
                     Button("Resume") {
@@ -381,7 +396,8 @@ struct PullRequestReviewView: View {
         if let archived = session.archivedAt {
             Label("Finished \(archived.formatted(.relative(presentation: .named)))", systemImage: "archivebox").foregroundStyle(.secondary)
         } else if sessions.reviewDrafts[session.id]?.posted != nil, !(sessions.isRunning(session.id) && (state == .working || state == .starting)) {
-            Label("Posted", systemImage: "checkmark.circle.fill").foregroundStyle(ChartPalette.good)
+            let label = sessions.reviewDrafts[session.id]?.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
+            Label(label.text, systemImage: label.symbol).foregroundStyle(label.color)
         } else if !sessions.isRunning(session.id) {
             Label("Not running", systemImage: "pause.circle").foregroundStyle(.secondary)
         } else if state == .working || state == .starting {
@@ -787,10 +803,18 @@ private struct PostReviewSheet: View {
                     Text("Request Changes").tag("REQUEST_CHANGES")
                 }
                 .pickerStyle(.segmented)
-                TextField("Body", text: $bodyText, axis: .vertical)
-                    .lineLimit(5...14)
             } header: {
-                Text("\(reference.repo)#\(reference.number)")
+                Text(verbatim: "\(reference.repo)#\(reference.number)")
+            }
+            // An editor rather than a field: a field selects all its text
+            // when the sheet gives it focus.
+            Section {
+                TextEditor(text: $bodyText)
+                    .font(.body)
+                    .frame(minHeight: 160, idealHeight: 220)
+                    .scrollContentBackground(.hidden)
+            } header: {
+                Text("Body")
             } footer: {
                 Text(general.isEmpty ? "" : "\(general.count) finding\(general.count == 1 ? " isn't" : "s aren't") on a line the diff shows, so \(general.count == 1 ? "it's" : "they're") in the body.")
                     .font(.caption)
@@ -873,6 +897,7 @@ private struct PostReviewSheet: View {
                 let url = try await api.postReview(repo: reference.repo, number: reference.number, commit: pullRequest.headSHA, event: event, body: body, comments: inline)
                 sessions.reviewDrafts[session.id, default: ReviewDraft()].posted = url ?? reference.url
                 sessions.reviewDrafts[session.id, default: ReviewDraft()].postedAt = .now
+                sessions.reviewDrafts[session.id, default: ReviewDraft()].postedEvent = event
                 dismiss()
             } catch {
                 self.error = "GitHub didn't take it: \(error.localizedDescription)"
@@ -916,7 +941,8 @@ struct ClaudeReviewBadge: View {
         let state = sessions.state(review.id)
         let working = sessions.isRunning(review.id) && (state == .working || state == .starting)
         if !working, sessions.reviewDrafts[review.id]?.posted != nil || review.reviewDraft?.posted != nil {
-            return ("Posted", ChartPalette.good)
+            let label = (sessions.reviewDrafts[review.id] ?? review.reviewDraft)?.postedLabel
+            return (label?.text ?? "Posted", label?.color ?? ChartPalette.good)
         }
         guard sessions.isRunning(review.id) else {
             return sessions.transcripts[review.id]?.review != nil ? ("Review ready", ChartPalette.good) : ("Review", .secondary)
