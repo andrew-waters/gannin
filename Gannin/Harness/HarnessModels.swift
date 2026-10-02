@@ -1,13 +1,50 @@
 import Foundation
 
 /// The org's harness: a repo of plans, requirements, findings and skills
-/// kept beside the code (Ctrl Hub's `ctrl-hub/harness`), read from GitHub so
+/// kept beside the code, read from GitHub so
 /// everyone in the org sees the same documents.
 struct HarnessConfig: Codable, Hashable {
     /// `owner/name`.
     var repo: String
     /// The branch the harness is read from; nil for the repo's default.
     var branch: String?
+    /// For a harness beside the primary one: the code repos it's for
+    /// (`owner/name` or a name alone). Work in them runs in it; anything
+    /// no other harness claims runs in the primary.
+    var repos: [String]? = nil
+
+    var name: String { repo.split(separator: "/").last.map(String.init) ?? repo }
+
+    func covers(_ target: String) -> Bool {
+        (repos ?? []).contains { repo in
+            let lower = repo.lowercased(), full = target.lowercased()
+            return lower == full || lower == full.split(separator: "/").last.map(String.init)
+        }
+    }
+}
+
+nonisolated extension HarnessIndex {
+    /// A document path in a combined index: plain for the primary
+    /// harness's, `owner/name:path` for another's.
+    static func split(_ path: String) -> (repo: String?, path: String) {
+        guard let colon = path.firstIndex(of: ":"), path[..<colon].contains("/") else { return (nil, path) }
+        return (String(path[..<colon]), String(path[path.index(after: colon)...]))
+    }
+}
+
+nonisolated extension HarnessDocument {
+    /// The same document under `owner/name:path`, for a combined index.
+    func prefixed(_ repo: String) -> HarnessDocument {
+        HarnessDocument(
+            path: "\(repo):\(path)", sha: sha, kind: kind, title: title, text: text, module: module, date: date, status: status,
+            summary: summary, domains: domains, touches: touches, hasFrontMatter: hasFrontMatter, requirement: requirement,
+            branch: branch, owner: owner, dependsOn: dependsOn, frontMatter: frontMatter, tasks: tasks, tasksDone: tasksDone,
+            references: references
+        )
+    }
+
+    /// The harness it's from in a combined index; nil for the primary.
+    var harnessRepo: String? { HarnessIndex.split(path).repo }
 }
 
 /// What a document in the harness is, from where it sits.
@@ -16,6 +53,8 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
     case requirements = "Requirements"
     case findings = "Findings"
     case skills = "Skills"
+    /// The team's prompts for Claude Code sessions (`HarnessPrompt`).
+    case prompts = "Prompts"
 
     var id: Self { self }
 
@@ -25,6 +64,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .requirements: "doc.text"
         case .findings: "magnifyingglass"
         case .skills: "wand.and.stars"
+        case .prompts: "text.bubble"
         }
     }
 
@@ -40,12 +80,13 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .requirements: "requirement"
         case .findings: "finding"
         case .skills: "skill"
+        case .prompts: "prompt"
         }
     }
 
     /// The harness's layout: `plans/` for plans (and, until they're moved,
     /// `requirements/<module>/plans/`), the rest of `requirements/` for
-    /// requirements, `findings/` and `skills/`. READMEs and templates
+    /// requirements, `findings/`, `skills/` and `prompts/`. READMEs and templates
     /// describe the layout rather than being part of it.
     init?(path: String) {
         let parts = path.split(separator: "/")
@@ -56,6 +97,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case "requirements": self = parts.contains("plans") ? .plans : .requirements
         case "findings": self = .findings
         case "skills": self = .skills
+        case "prompts": self = .prompts
         default: return nil
         }
     }
@@ -114,7 +156,7 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 5
+    static let parserVersion = 6
 
     /// The status in a word or two, for a table: an older document's
     /// sentence cut at its first clause.
@@ -205,7 +247,7 @@ nonisolated struct HarnessDataFile: Codable, Hashable, Sendable {
     let sha: String
     let text: String
 
-    /// `.gannin/views.json`, `.gannin/people/ian.json`: what the index keeps
+    /// `.gannin/views.json`, `.gannin/people/alex.json`: what the index keeps
     /// beside the documents.
     static func isData(_ path: String) -> Bool {
         path.hasPrefix(".gannin/") && path.hasSuffix(".json")
@@ -225,7 +267,7 @@ nonisolated struct HarnessIndex: Codable, Sendable {
     let branch: String
     let commit: String
     var fetchedAt: Date
-    let documents: [HarnessDocument]
+    var documents: [HarnessDocument]
     /// The team's data under `.gannin/`; nil in an index cached before it
     /// was read, which is fetched again.
     var dataFiles: [HarnessDataFile]?
@@ -254,7 +296,18 @@ nonisolated struct HarnessIndex: Codable, Sendable {
     }
 
     func url(for document: HarnessDocument) -> URL? {
-        URL(string: "https://github.com/\(repo)/blob/\(branch)/\(document.path)")
+        let (other, path) = Self.split(document.path)
+        // Another harness's, in a combined index: its default branch.
+        return URL(string: "https://github.com/\(other ?? repo)/blob/\(other == nil ? branch : "HEAD")/\(path)")
+    }
+
+    /// The primary index with every other harness's documents added under
+    /// `owner/name:` paths, for the views that look across them all.
+    func combined(with others: [HarnessIndex]) -> HarnessIndex {
+        guard !others.isEmpty else { return self }
+        var index = self
+        index.documents = documents + others.flatMap { other in other.documents.map { $0.prefixed(other.repo) } }
+        return index
     }
 }
 

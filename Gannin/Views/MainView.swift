@@ -37,7 +37,11 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case views = "Views"
     /// The morning session with CS, under Meetings.
     case prioritisation = "Prioritisation"
-    /// What the Claude Code agents want from you (the Mac's).
+    /// What the team closed over its period, under Rituals.
+    case recap = "Recap"
+    /// The goals period by period, under Delivery.
+    case scorecard = "Scorecard"
+    /// What the Claude Code agents want from you.
     case agents = "Agents"
     /// Questions about the org, answered by Claude from Gannin's data.
     case ask = "Ask"
@@ -77,6 +81,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .harness: "text.book.closed"
         case .views: "square.grid.3x3"
         case .prioritisation: "list.number"
+        case .recap: "calendar.badge.checkmark"
+        case .scorecard: "target"
         case .agents: "questionmark.bubble"
         case .ask: "sparkle.magnifyingglass"
         case .epics: "square.stack.3d.up"
@@ -216,12 +222,6 @@ struct MainView: View {
                     searchText: searchText
                 )
                 .id(selectedOrg)
-                #if !os(macOS)
-                // The page's title and controls share the bar with the
-                // sidebar toggle, as on the Mac's title bar.
-                .navigationTitle(customTitle.isEmpty ? automaticTitle : customTitle)
-                .navigationBarTitleDisplayMode(.inline)
-                #endif
             } else {
                 ContentUnavailableView(
                     "Pick an organisation",
@@ -238,11 +238,9 @@ struct MainView: View {
         .investmentPrompt()
         .environment(\.showPerson, ShowPersonAction { login in sidebarSelection.wrappedValue = .person(login) })
         .environment(\.showSidebarItem, ShowSidebarAction { item in sidebarSelection.wrappedValue = item })
-        #if os(macOS)
         .background(WindowAccessor { window in
             TabMenuRename.shared.register(window, action: startRenaming)
         })
-        #endif
         .alert("Rename Tab", isPresented: $isRenaming) {
             TextField("Title", text: $draftTitle)
             Button("Rename") { customTitle = draftTitle.trimmingCharacters(in: .whitespaces) }
@@ -267,7 +265,8 @@ struct MainView: View {
         }
         .onChange(of: orgs.orgs, initial: true) {
             if selectedOrg == nil {
-                selectedOrg = (orgs.starredOrgs.first ?? orgs.orgs.first)?.login
+                // An org before your own account, unless that's starred.
+                selectedOrg = (orgs.starredOrgs.first ?? orgs.orgs.first { !$0.isPersonal } ?? orgs.orgs.first)?.login
             }
         }
     }
@@ -322,7 +321,7 @@ struct MainView: View {
             workload: workload,
             metrics: metrics,
             actions: selectedOrg.flatMap(actionsStore.history(for:)),
-            harness: selectedOrg.flatMap { org in orgConfigs.config(for: org).harness.flatMap { harnessStore.index(for: org, $0) } }
+            harness: selectedOrg.flatMap { org in harnessStore.combined(org: org, orgConfigs.config(for: org).harnesses) }
         )
     }
 
@@ -828,11 +827,9 @@ private struct PageStack: View {
                     .id(path)
             } else {
                 HStack(spacing: 10) {
-                    #if os(macOS)
                     if let reference = pullRequestReference(item) {
                         ReviewWithClaudeButton(reference: reference)
                     }
-                    #endif
                     Spacer()
                     Button("Open as Page") {
                         drawers = []
@@ -1007,21 +1004,18 @@ struct OrgSidebar: View {
     @Environment(ProjectStore.self) private var projectStore
     @Environment(OrgConfigStore.self) private var configs
     @Environment(AuthStore.self) private var auth
-    #if os(macOS)
     @Environment(SessionStore.self) private var sessions
-    #endif
 
     /// Documents of the kind that follow the harness's standard, as the page
     /// lists them.
     private func harnessCount(_ kind: HarnessKind) -> Int {
-        guard let selectedOrg, let setup = configs.config(for: selectedOrg).harness,
-              let index = harnessStore.index(for: selectedOrg, setup) else { return 0 }
+        guard let selectedOrg, let index = harnessStore.combined(org: selectedOrg, configs.config(for: selectedOrg).harnesses) else { return 0 }
         return index.documents(kind).count(where: \.followsStandard)
     }
 
     /// The Harness row only shows once the org names its harness repo.
     private var hasHarness: Bool {
-        selectedOrg.map { configs.config(for: $0).harness != nil } ?? false
+        selectedOrg.map { !configs.config(for: $0).harnesses.isEmpty } ?? false
     }
 
     var body: some View {
@@ -1030,9 +1024,7 @@ struct OrgSidebar: View {
                 // What needs me, and quick answers.
                 Section {
                     row(.inbox)
-                    #if os(macOS)
                     row(.ask)
-                    #endif
                     row(.dashboard)
                 }
 
@@ -1086,6 +1078,7 @@ struct OrgSidebar: View {
 
                 // How it's going.
                 Section("Delivery", isExpanded: $deliveryExpanded) {
+                    row(.scorecard)
                     row(.delivery)
                     row(.issueFlow)
                     row(.investments)
@@ -1109,6 +1102,7 @@ struct OrgSidebar: View {
                 // The meetings Gannin runs.
                 Section("Rituals", isExpanded: $meetingsExpanded) {
                     peopleViewRow(.standup)
+                    row(.recap)
                     row(.prioritisation)
                     row(.hygiene)
                 }
@@ -1125,12 +1119,10 @@ struct OrgSidebar: View {
                     }
                 }
 
-                #if os(macOS)
                 Section("Agents", isExpanded: $sessionsExpanded) {
                     row(.agents)
                     SessionSidebarRows(org: selectedOrg)
                 }
-                #endif
 
             }
             if let error = orgs.errors["orgs"] {
@@ -1306,13 +1298,9 @@ struct OrgSidebar: View {
             return Inbox(login: login, workload: workload, history: nil, workflow: IssueWorkflow()).count
         // Issues' lists under it have their own counts.
         case .agents:
-            #if os(macOS)
             guard let selectedOrg else { return 0 }
             return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
-            #else
-            return 0
-            #endif
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .ask, .epics, .hygiene, .delivery, .issueFlow, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .recap, .scorecard, .ask, .epics, .hygiene, .delivery, .issueFlow, .settings: return 0
         }
     }
 }
@@ -1322,6 +1310,7 @@ struct OrgSidebar: View {
 private struct SidebarFooter: View {
     @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
+    @Environment(OrgConfigStore.self) private var configs
     @Environment(\.openURL) private var openURL
     @Binding var selectedOrg: String?
     @Binding var selection: SidebarItem?
@@ -1353,8 +1342,16 @@ private struct SidebarFooter: View {
                         }
                     }
                 }
+                let personal = orgs.orgs.filter { $0.isPersonal && !orgs.isStarred($0) }
+                if !personal.isEmpty {
+                    Section("Personal") {
+                        ForEach(personal) { account in
+                            Text("\(account.displayName) (\(account.login))").tag(Optional(account.login))
+                        }
+                    }
+                }
                 Section(orgs.starredOrgs.isEmpty ? "Organisations" : "Other Organisations") {
-                    ForEach(orgs.orgs.filter { !orgs.isStarred($0) }) { org in
+                    ForEach(orgs.orgs.filter { !orgs.isStarred($0) && !$0.isPersonal }) { org in
                         Text(org.displayName).tag(Optional(org.login))
                     }
                 }
@@ -1369,8 +1366,17 @@ private struct SidebarFooter: View {
                 Button("Open \(current.displayName) on GitHub") {
                     if let url = URL(string: "https://github.com/\(current.login)") { openURL(url) }
                 }
+                let projects = configs.baseConfig(for: current.login).repoProjects
+                if !projects.isEmpty {
+                    Divider()
+                    Picker("Focus", selection: Binding(get: { configs.focus[current.login] }, set: { configs.setFocus($0, in: current.login) })) {
+                        Text("All Repositories").tag(UUID?.none)
+                        Divider()
+                        ForEach(projects) { Text($0.name).tag(Optional($0.id)) }
+                    }
+                }
             }
-            Button("Reload Organisations") {
+            Button("Reload Accounts") {
                 Task { await orgs.loadOrgs() }
             }
             .disabled(orgs.isLoadingOrgs)
@@ -1382,8 +1388,16 @@ private struct SidebarFooter: View {
                     Image(systemName: "building.2")
                         .frame(width: 20, height: 20)
                 }
-                Text(current?.displayName ?? "Choose Organisation")
-                    .lineLimit(1)
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(current?.displayName ?? "Choose Organisation")
+                        .lineLimit(1)
+                    if let current, let project = configs.focusedProject(current.login) {
+                        Text("Focused on \(project.name)")
+                            .font(.caption)
+                            .foregroundStyle(Color.accentColor)
+                            .lineLimit(1)
+                    }
+                }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")
                     .font(.caption.weight(.semibold))
@@ -1423,11 +1437,7 @@ private struct SidebarFooter: View {
             Menu {
                 Text(viewer.name ?? viewer.login)
                 Divider()
-                #if os(macOS)
                 SettingsLink { Text("Settings") }
-                #else
-                Button("Settings") { showingSettings = true }
-                #endif
                 Button("Sign Out") {
                     auth.signOut()
                     orgs.clear()
@@ -1440,19 +1450,6 @@ private struct SidebarFooter: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help(viewer.login)
-            #if !os(macOS)
-            // iPad has no Settings window, so the app's settings are a sheet.
-            .sheet(isPresented: $showingSettings) {
-                NavigationStack {
-                    SettingsView()
-                        .toolbar {
-                            ToolbarItem(placement: .confirmationAction) {
-                                Button("Done") { showingSettings = false }
-                            }
-                        }
-                }
-            }
-            #endif
         }
     }
 }

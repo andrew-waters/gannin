@@ -10,9 +10,11 @@ final class HarnessStore {
     private static let maxAge: TimeInterval = 10 * 60
     private static let batchSize = 30
 
+    /// By `key(org, repo)`: an org can have several harnesses.
     private(set) var indexes: [String: HarnessIndex] = [:]
     private(set) var loading: Set<String> = []
     private(set) var errors: [String: String] = [:]
+    @ObservationIgnored private var combinedCache: [String: (key: String, index: HarnessIndex)] = [:]
     /// Every repo in the org that isn't archived, by name, for picking the
     /// harness from.
     private(set) var repositories: [String: [String]] = [:]
@@ -27,15 +29,42 @@ final class HarnessStore {
         let files = (try? FileManager.default.contentsOfDirectory(at: Self.directory, includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "json" {
             if let data = try? Data(contentsOf: file), let index = try? Self.decoder.decode(HarnessIndex.self, from: data) {
-                indexes[file.deletingPathExtension().lastPathComponent] = index
+                // `org@owner~name.json`, or `org.json` from when an org had one.
+                let name = file.deletingPathExtension().lastPathComponent
+                let org = name.split(separator: "@", maxSplits: 1).first.map(String.init) ?? name
+                let key = Self.key(org, index.repo)
+                if indexes[key] == nil || name.contains("@") { indexes[key] = index }
             }
         }
     }
 
-    /// The org's index for its harness; nil until loaded, or when the repo
-    /// or branch has changed since.
+    static func key(_ org: String, _ repo: String) -> String { "\(org)|\(repo)" }
+
+    /// The org's index for a harness; nil until loaded, or when its branch
+    /// has changed since.
     func index(for org: String, _ setup: HarnessConfig) -> HarnessIndex? {
-        indexes[org].flatMap { $0.repo == setup.repo && $0.requestedBranch == setup.branch ? $0 : nil }
+        indexes[Self.key(org, setup.repo)].flatMap { $0.requestedBranch == setup.branch ? $0 : nil }
+    }
+
+    /// Whatever's indexed for the harness repo, whichever branch.
+    func anyIndex(org: String, repo: String) -> HarnessIndex? { indexes[Self.key(org, repo)] }
+
+    func isLoading(_ org: String, _ setup: HarnessConfig) -> Bool { loading.contains(Self.key(org, setup.repo)) }
+
+    func error(_ org: String, _ setup: HarnessConfig) -> String? { errors[Self.key(org, setup.repo)] }
+
+    /// Every harness of the org as one index: the primary's, with the
+    /// others' documents under `owner/name:` paths. Nil until the primary
+    /// (else the first) is loaded.
+    func combined(org: String, _ harnesses: [HarnessConfig]) -> HarnessIndex? {
+        let loaded = harnesses.compactMap { index(for: org, $0) }
+        guard let first = loaded.first else { return nil }
+        guard loaded.count > 1 else { return first }
+        let key = loaded.map { "\($0.repo)@\($0.commit)@\($0.fetchedAt.timeIntervalSince1970)" }.joined(separator: ",")
+        if let cached = combinedCache[org], cached.key == key { return cached.index }
+        let index = first.combined(with: Array(loaded.dropFirst()))
+        combinedCache[org] = (key, index)
+        return index
     }
 
     /// From disk at once, then from GitHub when stale (or `force`). The
@@ -43,14 +72,15 @@ final class HarnessStore {
     /// redraws once a harness is picked) mustn't cancel it half done, and a
     /// second caller waits on the fetch already running.
     func load(org: String, setup: HarnessConfig, force: Bool = false) async {
-        loadCached(org)
+        let key = Self.key(org, setup.repo)
+        loadCached(org, repo: setup.repo)
         if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge { return }
-        if let running = fetches[org] {
+        if let running = fetches[key] {
             await running.value
             // A forced fetch (after a commit, say) wants what's there now,
             // which the running one may have started before.
             guard force else { return }
-            if let again = fetches[org] {
+            if let again = fetches[key] {
                 await again.value
                 return
             }
@@ -58,25 +88,33 @@ final class HarnessStore {
         guard let api = auth.api else { return }
         // Unchanged blobs are kept from whatever was indexed before, even
         // another branch.
-        let previous = indexes[org].flatMap { $0.repo == setup.repo ? $0 : nil }
-        loading.insert(org)
+        let previous = indexes[key]
+        loading.insert(key)
         let task = Task {
             defer {
-                loading.remove(org)
-                fetches[org] = nil
+                loading.remove(key)
+                fetches[key] = nil
             }
             do {
-                indexes[org] = try await Self.fetch(setup: setup, previous: previous, api: api)
-                errors[org] = nil
-                save(org)
+                indexes[key] = try await Self.fetch(setup: setup, previous: previous, api: api)
+                errors[key] = nil
+                save(org, repo: setup.repo)
             } catch APIError.unauthorized {
                 auth.signOut()
             } catch {
-                errors[org] = error.localizedDescription
+                errors[key] = error.localizedDescription
             }
         }
-        fetches[org] = task
+        fetches[key] = task
         await task.value
+    }
+
+    /// Every harness the org has.
+    func loadAll(org: String, _ harnesses: [HarnessConfig], force: Bool = false) async {
+        // Each fetch runs as the store's own task, so starting them all
+        // first lets them go side by side.
+        let tasks = harnesses.map { setup in Task { await load(org: org, setup: setup, force: force) } }
+        for task in tasks { await task.value }
     }
 
     /// A repo's branches, and which is its default, once a launch.
@@ -154,6 +192,7 @@ final class HarnessStore {
     func clear() {
         indexes = [:]
         errors = [:]
+        combinedCache = [:]
         try? FileManager.default.removeItem(at: Self.directory)
     }
 
@@ -163,22 +202,25 @@ final class HarnessStore {
         URL.applicationSupportDirectory.appending(path: "Harness", directoryHint: .isDirectory)
     }
 
-    private static func fileURL(_ org: String) -> URL {
-        directory.appending(path: "\(org).json")
+    private static func fileURL(_ org: String, repo: String) -> URL {
+        directory.appending(path: "\(org)@\(repo.replacingOccurrences(of: "/", with: "~")).json")
     }
 
-    private func loadCached(_ org: String) {
-        guard indexes[org] == nil,
-              let data = try? Data(contentsOf: Self.fileURL(org)),
+    private func loadCached(_ org: String, repo: String) {
+        let key = Self.key(org, repo)
+        guard indexes[key] == nil,
+              let data = try? Data(contentsOf: Self.fileURL(org, repo: repo)),
               let index = try? Self.decoder.decode(HarnessIndex.self, from: data) else { return }
-        indexes[org] = index
+        indexes[key] = index
     }
 
-    private func save(_ org: String) {
-        guard let index = indexes[org] else { return }
+    private func save(_ org: String, repo: String) {
+        guard let index = indexes[Self.key(org, repo)] else { return }
         try? FileManager.default.createDirectory(at: Self.directory, withIntermediateDirectories: true)
         if let data = try? Self.encoder.encode(index) {
-            try? data.write(to: Self.fileURL(org), options: .atomic)
+            try? data.write(to: Self.fileURL(org, repo: repo), options: .atomic)
+            // The file from when an org had one harness.
+            try? FileManager.default.removeItem(at: Self.directory.appending(path: "\(org).json"))
         }
     }
 
@@ -214,8 +256,8 @@ extension GitHubAPI {
             if let cursor { variables["cursor"] = cursor }
             let response: Response = try await query("""
                 query($login: String!, $cursor: String) {
-                  organization(login: $login) {
-                    repositories(first: 100, after: $cursor, isArchived: false, orderBy: { field: NAME, direction: ASC }) {
+                  \(GitHubAccounts.ownerField(org)) {
+                    repositories(first: 100, after: $cursor, isArchived: false, orderBy: { field: NAME, direction: ASC }\(GitHubAccounts.repositoryArguments(org))) {
                       pageInfo { hasNextPage endCursor }
                       nodes { nameWithOwner }
                     }

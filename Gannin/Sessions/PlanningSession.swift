@@ -1,4 +1,3 @@
-#if os(macOS)
 import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -28,16 +27,21 @@ extension CodeSession {
 extension SessionStore {
     /// A Claude Code session to write a plan with you, in the org's harness,
     /// about a topic or starting from one of its documents.
-    func startPlanning(org: String, topic: String, documentPath: String?, harness setup: HarnessConfig, harnessPath: String) -> CodeSession {
+    /// `choice` is what was picked from the team's prompts and skills; nil
+    /// takes the defaults for planning.
+    /// `guidance` is the org's planning prompt (`HarnessAuthoring`), its
+    /// placeholders still to fill.
+    func startPlanning(org: String, topic: String, documentPath: String?, harness setup: HarnessConfig, harnessPath: String, guidance: String, choice: PromptChoice? = nil) -> CodeSession {
         let slug = Self.slug(topic)
         let branch = "plan-\(slug)"
         let info = PlanningInfo(topic: topic, documentPath: documentPath, slug: slug)
         let url = URL(string: "https://github.com/\(setup.repo)")!
+        let instructions = launchInstructions(org: org, setup: setup, use: .planning, repos: [], choice: choice, values: Self.planningValues(topic: topic, harness: setup.repo, branch: branch))
         let session = CodeSession(
             id: UUID(), issue: IssueReference(org: org, id: "plan-\(UUID().uuidString)", number: 0, title: topic, repo: setup.repo, url: url),
             repo: setup.repo, branch: branch, createdAt: .now,
             connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
-            role: "Plan", prompt: Self.planningPrompt(info, branch: branch), planning: info
+            role: "Plan", prompt: Self.planningPrompt(info, branch: branch, guidance: guidance), instructions: instructions, planning: info
         )
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -48,15 +52,19 @@ extension SessionStore {
         return session
     }
 
-    static func planningPrompt(_ info: PlanningInfo, branch: String) -> String {
-        let today = Date.now.formatted(.iso8601.year().month().day())
-        return """
-            Let's plan "\(info.topic)" together, here in the team's harness. Read STANDARDS.md and plans/_template.md first\(info.documentPath.map { ", then \($0), which we're starting from" } ?? "").
+    /// The placeholders for a planning prompt: the topic is its title.
+    static func planningValues(topic: String, harness: String, branch: String) -> [String: String] {
+        ["title": topic, "topic": topic, "repo": harness, "branch": branch]
+    }
 
-            I may share documents (specs, notes, emails, exports). They'll be in .worktrees/\(branch)/docs/, and I'll tell you each time, with which ones may be committed. Only those may go into the harness, in plans/assets/\(info.slug)/, linked from the plan. Never commit, copy into the harness, or quote at length a document I haven't marked for committing: it may hold sensitive details. Summarise what you need from it in your own words.
-
-            Ask me what you need to know, one or two questions at a time. Then write the plan as plans/\(today)-\(info.slug).md, following the standard, with its summary and any issues it's about in the front matter. Show me the plan before you commit, and commit and push it (with the assets marked for committing) on the harness's default branch when I say so.
-            """
+    static func planningPrompt(_ info: PlanningInfo, branch: String, guidance: String) -> String {
+        HarnessAuthoring.fill(guidance, [
+            "topic": info.topic,
+            "plan": "plans/\(HarnessAuthoring.today)-\(info.slug).md",
+            "docs": ".worktrees/\(branch)/docs/",
+            "assets": "plans/assets/\(info.slug)/",
+            "starting_point": info.documentPath.map { "Then read \($0), which we're starting from." } ?? "",
+        ])
     }
 
     static func slug(_ text: String) -> String {
@@ -129,21 +137,39 @@ extension SessionStore {
 struct NewPlanningSheet: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(HarnessStore.self) private var harness
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismiss) private var dismiss
     let org: String
     var documentPath: String? = nil
     var topic = ""
     @State private var text = ""
+    @State private var choice = PromptChoice()
+    /// The harness picked, by repo; nil for the document's, else the primary.
+    @State private var picked: String?
+
+    /// A document from a combined index names its harness.
+    private var source: (repo: String?, path: String)? { documentPath.map(HarnessIndex.split) }
 
     var body: some View {
-        let setup = configs.config(for: org).harness
+        let config = configs.config(for: org)
+        let harnesses = config.harnesses
+        let setup = (picked ?? source?.repo).flatMap(config.harness(repo:)) ?? harnesses.first
+        let library = setup.map { sessions.promptLibrary(org: org, setup: $0) } ?? HarnessPromptLibrary(index: nil)
         Form {
             Section {
                 TextField("What are we planning?", text: $text, axis: .vertical)
                     .lineLimit(1...3)
-                if let documentPath {
-                    LabeledContent("Starting from", value: documentPath)
+                if let source {
+                    LabeledContent("Starting from", value: source.path)
+                }
+                if harnesses.count > 1 {
+                    Picker("Harness", selection: Binding(get: { setup?.repo ?? "" }, set: { repo in
+                        picked = repo
+                        choice = config.harness(repo: repo).map { sessions.promptLibrary(org: org, setup: $0).defaults(for: .planning, repos: []) } ?? PromptChoice()
+                    })) {
+                        ForEach(harnesses, id: \.repo) { Text($0.repo).tag($0.repo) }
+                    }
                 }
             } footer: {
                 Text(setup == nil
@@ -152,23 +178,37 @@ struct NewPlanningSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if library.hasChoices(for: .planning) {
+                PromptPickerSections(
+                    library: library, use: .planning,
+                    values: SessionStore.planningValues(topic: text, harness: setup?.repo ?? "", branch: "plan-\(SessionStore.slug(text))"),
+                    choice: $choice
+                )
+            }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
+        .frame(width: library.hasChoices(for: .planning) ? 560 : 480)
+        .frame(maxHeight: 680)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Start Planning") {
                     guard let setup, let path = SessionStore.harnessPath(org: org, repo: setup.repo) else { return }
-                    let session = sessions.startPlanning(org: org, topic: text.trimmingCharacters(in: .whitespacesAndNewlines), documentPath: documentPath, harness: setup, harnessPath: path)
+                    // The document's own path, when it's in the harness picked.
+                    let start = source.flatMap { ($0.repo ?? harnesses.first?.repo) == setup.repo ? $0.path : nil }
+                    let session = sessions.startPlanning(org: org, topic: text.trimmingCharacters(in: .whitespacesAndNewlines), documentPath: start, harness: setup, harnessPath: path,
+                                                          guidance: HarnessAuthoring.guidance(for: .plans, config: configs.config(for: org), org: org), choice: choice)
                     sessions.show(session.id, with: openWindow)
                     dismiss()
                 }
-                .disabled(setup == nil || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                          || SessionStore.connectCommand != nil && SessionStore.remoteHarnessPath(org: org) == nil)
+                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || SessionStore.unavailable(org: org, harness: setup) != nil)
+                .help(SessionStore.unavailable(org: org, harness: setup) ?? "")
             }
         }
-        .onAppear { text = topic }
+        .onAppear {
+            text = topic
+            choice = library.defaults(for: .planning, repos: [])
+        }
     }
 }
 
@@ -288,4 +328,3 @@ struct PlanningSection: View {
         picking = panel.urls
     }
 }
-#endif

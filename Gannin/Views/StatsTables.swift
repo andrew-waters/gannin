@@ -372,15 +372,9 @@ struct ColumnGuideButton: View {
         }
     }
 
-    /// Below the button on the Mac. On iPad the button sits at the window's
-    /// right edge, and a sideways arrow would push the guide off screen, so
-    /// it hangs below the button instead.
+    /// Below the button.
     private static var arrowEdge: Edge {
-        #if os(macOS)
         .bottom
-        #else
-        .top
-        #endif
     }
 
     static let people = ColumnGuideButton(

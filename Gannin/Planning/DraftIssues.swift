@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// Requirement to Issues: Claude reads a plan or requirement from the
@@ -53,7 +52,7 @@ struct DraftIssuesSheet: View {
     private var repos: [String] {
         let issues = issueStore.history(for: org).map { Array($0.issues.values) } ?? []
         return Dictionary(grouping: issues, by: \.repo).mapValues(\.count).sorted { $0.value > $1.value }.map(\.key)
-            .filter { !configs.config(for: org).excludedRepos.contains($0) }
+            .filter { !configs.config(for: org).repoExclusion.contains($0) }
     }
 
     var body: some View {
@@ -211,4 +210,3 @@ struct DraftIssuesSheet: View {
         text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 }
-#endif

@@ -68,13 +68,13 @@ struct EpicsView: View {
     private func epics() -> [Epic] {
         guard let history = issueStore.history(for: org) else { return [] }
         let config = configs.config(for: org)
-        let index = config.harness.flatMap { harness.index(for: org, $0) }
+        let index = harness.combined(org: org, config.harnesses)
         let workflow = config.workflow
         let children = Dictionary(grouping: history.issues.values.filter { $0.parentID != nil }) { $0.parentID! }
         let words = search.lowercased().split(separator: " ")
         return children.compactMap { parentID, kids -> Epic? in
             guard let issue = history.issues[parentID], showsClosed || issue.isOpen,
-                  !config.excludedRepos.contains(issue.repo) else { return nil }
+                  !config.repoExclusion.contains(issue.repo) else { return nil }
             let text = "\(issue.title) \(issue.repo) \(issue.number)".lowercased()
             guard words.allSatisfy({ text.contains($0) }) else { return nil }
             let everything = [issue] + kids

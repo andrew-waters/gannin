@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// Every session at once: what each is doing, what it last said, the
@@ -210,4 +209,3 @@ struct SessionPromptSettingsSection: View {
         .onChange(of: snippets) { PromptSnippet.saved = snippets }
     }
 }
-#endif

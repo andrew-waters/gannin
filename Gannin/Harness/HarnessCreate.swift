@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// A new harness's first commit: where plans, requirements, findings and
-/// skills go, a starter CLAUDE.md in the spirit of Ctrl Hub's, and the
+/// skills go, a starter CLAUDE.md, and the
 /// folders Gannin keeps (sessions, team data), with the clones and worktrees
 /// sessions make left out of git.
 enum HarnessSkeleton {
@@ -80,6 +80,8 @@ enum HarnessSkeleton {
                 - `plans/`: every plan, dated (`YYYY-MM-DD-slug.md`), from `_template.md`.
                 - `findings/`: investigations and what they found, dated (`YYYY-MM-DD-topic.md`).
                 - `skills/`: reusable workflows for Claude Code (`skills/README.md`).
+                - `prompts/`: the team's prompts for Claude Code sessions, offered by Gannin when work, a
+                  review or planning starts (`prompts/README.md`).
                 - `sessions/`: Gannin's record of each Claude Code session, with the brief it started from.
                 - `.gannin/`: the team's settings and people's dates, kept by Gannin. Don't edit by hand.
 
@@ -133,6 +135,7 @@ enum HarnessSkeleton {
                 plans/YYYY-MM-DD-<slug>.md
                 findings/YYYY-MM-DD-<slug>.md
                 skills/<name>.md
+                prompts/<name>.md
                 ```
 
                 ## Domains
@@ -252,6 +255,48 @@ enum HarnessSkeleton {
                 Name files in lowercase kebab case, matching `name`.
 
                 """,
+            "prompts/README.md": """
+                # Prompts
+
+                The team's prompts for Claude Code sessions. Gannin offers them when a session starts (Work
+                on This, Review with Claude, planning) with the defaults ticked, adds what's picked to the
+                session's first prompt, and lists those for use in a session in the menu under its terminal.
+                Edit them in Gannin (the org's Settings, under Harness) or here, one file each:
+
+                ```markdown
+                ---
+                type: prompt
+                summary: >
+                  What it's for, in a line.
+                use: [work, review, planning, session]  # where it's offered; all when left out
+                default: true                          # ticked when a session starts
+                repos: [api]                           # only the default for these repos
+                skills: [triage]                       # skills it brings, by name
+                ---
+
+                # Title
+
+                What Claude is told. {{issue}}, {{title}}, {{url}}, {{repo}}, {{number}} and {{branch}}
+                are filled in.
+                ```
+
+                A default for a repo (the issue's, its PRs' or the PR reviewed) takes the place of the
+                general defaults there, so a repo can have reviews of its own.
+
+                """,
+            "prompts/_template.md": """
+                ---
+                type: prompt
+                summary: >
+                  What it's for, in a line.
+                use: [review]
+                ---
+
+                # Title
+
+                What Claude is told.
+
+                """,
             "sessions/README.md": """
                 # Sessions
 
@@ -289,7 +334,9 @@ extension GitHubAPI {
             let fullName: String
             let defaultBranch: String?
         }
-        let response: Response = try await restWrite("POST", "orgs/\(org)/repos", body: [
+        // A personal account's repos are made as the user's own.
+        let path = GitHubAccounts.isUser(org) ? "user/repos" : "orgs/\(org)/repos"
+        let response: Response = try await restWrite("POST", path, body: [
             "name": name,
             "description": description,
             "private": true,
@@ -309,6 +356,9 @@ struct CreateHarnessSheet: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.dismiss) private var dismiss
     let org: String
+    /// Beside the primary harness, for these repos; nil makes it the
+    /// primary.
+    var otherFor: [String]? = nil
     @State private var name = "harness"
     @State private var isCreating = false
     @State private var status: String?
@@ -336,7 +386,7 @@ struct CreateHarnessSheet: View {
             .frame(height: taken ? 96 : 70)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Gannin creates \(org)/\(name) as a private repo, then commits:")
-                Text("README.md, a starter CLAUDE.md\(projects.isEmpty ? "" : " listing \(projects.count) of the org's repos"), STANDARDS.md for documents' front matter, requirements, plans and findings with their templates, skills, sessions, .gannin, and a .gitignore keeping out projects/ and .worktrees/.")
+                Text("README.md, a starter CLAUDE.md\(projects.isEmpty ? "" : " listing \(projects.count) of the org's repos"), STANDARDS.md for documents' front matter, requirements, plans and findings with their templates, skills, prompts, sessions, .gannin, and a .gitignore keeping out projects/ and .worktrees/.")
                     .foregroundStyle(.secondary)
             }
             .font(.callout)
@@ -368,7 +418,7 @@ struct CreateHarnessSheet: View {
     private var projects: [String] {
         let config = configs.config(for: org)
         return OrgSettingsView.repositories(snapshot: orgs.snapshot(for: org), history: metrics.history(for: org))
-            .filter { $0.openPullRequests + $0.merged > 0 && !config.excludedRepos.contains($0.name) }
+            .filter { $0.openPullRequests + $0.merged > 0 && !config.repoExclusion.contains($0.name) }
             .sorted { $0.openPullRequests + $0.merged > $1.openPullRequests + $1.merged }
             .prefix(12)
             .map(\.name)
@@ -386,9 +436,11 @@ struct CreateHarnessSheet: View {
         do {
             status = "Creating \(org)/\(name)"
             let created = try await api.createRepository(org: org, name: name, description: "Plans, requirements, findings and skills beside the code, kept with Gannin.")
-            let setup = HarnessConfig(repo: created.nameWithOwner)
+            let setup = HarnessConfig(repo: created.nameWithOwner, repos: otherFor)
             // It's the org's harness from here, even if the layout fails.
-            configs.update(org) { $0.harness = setup }
+            configs.update(org) { config in
+                if otherFor != nil { config.otherHarnesses.append(setup) } else { config.harness = setup }
+            }
             status = "Committing the layout"
             let files = HarnessSkeleton.files(org: org, repo: created.nameWithOwner, projects: projects)
             // The first commit GitHub makes can take a moment to show.
@@ -406,7 +458,7 @@ struct CreateHarnessSheet: View {
             }
             dismiss()
         } catch {
-            self.error = configs.config(for: org).harness == nil
+            self.error = configs.config(for: org).harness(repo: "\(org)/\(name)") == nil
                 ? error.localizedDescription
                 : "Created \(org)/\(name), but couldn't commit its layout: \(error.localizedDescription)"
         }

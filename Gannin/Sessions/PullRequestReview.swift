@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 // MARK: - The review's state
@@ -69,17 +68,22 @@ extension SessionStore {
     /// A review agent on the PR, in the org's harness: it can't edit, can
     /// check the PR out to read or run it, and ends with its findings as
     /// JSON for the review tab.
-    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String) -> CodeSession {
+    /// `choice` is what was picked from the team's prompts and skills; nil
+    /// takes the defaults for the PR's repo.
+    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil) -> CodeSession {
         if let existing = review(of: pr.id) {
             reveal(existing.id)
             return existing
         }
-        let branch = "review-\(pr.repo.split(separator: "/").last ?? "")-\(pr.number)"
+        let branch = Self.reviewBranch(pr)
+        let values = HarnessPromptLibrary.values(reference: "\(pr.repo)#\(pr.number)", title: pr.title, url: pr.url, repo: pr.repo, number: pr.number, branch: branch)
+        let instructions = launchInstructions(org: pr.org, setup: setup, use: .review, repos: [pr.repo], choice: choice, values: values)
         let session = CodeSession(
             id: UUID(), issue: IssueReference(org: pr.org, id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url),
             repo: setup.repo, branch: branch, createdAt: .now, pullRequests: [pr.url],
             connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
-            role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch), isReviewer: true, reviewOf: pr
+            role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch),
+            instructions: instructions.map(Self.reviewInstructions), isReviewer: true, reviewOf: pr
         )
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -88,6 +92,16 @@ extension SessionStore {
         add(session)
         reveal(session.id)
         return session
+    }
+
+    static func reviewBranch(_ pr: PullRequestReference) -> String {
+        "review-\(pr.repo.split(separator: "/").last ?? "")-\(pr.number)"
+    }
+
+    /// The team's instructions for a review, which mustn't change how it
+    /// ends: Gannin reads the JSON.
+    static func reviewInstructions(_ instructions: String) -> String {
+        "\(instructions)\n\nWhatever these ask, still end your reply with the fenced ```json block as set out above."
     }
 
     static func pullRequestReviewPrompt(_ pr: PullRequestReference, branch: String) -> String {
@@ -191,8 +205,11 @@ extension GitHubAPI {
 struct ReviewWithClaudeButton: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(HarnessStore.self) private var harness
     @Environment(\.openWindow) private var openWindow
     let reference: PullRequestReference
+    /// While the team's prompts and skills are picked.
+    @State private var choosing = false
 
     var body: some View {
         if let existing = sessions.review(of: reference.id) {
@@ -204,27 +221,44 @@ struct ReviewWithClaudeButton: View {
             .help("Show Claude's review of this PR")
         } else {
             let blocked = unavailable
+            let config = configs.config(for: reference.org)
+            let setup = config.harness(covering: [reference.repo])
             Button {
-                guard let setup = configs.config(for: reference.org).harness,
-                      let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return }
-                let session = sessions.startReview(of: reference, harness: setup, harnessPath: path)
-                sessions.show(session.id, with: openWindow)
+                if let setup, SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .review, harnesses: config.harnesses) {
+                    choosing = true
+                } else {
+                    start(choice: nil, setup: setup)
+                }
             } label: {
                 Label("Review with Claude", systemImage: "eye")
             }
             .disabled(blocked != nil)
             .help(blocked ?? "Have Claude review this PR, then go through its findings and post the review to GitHub")
+            .sheet(isPresented: $choosing) {
+                if let setup {
+                    SessionLaunchSheet(
+                        title: "Review \(reference.repo)#\(reference.number)", org: reference.org, harnesses: config.harnesses, initial: setup,
+                        use: .review, repos: [reference.repo],
+                        values: HarnessPromptLibrary.values(reference: "\(reference.repo)#\(reference.number)", title: reference.title, url: reference.url, repo: reference.repo, number: reference.number, branch: SessionStore.reviewBranch(reference)),
+                        startTitle: "Start Review"
+                    ) { choice, picked in
+                        start(choice: choice, setup: picked)
+                    }
+                }
+            }
         }
     }
 
+    private func start(choice: PromptChoice?, setup: HarnessConfig?) {
+        guard let setup, let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return }
+        let session = sessions.startReview(of: reference, harness: setup, harnessPath: path, choice: choice)
+        sessions.show(session.id, with: openWindow)
+    }
+
     private var unavailable: String? {
-        guard configs.config(for: reference.org).harness != nil else {
-            return "Reviews run in the org's harness. Pick or create it in the org's Settings, under Harness."
-        }
-        if SessionStore.connectCommand != nil, SessionStore.remoteHarnessPath(org: reference.org) == nil {
-            return "Sessions run on your server. Set where the harness is checked out there in the org's Settings, under Harness."
-        }
-        return nil
+        let config = configs.config(for: reference.org)
+        guard config.harnesses.count < 2 else { return nil }
+        return SessionStore.unavailable(org: reference.org, harness: config.harness(covering: [reference.repo]), what: "Reviews")
     }
 }
 
@@ -906,9 +940,7 @@ private struct PostReviewSheet: View {
         }
     }
 }
-#endif
 
-#if os(macOS)
 /// Beside a PR in a list, when Claude has a review of it: what the review's
 /// doing, and a click to its tab. The store is passed in rather than read
 /// from the environment: a table's cells, rebuilt when it sorts, don't
@@ -954,4 +986,3 @@ struct ClaudeReviewBadge: View {
         }
     }
 }
-#endif

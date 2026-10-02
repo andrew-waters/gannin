@@ -318,7 +318,7 @@ struct ActionsMetrics {
         let previousEnd = previousInterval.end
         self.previousStart = previousStart
         // A whole period in the past leaves out what came after it.
-        let included = history.runs.values.filter { !config.excludedRepos.contains($0.repo) && $0.createdAt < now }
+        let included = history.runs.values.filter { !config.repoExclusion.contains($0.repo) && $0.createdAt < now }
         let inWindow = included.filter { $0.createdAt >= windowStart }
         let before = included.filter { $0.createdAt >= previousStart && $0.createdAt < previousEnd }
         let byWorkflow = Dictionary(grouping: included, by: \.workflowKey)

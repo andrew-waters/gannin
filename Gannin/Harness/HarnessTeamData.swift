@@ -11,6 +11,10 @@ enum TeamFile {
     static let leave = ".gannin/leave.json"
     static let exclusions = ".gannin/exclusions.json"
     static let goals = ".gannin/goals.json"
+    static let authoring = ".gannin/authoring.json"
+    static let recap = ".gannin/recap.json"
+    static let scorecard = ".gannin/scorecard.json"
+    static let repoProjects = ".gannin/repo-projects.json"
     static let peoplePrefix = ".gannin/people/"
 
     static func person(_ login: String) -> String { "\(peoplePrefix)\(login).json" }
@@ -30,6 +34,10 @@ enum TeamFile {
         case leave: "leave policy"
         case exclusions: "repos and people left out, and repos without review"
         case goals: "delivery goals"
+        case authoring: "prompts for drafting harness documents"
+        case recap: "how often the team recaps"
+        case scorecard: "the scorecard"
+        case repoProjects: "projects"
         default: login(path).map { "dates for \($0)" } ?? path
         }
     }
@@ -56,6 +64,10 @@ struct HarnessTeamData {
     var leave: LeavePolicy?
     var exclusions: TeamExclusions?
     var goals: MetricGoals?
+    var authoring: [String: String]?
+    var recap: RecapCadence?
+    var scorecard: [Measurable]?
+    var repoProjects: [RepoProject]?
     var people: [String: PersonDates] = [:]
 
     init(files: [String: String]) {
@@ -66,6 +78,10 @@ struct HarnessTeamData {
         leave = files[TeamFile.leave].flatMap { TeamCoding.decode(LeavePolicy.self, $0) }
         exclusions = files[TeamFile.exclusions].flatMap { TeamCoding.decode(TeamExclusions.self, $0) }
         goals = files[TeamFile.goals].flatMap { TeamCoding.decode(MetricGoals.self, $0) }
+        authoring = files[TeamFile.authoring].flatMap { TeamCoding.decode([String: String].self, $0) }
+        recap = files[TeamFile.recap].flatMap { TeamCoding.decode(RecapCadence.self, $0) }
+        scorecard = files[TeamFile.scorecard].flatMap { TeamCoding.decode([Measurable].self, $0) }
+        repoProjects = files[TeamFile.repoProjects].flatMap { TeamCoding.decode([RepoProject].self, $0) }
         for (path, text) in files {
             if let login = TeamFile.login(path), let dates = TeamCoding.decode(PersonDates.self, text) {
                 people[login] = dates
@@ -87,6 +103,10 @@ struct HarnessTeamData {
         config.includedAuthors = Set(exclusions?.includedPeople ?? [])
         config.reposWithoutReview = Set(exclusions?.reposWithoutReview ?? [])
         config.goals = goals
+        config.authoring = authoring
+        config.recap = recap
+        config.scorecard = scorecard
+        config.repoProjects = repoProjects ?? []
         return config
     }
 
@@ -101,6 +121,10 @@ struct HarnessTeamData {
         if before.issueWorkflow != after.issueWorkflow { files[TeamFile.workflow] = after.issueWorkflow.flatMap(TeamCoding.encode) }
         if before.workWeek != after.workWeek { files[TeamFile.workingWeek] = after.workWeek.flatMap(TeamCoding.encode) }
         if before.goals != after.goals { files[TeamFile.goals] = after.goals.flatMap(TeamCoding.encode) }
+        if before.authoring != after.authoring { files[TeamFile.authoring] = after.authoring.flatMap(TeamCoding.encode) }
+        if before.recap != after.recap { files[TeamFile.recap] = after.recap.flatMap(TeamCoding.encode) }
+        if before.scorecard != after.scorecard { files[TeamFile.scorecard] = after.scorecard.flatMap(TeamCoding.encode) }
+        if before.repoProjects != after.repoProjects { files[TeamFile.repoProjects] = after.repoProjects.isEmpty ? nil : TeamCoding.encode(after.repoProjects) }
         if before.leave != after.leave { files[TeamFile.leave] = after.leave.flatMap(TeamCoding.encode) }
         if before.excludedRepos != after.excludedRepos || before.excludedAuthors != after.excludedAuthors || before.includedAuthors != after.includedAuthors
             || before.reposWithoutReview != after.reposWithoutReview {
@@ -119,6 +143,10 @@ struct HarnessTeamData {
             TeamFile.leave: TeamCoding.encode(config.leavePolicy),
             TeamFile.exclusions: exclusionsFile(config),
             TeamFile.goals: config.goals.flatMap(TeamCoding.encode),
+            TeamFile.authoring: config.authoring.flatMap(TeamCoding.encode),
+            TeamFile.recap: config.recap.flatMap(TeamCoding.encode),
+            TeamFile.scorecard: config.scorecard.flatMap(TeamCoding.encode),
+            TeamFile.repoProjects: config.repoProjects.isEmpty ? nil : TeamCoding.encode(config.repoProjects),
         ]
         for (login, dates) in people where !dates.isEmpty {
             files[TeamFile.person(login)] = TeamCoding.encode(dates)
@@ -258,7 +286,7 @@ enum TeamCoding {
 ///
 /// An org keeps its data in the harness once `.gannin/` has any of it (after
 /// Move to Harness); until then `OrgConfigStore` and `PeopleDatesStore` keep
-/// using what's synced through iCloud.
+/// using what's kept on this device.
 @Observable
 final class HarnessTeamStore {
     struct Pending: Codable, Equatable {
@@ -405,7 +433,7 @@ final class HarnessTeamStore {
         }
     }
 
-    /// Copies the org's settings and people's dates from iCloud into the
+    /// Copies the org's settings and people's dates from this device into the
     /// harness in one commit; from then on they're read from there.
     func moveIn(org: String, config: OrgConfig, people: [String: PersonDates]) async throws {
         guard let setup = setup(org) else { return }
@@ -425,9 +453,30 @@ final class HarnessTeamStore {
         pending[org] = pending[org]
     }
 
+    /// Copies the team's data (`.gannin/`) as committed into another of
+    /// the org's harnesses, in one commit, for keeping it there instead.
+    /// The caller then makes that the team data's harness; the old copy
+    /// stays where it was.
+    func moveData(org: String, to target: HarnessConfig) async throws {
+        guard let current = setup(org), current.repo != target.repo,
+              let files = harness.index(for: org, current)?.dataFiles, !files.isEmpty else { return }
+        let texts = Dictionary(files.map { ($0.path, Optional($0.text)) }, uniquingKeysWith: { first, _ in first })
+        let before = harness.index(for: org, target)?.commit
+        var head: String?
+        try await harness.commit(org: org, setup: target) { commit in
+            head = commit
+            return HarnessChange(
+                message: "Gannin: the team's settings and people's dates\n\nMoved from \(current.repo), where they were kept before.",
+                files: texts
+            )
+        }
+        written[org] = Written(files: texts, before: Set([before, head].compactMap { $0 }))
+        revision += 1
+    }
+
     // MARK: Describing
 
-    /// What's pending, a line each: "time off for ian, 3 to 5 Oct".
+    /// What's pending, a line each: "time off for alex, 3 to 5 Oct".
     static func notes(_ changes: [String: Pending]) -> [String] {
         changes.keys.sorted().flatMap { path -> [String] in
             let change = changes[path]!
@@ -478,7 +527,7 @@ final class HarnessTeamStore {
         return "\(first) to \(absence.end.formatted(day))"
     }
 
-    /// `Gannin: time off for ian, 3 to 5 Oct`, with every note in the body
+    /// `Gannin: time off for alex, 3 to 5 Oct`, with every note in the body
     /// when there's more than one.
     static func message(_ notes: [String]) -> String {
         guard let first = notes.first else { return "Gannin: team data" }
@@ -492,7 +541,7 @@ final class HarnessTeamStore {
 
     private static var directory: URL {
         URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.getgannin", directoryHint: .isDirectory)
+            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
             .appending(path: "HarnessPending", directoryHint: .isDirectory)
     }
 

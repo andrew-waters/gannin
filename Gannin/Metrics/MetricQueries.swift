@@ -21,7 +21,7 @@ extension GitHubAPI {
 
     /// The search for PRs merged in `[from, to]`, by day.
     static func mergedSearch(org: String, from: Date, to: Date) -> String {
-        "org:\(org) archived:false is:pr is:merged merged:\(day(from))..\(day(to))"
+        "\(GitHubAccounts.scope(org)) archived:false is:pr is:merged merged:\(day(from))..\(day(to))"
     }
 
     /// Number of PRs opened in each week starting at the given dates.
@@ -39,7 +39,7 @@ extension GitHubAPI {
             let end = Calendar.metrics.date(byAdding: .day, value: 6, to: week) ?? week
             let response: Response = try await query("""
                 query($q: String!) { search(query: $q, type: ISSUE, first: 1) { issueCount } }
-                """, variables: ["q": "org:\(org) archived:false is:pr created:\(Self.day(week))..\(Self.day(end))"])
+                """, variables: ["q": "\(GitHubAccounts.scope(org)) archived:false is:pr created:\(Self.day(week))..\(Self.day(end))"])
             counts[week] = response.search.issueCount
             onWeek(counts.count)
         }

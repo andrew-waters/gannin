@@ -17,10 +17,13 @@ struct MetricGoals: Codable, Hashable {
         var prSizeLines: Int?
         /// Share of review requests answered, 0 to 1 (higher is better).
         var answeredShare: Double?
+        /// PRs merged a week, at least; a longer span is held to as many
+        /// weeks' worth.
+        var mergedPerWeek: Double?
 
         var isEmpty: Bool {
             cycleTimeHours == nil && firstReviewHours == nil && reworkShare == nil && unreviewedShare == nil
-                && prSizeLines == nil && answeredShare == nil
+                && prSizeLines == nil && answeredShare == nil && mergedPerWeek == nil
         }
     }
 
@@ -39,7 +42,8 @@ struct MetricGoals: Codable, Hashable {
             reworkShare: own.reworkShare ?? org.reworkShare,
             unreviewedShare: own.unreviewedShare ?? org.unreviewedShare,
             prSizeLines: own.prSizeLines ?? org.prSizeLines,
-            answeredShare: own.answeredShare ?? org.answeredShare
+            answeredShare: own.answeredShare ?? org.answeredShare,
+            mergedPerWeek: own.mergedPerWeek ?? org.mergedPerWeek
         )
     }
 }
@@ -59,10 +63,22 @@ struct GoalResult: Identifiable, Hashable {
 }
 
 extension MetricGoals.Targets {
+    /// "10", or "2.5".
+    static func count(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0...1))) }
+
     func results(for metrics: OrgMetrics) -> [GoalResult] {
         var results: [GoalResult] = []
         func hours(_ value: Double) -> String { (value * 3600).compactDuration }
         func share(_ value: Double) -> String { value.formatted(.percent.precision(.fractionLength(0))) }
+        if let target = mergedPerWeek {
+            // As many weeks' worth as the window holds (so far, for one
+            // under way).
+            let expected = target * metrics.interval.duration / (7 * 86_400)
+            results.append(.init(
+                name: "PRs merged", target: "≥ \(MetricGoals.Targets.count(target)) a week", actual: "\(metrics.merged.count)",
+                onTrack: Double(metrics.merged.count) >= expected.rounded(.down), previous: metrics.previous.map { "\($0.merged)" }, drill: nil
+            ))
+        }
         if let target = cycleTimeHours {
             let actual = metrics.cycleTime.median
             results.append(.init(

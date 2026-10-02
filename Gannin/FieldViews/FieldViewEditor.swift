@@ -192,7 +192,7 @@ struct FieldViewEditor: View {
     private func valuesMenu(_ filter: Binding<FieldFilter>) -> some View {
         var base = draft
         base.filters = []
-        let context = base.context(workflow: configs.config(for: org).workflow, history: issueStore.history(for: org), harness: configs.config(for: org).harness.flatMap { harness.index(for: org, $0) })
+        let context = base.context(workflow: configs.config(for: org).workflow, history: issueStore.history(for: org), harness: harness.combined(org: org, configs.config(for: org).harnesses))
         let values = FieldView.values(of: filter.wrappedValue.key, in: base.issues(in: issueStore.history(for: org), context: context), context: context)
         let picked = filter.wrappedValue.values
         let label = picked.isEmpty ? "Anything" : values.filter { picked.contains($0.name) }.map(\.title).joined(separator: ", ")
@@ -208,10 +208,6 @@ struct FieldViewEditor: View {
         } label: {
             Text(label.isEmpty ? "Anything" : label).lineLimit(1)
         }
-        #if !os(macOS)
-        // Ticking several values without the menu closing each time.
-        .menuActionDismissBehavior(.disabled)
-        #endif
         .frame(maxWidth: 260, alignment: .leading)
     }
 }

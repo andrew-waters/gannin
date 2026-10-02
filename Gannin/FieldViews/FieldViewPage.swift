@@ -37,7 +37,7 @@ struct FieldViewPage: View {
     @State private var editingFields: BoardFieldsRequest?
     /// The org's harness, for the Plan and Requirement fields.
     private var harnessIndex: HarnessIndex? {
-        configs.config(for: org).harness.flatMap { harness.index(for: org, $0) }
+        harness.combined(org: org, configs.config(for: org).harnesses)
     }
 
     /// The issue open in the drawer.
@@ -547,7 +547,7 @@ struct FieldViewPage: View {
         .help(picked.isEmpty ? "Only issues with some values of \(key.title)" : "Only issues where \(key.title) is \(summary(picked, key: key, limit: 10))")
     }
 
-    /// Names for the picked values: "Me, Ian Wood", or "Me and 3 more".
+    /// Names for the picked values: "Me, Sam Lee", or "Me and 3 more".
     private func summary(_ values: Set<String?>, key: FieldKey, limit: Int = 2) -> String {
         let me = auth.viewer?.login
         let names = values.map { value -> String in

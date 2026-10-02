@@ -1,4 +1,3 @@
-#if os(macOS)
 import AppKit
 import Foundation
 
@@ -177,13 +176,23 @@ extension SessionStore {
     /// Another agent on the session's issue, in its folder on its branch,
     /// with its own conversation: writing tests, say, or reviewing what the
     /// first has done (a reviewer can't edit).
+    /// A reviewer is given the team's default review prompts and skills
+    /// for the issue's repo and its PRs'.
     func startHelper(for parentID: UUID, role: String, prompt: String, reviewer: Bool) -> CodeSession? {
         guard let parent = sessions[parentID] else { return nil }
+        var instructions: String?
+        if reviewer, let repo = parent.harnessRepo {
+            let repos = [parent.issue.repo] + (pullRequestInfo[parentID] ?? []).map(\.repo)
+            let issue = parent.issue
+            let values = HarnessPromptLibrary.values(reference: issue.reference, title: issue.title, url: issue.url, repo: issue.repo, number: issue.number, branch: parent.branch)
+            instructions = launchInstructions(org: parent.org, setup: HarnessConfig(repo: repo), use: .review, repos: repos, choice: nil, values: values)
+                .map(Self.reviewInstructions)
+        }
         let helper = CodeSession(
             id: UUID(), issue: parent.issue, repo: parent.repo, branch: parent.branch, createdAt: .now,
             connect: parent.connect, remoteWorkspace: parent.remoteWorkspace,
             harnessRepo: parent.harnessRepo, harnessPath: parent.harnessPath, harnessFolder: parent.harnessFolder,
-            parentID: parentID, role: role, prompt: prompt, isReviewer: reviewer
+            parentID: parentID, role: role, prompt: prompt, instructions: instructions, isReviewer: reviewer
         )
         let directory = Self.directory(for: helper.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -206,7 +215,7 @@ extension SessionStore {
     }
 
     /// A reviewer's findings, as comments on the session it reviewed, ready
-    /// to send. Paths name the repo's folder first (`mono/src/x.go`).
+    /// to send. Paths name the repo's folder first (`api/src/x.go`).
     func importFindings(from reviewerID: UUID) -> Int {
         guard let reviewer = sessions[reviewerID], let parentID = reviewer.parentID, let parent = sessions[parentID],
               let findings = transcripts[reviewerID]?.findings, !findings.isEmpty else { return 0 }
@@ -335,4 +344,3 @@ enum SessionError: LocalizedError {
         }
     }
 }
-#endif

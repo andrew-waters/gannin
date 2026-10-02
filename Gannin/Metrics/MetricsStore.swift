@@ -89,19 +89,31 @@ final class MetricsStore {
 
         do {
             if !chunks.isEmpty {
-                let prs = try await run.track("merged", count: \.count) { progress in
-                    var fetched: [MetricPullRequest] = []
-                    for (index, (from, to)) in chunks.enumerated() {
-                        run.setParts(index, of: chunks.count, for: "merged")
-                        let before = fetched.count
-                        fetched += try await api.metricPullRequests(org: org, from: from, to: to) { page, _ in
+                // Newest first, the history reaching back a week at a time
+                // and saved every few, so a long backfill (all time) shows
+                // as it goes and keeps what it got if it stops.
+                let ordered = topUp + backfill.reversed()
+                _ = try await run.track("merged", count: { $0 }) { progress in
+                    var fetched = 0
+                    for (index, (from, to)) in ordered.enumerated() {
+                        run.setParts(index, of: ordered.count, for: "merged")
+                        let before = fetched
+                        let prs = try await api.metricPullRequests(org: org, from: from, to: to) { page, _ in
                             progress(before + page, nil)
+                        }
+                        fetched += prs.count
+                        for pr in prs { history.pullRequests[pr.id] = pr }
+                        if index >= topUp.count {
+                            history.coveredFrom = min(history.coveredFrom, from)
+                            if (index - topUp.count) % 8 == 7 {
+                                histories[org] = history
+                                save(history)
+                            }
                         }
                     }
                     return fetched
                 }
-                for pr in prs { history.pullRequests[pr.id] = pr }
-                if !backfill.isEmpty { history.coveredFrom = start }
+                if !backfill.isEmpty { history.coveredFrom = min(history.coveredFrom, start) }
             }
             if !weeks.isEmpty {
                 let counts = try await run.track("opened", count: \.count) { progress in

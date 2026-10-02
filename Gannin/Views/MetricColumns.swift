@@ -496,7 +496,6 @@ extension Color {
         func components(_ hex: UInt32) -> (CGFloat, CGFloat, CGFloat) {
             (CGFloat((hex >> 16) & 0xFF) / 255, CGFloat((hex >> 8) & 0xFF) / 255, CGFloat(hex & 0xFF) / 255)
         }
-        #if os(macOS)
         func color(_ hex: UInt32) -> NSColor {
             let (r, g, b) = components(hex)
             return NSColor(srgbRed: r, green: g, blue: b, alpha: 1)
@@ -504,14 +503,5 @@ extension Color {
         self.init(nsColor: NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? color(dark) : color(light)
         })
-        #else
-        func color(_ hex: UInt32) -> UIColor {
-            let (r, g, b) = components(hex)
-            return UIColor(red: r, green: g, blue: b, alpha: 1)
-        }
-        self.init(uiColor: UIColor { traits in
-            traits.userInterfaceStyle == .dark ? color(dark) : color(light)
-        })
-        #endif
     }
 }

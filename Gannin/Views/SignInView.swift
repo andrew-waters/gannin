@@ -1,9 +1,5 @@
 import SwiftUI
-#if os(macOS)
 import AppKit
-#else
-import UIKit
-#endif
 
 struct SignInView: View {
     @Environment(AuthStore.self) private var auth
@@ -130,12 +126,8 @@ struct SignInView: View {
     }
 
     private func copy(_ value: String) {
-        #if os(macOS)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
-        #else
-        UIPasteboard.general.string = value
-        #endif
         copied = true
         Task {
             try? await Task.sleep(for: .seconds(1.5))

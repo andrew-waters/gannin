@@ -89,9 +89,9 @@ enum DeviceFlow {
                     "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
                 ])
             } catch AuthError.network {
-                // On iPhone and iPad the app is suspended while you approve
-                // in Safari, which drops the request in flight; keep polling
-                // until the code expires rather than failing the sign-in.
+                // A dropped connection (the Mac asleep, a network change)
+                // isn't the end of the sign-in; keep polling until the code
+                // expires.
                 guard Date.now < expiry else { throw AuthError.expired }
                 continue
             }

@@ -1,7 +1,5 @@
 import SwiftUI
-#if os(macOS)
 import AppKit
-#endif
 
 // MARK: - What changed
 
@@ -281,7 +279,7 @@ enum WeeklyDigest {
         lines.append("")
 
         if let issues {
-            let completed = issues.issues.values.filter { $0.isCompleted && ($0.closedAt ?? .distantPast) >= start && ($0.closedAt ?? .distantPast) < now && !config.excludedRepos.contains($0.repo) }
+            let completed = issues.issues.values.filter { $0.isCompleted && ($0.closedAt ?? .distantPast) >= start && ($0.closedAt ?? .distantPast) < now && !config.repoExclusion.contains($0.repo) }
             if !completed.isEmpty {
                 lines += ["## Shipped", ""]
                 let investments = config.investmentConfig
@@ -389,18 +387,12 @@ struct NotesSheet: View {
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                #if os(macOS)
                 Button("Rewrite with Claude") { rewriteWithClaude() }
                     .disabled(working)
                     .help("Ask Claude to make it a short, readable update, keeping every fact")
-                #endif
                 Button("Copy") {
-                    #if os(macOS)
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(text, forType: .string)
-                    #else
-                    UIPasteboard.general.string = text
-                    #endif
                     status = "Copied"
                 }
                 if configs.config(for: org).harness != nil {
@@ -433,7 +425,6 @@ struct NotesSheet: View {
     }
 
     private func rewriteWithClaude() {
-        #if os(macOS)
         working = true
         status = "Claude is rewriting it"
         let prompt = rewrite + " Keep every fact, number and link. Use Markdown headings and bullets. Reply with the text only, no preamble.\n\n" + text
@@ -446,7 +437,6 @@ struct NotesSheet: View {
             }
             working = false
         }
-        #endif
     }
 }
 
@@ -509,12 +499,14 @@ struct GoalsSettingsSection: View {
             }
         } footer: {
             Text(team.isEmpty
-                 ? "Shown on the Dashboard as on track or not, for the window picked, with where each was in the period before. Leave one empty for no goal."
+                 ? "Shown on the Dashboard as on track or not, for the window picked, with where each was in the period before. Leave one empty for no goal. The Scorecard keeps its own measurables and targets for each cadence, starting from these as weekly ones."
                  : "A team's empty goals use the org's, shown greyed in the box.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        Section("Speed") {
+        Section("Velocity") {
+            row("PRs merged", "A week; a longer window is held to as many weeks' worth", unit: "a week", at: "at least",
+                value: targets.mergedPerWeek, fallback: fallback?.mergedPerWeek) { value in update { $0.mergedPerWeek = value } }
             row("Cycle time", "Median, first commit to merge", unit: "hours", at: "at most",
                 value: targets.cycleTimeHours, fallback: fallback?.cycleTimeHours) { value in update { $0.cycleTimeHours = value } }
             row("First review", "Median wait for the first review once ready", unit: "hours", at: "at most",

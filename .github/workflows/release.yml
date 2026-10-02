@@ -1,0 +1,296 @@
+name: Release
+
+# A tag (v1.2.0) is a release: the Mac app archived and signed with
+# Developer ID, notarised, packed in a DMG, signed for Sparkle, and published
+# to gannin.ai through the public andrew-waters/gannin-site repo (the DMG on
+# its downloads branch, appcast.xml on main, deployed by its Pages workflow).
+# A GitHub release here keeps the record, with the DMG attached.
+#
+# The tag's message is the release: its first line the title, the rest the
+# notes, shown on GitHub and in Sparkle's update panel. Tag with
+#   git tag -a v1.2.0 -m "Title" -m "- what changed" && git push origin v1.2.0
+#
+# Secrets (see docs/RELEASING.md):
+#   DEVELOPER_ID_CERTIFICATE_P12, DEVELOPER_ID_CERTIFICATE_PASSWORD  signing
+#   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8  App Store Connect API key, for
+#     Developer ID signing and notarisation
+#   SPARKLE_PRIVATE_KEY  the update signing key (account "gannin")
+#   SITE_DEPLOY_KEY  write deploy key for andrew-waters/gannin-site
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  TEAM_ID: AKC33ZRNL9
+  # The oldest macOS an update is offered to; keep with project.yml.
+  MIN_SYSTEM_VERSION: "26.0"
+  SPARKLE_VERSION: 2.9.4
+
+jobs:
+  release:
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      # The version is the tag's; the build number (which Sparkle compares)
+      # is this workflow's run number, so it only goes up.
+      - name: Version from the tag
+        id: version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Tags are v<major>.<minor>.<patch>; $GITHUB_REF_NAME isn't."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      # The tag message, read from the API: actions/checkout makes a tag a
+      # lightweight ref, so git alone would find the commit's subject.
+      - name: Notes from the tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          message=""
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.type')" = "tag" ]; then
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')
+            message=$(gh api "repos/$GITHUB_REPOSITORY/git/tags/$sha" --jq '.message')
+          fi
+          printf '%s\n' "${message:-$GITHUB_REF_NAME}" > tag-message.txt
+          head -1 tag-message.txt > release-title.txt
+          python3 .github/scripts/release_notes.py --markdown < tag-message.txt > release-notes.md
+          python3 .github/scripts/release_notes.py < tag-message.txt > release-notes.html
+          cat tag-message.txt
+
+      - name: Generate the project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Install the Developer ID certificate
+        env:
+          CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          if [[ -z "$CERTIFICATE_P12" ]]; then
+            echo "::error::DEVELOPER_ID_CERTIFICATE_P12 isn't set."
+            exit 1
+          fi
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          rm -f "$RUNNER_TEMP/certificate.p12"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain
+
+      # For xcodebuild's Developer ID signing, and for notarytool.
+      - name: Install the App Store Connect key
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          if [[ -z "$ASC_KEY_P8" || -z "$ASC_KEY_ID" ]]; then
+            echo "::error::ASC_KEY_P8 and ASC_KEY_ID aren't set."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/asc"
+          printf '%s' "$ASC_KEY_P8" > "$RUNNER_TEMP/asc/AuthKey_$ASC_KEY_ID.p8"
+
+      - name: Archive
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          xcodebuild archive \
+            -project Gannin.xcodeproj \
+            -scheme Gannin \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath build/Gannin.xcarchive \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build }}" \
+            OTHER_CODE_SIGN_FLAGS="--timestamp"
+
+      - name: Export with Developer ID
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          cat > export-options.plist <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>developer-id</string>
+              <key>teamID</key>
+              <string>$TEAM_ID</string>
+              <key>signingStyle</key>
+              <string>automatic</string>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath build/Gannin.xcarchive \
+            -exportPath build/export \
+            -exportOptionsPlist export-options.plist \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/asc/AuthKey_$ASC_KEY_ID.p8" \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      # What would be wrong in the field and nowhere else: the version and
+      # the signature.
+      - name: Check the app
+        run: |
+          APP=build/export/Gannin.app
+          reported=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP/Contents/Info.plist")
+          if [[ "$reported" != "${{ steps.version.outputs.version }}" ]]; then
+            echo "::error::The tag is $GITHUB_REF_NAME but the app says $reported."
+            exit 1
+          fi
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          codesign -d --verbose=2 "$APP" 2>&1 | grep -q "Authority=Developer ID Application" || { echo "::error::The app isn't signed with Developer ID."; exit 1; }
+
+      - name: Make the DMG
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p dmg
+          cp -R build/export/Gannin.app dmg/
+          ln -s /Applications dmg/Applications
+          hdiutil create -volname "Gannin $VERSION" -srcfolder dmg -ov -format UDZO "Gannin-$VERSION.dmg"
+          codesign --sign "Developer ID Application" --timestamp "Gannin-$VERSION.dmg"
+
+      - name: Notarise and staple
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          DMG="Gannin-${{ steps.version.outputs.version }}.dmg"
+          if ! xcrun notarytool submit "$DMG" \
+               --key "$RUNNER_TEMP/asc/AuthKey_$ASC_KEY_ID.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" \
+               --wait --output-format json > notarisation.json; then
+            cat notarisation.json || true
+          fi
+          cat notarisation.json
+          status=$(python3 -c 'import json; print(json.load(open("notarisation.json")).get("status", ""))')
+          if [[ "$status" != "Accepted" ]]; then
+            id=$(python3 -c 'import json; print(json.load(open("notarisation.json")).get("id", ""))')
+            [[ -n "$id" ]] && xcrun notarytool log "$id" \
+              --key "$RUNNER_TEMP/asc/AuthKey_$ASC_KEY_ID.p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" || true
+            echo "::error::Notarisation was $status."
+            exit 1
+          fi
+          xcrun stapler staple "$DMG"
+          shasum -a 256 "$DMG" > "$DMG.sha256"
+          # The same DMG under a name that never changes, for the site's
+          # Download button.
+          cp "$DMG" Gannin.dmg
+
+      - name: Sign for Sparkle and write the appcast
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "::error::SPARKLE_PRIVATE_KEY isn't set."
+            exit 1
+          fi
+          curl -sL -o sparkle.tar.xz "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          tar -xf sparkle.tar.xz bin/sign_update
+          printf '%s' "$SPARKLE_PRIVATE_KEY" > "$RUNNER_TEMP/sparkle_key"
+          # sparkle:edSignature="..." length="..."
+          SIGNATURE=$(./bin/sign_update "Gannin-$VERSION.dmg" --ed-key-file "$RUNNER_TEMP/sparkle_key")
+          rm -f "$RUNNER_TEMP/sparkle_key"
+          TITLE=$(python3 -c 'import html,sys; print(html.escape(open("release-title.txt").read().strip()))')
+          NOTES=$(cat release-notes.html)
+          cat > appcast.xml <<EOF
+          <?xml version="1.0" standalone="yes"?>
+          <rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+            <channel>
+              <title>Gannin</title>
+              <item>
+                <title>${TITLE}</title>
+                <sparkle:version>${{ steps.version.outputs.build }}</sparkle:version>
+                <sparkle:shortVersionString>${VERSION}</sparkle:shortVersionString>
+                <sparkle:minimumSystemVersion>${MIN_SYSTEM_VERSION}</sparkle:minimumSystemVersion>
+                <description><![CDATA[
+          ${NOTES}
+          ]]></description>
+                <pubDate>$(date -u +"%a, %d %b %Y %H:%M:%S +0000")</pubDate>
+                <enclosure url="https://gannin.ai/downloads/Gannin-${VERSION}.dmg" type="application/octet-stream" ${SIGNATURE} />
+              </item>
+            </channel>
+          </rss>
+          EOF
+          cat appcast.xml
+
+      # The DMG first, then the appcast that points at it, so an update
+      # never names a file that isn't there yet. The downloads branch holds
+      # only the latest release, replaced each time.
+      - name: Publish to gannin.ai
+        env:
+          SITE_DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SITE_DEPLOY_KEY" > ~/.ssh/site_key
+          chmod 600 ~/.ssh/site_key
+          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/site_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
+          REMOTE=git@github.com:andrew-waters/gannin-site.git
+
+          mkdir downloads && cd downloads
+          git init -q -b downloads
+          git config user.name "Andrew Waters"
+          git config user.email "501976+andrew-waters@users.noreply.github.com"
+          cp "../Gannin-$VERSION.dmg" "../Gannin-$VERSION.dmg.sha256" ../Gannin.dmg .
+          git add -A
+          git commit -qm "Gannin $VERSION"
+          git push -f "$REMOTE" downloads
+          cd ..
+
+          git clone -q --depth 1 --branch main "$REMOTE" site-repo
+          cp appcast.xml site-repo/appcast.xml
+          cd site-repo
+          git config user.name "Andrew Waters"
+          git config user.email "501976+andrew-waters@users.noreply.github.com"
+          git add appcast.xml
+          git commit -qm "Appcast for Gannin $VERSION"
+          git push -q origin main
+          rm -f ~/.ssh/site_key
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$(cat release-title.txt)" \
+            --notes-file release-notes.md \
+            "Gannin-$VERSION.dmg" "Gannin-$VERSION.dmg.sha256"

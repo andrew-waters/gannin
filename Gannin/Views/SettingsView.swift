@@ -1,10 +1,8 @@
 import SwiftUI
 
-/// The app's settings: General (account and activity) and Storage. Panes on
-/// the Mac; on iPad, a form with Storage a page of its own.
+/// The app's settings: General (account and activity) and Storage, as panes.
 struct SettingsView: View {
     var body: some View {
-        #if os(macOS)
         TabView {
             Tab("General", systemImage: "gearshape") {
                 GeneralSettings()
@@ -16,10 +14,6 @@ struct SettingsView: View {
                     .frame(minHeight: 520)
             }
         }
-        #else
-        GeneralSettings()
-            .navigationTitle("Settings")
-        #endif
     }
 }
 
@@ -78,18 +72,8 @@ struct GeneralSettings: View {
             } header: {
                 Text("GitHub Actions")
             }
-            #if os(macOS)
             SessionSettingsSection()
             SessionPromptSettingsSection()
-            #endif
-            #if !os(macOS)
-            Section {
-                NavigationLink("Storage") {
-                    StorageSettings()
-                        .navigationTitle("Storage")
-                }
-            }
-            #endif
         }
         .formStyle(.grouped)
     }

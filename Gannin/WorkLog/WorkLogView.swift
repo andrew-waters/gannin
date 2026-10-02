@@ -199,9 +199,7 @@ struct WorkLogPage: View {
             .labelsHidden()
             .fixedSize()
         }
-        #if os(macOS)
-        // One item, so the Mac draws the range and the scale in one capsule
-        // as iPad does with neighbouring items.
+        // One item, so the Mac draws the range and the scale in one capsule.
         ToolbarItem {
             HStack(spacing: 10) {
                 rangeLabel(columns)
@@ -210,10 +208,6 @@ struct WorkLogPage: View {
             }
             .fixedSize()
         }
-        #else
-        ToolbarItem { rangeLabel(columns) }
-        ToolbarItem { scalePicker }
-        #endif
         ToolbarItem {
             ControlGroup {
                 Button { pagesBack += 1 } label: { Label("Earlier", systemImage: "chevron.left") }
@@ -394,7 +388,7 @@ struct WorkLogGrid {
 extension WorkLogHistory {
     /// PRs left after hiding and the org's repo exclusions.
     func pullRequests(config: OrgConfig, hidden: Set<String>) -> [WorkLogPullRequest] {
-        pullRequests.values.filter { !hidden.contains($0.id) && !config.excludedRepos.contains($0.repo) }
+        pullRequests.values.filter { !hidden.contains($0.id) && !config.repoExclusion.contains($0.repo) }
     }
 }
 

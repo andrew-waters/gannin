@@ -189,7 +189,7 @@ struct IssueMetrics {
         let teamLogins = team.map { Set($0.members) }
 
         let records = history.issues.values.filter { record in
-            !config.excludedRepos.contains(record.repo)
+            !config.repoExclusion.contains(record.repo)
                 && (teamLogins.map { logins in record.assignees.contains(where: logins.contains) } ?? true)
         }
         let all = records.map { IssueTiming($0, workflow: workflow, now: now) }

@@ -36,7 +36,7 @@ actor IssueTextIndex {
 
     static var file: URL {
         URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.getgannin", directoryHint: .isDirectory)
+            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
             .appending(path: "IssueText.sqlite")
     }
 

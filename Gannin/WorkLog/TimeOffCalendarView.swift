@@ -1,7 +1,5 @@
 import SwiftUI
-#if os(macOS)
 import AppKit
-#endif
 
 /// What the time off calendar shows at once.
 enum CalendarScale: String, CaseIterable {
@@ -226,14 +224,9 @@ struct TimeOffCalendarView: View {
         }
     }
 
-    /// Shift held on a Mac; on iPad a second tap in a row extends instead
-    /// (see `select`), so this is only the Mac's.
+    /// Shift held, which extends the selection.
     private static var extending: Bool {
-        #if os(macOS)
         NSEvent.modifierFlags.contains(.shift)
-        #else
-        false
-        #endif
     }
 
     private func clearSelection() {

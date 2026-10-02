@@ -9,7 +9,7 @@ extension GitHubAPI {
         }
         let response: Response = try await query("""
             query($login: String!) {
-              organization(login: $login) {
+              \(GitHubAccounts.ownerField(org)) {
                 projectV2(number: \(number)) {
                   id number title url
                   fields(first: 50) {
@@ -43,7 +43,7 @@ extension GitHubAPI {
     }
 
     /// A board's items matching a filter in GitHub's own syntax, as its
-    /// views use (`-status:Done label:"ai: pickup"`); empty for everything.
+    /// views use (`-status:Done label:bug`); empty for everything.
     func boardItems(org: String, number: Int, filter: String, onPage: (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }) async throws -> [BoardItem] {
         struct Response: Decodable {
             struct Project: Decodable { let items: PagedConnection<Lossy<RawBoardItem>> }
@@ -57,7 +57,7 @@ extension GitHubAPI {
             if let cursor { variables["cursor"] = cursor }
             let response: Response = try await query("""
                 query($login: String!, $query: String, $cursor: String) {
-                  organization(login: $login) {
+                  \(GitHubAccounts.ownerField(org)) {
                     projectV2(number: \(number)) {
                       items(first: 50, after: $cursor, query: $query) {
                         totalCount

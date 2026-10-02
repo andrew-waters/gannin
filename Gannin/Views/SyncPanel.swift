@@ -1,15 +1,9 @@
 import SwiftUI
-#if os(macOS)
 import AppKit
-#endif
 
 /// Option-click on Refresh means Full Refresh, on a Mac.
 private func optionKeyHeld() -> Bool {
-    #if os(macOS)
     NSEvent.modifierFlags.contains(.option)
-    #else
-    false
-    #endif
 }
 
 /// Bottom of the sidebar: sync status and the refresh button, with the
@@ -198,7 +192,7 @@ struct SyncFooter: View {
     }
 
     private func refreshHarness() async {
-        if let setup = configs.harness(for: org) { await harness.load(org: org, setup: setup, force: true) }
+        await harness.loadAll(org: org, configs.config(for: org).harnesses, force: true)
     }
 
     private func refresh(_ mode: OrgStore.RefreshMode) {

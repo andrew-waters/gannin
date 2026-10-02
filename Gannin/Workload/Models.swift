@@ -25,6 +25,11 @@ struct Organisation: Codable, Hashable, Identifiable {
     let name: String?
     let avatarUrl: URL?
     let description: String?
+    /// The signed-in user's own account rather than an org; nil for an org
+    /// (and for orgs saved before).
+    var isUser: Bool? = nil
+
+    var isPersonal: Bool { isUser == true }
 
     var displayName: String {
         if let name, !name.isEmpty { return name }

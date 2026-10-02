@@ -1,0 +1,66 @@
+name: CI
+
+# Builds the Mac app on every pull request and push to main, unsigned, so a
+# broken build is caught before a release tag is. Releases are release.yml.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # The app targets macOS 26, so its SDK, so a Tahoe runner.
+    runs-on: macos-26
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Xcode
+        uses: maxim-lobanov/setup-xcode@ed7a3b1fda3918c0306d1b724322adc0b8cc0a90 # v1.7.0
+        with:
+          xcode-version: latest-stable
+
+      # The version in project.yml is a placeholder that release.yml replaces
+      # from the tag. A hand-edited one could disagree with the tag it ships
+      # under, and development builds rely on 0.0.0 to keep Sparkle quiet.
+      - name: Check the version is the placeholder
+        run: |
+          if ! grep -qE '^    MARKETING_VERSION: "0\.0\.0"$' project.yml; then
+            echo "project.yml must keep MARKETING_VERSION \"0.0.0\"; releases take theirs from the tag."
+            grep -n MARKETING_VERSION project.yml
+            exit 1
+          fi
+
+      # The project is generated from project.yml and isn't checked in.
+      - name: Generate the project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Cache SwiftPM packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .spm-cache
+          key: ${{ runner.os }}-spm-${{ hashFiles('project.yml') }}
+          restore-keys: ${{ runner.os }}-spm-
+
+      - name: Build the Mac app
+        run: |
+          xcodebuild build \
+            -project Gannin.xcodeproj \
+            -scheme Gannin \
+            -destination 'generic/platform=macOS' \
+            -clonedSourcePackagesDirPath .spm-cache \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO

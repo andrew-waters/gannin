@@ -1,12 +1,10 @@
 import SwiftUI
-#if os(macOS)
 import AppKit
-#endif
 
 // Navigation in a main window is a stack: the sidebar picks the root page,
 // and each drill-down pushes a page onto `MainView.path`, shown full width
 // with breadcrumbs and Back. Any page can instead be opened in a new tab
-// (the Mac's) or window, carrying the trail that led to it.
+// or window, carrying the trail that led to it.
 
 /// Pushes a page from the level it's used at. A page already in the trail
 /// is gone back to rather than pushed again.
@@ -64,9 +62,7 @@ enum WindowRequest {
     /// when asked.
     @MainActor static func open(_ request: NavigationRequest, placement: OpenPlacement, openWindow: OpenWindowAction) {
         pending = request
-        #if os(macOS)
         if placement == .tab { TabRequest.parent = NSApp.keyWindow }
-        #endif
         openWindow(id: "main")
     }
 }
@@ -90,21 +86,16 @@ struct OpenElsewhereItems: View {
 
     var body: some View {
         if let openElsewhere, supportsMultipleWindows {
-            #if os(macOS)
             Button("Open in New Tab") { open(openElsewhere, .tab) }
-            #endif
             Button("Open in New Window") { open(openElsewhere, .window) }
             Divider()
         }
-        #if os(macOS)
         if let destination {
             ReviewMenuItem(destination: destination)
         }
-        #endif
     }
 }
 
-#if os(macOS)
 /// Review with Claude (or Open Review) in a PR's right-click menu, wherever
 /// the PR is listed.
 private struct ReviewMenuItem: View {
@@ -134,7 +125,6 @@ private struct ReviewMenuItem: View {
         }
     }
 }
-#endif
 
 extension View {
     /// Adds Open in New Tab and Open in New Window as the row's context menu.

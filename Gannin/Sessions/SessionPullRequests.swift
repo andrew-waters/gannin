@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// A pull request from a session: its state, checks and the review on it,
@@ -334,7 +333,7 @@ extension GitHubAPI {
                 comments(first: 20) { nodes { author { login } body url } } } }
             }
             """
-        var values: [String: Any] = ["q": "org:\(org) is:pr head:\(branch)"]
+        var values: [String: Any] = ["q": "\(GitHubAccounts.scope(org)) is:pr head:\(branch)"]
         for (name, url) in known { values[name] = url.absoluteString }
         let response: SessionPRResponse = try await self.query(query, values: values)
         var seen: Set<String> = []
@@ -490,4 +489,3 @@ private struct RawPullRequest: Decodable {
         }
     }
 }
-#endif

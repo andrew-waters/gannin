@@ -83,13 +83,11 @@ struct PullRequestWindow: View {
             DescriptionSections(id: reference.id, url: reference.url)
         }
         .ownWindowTitle(isEmbedded ? nil : "\(reference.repo)#\(reference.number)", subtitle: reference.title)
-        #if os(macOS)
         .toolbar {
             if !isEmbedded {
                 ToolbarItem { ReviewWithClaudeButton(reference: reference) }
             }
         }
-        #endif
         .task(id: reference.id) { await details.load(reference.id, updatedAt: open?.updatedAt) }
     }
 

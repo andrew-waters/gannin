@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 
 /// What a session's claude has done, read from Claude Code's transcript
@@ -296,4 +295,3 @@ nonisolated struct TranscriptReader: Sendable {
         }
     }
 }
-#endif

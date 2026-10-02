@@ -34,6 +34,7 @@ final class OrgStore {
         if let data = UserDefaults.standard.data(forKey: Self.orgsKey),
            let cached = try? JSONDecoder().decode([Organisation].self, from: data) {
             orgs = cached
+            GitHubAccounts.setUsers(Set(cached.filter(\.isPersonal).map(\.login)))
         }
     }
 
@@ -80,8 +81,12 @@ final class OrgStore {
         isLoadingOrgs = true
         defer { isLoadingOrgs = false }
         do {
-            orgs = try await api.organisations()
+            // Your own account first, then the orgs.
+            let viewer = try await api.viewer()
+            let personal = Organisation(id: "user:\(viewer.login)", login: viewer.login, name: viewer.name, avatarUrl: viewer.avatarUrl, description: "Your personal account", isUser: true)
+            orgs = [personal] + (try await api.organisations())
                 .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+            GitHubAccounts.setUsers([viewer.login])
             errors["orgs"] = nil
             if let data = try? JSONEncoder().encode(orgs) {
                 UserDefaults.standard.set(data, forKey: Self.orgsKey)

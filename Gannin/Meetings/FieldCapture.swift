@@ -414,11 +414,9 @@ struct WriteIssueSheet: View {
         .frame(width: 600, height: 620)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            #if os(macOS)
             ToolbarItem {
                 Button("Draft Again") { draft() }.disabled(drafting)
             }
-            #endif
             ToolbarItem(placement: .confirmationAction) {
                 Button(creating ? "Creating" : "Create Issue") { create() }
                     .disabled(creating || repo.isEmpty || title.trimmingCharacters(in: .whitespaces).isEmpty)
@@ -428,9 +426,7 @@ struct WriteIssueSheet: View {
             repo = repos.first ?? ""
             title = String(note.text.prefix(80))
             bodyText = note.text
-            #if os(macOS)
             draft()
-            #endif
         }
     }
 
@@ -438,10 +434,9 @@ struct WriteIssueSheet: View {
     private var knownRepos: [String] {
         let issues = issueStore.history(for: org).map { Array($0.issues.values) } ?? []
         let counts = Dictionary(grouping: issues, by: \.repo).mapValues(\.count)
-        return counts.sorted { $0.value > $1.value }.map(\.key).filter { !configs.config(for: org).excludedRepos.contains($0) }
+        return counts.sorted { $0.value > $1.value }.map(\.key).filter { !configs.config(for: org).repoExclusion.contains($0) }
     }
 
-    #if os(macOS)
     private func draft() {
         drafting = true
         let issues = issueStore.history(for: org).map { Array($0.issues.values) } ?? []
@@ -478,7 +473,6 @@ struct WriteIssueSheet: View {
             drafting = false
         }
     }
-    #endif
 
     private func create() {
         guard let api = auth.api else { return }

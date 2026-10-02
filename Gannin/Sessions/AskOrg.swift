@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// What Ask hands Claude: Gannin's view of the org as JSON files it reads
@@ -81,7 +80,7 @@ enum OrgContext {
         if let issues {
             let investments = config.investmentConfig
             let byID = issues.issues
-            let rows = byID.values.filter { !config.excludedRepos.contains($0.repo) }.map { record in
+            let rows = byID.values.filter { !config.repoExclusion.contains($0.repo) }.map { record in
                 IssueRow(
                     repo: record.repo, number: record.number, title: record.title, url: record.url,
                     open: record.isOpen, closed: record.closedAt, reason: record.stateReason,
@@ -285,7 +284,7 @@ struct AskOrgPage: View {
         let config = configs.config(for: org)
         let files: [String: Data] = starting ? OrgContext.files(
             org: org, workload: workload, metrics: metrics(config), issues: issueStore.history(for: org), config: config,
-            harness: config.harness.flatMap { harness.index(for: org, $0) }, people: peopleDates.all(in: org)
+            harness: harness.combined(org: org, config.harnesses), people: peopleDates.all(in: org)
         ) : [:]
         let prompt = starting
             ? "You're answering questions about the engineering org \(org) from the files in this folder (start with README.md). Answer from the data, cite issues and PRs by repo#number with their links, say when the data doesn't cover something, and keep it short. Don't modify anything.\n\nQuestion: \(text)"
@@ -311,4 +310,3 @@ struct AskOrgPage: View {
         return OrgMetrics(history: history, window: MetricsWindow(code: windowDays), team: nil, members: snapshot?.members ?? [], hidden: hidden.keys, config: config)
     }
 }
-#endif

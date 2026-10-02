@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// What claude has been doing, from its transcript: what it cost and how
@@ -334,4 +333,3 @@ private struct HelperSheet: View {
         }
     }
 }
-#endif

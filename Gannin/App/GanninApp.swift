@@ -1,7 +1,5 @@
 import SwiftUI
-#if os(macOS)
 import AppKit
-#endif
 
 @main
 struct GanninApp: App {
@@ -22,13 +20,13 @@ struct GanninApp: App {
     @State private var activity: SyncActivity
     @State private var harness: HarnessStore
     @State private var team: HarnessTeamStore
-    #if os(macOS)
     @State private var sessions: SessionStore
     @NSApplicationDelegateAdaptor private var appDelegate: GanninAppDelegate
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
-    #endif
 
     init() {
+        // Before anything reads preferences, the keychain or the store.
+        BundleMove.run()
         let auth = AuthStore()
         let activity = SyncActivity()
         _auth = State(initialValue: auth)
@@ -55,18 +53,23 @@ struct GanninApp: App {
         orgConfigs.team = team
         peopleDates.team = team
         _team = State(initialValue: team)
-        #if os(macOS)
+        // Checkouts set when an org had one harness, now that it can have several.
+        for (org, config) in orgConfigs.configs {
+            if let primary = config.harness { SessionStore.migrateHarnessPaths(org: org, primary: primary.repo) }
+        }
         let sessions = SessionStore(harness: harness)
         _sessions = State(initialValue: sessions)
         GanninAppDelegate.sessions = sessions
         sessions.api = { [weak auth] in auth?.api }
         sessions.watchPullRequests()
+        // Sparkle starts checking now, not when a menu is first built.
+        _ = Updater.shared
         let watch = EngineerWatch.shared
         watch.api = { [weak auth] in auth?.api }
         // Review with Claude from the menu bar or a notification: in the
         // PR's org's harness, else the PR on GitHub.
         watch.startReview = { [weak sessions, weak orgConfigs] reference in
-            guard let sessions, let setup = orgConfigs?.config(for: reference.org).harness,
+            guard let sessions, let setup = orgConfigs?.config(for: reference.org).harness(covering: [reference.repo]),
                   let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else {
                 NSWorkspace.shared.open(reference.url)
                 return
@@ -76,7 +79,6 @@ struct GanninApp: App {
         }
         watch.start()
         TabMenuRename.shared.install()
-        #endif
     }
 
     var body: some Scene {
@@ -85,9 +87,7 @@ struct GanninApp: App {
         WindowGroup(id: "main") {
             RootView()
                 .joinsRequestedTab()
-                #if os(macOS)
                 .capturesOpenWindow()
-                #endif
                 .environment(fieldNotes)
                 .environment(actions)
                 .environment(auth)
@@ -105,30 +105,25 @@ struct GanninApp: App {
                 .environment(bankHolidays)
                 .environment(activity)
                 .environment(database)
-                #if os(macOS)
                 .environment(sessions)
-                #endif
         }
         .defaultSize(width: 1280, height: 800)
         .commands {
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesCommand()
+            }
             CommandGroup(after: .newItem) {
-                #if os(macOS)
                 NewTabCommand()
-                #endif
                 RenameTabCommand()
             }
-            #if os(macOS)
             SessionCommands(sessions: sessions)
-            #endif
         }
 
         // A PR opened from the work log; one window per PR.
         WindowGroup("Pull Request", for: PullRequestReference.self) { $reference in
             if let reference {
                 PullRequestWindow(reference: reference)
-                    #if os(macOS)
                     .environment(sessions)
-                    #endif
                     .environment(auth)
                     .environment(orgs)
                     .environment(details)
@@ -162,15 +157,12 @@ struct GanninApp: App {
                     .environment(harness)
                     .environment(team)
                     .environment(activity)
-                    #if os(macOS)
                     .environment(sessions)
-                    #endif
             }
         }
         .defaultSize(width: 1080, height: 960)
         .windowResizability(.contentMinSize)
 
-        #if os(macOS)
         // Claude Code sessions, a tab each: the terminal, and the issue's
         // board fields or the worktrees' changes beside it. The terminals
         // outlive their tabs and the window.
@@ -188,9 +180,7 @@ struct GanninApp: App {
                 .environment(projects)
         }
         .defaultSize(width: 1280, height: 820)
-        #endif
 
-        #if os(macOS)
         // What you need to act on, from the menu bar.
         MenuBarExtra(isInserted: $showsMenuBar) {
             EngineerMenu()
@@ -219,7 +209,6 @@ struct GanninApp: App {
                 .environment(hidden)
                 .environment(database)
         }
-        #endif
     }
 }
 

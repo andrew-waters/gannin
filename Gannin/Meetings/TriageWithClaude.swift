@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// Triage with Claude, from Prioritisation's Triage: for each issue with no
@@ -352,4 +351,3 @@ struct TriageWithClaudeSheet: View {
         working = false
     }
 }
-#endif

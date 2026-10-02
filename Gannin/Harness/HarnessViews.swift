@@ -28,9 +28,9 @@ private struct HarnessLoader: ViewModifier {
     let org: String
 
     func body(content: Content) -> some View {
-        let setup = configs.config(for: org).harness
-        content.task(id: setup) {
-            if let setup { await harness.load(org: org, setup: setup) }
+        let harnesses = configs.config(for: org).harnesses
+        content.task(id: harnesses) {
+            await harness.loadAll(org: org, harnesses)
         }
     }
 }
@@ -54,14 +54,34 @@ struct HarnessView: View {
     @State private var picked: [String: Set<String>] = [:]
     /// Nil is newest first.
     @State private var sort: StatsSort?
+    /// New on the page, and Edit on a skill or prompt.
+    @State private var creatingIn: HarnessChoice?
+    @State private var editingSkill: HarnessEdit<HarnessDocument>?
+    @State private var editingPrompt: HarnessEdit<HarnessPrompt>?
+    /// Only one harness's documents, by repo; nil for every harness.
+    @State private var harnessFilter: String?
     let org: String
     @Binding var selection: DetailSelection?
 
+    /// A harness to write a new document in.
+    struct HarnessChoice: Identifiable {
+        let setup: HarnessConfig
+        var id: String { setup.repo }
+    }
+
+    /// A document to edit, in the harness it's in, by its own path.
+    struct HarnessEdit<Item>: Identifiable {
+        let setup: HarnessConfig
+        let item: Item
+        let id: String
+    }
+
     var body: some View {
-        let setup = configs.config(for: org).harness
+        let harnesses = configs.config(for: org).harnesses
+        let setup = harnesses.first
         Group {
             if let setup {
-                content(setup)
+                content(setup, harnesses: harnesses)
             } else {
                 ContentUnavailableView(
                     "No harness",
@@ -71,25 +91,71 @@ struct HarnessView: View {
             }
         }
         .loadsHarness(org: org)
+        .toolbar {
+            if let setup {
+                ToolbarItem {
+                    if harnesses.count > 1 {
+                        // Which harness it goes in.
+                        Menu {
+                            ForEach(harnesses, id: \.repo) { choice in
+                                Button(choice.repo) { creatingIn = HarnessChoice(setup: choice) }
+                                    .disabled(harness.index(for: org, choice) == nil)
+                            }
+                        } label: {
+                            Label(HarnessNewDocumentSheet.title(kind), systemImage: "plus")
+                        }
+                        .help("Write a new \(kind.singular) in one of the harnesses")
+                    } else {
+                        Button {
+                            creatingIn = HarnessChoice(setup: setup)
+                        } label: {
+                            Label(HarnessNewDocumentSheet.title(kind), systemImage: "plus")
+                        }
+                        .disabled(harness.index(for: org, setup) == nil)
+                        .help("Write a new \(kind.singular) and commit it to \(setup.repo)")
+                    }
+                }
+            }
+        }
+        .sheet(item: $creatingIn) { choice in
+            HarnessNewDocumentSheet(kind: kind, org: org, setup: choice.setup)
+        }
+        .sheet(item: $editingSkill) { edit in
+            HarnessSkillEditor(org: org, setup: edit.setup, document: edit.item)
+        }
+        .sheet(item: $editingPrompt) { edit in
+            HarnessPromptEditor(org: org, setup: edit.setup, library: HarnessPromptLibrary(index: harness.index(for: org, edit.setup)), prompt: edit.item)
+        }
+    }
+
+    /// The harness a document in the combined index is in, and the
+    /// document as that harness has it.
+    private func source(of document: HarnessDocument) -> (HarnessConfig, HarnessDocument)? {
+        let config = configs.config(for: org)
+        let (repo, path) = HarnessIndex.split(document.path)
+        guard let setup = repo.flatMap(config.harness(repo:)) ?? config.harnesses.first,
+              let own = harness.index(for: org, setup)?.document(at: path) else { return nil }
+        return (setup, own)
     }
 
     @ViewBuilder
-    private func content(_ setup: HarnessConfig) -> some View {
+    private func content(_ setup: HarnessConfig, harnesses: [HarnessConfig]) -> some View {
         let repo = setup.repo
-        if let index = harness.index(for: org, setup) {
+        if let index = harness.combined(org: org, harnesses) {
             let lookup = IssueLookup(history: issueStore.history(for: org))
             let linkable = kind == .plans || kind == .requirements
             let pool = index.documents(kind).filter(\.followsStandard)
                 .filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
+                .filter { harnessFilter == nil || ($0.harnessRepo ?? setup.repo) == harnessFilter }
                 .filter { matches($0) }
             // Only what follows the standard; older documents aren't listed.
             let documents = pool.filter { $0.followsStandard && matchesPicked($0) }
             VStack(spacing: 0) {
-                bar(linkable: linkable, pool: pool)
+                bar(linkable: linkable, pool: pool, harnesses: harnesses)
                 Divider()
-                list(documents: documents, index: index, lookup: lookup, linkable: linkable, setup: setup)
+                list(documents: documents, index: index, lookup: lookup, linkable: linkable, setup: setup, showsHarness: harnesses.count > 1 && harnessFilter == nil)
             }
-        } else if let error = harness.errors[org] {
+        } else if let error = harness.error(org, setup) {
             ContentUnavailableView {
                 Label("Couldn't read \(repo)", systemImage: "exclamationmark.triangle")
             } description: {
@@ -97,7 +163,7 @@ struct HarnessView: View {
             } actions: {
                 Button("Try Again") { Task { await harness.load(org: org, setup: setup, force: true) } }
             }
-        } else if harness.loading.contains(org) {
+        } else if harness.isLoading(org, setup) {
             ProgressView("Indexing \(repo)")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
@@ -111,9 +177,18 @@ struct HarnessView: View {
 
     /// Search, a menu for each front matter field the documents share
     /// values in, and Not Linked for plans and requirements.
-    private func bar(linkable: Bool, pool: [HarnessDocument]) -> some View {
+    private func bar(linkable: Bool, pool: [HarnessDocument], harnesses: [HarnessConfig]) -> some View {
         HStack(spacing: 8) {
             FilterSearchField(text: $search, prompt: "Title, summary, path or issue")
+            if harnesses.count > 1 {
+                Picker("Harness", selection: $harnessFilter) {
+                    Text("Every harness").tag(String?.none)
+                    Divider()
+                    ForEach(harnesses, id: \.repo) { Text($0.name).tag(Optional($0.repo)) }
+                }
+                .fixedSize()
+                .help("Only one harness's \(kind.rawValue.lowercased())")
+            }
             ForEach(Self.filterFields(pool), id: \.self) { field in
                 fieldMenu(field, pool: pool)
             }
@@ -123,11 +198,12 @@ struct HarnessView: View {
                     .help("Only the \(kind.rawValue.lowercased()) that name no issue")
             }
             Spacer(minLength: 0)
-            if !search.isEmpty || picked.values.contains(where: { !$0.isEmpty }) || unlinkedOnly {
+            if !search.isEmpty || picked.values.contains(where: { !$0.isEmpty }) || unlinkedOnly || harnessFilter != nil {
                 Button("Clear All") {
                     search = ""
                     picked = [:]
                     unlinkedOnly = false
+                    harnessFilter = nil
                 }
                 .linkButton()
             }
@@ -221,7 +297,7 @@ struct HarnessView: View {
         return words.allSatisfy { word in fields.contains { $0.localizedCaseInsensitiveContains(word) } }
     }
 
-    private func list(documents: [HarnessDocument], index: HarnessIndex, lookup: IssueLookup, linkable: Bool, setup: HarnessConfig) -> some View {
+    private func list(documents: [HarnessDocument], index: HarnessIndex, lookup: IssueLookup, linkable: Bool, setup: HarnessConfig, showsHarness: Bool) -> some View {
         let repo = setup.repo
         let newestFirst = documents.sorted { a, b in
             if a.date != b.date { return (a.date ?? .distantPast) > (b.date ?? .distantPast) }
@@ -229,7 +305,7 @@ struct HarnessView: View {
         }
         return ScrollView {
             VStack(alignment: .leading, spacing: 12) {
-                if let error = harness.errors[org] {
+                if let error = harness.error(org, setup) {
                     Banner(message: "Refresh failed: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
                         Task { await harness.load(org: org, setup: setup, force: true) }
                     }
@@ -242,12 +318,18 @@ struct HarnessView: View {
                 } else {
                     StatsTable(
                         rows: newestFirst,
-                        columns: columns(index: index, lookup: lookup, linkable: linkable),
+                        columns: columns(index: index, lookup: lookup, linkable: linkable, showsHarness: showsHarness, primary: setup.repo),
                         sort: $sort,
                         selectedID: nil,
                         onSelect: { selection = .harnessDocument($0.path) },
                         contextMenu: { document in
                             AnyView(Group {
+                                if document.kind == .skills, let (setup, own) = source(of: document) {
+                                    Button("Edit Skill") { editingSkill = HarnessEdit(setup: setup, item: own, id: document.path) }
+                                }
+                                if document.kind == .prompts, let (setup, own) = source(of: document), let prompt = HarnessPrompt(document: own) {
+                                    Button("Edit Prompt") { editingPrompt = HarnessEdit(setup: setup, item: prompt, id: document.path) }
+                                }
                                 if let url = index.url(for: document) {
                                     Button("Open on GitHub") { openURL(url) }
                                 }
@@ -262,7 +344,7 @@ struct HarnessView: View {
     }
 
     /// Title with its summary, status, domain, issues, tasks, owner and date.
-    private func columns(index: HarnessIndex, lookup: IssueLookup, linkable: Bool) -> [StatsColumn<HarnessDocument>] {
+    private func columns(index: HarnessIndex, lookup: IssueLookup, linkable: Bool, showsHarness: Bool, primary: String) -> [StatsColumn<HarnessDocument>] {
         var columns: [StatsColumn<HarnessDocument>] = [
             StatsColumn(id: "title", title: kind.singular.capitalized, help: "Its title, with its summary", width: nil, minWidth: 320,
                         sortKey: { .text($0.title.lowercased()) },
@@ -311,6 +393,15 @@ struct HarnessView: View {
                                            AnyView(Group {
                                                if document.tasks > 0 { TaskCount(done: document.tasksDone, total: document.tasks) }
                                            })
+                                       }))
+        }
+        if showsHarness {
+            columns.append(StatsColumn(id: "harness", title: "Harness", help: "The harness it's in", width: 120,
+                                       sortKey: { .text(($0.harnessRepo ?? primary).lowercased()) },
+                                       cell: { document in
+                                           AnyView(Text((document.harnessRepo ?? primary).split(separator: "/").last.map(String.init) ?? "")
+                                               .foregroundStyle(.secondary)
+                                               .lineLimit(1))
                                        }))
         }
         columns.append(StatsColumn(id: "owner", title: "Owner", help: "Who's driving it", width: 130,
@@ -410,22 +501,19 @@ struct HarnessDocumentPage: View {
     private static let sizes: ClosedRange<Double> = 11...20
 
     var body: some View {
-        let setup = configs.config(for: org).harness
         Group {
-            if let setup, let index = harness.index(for: org, setup), let document = index.document(at: path) {
+            if let index = harness.combined(org: org, configs.config(for: org).harnesses), let document = index.document(at: path) {
                 let lookup = IssueLookup(history: issueStore.history(for: org))
                 let sections = HarnessDocumentSection.split(document.linkedBody(issuesRepo: index.issuesRepo))
                 ScrollViewReader { proxy in
                     VStack(spacing: 0) {
                         header(document, index: index, sections: sections, proxy: proxy)
-                            #if os(macOS)
                             .sheet(isPresented: $draftingIssues) {
                                 DraftIssuesSheet(org: org, document: document, index: index)
                             }
                             .sheet(isPresented: $planning) {
                                 NewPlanningSheet(org: org, documentPath: document.path, topic: document.title)
                             }
-                            #endif
                         Divider()
                         if width >= 900 {
                             HStack(spacing: 0) {
@@ -471,14 +559,12 @@ struct HarnessDocumentPage: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
-            #if os(macOS)
             if document.kind == .plans || document.kind == .requirements {
                 Button("Draft Issues") { draftingIssues = true }
                     .help("Claude breaks it into issues for you to edit, then makes them on GitHub")
             }
             Button("Plan with Claude") { planning = true }
                 .help("Start a planning session in the harness from this document")
-            #endif
             if onClose != nil, let openAsPage {
                 Button("Open as Page") {
                     onClose?()
@@ -734,10 +820,14 @@ struct HarnessDocumentPage: View {
             return .handled
         }
         if url.scheme == nil, url.path().hasSuffix(".md"), let navigate {
-            let base = URL(filePath: "/" + document.path).deletingLastPathComponent()
-            let resolved = URL(filePath: url.path(), relativeTo: base).standardizedFileURL.path().dropFirst()
-            if index.document(at: String(resolved)) != nil {
-                navigate(.harnessDocument(String(resolved)))
+            // Within the document's own harness, which another's in a
+            // combined index names before its path.
+            let (harnessRepo, own) = HarnessIndex.split(document.path)
+            let base = URL(filePath: "/" + own).deletingLastPathComponent()
+            let resolved = String(URL(filePath: url.path(), relativeTo: base).standardizedFileURL.path().dropFirst())
+            let path = harnessRepo.map { "\($0):\(resolved)" } ?? resolved
+            if index.document(at: path) != nil {
+                navigate(.harnessDocument(path))
                 return .handled
             }
         }
@@ -992,8 +1082,7 @@ struct HarnessIssueSection: View {
     var showsEmpty = false
 
     var body: some View {
-        if let setup = configs.config(for: reference.org).harness,
-           let index = harness.index(for: reference.org, setup) {
+        if let index = harness.combined(org: reference.org, configs.config(for: reference.org).harnesses) {
             // As the Harness page lists them: only those that follow the standard.
             let matches = index.matches(repo: reference.repo, number: reference.number).filter(\.document.followsStandard)
             if !matches.isEmpty || showsEmpty {
@@ -1051,74 +1140,222 @@ struct HarnessIssueSection: View {
 
 // MARK: - Settings
 
-/// Settings: the org's harness repo and branch, picked from GitHub's.
+/// Settings › Harness: the org's harnesses, as equals, each with its
+/// branch and the repos it's for; which one keeps the team's data; then
+/// the team data, each harness's prompts, drafting and checkouts.
 struct HarnessSettingsSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     let org: String
-    @State private var isCreating = false
 
     var body: some View {
-        let saved = configs.config(for: org).harness
+        let harnesses = configs.config(for: org).harnesses
         // What's saved stays listed even before GitHub's lists load.
-        let repos = Set(harness.repositories[org] ?? []).union(saved.map { [$0.repo] } ?? [])
+        let repos = Set(harness.repositories[org] ?? []).union(harnesses.map(\.repo))
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        Section {
-            LabeledContent("Repository") {
-                SearchablePicker(
-                    choices: [SearchableChoice(value: nil, title: "None")] + repos.map { SearchableChoice(value: $0, title: $0) },
-                    selection: saved?.repo,
-                    prompt: "Search repositories",
-                    isLoading: harness.repositories[org] == nil
-                ) { repo in
-                    // Another repo starts on its default branch.
-                    guard repo != saved?.repo else { return }
-                    configs.update(org) { $0.harness = repo.map { HarnessConfig(repo: $0) } }
-                }
+        HarnessesSection(org: org, harnesses: harnesses, repos: repos)
+            .task { await harness.loadRepositories(org: org) }
+            .loadsHarness(org: org)
+        if let teamHarness = harnesses.first {
+            TeamDataSection(org: org, setup: teamHarness)
+            ForEach(harnesses, id: \.repo) { setup in
+                HarnessPromptsSection(org: org, setup: setup, showsName: harnesses.count > 1)
             }
-            if let saved {
-                let branches = harness.branches[saved.repo]
-                // The default is Default's, so it isn't listed again.
-                let listed = Set(branches?.all ?? []).union(saved.branch.map { [$0] } ?? [])
-                    .subtracting(branches?.defaultBranch.map { [$0] } ?? [])
-                    .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-                LabeledContent("Branch") {
-                    SearchablePicker(
-                        choices: [SearchableChoice(value: nil, title: branches?.defaultBranch.map { "Default (\($0))" } ?? "Default")]
-                            + listed.map { SearchableChoice(value: $0, title: $0) },
-                        selection: saved.branch,
-                        prompt: "Search branches",
-                        isLoading: branches == nil
-                    ) { branch in
-                        configs.update(org) { $0.harness?.branch = branch }
+            HarnessAuthoringSection(org: org)
+        }
+        ForEach(harnesses, id: \.repo) { setup in
+            HarnessCheckoutSection(org: org, repo: setup.repo, showsName: harnesses.count > 1, showsRecording: setup.repo == harnesses.first?.repo)
+        }
+    }
+}
+
+/// Every harness the org has, alike: its branch, the repos it's for (none
+/// for any repo the others don't name), whether it keeps the team's data,
+/// and Add or Create for another.
+struct HarnessesSection: View {
+    @Environment(HarnessStore.self) private var harness
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(HarnessTeamStore.self) private var team
+    let org: String
+    let harnesses: [HarnessConfig]
+    /// Every repo in the org, for picking from.
+    let repos: [String]
+    @State private var isCreating = false
+    @State private var moving: HarnessConfig?
+    @State private var isMoving = false
+    @State private var moveError: String?
+
+    var body: some View {
+        Section {
+            if harnesses.isEmpty {
+                Text("A harness is a repo of plans, requirements, findings, skills and prompts beside the code, where Claude Code sessions run. Add one \(org) has, or create one.")
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(harnesses, id: \.repo) { setup in
+                row(setup, keepsTeamData: setup.repo == harnesses.first?.repo)
+            }
+            HStack {
+                Menu("Add Harness") {
+                    ForEach(repos.filter { repo in !harnesses.contains { $0.repo == repo } }, id: \.self) { repo in
+                        Button(repo) {
+                            configs.update(org) { config in
+                                if config.harness == nil { config.harness = HarnessConfig(repo: repo) } else { config.otherHarnesses.append(HarnessConfig(repo: repo, repos: [])) }
+                            }
+                        }
                     }
                 }
-                .task(id: saved.repo) { await harness.loadBranches(repo: saved.repo) }
-                // Only a failure to read it; what's found is on the Harness page.
-                if let error = harness.errors[org] {
-                    Text(error).font(.caption).foregroundStyle(.red)
-                }
-            } else {
-                LabeledContent {
-                    Button("Create Harness") { isCreating = true }
-                } label: {
-                    Text("No harness yet?")
-                    Text("Make a private repo in \(org) with the layout Gannin and Claude Code sessions use.")
-                }
+                .fixedSize()
+                Button("Create Harness") { isCreating = true }
+            }
+            if let moveError {
+                Text(moveError).font(.caption).foregroundStyle(.red)
             }
         } header: {
-            Text("Harness")
+            Text(harnesses.count > 1 ? "Harnesses" : "Harness")
+        } footer: {
+            Text(harnesses.count > 1
+                 ? "Work on an issue or PR runs in the harness that names its repo (or a linked PR's), with that harness's prompts and skills. One that names no repos takes any repo the others don't. The Harness pages show every harness's documents."
+                 : "Name repos to keep this harness for just those, once there's another for the rest.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .task { await harness.loadRepositories(org: org) }
-        .loadsHarness(org: org)
-        .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org) }
-        if let saved {
-            TeamDataSection(org: org, setup: saved)
+        .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org, otherFor: harnesses.isEmpty ? nil : []) }
+        .confirmationDialog("Keep the team's data in \(moving?.repo ?? "")?", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } })) {
+            if let target = moving {
+                if team.keepsData(org) {
+                    Button("Copy and Keep It There") { move(to: target) }
+                } else {
+                    Button("Keep It There") { configs.update(org) { $0.keepTeamData(in: target.repo) } }
+                }
+            }
+        } message: {
+            Text(team.keepsData(org)
+                 ? "Gannin commits a copy of .gannin/ from \(harnesses.first?.repo ?? "") to \(moving?.repo ?? "") and reads it from there. The old copy stays where it is until you remove it."
+                 : "Moving the team's settings into a harness (below) puts them there from then on.")
         }
-        #if os(macOS)
-        if let saved {
-            HarnessCheckoutSection(org: org, repo: saved.repo)
+    }
+
+    private func row(_ setup: HarnessConfig, keepsTeamData: Bool) -> some View {
+        let covered = setup.repos ?? []
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(setup.repo, systemImage: "text.book.closed").fontWeight(.medium)
+                if keepsTeamData && harnesses.count > 1 {
+                    Text("Team data")
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                        .foregroundStyle(Color.accentColor)
+                        .help("The team's settings and people's dates are read from and committed to this harness")
+                }
+                Spacer()
+                if harness.isLoading(org, setup) { ProgressView().controlSize(.small) }
+                Menu {
+                    if !keepsTeamData {
+                        Button("Keep Team Data Here") { moving = setup }
+                    }
+                    Button("Remove Harness", role: .destructive) {
+                        configs.update(org) { $0.removeHarness(setup.repo) }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .disabled(isMoving)
+                .help("Remove it (nothing in it changes), or keep the team's data in it")
+            }
+            if let error = harness.error(org, setup) {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            branchPicker(setup)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("For").foregroundStyle(.secondary)
+                if covered.isEmpty {
+                    Text(harnesses.count > 1 ? "any repo the others don't name" : "every repo").foregroundStyle(.secondary)
+                }
+                ForEach(covered, id: \.self) { repo in
+                    HStack(spacing: 2) {
+                        Text(repo.split(separator: "/").last.map(String.init) ?? repo)
+                        Button {
+                            update(setup.repo) { $0.repos = covered.filter { $0 != repo } }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                        }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.tertiary)
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                    .help(repo)
+                }
+                Menu {
+                    let projects = configs.baseConfig(for: org).repoProjects
+                    if !projects.isEmpty {
+                        Section("Projects") {
+                            ForEach(projects) { project in
+                                Button(project.name) { update(setup.repo) { $0.repos = Array(Set(covered + project.repos)).sorted() } }
+                            }
+                        }
+                    }
+                    Section("Repositories") {
+                        ForEach(repos.filter { !covered.contains($0) && !harnesses.map(\.repo).contains($0) }, id: \.self) { repo in
+                            Button(repo) { update(setup.repo) { $0.repos = covered + [repo] } }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "plus.circle")
+                }
+                .menuStyle(.button)
+                .buttonStyle(.borderless)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("Keep this harness for a repo")
+            }
+            .font(.callout)
         }
-        #endif
+        .padding(.vertical, 2)
+    }
+
+    private func branchPicker(_ setup: HarnessConfig) -> some View {
+        let branches = harness.branches[setup.repo]
+        // The default is Default's, so it isn't listed again.
+        let listed = Set(branches?.all ?? []).union(setup.branch.map { [$0] } ?? [])
+            .subtracting(branches?.defaultBranch.map { [$0] } ?? [])
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return LabeledContent("Branch") {
+            SearchablePicker(
+                choices: [SearchableChoice(value: nil, title: branches?.defaultBranch.map { "Default (\($0))" } ?? "Default")]
+                    + listed.map { SearchableChoice(value: $0, title: $0) },
+                selection: setup.branch,
+                prompt: "Search branches",
+                isLoading: branches == nil
+            ) { branch in
+                update(setup.repo) { $0.branch = branch }
+            }
+        }
+        .task(id: setup.repo) { await harness.loadBranches(repo: setup.repo) }
+    }
+
+    private func update(_ repo: String, _ change: (inout HarnessConfig) -> Void) {
+        configs.update(org) { $0.updateHarness(repo, change) }
+    }
+
+    private func move(to target: HarnessConfig) {
+        isMoving = true
+        moveError = nil
+        Task {
+            do {
+                try await team.moveData(org: org, to: target)
+                configs.update(org) { $0.keepTeamData(in: target.repo) }
+            } catch {
+                moveError = "Couldn't copy the team's data: \(error.localizedDescription)"
+            }
+            isMoving = false
+        }
     }
 }

@@ -38,17 +38,17 @@ struct OrgWorkloadView: View {
             } else if tab == .harness {
                 HarnessView(org: org, selection: $selection)
             } else if tab == .agents {
-                #if os(macOS)
                 AgentsPage(org: org)
-                #endif
             } else if tab == .ask {
-                #if os(macOS)
                 AskOrgPage(org: org, workload: workload)
-                #endif
             } else if tab == .epics {
                 EpicsView(org: org)
             } else if tab == .hygiene {
                 BoardHygieneView(org: org)
+            } else if tab == .recap {
+                RecapView(org: org)
+            } else if tab == .scorecard {
+                ScorecardView(org: org)
             } else if tab == .prioritisation, let workload {
                 PrioritisationView(org: org, workload: workload, selection: $selection)
             } else if tab == .views {
@@ -196,7 +196,7 @@ struct OrgWorkloadView: View {
         case .repositories: repositoryView(workload)
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
-        case .projects, .actions, .harness, .views, .prioritisation, .agents, .ask, .epics, .hygiene, .settings: EmptyView()
+        case .projects, .actions, .harness, .views, .prioritisation, .recap, .scorecard, .agents, .ask, .epics, .hygiene, .settings: EmptyView()
         }
     }
 

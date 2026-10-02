@@ -1,0 +1,56 @@
+name: Publish site
+
+# This repo is private, so gannin.ai is served from a separate public repo,
+# andrew-waters/gannin-site, which holds nothing but the published files.
+# This job mirrors site/ into its main branch over a deploy key; its own
+# Pages workflow then deploys it. appcast.xml there is written by
+# release.yml, and the DMGs live on its downloads branch, so both are left
+# alone here.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "site/**"
+      - ".github/workflows/publish-site.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-site
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - name: Check out the public site repo
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          repository: andrew-waters/gannin-site
+          ssh-key: ${{ secrets.SITE_DEPLOY_KEY }}
+          path: _public
+
+      - name: Mirror site/ into it
+        run: |
+          rsync -a --delete \
+            --exclude '.git' --exclude '.github' --exclude 'README.md' --exclude 'appcast.xml' \
+            site/ _public/
+
+      - name: Commit and push
+        working-directory: _public
+        run: |
+          git config user.name "Andrew Waters"
+          git config user.email "501976+andrew-waters@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Site unchanged, nothing to publish"
+            exit 0
+          fi
+          git commit -m "Publish site (${GITHUB_SHA::7})"
+          git push origin HEAD:main

@@ -106,7 +106,7 @@ extension GitHubAPI {
         }
         let response: Response = try await query("""
             query($login: String!) {
-              organization(login: $login) {
+              \(GitHubAccounts.ownerField(org)) {
                 projectsV2(first: 50, orderBy: { field: TITLE, direction: ASC }) { nodes { id number title closed } }
               }
             }

@@ -1,77 +1,45 @@
 import SwiftUI
 
-// The few Mac-only SwiftUI styles and modifiers the app uses, with their
-// nearest iPad equivalent, so views read the same on both.
+// Names for the few SwiftUI styles and modifiers the app uses throughout.
 
 extension View {
-    /// A checkbox on the Mac; a toggle button on iPad.
+    /// A checkbox.
     func checkboxToggle() -> some View {
-        #if os(macOS)
         toggleStyle(.checkbox)
-        #else
-        toggleStyle(.button)
-        #endif
     }
 
-    /// A text link on the Mac; a borderless button on iPad.
+    /// A text link.
     func linkButton() -> some View {
-        #if os(macOS)
         buttonStyle(.link)
-        #else
-        buttonStyle(.borderless)
-        #endif
     }
 
-    /// Esc: the exit command on the Mac, the key on an iPad keyboard.
+    /// Esc, the exit command.
     func onEscape(_ action: @escaping () -> Void) -> some View {
-        #if os(macOS)
         onExitCommand(perform: action)
-        #else
-        onKeyPress(.escape) {
-            action()
-            return .handled
-        }
-        #endif
     }
 
-    /// The window's subtitle, which only the Mac has.
+    /// The window's subtitle.
     func windowSubtitle(_ subtitle: String) -> some View {
-        #if os(macOS)
         navigationSubtitle(subtitle)
-        #else
-        self
-        #endif
     }
 }
 
 extension Color {
     /// The system separator line colour.
     static var separatorLine: Color {
-        #if os(macOS)
         Color(nsColor: .separatorColor)
-        #else
-        Color(uiColor: .separator)
-        #endif
     }
 
     /// The window's background.
     static var windowBackground: Color {
-        #if os(macOS)
         Color(nsColor: .windowBackgroundColor)
-        #else
-        Color(uiColor: .systemBackground)
-        #endif
     }
 }
 
 extension View {
     /// Text alone in a toolbar item: the Mac gives it a capsule of its own
-    /// with no inset, so it needs room; iPad groups it with its neighbours.
+    /// with no inset, so it needs room.
     func toolbarTextPadding() -> some View {
-        #if os(macOS)
         padding(.horizontal, 10)
-        #else
-        self
-        #endif
     }
 }

@@ -3,53 +3,46 @@ options:
   bundleIdPrefix: dev.andon
   deploymentTarget:
     macOS: "26.0"
-    iOS: "26.0"
   createIntermediateGroups: true
 packages:
-  # The terminal Claude Code sessions run in (the Mac's).
+  # The terminal Claude Code sessions run in.
   SwiftTerm:
     url: https://github.com/migueldeicaza/SwiftTerm
     from: 1.20.0
+  # Updates for the Mac app outside the App Store, from gannin.ai's appcast.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.9.4
 settings:
   base:
     SWIFT_VERSION: "6.0"
     SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
     DEVELOPMENT_TEAM: AKC33ZRNL9
     CODE_SIGN_STYLE: Automatic
-    MARKETING_VERSION: "0.1.0"
+    # Placeholders: a release takes its version from the tag and its build
+    # number from the run (.github/workflows/release.yml).
+    MARKETING_VERSION: "0.0.0"
     CURRENT_PROJECT_VERSION: "1"
 targets:
   Gannin:
     type: application
-    platform: auto
-    # The Mac app, and the same sources on iPad.
-    supportedDestinations: [macOS, iOS]
+    platform: macOS
     sources:
       - Gannin
     dependencies:
       - package: SwiftTerm
-        destinationFilters: [macOS]
+      - package: Sparkle
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: dev.andon.getgannin
+        PRODUCT_BUNDLE_IDENTIFIER: dev.andon.gannin
         PRODUCT_NAME: Gannin
         INFOPLIST_KEY_CFBundleDisplayName: Gannin
         INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
         GENERATE_INFOPLIST_FILE: YES
-        # iPhone and iPad.
-        TARGETED_DEVICE_FAMILY: "1,2"
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
-        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        # The sandbox and hardened runtime are the Mac's.
-        "ENABLE_APP_SANDBOX[sdk=macosx*]": NO
-        "ENABLE_HARDENED_RUNTIME[sdk=macosx*]": YES
-        "ENABLE_OUTGOING_NETWORK_CONNECTIONS[sdk=macosx*]": YES
-        "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": Gannin/Gannin.entitlements
-        # iCloud (CloudKit) for syncing what's entered in Gannin.
-        "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": Gannin/Gannin-iOS.entitlements
-        # Lets CloudKit's pushes wake the app to fetch other devices' changes.
-        INFOPLIST_KEY_UIBackgroundModes: remote-notification
+        # Not sandboxed: Claude Code sessions run git, gh and claude as you.
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        # Sparkle's feed and key, merged into the generated Info.plist.
+        INFOPLIST_FILE: Gannin/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

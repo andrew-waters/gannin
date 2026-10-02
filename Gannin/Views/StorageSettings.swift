@@ -123,18 +123,12 @@ struct StorageSettings: View {
                 LabeledContent("Stored") {
                     Text(Self.size(database.storedBytes)).monospacedDigit().foregroundStyle(.secondary)
                 }
-                LabeledContent("Sync") {
-                    Label(database.isSyncing ? "iCloud" : "This device only", systemImage: database.isSyncing ? "icloud" : "icloud.slash")
-                        .foregroundStyle(.secondary)
-                }
                 Button("Delete Your Data", role: .destructive) { confirming = .yourData }
                     .disabled(!hasYourData)
             } header: {
                 Text("Entered in Gannin")
             } footer: {
-                Text(database.isSyncing
-                     ? "Synced through your private iCloud, so your other devices signed into the same Apple Account share it. Nothing is sent anywhere else. Deleting it removes it from every device and can't be undone."
-                     : "Stored only on this device (iCloud isn't available to this build) and never sent anywhere. Deleting it can't be undone.")
+                Text("Stored only on this device and never sent anywhere. What the team shares belongs in the org's harness (Settings › Harness), where everyone reads the same copy. Deleting it can't be undone.")
                     .foregroundStyle(.secondary)
             }
 

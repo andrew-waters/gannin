@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 
 /// What a session's terminal runs, and the hooks claude reports through.
@@ -30,6 +29,12 @@ enum SessionScript {
         return options
     }
 
+    /// Claude's first prompt: the helper's or the issue's, then what was
+    /// picked from the team's prompts and skills.
+    private static func firstPrompt(_ session: CodeSession, otherwise issuePrompt: String) -> String {
+        [session.prompt ?? issuePrompt, session.instructions].compactMap { $0 }.joined(separator: "\n\n")
+    }
+
     /// The bash script a session runs: claude starts, or resumes once it has
     /// had a prompt, with a shell left open after it exits (or if a step
     /// fails). `root` is the harness checkout, or for older sessions the
@@ -47,12 +52,12 @@ enum SessionScript {
     private static func harnessStart(_ session: CodeSession, harness: String, directory: String) -> String {
         let issue = session.issue
         let folder = ".worktrees/\(session.branch)"
-        let prompt = session.prompt ?? """
+        let prompt = firstPrompt(session, otherwise: """
             You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
             it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos under projects/ \
             it touches and look through their code, then propose a plan before changing anything. Make the changes in a worktree \
             per repo under \(folder)/, as the brief says, never in projects/.
-            """
+            """)
         // A server session's brief comes from the harness once it's there.
         let briefSource = session.harnessFolder.map { recorded in
             #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(recorded) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Restart."\#n"#
@@ -116,11 +121,11 @@ enum SessionScript {
     /// (excluded from git), and run claude there.
     private static func repoStart(_ session: CodeSession, root: String, directory: String) -> String {
         let issue = session.issue
-        let prompt = session.prompt ?? """
+        let prompt = firstPrompt(session, otherwise: """
             You're picking up \(issue.reference), "\(issue.title)", in \(session.repo). Read .gannin/brief.md first: it has the \
             issue, its discussion, where it sits on the board and any plans for it. Then look through the code and propose a plan \
             before changing anything.
-            """
+            """)
         return """
             # Written by Gannin for \(issue.reference). Run in the session's terminal.
             session=\(directory)
@@ -348,7 +353,7 @@ enum SessionBrief {
             .filter { seen.insert($0).inserted }
             working += [
                 "- You're in the team's harness, \(harnessRepo), checked out at `\(harnessPath)`. Its CLAUDE.md lists the projects and how work goes here.",
-                "- The code repos are shared clones under `projects/<name>` (some a folder further down, as `projects/v2/<name>`), kept on their default branch. Don't work in them. This issue's folder is `\(folder)/`: give each repo it touches a worktree there, on the branch `\(session.branch)`, from the harness root:",
+                "- The code repos are shared clones under `projects/<name>` (some a folder further down, as `projects/<group>/<name>`), kept on their default branch. Don't work in them. This issue's folder is `\(folder)/`: give each repo it touches a worktree there, on the branch `\(session.branch)`, from the harness root:",
                 "",
                 "  ```bash",
                 "  git -C projects/<name> fetch origin",
@@ -387,4 +392,3 @@ enum SessionBrief {
         return lines.joined(separator: "\n")
     }
 }
-#endif

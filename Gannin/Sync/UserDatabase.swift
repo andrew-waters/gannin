@@ -3,15 +3,16 @@ import Foundation
 import Observation
 import SwiftData
 
-// What you enter in Gannin, kept in SwiftData and synced through your
-// private CloudKit database, so the Mac and iPad share it. GitHub caches
-// are not here; they stay on each device.
+// What you enter in Gannin, kept in SwiftData on this device. What the team
+// shares (settings, people's dates) belongs in the org's harness, where
+// everyone reads the same copy; what's here is your own, or the team's for
+// an org that hasn't moved it there. GitHub caches are not here either.
 //
-// CloudKit allows no unique constraints and needs every property optional or
-// defaulted, so records are keyed by plain fields (org, login, a UUID) with
-// an `updatedAt`, and two devices creating the same record are merged when
-// the data is next loaded: newest wins, time off merges by its ID. The same
-// keys and dates are what a server of our own would sync by later.
+// The store once synced through CloudKit, which allows no unique
+// constraints and needs every property optional or defaulted, so records
+// are keyed by plain fields (org, login, a UUID) with an `updatedAt`, and
+// duplicates are merged when the data is loaded: newest wins, time off
+// merges by its ID.
 
 @Model
 final class PersonRecord {
@@ -104,15 +105,11 @@ final class StarRecord {
 
 /// The SwiftData store behind the people, org config, hidden and star
 /// stores. They keep their data in memory as before and write through here;
-/// when another device's changes arrive, `onRemoteChange` tells them to load
-/// again.
+/// when the store changes underneath them, or the app comes to the front,
+/// `onRemoteChange` tells them to load again.
 @Observable
 final class UserDatabase {
-    static let containerIdentifier = "iCloud.dev.andon.getgannin"
-
     let container: ModelContainer
-    /// Whether it syncs through CloudKit, or fell back to this device only.
-    let isSyncing: Bool
     private var context: ModelContext { container.mainContext }
     @ObservationIgnored private var listeners: [() -> Void] = []
     @ObservationIgnored private var observers: [NSObjectProtocol] = []
@@ -122,20 +119,14 @@ final class UserDatabase {
         let schema = Schema([PersonRecord.self, AbsenceRecord.self, OrgConfigRecord.self, HiddenRecord.self, StarRecord.self])
         let url = Self.storeURL
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if let synced = try? ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .private(Self.containerIdentifier))) {
-            container = synced
-            isSyncing = true
-        } else {
-            // No iCloud entitlement or container (an unsigned build, say):
-            // the same store, on this device only.
-            container = (try? ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)))
-                ?? (try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)))
-            isSyncing = false
-        }
+        container = (try? ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)))
+            ?? (try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)))
         migrateFromUserDefaults()
         observeRemoteChanges()
     }
 
+    /// The same file it was while it synced through CloudKit, so nothing
+    /// moves.
     static var storeURL: URL {
         URL.applicationSupportDirectory.appending(path: "UserData", directoryHint: .isDirectory).appending(path: "Gannin.store")
     }
@@ -160,11 +151,7 @@ final class UserDatabase {
         observers.append(center.addObserver(forName: .NSPersistentStoreRemoteChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleReload() }
         })
-        #if os(macOS)
         let active = NSNotification.Name("NSApplicationDidBecomeActiveNotification")
-        #else
-        let active = NSNotification.Name("UIApplicationDidBecomeActiveNotification")
-        #endif
         observers.append(center.addObserver(forName: active, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.scheduleReload() }
         })

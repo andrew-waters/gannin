@@ -9,7 +9,8 @@ extension GitHubAPI {
         return response.viewer
     }
 
-    /// Orgs the signed-in user is a member of.
+    /// Orgs the signed-in user is a member of; their own account is added
+    /// by `OrgStore`.
     func organisations() async throws -> [Organisation] {
         struct Response: Decodable {
             struct ViewerOrgs: Decodable { let organizations: PagedConnection<Organisation> }
@@ -56,7 +57,7 @@ extension GitHubAPI {
         let mergedSince = Calendar.current.startOfDay(
             for: Calendar.current.date(byAdding: .day, value: -lookbackDays, to: startedAt) ?? startedAt
         )
-        let scope = "org:\(org) archived:false"
+        let scope = "\(GitHubAccounts.scope(org)) archived:false"
         let fetchPeople = plan.people || previous == nil
         let changesSince = previous == nil ? nil : plan.changesSince
 
@@ -191,6 +192,13 @@ extension GitHubAPI {
     }
 
     private func members(org: String, onPage: (Int, Int?) -> Void) async throws -> [Person] {
+        // A personal account's only member is its owner.
+        if GitHubAccounts.isUser(org) {
+            struct Response: Decodable { let user: Person? }
+            let response: Response = try await query("query($login: String!) { user(login: $login) { login name avatarUrl } }", variables: ["login": org])
+            onPage(1, 1)
+            return response.user.map { [$0] } ?? []
+        }
         struct Response: Decodable {
             struct Org: Decodable { let membersWithRole: PagedConnection<Person> }
             let organization: Org?
@@ -214,6 +222,7 @@ extension GitHubAPI {
     }
 
     private func teams(org: String, onPage: (Int, Int?) -> Void) async throws -> [Team] {
+        guard !GitHubAccounts.isUser(org) else { return [] }
         struct RawTeam: Decodable {
             struct Member: Decodable { let login: String }
             let id: String
@@ -276,7 +285,7 @@ extension GitHubAPI {
             definitions.append("$q\(index): String!")
             fields.append("s\(index): search(query: $q\(index), type: ISSUE, first: 1) { issueCount }")
         }
-        if let org {
+        if let org, !GitHubAccounts.isUser(org) {
             variables["login"] = org
             definitions.append("$login: String!")
             fields.append("org: organization(login: $login) { membersWithRole(first: 1) { totalCount } teams(first: 1) { totalCount } }")

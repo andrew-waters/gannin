@@ -102,7 +102,7 @@ struct Standup {
             for (login, item) in reviews { entries[login]?.reviews.append(item) }
         }
 
-        for record in issues where !config.excludedRepos.contains(record.repo) {
+        for record in issues where !config.repoExclusion.contains(record.repo) {
             let opened = day.contains(record.createdAt)
             let closed = record.closedAt.map(day.contains) ?? false
             let moves = record.statusChanges.filter { day.contains($0.at) }.sorted { $0.at < $1.at }
@@ -349,7 +349,18 @@ struct StandupPage: View {
         if layout == .changelog {
             // Only the issue history; the work log needn't be in.
             if let history = issueStore.history(for: org) {
-                StandupChangelog(org: org, day: day, history: history, config: configs.config(for: org), members: people)
+                VStack(alignment: .leading, spacing: 22) {
+                    let closed = ClosedIssuesList.closed(in: day, history: history, config: configs.config(for: org))
+                    let completed = closed.filter(\.isCompleted).count
+                    HStack(spacing: 6) {
+                        Text(completed == 1 ? "1 issue completed" : "\(completed) issues completed").fontWeight(.medium)
+                        if closed.count > completed {
+                            Text("· \(closed.count - completed) closed as not planned").foregroundStyle(.secondary)
+                        }
+                    }
+                    .font(.callout)
+                    ClosedIssuesList(org: org, range: day, history: history, config: configs.config(for: org), members: people)
+                }
             } else if let error = issueStore.errors[org] {
                 Banner(message: "Couldn't load issues: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red)
             } else {
@@ -711,7 +722,7 @@ struct StandupRow: View {
 
     // MARK: Words, icons and colours
 
-    /// "mono#1050", with the repo's short name and no digit grouping.
+    /// "api#1050", with the repo's short name and no digit grouping.
     static func number(_ repo: String, _ number: Int) -> String {
         "\(repo.split(separator: "/").last.map(String.init) ?? repo)#\(String(number))"
     }
@@ -1129,150 +1140,6 @@ struct LinesText: View {
         }
         .font(.caption.monospacedDigit())
         .fixedSize()
-    }
-}
-
-// MARK: - Changelog
-
-/// The issues closed on the day, as a changelog: completed ones by
-/// investment category (the Investments page's categories and colours),
-/// newest last within each, then those closed as not planned.
-private struct StandupChangelog: View {
-    @Environment(\.navigate) private var navigate
-    @Environment(\.openURL) private var openURL
-    let org: String
-    let day: DateInterval
-    let history: IssueHistory
-    let config: OrgConfig
-    let members: [Person]
-
-    private struct Group: Identifiable {
-        let name: String
-        /// Palette slot; nil for uncategorised.
-        let slot: Int?
-        var issues: [IssueRecord]
-
-        var id: String { name }
-    }
-
-    var body: some View {
-        let closed = history.issues.values
-            .filter { record in record.closedAt.map(day.contains) == true && !config.excludedRepos.contains(record.repo) }
-            .sorted { ($0.closedAt ?? .distantPast) < ($1.closedAt ?? .distantPast) }
-        let completed = closed.filter(\.isCompleted)
-        let notPlanned = closed.filter { !$0.isCompleted }
-        let groups = groups(completed)
-        VStack(alignment: .leading, spacing: 22) {
-            HStack(spacing: 6) {
-                Text(completed.count == 1 ? "1 issue completed" : "\(completed.count) issues completed").fontWeight(.medium)
-                if !notPlanned.isEmpty {
-                    Text("· \(notPlanned.count) closed as not planned").foregroundStyle(.secondary)
-                }
-            }
-            .font(.callout)
-            if closed.isEmpty {
-                Text("No issues closed on this day.").foregroundStyle(.secondary)
-            }
-            ForEach(groups) { group in
-                section(group.name, count: group.issues.count, color: ChartPalette.slot(group.slot)) {
-                    ForEach(group.issues) { row($0) }
-                }
-            }
-            if !notPlanned.isEmpty {
-                section("Closed as not planned", count: notPlanned.count, color: nil) {
-                    ForEach(notPlanned) { row($0) }
-                }
-            }
-        }
-    }
-
-    /// Completed issues by category, in the categories' order, with the
-    /// uncategorised last.
-    private func groups(_ issues: [IssueRecord]) -> [Group] {
-        let investments = config.investmentConfig
-        var byCategory: [UUID: [IssueRecord]] = [:]
-        var uncategorised: [IssueRecord] = []
-        for record in issues {
-            let parent = record.parentID.flatMap { history.issues[$0] }
-            if let (category, _) = investments.categorise(record, parent: parent) {
-                byCategory[category.id, default: []].append(record)
-            } else {
-                uncategorised.append(record)
-            }
-        }
-        var groups = investments.categories.compactMap { category in
-            byCategory[category.id].map { Group(name: category.name, slot: category.slot, issues: $0) }
-        }
-        if !uncategorised.isEmpty { groups.append(Group(name: "Uncategorised", slot: nil, issues: uncategorised)) }
-        return groups
-    }
-
-    private func section<Content: View>(_ title: String, count: Int, color: Color?, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                if let color {
-                    RoundedRectangle(cornerRadius: 3).fill(color).frame(width: 12, height: 12)
-                }
-                Text(title).font(.headline)
-                Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
-            }
-            VStack(alignment: .leading, spacing: 0) {
-                content()
-            }
-        }
-    }
-
-    private func row(_ record: IssueRecord) -> some View {
-        let reference = IssueReference(org: org, record: record)
-        let assignees = record.assignees.map { login in
-            members.first { $0.login == login } ?? Person(login: login, name: nil, avatarUrl: URL(string: "https://github.com/\(login).png?size=64"))
-        }
-        return HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Image(systemName: record.isCompleted ? "checkmark.circle.fill" : "slash.circle")
-                .foregroundStyle(record.isCompleted ? Color.purple : Color.secondary)
-                .frame(width: 18)
-            Text(record.closedAt.map(StandupRow.clock) ?? "")
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 44, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Button {
-                    navigate?(.issueReference(reference))
-                } label: {
-                    Text(verbatim: record.title)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .opensElsewhere(.issueReference(reference))
-                HStack(spacing: 6) {
-                    Text(verbatim: StandupRow.number(record.repo, record.number))
-                    if let type = record.issueType { Text(verbatim: "· \(type)") }
-                    if let author = record.author { Text(verbatim: "· opened by \(author)") }
-                    let merged = record.linkedPullRequests.filter { $0.mergedAt != nil }
-                    if !merged.isEmpty {
-                        Text("· via")
-                        ForEach(merged, id: \.url) { pr in
-                            Button {
-                                openURL(pr.url)
-                            } label: {
-                                Text(verbatim: "#\(String(pr.number))").foregroundStyle(.link)
-                            }
-                            .buttonStyle(.plain)
-                            .help("Open PR #\(String(pr.number)) on GitHub")
-                        }
-                    }
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            }
-            Spacer(minLength: 8)
-            AvatarStack(people: assignees)
-        }
-        .font(.callout)
-        .padding(.vertical, 6)
     }
 }
 

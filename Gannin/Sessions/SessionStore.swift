@@ -1,4 +1,3 @@
-#if os(macOS)
 import AppKit
 import Foundation
 import Observation
@@ -46,6 +45,9 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var role: String? = nil
     /// The helper's first prompt, in place of the issue's.
     var prompt: String? = nil
+    /// What the first prompt adds from the team's prompts and skills in
+    /// the harness, picked when it started.
+    var instructions: String? = nil
     /// A reviewer reads and reports but can't edit files.
     var isReviewer = false
     /// When its claude last did something, for spotting stale sessions.
@@ -100,6 +102,7 @@ extension CodeSession {
         parentID = try container.decodeIfPresent(UUID.self, forKey: .parentID)
         role = try container.decodeIfPresent(String.self, forKey: .role)
         prompt = try container.decodeIfPresent(String.self, forKey: .prompt)
+        instructions = try container.decodeIfPresent(String.self, forKey: .instructions)
         isReviewer = try container.decodeIfPresent(Bool.self, forKey: .isReviewer) ?? false
         lastActiveAt = try container.decodeIfPresent(Date.self, forKey: .lastActiveAt)
         reviewOf = try container.decodeIfPresent(PullRequestReference.self, forKey: .reviewOf)
@@ -200,38 +203,62 @@ final class SessionStore {
         return command.isEmpty ? nil : command
     }
 
-    /// The org's harness checkout on this Mac, as set in its Settings.
-    static func harnessPathKey(_ org: String) -> String { "sessionsHarnessPath.\(org)" }
+    /// A harness's checkout on this Mac, as set in the org's Settings.
+    static func harnessPathKey(_ org: String, repo: String) -> String { "sessionsHarnessPath.\(org).\(repo)" }
     /// And on the server, which has no default: only you know that box.
-    static func remoteHarnessPathKey(_ org: String) -> String { "sessionsRemoteHarnessPath.\(org)" }
+    static func remoteHarnessPathKey(_ org: String, repo: String) -> String { "sessionsRemoteHarnessPath.\(org).\(repo)" }
+
+    /// Checkouts set when an org had one harness become that harness's.
+    static func migrateHarnessPaths(org: String, primary repo: String) {
+        let defaults = UserDefaults.standard
+        for (old, new) in [("sessionsHarnessPath.\(org)", harnessPathKey(org, repo: repo)), ("sessionsRemoteHarnessPath.\(org)", remoteHarnessPathKey(org, repo: repo))] {
+            if let value = defaults.string(forKey: old), !value.isEmpty, (defaults.string(forKey: new) ?? "").isEmpty {
+                defaults.set(value, forKey: new)
+            }
+            defaults.removeObject(forKey: old)
+        }
+    }
 
     /// The harness checkout on this Mac: the one set, else a checkout you
-    /// already have, else `<workspace>/<org>-harness` for Gannin to clone.
+    /// already have, else `<workspace>/<name>` for Gannin to clone
+    /// (`<org>-harness` for one called harness).
     static func localHarnessPath(org: String, repo: String) -> String {
-        let saved = (UserDefaults.standard.string(forKey: harnessPathKey(org)) ?? "").trimmingCharacters(in: .whitespaces)
+        let saved = (UserDefaults.standard.string(forKey: harnessPathKey(org, repo: repo)) ?? "").trimmingCharacters(in: .whitespaces)
         if !saved.isEmpty { return saved }
-        return existingCheckout(of: repo) ?? defaultHarnessPath(org: org)
+        return existingCheckout(of: repo) ?? defaultHarnessPath(org: org, repo: repo)
     }
 
-    static func defaultHarnessPath(org: String) -> String {
+    static func defaultHarnessPath(org: String, repo: String) -> String {
         let workspace = UserDefaults.standard.string(forKey: workspaceKey).flatMap { $0.isEmpty ? nil : $0 } ?? defaultWorkspace
-        return workspace + "/\(org)-harness"
+        let name = repo.split(separator: "/").last.map(String.init) ?? repo
+        return workspace + "/" + (name == "harness" ? "\(org)-harness" : "\(org)-\(name)")
     }
 
-    static func remoteHarnessPath(org: String) -> String? {
-        let path = (UserDefaults.standard.string(forKey: remoteHarnessPathKey(org)) ?? "").trimmingCharacters(in: .whitespaces)
+    static func remoteHarnessPath(org: String, repo: String) -> String? {
+        let path = (UserDefaults.standard.string(forKey: remoteHarnessPathKey(org, repo: repo)) ?? "").trimmingCharacters(in: .whitespaces)
         return path.isEmpty ? nil : path
     }
 
-    /// Where new sessions for the org run their harness: on the server when
-    /// there's a Connect with command, else on this Mac. Nil when that's the
+    /// Where new sessions in a harness run it: on the server when there's
+    /// a Connect with command, else on this Mac. Nil when that's the
     /// server and its checkout hasn't been set.
     static func harnessPath(org: String, repo: String) -> String? {
-        connectCommand == nil ? localHarnessPath(org: org, repo: repo) : remoteHarnessPath(org: org)
+        connectCommand == nil ? localHarnessPath(org: org, repo: repo) : remoteHarnessPath(org: org, repo: repo)
+    }
+
+    /// Why sessions can't start in the harness, if they can't.
+    static func unavailable(org: String, harness: HarnessConfig?, what: String = "Sessions") -> String? {
+        guard let harness else {
+            return "\(what) run in the org's harness. Pick or create it in the org's Settings, under Harness."
+        }
+        if connectCommand != nil, remoteHarnessPath(org: org, repo: harness.repo) == nil {
+            return "Sessions run on your server. Set where \(harness.repo) is checked out there in the org's Settings, under Harness."
+        }
+        return nil
     }
 
     /// A checkout of the repo in one of the usual places, found by its
-    /// origin: `~/Code/<owner>/<name>` (as Ctrl Hub keeps its harness), and
+    /// origin: `~/Code/<owner>/<name>`, and
     /// the like.
     static func existingCheckout(of repo: String) -> String? {
         let parts = repo.split(separator: "/").map(String.init)
@@ -421,11 +448,11 @@ final class SessionStore {
 
     /// The issue's session, made in the harness checkout at `harnessPath` if
     /// it has none, with its brief written afresh from what Gannin knows now.
-    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, brief: (CodeSession) -> String) -> CodeSession {
+    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, brief: (CodeSession) -> String) -> CodeSession {
         let session = session(forIssue: issue.id)
             ?? CodeSession(
                 id: UUID(), issue: issue, repo: harness.repo, branch: Self.branchName(issue), createdAt: .now,
-                connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath
+                connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath, instructions: instructions
             )
         sessions[session.id] = session
         save()
@@ -947,7 +974,7 @@ final class SessionStore {
     /// the shared Application Support.
     private static var baseDirectory: URL {
         URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.getgannin", directoryHint: .isDirectory)
+            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
             .appending(path: "Sessions", directoryHint: .isDirectory)
     }
 
@@ -1065,4 +1092,3 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
     nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 }
-#endif

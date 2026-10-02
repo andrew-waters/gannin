@@ -76,7 +76,7 @@ struct Workload {
             options.config.excludes(login) || options.hidden.contains(HiddenStore.personKey(login))
         }
         func isIncluded(_ pr: PullRequest) -> Bool {
-            !options.config.excludedRepos.contains(pr.repo) && !(pr.author.map { isExcluded($0.login) } ?? false)
+            !options.config.repoExclusion.contains(pr.repo) && !(pr.author.map { isExcluded($0.login) } ?? false)
         }
         let snapshot = OrgSnapshot(
             orgLogin: raw.orgLogin,
@@ -88,7 +88,7 @@ struct Workload {
             teams: raw.teams,
             openPullRequests: raw.openPullRequests.filter { isVisible($0.id) && isIncluded($0) && !(options.excludeDrafts && $0.isDraft) },
             mergedPullRequests: raw.mergedPullRequests.filter { isVisible($0.id) && isIncluded($0) },
-            issues: raw.issues.filter { isVisible($0.id) && !options.config.excludedRepos.contains($0.repo) },
+            issues: raw.issues.filter { isVisible($0.id) && !options.config.repoExclusion.contains($0.repo) },
             warnings: raw.warnings
         )
         self.snapshot = snapshot

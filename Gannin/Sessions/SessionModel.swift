@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 
 /// Who runs a session's agent. Anthropic's Claude Code only, for now.
@@ -47,4 +46,3 @@ extension SessionStore {
         return model.isEmpty ? nil : model
     }
 }
-#endif

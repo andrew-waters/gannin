@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// The bar under a session's terminal: a box to tell it something (sent as a prompt, queued if it's
@@ -72,6 +71,14 @@ struct SessionComposer: View {
                     button.keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .control)
                 } else {
                     button
+                }
+            }
+            let library = session.harnessRepo.map { sessions.promptLibrary(org: session.org, setup: HarnessConfig(repo: $0)) }
+            if let library, !library.offered(for: .session).isEmpty {
+                Section("The team's prompts") {
+                    ForEach(library.offered(for: .session)) { prompt in
+                        Button(prompt.title) { sessions.submit(library.message(for: prompt, values: sessions.promptValues(for: session)), to: session.id) }
+                    }
                 }
             }
             Divider()
@@ -355,4 +362,3 @@ struct SessionQuestionCard: View {
         }
     }
 }
-#endif

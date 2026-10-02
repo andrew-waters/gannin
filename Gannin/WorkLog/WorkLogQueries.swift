@@ -8,7 +8,7 @@ extension GitHubAPI {
         // GitHub documents.
         func stamp(_ date: Date) -> String { date.formatted(.iso8601).replacingOccurrences(of: "Z", with: "+00:00") }
         let range = to.map { "\(stamp(from))..\(stamp($0))" } ?? ">=\(stamp(from))"
-        return "org:\(org) archived:false is:pr updated:\(range)"
+        return "\(GitHubAccounts.scope(org)) archived:false is:pr updated:\(range)"
     }
 
     /// PRs matching a `workLogSearch`, with their commits and reviews.

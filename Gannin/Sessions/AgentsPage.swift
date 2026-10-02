@@ -1,4 +1,3 @@
-#if os(macOS)
 import SwiftUI
 
 /// Claude Code › Agents in the main window: what the org's agents want from
@@ -166,6 +165,16 @@ private struct WaitingAgent: View {
                 ForEach(PromptSnippet.saved) { snippet in
                     Button(snippet.title) { sessions.submit(snippet.prompt, to: session.id) }
                 }
+                if let repo = session.harnessRepo {
+                    let library = sessions.promptLibrary(org: session.org, setup: HarnessConfig(repo: repo))
+                    if !library.offered(for: .session).isEmpty {
+                        Section("The team's prompts") {
+                            ForEach(library.offered(for: .session)) { prompt in
+                                Button(prompt.title) { sessions.submit(library.message(for: prompt, values: sessions.promptValues(for: session)), to: session.id) }
+                            }
+                        }
+                    }
+                }
             } label: {
                 Image(systemName: "text.badge.plus")
             }
@@ -237,4 +246,3 @@ private struct WorkingAgentRow: View {
         .buttonStyle(.plain)
     }
 }
-#endif

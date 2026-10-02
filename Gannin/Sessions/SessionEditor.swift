@@ -1,4 +1,3 @@
-#if os(macOS)
 import AppKit
 
 /// The editor a session's files open in, at the line: on this Mac, or for a
@@ -96,4 +95,3 @@ extension SessionStore {
         }
     }
 }
-#endif

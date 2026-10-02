@@ -150,9 +150,7 @@ struct IssueSheet: View {
                     onClose()
                     openWindow(value: reference)
                 }
-                #if os(macOS)
                 StartSessionButton(reference: reference)
-                #endif
             }
             if let record {
                 facts(record)

@@ -69,11 +69,9 @@ struct IssueWindow: View {
         .task(id: reference.id) { await details.load(reference.id) }
         .loadsHarness(org: reference.org)
         .modifier(OwnInvestmentPrompt(isEnabled: !isEmbedded))
-        #if os(macOS)
         .toolbar {
             ToolbarItem { StartSessionButton(reference: reference) }
         }
-        #endif
     }
 
     /// Full width across the top: the title and the headline facts.

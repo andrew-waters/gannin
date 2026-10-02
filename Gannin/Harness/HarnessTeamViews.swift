@@ -102,7 +102,7 @@ struct HarnessCommitSheet: View {
 }
 
 /// Settings > Harness: where the team's data is kept, and Move to Harness
-/// for an org still keeping it in iCloud.
+/// for an org still keeping it on this device.
 struct TeamDataSection: View {
     @Environment(HarnessTeamStore.self) private var team
     @Environment(HarnessStore.self) private var harness
@@ -129,7 +129,7 @@ struct TeamDataSection: View {
                         .disabled(isMoving || harness.index(for: org, setup) == nil)
                 } label: {
                     Text("Team data")
-                    Text("Kept in your iCloud")
+                    Text("Kept on this device")
                 }
                 Text("Move the team's settings and people's dates into \(setup.repo), so everyone in \(org) works from the same, versioned copy. Your stars, hidden items and app settings stay your own.")
                     .font(.caption)

@@ -14,6 +14,8 @@ xcodegen generate
 open Gannin.xcodeproj
 ```
 
+Releases are tags; see [docs/RELEASING.md](docs/RELEASING.md).
+
 ## Claude
 
 Gannin's Claude features (Claude Code sessions, PR reviews, Ask, triage, drafting issues and

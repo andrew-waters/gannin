@@ -32,7 +32,7 @@ struct BoardHygieneView: View {
             } else if let history {
                 let context = FieldContext(board: workflow.projectNumber, workflow: workflow, history: history)
                 let flagged = IssueSignals.Flag.allCases.map { flag in
-                    (flag, history.issues.values.filter { context.signals($0).flags.contains(flag) && !configs.config(for: org).excludedRepos.contains($0.repo) }
+                    (flag, history.issues.values.filter { context.signals($0).flags.contains(flag) && !configs.config(for: org).repoExclusion.contains($0.repo) }
                         .sorted { $0.number > $1.number })
                 }
                 let total = flagged.reduce(0) { $0 + $1.1.count }

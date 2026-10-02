@@ -153,7 +153,6 @@ struct PrioritisationView: View {
                 Divider()
             }
             if let board = workflow.projectNumber {
-                #if os(macOS)
                 HSplitView {
                     List(selection: $selection) {
                         Section {
@@ -169,21 +168,6 @@ struct PrioritisationView: View {
                             .frame(minWidth: 340, idealWidth: 440, maxWidth: 640)
                     }
                 }
-                #else
-                VStack(spacing: 0) {
-                    FieldCapturePanel(org: org, workload: workload, selection: $selection)
-                        .frame(maxHeight: 420)
-                    Divider()
-                    List(selection: $selection) {
-                        Section {
-                            PrioritisationOverview(org: org, workload: workload, board: board, dateField: dateField, presenting: presenting, selection: $selection)
-                                .listRowSeparator(.hidden)
-                        }
-                        triage(board: board)
-                        committed(board: board)
-                    }
-                }
-                #endif
             } else {
                 ContentUnavailableView(
                     "No board",
@@ -205,11 +189,9 @@ struct PrioritisationView: View {
             // Descriptions and comments, for the search.
             await issueStore.deepSync(org)
         }
-        #if os(macOS)
         .sheet(isPresented: Binding(get: { triaging != nil }, set: { if !$0 { triaging = nil } })) {
             TriageWithClaudeSheet(org: org, issues: triaging ?? [])
         }
-        #endif
     }
 
     // MARK: Bar
@@ -248,7 +230,7 @@ struct PrioritisationView: View {
     /// Open issues the workload counts: excluded repos and hidden ones left
     /// out, and the search applied.
     private var openIssues: [IssueRecord] {
-        let excluded = configs.config(for: org).excludedRepos
+        let excluded = configs.config(for: org).repoExclusion
         let members = workload.team.map { Set($0.members) }
         return (issueStore.history(for: org).map { Array($0.issues.values) } ?? [])
             .filter { $0.isOpen && !excluded.contains($0.repo) && !hidden.keys.contains($0.id) }
@@ -281,7 +263,6 @@ struct PrioritisationView: View {
             HStack {
                 SectionHeader(title: "Triage", count: issues.count)
                 Spacer()
-                #if os(macOS)
                 if !issues.isEmpty {
                     Button {
                         triaging = Array(issues.prefix(20))
@@ -291,7 +272,6 @@ struct PrioritisationView: View {
                     .controlSize(.small)
                     .help("Claude suggests the board fields, investment category and whether it suits an agent, for the newest \(min(issues.count, 20)); you pick what to apply")
                 }
-                #endif
             }
         }
     }

@@ -251,7 +251,7 @@ struct FilterMenu: View {
         })
     }
 
-    /// "Me, Ian Wood", or "Me and 3 more".
+    /// "Me, Sam Lee", or "Me and 3 more".
     private func summary(limit: Int = 2) -> String {
         let known = Dictionary((leading + options).map { ($0.value, $0.title) }, uniquingKeysWith: { first, _ in first })
         let titles = picked.map { known[$0] ?? $0 }

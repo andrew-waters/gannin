@@ -31,7 +31,7 @@ struct PrioritisationOverview: View {
         let today = calendar.startOfDay(for: .now)
         let lastDay = StandupPage.workingDay(before: today, week: config.week)
         let issues = (issueStore.history(for: org).map { Array($0.issues.values) } ?? [])
-            .filter { !config.excludedRepos.contains($0.repo) && !hidden.keys.contains($0.id) }
+            .filter { !config.repoExclusion.contains($0.repo) && !hidden.keys.contains($0.id) }
         let completed = issues.filter { $0.isCompleted && ($0.closedAt ?? .distantPast) >= lastDay }
             .sorted { ($0.closedAt ?? .distantPast) > ($1.closedAt ?? .distantPast) }
         let earlier = completed.filter { ($0.closedAt ?? .distantPast) < today }.map { shipped($0, issues: issues, config: config) }

@@ -53,7 +53,7 @@ final class IssueStore {
         let now = Date.now
         let start = MetricsStore.coverageStart(windowDays: windowDays, now: now)
         let history = histories[org]
-        let scope = "org:\(org) archived:false is:issue"
+        let scope = "\(GitHubAccounts.scope(org)) archived:false is:issue"
 
         var searches: [(key: String, query: String)] = []
         if let history {
@@ -290,7 +290,7 @@ extension IssueStore {
         var ids = Set(history.issues.keys).subtracting(indexed)
         if let last = await index.lastSync(org: org) {
             let since = Self.stamp(last.addingTimeInterval(-Self.overlap))
-            if let changed: [Lossy<ChangedIssue>] = try? await api.search("org:\(org) archived:false is:issue updated:>=\(since)", fields: "... on Issue { id }") {
+            if let changed: [Lossy<ChangedIssue>] = try? await api.search("\(GitHubAccounts.scope(org)) archived:false is:issue updated:>=\(since)", fields: "... on Issue { id }") {
                 ids.formUnion(changed.compactMap { $0.value?.id }.filter { history.issues[$0] != nil })
             }
         }

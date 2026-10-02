@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Gannin is a native SwiftUI macOS app (bundle ID `dev.andon.getgannin`) for keeping an eye on
+Gannin is a native SwiftUI macOS app (bundle ID `dev.andon.gannin`, gannin.ai) for keeping an eye on
 workload across the GitHub orgs you belong to: who has which PRs, reviews and issues in flight,
 and how PRs link to tickets.
 
@@ -19,37 +19,42 @@ marked otherwise. The Mac app isn't sandboxed while Claude Code sessions are pro
 run git, gh and claude as the user, which a sandboxed child process can't (its login, keys and
 toolchains are out of reach). So Application Support is the shared one, not a container.
 
-The target also builds for iPhone and iPad (`supportedDestinations: [macOS, iOS]`), from the
-same sources:
-
-```bash
-xcodebuild -project Gannin.xcodeproj -scheme Gannin -destination 'platform=iOS Simulator,name=iPad Pro 13-inch (M5)' build
-```
-
-Mac-only styles and modifiers go through `App/Platform.swift` (`checkboxToggle`, `linkButton`,
-`onEscape`, `windowSubtitle`, `Color.separatorLine`); anything else AppKit sits behind
-`#if os(macOS)`. Window tabs and Rename Tab are the Mac's; on iPad the app's Settings open as a
-sheet from the account menu.
+It's a Mac app only (`platform: macOS`): AppKit is used directly, with no `#if os` branches.
+`App/Platform.swift` names the few styles used throughout (`checkboxToggle`, `linkButton`,
+`onEscape`, `windowSubtitle`, `Color.separatorLine`).
 
 What's entered in Gannin (people's dates and time off, org settings, hidden items, stars) is
-kept in SwiftData (`Sync/UserDatabase.swift`) and synced through the private CloudKit database
-`iCloud.dev.andon.getgannin`; without the entitlement it falls back to a local store. The
-stores keep their data in memory, write through, and load again on remote changes. Records
-have no unique constraints (CloudKit allows none), so duplicates from two devices are merged
-on load: newest wins, time off merges by its UUID. It was copied from `UserDefaults` once
-(`userDataMigrated`). GitHub caches stay local JSON. Mac builds need `-allowProvisioningUpdates`
-for the iCloud profile.
+kept in SwiftData on this device only (`Sync/UserDatabase.swift`, `UserData/Gannin.store`); no
+iCloud. What the team shares belongs in the org's harness (team data, `HarnessTeamData.swift`),
+which is how it's shared between people and Macs; stars, hidden items and which harnesses
+are yours stay here. The stores keep their data in memory and write through. Records have no
+unique constraints (the store once synced through CloudKit), so duplicates are merged on load:
+newest wins, time off merges by its UUID. It was copied from `UserDefaults` once
+(`userDataMigrated`). GitHub caches stay local JSON. The app has no entitlements beyond the
+hardened runtime.
 
-The app's settings (`SettingsView`) are General and Storage panes on the Mac (a form with a
-Storage page on iPad). Storage (`StorageSettings`) shows each cache's size on disk with Clear
+The app's settings (`SettingsView`) are General and Storage panes. Storage (`StorageSettings`) shows each cache's size on disk with Clear
 (the stores' `clear()`, fetched again when next needed), what's been entered in Gannin with
 Delete Your Data, and Erase Everything and Sign Out.
 
 Each page's title is the window's (`MainView.automaticTitle`) and its top-level controls are
-toolbar items (`.toolbar` on the page, the metrics window picker on `OrgWorkloadView`), so on
-iPad they share the bar with the sidebar toggle and on the Mac sit in the title bar.
+toolbar items (`.toolbar` on the page, the metrics window picker on `OrgWorkloadView`), in the
+title bar.
 `PinnedHeader` is only for section headers further down a page, and for the calendar and
 report inside a person's view, which are one column of several.
+
+## Releases
+
+Tags (`v1.2.0`, annotated: the first line is the title, the rest the notes) run
+`.github/workflows/release.yml`: archive with the version from the tag and the run number as
+build, Developer ID export, notarise (both with the App Store Connect key), DMG, Sparkle signature and appcast, published to the public `andrew-waters/gannin-site`
+(DMGs on its `downloads` branch, `appcast.xml` on `main`) and a GitHub release here.
+`publish-site.yml` mirrors `site/` there; `ci.yml` builds pull requests and keeps project.yml's
+`MARKETING_VERSION` at the `0.0.0` placeholder. Sparkle (`App/Updater.swift`, Gannin › Check
+for Updates) reads `https://gannin.ai/appcast.xml` with the key in `Info.plist`, and
+doesn't check by itself in a 0.0.0 build. `docs/RELEASING.md` has the secrets and DNS. The
+app was `dev.andon.getgannin`; `App/BundleMove.swift` brings its preferences, Application
+Support folder and token across once.
 
 ## Layout
 
@@ -103,7 +108,7 @@ added, removed or created, and the tracked board field set), and commits to the 
   toolbar (⌘[, Esc) and its name as the window title (`PageTitles`). Pages push through
   their `selection` binding or the `navigate` environment action (`Navigation.swift`); a
   page already in the trail is gone back to. Picking a sidebar row clears the trail.
-- Right-click menus offer Open in New Tab (the Mac's) and Open in New Window
+- Right-click menus offer Open in New Tab and Open in New Window
   (`OpenElsewhereItems`, the `openElsewhere` action): a PR or issue in a new window gets its
   own window (`PullRequestWindow`, `IssueWindow`); anything else opens a main window on the
   same org, sidebar item and trail plus the page, handed over through
@@ -113,6 +118,12 @@ added, removed or created, and the tracked board field set), and commits to the 
 
 ## Behaviour worth knowing
 
+- Your personal GitHub account is listed first (`OrgStore.loadOrgs`, `Organisation.isUser`, under
+  Personal in the account menu) and works as an org does. `GitHubAccounts` (`GitHub/GitHubAccounts.swift`)
+  knows which logins are personal: searches scope with `scope` (`user:` rather than `org:`), owner
+  lookups with `ownerField` (`user(login:)` aliased as `organization`, for boards and repos, own repos
+  only via `repositoryArguments`), members are just you and there are no teams, and Create Harness
+  posts to `user/repos`.
 - Stars are local to the app (GitHub has no org stars), stored in `UserDefaults`.
 - A full snapshot is five parallel queries: members, teams, open PRs, PRs merged in the lookback
   window, and open issues. Issue and PR search is capped at 1000 results by GitHub.
@@ -183,8 +194,23 @@ added, removed or created, and the tracked board field set), and commits to the 
   (`SizeStat`, large over 400 lines) and rushed large PRs (approved within 15 minutes with
   nothing asked, or unreviewed) by repo.
 - Goals (`MetricGoals`, in `OrgConfig.goals` and the harness's `.gannin/goals.json`, Settings ›
-  Goals) are targets for the org and per team (cycle time, first review, rework, unreviewed,
-  PR size, requests answered), shown on the Dashboard as on track or not.
+  Goals) are targets for the org and per team (under Velocity: PRs merged a week, held to as many
+  weeks' worth as the window, cycle time and first review; then rework, unreviewed, PR size,
+  requests answered), shown on the Dashboard as on track or not.
+- Scorecard (`Metrics/Scorecard.swift`, Delivery › Scorecard, `WorkloadTab.scorecard`), in the
+  spirit of Strety's: `Measurable`s (`OrgConfig.scorecard`, a team file, `.gannin/scorecard.json`;
+  until edited, `OrgConfig.measurables` seeds weekly ones from the Goals), each with a cadence
+  (`ScorecardCadence`: weekly, monthly, quarterly, annual, tabs with counts), a source (a
+  `ScorecardMetric` worked out from merged PRs as `OrgMetrics` does, author for PR numbers and
+  reviewer for requests answered, or a number entered by hand in a unit: number, money, percentage,
+  hours, days), a team, an owner, a target (at least or at most, in the unit) and notes
+  (`MeasurableEditor`). Columns per period newest first, the one under way shaded (a count such as
+  PRs merged held to its share so far), green on target and red off it, N/A with nothing and a dash
+  before the history; Hit is whole periods on target. Hand-entered cells take a value in a popover,
+  kept by the period's first day (`Measurable.values`). Ranges up to 104 weeks, 36 months, 12
+  quarters, 5 years or All time, which syncs the metrics history back to the org's first issue
+  (`MetricsStore.sync` backfills newest first, saving every eight weeks). Group by team, owner or
+  none.
 - Weekly Digest (`WeeklyDigest`, `DigestSheet` on `NotesSheet`) is the week as Markdown:
   delivery against the week before and goals, what shipped by investment category, notable
   PRs, CI and who's off next week, to copy, rewrite with Claude, or commit to the harness as
@@ -319,7 +345,7 @@ added, removed or created, and the tracked board field set), and commits to the 
   count what falls outside. Weeks still start on Monday everywhere.
 - People's dates (`PeopleDates.swift`, `PeopleDatesStore`, per org and login): start and end
   dates and time off (holiday or sick, inclusive day ranges with a note), entered by hand, kept
-  in iCloud or, for an org that keeps its team data there, in the harness. The Time off part of the person view (`PersonColumn`, Work
+  on this device or, for an org that keeps its team data there, in the harness. The Time off part of the person view (`PersonColumn`, Work
   or Time off) has Calendar (`TimeOffCalendarView` with `fixedPerson`), Report
   (`PersonLeaveReport`: allowance tiles, holiday and sick by month, the year's entries, past
   leave years) and Details, where they're edited, from a person's context menu on the work log, threads or
@@ -413,7 +439,7 @@ added, removed or created, and the tracked board field set), and commits to the 
 
 ## Claude Code sessions
 
-- `Gannin/Sessions/` (Mac only): Work on This on an issue (`StartSessionButton`, the issue
+- `Gannin/Sessions/`: Work on This on an issue (`StartSessionButton`, the issue
   page's toolbar) starts the issue's session in the org's harness, no repo to pick, and opens it
   as a tab in the one Claude Code window (`SessionsWindow`, `SessionStore.tabs`, kept across
   launches; + opens a session already started, ⌘W closes a tab, claude keeps running). Each tab
@@ -544,18 +570,63 @@ added, removed or created, and the tracked board field set), and commits to the 
 - Hooks in the session's `--settings` write its state (working, needs you, your turn, exited)
   to a file `SessionStore` reads every second while a terminal runs, and the URL from a
   `gh pr create`. claude runs signed in as the user; Gannin never handles that login.
+- The team's prompts (`Harness/HarnessPrompts.swift`, `HarnessPrompt`, `HarnessPromptLibrary`) are
+  `prompts/<name>.md` in the harness (`HarnessKind.prompts`, listed under Harness in the sidebar):
+  front matter `use` (work, review, planning, session; all when left out), `default`, `repos` (a
+  repo's own defaults replace the general ones for its issues, PRs and reviews) and `skills` (by
+  name, from `skills/`, `HarnessSkill`), and the body, with `{{issue}}`, `{{title}}`, `{{url}}`,
+  `{{repo}}`, `{{number}}` and `{{branch}}` filled in. Work on This, Review with Claude and
+  planning show `SessionLaunchSheet` / `PromptPickerSections` (`SessionLaunch.swift`) when there's
+  anything to pick: prompts with the defaults ticked, skills, and a note. What's picked goes in
+  `CodeSession.instructions`, added to the first prompt (`SessionScript.firstPrompt`); a review's
+  keeps its JSON ending. Starts with no sheet (notifications, the menu bar, Review the Changes) take
+  the defaults. `session` prompts are in the composer's and Agents' prompt menus. Settings >
+  Harness > Prompts (`HarnessPromptsSection`, `HarnessPromptEditor`) edits them, each save one commit.
+- Each Harness page has New in its toolbar (`HarnessNewDocumentSheet`, `HarnessEditors.swift`):
+  `HarnessSkillEditor` and `HarnessPromptEditor` (also Edit in a skill's or prompt's context
+  menu), `HarnessDocumentEditor` for requirements and findings (front matter as STANDARDS.md has
+  it, the body from the folder's `_template.md`), and Plan with Claude for plans. Each commits one
+  file. `DraftWithClaudeSection` has Claude draft it (`ClaudeRunner`, the guides sent
+  as files, a JSON reply, `HarnessAuthoring.request`) from the org's guidance for the kind:
+  `OrgConfig.authoring` (a team file, `.gannin/authoring.json`), else
+  `HarnessAuthoring.defaultGuidance`, edited in Settings > Harness (`HarnessAuthoringSection`).
+  For plans it's the planning session's first prompt (`{{topic}}`, `{{plan}}`, `{{docs}}`,
+  `{{assets}}`, `{{starting_point}}`).
 - `SessionBrief` is what Gannin knows: the issue's facts, board fields, parent, linked PRs,
   description and comments, and the harness documents about it (in full) or mentioning it.
 
 ## Harness
 
-- `Gannin/Harness/`: the org's harness repo (Ctrl Hub's `ctrl-hub/harness`), a repo of plans,
+- `Gannin/Harness/`: the org's harness repo, a repo of plans,
   requirements, findings and skills beside the code. Its repo and branch (the default when
   none is picked) are chosen from GitHub's lists in the org's Settings (`OrgConfig.harness`).
   `HarnessStore` indexes it from GitHub, so it's the same for everyone: the branch's head
   commit (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
   parsed off the main thread. Cached in Application Support/Harness, fetched again after 10
   minutes. The fetch is the store's own task, so a view going away doesn't cancel it.
+- An account can have several harnesses, as equals (`OrgConfig.harnesses`: `harness`, the one the
+  team's data is kept in, then `otherHarnesses`; all the user's own), listed in Settings > Harness
+  (`HarnessesSection`: branch, the code repos each is for, `HarnessConfig.repos`, added singly or
+  from a project, Add or Create Harness, Remove, and Keep Team Data Here, which commits a copy of
+  `.gannin/` to it first, `HarnessTeamStore.moveData`, `OrgConfig.keepTeamData`). `OrgConfig.harness(covering:)`
+  picks the harness for work: the first naming the issue's or PR's repo (or its linked PRs'), else
+  one naming no repos (it takes any other), else the first. Work on This, Review with Claude and
+  planning offer a harness picker in their sheet when there are several; notifications take the
+  covering one. `HarnessStore` keys indexes, loading and errors by
+  `key(org, repo)` (cached as `org@owner~name.json`), `loadAll` fetches every harness, and
+  `combined(org:_:)` is the views' index across them: the primary's documents plus the others'
+  under `owner/name:path` (`HarnessIndex.split`, `HarnessDocument.harnessRepo`), so drawers, links,
+  issue plans, epics, the Inbox and Ask see them all. The Harness page has a Harness filter and
+  column, New asks which harness, and Edit opens the document in its own. Checkouts are per harness
+  (`SessionStore.harnessPathKey(org, repo:)`, migrated from the org's one key at launch), and each
+  harness lists its own prompts in Settings.
+- Projects (`Workload/RepoProjects.swift`, `OrgConfig.repoProjects`, a team file,
+  `.gannin/repo-projects.json`, Settings > Repositories > Projects) are named groups of repos. The
+  account menu's Focus picks one (`OrgConfigStore.setFocus`, per account on this Mac, shown under
+  the account's name): `config(for:)` sets `focusRepos`, and every view that leaves out excluded
+  repos checks `repoExclusion` instead, so the workload, metrics, scorecard, CI, Recap, issues and
+  Inbox narrow to the project. `baseConfig(for:)` is the settings without the focus, which
+  `update` and Settings edit.
 - Team data in the harness (`HarnessTeamData.swift`): an org can keep its views, investments,
   issue workflow, working week, leave policy, exclusions and people's dates (time off with sick
   days included) as JSON under `.gannin/` (`TeamFile`: `views.json`, `investments.json`,
@@ -563,13 +634,13 @@ added, removed or created, and the tracked board field set), and commits to the 
   `people/<login>.json`), keys sorted and calendar days as `2026-10-03` (`TeamCoding`). The
   index reads `.gannin/*.json` beside the documents (`HarnessIndex.dataFiles`), and every
   cached index loads at launch. Once any is there (Settings > Harness > Move to Harness,
-  `TeamDataSection`, one commit from what's in iCloud), `OrgConfigStore.config(for:)` and
+  `TeamDataSection`, one commit from what's on this device), `OrgConfigStore.config(for:)` and
   `PeopleDatesStore` read the team's parts from `HarnessTeamStore` instead; stars, hidden
-  items, app settings and which harness it is stay the user's own, in iCloud.
+  items, app settings and which harnesses it has stay the user's own, on this device.
 - Edits to that data apply at once and wait as pending changes (`HarnessTeamStore.pending`,
   kept on disk in Application Support/<bundle ID>/HarnessPending) until reviewed: the sidebar
   shows "N changes to commit" above the sync row (`HarnessPendingRow`), whose Review
-  (`HarnessCommitSheet`) commits them together (`Gannin: time off for ian, 3 to 5 Oct`) or
+  (`HarnessCommitSheet`) commits them together (`Gannin: time off for alex, 3 to 5 Oct`) or
   discards them. The commit merges each file three ways (`TeamCoding.merge`: objects by key,
   lists of objects by `id`, ours winning a clash) onto the harness's copy at the head, so
   changes made there since survive. What was written shows until the index catches up.
@@ -583,7 +654,7 @@ added, removed or created, and the tracked board field set), and commits to the 
   `projects/` and `.worktrees/`), and it's picked as the org's harness.
 - The layout (`HarnessKind`): plans in a flat `plans/` (and, until they're moved, under
   `requirements/<module>/plans/`), requirements the rest of `requirements/`, `findings/`,
-  `skills/`; READMEs and `_templates` left out. A front matter `type` overrides the folder, and
+  `skills/`, `prompts/`; READMEs and `_templates` left out. A front matter `type` overrides the folder, and
   plans and requirements are grouped by their first domain, else their module folder
   (`HarnessDocument.area`). A document is
   about an issue named in its file name (`prd-123`) or its header table's GitHub row
@@ -668,7 +739,18 @@ added, removed or created, and the tracked board field set), and commits to the 
   per org on this Mac), ticked off when dealt with, those still open carrying over; and the
   open issues with the committed date set, soonest first, red once overdue and orange within
   the week. Issues open in the drawer, where their Status and fields are set.
-- Capture (`FieldCapturePanel`, beside the lists on the Mac) takes what CS raises as they say
+- Recap (`Meetings/RecapView.swift`, Rituals › Recap, `WorkloadTab.recap`) is the issues closed
+  over the team's period, for the fortnightly look back: `RecapCadence` (in `OrgConfig.recap`, a
+  team file, `.gannin/recap.json`; two weeks from Monday 5 January 2026 by default) cuts time into
+  periods from a day one started on, set from the toolbar's cadence popover. It opens on the last
+  whole period, with arrows, Last and This (the one under way). `ClosedIssuesList` (shared with the
+  Standup's Changelog) groups what was completed by investment category, person, repository or
+  parent issue, then lists those closed as not planned; the header counts them against the period
+  before. A Person menu (Me, Unassigned, then whoever closed something, `recapPeople` per window)
+  narrows the list, counts and notes to their assigned issues. Speech (`RecapSpeechSheet`) has Claude write the notes up as a casual spoken update to read out: themes,
+  first names, no numbers, in the first person when one person is picked, about a minute or two
+  to three, with anything to work in; kept in memory per period, people and length. Notes is the period as Markdown, committed as `recaps/<start>.md`.
+- Capture (`FieldCapturePanel`, beside the lists) takes what CS raises as they say
   it: text, who (remembered), customer, kind and urgency (`FieldNote`), ⌘↩ to add. Notes are
   linked to an issue, or raised as one (`WriteIssueSheet`: Claude drafts the repo, title,
   description and labels, then `createIssue` and onto the board for triage).
@@ -695,7 +777,7 @@ added, removed or created, and the tracked board field set), and commits to the 
 - Inbox (`InboxView`, first in the sidebar) is the signed-in person's share of the workload, in
   sections under a bar like the issue pages' (a search across them, and Sections: a popover to
   tick which show and drag them into order, `InboxSection`, per org on this Mac,
-  `inboxSections.<org>` and `inboxSectionOrder.<org>`): Claude Code sessions waiting on them (the Mac's), reviews
+  `inboxSections.<org>` and `inboxSectionOrder.<org>`): Claude Code sessions waiting on them, reviews
   requested of them (longest waiting first), their open PRs and where each stands, their
   assigned issues (in progress first, with status, time in status and Attention flags), all on
   by default; and, off until wanted, issues they opened, their harness plans (owner, not done)

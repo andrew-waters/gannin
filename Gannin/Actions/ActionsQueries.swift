@@ -27,8 +27,8 @@ extension GitHubAPI {
             if let cursor { variables["cursor"] = cursor }
             let response: Response = try await query("""
                 query($login: String!, $cursor: String) {
-                  organization(login: $login) {
-                    repositories(first: 100, after: $cursor, isArchived: false, orderBy: { field: PUSHED_AT, direction: DESC }) {
+                  \(GitHubAccounts.ownerField(org)) {
+                    repositories(first: 100, after: $cursor, isArchived: false, orderBy: { field: PUSHED_AT, direction: DESC }\(GitHubAccounts.repositoryArguments(org))) {
                       pageInfo { hasNextPage endCursor }
                       nodes { nameWithOwner pushedAt defaultBranchRef { name } }
                     }

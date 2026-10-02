@@ -298,7 +298,7 @@ struct OrgMetrics {
             .filter {
                 !$0.authorIsBot && !hidden.contains($0.id) && $0.mergedAt >= min(coverageStart, previousInterval.start)
                     && $0.mergedAt < now
-                    && !config.excludedRepos.contains($0.repo)
+                    && !config.repoExclusion.contains($0.repo)
                     && !config.excludes($0.author?.login ?? "")
             }
             .map { pr in

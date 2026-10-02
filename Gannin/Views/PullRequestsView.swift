@@ -116,9 +116,7 @@ struct StoredPullRequestFilters: DynamicProperty {
 struct PullRequestsView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(HiddenStore.self) private var hidden
-    #if os(macOS)
     @Environment(SessionStore.self) private var sessions
-    #endif
     @Environment(\.openURL) private var openURL
     let workload: Workload
     @Binding var selection: DetailSelection?
@@ -169,13 +167,11 @@ struct PullRequestsView: View {
             }
             .width(min: 220, ideal: 440)
             .customizationID("title")
-            #if os(macOS)
             TableColumn("Claude") { row in
                 ClaudeReviewBadge(sessions: sessions, pullRequestID: row.id)
             }
             .width(min: 60, ideal: 110)
             .customizationID("claude")
-            #endif
             TableColumn("Repository", value: \.repoName) { row in
                 Text(verbatim: row.repoName).foregroundStyle(.secondary)
             }

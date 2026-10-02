@@ -35,11 +35,7 @@ enum InboxSection: String, CaseIterable, Identifiable {
 
     /// Those on the Mac only (Claude Code) left out elsewhere.
     static var available: [InboxSection] {
-        #if os(macOS)
         allCases
-        #else
-        allCases.filter { $0 != .sessions }
-        #endif
     }
 }
 
@@ -59,9 +55,7 @@ struct InboxView: View {
     @Environment(HiddenStore.self) private var hidden
     @Environment(\.navigate) private var navigate
     @Environment(\.openWindow) private var openWindow
-    #if os(macOS)
     @Environment(SessionStore.self) private var sessions
-    #endif
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
 
     let org: String
@@ -205,7 +199,6 @@ struct InboxView: View {
             }
             .width(min: 220, ideal: 420)
             .customizationID("title")
-            #if os(macOS)
             TableColumn("Claude") { row in
                 if case .pullRequest(let id) = row.page {
                     ClaudeReviewBadge(sessions: sessions, pullRequestID: id)
@@ -213,7 +206,6 @@ struct InboxView: View {
             }
             .width(min: 60, ideal: 110)
             .customizationID("claude")
-            #endif
             TableColumn("Repository", value: \.repoName) { row in
                 Text(verbatim: row.repoName).foregroundStyle(.secondary)
             }
@@ -275,19 +267,16 @@ struct InboxView: View {
     }
 
     private func open(_ row: InboxRow) {
-        #if os(macOS)
         if let session = row.session {
             sessions.show(session, with: openWindow)
             return
         }
-        #endif
         if let page = row.page { navigate?(page) }
     }
 
     private func sections(_ inbox: Inbox) -> [(title: String, rows: [InboxRow])] {
         var sections: [(title: String, rows: [InboxRow])] = []
         let shown = shown
-        #if os(macOS)
         let waiting = sessions.sessions(for: org).filter { [.needsYou, .idle].contains(sessions.state($0.id)) }
         if shown.contains(.sessions), !waiting.isEmpty {
             sections.append(("Claude Code", waiting.map { session in
@@ -299,7 +288,6 @@ struct InboxView: View {
                 )
             }))
         }
-        #endif
         if shown.contains(.reviews) { sections.append((InboxSection.reviews.rawValue, inbox.reviews.map { item in
             InboxRow(
                 id: "review-\(item.pr.id)", title: item.pr.title, reference: Self.number(item.pr.repo, item.pr.number),
@@ -349,7 +337,7 @@ struct InboxView: View {
     /// The issue history's issues as the workload sees them: excluded repos
     /// and hidden ones left out.
     private var historyIssues: [IssueRecord] {
-        let excluded = configs.config(for: org).excludedRepos
+        let excluded = configs.config(for: org).repoExclusion
         return (issueStore.history(for: org).map { Array($0.issues.values) } ?? [])
             .filter { !excluded.contains($0.repo) && !hidden.keys.contains($0.id) }
     }
@@ -380,8 +368,7 @@ struct InboxView: View {
 
     /// Plans in the harness you own that aren't done or abandoned, newest first.
     private var plans: [InboxRow] {
-        guard let login = auth.viewer?.login, let setup = configs.config(for: org).harness,
-              let index = harness.index(for: org, setup) else { return [] }
+        guard let login = auth.viewer?.login, let index = harness.combined(org: org, configs.config(for: org).harnesses) else { return [] }
         return index.documents(.plans)
             .filter { $0.followsStandard && $0.owner?.lowercased() == login.lowercased() }
             .filter { !["done", "abandoned"].contains(($0.status ?? "").lowercased()) }
@@ -435,8 +422,8 @@ struct InboxRow: Identifiable {
     var session: UUID? = nil
     var flags: [IssueSignals.Flag] = []
 
-    /// The repo, from the reference: "product" from "product#3129", the
-    /// last part of "ctrl-hub/harness", or "Plan".
+    /// The repo, from the reference: "api" from "api#3129", the
+    /// last part of "acme/harness", or "Plan".
     var repoName: String {
         let repo = reference.split(separator: "#", maxSplits: 1).first.map(String.init) ?? reference
         return repo.split(separator: "/").last.map(String.init) ?? repo

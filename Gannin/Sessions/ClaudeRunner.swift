@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 
 /// One-off questions to Claude Code (`claude -p`), for the parts of Gannin
@@ -161,4 +160,3 @@ enum ClaudeRunner {
         return nil
     }
 }
-#endif

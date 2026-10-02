@@ -66,7 +66,7 @@ struct OpenIssuesView: View {
     /// the latest opened or closed first.
     private func pool(_ filters: IssueFilters) -> [IssueRecord] {
         guard let history = store.history(for: org) else { return [] }
-        let excluded = configs.config(for: org).excludedRepos
+        let excluded = configs.config(for: org).repoExclusion
         let members = workload.team.map { Set($0.members) }
         return history.issues.values
             .filter { filters.inState($0) && !excluded.contains($0.repo) && (showHidden || !hidden.keys.contains($0.id)) }

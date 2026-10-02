@@ -1,4 +1,3 @@
-#if os(macOS)
 import AppKit
 import Observation
 import SwiftUI
@@ -612,4 +611,3 @@ struct ReviewRequestsSection: View {
         }
     }
 }
-#endif
