@@ -1,21 +1,24 @@
 import SwiftUI
 
 /// The org's settings, as panes picked from a segmented control in the
-/// toolbar: which repos and people count anywhere in the app,
-/// working time, the issue workflow, investments, the harness, and the PRs
+/// toolbar: which repos and people count anywhere in the app, the
+/// projects, working time, the issue workflow, investments, the harness, and the PRs
 /// and issues hidden one at a time.
 struct OrgSettingsView: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(MetricsStore.self) private var metricsStore
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HiddenStore.self) private var hidden
+    @Environment(HarnessStore.self) private var harness
 
     let org: String
     @State private var search = ""
+    @FocusState private var isFiltering: Bool
     @SceneStorage("orgSettingsPane") private var pane: Pane = .repositories
 
     enum Pane: String, CaseIterable, Identifiable {
         case repositories = "Repositories"
+        case projects = "Projects"
         case people = "People"
         case workingTime = "Working Time"
         case issues = "Issues"
@@ -45,6 +48,8 @@ struct OrgSettingsView: View {
             }
         }
         .onChange(of: pane) { search = "" }
+        // Every repo, for those with nothing synced yet.
+        .task(id: org) { await harness.loadRepositories(org: org) }
     }
 
     @ViewBuilder
@@ -54,43 +59,28 @@ struct OrgSettingsView: View {
         let orgName = orgs.org(login: org)?.displayName ?? org
         switch pane {
         case .repositories:
-            let repos = Self.repositories(snapshot: snapshot, history: history).filter { matches($0.name) }
+            let all = Self.repositories(snapshot: snapshot, history: history, all: allRepos).filter { matches($0.name) }
+            // Included first, then the rest, each by name.
+            let excluded = configs.config(for: org).excludedRepos
+            let repos = all.filter { !excluded.contains($0.name) } + all.filter { excluded.contains($0.name) }
             Section {
                 Text("Unticked repositories are left out everywhere in \(orgName): the workload lists, People and the stats. Untick Needs Review for a repository whose PRs can merge without one (docs, config, the harness), so they aren't flagged as merged without review.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                TextField("Filter repositories", text: $search)
+                filterField("Type to filter repositories")
+                bulkActions(all.map(\.name))
             }
             Section {
                 if repos.isEmpty {
-                    Text(search.isEmpty ? "No repositories yet. They appear once the org has synced." : "No matches")
+                    Text(search.isEmpty ? "No repositories yet. They appear once GitHub's list has loaded." : "No matches")
                         .foregroundStyle(.secondary)
                 }
-                ForEach(repos) { repo in
-                    let isIncluded = !configs.config(for: org).excludedRepos.contains(repo.name)
-                    LabeledContent {
-                        HStack(spacing: 16) {
-                            Toggle("Needs Review", isOn: Binding {
-                                configs.config(for: org).needsReview(repo.name)
-                            } set: { _ in
-                                configs.toggleReview(repo.name, in: org)
-                            })
-                            .checkboxToggle()
-                            .disabled(!isIncluded)
-                            .help("Whether its PRs should have a review before they merge")
-                            Toggle("Included", isOn: included(repo: repo.name))
-                                .toggleStyle(.switch)
-                                .labelsHidden()
-                        }
-                    } label: {
-                        Text(repo.name)
-                        if !repo.summary.isEmpty { Text(repo.summary) }
-                    }
-                }
+                ForEach(repos) { repo in repositoryRow(repo) }
             } header: {
-                header("Repositories", excluded: configs.config(for: org).excludedRepos.count)
+                header("Repositories", excluded: excluded.count)
             }
-            RepoProjectsSection(org: org, repos: Self.repositories(snapshot: snapshot, history: history).map(\.name))
+        case .projects:
+            ProjectsSettingsSection(org: org, repos: Self.repositories(snapshot: snapshot, history: history).map(\.name), teams: snapshot?.teams ?? [])
         case .people:
             let everyone = Self.people(snapshot: snapshot, history: history)
             let people = everyone.filter { matches($0.person.login) || matches($0.person.displayName) }
@@ -98,7 +88,7 @@ struct OrgSettingsView: View {
                 Text("Unticked people are left out everywhere in \(orgName): their PRs and reviews don't count in the workload lists, People or the stats. Accounts ending in -bot start unticked.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-                TextField("Filter people", text: $search)
+                filterField("Type to filter people")
             }
             Section {
                 if people.isEmpty {
@@ -154,6 +144,80 @@ struct OrgSettingsView: View {
             } header: {
                 header("Hidden items", excluded: 0)
             }
+        }
+    }
+
+    /// A search field, focused when the pane opens so typing a name
+    /// filters straight away.
+    private func filterField(_ prompt: String) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+            TextField("Filter", text: $search, prompt: Text(prompt))
+                .textFieldStyle(.plain)
+                .labelsHidden()
+                .multilineTextAlignment(.leading)
+                .focused($isFiltering)
+                .onKeyPress(.escape) {
+                    guard !search.isEmpty else { return .ignored }
+                    search = ""
+                    return .handled
+                }
+            if !search.isEmpty {
+                Button { search = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tertiary)
+                    .help("Clear")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.quaternary.opacity(0.7), in: Capsule())
+        .onAppear { isFiltering = true }
+    }
+
+    /// Changes every repo listed (those the filter matches) at once, as one
+    /// change to the settings.
+    private func bulkActions(_ names: [String]) -> some View {
+        let shown = Set(names)
+        let label = search.isEmpty ? "all \(names.count)" : "the \(names.count) shown"
+        return HStack {
+            Text("Change \(label)")
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Include") { configs.update(org) { $0.excludedRepos.subtract(shown) } }
+            Button("Exclude") { configs.update(org) { $0.excludedRepos.formUnion(shown) } }
+            Divider().frame(height: 16)
+            Button("Needs Review") { configs.update(org) { $0.reposWithoutReview.subtract(shown) } }
+            Button("No Review") { configs.update(org) { $0.reposWithoutReview.formUnion(shown) } }
+        }
+        .disabled(names.isEmpty)
+        .controlSize(.small)
+    }
+
+    /// The org's repos from GitHub, and any excluded, so they can come back.
+    private var allRepos: [String] {
+        (harness.repositories[org] ?? []) + configs.config(for: org).excludedRepos
+    }
+
+    private func repositoryRow(_ repo: RepositoryOption) -> some View {
+        let isIncluded = !configs.config(for: org).excludedRepos.contains(repo.name)
+        return LabeledContent {
+            HStack(spacing: 16) {
+                Toggle("Needs Review", isOn: Binding {
+                    configs.config(for: org).needsReview(repo.name)
+                } set: { _ in
+                    configs.toggleReview(repo.name, in: org)
+                })
+                .checkboxToggle()
+                .disabled(!isIncluded)
+                .help("Whether its PRs should have a review before they merge")
+                Toggle("Included", isOn: included(repo: repo.name))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+        } label: {
+            Text(repo.name)
+            if !repo.summary.isEmpty { Text(repo.summary) }
         }
     }
 
@@ -219,6 +283,7 @@ extension OrgSettingsView {
             if merged > 0 { parts.append("\(merged) merged") }
             return parts.joined(separator: " · ")
         }
+
     }
 
     struct PersonOption: Identifiable {
@@ -234,13 +299,15 @@ extension OrgSettingsView {
         let reference: String
     }
 
-    /// Every repo seen in the snapshot or the metrics history, by name.
-    static func repositories(snapshot: OrgSnapshot?, history: MetricsHistory?) -> [RepositoryOption] {
+    /// Every repo seen in the snapshot or the metrics history, plus `all`
+    /// (the org's from GitHub) with nothing to count, by name.
+    static func repositories(snapshot: OrgSnapshot?, history: MetricsHistory?, all: [String] = []) -> [RepositoryOption] {
         let open = Dictionary(grouping: snapshot?.openPullRequests ?? [], by: \.repo).mapValues(\.count)
         let issues = Dictionary(grouping: snapshot?.issues ?? [], by: \.repo).mapValues(\.count)
         let merged = Dictionary(grouping: history.map { Array($0.pullRequests.values) } ?? [], by: \.repo).mapValues(\.count)
         let names = Set(open.keys).union(issues.keys).union(merged.keys)
             .union((snapshot?.mergedPullRequests ?? []).map(\.repo))
+            .union(all)
         return names
             .map { RepositoryOption(name: $0, openPullRequests: open[$0] ?? 0, issues: issues[$0] ?? 0, merged: merged[$0] ?? 0) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }

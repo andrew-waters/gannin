@@ -204,7 +204,7 @@ struct SyncFooter: View {
             async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true) : ()
             // Actions runs likewise, once the Actions page has been opened.
             async let runs: Void = actions.isTracking(org)
-                ? actions.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).excludedRepos, force: true)
+                ? actions.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).unfetchedRepos, force: true)
                 : ()
             // Boards, and the board investments are tracked on.
             async let boards: Void = projects.refresh(org: org, definitions: trackedBoards)

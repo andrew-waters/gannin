@@ -144,8 +144,20 @@ struct HarnessDocumentDraft {
         return lines.joined(separator: "\n")
     }
 
+    /// The statuses a kind's documents take, as saved (slugs).
     static func statuses(_ kind: HarnessKind) -> [String] {
-        kind == .findings ? ["open", "investigating", "fixing", "fixed", "wont-fix"] : ["draft", "in-progress", "done"]
+        switch kind {
+        case .findings: ["open", "investigating", "fixing", "fixed", "wont-fix"]
+        case .skills, .prompts: ["active", "draft", "archived"]
+        case .plans, .requirements: ["draft", "in-progress", "done"]
+        }
+    }
+
+    /// A status slug as shown: `in-progress` as "In progress".
+    static func statusTitle(_ slug: String) -> String {
+        if slug == "wont-fix" { return "Won't fix" }
+        let words = slug.replacingOccurrences(of: "-", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
     }
 
     static let severities = ["low", "medium", "high", "critical"]

@@ -50,6 +50,8 @@ struct NavigationRequest {
     let org: String
     let sidebar: SidebarItem
     let path: [DetailSelection]
+    /// The project the window's narrowed to; nil for All.
+    var workspace: UUID? = nil
 }
 
 /// Hands a request to the main window opened for it. SwiftUI can open a

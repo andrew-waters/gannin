@@ -150,7 +150,7 @@ struct ActionsSummary: View {
     }
 
     private func sync(force: Bool) async {
-        await store.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).excludedRepos, force: force)
+        await store.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).unfetchedRepos, force: force)
     }
 
     @ViewBuilder

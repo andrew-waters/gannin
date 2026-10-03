@@ -494,6 +494,7 @@ struct HarnessDocumentPage: View {
     @State private var width: CGFloat = 1000
     @State private var draftingIssues = false
     @State private var planning = false
+    @State private var editingDetails = false
     /// Folded sections, by index.
     @State private var folded: Set<Int> = []
     @AppStorage("harnessReadingSize") private var size: Double = 14
@@ -513,6 +514,11 @@ struct HarnessDocumentPage: View {
                             }
                             .sheet(isPresented: $planning) {
                                 NewPlanningSheet(org: org, documentPath: document.path, topic: document.title)
+                            }
+                            .sheet(isPresented: $editingDetails) {
+                                if let (setup, own) = source(of: document) {
+                                    HarnessDetailsEditor(org: org, setup: setup, document: document, path: own)
+                                }
                             }
                         Divider()
                         if width >= 900 {
@@ -586,7 +592,16 @@ struct HarnessDocumentPage: View {
         .padding(20)
     }
 
-    /// Status, kind, tasks, date, owner, branch and domains, a row each.
+    /// The harness a document in the combined index is in, and its path
+    /// there.
+    private func source(of document: HarnessDocument) -> (HarnessConfig, String)? {
+        let config = configs.config(for: org)
+        let (repo, path) = HarnessIndex.split(document.path)
+        return (repo.flatMap(config.harness(repo:)) ?? config.harnesses.first).map { ($0, path) }
+    }
+
+    /// Status, kind, tasks, owner, branch and domains, a row each, and
+    /// Edit Details for the ones in its front matter.
     @ViewBuilder
     private func overview(_ document: HarnessDocument) -> some View {
         Section {
@@ -605,9 +620,6 @@ struct HarnessDocumentPage: View {
                         Text(verbatim: "\(document.tasksDone) of \(document.tasks)").monospacedDigit()
                     }
                 }
-            }
-            if let date = document.date {
-                LabeledContent("Date", value: date.formatted(date: .abbreviated, time: .omitted))
             }
             if let owner = document.owner {
                 let person = orgs.snapshot(for: org)?.members.first { $0.login == owner }
@@ -628,6 +640,8 @@ struct HarnessDocumentPage: View {
             if let domains = document.domains, !domains.isEmpty {
                 LabeledContent(domains.count == 1 ? "Domain" : "Domains", value: domains.map(HarnessView.prettify).joined(separator: ", "))
             }
+            Button("Edit Details") { editingDetails = true }
+                .help("Change its status, owner and domains, committed to the harness")
         }
     }
 
@@ -1140,16 +1154,18 @@ struct HarnessIssueSection: View {
 
 // MARK: - Settings
 
-/// Settings › Harness: the org's harnesses, as equals, each with its
-/// branch and the repos it's for; which one keeps the team's data; then
-/// the team data, each harness's prompts, drafting and checkouts.
+/// Settings › Harness: the org's harness (projects' are under Projects)
+/// with its branch, the team data, its prompts and drafting, then where
+/// every harness, projects' too, is checked out on this Mac.
 struct HarnessSettingsSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     let org: String
 
     var body: some View {
-        let harnesses = configs.config(for: org).harnesses
+        let config = configs.config(for: org)
+        // Any left from before projects show until they're moved.
+        let harnesses = (config.harness.map { [$0] } ?? []) + config.otherHarnesses
         // What's saved stays listed even before GitHub's lists load.
         let repos = Set(harness.repositories[org] ?? []).union(harnesses.map(\.repo))
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
@@ -1163,15 +1179,16 @@ struct HarnessSettingsSection: View {
             }
             HarnessAuthoringSection(org: org)
         }
-        ForEach(harnesses, id: \.repo) { setup in
-            HarnessCheckoutSection(org: org, repo: setup.repo, showsName: harnesses.count > 1, showsRecording: setup.repo == harnesses.first?.repo)
+        let checkouts = config.allHarnesses
+        ForEach(checkouts, id: \.repo) { setup in
+            HarnessCheckoutSection(org: org, repo: setup.repo, showsName: checkouts.count > 1, showsRecording: setup.repo == checkouts.first?.repo)
         }
     }
 }
 
-/// Every harness the org has, alike: its branch, the repos it's for (none
-/// for any repo the others don't name), whether it keeps the team's data,
-/// and Add or Create for another.
+/// The org's harness and its branch, or Add and Create while there's none.
+/// Harnesses beside it from before projects list the repos they're for
+/// and can keep the team's data, until they're moved into projects.
 struct HarnessesSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
@@ -1194,18 +1211,18 @@ struct HarnessesSection: View {
             ForEach(harnesses, id: \.repo) { setup in
                 row(setup, keepsTeamData: setup.repo == harnesses.first?.repo)
             }
-            HStack {
-                Menu("Add Harness") {
-                    ForEach(repos.filter { repo in !harnesses.contains { $0.repo == repo } }, id: \.self) { repo in
-                        Button(repo) {
-                            configs.update(org) { config in
-                                if config.harness == nil { config.harness = HarnessConfig(repo: repo) } else { config.otherHarnesses.append(HarnessConfig(repo: repo, repos: [])) }
+            if harnesses.isEmpty {
+                HStack {
+                    Menu("Add Harness") {
+                        ForEach(repos.filter { repo in !harnesses.contains { $0.repo == repo } }, id: \.self) { repo in
+                            Button(repo) {
+                                configs.update(org) { $0.harness = HarnessConfig(repo: repo) }
                             }
                         }
                     }
+                    .fixedSize()
+                    Button("Create Harness") { isCreating = true }
                 }
-                .fixedSize()
-                Button("Create Harness") { isCreating = true }
             }
             if let moveError {
                 Text(moveError).font(.caption).foregroundStyle(.red)
@@ -1213,13 +1230,11 @@ struct HarnessesSection: View {
         } header: {
             Text(harnesses.count > 1 ? "Harnesses" : "Harness")
         } footer: {
-            Text(harnesses.count > 1
-                 ? "Work on an issue or PR runs in the harness that names its repo (or a linked PR's), with that harness's prompts and skills. One that names no repos takes any repo the others don't. The Harness pages show every harness's documents."
-                 : "Name repos to keep this harness for just those, once there's another for the rest.")
+            Text("Work on an issue or PR runs in its project's harness, with that harness's prompts and skills, when a project with one names its repo; anything else runs here. A project gets its own harness in Projects.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org, otherFor: harnesses.isEmpty ? nil : []) }
+        .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org) }
         .confirmationDialog("Keep the team's data in \(moving?.repo ?? "")?", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } })) {
             if let target = moving {
                 if team.keepsData(org) {
@@ -1272,51 +1287,53 @@ struct HarnessesSection: View {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
             branchPicker(setup)
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("For").foregroundStyle(.secondary)
-                if covered.isEmpty {
-                    Text(harnesses.count > 1 ? "any repo the others don't name" : "every repo").foregroundStyle(.secondary)
-                }
-                ForEach(covered, id: \.self) { repo in
-                    HStack(spacing: 2) {
-                        Text(repo.split(separator: "/").last.map(String.init) ?? repo)
-                        Button {
-                            update(setup.repo) { $0.repos = covered.filter { $0 != repo } }
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.tertiary)
+            if harnesses.count > 1 {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text("For").foregroundStyle(.secondary)
+                    if covered.isEmpty {
+                        Text(harnesses.count > 1 ? "any repo the others don't name" : "every repo").foregroundStyle(.secondary)
                     }
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.secondary.opacity(0.12)))
-                    .help(repo)
-                }
-                Menu {
-                    let projects = configs.baseConfig(for: org).repoProjects
-                    if !projects.isEmpty {
-                        Section("Projects") {
-                            ForEach(projects) { project in
-                                Button(project.name) { update(setup.repo) { $0.repos = Array(Set(covered + project.repos)).sorted() } }
+                    ForEach(covered, id: \.self) { repo in
+                        HStack(spacing: 2) {
+                            Text(repo.split(separator: "/").last.map(String.init) ?? repo)
+                            Button {
+                                update(setup.repo) { $0.repos = covered.filter { $0 != repo } }
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.tertiary)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                        .help(repo)
+                    }
+                    Menu {
+                        let projects = configs.baseConfig(for: org).repoProjects
+                        if !projects.isEmpty {
+                            Section("Projects") {
+                                ForEach(projects) { project in
+                                    Button(project.name) { update(setup.repo) { $0.repos = Array(Set(covered + project.repos)).sorted() } }
+                                }
                             }
                         }
-                    }
-                    Section("Repositories") {
-                        ForEach(repos.filter { !covered.contains($0) && !harnesses.map(\.repo).contains($0) }, id: \.self) { repo in
-                            Button(repo) { update(setup.repo) { $0.repos = covered + [repo] } }
+                        Section("Repositories") {
+                            ForEach(repos.filter { !covered.contains($0) && !harnesses.map(\.repo).contains($0) }, id: \.self) { repo in
+                                Button(repo) { update(setup.repo) { $0.repos = covered + [repo] } }
+                            }
                         }
+                    } label: {
+                        Image(systemName: "plus.circle")
                     }
-                } label: {
-                    Image(systemName: "plus.circle")
+                    .menuStyle(.button)
+                    .buttonStyle(.borderless)
+                    .menuIndicator(.hidden)
+                    .fixedSize()
+                    .help("Keep this harness for a repo")
                 }
-                .menuStyle(.button)
-                .buttonStyle(.borderless)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .help("Keep this harness for a repo")
+                .font(.callout)
             }
-            .font(.callout)
         }
         .padding(.vertical, 2)
     }

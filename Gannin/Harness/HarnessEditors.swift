@@ -219,7 +219,7 @@ struct HarnessDocumentEditor: View {
             }
             Section {
                 Picker("Status", selection: $draft.status) {
-                    ForEach(HarnessDocumentDraft.statuses(kind), id: \.self) { Text($0).tag($0) }
+                    ForEach(HarnessDocumentDraft.statuses(kind), id: \.self) { Text(HarnessDocumentDraft.statusTitle($0)).tag($0) }
                 }
                 if kind == .findings {
                     Picker("Severity", selection: $draft.severity) {
@@ -447,5 +447,111 @@ struct HarnessAuthoringSection: View {
             return "A planning session's first prompt, from Plan with Claude. \(placeholders) are filled in. Prompts picked from the library are added after it."
         }
         return "What Claude is told when it drafts a new \(kind.singular) from the Harness page. Gannin adds what you asked for, what's written so far, the harness's CLAUDE.md, STANDARDS.md and the folder's README and template, the \(kind.rawValue.lowercased()) already there, and the JSON reply it reads, so leave the format out. \(placeholders) are filled in."
+    }
+}
+
+/// A document's details: its status, owner and domains, written into its
+/// front matter and committed, leaving the rest of the file as it is.
+struct HarnessDetailsEditor: View {
+    @Environment(HarnessStore.self) private var harness
+    @Environment(OrgStore.self) private var orgs
+    @Environment(\.dismiss) private var dismiss
+    let org: String
+    let setup: HarnessConfig
+    let document: HarnessDocument
+    /// Its path in its own harness.
+    let path: String
+
+    @State private var status: String
+    @State private var owner: String
+    @State private var domains: String
+    @State private var saving = false
+    @State private var error: String?
+
+    init(org: String, setup: HarnessConfig, document: HarnessDocument, path: String) {
+        self.org = org
+        self.setup = setup
+        self.document = document
+        self.path = path
+        _status = State(initialValue: document.status ?? "")
+        _owner = State(initialValue: document.owner ?? "")
+        _domains = State(initialValue: (document.domains ?? []).joined(separator: ", "))
+    }
+
+    var body: some View {
+        let members = (orgs.snapshot(for: org)?.members ?? [])
+            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        // What it has now stays a choice even when it's not one of these.
+        let statuses = HarnessDocumentDraft.statuses(document.kind)
+        Form {
+            Section {
+                Picker("Status", selection: $status) {
+                    Text("None").tag("")
+                    if !status.isEmpty && !statuses.contains(status) { Text(document.statusLabel ?? status).tag(status) }
+                    ForEach(statuses, id: \.self) { Text(HarnessDocumentDraft.statusTitle($0)).tag($0) }
+                }
+                Picker("Owner", selection: $owner) {
+                    Text("Nobody").tag("")
+                    if !owner.isEmpty && !members.contains(where: { $0.login == owner }) { Text(owner).tag(owner) }
+                    ForEach(members) { Text("\($0.displayName) (\($0.login))").tag($0.login) }
+                }
+                TextField("Domains", text: $domains, prompt: Text("billing, data-capture"))
+            } footer: {
+                Text("Written into \(path)'s front matter and committed to \(setup.repo). The rest of the file is left as it is.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let error {
+                Text(error).foregroundStyle(.red).font(.callout)
+            }
+        }
+        .formStyle(.grouped)
+        .frame(width: 460)
+        .navigationTitle("\(document.title) Details")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(saving ? "Committing" : "Commit to Harness") { save() }
+                    .disabled(saving)
+                    .help("Commits the change to \(path) in \(setup.repo)")
+            }
+        }
+    }
+
+    private func save() {
+        let updates: [(key: String, value: HarnessFrontMatter.Value?)] = [
+            ("status", status.isEmpty ? nil : .text(status)),
+            ("owner", owner.isEmpty ? nil : .text(owner)),
+            ("domains", .list(domains.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })),
+        ]
+        let message = "Gannin: details of \(path)"
+        saving = true
+        error = nil
+        Task {
+            do {
+                // Against the file at the head, so changes since survive.
+                try await harness.commit(org: org, setup: setup) { head in
+                    guard case let text?? = try await harness.files(setup: setup, at: head, paths: [path])[path] else {
+                        throw HarnessDetailsError.missing(path)
+                    }
+                    let changed = HarnessFrontMatter.setting(updates, in: text)
+                    return changed == text ? nil : HarnessChange(message: message, files: [path: changed])
+                }
+                dismiss()
+            } catch let failure {
+                error = failure.localizedDescription
+            }
+            saving = false
+        }
+    }
+}
+
+enum HarnessDetailsError: LocalizedError {
+    case missing(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .missing(let path): "\(path) isn't in the harness any more."
+        }
     }
 }
