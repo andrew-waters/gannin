@@ -4,6 +4,8 @@ name: create-issue
 description: >
   Draft a GitHub issue the team's way, check it isn't a duplicate, create it with gh once the user has confirmed it, then link it to its parent and the workflow board; use when a session, plan or conversation turns up work that needs its own issue.
 repos: all
+status: active
+owner: andrew-waters
 ---
 
 # Create an issue
