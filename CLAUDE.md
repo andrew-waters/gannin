@@ -85,8 +85,10 @@ added, removed or created, and the tracked board field set), and commits to the 
   progress runs along the divider above the row.
 - Windows are independent: the selected org, project (`workspace`), section and metrics window
   of days are `@SceneStorage`, so each main window or tab has its own (File > New Window, or New Tab, which
-  `WindowTabs.swift` joins to the current window). Preferences like chart granularity stay
-  `@AppStorage`, shared.
+  `WindowTabs.swift` joins to the current window). A window that opens with no org (macOS
+  doesn't always restore windows) takes the last one picked (`lastOrg`), and picking an org takes
+  the project last picked for it on this Mac (`lastWorkspace.<org>`). Preferences like chart
+  granularity stay `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
   (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Inbox, Ask (the
   Mac's) and Overview at the top; Work (Pull Requests, Issues with All and Not on a board,
@@ -704,7 +706,9 @@ added, removed or created, and the tracked board field set), and commits to the 
   issue drawer: a header (the title, Open as Page, Open in Window and Done), then a grouped Form of the
   summary and a section per `##` heading (`HarnessDocumentSection`, each folding from its
   header, Contents jumping between them), in `MarkdownText`'s reading style, beside a Form of
-  its facts at the top (status, kind, tasks, date, owner, branch, domains), the issues it's about, its requirement and what it depends on, touches, mentions and the
+  its facts at the top (status, kind, tasks, owner, branch, domains; Edit Details,
+  `HarnessDetailsEditor`, sets status, owner and domains in its front matter with
+  `HarnessFrontMatter.setting` against the file at the head and commits it), the issues it's about, its requirement and what it depends on, touches, mentions and the
   file; one Form when narrow. Issues named in the text
   (`owner/repo#123`, `#123`, `PRD-123`) become `gannin-issue:` links (`linkedBody`) that open in
   a drawer (an issue or PR outside the history is looked up by number first,

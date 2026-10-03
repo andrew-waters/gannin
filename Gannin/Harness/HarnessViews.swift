@@ -494,6 +494,7 @@ struct HarnessDocumentPage: View {
     @State private var width: CGFloat = 1000
     @State private var draftingIssues = false
     @State private var planning = false
+    @State private var editingDetails = false
     /// Folded sections, by index.
     @State private var folded: Set<Int> = []
     @AppStorage("harnessReadingSize") private var size: Double = 14
@@ -513,6 +514,11 @@ struct HarnessDocumentPage: View {
                             }
                             .sheet(isPresented: $planning) {
                                 NewPlanningSheet(org: org, documentPath: document.path, topic: document.title)
+                            }
+                            .sheet(isPresented: $editingDetails) {
+                                if let (setup, own) = source(of: document) {
+                                    HarnessDetailsEditor(org: org, setup: setup, document: document, path: own)
+                                }
                             }
                         Divider()
                         if width >= 900 {
@@ -586,7 +592,16 @@ struct HarnessDocumentPage: View {
         .padding(20)
     }
 
-    /// Status, kind, tasks, date, owner, branch and domains, a row each.
+    /// The harness a document in the combined index is in, and its path
+    /// there.
+    private func source(of document: HarnessDocument) -> (HarnessConfig, String)? {
+        let config = configs.config(for: org)
+        let (repo, path) = HarnessIndex.split(document.path)
+        return (repo.flatMap(config.harness(repo:)) ?? config.harnesses.first).map { ($0, path) }
+    }
+
+    /// Status, kind, tasks, owner, branch and domains, a row each, and
+    /// Edit Details for the ones in its front matter.
     @ViewBuilder
     private func overview(_ document: HarnessDocument) -> some View {
         Section {
@@ -605,9 +620,6 @@ struct HarnessDocumentPage: View {
                         Text(verbatim: "\(document.tasksDone) of \(document.tasks)").monospacedDigit()
                     }
                 }
-            }
-            if let date = document.date {
-                LabeledContent("Date", value: date.formatted(date: .abbreviated, time: .omitted))
             }
             if let owner = document.owner {
                 let person = orgs.snapshot(for: org)?.members.first { $0.login == owner }
@@ -628,6 +640,8 @@ struct HarnessDocumentPage: View {
             if let domains = document.domains, !domains.isEmpty {
                 LabeledContent(domains.count == 1 ? "Domain" : "Domains", value: domains.map(HarnessView.prettify).joined(separator: ", "))
             }
+            Button("Edit Details") { editingDetails = true }
+                .help("Change its status, owner and domains, committed to the harness")
         }
     }
 

@@ -160,6 +160,15 @@ struct MainView: View {
         nonmutating set { workspaceID = newValue?.uuidString ?? "" }
     }
 
+    /// The last org picked in any window, for a window that opens with
+    /// none (macOS doesn't always restore windows, and scene storage with them).
+    @AppStorage("lastOrg") private var lastOrg = ""
+
+    /// The last project picked for an org in any window, on this Mac.
+    private static func lastWorkspace(for org: String) -> UUID? {
+        UserDefaults.standard.string(forKey: "lastWorkspace.\(org)").flatMap(UUID.init(uuidString:))
+    }
+
     /// The settings as this window sees them, its project laid over them.
     private var orgConfigs: OrgConfigStore { rootConfigs.scoped(workspace) }
     /// A title chosen with Rename Tab; empty means the automatic one.
@@ -265,7 +274,9 @@ struct MainView: View {
         .task { await orgs.loadOrgs() }
         .onAppear(perform: claimRequest)
         .onChange(of: selectedOrg) {
-            workspace = nil
+            // The project last picked for this org, until a request says otherwise.
+            workspace = selectedOrg.flatMap(Self.lastWorkspace(for:))
+            if let selectedOrg { lastOrg = selectedOrg }
             teamID = nil
             person = nil
             peopleView = nil
@@ -278,9 +289,13 @@ struct MainView: View {
         }
         .onChange(of: orgs.orgs, initial: true) {
             if selectedOrg == nil {
-                // An org before your own account, unless that's starred.
-                selectedOrg = (orgs.starredOrgs.first ?? orgs.orgs.first { !$0.isPersonal } ?? orgs.orgs.first)?.login
+                // The last one picked, else an org before your own account,
+                // unless that's starred.
+                selectedOrg = (orgs.orgs.first { $0.login == lastOrg } ?? orgs.starredOrgs.first ?? orgs.orgs.first { !$0.isPersonal } ?? orgs.orgs.first)?.login
             }
+        }
+        .onChange(of: workspaceID) {
+            if let selectedOrg { UserDefaults.standard.set(workspaceID, forKey: "lastWorkspace.\(selectedOrg)") }
         }
     }
 

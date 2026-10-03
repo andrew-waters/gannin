@@ -488,6 +488,61 @@ nonisolated enum HarnessFrontMatter {
         return nil
     }
 
+    /// The text with these top-level fields set (nil removes one): each
+    /// replaces the field's line and anything belonging to it (list items,
+    /// indented lines), a new one goes at the end, and a document with no
+    /// front matter gets some. Everything else is left as it was.
+    static func setting(_ updates: [(key: String, value: Value?)], in text: String) -> String {
+        var lines = text.components(separatedBy: "\n")
+        if lines.first?.trimmingCharacters(in: .whitespaces) != "---" {
+            lines = ["---", "---"] + lines
+        }
+        guard var end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) else { return text }
+        for (key, value) in updates {
+            var index = 1
+            var found: Int?
+            while index < end {
+                if lines[index].hasPrefix("\(key):") {
+                    found = index
+                    break
+                }
+                index += 1
+            }
+            let rendered = value.flatMap { render(key, $0) }
+            if let found {
+                // The field and what belongs to it, up to the next field.
+                var last = found + 1
+                while last < end, lines[last].isEmpty || lines[last].hasPrefix(" ") || lines[last].hasPrefix("\t") || lines[last].hasPrefix("- ") {
+                    last += 1
+                }
+                lines.replaceSubrange(found..<last, with: rendered.map { [$0] } ?? [])
+                end += (rendered == nil ? 0 : 1) - (last - found)
+            } else if let rendered {
+                lines.insert(rendered, at: end)
+                end += 1
+            }
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func render(_ key: String, _ value: Value) -> String? {
+        switch value {
+        case .text(let text):
+            let text = text.trimmingCharacters(in: .whitespaces)
+            return text.isEmpty ? nil : "\(key): \(quoted(text))"
+        case .list(let items):
+            let items = items.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+            return items.isEmpty ? nil : "\(key): [\(items.map(quoted).joined(separator: ", "))]"
+        }
+    }
+
+    /// Quoted when YAML would read it as something else.
+    private static func quoted(_ text: String) -> String {
+        let special = text.contains(": ") || text.contains(" #") || text.contains(",") || text.contains("\"")
+            || text.first.map { "[]{}&*!|>'%@`#-?".contains($0) } ?? false
+        return special ? "\"\(text.replacingOccurrences(of: "\"", with: "\\\""))\"" : text
+    }
+
     private static func unquoted(_ text: String) -> String {
         let text = text.trimmingCharacters(in: .whitespaces)
         if text.count >= 2, let first = text.first, first == text.last, first == "\"" || first == "'" {
