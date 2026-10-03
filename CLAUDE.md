@@ -430,6 +430,13 @@ added, removed or created, and the tracked board field set), and commits to the 
   Projects; a board page (`ProjectBoardView`) shows the board's saved views as tabs, each
   opening with its own filter, layout, grouping (table sections or board swimlanes), board
   columns, sort and visible fields. Changes there are local and never saved back.
+- The Boards page before a board is picked (`ProjectsLandingView`) stands in for a repo's Projects
+  tab on GitHub: the org's boards, or for a project with `boardsRepo` those linked to the repo,
+  with a search and Open and Closed tabs (`ProjectStore.allBoards`; `boardLists` and `boards` are
+  the open ones everything else lists). New Board (`NewBoardSheet`, `Projects/BoardWrites.swift`)
+  makes one with `createProjectV2`, or copies a board's fields and views (`copyProjectV2`), and
+  links it to a repo; Link Board, Unlink, Close and Reopen are confirmed first
+  (`linkProjectV2ToRepository`, `unlinkProjectV2FromRepository`, `updateProjectV2`).
 - Items are fetched with the view's filter passed to GitHub (`items(query:)`), so GitHub
   applies its own filter syntax; `ProjectStore` caches each board's definition and each
   filter's items on disk, refreshed after 10 minutes. Layouts: Table (`StatsTable` per group),
@@ -630,7 +637,9 @@ added, removed or created, and the tracked board field set), and commits to the 
 - Projects (`Workload/RepoProjects.swift`, `RepoProject`, `OrgConfig.repoProjects`, a team file,
   `.gannin/repo-projects.json`) are the unit a window works in: a name, repos, and optionally its
   own harness, workflow board, investments, goals, scorecard measurables, recap cadence and
-  committed date field, each the org's while nil. Org › Project is picked from the project menu
+  committed date field, each the org's while nil, and the repo whose linked boards it lists
+  (`boardsRepo`: the sidebar's Boards and the Boards page show `ProjectStore.boards(org:repo:)`,
+  the repo's boards that the org owns, `repoProjects`, cached per repo; nil for every board). Org › Project is picked from the project menu
   above the org in the sidebar's footer (`SidebarFooter.projectMenu`, once the org has projects),
   per window (`@SceneStorage("workspace")`, not `selectedProject`, which is a board;
   carried by Open in New Tab and New Window through `NavigationRequest.workspace`, cleared when

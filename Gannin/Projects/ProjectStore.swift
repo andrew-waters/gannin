@@ -7,7 +7,14 @@ import Observation
 final class ProjectStore {
     private static let maxAge: TimeInterval = 10 * 60
 
-    private(set) var boardLists: [String: [OrgProject]] = [:]
+    /// Every board each org has, closed ones too.
+    private(set) var allBoardLists: [String: [OrgProject]] = [:]
+    /// Boards linked to a repo, by `owner/name`, closed ones too, for a
+    /// project that takes its boards from one (`RepoProject.boardsRepo`).
+    private(set) var allRepoBoardLists: [String: [OrgProject]] = [:]
+
+    /// Each org's open boards: what everything but the Boards page lists.
+    var boardLists: [String: [OrgProject]] { allBoardLists.mapValues { $0.filter { !$0.closed } } }
     private(set) var caches: [String: BoardCache] = [:]
     private(set) var loading: Set<String> = []
     private(set) var errors: [String: String] = [:]
@@ -35,18 +42,46 @@ final class ProjectStore {
         loadCachedBoards(org)
         guard let api = auth.api else { return }
         if let projects = try? await api.orgProjects(org: org) {
-            boardLists[org] = projects
+            allBoardLists[org] = projects
             if let data = try? Self.encoder.encode(projects) {
                 try? data.write(to: Self.boardListURL(org), options: .atomic)
             }
         }
     }
 
+    /// The boards a window lists: a repo's, for a project that takes its
+    /// boards from one, else every one the org has.
+    func boards(org: String, repo: String?) -> [OrgProject] {
+        allBoards(org: org, repo: repo).filter { !$0.closed }
+    }
+
+    /// Those boards closed ones too, for the Boards page.
+    func allBoards(org: String, repo: String?) -> [OrgProject] {
+        guard let repo else { return allBoardLists[org] ?? [] }
+        return allRepoBoardLists[repo] ?? []
+    }
+
+    /// The boards linked to a repo: from disk at once, then fetched again.
+    func loadRepoBoards(org: String, repo: String) async {
+        if allRepoBoardLists[repo] == nil,
+           let data = try? Data(contentsOf: Self.repoBoardListURL(repo)),
+           let projects = try? Self.decoder.decode([OrgProject].self, from: data) {
+            allRepoBoardLists[repo] = projects
+        }
+        guard let api = auth.api else { return }
+        if let projects = try? await api.repoProjects(org: org, repo: repo) {
+            allRepoBoardLists[repo] = projects
+            if let data = try? Self.encoder.encode(projects) {
+                try? data.write(to: Self.repoBoardListURL(repo), options: .atomic)
+            }
+        }
+    }
+
     private func loadCachedBoards(_ org: String) {
-        guard boardLists[org] == nil,
+        guard allBoardLists[org] == nil,
               let data = try? Data(contentsOf: Self.boardListURL(org)),
               let projects = try? Self.decoder.decode([OrgProject].self, from: data) else { return }
-        boardLists[org] = projects
+        allBoardLists[org] = projects
     }
 
     /// Part of Refresh: the board list, and the definitions of boards the
@@ -60,7 +95,7 @@ final class ProjectStore {
         if !tracked.isEmpty { run.add("fields", title: "Investment board fields") }
         do {
             let projects = try await run.track("boards", count: { $0.count }) { _ in try await api.orgProjects(org: org) }
-            boardLists[org] = projects
+            allBoardLists[org] = projects
             if let data = try? Self.encoder.encode(projects) {
                 try? data.write(to: Self.boardListURL(org), options: .atomic)
             }
@@ -152,7 +187,8 @@ final class ProjectStore {
     static var cacheDirectory: URL { directory }
 
     func clear() {
-        boardLists = [:]
+        allBoardLists = [:]
+        allRepoBoardLists = [:]
         caches = [:]
         errors = [:]
         try? FileManager.default.removeItem(at: Self.directory)
@@ -193,6 +229,10 @@ final class ProjectStore {
 
     private static func boardListURL(_ org: String) -> URL {
         fileURL("boards-\(org)")
+    }
+
+    private static func repoBoardListURL(_ repo: String) -> URL {
+        fileURL("repo-boards-\(repo.replacingOccurrences(of: "/", with: "~"))")
     }
 
     private static func fileURL(_ key: String) -> URL {

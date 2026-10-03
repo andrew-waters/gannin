@@ -14,6 +14,18 @@ struct OrgProject: Codable, Identifiable, Hashable {
     let id: String
     let number: Int
     let title: String
+    var closed = false
+}
+
+extension OrgProject {
+    /// Tolerates lists cached before `closed` was kept.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        number = try container.decode(Int.self, forKey: .number)
+        title = try container.decode(String.self, forKey: .title)
+        closed = try container.decodeIfPresent(Bool.self, forKey: .closed) ?? false
+    }
 }
 
 struct ProjectField: Identifiable {
@@ -107,11 +119,37 @@ extension GitHubAPI {
         let response: Response = try await query("""
             query($login: String!) {
               \(GitHubAccounts.ownerField(org)) {
-                projectsV2(first: 50, orderBy: { field: TITLE, direction: ASC }) { nodes { id number title closed } }
+                projectsV2(first: 100, orderBy: { field: TITLE, direction: ASC }) { nodes { id number title closed } }
               }
             }
             """, variables: ["login": org])
-        return (response.organization?.projectsV2.nodes ?? []).filter { !$0.closed }.map { OrgProject(id: $0.id, number: $0.number, title: $0.title) }
+        return (response.organization?.projectsV2.nodes ?? []).map { OrgProject(id: $0.id, number: $0.number, title: $0.title, closed: $0.closed) }
+    }
+
+    /// The boards linked to a repo that the org (or account) owns, open or closed,
+    /// by title. Boards owned elsewhere are left out: everything else
+    /// finds a board by its number within the org.
+    func repoProjects(org: String, repo: String) async throws -> [OrgProject] {
+        struct Response: Decodable {
+            struct Owner: Decodable { let login: String? }
+            struct Project: Decodable { let id: String; let number: Int; let title: String; let closed: Bool; let owner: Owner }
+            struct Repo: Decodable { let projectsV2: Connection<Project> }
+            let repository: Repo?
+        }
+        let parts = repo.split(separator: "/").map(String.init)
+        guard parts.count == 2 else { throw APIError.graphQL(["\(repo) isn't owner/name"]) }
+        let response: Response = try await query("""
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                projectsV2(first: 50, orderBy: { field: TITLE, direction: ASC }) {
+                  nodes { id number title closed owner { ... on Organization { login } ... on User { login } } }
+                }
+              }
+            }
+            """, variables: ["owner": parts[0], "name": parts[1]])
+        return (response.repository?.projectsV2.nodes ?? [])
+            .filter { $0.owner.login?.lowercased() == org.lowercased() }
+            .map { OrgProject(id: $0.id, number: $0.number, title: $0.title, closed: $0.closed) }
     }
 
     /// Adds an issue (by node ID) to a project board. A write.

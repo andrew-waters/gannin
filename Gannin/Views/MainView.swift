@@ -1074,7 +1074,7 @@ struct OrgSidebar: View {
                     }
                     row(.epics)
                     DisclosureGroup(isExpanded: $projectsExpanded) {
-                        ForEach(projectStore.boardLists[selectedOrg] ?? []) { board in
+                        ForEach(projectStore.boards(org: selectedOrg, repo: configs.config(for: selectedOrg).boardsRepo)) { board in
                             Label(board.title, systemImage: "rectangle.split.3x1")
                                 .lineLimit(1)
                                 .tag(SidebarItem.project(board.number))
@@ -1166,6 +1166,11 @@ struct OrgSidebar: View {
         }
         .task(id: selectedOrg) {
             if let selectedOrg { await projectStore.loadBoards(org: selectedOrg) }
+        }
+        .task(id: selectedOrg.flatMap { configs.config(for: $0).boardsRepo }) {
+            if let selectedOrg, let repo = configs.config(for: selectedOrg).boardsRepo {
+                await projectStore.loadRepoBoards(org: selectedOrg, repo: repo)
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {
