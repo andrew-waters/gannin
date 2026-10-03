@@ -4,6 +4,8 @@ name: create-pull-request
 description: >
   Open a pull request from a session's worktree with gh pr create, linked to its issue, built once and described the team's way; use when work on an issue branch is ready to go up for review (or as a draft).
 repos: all
+status: active
+owner: andrew-waters
 ---
 
 # Create a pull request
