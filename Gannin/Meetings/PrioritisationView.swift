@@ -130,8 +130,9 @@ struct PrioritisationView: View {
     let workload: Workload
     @Binding var selection: DetailSelection?
 
-    /// The board's date field that says an issue's committed to.
-    @AppStorage private var dateField: String
+    /// The board's date field that says an issue's committed to, for the
+    /// org on this Mac.
+    @AppStorage private var orgDateField: String
     @State private var triaging: [IssueRecord]?
     /// On screen in the meeting: the summary larger, capture and search
     /// put away.
@@ -142,7 +143,33 @@ struct PrioritisationView: View {
         self.org = org
         self.workload = workload
         _selection = selection
-        _dateField = AppStorage(wrappedValue: "Committed", "prioritisationDateField.\(org)")
+        _orgDateField = AppStorage(wrappedValue: "Committed", Self.dateFieldKey(org))
+    }
+
+    private static func dateFieldKey(_ org: String) -> String { "prioritisationDateField.\(org)" }
+
+    /// The org's committed date field on this Mac, which a project's own
+    /// starts from.
+    static func orgDateField(_ org: String) -> String {
+        UserDefaults.standard.string(forKey: dateFieldKey(org)) ?? "Committed"
+    }
+
+    /// The committed date field: the window's project's, if it keeps its
+    /// own, else the org's.
+    private var dateField: String {
+        configs.currentProject(org)?.committedDateField ?? orgDateField
+    }
+
+    private var dateFieldBinding: Binding<String> {
+        Binding {
+            dateField
+        } set: { field in
+            if let project = configs.currentProject(org), project.committedDateField != nil {
+                configs.updateProject(project.id, in: org) { $0.committedDateField = field }
+            } else {
+                orgDateField = field
+            }
+        }
     }
 
     var body: some View {
@@ -201,7 +228,7 @@ struct PrioritisationView: View {
             Spacer(minLength: 0)
             if let board {
                 let fields = dateFields(board: board)
-                Picker("Committed date", selection: $dateField) {
+                Picker("Committed date", selection: dateFieldBinding) {
                     ForEach(fields.contains(dateField) ? fields : [dateField] + fields, id: \.self) { Text($0).tag($0) }
                 }
                 .fixedSize()

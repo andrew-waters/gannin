@@ -83,8 +83,8 @@ added, removed or created, and the tracked board field set), and commits to the 
   Option-click or right-click for Full Refresh), the API budget and reset, and a chevron. The
   step detail slides up while a sync runs and closes itself a few seconds after; overall
   progress runs along the divider above the row.
-- Windows are independent: the selected org, section and metrics window of days are
-  `@SceneStorage`, so each main window or tab has its own (File > New Window, or New Tab, which
+- Windows are independent: the selected org, project (`workspace`), section and metrics window
+  of days are `@SceneStorage`, so each main window or tab has its own (File > New Window, or New Tab, which
   `WindowTabs.swift` joins to the current window). Preferences like chart granularity stay
   `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
@@ -100,8 +100,8 @@ added, removed or created, and the tracked board field set), and commits to the 
   full). The Issues row is the issue lists; Issue flow is the metrics. Picking a person shows their
   `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
   by the cog beside the account menu in the sidebar's footer, are panes picked from a segmented
-  control in the toolbar: Repositories and People (exclusions, which apply to the workload and
-  the stats alike), Working Time, Issues, Investments, Harness and Hidden. The first
+  control in the toolbar: Repositories, Projects, People (exclusions, which apply to the workload
+  and the stats alike), Working Time, Issues, Investments, Goals, Harness and Hidden. The first
   page is the section's (or the person, repo, list or board picked under it);
   `path: [DetailSelection]` is the trail of pages pushed over it (`PageStack` in
   `MainView.swift`). Only the last shows, full width, under breadcrumbs, with Back in the
@@ -604,29 +604,51 @@ added, removed or created, and the tracked board field set), and commits to the 
   commit (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
   parsed off the main thread. Cached in Application Support/Harness, fetched again after 10
   minutes. The fetch is the store's own task, so a view going away doesn't cancel it.
-- An account can have several harnesses, as equals (`OrgConfig.harnesses`: `harness`, the one the
-  team's data is kept in, then `otherHarnesses`; all the user's own), listed in Settings > Harness
-  (`HarnessesSection`: branch, the code repos each is for, `HarnessConfig.repos`, added singly or
-  from a project, Add or Create Harness, Remove, and Keep Team Data Here, which commits a copy of
-  `.gannin/` to it first, `HarnessTeamStore.moveData`, `OrgConfig.keepTeamData`). `OrgConfig.harness(covering:)`
-  picks the harness for work: the first naming the issue's or PR's repo (or its linked PRs'), else
-  one naming no repos (it takes any other), else the first. Work on This, Review with Claude and
-  planning offer a harness picker in their sheet when there are several; notifications take the
-  covering one. `HarnessStore` keys indexes, loading and errors by
-  `key(org, repo)` (cached as `org@owner~name.json`), `loadAll` fetches every harness, and
-  `combined(org:_:)` is the views' index across them: the primary's documents plus the others'
-  under `owner/name:path` (`HarnessIndex.split`, `HarnessDocument.harnessRepo`), so drawers, links,
-  issue plans, epics, the Inbox and Ask see them all. The Harness page has a Harness filter and
-  column, New asks which harness, and Edit opens the document in its own. Checkouts are per harness
-  (`SessionStore.harnessPathKey(org, repo:)`, migrated from the org's one key at launch), and each
-  harness lists its own prompts in Settings.
-- Projects (`Workload/RepoProjects.swift`, `OrgConfig.repoProjects`, a team file,
-  `.gannin/repo-projects.json`, Settings > Repositories > Projects) are named groups of repos. The
-  account menu's Focus picks one (`OrgConfigStore.setFocus`, per account on this Mac, shown under
-  the account's name): `config(for:)` sets `focusRepos`, and every view that leaves out excluded
-  repos checks `repoExclusion` instead, so the workload, metrics, scorecard, CI, Recap, issues and
-  Inbox narrow to the project. `baseConfig(for:)` is the settings without the focus, which
-  `update` and Settings edit.
+- The org has one harness of its own (`OrgConfig.harness`, the user's own setting, where the team's
+  data is kept), set in Settings > Harness (`HarnessesSection`: Add or Create Harness while there's
+  none, its branch, Remove), and each project can have its own (`RepoProject.harness`, team data,
+  set in Settings > Projects). `OrgConfig.allHarnesses` is every one, the org's first, each
+  project's covering its repos (`RepoProject.ownHarness`); `harnesses` is the ones in view: the
+  window's project's alone when it has one, else all. `harness(covering:)` picks the harness for
+  work: the window's project's, else the first naming the issue's or PR's repo (or its linked
+  PRs'), else one naming no repos (the org's), else the first; `harness(repo:)` looks through all.
+  Work on This, Review with Claude and planning offer a harness picker in their sheet when there
+  are several in view; notifications (the shared store) take the covering one. `HarnessStore` keys
+  indexes, loading and errors by `key(org, repo)` (cached as `org@owner~name.json`), `loadAll`
+  fetches every harness in view, and `combined(org:_:)` is the views' index across them: the
+  first's documents plus the others' under `owner/name:path` (`HarnessIndex.split`,
+  `HarnessDocument.harnessRepo`), so drawers, links, issue plans, epics, the Inbox and Ask see
+  them all. With All, the Harness page has a Harness filter and column, New asks which harness,
+  and Edit opens the document in its own; with a project that has a harness, it's that one's
+  alone. Checkouts are per harness (`SessionStore.harnessPathKey(org, repo:)`), listed in
+  Settings > Harness for every harness; the org's prompts are there and a project's on its page
+  in Projects. Harnesses beside the org's from before projects (`otherHarnesses`, only read)
+  become projects at launch (`OrgConfigStore.moveHarnessesToProjects`), once the org's harness
+  is indexed.
+- Projects (`Workload/RepoProjects.swift`, `RepoProject`, `OrgConfig.repoProjects`, a team file,
+  `.gannin/repo-projects.json`) are the unit a window works in: a name, repos, and optionally its
+  own harness, workflow board, investments, goals, scorecard measurables, recap cadence and
+  committed date field, each the org's while nil. Org › Project is picked from the project menu
+  above the org in the sidebar's footer (`SidebarFooter.projectMenu`, once the org has projects),
+  per window (`@SceneStorage("workspace")`, not `selectedProject`, which is a board;
+  carried by Open in New Tab and New Window through `NavigationRequest.workspace`, cleared when
+  the org changes); All is every repo. `MainView` puts the
+  project's store (`OrgConfigStore.scoped`, one per project, sharing `Storage` with the app's
+  store, `root`) in the window's environment, so every `configs.config(for:)` there has the
+  project laid over the org's settings (`OrgConfig.apply`: `focusRepos` from its repos, none
+  meaning every repo, its own settings in place of the org's, `scope`). Every view that leaves out
+  excluded repos checks `repoExclusion`, so the workload, metrics, scorecard, CI, Recap, issues and
+  Inbox narrow to the project; a project's repos count even when excluded for the org (it names
+  them), and CI fetches skip only excluded repos no project names (`unfetchedRepos`). Fetchers
+  stay org-wide. `update` on a project's store writes a
+  change to what the project keeps of its own into the project (`OrgConfig.separate`), the rest to
+  the org; `updateProject` changes a project directly; `baseConfig(for:)` is the saved settings.
+  Settings (shown with `root`, whichever project is picked) has a Projects pane
+  (`ProjectsSettingsSection`): one project at a time, its name and repos, its harness (the org's,
+  a repo, or Create Harness, with branch and prompts), The org's or Its own for each setting (its
+  own starts as a copy), and the workflow, investments and goals editors given the project's
+  store. The scorecard, recap cadence and committed date field are edited where they're used,
+  with the project picked.
 - Team data in the harness (`HarnessTeamData.swift`): an org can keep its views, investments,
   issue workflow, working week, leave policy, exclusions and people's dates (time off with sick
   days included) as JSON under `.gannin/` (`TeamFile`: `views.json`, `investments.json`,
@@ -734,14 +756,14 @@ added, removed or created, and the tracked board field set), and commits to the 
 - Under Meetings in the sidebar: Standup (`StandupView`, as before) and Prioritisation
   (`Gannin/Meetings/PrioritisationView.swift`), for the morning session with CS. Under a bar (a
   search, and which of the board's date fields is the committed date, `Committed` by default,
-  `prioritisationDateField.<org>`): Triage, the open issues with no Status on the workflow board
+  `prioritisationDateField.<org>`, or the project's own, `RepoProject.committedDateField`): Triage, the open issues with no Status on the workflow board
   or not on it, newest first; From the field, points raised in the meeting (`FieldNotesStore`,
   per org on this Mac), ticked off when dealt with, those still open carrying over; and the
   open issues with the committed date set, soonest first, red once overdue and orange within
   the week. Issues open in the drawer, where their Status and fields are set.
 - Recap (`Meetings/RecapView.swift`, Rituals › Recap, `WorkloadTab.recap`) is the issues closed
   over the team's period, for the fortnightly look back: `RecapCadence` (in `OrgConfig.recap`, a
-  team file, `.gannin/recap.json`; two weeks from Monday 5 January 2026 by default) cuts time into
+  team file, `.gannin/recap.json`, or a project's own; two weeks from Monday 5 January 2026 by default) cuts time into
   periods from a day one started on, set from the toolbar's cadence popover. It opens on the last
   whole period, with arrows, Last and This (the one under way). `ClosedIssuesList` (shared with the
   Standup's Changelog) groups what was completed by investment category, person, repository or

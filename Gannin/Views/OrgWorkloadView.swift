@@ -32,7 +32,9 @@ struct OrgWorkloadView: View {
     var body: some View {
         Group {
             if tab == .settings {
+                // The org's settings, whichever project the window has picked.
                 OrgSettingsView(org: org)
+                    .environment(configs.root)
             } else if tab == .actions {
                 ActionsView(org: org, selection: $selection)
             } else if tab == .harness {

@@ -146,12 +146,22 @@ struct MainView: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(HiddenStore.self) private var hidden
     @Environment(MetricsStore.self) private var metricsStore
-    @Environment(OrgConfigStore.self) private var orgConfigs
+    @Environment(OrgConfigStore.self) private var rootConfigs
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("excludeDrafts") private var excludeDrafts = false
     @AppStorage("showHidden") private var showHidden = false
 
     @SceneStorage("selectedOrg") private var selectedOrg: String?
+    /// The project the window's narrowed to, by ID; empty for All. Not
+    /// `selectedProject`, which is a board.
+    @SceneStorage("workspace") private var workspaceID = ""
+    private var workspace: UUID? {
+        get { UUID(uuidString: workspaceID) }
+        nonmutating set { workspaceID = newValue?.uuidString ?? "" }
+    }
+
+    /// The settings as this window sees them, its project laid over them.
+    private var orgConfigs: OrgConfigStore { rootConfigs.scoped(workspace) }
     /// A title chosen with Rename Tab; empty means the automatic one.
     @SceneStorage("customTitle") private var customTitle = ""
     @State private var isRenaming = false
@@ -198,7 +208,7 @@ struct MainView: View {
 
     var body: some View {
         NavigationSplitView {
-            OrgSidebar(selectedOrg: $selectedOrg, selection: sidebarSelection, workload: workload)
+            OrgSidebar(selectedOrg: $selectedOrg, workspace: Binding(get: { workspace }, set: { workspace = $0 }), selection: sidebarSelection, workload: workload)
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
                 .environment(\.openElsewhere, sidebarOpenElsewhere)
         } detail: {
@@ -221,7 +231,8 @@ struct MainView: View {
                     titles: titles,
                     searchText: searchText
                 )
-                .id(selectedOrg)
+                // Pages start again on another project.
+                .id("\(selectedOrg)|\(workspaceID)")
             } else {
                 ContentUnavailableView(
                     "Pick an organisation",
@@ -236,6 +247,7 @@ struct MainView: View {
         .windowSubtitle(selectedOrg.map { orgs.org(login: $0)?.displayName ?? $0 } ?? "")
         .focusedSceneValue(\.renameTab, RenameTabAction(window: windowID, perform: startRenaming))
         .investmentPrompt()
+        .environment(orgConfigs)
         .environment(\.showPerson, ShowPersonAction { login in sidebarSelection.wrappedValue = .person(login) })
         .environment(\.showSidebarItem, ShowSidebarAction { item in sidebarSelection.wrappedValue = item })
         .background(WindowAccessor { window in
@@ -253,6 +265,7 @@ struct MainView: View {
         .task { await orgs.loadOrgs() }
         .onAppear(perform: claimRequest)
         .onChange(of: selectedOrg) {
+            workspace = nil
             teamID = nil
             person = nil
             peopleView = nil
@@ -286,6 +299,7 @@ struct MainView: View {
 
     private func apply(_ pending: NavigationRequest) {
         request = nil
+        workspace = pending.workspace
         sidebarSelection.wrappedValue = pending.sidebar
         path = pending.path
     }
@@ -295,10 +309,10 @@ struct MainView: View {
         guard let selectedOrg else { return nil }
         return OpenElsewhereAction(
             open: { destination, placement in
-                WindowRequest.open(NavigationRequest(org: selectedOrg, sidebar: .tab(tab), path: [destination]), placement: placement, openWindow: openWindow)
+                WindowRequest.open(NavigationRequest(org: selectedOrg, sidebar: .tab(tab), path: [destination], workspace: workspace), placement: placement, openWindow: openWindow)
             },
             openSidebar: { item, placement in
-                WindowRequest.open(NavigationRequest(org: selectedOrg, sidebar: item, path: []), placement: placement, openWindow: openWindow)
+                WindowRequest.open(NavigationRequest(org: selectedOrg, sidebar: item, path: [], workspace: workspace), placement: placement, openWindow: openWindow)
             }
         )
     }
@@ -690,10 +704,10 @@ private struct PageStack: View {
         OpenElsewhereAction(
             open: { destination, placement in
                 if placement == .window, openOwnWindow(destination) { return }
-                WindowRequest.open(NavigationRequest(org: org, sidebar: sidebar, path: trail + [destination]), placement: placement, openWindow: openWindow)
+                WindowRequest.open(NavigationRequest(org: org, sidebar: sidebar, path: trail + [destination], workspace: configs.workspace), placement: placement, openWindow: openWindow)
             },
             openSidebar: { item, placement in
-                WindowRequest.open(NavigationRequest(org: org, sidebar: item, path: []), placement: placement, openWindow: openWindow)
+                WindowRequest.open(NavigationRequest(org: org, sidebar: item, path: [], workspace: configs.workspace), placement: placement, openWindow: openWindow)
             }
         )
     }
@@ -838,7 +852,7 @@ private struct PageStack: View {
                     Button("Open in Window") {
                         drawers = []
                         if !openOwnWindow(item) {
-                            WindowRequest.open(NavigationRequest(org: org, sidebar: sidebar, path: path + [item]), placement: .window, openWindow: openWindow)
+                            WindowRequest.open(NavigationRequest(org: org, sidebar: sidebar, path: path + [item], workspace: configs.workspace), placement: .window, openWindow: openWindow)
                         }
                     }
                     Button("Done") { closeDrawer(level) }
@@ -985,6 +999,7 @@ struct OrgSidebar: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(IssueStore.self) private var issueStore
     @Binding var selectedOrg: String?
+    @Binding var workspace: UUID?
     @Binding var selection: SidebarItem?
     let workload: Workload?
     @AppStorage("sidebarPeopleExpanded") private var peopleExpanded = true
@@ -1013,7 +1028,8 @@ struct OrgSidebar: View {
         return index.documents(kind).count(where: \.followsStandard)
     }
 
-    /// The Harness row only shows once the org names its harness repo.
+    /// The Harness section only shows once there's a harness in view: the
+    /// project's, else any of the org's.
     private var hasHarness: Bool {
         selectedOrg.map { !configs.config(for: $0).harnesses.isEmpty } ?? false
     }
@@ -1143,7 +1159,7 @@ struct OrgSidebar: View {
                     SyncFooter(org: selectedOrg)
                         .loadsHarness(org: selectedOrg)
                 }
-                SidebarFooter(selectedOrg: $selectedOrg, selection: $selection)
+                SidebarFooter(selectedOrg: $selectedOrg, workspace: $workspace, selection: $selection)
             }
             // Its own material, so rows scrolled under it (and the sync
             // panel sliding up over them) don't show through.
@@ -1313,19 +1329,70 @@ private struct SidebarFooter: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(\.openURL) private var openURL
     @Binding var selectedOrg: String?
+    @Binding var workspace: UUID?
     @Binding var selection: SidebarItem?
     @State private var showingSettings = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            orgMenu
-            if let current {
-                orgSettingsButton(current)
+        // With projects, the cog sits beside the project and the account
+        // beside the org, both 26 points, so the two menus line up.
+        VStack(spacing: 6) {
+            if let current, !configs.baseConfig(for: current.login).repoProjects.isEmpty {
+                HStack(spacing: 8) {
+                    projectMenu(current.login)
+                    orgSettingsButton(current)
+                }
+                HStack(spacing: 8) {
+                    orgMenu
+                    accountMenu
+                }
+            } else {
+                HStack(spacing: 8) {
+                    orgMenu
+                    if let current {
+                        orgSettingsButton(current)
+                    }
+                    accountMenu
+                }
             }
-            accountMenu
         }
         .padding(.horizontal, 10)
         .padding(.bottom, 10)
+    }
+
+    /// The window's project, or All; other windows and tabs keep theirs.
+    private func projectMenu(_ org: String) -> some View {
+        let projects = configs.baseConfig(for: org).repoProjects
+        let project = configs.currentProject(org)
+        return Menu {
+            Picker("Project", selection: Binding(get: { project?.id }, set: { workspace = $0 })) {
+                Text("All").tag(UUID?.none)
+                Divider()
+                ForEach(projects) { Text($0.name).tag(Optional($0.id)) }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: project == nil ? "square.stack.3d.up" : "folder")
+                    .foregroundStyle(project == nil ? Color.secondary : Color.accentColor)
+                    .frame(width: 20)
+                Text(project?.name ?? "All projects")
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .menuStyle(.button)
+        .buttonStyle(.plain)
+        .menuIndicator(.hidden)
+        .help("The project this window shows; other windows and tabs keep theirs")
     }
 
     private var current: Organisation? {
@@ -1366,15 +1433,6 @@ private struct SidebarFooter: View {
                 Button("Open \(current.displayName) on GitHub") {
                     if let url = URL(string: "https://github.com/\(current.login)") { openURL(url) }
                 }
-                let projects = configs.baseConfig(for: current.login).repoProjects
-                if !projects.isEmpty {
-                    Divider()
-                    Picker("Focus", selection: Binding(get: { configs.focus[current.login] }, set: { configs.setFocus($0, in: current.login) })) {
-                        Text("All Repositories").tag(UUID?.none)
-                        Divider()
-                        ForEach(projects) { Text($0.name).tag(Optional($0.id)) }
-                    }
-                }
             }
             Button("Reload Accounts") {
                 Task { await orgs.loadOrgs() }
@@ -1391,12 +1449,6 @@ private struct SidebarFooter: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(current?.displayName ?? "Choose Organisation")
                         .lineLimit(1)
-                    if let current, let project = configs.focusedProject(current.login) {
-                        Text("Focused on \(project.name)")
-                            .font(.caption)
-                            .foregroundStyle(Color.accentColor)
-                            .lineLimit(1)
-                    }
                 }
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")

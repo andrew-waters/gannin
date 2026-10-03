@@ -356,9 +356,8 @@ struct CreateHarnessSheet: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.dismiss) private var dismiss
     let org: String
-    /// Beside the primary harness, for these repos; nil makes it the
-    /// primary.
-    var otherFor: [String]? = nil
+    /// The project it's for; nil makes it the org's harness.
+    var project: UUID? = nil
     @State private var name = "harness"
     @State private var isCreating = false
     @State private var status: String?
@@ -436,10 +435,12 @@ struct CreateHarnessSheet: View {
         do {
             status = "Creating \(org)/\(name)"
             let created = try await api.createRepository(org: org, name: name, description: "Plans, requirements, findings and skills beside the code, kept with Gannin.")
-            let setup = HarnessConfig(repo: created.nameWithOwner, repos: otherFor)
-            // It's the org's harness from here, even if the layout fails.
-            configs.update(org) { config in
-                if otherFor != nil { config.otherHarnesses.append(setup) } else { config.harness = setup }
+            let setup = HarnessConfig(repo: created.nameWithOwner)
+            // It's the harness from here, even if the layout fails.
+            if let project {
+                configs.updateProject(project, in: org) { $0.harness = setup }
+            } else {
+                configs.update(org) { $0.harness = setup }
             }
             status = "Committing the layout"
             let files = HarnessSkeleton.files(org: org, repo: created.nameWithOwner, projects: projects)

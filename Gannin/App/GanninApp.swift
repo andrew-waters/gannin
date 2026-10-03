@@ -57,6 +57,8 @@ struct GanninApp: App {
         for (org, config) in orgConfigs.configs {
             if let primary = config.harness { SessionStore.migrateHarnessPaths(org: org, primary: primary.repo) }
         }
+        // Harnesses beside the org's become projects with harnesses.
+        orgConfigs.moveHarnessesToProjects()
         let sessions = SessionStore(harness: harness)
         _sessions = State(initialValue: sessions)
         GanninAppDelegate.sessions = sessions
