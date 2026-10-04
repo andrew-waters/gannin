@@ -166,6 +166,10 @@ extension SessionStore {
         var failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])] = []
         var said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])] = []
         let seen = session.pullRequestsSeen
+        // Each thread's or review's key now, to drop its older ones.
+        var current: [String: String] = [:]
+        // Threads seen before at an earlier comment.
+        var replies: Set<String> = []
         for pr in pullRequests where pr.state == "OPEN" {
             var newChecks: [SessionPullRequest.Check] = []
             for check in pr.failed {
@@ -176,21 +180,27 @@ extension SessionStore {
             var newItems: [SessionPullRequest.Feedback] = []
             for item in pr.feedback {
                 keys.insert(item.key)
-                if seen?.contains(item.key) == false, item.latestAuthor != pr.author { newItems.append(item) }
+                current[item.id] = item.key
+                guard let seen, !seen.contains(item.key) else { continue }
+                if seen.contains(where: { $0.hasPrefix(item.keyPrefix) }) { replies.insert(item.id) }
+                if item.latestAuthor != pr.author { newItems.append(item) }
             }
             if !newChecks.isEmpty { failed.append((pr, newChecks)) }
             if !newItems.isEmpty { said.append((pr, newItems)) }
         }
         // Keys of PRs no longer open are kept: a reopened PR's are still seen.
         if let seen, keys.isSubset(of: seen) { return }
-        update(id) { $0.pullRequestsSeen = (seen ?? []).union(keys) }
+        let outdated = (seen ?? []).filter { key in
+            current.contains { key.hasPrefix(SessionPullRequest.Feedback.keyPrefix($0.key)) && key != $0.value }
+        }
+        update(id) { $0.pullRequestsSeen = (seen ?? []).subtracting(outdated).union(keys) }
         guard seen != nil, !failed.isEmpty || !said.isEmpty else { return }
 
         // Each as a title and what was said, one notification for them all.
         var news = failed.map { ("Checks failed on \($0.pr.repo)#\($0.pr.number)", $0.checks.map(\.name).joined(separator: ", ")) }
         for (pr, items) in said {
             for item in items {
-                let what = item.comments.count > 1 ? "replied" : item.verdict ?? (item.location == nil ? "reviewed" : "commented")
+                let what = replies.contains(item.id) ? "replied" : item.verdict ?? (item.location == nil ? "reviewed" : "commented")
                 news.append(("@\(item.latestAuthor) \(what) on \(pr.repo)#\(pr.number)", item.comments.last?.body ?? ""))
             }
         }
@@ -200,34 +210,56 @@ extension SessionStore {
         var body = news.count == 1
             ? String(news[0].1.prefix(180))
             : news.map { "\($0.0): \($0.1.split(separator: "\n").first ?? "")".prefix(100) }.joined(separator: "\n")
-        if sent { body += "\nSent to Claude." }
+        switch sent {
+        case .pasted: body += "\nSent to Claude."
+        case .queued: body += "\nWill go to Claude when it finishes its turn."
+        case nil: break
+        }
         flag(id, title: title, body: body, replies: false)
     }
 
+    enum FeedbackDelivery { case pasted, queued }
+
     /// Hands what's new to the session's claude, when it's to be told:
     /// pasted now if it's waiting for a prompt, else once it finishes its
-    /// turn. A session that isn't running isn't started for it.
+    /// turn (`pendingFeedback`). A session that isn't running isn't started
+    /// for it. Marked sent only once it's pasted.
     private func sendNews(
         failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])],
         said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])],
         to id: UUID
-    ) -> Bool {
+    ) -> FeedbackDelivery? {
         guard let session = sessions[id], session.reviewOf == nil, !session.isReviewer,
-              sendsFeedback(id), isRunning(id) else { return false }
-        let prompts = failed.map { SessionPrompts.failures($0.pr, in: session) }
-            + said.map { SessionPrompts.feedback($0.items, on: $0.pr, in: session) }
-        let prompt = prompts.joined(separator: "\n\n")
+              sendsFeedback(id), isRunning(id) else { return nil }
+        let prompt = (failed.map { SessionPrompts.failures($0.pr, in: session) }
+            + said.map { SessionPrompts.feedback($0.items, on: $0.pr, in: session) })
+            .joined(separator: "\n\n")
+        let keys = said.flatMap { $0.items.map(\.key) } + failed.map { "checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",") }
         switch state(id) {
         case .idle:
-            guard submit(prompt, to: id) else { return false }
+            guard submit(prompt, to: id) else { return nil }
+            markSent(keys, for: id)
+            return .pasted
         case .starting, .working, .needsYou:
-            pendingPrompts[id] = [pendingPrompts[id], prompt].compactMap { $0 }.joined(separator: "\n\n")
+            let queued = pendingFeedback[id]
+            pendingFeedback[id] = (
+                [queued?.prompt, prompt].compactMap { $0 }.joined(separator: "\n\n"),
+                (queued?.keys ?? []) + keys
+            )
+            return .queued
         default:
             // Claude has exited and left its shell, where a paste would go to bash.
-            return false
+            return nil
         }
-        markSent(said.flatMap { $0.items.map(\.key) } + failed.map { "checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",") }, for: id)
-        return true
+    }
+
+    /// Feedback queued while claude was busy, now its turn has ended;
+    /// left out if it was all sent from the PRs pane meanwhile.
+    func sendPendingFeedback(_ id: UUID) {
+        guard let pending = pendingFeedback.removeValue(forKey: id) else { return }
+        let sent = self.sent[id] ?? []
+        guard !pending.keys.allSatisfy(sent.contains), submit(pending.prompt, to: id) else { return }
+        markSent(pending.keys, for: id)
     }
 
     // MARK: Helpers

@@ -32,7 +32,10 @@ struct SessionPullRequest: Identifiable, Hashable {
         let comments: [Comment]
 
         /// Seen at its latest comment, so a reply makes it new again.
-        var key: String { "feedback:\(id):\(comments.last?.url.absoluteString ?? "")" }
+        var key: String { keyPrefix + (comments.last?.url.absoluteString ?? "") }
+        /// What every key it's had starts with.
+        var keyPrefix: String { Self.keyPrefix(id) }
+        static func keyPrefix(_ id: String) -> String { "feedback:\(id):" }
         /// Who said the newest thing in it.
         var latestAuthor: String { comments.last?.author ?? author }
     }
@@ -344,7 +347,7 @@ extension GitHubAPI {
               } } } } } }
               reviews(last: 30) { nodes { id author { login } state body url } }
               reviewThreads(first: 60) { nodes { id isResolved isOutdated path line originalLine
-                comments(first: 20) { nodes { author { login } body url } } } }
+                comments(last: 20) { nodes { author { login } body url } } } }
             }
             """
         var values: [String: Any] = ["q": "\(GitHubAccounts.scope(org)) is:pr head:\(branch)"]

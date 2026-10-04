@@ -547,11 +547,13 @@ added, removed or created, and the tracked board field set), and commits to the 
   every 90 seconds, 30 while checks run, and flags new failures and new review feedback in one
   notification (`noticeNews`). What's been seen is kept with the session
   (`CodeSession.pullRequestsSeen`, so a relaunch flags what came while Gannin was closed; the
-  first look only learns), a thread by its latest comment, so a reply from anyone but the PR's
-  author is new again. Conversation comments, approvals and conflicts aren't flagged. With Send
-  new feedback to Claude (the PRs pane, `CodeSession.sendsFeedback`, defaulting to Settings >
-  General > Agent, `sessionsSendFeedback`, off) it's also pasted into the session: now when
-  claude is waiting for a prompt, else through `pendingPrompts` when it finishes its turn.
+  first look only learns), a thread by its latest comment (`comments(last: 20)`, older keys
+  dropped), so a reply from anyone but the PR's author is new again. Conversation comments,
+  approvals and conflicts aren't flagged. With Send new feedback to Claude (the PRs pane,
+  `CodeSession.sendsFeedback`, defaulting to Settings > General > Agent, `sessionsSendFeedback`,
+  off) it's also pasted into the session: now when claude is waiting for a prompt, else queued
+  (`pendingFeedback`) until its turn ends, dropped if claude exits first, and marked sent only
+  once pasted.
 - Helpers (`CodeSession.parentID`, `role`, `prompt`): more agents on an issue's folder and
   branch, each with its own settings file in `.gannin/`; Review the Changes starts one with
   edits disallowed (`isReviewer`, `--disallowedTools`) and `SessionStore.reviewPrompt`.

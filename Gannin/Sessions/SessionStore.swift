@@ -367,6 +367,9 @@ final class SessionStore {
     /// What to tell claude once it has started (a review asked to look
     /// again while it wasn't running).
     @ObservationIgnored var pendingPrompts: [UUID: String] = [:]
+    /// New PR feedback waiting for claude's turn to end, with the keys to
+    /// mark sent once it's pasted. Dropped if claude exits first.
+    @ObservationIgnored var pendingFeedback: [UUID: (prompt: String, keys: [String])] = [:]
     /// What happened on reviewed PRs, for the Inbox's catch-up.
     let activity = ReviewActivity()
     /// Every session at once instead of a tab.
@@ -670,6 +673,9 @@ final class SessionStore {
         let old = states[id]
         guard old != state else { return }
         states[id] = state
+        // Feedback queued for a claude that's gone may be dealt with by the
+        // time it's back; the PRs pane still offers it.
+        if state == .exited || state == .stopped { pendingFeedback[id] = nil }
         if [.needsYou, .idle, .exited].contains(state), sessions[id] != nil {
             sessions[id]?.lastActiveAt = .now
             save()
@@ -678,8 +684,9 @@ final class SessionStore {
         case .needsYou:
             let asking = transcripts[id]?.question != nil
             flag(id, title: "Claude needs you", body: asking ? (transcripts[id]?.question?.items.first?.question ?? "") : "It's asking for permission to go on.", replies: true)
-        case .idle where pendingPrompts[id] != nil:
+        case .idle where pendingPrompts[id] != nil || pendingFeedback[id] != nil:
             sendPendingPrompt(id)
+            sendPendingFeedback(id)
         case .idle where old == .working:
             flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false)
         case .working, .starting, .stopped:
