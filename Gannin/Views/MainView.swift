@@ -541,6 +541,9 @@ private struct PageStack: View {
     /// The PRs, issues and harness documents open in drawers over the
     /// page, the top one last. A link in a drawer opens another on top.
     @State private var drawers: [DetailSelection] = []
+    /// New Issue, while its sheet is open.
+    @State private var newIssue: NewIssueContext?
+    @State private var stackID = UUID()
 
     var body: some View {
         Group {
@@ -577,6 +580,14 @@ private struct PageStack: View {
             }
         }
         .overlay(alignment: .trailing) { drawerOverlay }
+        .environment(\.newIssue, newIssueAction)
+        .focusedSceneValue(\.newIssue, newIssueAction)
+        .sheet(item: $newIssue) { context in
+            NewIssueSheet(context: context) { created in
+                // The new issue, in a drawer over the page.
+                if let created { navigate(at: path.count)(.issueReference(created)) }
+            }
+        }
         .animation(.snappy(duration: 0.25), value: drawers)
         .onChange(of: path) { drawers = [] }
         .toolbar {
@@ -595,6 +606,14 @@ private struct PageStack: View {
             }
         }
         .environment(\.currentOrg, org)
+    }
+
+    /// New Issue from anywhere in the window: what's asked for, else the
+    /// board the page shows.
+    private var newIssueAction: NewIssueAction {
+        NewIssueAction(window: stackID) { context in
+            newIssue = context ?? NewIssueContext(org: org, board: path.isEmpty && tab == .projects ? project : nil)
+        }
     }
 
     // MARK: Chrome

@@ -71,7 +71,10 @@ final class HarnessStore {
     /// fetch is the store's, not the caller's: a view going away (as Settings
     /// redraws once a harness is picked) mustn't cancel it half done, and a
     /// second caller waits on the fetch already running.
-    func load(org: String, setup: HarnessConfig, force: Bool = false) async {
+    /// - Parameter expecting: a commit just made, which GitHub can take a
+    ///   moment to report as the branch's head: fetched again (a few times,
+    ///   a little later each time) until it does.
+    func load(org: String, setup: HarnessConfig, force: Bool = false, expecting: String? = nil) async {
         let indexKey = Self.key(org, setup.repo)
         loadCached(org, repo: setup.repo)
         if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge { return }
@@ -96,7 +99,14 @@ final class HarnessStore {
                 fetches[indexKey] = nil
             }
             do {
-                indexes[indexKey] = try await Self.fetch(setup: setup, previous: previous, api: api)
+                var index = try await Self.fetch(setup: setup, previous: previous, api: api)
+                var attempt = 0
+                while let expecting, index.commit != expecting, attempt < 5 {
+                    attempt += 1
+                    try await Task.sleep(for: .seconds(attempt))
+                    index = try await Self.fetch(setup: setup, previous: index, api: api)
+                }
+                indexes[indexKey] = index
                 errors[indexKey] = nil
                 save(org, repo: setup.repo)
             } catch APIError.unauthorized {

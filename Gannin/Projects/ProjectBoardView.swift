@@ -12,6 +12,7 @@ struct ProjectBoardView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.navigate) private var navigate
     @Environment(\.openURL) private var openURL
+    @Environment(\.newIssue) private var newIssue
     let org: String
     let number: Int
 
@@ -41,6 +42,9 @@ struct ProjectBoardView: View {
             } else {
                 ProgressView("Loading project").frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+        .toolbar {
+            ToolbarItem { NewIssueButton(context: NewIssueContext(org: org, board: number, boardFilter: appliedFilter)) }
         }
         .task(id: "\(org)#\(number) \(appliedFilter)") {
             await store.sync(org: org, number: number, filter: appliedFilter)
@@ -181,7 +185,12 @@ struct ProjectBoardView: View {
             let sorted = BoardLayout.sorted(items, by: sortBy)
             switch mode {
             case .layout(.board):
-                BoardColumnsView(board: board, items: sorted, columnBy: columnBy ?? "Status", swimlaneBy: groupBy, visibleFields: visible, open: open)
+                BoardColumnsView(board: board, items: sorted, columnBy: columnBy ?? "Status", swimlaneBy: groupBy, visibleFields: visible, open: open) { value in
+                    // A column's +: New Issue in that column.
+                    var context = NewIssueContext(org: org, board: number, boardFilter: appliedFilter)
+                    if let value { context.fields[columnBy ?? "Status"] = value.display }
+                    newIssue?(context)
+                }
             case .insights:
                 BoardInsightsView(org: org, board: board, items: items)
             default:

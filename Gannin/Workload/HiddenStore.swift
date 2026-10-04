@@ -41,6 +41,8 @@ final class HiddenStore {
 /// while "Show hidden" is on).
 struct HideableRow: ViewModifier {
     @Environment(HiddenStore.self) private var hidden
+    @Environment(IssueStore.self) private var issueStore
+    @Environment(\.currentOrg) private var org
     @Environment(\.openURL) private var openURL
     let key: String
     let url: URL?
@@ -64,11 +66,25 @@ struct HideableRow: ViewModifier {
             .contextMenu {
                 if let opens { OpenElsewhereItems(opens) }
                 Button(isHidden ? "Unhide" : "Hide") { hidden.toggle(key) }
+                if let parent { NewSubIssueItem(parent: parent) }
                 if let extra { extra }
                 if let url {
                     Button("Open on GitHub") { openURL(url) }
                 }
             }
+    }
+
+    /// The issue the row is, for New Sub-issue; nil for a PR or anything else.
+    private var parent: IssueReference? {
+        switch opens {
+        case .issueReference(let reference):
+            return reference
+        case .issue(let id):
+            guard let org, let issue = issueStore.history(for: org)?.issues[id] else { return nil }
+            return IssueReference(org: org, record: issue)
+        default:
+            return nil
+        }
     }
 }
 

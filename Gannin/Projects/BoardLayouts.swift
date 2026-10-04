@@ -179,6 +179,8 @@ struct BoardColumnsView: View {
     let swimlaneBy: String?
     let visibleFields: [String]
     let open: (BoardItem) -> Void
+    /// New Issue in a column, given its value (nil for the empty one).
+    var add: ((IssueFieldValue?) -> Void)?
     @Environment(\.currentOrg) private var org
 
     private static let columnWidth: CGFloat = 290
@@ -215,6 +217,12 @@ struct BoardColumnsView: View {
                     .font(.callout.weight(.semibold))
                 Text("\(column.items.count)").foregroundStyle(.secondary).monospacedDigit()
                 Spacer()
+                if let add {
+                    Button { add(column.value) } label: { Image(systemName: "plus") }
+                        .buttonStyle(.borderless)
+                        .foregroundStyle(.secondary)
+                        .help("New issue in \(column.name)")
+                }
             }
             .padding(.horizontal, 4)
             LazyVStack(spacing: 8) {

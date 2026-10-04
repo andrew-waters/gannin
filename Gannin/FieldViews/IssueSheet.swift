@@ -14,6 +14,7 @@ struct IssueSheet: View {
     @Environment(\.navigate) private var navigate
     @Environment(\.openAsPage) private var openAsPage
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.newIssue) private var newIssue
 
     let reference: IssueReference
     let signals: IssueSignals?
@@ -149,6 +150,12 @@ struct IssueSheet: View {
                 Button("Open in Window") {
                     onClose()
                     openWindow(value: reference)
+                }
+                if let newIssue {
+                    Button("New Sub-issue") {
+                        newIssue(NewIssueContext(org: reference.org, repo: reference.repo, parent: reference))
+                    }
+                    .help("Write a new issue under this one")
                 }
                 StartSessionButton(reference: reference)
             }

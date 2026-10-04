@@ -310,10 +310,13 @@ enum HarnessCommitting {
     }
 }
 
-/// Say what it's for, and Claude drafts it from that, the harness's
-/// guides, the ones already there and the org's guidance for the kind
-/// (Settings › Harness). Run through your own claude, only when asked;
-/// nothing's committed until you do.
+/// Drafting with Claude as a conversation: say what it's for, and Claude
+/// asks what it needs to know or drafts it (from the harness's guides, the
+/// ones already there and the org's guidance for the kind, Settings ›
+/// Harness), saying what it did; answer or ask for changes and it carries
+/// on, working from what's in the editor. One claude conversation per
+/// sheet (`--resume` in the same folder). Run through your own claude,
+/// only when you send something; nothing's committed until you do.
 struct DraftWithClaudeSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
@@ -323,29 +326,85 @@ struct DraftWithClaudeSection: View {
     /// What's written so far, to improve on; nil for nothing yet.
     let current: () -> String?
     let apply: (HarnessAuthoring.Reply) -> Void
-    @State private var ask = ""
+
+    struct Turn: Identifiable {
+        let id = UUID()
+        let fromClaude: Bool
+        let text: String
+    }
+
+    @State private var message = ""
+    @State private var turns: [Turn] = []
     @State private var working = false
-    @State private var status: String?
+    @State private var conversation = UUID()
+    /// Claude has answered once, so there's a conversation to go on with.
+    @State private var started = false
 
     var body: some View {
         Section {
-            TextField("What's it for?", text: $ask, prompt: Text(placeholder), axis: .vertical)
-                .lineLimit(2...6)
-            HStack {
-                Button(working ? "Drafting" : "Draft with Claude") { Task { await draft() } }
-                    .disabled(working || ask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                if working { ProgressView().controlSize(.small) }
-                Spacer()
+            if !turns.isEmpty {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 10) {
+                            ForEach(turns) { turn in
+                                bubble(turn).id(turn.id)
+                            }
+                            if working {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small)
+                                    Text("Claude is thinking").foregroundStyle(.secondary)
+                                }
+                                .id("working")
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+                    .frame(minHeight: 80, maxHeight: 300)
+                    .onChange(of: turns.count) {
+                        withAnimation { proxy.scrollTo(turns.last?.id, anchor: .bottom) }
+                    }
+                    .onChange(of: working) {
+                        if working { withAnimation { proxy.scrollTo("working", anchor: .bottom) } }
+                    }
+                }
             }
-            if let status {
-                Text(status).font(.caption).foregroundStyle(.secondary)
+            TextField("Message", text: $message, prompt: Text(turns.isEmpty ? placeholder : "Answer, or say what to change"), axis: .vertical)
+                .lineLimit(2...6)
+                .onSubmit(send)
+            HStack {
+                Button(turns.isEmpty ? "Start with Claude" : "Send") { send() }
+                    .keyboardShortcut(.return, modifiers: [.command, .shift])
+                    .disabled(working || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if working && turns.isEmpty { ProgressView().controlSize(.small) }
+                Spacer()
+                if !turns.isEmpty {
+                    Button("Start Over") {
+                        turns = []
+                        conversation = UUID()
+                        started = false
+                    }
+                    .disabled(working)
+                    .help("Forget this conversation; what's in the editor stays")
+                }
             }
         } header: {
             Text("Draft with Claude")
         } footer: {
-            Text("Claude reads the harness's guides and the \(kind.rawValue.lowercased()) already there, and follows the org's guidance for \(kind.rawValue.lowercased()), set in Settings under Harness. Drafting again improves on what's below. Nothing's committed until you do.")
+            Text("A conversation: Claude asks what it needs to know, drafts into the fields below and says what it did, and carries on from there. It reads the harness's guides and the \(kind.rawValue.lowercased()) already there, follows the org's guidance for \(kind.rawValue.lowercased()) (Settings under Harness), and sees your edits each time. Nothing's committed until you do.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+    }
+
+    private func bubble(_ turn: Turn) -> some View {
+        HStack {
+            if !turn.fromClaude { Spacer(minLength: 40) }
+            Text(turn.text)
+                .textSelection(.enabled)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(turn.fromClaude ? Color.secondary.opacity(0.12) : Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+            if turn.fromClaude { Spacer(minLength: 40) }
         }
     }
 
@@ -358,27 +417,52 @@ struct DraftWithClaudeSection: View {
         }
     }
 
-    private func draft() async {
+    private static let conversational = """
+        This is a conversation with me, not a one-off. Put what you say to me in `message`. If something that matters is unclear, ask me (a few short questions at most) in `message` and leave the other fields out until I've answered. Once you can, draft it, and use `message` to say briefly what you did and anything I should check. Later messages from me are answers or changes: work from what's in the editor then, since I may have edited it. Always reply with only the JSON, `message` included.
+        """
+
+    private func send() {
+        let text = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !working else { return }
+        message = ""
+        let isFirst = !started
+        turns.append(Turn(fromClaude: false, text: text))
         working = true
-        status = nil
-        defer { working = false }
-        let guides = await harness.guides(for: kind, org: org, setup: setup)
-        let prompt = HarnessAuthoring.request(
-            kind: kind,
-            guidance: HarnessAuthoring.guidance(for: kind, config: configs.config(for: org), org: org),
-            ask: ask, current: current(), guides: guides.keys.sorted(),
-            existing: (harness.index(for: org, setup)?.documents(kind) ?? []).filter { $0.summary != nil }
-        )
-        do {
-            let reply = try await ClaudeRunner.ask(prompt, org: org, files: guides.mapValues { Data($0.utf8) }, tools: ["Read", "Glob", "Grep"])
-            guard let parsed = ClaudeRunner.json(HarnessAuthoring.Reply.self, in: reply) else {
-                status = "Claude's reply wasn't a draft. Say a little more and try again."
-                return
+        Task {
+            defer { working = false }
+            let prompt: String
+            var files: [String: Data] = [:]
+            if isFirst {
+                let guides = await harness.guides(for: kind, org: org, setup: setup)
+                files = guides.mapValues { Data($0.utf8) }
+                prompt = HarnessAuthoring.request(
+                    kind: kind,
+                    guidance: HarnessAuthoring.guidance(for: kind, config: configs.config(for: org), org: org),
+                    ask: turns.filter { !$0.fromClaude }.map(\.text).joined(separator: "\n\n"), current: current(), guides: guides.keys.sorted(),
+                    existing: (harness.index(for: org, setup)?.documents(kind) ?? []).filter { $0.summary != nil }
+                ) + "\n\n" + Self.conversational
+            } else {
+                let editor = current().map { "\n\nWhat's in the editor now:\n\n\($0)" } ?? ""
+                prompt = "\(text)\(editor)\n\nReply with only the JSON, as before."
             }
-            apply(parsed)
-            status = "Drafted. Check it over before committing."
-        } catch {
-            status = error.localizedDescription
+            do {
+                let reply = try await ClaudeRunner.ask(
+                    prompt, org: org, files: files, folder: "gannin-draft-\(conversation.uuidString)",
+                    tools: ["Read", "Glob", "Grep"], session: (conversation.uuidString.lowercased(), !isFirst)
+                )
+                started = true
+                guard let parsed = ClaudeRunner.json(HarnessAuthoring.Reply.self, in: reply) else {
+                    // Not the JSON: it's talking, so show it as said.
+                    turns.append(Turn(fromClaude: true, text: reply))
+                    return
+                }
+                if parsed.hasDraft { apply(parsed) }
+                turns.append(Turn(fromClaude: true, text: parsed.message ?? (parsed.hasDraft ? "Drafted. Check it over below." : "No changes.")))
+            } catch {
+                turns.append(Turn(fromClaude: true, text: error.localizedDescription))
+                // A first message that failed starts afresh next time.
+                if isFirst { conversation = UUID() }
+            }
         }
     }
 }

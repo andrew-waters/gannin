@@ -90,7 +90,7 @@ enum HarnessAuthoring {
             let list = existing.prefix(80).map { "- \($0.title) (`\($0.path)`)\($0.summary.map { ": \($0)" } ?? "")" }
             parts.append("The \(kind.rawValue.lowercased()) already in the harness:\n\n\(list.joined(separator: "\n"))")
         }
-        parts.append("Reply with only JSON, no preamble: \(replyShape(kind)). `body` is Markdown without front matter\(kind == .skills ? ", starting with its heading" : " or the title heading"); Gannin writes the front matter from the other fields.")
+        parts.append("Reply with only JSON, no preamble: \(replyShape(kind)), plus \"message\": what you say to me. `body` is Markdown without front matter\(kind == .skills ? ", starting with its heading" : " or the title heading"); Gannin writes the front matter from the other fields.")
         return parts.joined(separator: "\n\n")
     }
 
@@ -117,6 +117,14 @@ enum HarnessAuthoring {
         var domains: [String]?
         var issues: [String]?
         var body: String?
+        /// What Claude says to you: questions, or what it did.
+        var message: String?
+
+        /// Whether it drafted anything, rather than only asking.
+        var hasDraft: Bool {
+            [name, title, description, summary, status, severity, body].contains { $0 != nil }
+                || [repos, uses, skills, domains, issues].contains { $0 != nil }
+        }
     }
 }
 
