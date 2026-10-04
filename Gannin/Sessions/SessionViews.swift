@@ -1315,7 +1315,7 @@ struct SessionSettingsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Post automatic reviews to GitHub", isOn: $postsReviews)
-            Text("Reviews Gannin starts by itself are posted as comments, marked as written by Claude. They never approve or request changes. Off, they wait for you to Post Review.")
+            Text("Reviews Gannin starts by itself are posted as comments. They never approve or request changes. Off, they wait for you to Post Review.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Send new PR feedback to Claude", isOn: $sendsFeedback)

@@ -613,7 +613,7 @@ added, removed or created, and the tracked board field set), and commits to the 
   busy, it's asked to look again (`reviewAgain`: pasted when it's idle, else resumed from the
   history and sent once `SessionStart` reports idle, `pendingPrompts`). Merged or closed stops
   the watch. Runs Gannin started (`automaticRuns`) are posted as a COMMENT review when Post
-  automatic reviews (`autoPostReviews`) is on, marked as Claude's, never approving or requesting
+  automatic reviews (`autoPostReviews`) is on, never approving or requesting
   changes, and the threads it says are dealt with are resolved too; otherwise they wait for Post
   Review. What happened (`ReviewActivity`, `ReviewEvent`,
   newest 500 in Sessions/ReviewActivity.json) is the Inbox's While you were away section, one
