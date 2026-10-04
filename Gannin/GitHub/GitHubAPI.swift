@@ -21,7 +21,7 @@ enum APIError: Error, LocalizedError {
     /// GitHub error bodies are JSON with a `message`, and often `errors`
     /// saying why (a 422's message is only "Unprocessable Entity"): strings,
     /// or objects with their own `message` or else a `field` and `code`
-    /// (`title missing_field`). The message leads, then the reasons; fall
+    /// (`Issue title missing_field`). The message leads, then the reasons; fall
     /// back to the raw text.
     private static func message(from body: String) -> String {
         guard let data = body.data(using: .utf8),
