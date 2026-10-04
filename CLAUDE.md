@@ -565,8 +565,9 @@ added, removed or created, and the tracked board field set), and commits to the 
   (`reviewedPullRequest`), findings on their lines (Keep, Edit, Dismiss; `ReviewDraft`),
   comments of your own on any line, the summary and verdict, Review Again, and the
   conversation beneath. Post Review (`PostReviewSheet`) sends one review through REST:
-  Approve, Comment or Request Changes, inline comments on lines the diff shows (a suggestion
-  as a GitHub suggestion block), and the rest in the body. Looking again, the reviewer lists your
+  Approve, Comment or Request Changes (only Comment on your own PR, as GitHub takes nothing
+  else from its author), inline comments on lines the diff shows (a suggestion as a GitHub
+  suggestion block), and the rest in the body. Looking again, the reviewer lists your
   review threads (`gh api graphql`) and names those now dealt with in the JSON's `resolved`
   (`ReviewResult.resolved`); Post Review offers them ticked and resolves them once the review is
   posted (`resolveReviewThread`). Only unresolved threads on that PR that you started are

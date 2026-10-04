@@ -940,18 +940,32 @@ private struct PostReviewSheet: View {
 
     private var reference: PullRequestReference { session.reviewOf! }
 
+    /// GitHub won't take an approval or a change request on your own PR.
+    private var isOwn: Bool {
+        guard let me = auth.viewer?.login, let author = pullRequest.author else { return false }
+        return me.caseInsensitiveCompare(author) == .orderedSame
+    }
+
     var body: some View {
         let (inline, general) = comments()
         Form {
             Section {
                 Picker("Review", selection: $event) {
                     Text("Comment").tag("COMMENT")
-                    Text("Approve").tag("APPROVE")
-                    Text("Request Changes").tag("REQUEST_CHANGES")
+                    if !isOwn {
+                        Text("Approve").tag("APPROVE")
+                        Text("Request Changes").tag("REQUEST_CHANGES")
+                    }
                 }
                 .pickerStyle(.segmented)
             } header: {
                 Text(verbatim: "\(reference.repo)#\(reference.number)")
+            } footer: {
+                if isOwn {
+                    Text("It's your own pull request, so GitHub only takes a comment.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             // An editor rather than a field: a field selects all its text
             // when the sheet gives it focus.
@@ -1020,7 +1034,7 @@ private struct PostReviewSheet: View {
             }
         }
         .onAppear {
-            event = switch review?.verdict {
+            event = switch isOwn ? nil : review?.verdict {
             case "approve": "APPROVE"
             case "request_changes": "REQUEST_CHANGES"
             default: "COMMENT"
