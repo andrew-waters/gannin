@@ -14,6 +14,10 @@ xcodegen generate
 xcodebuild -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS' build
 ```
 
+To try a change in the app, `scripts/relaunch.sh` builds it signed (so it reads the same keychain
+token) and, only if the build succeeds, quits every running Gannin and opens the new build, detached,
+so a Claude Code session running inside Gannin resumes in it; `--no-build` relaunches the last build.
+
 Swift 6 with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so everything is main-actor unless
 marked otherwise. The Mac app isn't sandboxed while Claude Code sessions are prototyped: they
 run git, gh and claude as the user, which a sandboxed child process can't (its login, keys and
