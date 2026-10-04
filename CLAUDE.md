@@ -528,8 +528,9 @@ added, removed or created, and the tracked board field set), and commits to the 
   (`reviewedPullRequest`), findings on their lines (Keep, Edit, Dismiss; `ReviewDraft`),
   comments of your own on any line, the summary and verdict, Review Again, and the
   conversation beneath. Post Review (`PostReviewSheet`) sends one review through REST:
-  Approve, Comment or Request Changes, inline comments on lines the diff shows (a suggestion
-  as a GitHub suggestion block), and the rest in the body.
+  Approve, Comment or Request Changes (only Comment on your own PR, as GitHub takes nothing
+  else from its author), inline comments on lines the diff shows (a suggestion as a GitHub
+  suggestion block), and the rest in the body.
 - `ClaudeRunner` asks Claude Code one-off questions (`claude -p`), on this Mac when claude is
   installed here, else on the Connect with server: a bash script on standard input writes the
   prompt and any files into a folder and runs claude there with only the tools given. It
