@@ -45,6 +45,8 @@ struct OrgWorkloadView: View {
                 AskOrgPage(org: org, workload: workload)
             } else if tab == .epics {
                 EpicsView(org: org)
+            } else if tab == .releases {
+                ReleasesView(org: org)
             } else if tab == .hygiene {
                 BoardHygieneView(org: org)
             } else if tab == .recap {
@@ -202,7 +204,7 @@ struct OrgWorkloadView: View {
         case .repositories: repositoryView(workload)
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
-        case .projects, .actions, .harness, .views, .prioritisation, .recap, .scorecard, .agents, .ask, .epics, .hygiene, .settings: EmptyView()
+        case .projects, .actions, .harness, .views, .prioritisation, .recap, .scorecard, .agents, .ask, .epics, .hygiene, .releases, .settings: EmptyView()
         }
     }
 

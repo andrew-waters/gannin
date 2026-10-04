@@ -13,6 +13,7 @@ struct GanninApp: App {
     @State private var issues: IssueStore
     @State private var projects: ProjectStore
     @State private var actions: ActionsStore
+    @State private var releases: ReleaseStore
     @State private var orgConfigs: OrgConfigStore
     @State private var peopleDates: PeopleDatesStore
     @State private var bankHolidays = BankHolidayStore()
@@ -45,6 +46,7 @@ struct GanninApp: App {
         _issues = State(initialValue: IssueStore(auth: auth, activity: activity))
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))
+        _releases = State(initialValue: ReleaseStore(auth: auth, activity: activity))
         let harness = HarnessStore(auth: auth)
         _harness = State(initialValue: harness)
         // Team data from the harness, for orgs that keep it there.
@@ -104,6 +106,7 @@ struct GanninApp: App {
                 .capturesOpenWindow()
                 .environment(fieldNotes)
                 .environment(actions)
+                .environment(releases)
                 .environment(auth)
                 .environment(orgs)
                 .environment(details)
@@ -147,6 +150,7 @@ struct GanninApp: App {
                     .commandPaletteOpeningInMainWindow()
                     .environment(sessions)
                     .environment(actions)
+                    .environment(releases)
                     .environment(auth)
                     .environment(orgs)
                     .environment(details)
@@ -170,6 +174,7 @@ struct GanninApp: App {
                 IssueWindow(reference: reference)
                     .commandPaletteOpeningInMainWindow()
                     .environment(actions)
+                    .environment(releases)
                     .environment(auth)
                     .environment(orgs)
                     .environment(details)
@@ -199,6 +204,7 @@ struct GanninApp: App {
                 .environment(metrics)
                 .environment(workLog)
                 .environment(actions)
+                .environment(releases)
                 .environment(orgs)
                 .environment(auth)
                 .environment(issues)
@@ -223,6 +229,7 @@ struct GanninApp: App {
         Settings {
             SettingsView()
                 .environment(actions)
+                .environment(releases)
                 .environment(auth)
                 .environment(orgs)
                 .environment(metrics)
@@ -248,6 +255,7 @@ struct RootView: View {
     @Environment(IssueStore.self) private var issues
     @Environment(ProjectStore.self) private var projects
     @Environment(ActionsStore.self) private var actions
+    @Environment(ReleaseStore.self) private var releases
     @Environment(HarnessStore.self) private var harness
 
     var body: some View {
@@ -266,6 +274,7 @@ struct RootView: View {
                 issues.clear()
                 projects.clear()
                 actions.clear()
+                releases.clear()
                 harness.clear()
             }
         }

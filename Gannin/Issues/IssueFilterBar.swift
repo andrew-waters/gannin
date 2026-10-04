@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// What the issue pages narrow their issues by: open or closed, a search,
-/// and assignees, repositories and labels (several of each, any matching).
+/// and assignees, repositories, labels and milestones (several of each, any
+/// matching).
 /// Kept per window, as newline-joined strings in scene storage.
 struct IssueFilters {
     enum State: String, CaseIterable {
@@ -14,25 +15,30 @@ struct IssueFilters {
         case assignee = "Assignee"
         case repository = "Repository"
         case label = "Label"
+        case milestone = "Milestone"
     }
 
     /// Assignee values: a login, or these.
     static let unassigned = ""
     static let anyoneAssigned = "*"
+    /// The milestone value for issues in none.
+    static let noMilestone = ""
 
     var state: State = .open
     var search = ""
     var assignees: Set<String> = []
     var repositories: Set<String> = []
     var labels: Set<String> = []
+    var milestones: Set<String> = []
 
-    var isNarrowed: Bool { !search.isEmpty || !assignees.isEmpty || !repositories.isEmpty || !labels.isEmpty }
+    var isNarrowed: Bool { !search.isEmpty || !assignees.isEmpty || !repositories.isEmpty || !labels.isEmpty || !milestones.isEmpty }
 
     func values(_ key: Key) -> Set<String> {
         switch key {
         case .assignee: assignees
         case .repository: repositories
         case .label: labels
+        case .milestone: milestones
         }
     }
 
@@ -41,6 +47,7 @@ struct IssueFilters {
         case .assignee: assignees = values
         case .repository: repositories = values
         case .label: labels = values
+        case .milestone: milestones = values
         }
     }
 
@@ -67,6 +74,7 @@ struct IssueFilters {
         }
         if key != .repository, !repositories.isEmpty, !repositories.contains(issue.repo) { return false }
         if key != .label, !labels.isEmpty, !issue.labels.contains(where: labels.contains) { return false }
+        if key != .milestone, !milestones.isEmpty, !milestones.contains(issue.milestone ?? Self.noMilestone) { return false }
         return IssueSearch.matches(search, title: issue.title, repo: issue.repo, number: issue.number,
                                    people: issue.assignees + issue.assignees.map(names) + [issue.author].compactMap { $0 },
                                    labels: issue.labels)
@@ -79,6 +87,7 @@ struct StoredIssueFilters: DynamicProperty {
     @SceneStorage private var assignees: String
     @SceneStorage private var repositories: String
     @SceneStorage private var labels: String
+    @SceneStorage private var milestones: String
     @State private var search = ""
 
     init(_ prefix: String) {
@@ -86,11 +95,12 @@ struct StoredIssueFilters: DynamicProperty {
         _assignees = SceneStorage(wrappedValue: "", "\(prefix).assignees")
         _repositories = SceneStorage(wrappedValue: "", "\(prefix).repositories")
         _labels = SceneStorage(wrappedValue: "", "\(prefix).labels")
+        _milestones = SceneStorage(wrappedValue: "", "\(prefix).milestones")
     }
 
     var wrappedValue: IssueFilters {
         get {
-            IssueFilters(state: state, search: search, assignees: StoredSet.set(assignees), repositories: StoredSet.set(repositories), labels: StoredSet.set(labels))
+            IssueFilters(state: state, search: search, assignees: StoredSet.set(assignees), repositories: StoredSet.set(repositories), labels: StoredSet.set(labels), milestones: StoredSet.set(milestones))
         }
         nonmutating set {
             state = newValue.state
@@ -98,6 +108,7 @@ struct StoredIssueFilters: DynamicProperty {
             assignees = StoredSet.string(newValue.assignees)
             repositories = StoredSet.string(newValue.repositories)
             labels = StoredSet.string(newValue.labels)
+            milestones = StoredSet.string(newValue.milestones)
         }
     }
 
@@ -107,8 +118,9 @@ struct StoredIssueFilters: DynamicProperty {
 }
 
 /// A row at the top of an issue page, as the Views page has: search, then
-/// Assignee (Me first), Repository and Label as menus of the values the
-/// page's issues have, with counts, and Clear All. `leading` goes first
+/// Assignee (Me first), Repository, Label and Milestone (once any issue has
+/// one) as menus of the values the page's issues have, with counts, and
+/// Clear All. `leading` goes first
 /// (a page's own pickers); the state control sits at the end.
 struct IssueFilterBar<Leading: View>: View {
     @Environment(AuthStore.self) private var auth
@@ -123,7 +135,7 @@ struct IssueFilterBar<Leading: View>: View {
         HStack(spacing: 8) {
             leading
             FilterSearchField(text: $filters.search, prompt: "Title, number, person or label")
-            ForEach(IssueFilters.Key.allCases, id: \.self) { menu($0) }
+            ForEach(keys, id: \.self) { menu($0) }
             Spacer(minLength: 0)
             if filters.isNarrowed {
                 Button("Clear All") {
@@ -147,6 +159,11 @@ struct IssueFilterBar<Leading: View>: View {
         .padding(.vertical, 8)
     }
 
+    private var keys: [IssueFilters.Key] {
+        let hasMilestones = !filters.milestones.isEmpty || pool.contains { $0.milestone != nil }
+        return IssueFilters.Key.allCases.filter { $0 != .milestone || hasMilestones }
+    }
+
     private func menu(_ key: IssueFilters.Key) -> some View {
         let candidates = pool.filter { filters.matches($0, except: key, names: names) }
         var counts: [String: Int] = [:]
@@ -157,6 +174,7 @@ struct IssueFilterBar<Leading: View>: View {
                 for login in Set(issue.assignees) { counts[login, default: 0] += 1 }
             case .repository: counts[issue.repo, default: 0] += 1
             case .label: for label in Set(issue.labels) { counts[label, default: 0] += 1 }
+            case .milestone: counts[issue.milestone ?? IssueFilters.noMilestone, default: 0] += 1
             }
         }
         let me = auth.viewer?.login
@@ -167,7 +185,10 @@ struct IssueFilterBar<Leading: View>: View {
             leading.append(FilterOption(value: IssueFilters.anyoneAssigned, title: "Anyone Assigned", count: counts[IssueFilters.anyoneAssigned] ?? 0))
             leading.append(FilterOption(value: IssueFilters.unassigned, title: "Unassigned", count: counts[IssueFilters.unassigned] ?? 0))
         }
-        let options = counts.keys.filter { key != .assignee || !special.contains($0) }
+        if key == .milestone {
+            leading.append(FilterOption(value: IssueFilters.noMilestone, title: "No Milestone", count: counts[IssueFilters.noMilestone] ?? 0))
+        }
+        let options = counts.keys.filter { key == .assignee ? !special.contains($0) : key != .milestone || $0 != IssueFilters.noMilestone }
             .map { FilterOption(value: $0, title: title($0, key: key), count: counts[$0] ?? 0) }
             .sorted(byCount: key == .assignee)
         return FilterMenu(
@@ -187,6 +208,7 @@ struct IssueFilterBar<Leading: View>: View {
             }
         case .repository: value.split(separator: "/").last.map(String.init) ?? value
         case .label: value
+        case .milestone: value == IssueFilters.noMilestone ? "No Milestone" : value
         }
     }
 }

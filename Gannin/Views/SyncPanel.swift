@@ -17,6 +17,7 @@ struct SyncFooter: View {
     @Environment(IssueStore.self) private var issueStore
     @Environment(ProjectStore.self) private var projects
     @Environment(ActionsStore.self) private var actions
+    @Environment(ReleaseStore.self) private var releases
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HarnessStore.self) private var harness
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
@@ -187,7 +188,7 @@ struct SyncFooter: View {
     private func refresh(_ mode: OrgStore.RefreshMode) {
         OrgRefresh(
             orgs: orgs, metricsStore: metricsStore, workLog: workLog, issueStore: issueStore,
-            actions: actions, projects: projects, configs: configs, harness: harness, windowDays: windowDays
+            actions: actions, releases: releases, projects: projects, configs: configs, harness: harness, windowDays: windowDays
         )(org, mode: mode)
     }
 }
@@ -202,6 +203,7 @@ struct OrgRefresh {
     let workLog: WorkLogStore
     let issueStore: IssueStore
     let actions: ActionsStore
+    let releases: ReleaseStore
     let projects: ProjectStore
     let configs: OrgConfigStore
     let harness: HarnessStore
@@ -220,11 +222,13 @@ struct OrgRefresh {
             async let runs: Void = actions.isTracking(org)
                 ? actions.sync(org, windowDays: (syncDays + 1) / 2, excluding: config.unfetchedRepos, force: true)
                 : ()
+            // Milestones and releases, once the Releases page has been opened.
+            async let milestones: Void = releases.isTracking(org) ? releases.sync(org, excluding: config.unfetchedRepos, force: true) : ()
             // Boards, and the board investments are tracked on.
             async let boards: Void = projects.refresh(org: org, definitions: Self.trackedBoards(config))
             // The harness, whose .gannin may hold the team's settings.
             async let harnessIndex: Void = harness.loadAll(org: org, config.harnesses, force: true)
-            _ = await (workload, metrics, log, issues, runs, boards, harnessIndex)
+            _ = await (workload, metrics, log, issues, runs, milestones, boards, harnessIndex)
         }
     }
 
