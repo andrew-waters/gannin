@@ -30,6 +30,11 @@ struct SessionPullRequest: Identifiable, Hashable {
         /// "changes requested", for a review.
         let verdict: String?
         let comments: [Comment]
+
+        /// Seen at its latest comment, so a reply makes it new again.
+        var key: String { "feedback:\(id):\(comments.last?.url.absoluteString ?? "")" }
+        /// Who said the newest thing in it.
+        var latestAuthor: String { comments.last?.author ?? author }
     }
 
     let id: String
@@ -37,6 +42,8 @@ struct SessionPullRequest: Identifiable, Hashable {
     let title: String
     let url: URL
     let repo: String
+    /// Its author's login: their own replies aren't feedback.
+    let author: String?
     /// `OPEN`, `MERGED` or `CLOSED`.
     let state: String
     let isDraft: Bool
@@ -144,6 +151,13 @@ struct SessionPullRequestsPane: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let pullRequests, !pullRequests.isEmpty {
             Form {
+                Section {
+                    Toggle("Send new feedback to Claude", isOn: Binding(
+                        get: { sessions.sendsFeedback(owner) },
+                        set: { sessions.setSendsFeedback($0, for: owner) }
+                    ))
+                    .help("New failing checks and review comments are pasted into the session for Claude to address: now if it's waiting for you, else when it finishes its turn. Settings > General > Agent sets the default.")
+                }
                 ForEach(pullRequests) { pr in
                     section(pr)
                 }
@@ -213,14 +227,14 @@ struct SessionPullRequestsPane: View {
 
             if !pr.feedback.isEmpty, pr.state == "OPEN" {
                 ForEach(pr.feedback) { item in
-                    feedbackRow(item, sent: sent.contains(item.id))
+                    feedbackRow(item, sent: sent.contains(item.key))
                 }
-                let picked = pr.feedback.filter { !unticked.contains($0.id) && !sent.contains($0.id) }
+                let picked = pr.feedback.filter { !unticked.contains($0.id) && !sent.contains($0.key) }
                 HStack {
                     Spacer()
                     Button(picked.count == 1 ? "Send 1 to Claude" : "Send \(picked.count) to Claude") {
                         if sessions.submit(SessionPrompts.feedback(picked, on: pr, in: session), to: session.id) {
-                            sessions.markSent(picked.map(\.id), for: session.id)
+                            sessions.markSent(picked.map(\.key), for: session.id)
                         }
                     }
                     .disabled(!running || picked.isEmpty)
@@ -474,7 +488,7 @@ private struct RawPullRequest: Decodable {
             ))
         }
         return SessionPullRequest(
-            id: id, number: number, title: title, url: url, repo: repository.nameWithOwner, state: state,
+            id: id, number: number, title: title, url: url, repo: repository.nameWithOwner, author: prAuthor, state: state,
             isDraft: isDraft ?? false, reviewDecision: reviewDecision, mergeable: mergeable,
             checks: checks.sorted { order($0.state) < order($1.state) }, feedback: feedback
         )

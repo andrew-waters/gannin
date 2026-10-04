@@ -66,6 +66,13 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// A review's PR, watched for new commits and comments to review
     /// again; nil until its first review finishes.
     var watch: ReviewWatch? = nil
+    /// What's been seen on its PRs (failed checks, and threads and reviews
+    /// at their latest comment), kept so a relaunch only flags what came
+    /// since; nil until the first look.
+    var pullRequestsSeen: Set<String>? = nil
+    /// Whether new failures and feedback on its PRs go to claude by
+    /// themselves; nil for the user's default (`sendsFeedbackKey`).
+    var sendsFeedback: Bool? = nil
 
     var isRemote: Bool { connect != nil }
     var isHelper: Bool { parentID != nil }
@@ -114,6 +121,8 @@ extension CodeSession {
         reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
         watch = try container.decodeIfPresent(ReviewWatch.self, forKey: .watch)
+        pullRequestsSeen = try container.decodeIfPresent(Set<String>.self, forKey: .pullRequestsSeen)
+        sendsFeedback = try container.decodeIfPresent(Bool.self, forKey: .sendsFeedback)
     }
 }
 
@@ -349,7 +358,6 @@ final class SessionStore {
     /// new reviews flag it like a question would.
     var pullRequestInfo: [UUID: [SessionPullRequest]] = [:]
     var pullRequestErrors: [UUID: String] = [:]
-    @ObservationIgnored var pullRequestsSeen: [UUID: Set<String>] = [:]
     @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
     /// GitHub, once signed in; set by the app.
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }
