@@ -541,6 +541,9 @@ private struct PageStack: View {
     /// The PRs, issues and harness documents open in drawers over the
     /// page, the top one last. A link in a drawer opens another on top.
     @State private var drawers: [DetailSelection] = []
+    /// New Issue, while its sheet is open.
+    @State private var newIssue: NewIssueContext?
+    @State private var stackID = UUID()
 
     var body: some View {
         Group {
@@ -577,6 +580,14 @@ private struct PageStack: View {
             }
         }
         .overlay(alignment: .trailing) { drawerOverlay }
+        .environment(\.newIssue, newIssueAction)
+        .focusedSceneValue(\.newIssue, newIssueAction)
+        .sheet(item: $newIssue) { context in
+            NewIssueSheet(context: context) { created in
+                // The new issue, in a drawer over the page.
+                if let created { navigate(at: path.count)(.issueReference(created)) }
+            }
+        }
         .animation(.snappy(duration: 0.25), value: drawers)
         .onChange(of: path) { drawers = [] }
         .toolbar {
@@ -595,6 +606,14 @@ private struct PageStack: View {
             }
         }
         .environment(\.currentOrg, org)
+    }
+
+    /// New Issue from anywhere in the window: what's asked for, else the
+    /// board the page shows.
+    private var newIssueAction: NewIssueAction {
+        NewIssueAction(window: stackID) { context in
+            newIssue = context ?? NewIssueContext(org: org, board: path.isEmpty && tab == .projects ? project : nil)
+        }
     }
 
     // MARK: Chrome
@@ -1074,7 +1093,7 @@ struct OrgSidebar: View {
                     }
                     row(.epics)
                     DisclosureGroup(isExpanded: $projectsExpanded) {
-                        ForEach(projectStore.boardLists[selectedOrg] ?? []) { board in
+                        ForEach(projectStore.boards(org: selectedOrg, repo: configs.config(for: selectedOrg).boardsRepo)) { board in
                             Label(board.title, systemImage: "rectangle.split.3x1")
                                 .lineLimit(1)
                                 .tag(SidebarItem.project(board.number))
@@ -1166,6 +1185,11 @@ struct OrgSidebar: View {
         }
         .task(id: selectedOrg) {
             if let selectedOrg { await projectStore.loadBoards(org: selectedOrg) }
+        }
+        .task(id: selectedOrg.flatMap { configs.config(for: $0).boardsRepo }) {
+            if let selectedOrg, let repo = configs.config(for: selectedOrg).boardsRepo {
+                await projectStore.loadRepoBoards(org: selectedOrg, repo: repo)
+            }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             VStack(spacing: 0) {

@@ -38,7 +38,7 @@ extension HarnessStore {
             guard let planned = try await change(head.commit) else { return nil }
             do {
                 let commit = try await api.createCommit(repo: setup.repo, branch: head.branch, expectedHead: head.commit, change: planned)
-                if refreshing { Task { await load(org: org, setup: setup, force: true) } }
+                if refreshing { Task { await load(org: org, setup: setup, force: true, expecting: commit) } }
                 return commit
             } catch let error as APIError where error.isStaleHead && attempt == 0 {
                 continue

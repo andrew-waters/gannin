@@ -55,6 +55,9 @@ struct OrgConfig: Codable, Hashable {
     /// `OrgConfigStore.config(for:)` and never saved; nil for All.
     var scope: RepoProject?
 
+    /// The repo whose linked boards the window lists; nil for every board.
+    var boardsRepo: String? { scope?.boardsRepo }
+
     /// What views check a repo against: excluded, or outside the project.
     var repoExclusion: RepoExclusion { RepoExclusion(excluded: excludedRepos, focus: focusRepos) }
 

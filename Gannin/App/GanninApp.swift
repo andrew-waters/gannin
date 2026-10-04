@@ -114,7 +114,10 @@ struct GanninApp: App {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesCommand()
             }
-            CommandGroup(after: .newItem) {
+            // ⌘N is New Issue; New Window moves to ⌥⌘N, as Mail's does.
+            CommandGroup(replacing: .newItem) {
+                NewIssueCommand()
+                NewWindowCommand()
                 NewTabCommand()
                 RenameTabCommand()
             }

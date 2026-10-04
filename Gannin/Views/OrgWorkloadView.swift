@@ -85,6 +85,10 @@ struct OrgWorkloadView: View {
             if hasWindowPicker {
                 ToolbarItem { windowPicker }
             }
+            // A board's page has its own, for its column and filter.
+            if [.inbox, .issues, .epics, .prioritisation, .hygiene, .views].contains(tab) || (tab == .projects && project == nil) {
+                ToolbarItem { NewIssueButton() }
+            }
         }
         .task {
             await orgs.refreshIfStale(org)

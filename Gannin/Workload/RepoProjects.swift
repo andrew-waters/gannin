@@ -25,6 +25,9 @@ struct RepoProject: Codable, Hashable, Identifiable {
     var scorecard: [Measurable]?
     /// Its own recap cadence; nil for the org's.
     var recap: RecapCadence?
+    /// The repo whose linked boards it lists (`owner/name`); nil for every
+    /// board the org has.
+    var boardsRepo: String?
     /// The board's date field Prioritisation reads as committed to; nil
     /// for the one picked for the org on this Mac.
     var committedDateField: String?
@@ -48,6 +51,7 @@ struct RepoProject: Codable, Hashable, Identifiable {
         scorecard = try container.decodeIfPresent([Measurable].self, forKey: .scorecard)
         recap = try container.decodeIfPresent(RecapCadence.self, forKey: .recap)
         committedDateField = try container.decodeIfPresent(String.self, forKey: .committedDateField)
+        boardsRepo = try container.decodeIfPresent(String.self, forKey: .boardsRepo)
     }
 
     /// Its harness, for its repos: where work in them runs.
@@ -80,6 +84,7 @@ struct RepoExclusion: Hashable {
 struct ProjectsSettingsSection: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HarnessStore.self) private var harness
+    @Environment(ProjectStore.self) private var boards
     let org: String
     /// Every repo there is to pick from.
     let repos: [String]
@@ -135,6 +140,7 @@ struct ProjectsSettingsSection: View {
         }
         if let selected {
             details(selected)
+            boardsSection(selected)
             harnessSection(selected)
             if let setup = selected.harness {
                 HarnessPromptsSection(org: org, setup: setup)
@@ -243,6 +249,35 @@ struct ProjectsSettingsSection: View {
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         return active.map { SearchableChoice(value: $0, title: $0, section: "With recent PRs") }
             + rest.map { SearchableChoice(value: $0, title: $0, section: "Every other repo") }
+    }
+
+    // MARK: Boards
+
+    private func boardsSection(_ project: RepoProject) -> some View {
+        let taken = Set(project.repos)
+        let rest = Set(harness.repositories[org] ?? []).union(project.boardsRepo.map { [$0] } ?? []).subtracting(taken)
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        let choices = [SearchableChoice(value: nil, title: "Every board in \(org)")]
+            + project.repos.map { SearchableChoice(value: $0, title: $0, section: "Its repos") }
+            + rest.map { SearchableChoice(value: $0, title: $0, section: "Every other repo") }
+        return Section {
+            LabeledContent("Boards") {
+                SearchablePicker(choices: choices, selection: project.boardsRepo, prompt: "Search repositories", isLoading: harness.repositories[org] == nil) { repo in
+                    update(project.id) { $0.boardsRepo = repo }
+                }
+            }
+            if let repo = project.boardsRepo {
+                let linked = boards.boards(org: org, repo: repo)
+                Text(linked.isEmpty ? "No open boards of \(org)'s are linked to \(repo) yet." : linked.map(\.title).joined(separator: ", "))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .task(id: repo) { await boards.loadRepoBoards(org: org, repo: repo) }
+            }
+        } footer: {
+            Text("With this project picked, Boards in the sidebar lists these. A repo's boards are those linked to it on GitHub (the repo's Projects tab) that \(org) owns.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
     }
 
     // MARK: Harness

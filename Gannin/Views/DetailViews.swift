@@ -298,7 +298,7 @@ struct IssueColumn: View {
                     if let pr = workload.pullRequest(id: item.id) {
                         PullRequestRow(pr: pr).tag(DetailSelection.pullRequest(pr.id))
                     } else {
-                        ExternalItemRow(item: item, systemImage: "arrow.triangle.pull")
+                        ExternalItemRow(item: item, systemImage: "arrow.triangle.pull", isPullRequest: true)
                     }
                 }
             }
@@ -560,14 +560,25 @@ struct PeopleGridRow: View {
 
 /// A linked issue or PR that isn't in the snapshot (closed, or outside the
 /// org), so it opens on GitHub instead of in a column.
+/// A linked issue or PR outside the workload: in a drawer where the page
+/// has one (looked up by number there), else on GitHub.
 struct ExternalItemRow: View {
     @Environment(\.openURL) private var openURL
+    @Environment(\.navigate) private var navigate
+    @Environment(\.currentOrg) private var org
     let item: LinkedItem
     let systemImage: String
+    var isPullRequest = false
 
     var body: some View {
         Button {
-            openURL(item.url)
+            if let navigate, let org {
+                navigate(isPullRequest
+                    ? .pullRequestReference(PullRequestReference(org: org, id: item.id, number: item.number, title: item.title, repo: item.repo, url: item.url))
+                    : .issueReference(IssueReference(org: org, id: item.id, number: item.number, title: item.title, repo: item.repo, url: item.url)))
+            } else {
+                openURL(item.url)
+            }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: systemImage).foregroundStyle(item.stateColor)
@@ -578,7 +589,9 @@ struct ExternalItemRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Image(systemName: "arrow.up.right.square").foregroundStyle(.secondary)
+                if navigate == nil || org == nil {
+                    Image(systemName: "arrow.up.right.square").foregroundStyle(.secondary)
+                }
             }
             .contentShape(Rectangle())
         }

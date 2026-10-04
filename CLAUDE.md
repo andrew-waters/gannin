@@ -413,6 +413,19 @@ added, removed or created, and the tracked board field set), and commits to the 
   link) and `<br>` become Markdown, tags with no Markdown of their own (`<sub>`, `<div>`, `<p>`)
   are dropped keeping their text, and `---` is a rule. Only HTML's tag names are touched, never
   inside code.
+- New Issue (`Issues/NewIssue.swift`, `NewIssueSheet`): ⌘N (File › New Issue; New Window is
+  ⌥⌘N), New Issue in the toolbar of the issue pages, Inbox, Epics, Prioritisation, Board Hygiene,
+  Views and Boards, a + on each board column (that column's value preset), and New Sub-issue in an
+  issue's context menu (`HideableRow`) and drawer. `PageStack` holds the sheet and hands out
+  `NewIssueAction` (environment and focused value, `NewIssueContext`: repo, board, field values,
+  parent), and opens the new issue in a drawer. Two columns: an issue in a repo or a draft item on
+  the board (`addProjectV2DraftIssue`), the repo (the project's first), its issue templates
+  (`.github/ISSUE_TEMPLATE`, Markdown or forms as headings, `IssueTemplate`), title and
+  description, and Draft with Claude (`ClaudeRunner`, a conversation that revises the draft, with
+  harness skills to follow, those about issues ticked to start); then the board (the workflow
+  board by default) and its settable fields (`BoardField.isSettable`), assignees, labels and
+  parent. Create writes it step by step: `createIssue` (labels, assignees), `addSubIssue`,
+  `addToBoard`, then each field with `setProjectField`; Create Another keeps the sheet open.
 - Issues › Not on a board (`OffBoardIssuesView`) lists stored issues on no board, or not on a
   chosen one (starting from the investments board), open, closed or all. Select them and add
   them to a board in bulk through `BulkWriteSheet` (confirm, then each ticked off, open until
@@ -430,6 +443,13 @@ added, removed or created, and the tracked board field set), and commits to the 
   Projects; a board page (`ProjectBoardView`) shows the board's saved views as tabs, each
   opening with its own filter, layout, grouping (table sections or board swimlanes), board
   columns, sort and visible fields. Changes there are local and never saved back.
+- The Boards page before a board is picked (`ProjectsLandingView`) stands in for a repo's Projects
+  tab on GitHub: the org's boards, or for a project with `boardsRepo` those linked to the repo,
+  with a search and Open and Closed tabs (`ProjectStore.allBoards`; `boardLists` and `boards` are
+  the open ones everything else lists). New Board (`NewBoardSheet`, `Projects/BoardWrites.swift`)
+  makes one with `createProjectV2`, or copies a board's fields and views (`copyProjectV2`), and
+  links it to a repo; Link Board, Unlink, Close and Reopen are confirmed first
+  (`linkProjectV2ToRepository`, `unlinkProjectV2FromRepository`, `updateProjectV2`).
 - Items are fetched with the view's filter passed to GitHub (`items(query:)`), so GitHub
   applies its own filter syntax; `ProjectStore` caches each board's definition and each
   filter's items on disk, refreshed after 10 minutes. Layouts: Table (`StatsTable` per group),
@@ -568,7 +588,9 @@ added, removed or created, and the tracked board field set), and commits to the 
 - Harness writes (`Harness/HarnessWrites.swift`, `HarnessStore.commit`) are commits through
   GraphQL `createCommitOnBranch` (`GitHubAPI.mutate` takes object variables), several files
   at once with `expectedHeadOid`; when the branch moved, the change is planned again on the new
-  head and retried once.
+  head and retried once. The index is then fetched again until GitHub reports the new commit as
+  the head (`load(expecting:)`, up to five tries a second longer apart each time), so what was
+  written shows without a Refresh.
 - Hooks in the session's `--settings` write its state (working, needs you, your turn, exited)
   to a file `SessionStore` reads every second while a terminal runs, and the URL from a
   `gh pr create`. claude runs signed in as the user; Gannin never handles that login.
@@ -588,8 +610,10 @@ added, removed or created, and the tracked board field set), and commits to the 
   `HarnessSkillEditor` and `HarnessPromptEditor` (also Edit in a skill's or prompt's context
   menu), `HarnessDocumentEditor` for requirements and findings (front matter as STANDARDS.md has
   it, the body from the folder's `_template.md`), and Plan with Claude for plans. Each commits one
-  file. `DraftWithClaudeSection` has Claude draft it (`ClaudeRunner`, the guides sent
-  as files, a JSON reply, `HarnessAuthoring.request`) from the org's guidance for the kind:
+  file. `DraftWithClaudeSection` drafts it with Claude as a conversation (`ClaudeRunner`
+  with one session per sheet, `--resume` in the same folder; the guides sent as files on the first
+  message, `HarnessAuthoring.request`; each reply JSON with a `message` to you, questions until it
+  can draft, the editor's text sent with every later message; Start Over forgets it) from the org's guidance for the kind:
   `OrgConfig.authoring` (a team file, `.gannin/authoring.json`), else
   `HarnessAuthoring.defaultGuidance`, edited in Settings > Harness (`HarnessAuthoringSection`).
   For plans it's the planning session's first prompt (`{{topic}}`, `{{plan}}`, `{{docs}}`,
@@ -630,7 +654,9 @@ added, removed or created, and the tracked board field set), and commits to the 
 - Projects (`Workload/RepoProjects.swift`, `RepoProject`, `OrgConfig.repoProjects`, a team file,
   `.gannin/repo-projects.json`) are the unit a window works in: a name, repos, and optionally its
   own harness, workflow board, investments, goals, scorecard measurables, recap cadence and
-  committed date field, each the org's while nil. Org › Project is picked from the project menu
+  committed date field, each the org's while nil, and the repo whose linked boards it lists
+  (`boardsRepo`: the sidebar's Boards and the Boards page show `ProjectStore.boards(org:repo:)`,
+  the repo's boards that the org owns, `repoProjects`, cached per repo; nil for every board). Org › Project is picked from the project menu
   above the org in the sidebar's footer (`SidebarFooter.projectMenu`, once the org has projects),
   per window (`@SceneStorage("workspace")`, not `selectedProject`, which is a board;
   carried by Open in New Tab and New Window through `NavigationRequest.workspace`, cleared when

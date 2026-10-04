@@ -15,7 +15,7 @@ extension GitHubAPI {
 
     /// A new issue in the repo, with any of its labels that exist there.
     /// Returns its node ID, number and URL. A write.
-    func createIssue(repo: String, title: String, body: String, labels: [String] = []) async throws -> (id: String, number: Int, url: URL) {
+    func createIssue(repo: String, title: String, body: String, labels: [String] = [], assigneeIDs: [String] = []) async throws -> (id: String, number: Int, url: URL) {
         struct Repository: Decodable {
             struct Node: Decodable {
                 struct Labels: Decodable {
@@ -47,6 +47,7 @@ extension GitHubAPI {
         }
         var input: [String: Any] = ["repositoryId": repository.id, "title": title, "body": body]
         if !labelIDs.isEmpty { input["labelIds"] = labelIDs }
+        if !assigneeIDs.isEmpty { input["assigneeIds"] = assigneeIDs }
         let created: Created = try await mutate("""
             mutation($input: CreateIssueInput!) {
               createIssue(input: $input) { issue { id number url } }
