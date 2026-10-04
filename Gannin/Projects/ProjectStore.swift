@@ -127,7 +127,7 @@ final class ProjectStore {
     func loadDefinition(org: String, number: Int, force: Bool = false) async {
         let key = Self.key(org, number)
         loadCached(key)
-        guard let api = auth.api, !loading.contains(key) else { return }
+        guard let api = auth.api else { return }
         if !force, let cached = caches[key], Date.now.timeIntervalSince(cached.fetchedAt) < Self.maxAge { return }
         do {
             guard let board = try await api.board(org: org, number: number) else {
@@ -194,9 +194,7 @@ final class ProjectStore {
                 run.finish()
                 return
             }
-            for item in items { cache.itemsByID[item.id] = item }
-            cache.items[filter] = BoardItems(fetchedAt: now, ids: items.map(\.id))
-            cache.pruneOrphanedItems()
+            cache.merge(items, for: filter, at: now)
             caches[key] = cache
             errors[key] = nil
             save(cache, key: key)

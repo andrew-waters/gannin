@@ -145,10 +145,51 @@ struct BoardCache: Codable {
         items[filter]?.ids.compactMap { itemsByID[$0] }
     }
 
+    /// Records what `filter` matched. Other filters listing an item that came
+    /// back changed are marked stale, since it may no longer match them.
+    mutating func merge(_ fetched: [BoardItem], for filter: String, at date: Date) {
+        let changed = Set(fetched.compactMap { item in
+            itemsByID[item.id].flatMap { $0 == item ? nil : item.id }
+        })
+        for item in fetched { itemsByID[item.id] = item }
+        if !changed.isEmpty {
+            for (other, result) in items where other != filter && result.ids.contains(where: changed.contains) {
+                items[other]?.fetchedAt = .distantPast
+            }
+        }
+        items[filter] = BoardItems(fetchedAt: date, ids: fetched.map(\.id))
+        pruneOrphanedItems()
+    }
+
     /// Drops items no filter currently references, so a view's result
     /// shrinking doesn't leave the items it dropped cached forever.
-    mutating func pruneOrphanedItems() {
+    private mutating func pruneOrphanedItems() {
         let referenced = Set(items.values.flatMap(\.ids))
         itemsByID = itemsByID.filter { referenced.contains($0.key) }
+    }
+}
+
+extension BoardCache {
+    private struct LegacyItems: Decodable {
+        var fetchedAt: Date
+        var items: [BoardItem]
+    }
+
+    /// Tolerates caches saved when each filter kept its own copy of its items.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        board = try container.decode(Board.self, forKey: .board)
+        fetchedAt = try container.decode(Date.self, forKey: .fetchedAt)
+        if let itemsByID = try container.decodeIfPresent([String: BoardItem].self, forKey: .itemsByID) {
+            self.itemsByID = itemsByID
+            items = try container.decodeIfPresent([String: BoardItems].self, forKey: .items) ?? [:]
+        } else {
+            let legacy = try container.decodeIfPresent([String: LegacyItems].self, forKey: .items) ?? [:]
+            items = legacy.mapValues { BoardItems(fetchedAt: $0.fetchedAt, ids: $0.items.map(\.id)) }
+            // Newest copy first, so the most recently fetched wins.
+            for result in legacy.values.sorted(by: { $0.fetchedAt > $1.fetchedAt }) {
+                for item in result.items where itemsByID[item.id] == nil { itemsByID[item.id] = item }
+            }
+        }
     }
 }

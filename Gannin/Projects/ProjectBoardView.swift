@@ -37,7 +37,15 @@ struct ProjectBoardView: View {
                 } description: {
                     Text(error)
                 } actions: {
-                    Button("Try Again") { Task { await store.sync(org: org, number: number, filter: appliedFilter, force: true) } }
+                    Button("Try Again") {
+                        Task {
+                            if viewID == nil {
+                                await loadBoard(force: true)
+                            } else {
+                                await store.sync(org: org, number: number, filter: appliedFilter, force: true)
+                            }
+                        }
+                    }
                 }
             } else {
                 ProgressView("Loading project").frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -46,19 +54,23 @@ struct ProjectBoardView: View {
         .toolbar {
             ToolbarItem { NewIssueButton(context: NewIssueContext(org: org, board: number, boardFilter: appliedFilter)) }
         }
-        .task(id: "\(org)#\(number)") {
-            await store.loadDefinition(org: org, number: number)
-            guard viewID == nil else { return }
-            if let first = store.cache(org: org, number: number)?.board.views.first {
-                select(first)
-            } else if store.cache(org: org, number: number) != nil {
-                // A board with no saved views at all: fall back to everything.
-                viewID = ""
-            }
-        }
+        .task(id: "\(org)#\(number)") { await loadBoard() }
         .task(id: "\(org)#\(number) \(viewID ?? "") \(appliedFilter)") {
             guard viewID != nil else { return }
             await store.sync(org: org, number: number, filter: appliedFilter)
+        }
+    }
+
+    /// The board's fields and views, then its first view, so the first items
+    /// synced are that view's rather than everything on the board.
+    private func loadBoard(force: Bool = false) async {
+        await store.loadDefinition(org: org, number: number, force: force)
+        guard viewID == nil, let cache = store.cache(org: org, number: number) else { return }
+        if let first = cache.board.views.first {
+            select(first)
+        } else {
+            // A board with no saved views at all: fall back to everything.
+            viewID = ""
         }
     }
 
