@@ -107,6 +107,8 @@ extension SessionStore {
 
     static func pullRequestReviewPrompt(_ pr: PullRequestReference, branch: String) -> String {
         let name = pr.repo.split(separator: "/").last.map(String.init) ?? pr.repo
+        let owner = pr.repo.split(separator: "/").first.map(String.init) ?? pr.repo
+        let threads = "gh api graphql -f query='{ viewer { login } repository(owner: \"\(owner)\", name: \"\(name)\") { pullRequest(number: \(pr.number)) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }'"
         return """
             Review pull request \(pr.repo)#\(pr.number), "\(pr.title)" (\(pr.url.absoluteString)). This is a review: don't edit any files.
 
@@ -115,9 +117,9 @@ extension SessionStore {
             Look for bugs, missed cases, security problems, and code that doesn't fit the repo or the issue it's for. Comment only on lines the diff changes or shows. Say what's good in the summary, not as findings.
 
             End your reply with one fenced ```json block, findings most important first:
-            {"summary": "<a few sentences for the PR's author>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}]}
+            {"summary": "<a few sentences for the PR's author>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"]}
 
-            If I ask you to look again, end the same way.
+            If I ask you to look again, end the same way. Before you do, list the PR's review threads with `\(threads)`. In `resolved`, give the ID of each thread that isn't resolved yet, was started by `viewer` (the account you review as), and whose point is now dealt with: fixed in the code, or answered so that nothing more is needed. Check the code rather than taking a reply's word for it. Leave out threads whose point still stands, and don't raise them again as findings unless something about them has changed. On a first review, `resolved` is empty.
             """
     }
 }
@@ -234,6 +236,65 @@ extension GitHubAPI {
         ])
         return posted.htmlUrl
     }
+
+    /// The threads a review says are dealt with that Gannin will resolve:
+    /// review threads on this PR, not resolved yet, started by you. Any
+    /// other ID (someone else's thread, another PR's) is left alone.
+    func resolvableThreads(_ ids: [String], pullRequest: String) async throws -> [ReviewThread] {
+        guard !ids.isEmpty else { return [] }
+        struct Author: Decodable { let login: String }
+        struct Comment: Decodable { let author: Author?; let body: String; let url: URL? }
+        struct Node: Decodable {
+            struct PullRequest: Decodable { let id: String }
+            let id: String?
+            let isResolved: Bool?
+            let path: String?
+            let line: Int?
+            let pullRequest: PullRequest?
+            let comments: Connection<Comment>?
+        }
+        struct Viewer: Decodable { let login: String }
+        struct Response: Decodable { let viewer: Viewer; let nodes: [Node?] }
+        let response: Response = try await query("""
+            query($ids: [ID!]!) {
+              viewer { login }
+              nodes(ids: $ids) {
+                ... on PullRequestReviewThread {
+                  id isResolved path line
+                  pullRequest { id }
+                  comments(first: 1) { nodes { author { login } body url } }
+                }
+              }
+            }
+            """, values: ["ids": Array(Set(ids))])
+        let me = response.viewer.login
+        return response.nodes.compactMap { node in
+            guard let node, let id = node.id, node.isResolved == false, node.pullRequest?.id == pullRequest,
+                  let first = node.comments?.nodes.first,
+                  first.author?.login.caseInsensitiveCompare(me) == .orderedSame else { return nil }
+            return ReviewThread(id: id, path: node.path ?? "", line: node.line, body: first.body, url: first.url)
+        }
+    }
+
+    /// Marks a review thread resolved. A write: not retried.
+    func resolveReviewThread(_ id: String) async throws {
+        struct Response: Decodable {}
+        let _: Response = try await mutate("""
+            mutation($thread: ID!) {
+              resolveReviewThread(input: { threadId: $thread }) { thread { id } }
+            }
+            """, variables: ["thread": id])
+    }
+}
+
+/// A review thread of yours that a review says is dealt with.
+struct ReviewThread: Identifiable, Hashable {
+    let id: String
+    let path: String
+    let line: Int?
+    /// The thread's first comment, what was asked.
+    let body: String
+    let url: URL?
 }
 
 // MARK: - Starting from a PR
@@ -421,7 +482,7 @@ struct PullRequestReviewView: View {
                 }
                 .buttonStyle(.bordered)
                 Button("Review Again") {
-                    sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block.", to: session.id)
+                    sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block, listing in `resolved` the threads now dealt with.", to: session.id)
                     Task { await load() }
                 }
                 .disabled(!sessions.isRunning(session.id) || state == .working)
@@ -857,8 +918,8 @@ private struct ReviewCommentEditor: View {
 
 /// The review as it'll go to GitHub: approve, comment or request changes,
 /// the body (claude's summary, and findings not on a line GitHub takes),
-/// and the inline comments: findings kept or edited, and yours. Nothing's
-/// sent until Post.
+/// and the inline comments: findings kept or edited, and yours, and your
+/// threads claude says are dealt with, to resolve. Nothing's sent until Post.
 private struct PostReviewSheet: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(AuthStore.self) private var auth
@@ -870,6 +931,12 @@ private struct PostReviewSheet: View {
     @State private var bodyText = ""
     @State private var sending = false
     @State private var error: String?
+    /// Your threads the review says are dealt with, and those ticked to resolve.
+    @State private var threads: [ReviewThread] = []
+    @State private var resolving: Set<String> = []
+    /// Posted, with threads left that GitHub didn't resolve: Post only
+    /// tries those again.
+    @State private var isPosted = false
 
     private var reference: PullRequestReference { session.reviewOf! }
 
@@ -912,17 +979,44 @@ private struct PostReviewSheet: View {
                     }
                 }
             }
+            if !threads.isEmpty {
+                Section {
+                    ForEach(threads) { thread in
+                        Toggle(isOn: Binding(
+                            get: { resolving.contains(thread.id) },
+                            set: { if $0 { resolving.insert(thread.id) } else { resolving.remove(thread.id) } }
+                        )) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(thread.line.map { "\(thread.path):\($0)" } ?? thread.path)
+                                    .font(.caption.monospaced())
+                                    .foregroundStyle(.secondary)
+                                Text(thread.body)
+                                    .font(.callout)
+                                    .lineLimit(3)
+                            }
+                        }
+                        .checkboxToggle()
+                    }
+                } header: {
+                    Text("Resolve \(threads.count) thread\(threads.count == 1 ? "" : "s") now dealt with")
+                } footer: {
+                    Text("Claude says the code or a reply has dealt with these. Ticked ones are resolved once the review is posted.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if let error {
                 Text(error).foregroundStyle(.red).font(.callout)
             }
         }
         .formStyle(.grouped)
         .frame(width: 620, height: 600)
+        .task { await loadThreads() }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button(sending ? "Posting" : "Post to GitHub") { post(inline) }
-                    .disabled(sending || (bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && inline.isEmpty && event != "APPROVE"))
+                Button(sending ? "Posting" : isPosted ? "Resolve Threads" : "Post to GitHub") { post(inline) }
+                    .disabled(sending || isPosted && resolving.isEmpty || !isPosted && (bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && inline.isEmpty && event != "APPROVE"))
             }
         }
         .onAppear {
@@ -940,23 +1034,51 @@ private struct PostReviewSheet: View {
         pullRequest.comments(for: review, draft: sessions.reviewDrafts[session.id] ?? ReviewDraft())
     }
 
+    private func loadThreads() async {
+        guard let api = auth.api, let ids = review?.resolved, !ids.isEmpty else { return }
+        threads = (try? await api.resolvableThreads(ids, pullRequest: reference.id)) ?? []
+        resolving = Set(threads.map(\.id))
+    }
+
     private func post(_ inline: [[String: Any]]) {
         guard let api = auth.api else { return }
         sending = true
         error = nil
         let body = bodyText
         let event = event
+        let toResolve = threads.filter { resolving.contains($0.id) }
         Task {
-            do {
-                let url = try await api.postReview(repo: reference.repo, number: reference.number, commit: pullRequest.headSHA, event: event, body: body, comments: inline)
-                sessions.reviewDrafts[session.id, default: ReviewDraft()].posted = url ?? reference.url
-                sessions.reviewDrafts[session.id, default: ReviewDraft()].postedAt = .now
-                sessions.reviewDrafts[session.id, default: ReviewDraft()].postedEvent = event
-                dismiss()
-            } catch {
-                self.error = "GitHub didn't take it: \(error.localizedDescription)"
+            if !isPosted {
+                do {
+                    let url = try await api.postReview(repo: reference.repo, number: reference.number, commit: pullRequest.headSHA, event: event, body: body, comments: inline)
+                    sessions.reviewDrafts[session.id, default: ReviewDraft()].posted = url ?? reference.url
+                    sessions.reviewDrafts[session.id, default: ReviewDraft()].postedAt = .now
+                    sessions.reviewDrafts[session.id, default: ReviewDraft()].postedEvent = event
+                    isPosted = true
+                } catch {
+                    self.error = "GitHub didn't take it: \(error.localizedDescription)"
+                    sending = false
+                    return
+                }
+            }
+            // The review's posted; threads GitHub won't resolve are named
+            // and the sheet stays open, the rest still go.
+            var failed: [ReviewThread] = []
+            for thread in toResolve {
+                do {
+                    try await api.resolveReviewThread(thread.id)
+                } catch {
+                    failed.append(thread)
+                }
             }
             sending = false
+            if failed.isEmpty {
+                dismiss()
+            } else {
+                threads = failed
+                resolving = Set(failed.map(\.id))
+                self.error = "The review is posted, but GitHub didn't resolve \(failed.count == 1 ? "this thread" : "these threads"). Try again, or resolve \(failed.count == 1 ? "it" : "them") on GitHub."
+            }
         }
     }
 }
