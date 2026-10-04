@@ -66,6 +66,13 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// A review's PR, watched for new commits and comments to review
     /// again; nil until its first review finishes.
     var watch: ReviewWatch? = nil
+    /// What's been seen on its PRs (failed checks, and threads and reviews
+    /// at their latest comment), kept so a relaunch only flags what came
+    /// since; nil until the first look.
+    var pullRequestsSeen: Set<String>? = nil
+    /// Whether new failures and feedback on its PRs go to claude by
+    /// themselves; nil for the user's default (`sendsFeedbackKey`).
+    var sendsFeedback: Bool? = nil
 
     var isRemote: Bool { connect != nil }
     var isHelper: Bool { parentID != nil }
@@ -114,6 +121,8 @@ extension CodeSession {
         reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
         watch = try container.decodeIfPresent(ReviewWatch.self, forKey: .watch)
+        pullRequestsSeen = try container.decodeIfPresent(Set<String>.self, forKey: .pullRequestsSeen)
+        sendsFeedback = try container.decodeIfPresent(Bool.self, forKey: .sendsFeedback)
     }
 }
 
@@ -349,7 +358,6 @@ final class SessionStore {
     /// new reviews flag it like a question would.
     var pullRequestInfo: [UUID: [SessionPullRequest]] = [:]
     var pullRequestErrors: [UUID: String] = [:]
-    @ObservationIgnored var pullRequestsSeen: [UUID: Set<String>] = [:]
     @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
     /// GitHub, once signed in; set by the app.
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }
@@ -359,6 +367,9 @@ final class SessionStore {
     /// What to tell claude once it has started (a review asked to look
     /// again while it wasn't running).
     @ObservationIgnored var pendingPrompts: [UUID: String] = [:]
+    /// New PR feedback waiting for claude's turn to end, with the keys to
+    /// mark sent once it's pasted. Dropped if claude exits first.
+    @ObservationIgnored var pendingFeedback: [UUID: (prompt: String, keys: [String])] = [:]
     /// What happened on reviewed PRs, for the Inbox's catch-up.
     let activity = ReviewActivity()
     /// Every session at once instead of a tab.
@@ -662,6 +673,9 @@ final class SessionStore {
         let old = states[id]
         guard old != state else { return }
         states[id] = state
+        // Feedback queued for a claude that's gone may be dealt with by the
+        // time it's back; the PRs pane still offers it.
+        if state == .exited || state == .stopped { pendingFeedback[id] = nil }
         if [.needsYou, .idle, .exited].contains(state), sessions[id] != nil {
             sessions[id]?.lastActiveAt = .now
             save()
@@ -670,8 +684,9 @@ final class SessionStore {
         case .needsYou:
             let asking = transcripts[id]?.question != nil
             flag(id, title: "Claude needs you", body: asking ? (transcripts[id]?.question?.items.first?.question ?? "") : "It's asking for permission to go on.", replies: true)
-        case .idle where pendingPrompts[id] != nil:
+        case .idle where pendingPrompts[id] != nil || pendingFeedback[id] != nil:
             sendPendingPrompt(id)
+            sendPendingFeedback(id)
         case .idle where old == .working:
             flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false)
         case .working, .starting, .stopped:

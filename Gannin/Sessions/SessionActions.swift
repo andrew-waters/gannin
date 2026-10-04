@@ -143,32 +143,123 @@ extension SessionStore {
         }
     }
 
-    /// New failures and feedback since the last look; the first look only
-    /// learns what's there.
+    /// Send new PR feedback to the session's claude by default.
+    static let sendsFeedbackKey = "sessionsSendFeedback"
+
+    /// Whether new failures and feedback on the session's PRs go to its
+    /// claude: its own choice, else the user's default.
+    func sendsFeedback(_ id: UUID) -> Bool {
+        sessions[id]?.sendsFeedback ?? UserDefaults.standard.bool(forKey: Self.sendsFeedbackKey)
+    }
+
+    func setSendsFeedback(_ sends: Bool, for id: UUID) {
+        update(id) { $0.sendsFeedback = sends }
+    }
+
+    /// New failures and feedback since the last look, kept with the
+    /// session so a relaunch catches up on what came while Gannin was
+    /// closed; the very first look only learns what's there. A thread is
+    /// new again when someone other than the PR's author replies.
     private func noticeNews(in pullRequests: [SessionPullRequest], for id: UUID) {
+        guard let session = sessions[id] else { return }
         var keys: Set<String> = []
-        var failed: [(SessionPullRequest, SessionPullRequest.Check)] = []
-        var said: [(SessionPullRequest, SessionPullRequest.Feedback)] = []
+        var failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])] = []
+        var said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])] = []
+        let seen = session.pullRequestsSeen
+        // Each thread's or review's key now, to drop its older ones.
+        var current: [String: String] = [:]
+        // Threads seen before at an earlier comment.
+        var replies: Set<String> = []
         for pr in pullRequests where pr.state == "OPEN" {
+            var newChecks: [SessionPullRequest.Check] = []
             for check in pr.failed {
-                keys.insert("check:\(pr.id):\(check.id)")
-                failed.append((pr, check))
+                let key = "check:\(pr.id):\(check.id)"
+                keys.insert(key)
+                if seen?.contains(key) == false { newChecks.append(check) }
             }
+            var newItems: [SessionPullRequest.Feedback] = []
             for item in pr.feedback {
-                keys.insert("feedback:\(item.id)")
-                said.append((pr, item))
+                keys.insert(item.key)
+                current[item.id] = item.key
+                guard let seen, !seen.contains(item.key) else { continue }
+                if seen.contains(where: { $0.hasPrefix(item.keyPrefix) }) { replies.insert(item.id) }
+                if item.latestAuthor != pr.author { newItems.append(item) }
+            }
+            if !newChecks.isEmpty { failed.append((pr, newChecks)) }
+            if !newItems.isEmpty { said.append((pr, newItems)) }
+        }
+        // Keys of PRs no longer open are kept: a reopened PR's are still seen.
+        if let seen, keys.isSubset(of: seen) { return }
+        let outdated = (seen ?? []).filter { key in
+            current.contains { key.hasPrefix(SessionPullRequest.Feedback.keyPrefix($0.key)) && key != $0.value }
+        }
+        update(id) { $0.pullRequestsSeen = (seen ?? []).subtracting(outdated).union(keys) }
+        guard seen != nil, !failed.isEmpty || !said.isEmpty else { return }
+
+        // Each as a title and what was said, one notification for them all.
+        var news = failed.map { ("Checks failed on \($0.pr.repo)#\($0.pr.number)", $0.checks.map(\.name).joined(separator: ", ")) }
+        for (pr, items) in said {
+            for item in items {
+                let what = replies.contains(item.id) ? "replied" : item.verdict ?? (item.location == nil ? "reviewed" : "commented")
+                news.append(("@\(item.latestAuthor) \(what) on \(pr.repo)#\(pr.number)", item.comments.last?.body ?? ""))
             }
         }
-        defer { pullRequestsSeen[id, default: []].formUnion(keys) }
-        guard let seen = pullRequestsSeen[id] else { return }
-        let newFailures = failed.filter { !seen.contains("check:\($0.0.id):\($0.1.id)") }
-        let newFeedback = said.filter { !seen.contains("feedback:\($0.1.id)") }
-        if let (pr, _) = newFailures.first {
-            let names = newFailures.map(\.1.name).joined(separator: ", ")
-            flag(id, title: "Checks failed on \(pr.repo)#\(pr.number)", body: names, replies: false)
-        } else if let (pr, item) = newFeedback.first {
-            flag(id, title: "@\(item.author) reviewed \(pr.repo)#\(pr.number)", body: String((item.comments.first?.body ?? "").prefix(180)), replies: false)
+        let sent = sendNews(failed: failed, said: said, to: id)
+        let pullRequestCount = Set(failed.map(\.pr.id) + said.map(\.pr.id)).count
+        let title = news.count == 1 ? news[0].0 : "\(news.count) new on \(pullRequestCount == 1 ? "a pull request" : "\(pullRequestCount) pull requests")"
+        var body = news.count == 1
+            ? String(news[0].1.prefix(180))
+            : news.map { "\($0.0): \($0.1.split(separator: "\n").first ?? "")".prefix(100) }.joined(separator: "\n")
+        switch sent {
+        case .pasted: body += "\nSent to Claude."
+        case .queued: body += "\nWill go to Claude when it finishes its turn."
+        case nil: break
         }
+        flag(id, title: title, body: body, replies: false)
+    }
+
+    enum FeedbackDelivery { case pasted, queued }
+
+    /// Hands what's new to the session's claude, when it's to be told:
+    /// pasted now if it's waiting for a prompt, else once it finishes its
+    /// turn (`pendingFeedback`). A session that isn't running isn't started
+    /// for it. Marked sent only once it's pasted.
+    private func sendNews(
+        failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])],
+        said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])],
+        to id: UUID
+    ) -> FeedbackDelivery? {
+        guard let session = sessions[id], session.reviewOf == nil, !session.isReviewer,
+              sendsFeedback(id), isRunning(id) else { return nil }
+        let prompt = (failed.map { SessionPrompts.failures($0.pr, in: session) }
+            + said.map { SessionPrompts.feedback($0.items, on: $0.pr, in: session) })
+            .joined(separator: "\n\n")
+        let keys = said.flatMap { $0.items.map(\.key) } + failed.map { "checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",") }
+        switch state(id) {
+        case .idle:
+            guard submit(prompt, to: id) else { return nil }
+            markSent(keys, for: id)
+            return .pasted
+        case .starting, .working, .needsYou:
+            let queued = pendingFeedback[id]
+            pendingFeedback[id] = (
+                [queued?.prompt, prompt].compactMap { $0 }.joined(separator: "\n\n"),
+                (queued?.keys ?? []) + keys
+            )
+            return .queued
+        default:
+            // Claude has exited and left its shell, where a paste would go to bash.
+            return nil
+        }
+    }
+
+    /// Feedback queued while claude was busy, now its turn has ended;
+    /// left out if it was all sent from the PRs pane meanwhile.
+    func sendPendingFeedback(_ id: UUID) {
+        guard let pending = pendingFeedback.removeValue(forKey: id) else { return }
+        let sent = self.sent[id] ?? []
+        guard !pending.keys.allSatisfy(sent.contains), submit(pending.prompt, to: id) else { return }
+        markSent(pending.keys, for: id)
     }
 
     // MARK: Helpers

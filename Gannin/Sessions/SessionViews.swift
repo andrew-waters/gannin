@@ -1260,6 +1260,7 @@ struct SessionSettingsSection: View {
     @AppStorage(SessionStore.providerKey) private var provider: AIProvider = .anthropic
     @AppStorage(SessionStore.modelKey) private var model = ""
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
+    @AppStorage(SessionStore.sendsFeedbackKey) private var sendsFeedback = false
     @AppStorage(EngineerWatch.intervalKey) private var reviewCheck = 5
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
     @AppStorage(AutoReview.enabledKey) private var autoReview = false
@@ -1314,7 +1315,11 @@ struct SessionSettingsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Post automatic reviews to GitHub", isOn: $postsReviews)
-            Text("Reviews Gannin starts by itself are posted as comments, marked as written by Claude. They never approve or request changes. Off, they wait for you to Post Review.")
+            Text("Reviews Gannin starts by itself are posted as comments. They never approve or request changes. Off, they wait for you to Post Review.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Send new PR feedback to Claude", isOn: $sendsFeedback)
+            Text("When checks fail or a reviewer says something new on a session's PR, it's pasted into the session for Claude to address: now if it's waiting for you, else when it finishes its turn. Each session can say otherwise in its PRs pane.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Show in the menu bar", isOn: $showsMenuBar)

@@ -544,7 +544,16 @@ added, removed or created, and the tracked board field set), and commits to the 
   to interrupt, the context gauge with /compact, and the last test result. The `Notification`
   hook only marks permission prompts and dialogs; a `PreToolUse` hook marks AskUserQuestion.
 - `SessionStore.watchPullRequests` fetches every running session's PRs (and any with one open)
-  every 90 seconds, 30 while checks run, and flags new failures and new review feedback.
+  every 90 seconds, 30 while checks run, and flags new failures and new review feedback in one
+  notification (`noticeNews`). What's been seen is kept with the session
+  (`CodeSession.pullRequestsSeen`, so a relaunch flags what came while Gannin was closed; the
+  first look only learns), a thread by its latest comment (`comments(last: 20)`, older keys
+  dropped), so a reply from anyone but the PR's author is new again. Conversation comments,
+  approvals and conflicts aren't flagged. With Send new feedback to Claude (the PRs pane,
+  `CodeSession.sendsFeedback`, defaulting to Settings > General > Agent, `sessionsSendFeedback`,
+  off) it's also pasted into the session: now when claude is waiting for a prompt, else queued
+  (`pendingFeedback`) until its turn ends, dropped if claude exits first, and marked sent only
+  once pasted.
 - Helpers (`CodeSession.parentID`, `role`, `prompt`): more agents on an issue's folder and
   branch, each with its own settings file in `.gannin/`; Review the Changes starts one with
   edits disallowed (`isReviewer`, `--disallowedTools`) and `SessionStore.reviewPrompt`.
@@ -604,7 +613,7 @@ added, removed or created, and the tracked board field set), and commits to the 
   busy, it's asked to look again (`reviewAgain`: pasted when it's idle, else resumed from the
   history and sent once `SessionStart` reports idle, `pendingPrompts`). Merged or closed stops
   the watch. Runs Gannin started (`automaticRuns`) are posted as a COMMENT review when Post
-  automatic reviews (`autoPostReviews`) is on, marked as Claude's, never approving or requesting
+  automatic reviews (`autoPostReviews`) is on, never approving or requesting
   changes, and the threads it says are dealt with are resolved too; otherwise they wait for Post
   Review. What happened (`ReviewActivity`, `ReviewEvent`,
   newest 500 in Sessions/ReviewActivity.json) is the Inbox's While you were away section, one

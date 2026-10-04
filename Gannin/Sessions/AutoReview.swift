@@ -197,7 +197,6 @@ extension SessionStore {
             let draft = reviewDrafts[id] ?? ReviewDraft()
             let (inline, general) = pull.comments(for: review, draft: draft)
             let body = ReviewedPullRequest.body(summary: review.summary, general: general)
-                + "\n\n_Written by Claude and posted automatically by Gannin, without a read-through._"
             let url = try await api.postReview(repo: pr.repo, number: pr.number, commit: pull.headSHA, event: "COMMENT", body: body, comments: inline)
             reviewDrafts[id, default: ReviewDraft()].posted = url ?? pr.url
             reviewDrafts[id, default: ReviewDraft()].postedAt = .now
