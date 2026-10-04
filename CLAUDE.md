@@ -129,8 +129,10 @@ added, removed or created, and the tracked board field set), and commits to the 
   and Claude Code windows). In the Claude Code window a focused terminal keeps ⌘K: the command
   passes the key on to SwiftTerm's `TerminalView`.
 - `PaletteSources` builds `PaletteItem`s from what's cached for every org, never fetching: it pulls
-  each org's snapshot, issue history and board list from disk first (`loadCached`,
-  `loadCachedBoards`), and the footer names orgs with nothing cached. Items are actions (New Issue,
+  each org's snapshot and board list from disk first (`loadCached`, `loadCachedBoards`), then
+  issue histories one org a frame apart (they're large and decode on the main actor), and the
+  footer names orgs with nothing cached. Results are ranked when the query or items change, not
+  on redraw. Items are actions (New Issue,
   Refresh, Full Refresh, Switch to an org or project, New Window and Tab, Open Claude Code, Next
   Session Waiting on You, the Exclude drafts and Show hidden toggles), pages and Settings panes per
   org, people, open and recently merged PRs, the issue history, harness documents that follow the
