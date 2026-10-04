@@ -157,24 +157,25 @@ final class ProjectStore {
         if force || boardStale { run.add("board", title: "Board and views") }
         run.add("items", title: "Items", detail: filter.isEmpty ? "Everything" : filter)
         do {
-            var cache = cached
-            if force || boardStale || cache == nil {
-                if let board = try await run.track("board", count: { $0.map { $0.views.count } }, { _ in try await api.board(org: org, number: number) }) {
-                    if cache == nil {
-                        cache = BoardCache(board: board, fetchedAt: now)
-                    } else {
-                        cache?.board = board
-                        cache?.fetchedAt = now
-                    }
-                }
+            var board: Board?
+            if force || boardStale || cached == nil {
+                board = try await run.track("board", count: { $0.map { $0.views.count } }, { _ in try await api.board(org: org, number: number) })
             }
-            guard var cache else {
+            let items = try await run.track("items", count: \.count) {
+                try await api.boardItems(org: org, number: number, filter: filter, onPage: $0)
+            }
+            // A sync for another filter (switching view tabs) can finish
+            // while this one awaited, so merge onto the cache as it is now
+            // rather than the snapshot taken before those awaits, or its
+            // write would be lost.
+            guard var cache = caches[key] ?? board.map({ BoardCache(board: $0, fetchedAt: now) }) else {
                 run.finish()
                 errors[key] = "Couldn't find project \(number)."
                 return
             }
-            let items = try await run.track("items", count: \.count) {
-                try await api.boardItems(org: org, number: number, filter: filter, onPage: $0)
+            if let board {
+                cache.board = board
+                cache.fetchedAt = now
             }
             cache.items[filter] = BoardItems(fetchedAt: now, items: items)
             caches[key] = cache
