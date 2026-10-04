@@ -205,6 +205,32 @@ extension SessionStore {
             note(id, .posted, text: "Posted to GitHub as a comment", url: url)
         } catch {
             note(id, .failed, text: "GitHub didn't take it: \(error.localizedDescription)")
+            return
+        }
+        await resolveThreads(review.resolved ?? [], of: pr, for: id, api: api)
+    }
+
+    /// Resolves the threads of yours the review says are dealt with (only
+    /// unresolved ones on this PR that you started), noting what was done.
+    private func resolveThreads(_ ids: [String], of pr: PullRequestReference, for id: UUID, api: GitHubAPI) async {
+        guard !ids.isEmpty else { return }
+        let threads: [ReviewThread]
+        do {
+            threads = try await api.resolvableThreads(ids, pullRequest: pr.id)
+        } catch {
+            note(id, .failed, text: "Couldn't look up the threads to resolve: \(error.localizedDescription)")
+            return
+        }
+        var resolved = 0
+        for thread in threads {
+            if (try? await api.resolveReviewThread(thread.id)) != nil { resolved += 1 }
+        }
+        if resolved > 0 {
+            note(id, .posted, text: "Resolved \(resolved) thread\(resolved == 1 ? "" : "s") now dealt with")
+        }
+        if resolved < threads.count {
+            let left = threads.count - resolved
+            note(id, .failed, text: "GitHub didn't resolve \(left) thread\(left == 1 ? "" : "s") Claude says \(left == 1 ? "is" : "are") dealt with")
         }
     }
 
@@ -273,7 +299,7 @@ extension SessionStore {
         let prompt = """
             Since your last review of \(pr.repo)#\(pr.number), \(reasons). Fetch the PR again with its comments and review it as it is now. \
             Answer what the comments ask of you. Leave out findings from your earlier review that still stand unchanged, and say in the \
-            summary which of them are now dealt with. End the same way with the fenced JSON block.
+            summary which of them are now dealt with, and list their threads in `resolved`. End the same way with the fenced JSON block.
             """
         if isRunning(id) {
             guard state(id) == .idle else {

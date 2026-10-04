@@ -214,6 +214,14 @@ struct MainView: View {
     }
     /// No search field for now; the list filtering is kept for when it returns.
     @State private var searchText = ""
+    /// The org settings' pane, which the command palette can pick; the
+    /// settings page reads the same scene storage.
+    @SceneStorage("orgSettingsPane") private var settingsPane: OrgSettingsView.Pane = .repositories
+    /// A command palette result waiting for the window to switch to its org.
+    @State private var pendingPalette: PaletteDestination?
+    /// A palette result for the page stack to open: a drawer, New Issue.
+    @State private var paletteDelivery: PaletteDestination?
+    @Environment(\.controlActiveState) private var activeState
 
     var body: some View {
         NavigationSplitView {
@@ -238,7 +246,8 @@ struct MainView: View {
                     sidebar: sidebarSelection.wrappedValue ?? .tab(tab),
                     rootTitle: rootTitle,
                     titles: titles,
-                    searchText: searchText
+                    searchText: searchText,
+                    paletteDelivery: $paletteDelivery
                 )
                 // Pages start again on another project.
                 .id("\(selectedOrg)|\(workspaceID)")
@@ -255,13 +264,20 @@ struct MainView: View {
         .navigationTitle(customTitle.isEmpty ? automaticTitle : customTitle)
         .windowSubtitle(selectedOrg.map { orgs.org(login: $0)?.displayName ?? $0 } ?? "")
         .focusedSceneValue(\.renameTab, RenameTabAction(window: windowID, perform: startRenaming))
+        .commandPalette(homeOrg: { selectedOrg }, open: openFromPalette)
         .investmentPrompt()
         .environment(orgConfigs)
         .environment(\.showPerson, ShowPersonAction { login in sidebarSelection.wrappedValue = .person(login) })
         .environment(\.showSidebarItem, ShowSidebarAction { item in sidebarSelection.wrappedValue = item })
         .background(WindowAccessor { window in
             TabMenuRename.shared.register(window, action: startRenaming)
+            PaletteRouter.register(windowID, PaletteRouter.MainWindow(org: { selectedOrg }, open: openFromPalette, window: window))
+            if window.isKeyWindow { PaletteRouter.activate(windowID) }
         })
+        .onChange(of: activeState) {
+            if activeState == .key { PaletteRouter.activate(windowID) }
+        }
+        .onDisappear { PaletteRouter.unregister(windowID) }
         .alert("Rename Tab", isPresented: $isRenaming) {
             TextField("Title", text: $draftTitle)
             Button("Rename") { customTitle = draftTitle.trimmingCharacters(in: .whitespaces) }
@@ -286,6 +302,10 @@ struct MainView: View {
             fieldView = nil
             path = []
             if let request, request.org == selectedOrg { apply(request) }
+            if let palette = pendingPalette, palette.org == selectedOrg {
+                pendingPalette = nil
+                deliver(palette)
+            }
         }
         .onChange(of: orgs.orgs, initial: true) {
             if selectedOrg == nil {
@@ -317,6 +337,53 @@ struct MainView: View {
         workspace = pending.workspace
         sidebarSelection.wrappedValue = pending.sidebar
         path = pending.path
+        if let palette = pending.palette { deliver(palette) }
+    }
+
+    /// Opens a command palette result: in this window (switching to its
+    /// org first when it's another), or in a new tab or window on its org.
+    private func openFromPalette(_ destination: PaletteDestination, _ placement: PalettePlacement) {
+        switch placement {
+        case .thisWindow:
+            if destination.org == selectedOrg {
+                deliver(destination)
+            } else {
+                pendingPalette = destination
+                selectedOrg = destination.org
+            }
+        case .newTab, .newWindow:
+            let request = NavigationRequest(
+                org: destination.org,
+                sidebar: destination.target.rootSidebar,
+                path: [],
+                workspace: destination.org == selectedOrg ? workspace : nil,
+                palette: destination
+            )
+            WindowRequest.open(request, placement: placement == .newTab ? .tab : .window, openWindow: openWindow)
+        }
+    }
+
+    /// A palette result in this window's org: a sidebar row, a settings
+    /// pane or a project here; drawers and New Issue in the page stack.
+    private func deliver(_ destination: PaletteDestination) {
+        switch destination.target {
+        case .sidebar(let item):
+            sidebarSelection.wrappedValue = item
+        case .settings(let pane):
+            settingsPane = pane
+            sidebarSelection.wrappedValue = .tab(.settings)
+        case .project(let id):
+            workspace = id
+        case .org:
+            break
+        case .harnessDocument(let repo, _, _):
+            // A project with its own harness only shows that one's
+            // documents: open others with All.
+            if !orgConfigs.config(for: destination.org).harnesses.contains(where: { $0.repo == repo }) { workspace = nil }
+            paletteDelivery = destination
+        case .page, .newIssue:
+            paletteDelivery = destination
+        }
     }
 
     /// Sidebar rows open in a new tab or window on the same org.
@@ -515,6 +582,7 @@ struct PageTitles {
 /// what it links to in a new tab or window with the trail that led there.
 private struct PageStack: View {
     @Environment(ActionsStore.self) private var actionsStore
+    @Environment(HarnessStore.self) private var harnessStore
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(\.openWindow) private var openWindow
@@ -537,6 +605,8 @@ private struct PageStack: View {
     let rootTitle: String
     let titles: PageTitles
     let searchText: String
+    /// A command palette result for this stack: a drawer, or New Issue.
+    @Binding var paletteDelivery: PaletteDestination?
 
     /// The PRs, issues and harness documents open in drawers over the
     /// page, the top one last. A link in a drawer opens another on top.
@@ -590,6 +660,11 @@ private struct PageStack: View {
         }
         .animation(.snappy(duration: 0.25), value: drawers)
         .onChange(of: path) { drawers = [] }
+        .onChange(of: paletteDelivery, initial: true) {
+            guard let delivery = paletteDelivery, delivery.org == org else { return }
+            paletteDelivery = nil
+            openFromPalette(delivery.target)
+        }
         .toolbar {
             if !path.isEmpty {
                 ToolbarItem(placement: .navigation) { backButton }
@@ -606,6 +681,28 @@ private struct PageStack: View {
             }
         }
         .environment(\.currentOrg, org)
+    }
+
+    /// A palette result over the page: a PR, issue or harness document in a
+    /// drawer, or New Issue.
+    private func openFromPalette(_ target: PaletteTarget) {
+        switch target {
+        case .page(let page):
+            navigate(at: path.count)(page)
+        case .harnessDocument(let repo, let documentPath, _):
+            // As the combined index has it: the first loaded harness's
+            // documents as they are, the others' under `owner/name:path`.
+            let index = harnessStore.combined(org: org, configs.config(for: org).harnesses)
+            let document = index?.documents.first { document in
+                let split = HarnessIndex.split(document.path)
+                return split.path == documentPath && (split.repo ?? index?.repo) == repo
+            }
+            navigate(at: path.count)(.harnessDocument(document?.path ?? documentPath))
+        case .newIssue:
+            newIssueAction()
+        default:
+            break
+        }
     }
 
     /// New Issue from anywhere in the window: what's asked for, else the

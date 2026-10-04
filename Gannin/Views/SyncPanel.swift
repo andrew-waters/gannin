@@ -184,34 +184,53 @@ struct SyncFooter: View {
         return date.formatted(date: .abbreviated, time: .omitted)
     }
 
-    /// Workload and metrics in parallel, so both sections are in the panel
-    /// from the start and it doesn't grow part way through.
-    private var trackedBoards: [Int] {
-        if case .projectField(let number, _, _) = configs.config(for: org).investmentConfig.trackedBy { return [number] }
-        return []
-    }
-
-    private func refreshHarness() async {
-        await harness.loadAll(org: org, configs.config(for: org).harnesses, force: true)
-    }
-
     private func refresh(_ mode: OrgStore.RefreshMode) {
+        OrgRefresh(
+            orgs: orgs, metricsStore: metricsStore, workLog: workLog, issueStore: issueStore,
+            actions: actions, projects: projects, configs: configs, harness: harness, windowDays: windowDays
+        )(org, mode: mode)
+    }
+}
+
+/// Refresh for an org, from the sidebar's Refresh link or the command
+/// palette: workload and metrics in parallel (so both sections are in the
+/// sync panel from the start and it doesn't grow part way through), and
+/// whatever else has been opened for the org.
+struct OrgRefresh {
+    let orgs: OrgStore
+    let metricsStore: MetricsStore
+    let workLog: WorkLogStore
+    let issueStore: IssueStore
+    let actions: ActionsStore
+    let projects: ProjectStore
+    let configs: OrgConfigStore
+    let harness: HarnessStore
+    let windowDays: Int
+
+    func callAsFunction(_ org: String, mode: OrgStore.RefreshMode) {
+        let config = configs.config(for: org)
+        let syncDays = MetricsWindow(code: windowDays).syncDays()
         Task {
             async let workload: Void = orgs.refresh(org, mode: mode)
-            async let metrics: Void = metricsStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true)
+            async let metrics: Void = metricsStore.sync(org, windowDays: syncDays, force: true)
             // The work log only once it's been opened for this org.
             async let log: Void = workLog.isTracking(org) ? workLog.sync(org, force: true) : ()
-            async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays(), force: true) : ()
+            async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: syncDays, force: true) : ()
             // Actions runs likewise, once the Actions page has been opened.
             async let runs: Void = actions.isTracking(org)
-                ? actions.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).unfetchedRepos, force: true)
+                ? actions.sync(org, windowDays: (syncDays + 1) / 2, excluding: config.unfetchedRepos, force: true)
                 : ()
             // Boards, and the board investments are tracked on.
-            async let boards: Void = projects.refresh(org: org, definitions: trackedBoards)
+            async let boards: Void = projects.refresh(org: org, definitions: Self.trackedBoards(config))
             // The harness, whose .gannin may hold the team's settings.
-            async let harnessIndex: Void = refreshHarness()
+            async let harnessIndex: Void = harness.loadAll(org: org, config.harnesses, force: true)
             _ = await (workload, metrics, log, issues, runs, boards, harnessIndex)
         }
+    }
+
+    private static func trackedBoards(_ config: OrgConfig) -> [Int] {
+        if case .projectField(let number, _, _) = config.investmentConfig.trackedBy { return [number] }
+        return []
     }
 }
 

@@ -99,7 +99,7 @@ final class OrgStore {
     func snapshot(for login: String) -> OrgSnapshot? { snapshots[login] }
 
     /// Pulls the snapshot saved by a previous launch into memory.
-    private func loadCached(_ login: String) {
+    func loadCached(_ login: String) {
         guard snapshots[login] == nil,
               let data = try? Data(contentsOf: Self.snapshotURL(login)),
               let snapshot = try? Self.decoder.decode(OrgSnapshot.self, from: data) else {

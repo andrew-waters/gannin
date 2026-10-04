@@ -64,6 +64,9 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         /// `approve`, `comment` or `request_changes`.
         let verdict: String?
         let findings: [Finding]
+        /// Review threads (node IDs) the reviewer's account started that are
+        /// now dealt with, for Gannin to resolve when the review is posted.
+        var resolved: [String]? = nil
     }
 
     /// The newest events, oldest first.

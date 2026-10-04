@@ -52,6 +52,8 @@ struct NavigationRequest {
     let path: [DetailSelection]
     /// The project the window's narrowed to; nil for All.
     var workspace: UUID? = nil
+    /// A command palette result to open once the window's on its org.
+    var palette: PaletteDestination? = nil
 }
 
 /// Hands a request to the main window opened for it. SwiftUI can open a

@@ -14,6 +14,10 @@ xcodegen generate
 xcodebuild -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS' build
 ```
 
+To try a change in the app, `scripts/relaunch.sh` builds it signed (so it reads the same keychain
+token) and, only if the build succeeds, quits every running Gannin and opens the new build, detached,
+so a Claude Code session running inside Gannin resumes in it; `--no-build` relaunches the last build.
+
 Swift 6 with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so everything is main-actor unless
 marked otherwise. The Mac app isn't sandboxed while Claude Code sessions are prototyped: they
 run git, gh and claude as the user, which a sandboxed child process can't (its login, keys and
@@ -117,6 +121,39 @@ added, removed or created, and the tracked board field set), and commits to the 
   `WindowRequest.pending` and claimed by the new window's `MainView`. PRs and issues from
   the work log, boards and issue history push `pullRequestReference` or `issueReference`,
   which show those windows' views embedded (`isEmbedded`).
+
+## Command palette
+
+- `Gannin/Palette/`: View › Command Palette (⌘K, `CommandPaletteCommand`) opens a panel over any
+  window (`.commandPalette` on `MainView`; `.commandPaletteOpeningInMainWindow()` on the issue, PR
+  and Claude Code windows). In the Claude Code window a focused terminal keeps ⌘K: the command
+  passes the key on to SwiftTerm's `TerminalView`.
+- `PaletteSources` builds `PaletteItem`s from what's cached for every org, never fetching: it pulls
+  each org's snapshot and board list from disk first (`loadCached`, `loadCachedBoards`), then
+  issue histories one org a frame apart (they're large and decode on the main actor), and the
+  footer names orgs with nothing cached. Results are ranked when the query or items change, not
+  on redraw. Items are actions (New Issue,
+  Refresh, Full Refresh, Switch to an org or project, New Window and Tab, Open Claude Code, Next
+  Session Waiting on You, the Exclude drafts and Show hidden toggles), pages and Settings panes per
+  org, people, open and recently merged PRs, the issue history, harness documents that follow the
+  standard, boards and views, repos and sessions, each labelled with its org. The window's project
+  is ignored. `IssueTextIndex` adds In Descriptions matches a moment after typing stops.
+- `PaletteQuery` needs every word typed, and `#123` or `repo#123` finds that number first; then a
+  title starting with the text, a word starting with it, anything else, the window's org, open
+  items and shorter titles breaking ties. Groups (`PaletteGroup`) show six each. With nothing
+  typed: recent picks (`PaletteRecents`, by item ID on this Mac, the window's org first) and
+  suggested actions.
+- Results open as `PaletteDestination`s (an org and a `PaletteTarget`). In a main window
+  (`MainView.openFromPalette`, `deliver`), a sidebar row, Settings pane (`orgSettingsPane`, the
+  scene storage `OrgSettingsView` reads) or project is set there, and PRs, issues, documents and
+  New Issue go to `PageStack` (`paletteDelivery`) for its drawers. A result in another org asks
+  each time: switch this window, new tab or new window (`NavigationRequest.palette` carries it to
+  the new one); ⌘↩ and ⌥↩ skip the question, and actions just switch. Other windows send results
+  to the main window used last (`PaletteRouter`, kept in order by `controlActiveState`), else a
+  new one. Refresh is `OrgRefresh`, shared with the sidebar's Refresh link.
+- Arrows move, Return picks, Esc closes (or leaves the question) and focus goes back to what had
+  it. Rows are labelled with what they are and their org for VoiceOver, the highlighted one
+  selected, and the number of results is announced once typing settles.
 
 ## Behaviour worth knowing
 
@@ -530,7 +567,11 @@ added, removed or created, and the tracked board field set), and commits to the 
   conversation beneath. Post Review (`PostReviewSheet`) sends one review through REST:
   Approve, Comment or Request Changes (only Comment on your own PR, as GitHub takes nothing
   else from its author), inline comments on lines the diff shows (a suggestion as a GitHub
-  suggestion block), and the rest in the body.
+  suggestion block), and the rest in the body. Looking again, the reviewer lists your
+  review threads (`gh api graphql`) and names those now dealt with in the JSON's `resolved`
+  (`ReviewResult.resolved`); Post Review offers them ticked and resolves them once the review is
+  posted (`resolveReviewThread`). Only unresolved threads on that PR that you started are
+  resolved (`GitHubAPI.resolvableThreads`), whatever IDs claude gives.
 - `ClaudeRunner` asks Claude Code one-off questions (`claude -p`), on this Mac when claude is
   installed here, else on the Connect with server: a bash script on standard input writes the
   prompt and any files into a folder and runs claude there with only the tools given. It
@@ -564,7 +605,8 @@ added, removed or created, and the tracked board field set), and commits to the 
   history and sent once `SessionStart` reports idle, `pendingPrompts`). Merged or closed stops
   the watch. Runs Gannin started (`automaticRuns`) are posted as a COMMENT review when Post
   automatic reviews (`autoPostReviews`) is on, marked as Claude's, never approving or requesting
-  changes; otherwise they wait for Post Review. What happened (`ReviewActivity`, `ReviewEvent`,
+  changes, and the threads it says are dealt with are resolved too; otherwise they wait for Post
+  Review. What happened (`ReviewActivity`, `ReviewEvent`,
   newest 500 in Sessions/ReviewActivity.json) is the Inbox's While you were away section, one
   row per review, until its tab is looked at (`looked`, `markSeen`).
 - Reviews keep a history: the result (`CodeSession.reviewResult`, from the transcript), your
