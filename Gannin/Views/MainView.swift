@@ -20,6 +20,10 @@ enum DetailSelection: Hashable {
     case workflowJob(workflow: String, name: String)
     /// A document in the org's harness, by path.
     case harnessDocument(String)
+    /// Milestones with this title across repos (`MilestoneGroup`).
+    case milestone(String)
+    /// A GitHub Release, by repo and tag.
+    case release(repo: String, tag: String)
 }
 
 /// The sidebar's sections, in sidebar order.
@@ -51,6 +55,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case delivery = "PR flow"
     /// Issue metrics; the Issues row is the lists.
     case issueFlow = "Issue flow"
+    /// Milestones and GitHub Releases, under Delivery.
+    case releases = "Releases"
     case settings = "Settings"
 
     var id: Self { self }
@@ -89,6 +95,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .hygiene: "wand.and.sparkles"
         case .delivery: "chart.line.uptrend.xyaxis"
         case .issueFlow: "chart.bar.doc.horizontal"
+        case .releases: "shippingbox"
         case .settings: "gearshape"
         }
     }
@@ -572,6 +579,10 @@ struct PageTitles {
             return name
         case .harnessDocument(let path):
             return harness?.document(at: path)?.title ?? path.split(separator: "/").last.map(String.init) ?? path
+        case .milestone(let title):
+            return title
+        case .release(_, let tag):
+            return tag
         }
     }
 }
@@ -1089,6 +1100,10 @@ private struct PageStack: View {
             }
         case .harnessDocument(let path):
             HarnessDocumentPage(org: org, path: path)
+        case .milestone(let title):
+            MilestonePage(org: org, title: title)
+        case .release(let repo, let tag):
+            ReleasePage(org: org, repo: repo, tag: tag)
         }
     }
 
@@ -1228,6 +1243,7 @@ struct OrgSidebar: View {
                     row(.scorecard)
                     row(.delivery)
                     row(.issueFlow)
+                    row(.releases)
                     row(.investments)
                     row(.actions)
                     DisclosureGroup(isExpanded: $repositoriesExpanded) {
@@ -1452,7 +1468,7 @@ struct OrgSidebar: View {
         case .agents:
             guard let selectedOrg else { return 0 }
             return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .recap, .scorecard, .ask, .epics, .hygiene, .delivery, .issueFlow, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .recap, .scorecard, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
         }
     }
 }

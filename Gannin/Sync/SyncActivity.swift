@@ -69,6 +69,7 @@ final class SyncRun: Identifiable {
         case issueText = "Issue text"
         case projects = "Project"
         case actions = "Actions"
+        case releases = "Releases"
     }
 
     let id = UUID()

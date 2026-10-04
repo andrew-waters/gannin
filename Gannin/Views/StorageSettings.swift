@@ -13,6 +13,7 @@ struct StorageSettings: View {
     @Environment(WorkLogStore.self) private var workLog
     @Environment(ProjectStore.self) private var projects
     @Environment(ActionsStore.self) private var actions
+    @Environment(ReleaseStore.self) private var releases
     @Environment(DetailStore.self) private var details
     @Environment(BankHolidayStore.self) private var bankHolidays
     @Environment(PeopleDatesStore.self) private var peopleDates
@@ -33,6 +34,7 @@ struct StorageSettings: View {
         case workLog = "Work log"
         case projects = "Project boards"
         case actions = "Actions runs"
+        case releases = "Milestones and releases"
         case details = "PR and issue details"
         case bankHolidays = "Bank holidays"
 
@@ -47,6 +49,7 @@ struct StorageSettings: View {
             case .workLog: "PRs with their commits and reviews, behind Activity"
             case .projects: "Project board definitions and items"
             case .actions: "Workflow runs and the jobs of those opened, behind Actions"
+            case .releases: "Milestones and GitHub Releases per repository, behind Releases"
             case .details: "Bodies, comments and checks of items you've opened"
             case .bankHolidays: "Public holidays by country and year, from date.nager.at"
             }
@@ -61,6 +64,7 @@ struct StorageSettings: View {
             case .workLog: WorkLogStore.cacheDirectory
             case .projects: ProjectStore.cacheDirectory
             case .actions: ActionsStore.cacheDirectory
+            case .releases: ReleaseStore.cacheDirectory
             case .details: DetailStore.cacheFile
             case .bankHolidays: BankHolidayStore.cacheDirectory
             }
@@ -196,6 +200,7 @@ struct StorageSettings: View {
         case .workLog: workLog.clear()
         case .projects: projects.clear()
         case .actions: actions.clear()
+        case .releases: releases.clear()
         case .details: details.clear()
         case .bankHolidays: bankHolidays.clear()
         }

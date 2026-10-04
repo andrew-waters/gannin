@@ -1,0 +1,510 @@
+import SwiftUI
+
+/// Delivery › Releases: the org's milestones, grouped by title across repos,
+/// with GitHub's progress (closed of all issues) and what the issue history
+/// says is in progress and merged; and its GitHub Releases, each linked to
+/// the milestone it shipped. Milestones and Releases are picked in the
+/// toolbar.
+struct ReleasesView: View {
+    enum Part: String, CaseIterable {
+        case milestones = "Milestones"
+        case releases = "Releases"
+    }
+
+    @Environment(ReleaseStore.self) private var store
+    @Environment(IssueStore.self) private var issueStore
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(\.navigate) private var navigate
+    @Environment(\.openURL) private var openURL
+    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
+    @SceneStorage("releasesPart") private var part: Part = .milestones
+    let org: String
+    @State private var search = ""
+    @State private var showsClosed = false
+    @State private var showsPrereleases = true
+
+    var body: some View {
+        let config = configs.config(for: org)
+        let history = store.history(for: org)
+        let groups = MilestoneGroup.groups(history?.milestones ?? [], excluding: config.repoExclusion)
+        let releases = (history?.releases ?? []).filter { !config.repoExclusion.contains($0.repo) }
+        VStack(spacing: 0) {
+            bar(count: part == .milestones ? shownMilestones(groups).count : shownReleases(releases).count)
+            Divider()
+            if history == nil {
+                if let error = store.errors[org] {
+                    ContentUnavailableView("Couldn't load milestones", systemImage: "exclamationmark.triangle", description: Text(error))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                switch part {
+                case .milestones: milestoneList(groups, releases: releases, config: config)
+                case .releases: releaseList(releases, groups: groups)
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItem {
+                Picker("Show", selection: $part) {
+                    ForEach(Part.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
+        }
+        .task(id: org) {
+            async let releases: Void = store.sync(org, excluding: config.unfetchedRepos)
+            async let issues: Void = issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays())
+            _ = await (releases, issues)
+        }
+    }
+
+    private func bar(count: Int) -> some View {
+        HStack(spacing: 10) {
+            FilterSearchField(text: $search, prompt: part == .milestones ? "Search milestones" : "Search releases")
+                .frame(maxWidth: 280)
+            switch part {
+            case .milestones: Toggle("Closed too", isOn: $showsClosed).checkboxToggle()
+            case .releases: Toggle("Pre-releases", isOn: $showsPrereleases).checkboxToggle()
+            }
+            Spacer()
+            let noun = part == .milestones ? "milestone" : "release"
+            Text("\(count) \(noun)\(count == 1 ? "" : "s")").foregroundStyle(.secondary)
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private var words: [Substring] { search.lowercased().split(separator: " ") }
+
+    // MARK: Milestones
+
+    private func shownMilestones(_ groups: [MilestoneGroup]) -> [MilestoneGroup] {
+        groups.filter { group in
+            guard showsClosed || group.isOpen else { return false }
+            let text = ([group.title] + group.repos).joined(separator: " ").lowercased()
+            return words.allSatisfy { text.contains($0) }
+        }
+    }
+
+    @ViewBuilder
+    private func milestoneList(_ groups: [MilestoneGroup], releases: [RepoRelease], config: OrgConfig) -> some View {
+        let shown = shownMilestones(groups)
+        if shown.isEmpty {
+            ContentUnavailableView(
+                groups.isEmpty ? "No milestones" : "No matching milestones",
+                systemImage: "flag.checkered",
+                description: Text(groups.isEmpty ? "Milestones in the org's repositories show here." : "Try another search, or show closed ones too.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            let issues = issueStore.history(for: org)
+            List(shown) { group in
+                MilestoneRow(
+                    group: group,
+                    activity: MilestoneActivity(group: group, history: issues, workflow: config.workflow),
+                    release: ReleaseLink.release(for: group, in: releases)
+                ) {
+                    navigate?(.milestone(group.title))
+                }
+                .contextMenu {
+                    ForEach(group.milestones) { milestone in
+                        Button(group.milestones.count == 1 ? "Open on GitHub" : "Open in \(Self.repoName(milestone.repo)) on GitHub") {
+                            openURL(milestone.url)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: Releases
+
+    private func shownReleases(_ releases: [RepoRelease]) -> [RepoRelease] {
+        releases
+            .filter { release in
+                guard showsPrereleases || !release.isPrerelease else { return false }
+                let text = "\(release.title) \(release.tagName) \(release.repo) \(release.author ?? "")".lowercased()
+                return words.allSatisfy { text.contains($0) }
+            }
+            .sorted { $0.date > $1.date }
+    }
+
+    @ViewBuilder
+    private func releaseList(_ releases: [RepoRelease], groups: [MilestoneGroup]) -> some View {
+        let shown = shownReleases(releases)
+        if shown.isEmpty {
+            ContentUnavailableView(
+                releases.isEmpty ? "No releases" : "No matching releases",
+                systemImage: "shippingbox",
+                description: Text(releases.isEmpty ? "GitHub Releases in the org's repositories show here." : "Try another search.")
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            List(shown) { release in
+                ReleaseRow(release: release, milestone: ReleaseLink.milestone(for: release, in: groups)) {
+                    navigate?(.release(repo: release.repo, tag: release.tagName))
+                } openMilestone: { group in
+                    navigate?(.milestone(group.title))
+                }
+                .contextMenu {
+                    Button("Open on GitHub") { openURL(release.url) }
+                }
+            }
+        }
+    }
+
+    static func repoName(_ repo: String) -> String {
+        repo.split(separator: "/").last.map(String.init) ?? repo
+    }
+}
+
+// MARK: - Rows
+
+private struct MilestoneRow: View {
+    let group: MilestoneGroup
+    let activity: MilestoneActivity
+    let release: RepoRelease?
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(group.title).fontWeight(.medium).lineLimit(1)
+                        if !group.isOpen { Text("Closed").font(.caption).foregroundStyle(.purple) }
+                        if let release {
+                            Label(release.isDraft ? "Draft \(release.tagName)" : "Released as \(release.tagName)", systemImage: "shippingbox")
+                                .font(.caption)
+                                .foregroundStyle(release.isDraft ? Color.secondary : ChartPalette.good)
+                        }
+                    }
+                    Text(group.repos.map(ReleasesView.repoName).joined(separator: ", "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                if group.isOpen, let due = group.dueOn {
+                    DueLabel(date: due)
+                } else if let closed = group.closedAt {
+                    Text("Closed \(closed.formatted(.relative(presentation: .named)))")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                if activity.withMergedPullRequest > 0 {
+                    Text("\(activity.withMergedPullRequest) merged")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .help("Issues in it with a merged PR, from the issue history")
+                }
+                if !activity.inProgress.isEmpty {
+                    Text("\(activity.inProgress.count) in progress")
+                        .font(.callout)
+                        .foregroundStyle(ChartPalette.blue)
+                }
+                MilestoneProgress(closed: group.closedIssues, total: group.total)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .padding(.vertical, 3)
+    }
+}
+
+private struct ReleaseRow: View {
+    let release: RepoRelease
+    let milestone: MilestoneGroup?
+    let open: () -> Void
+    let openMilestone: (MilestoneGroup) -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Button(action: open) {
+                HStack(spacing: 10) {
+                    Image(systemName: "tag")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 16)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text(release.title).fontWeight(.medium).lineLimit(1)
+                            if release.title != release.tagName {
+                                Text(release.tagName).font(.callout.monospaced()).foregroundStyle(.secondary)
+                            }
+                            ReleaseBadges(release: release)
+                        }
+                        Text(caption)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    Spacer()
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            if let milestone {
+                Button {
+                    openMilestone(milestone)
+                } label: {
+                    Label(milestone.title, systemImage: "flag.checkered")
+                }
+                .linkButton()
+                .help("The milestone it shipped")
+            }
+        }
+        .padding(.vertical, 3)
+    }
+
+    private var caption: String {
+        var parts = [ReleasesView.repoName(release.repo)]
+        if let author = release.author { parts.append(author) }
+        parts.append(release.isDraft ? "drafted \(release.createdAt.formatted(.relative(presentation: .named)))" : release.date.formatted(.relative(presentation: .named)))
+        return parts.joined(separator: " · ")
+    }
+}
+
+struct ReleaseBadges: View {
+    let release: RepoRelease
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if release.isLatest { badge("Latest", ChartPalette.good) }
+            if release.isPrerelease { badge("Pre-release", .orange) }
+            if release.isDraft { badge("Draft", .secondary) }
+        }
+    }
+
+    private func badge(_ text: String, _ color: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(color)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 1)
+            .overlay(Capsule().strokeBorder(color.opacity(0.6)))
+    }
+}
+
+/// "3 of 8" over a bar, green once everything's closed.
+struct MilestoneProgress: View {
+    let closed: Int
+    let total: Int
+    var width: CGFloat = 120
+
+    var body: some View {
+        let progress = total == 0 ? 0 : Double(closed) / Double(total)
+        VStack(alignment: .trailing, spacing: 3) {
+            Text(total == 0 ? "No issues" : "\(closed) of \(total)")
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(total == 0 ? .secondary : .primary)
+            ProgressView(value: progress)
+                .frame(width: width)
+                .tint(total > 0 && progress >= 1 ? ChartPalette.good : .accentColor)
+        }
+        .help("Closed issues of all issues in the milestone, as GitHub counts them")
+    }
+}
+
+/// A due date, red once it's passed and orange within the week, as
+/// Prioritisation shows committed dates.
+struct DueLabel: View {
+    let date: Date
+
+    var body: some View {
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: .now), to: calendar.startOfDay(for: date)).day ?? 0
+        let words = days < 0 ? "\(-days)d overdue" : days == 0 ? "Due today" : days == 1 ? "Due tomorrow" : "Due \(date.formatted(.dateTime.day().month(.abbreviated)))"
+        Text(words)
+            .font(.callout)
+            .foregroundStyle(days < 0 ? .red : days < 7 ? .orange : .secondary)
+            .help(date.formatted(date: .complete, time: .omitted))
+    }
+}
+
+// MARK: - Milestone page
+
+/// A milestone across its repos: progress in each, the release it shipped
+/// as, its description, and its issues from the issue history.
+struct MilestonePage: View {
+    @Environment(ReleaseStore.self) private var store
+    @Environment(IssueStore.self) private var issueStore
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(\.navigate) private var navigate
+    @Environment(\.openURL) private var openURL
+    let org: String
+    let title: String
+
+    var body: some View {
+        let config = configs.config(for: org)
+        let history = store.history(for: org)
+        let groups = MilestoneGroup.groups(history?.milestones ?? [], excluding: config.repoExclusion)
+        if let group = groups.first(where: { $0.key == MilestoneGroup.key(title) }) {
+            content(group, releases: history?.releases ?? [], config: config)
+        } else if history == nil {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView("No milestone called \(title)", systemImage: "flag.checkered", description: Text("It may have been renamed, or closed a while ago."))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func content(_ group: MilestoneGroup, releases: [RepoRelease], config: OrgConfig) -> some View {
+        let issueHistory = issueStore.history(for: org)
+        let activity = MilestoneActivity(group: group, history: issueHistory, workflow: config.workflow)
+        let release = ReleaseLink.release(for: group, in: releases)
+        let inProgress = Set(activity.inProgress.map(\.id))
+        let open = activity.issues.filter { $0.isOpen && !inProgress.contains($0.id) }.sorted { $0.number > $1.number }
+        let closed = activity.issues.filter { !$0.isOpen }.sorted { ($0.closedAt ?? .distantPast) > ($1.closedAt ?? .distantPast) }
+        return Form {
+            Section {
+                LabeledContent("State", value: group.isOpen ? "Open" : "Closed")
+                if let due = group.dueOn {
+                    LabeledContent("Due") {
+                        if group.isOpen { DueLabel(date: due) } else { Text(due.formatted(date: .abbreviated, time: .omitted)) }
+                    }
+                }
+                if let closedAt = group.closedAt {
+                    LabeledContent("Closed", value: closedAt.formatted(date: .abbreviated, time: .omitted))
+                }
+                LabeledContent("Progress") { MilestoneProgress(closed: group.closedIssues, total: group.total, width: 200) }
+                LabeledContent("In progress", value: "\(activity.inProgress.count)")
+                LabeledContent("With a merged PR", value: "\(activity.withMergedPullRequest)")
+                if let release {
+                    LabeledContent("Release") {
+                        Button {
+                            navigate?(.release(repo: release.repo, tag: release.tagName))
+                        } label: {
+                            Label("\(release.title) · \(release.isDraft ? "draft" : release.date.formatted(date: .abbreviated, time: .omitted))", systemImage: "shippingbox")
+                        }
+                        .linkButton()
+                    }
+                }
+            }
+            Section(group.milestones.count == 1 ? "Repository" : "Repositories") {
+                ForEach(group.milestones) { milestone in
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(milestone.repo)
+                            if !milestone.isOpen {
+                                Text("Closed").font(.caption).foregroundStyle(.purple)
+                            } else if let due = milestone.dueOn, due != group.dueOn {
+                                DueLabel(date: due)
+                            }
+                        }
+                        Spacer()
+                        MilestoneProgress(closed: milestone.closedIssues, total: milestone.total)
+                        Button("GitHub") { openURL(milestone.url) }
+                            .linkButton()
+                    }
+                }
+            }
+            if let description = group.description {
+                Section("Description") {
+                    MarkdownText(source: description)
+                }
+            }
+            issueSection("In progress", activity.inProgress.sorted { $0.number > $1.number })
+            issueSection("Open", open)
+            issueSection("Closed", closed)
+            if issueHistory != nil && activity.issues.count < group.total {
+                Section {
+                    Text("GitHub counts \(group.total) issue\(group.total == 1 ? "" : "s"); the issue history has \(activity.issues.count), as it keeps only those closed since the window's start.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    @ViewBuilder
+    private func issueSection(_ title: String, _ issues: [IssueRecord]) -> some View {
+        if !issues.isEmpty {
+            Section("\(title) (\(issues.count))") {
+                ForEach(issues) { issue in
+                    Button {
+                        navigate?(.issueReference(IssueReference(org: org, record: issue)))
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: issue.isOpen ? "circle" : "checkmark.circle.fill")
+                                .foregroundStyle(issue.isOpen ? .green : .purple)
+                            Text(issue.title).lineLimit(1)
+                            Spacer()
+                            if !issue.assignees.isEmpty {
+                                Text(issue.assignees.joined(separator: ", ")).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            if let status = issue.statusChanges.last?.status {
+                                Text(status).foregroundStyle(.secondary)
+                            }
+                            Text("\(ReleasesView.repoName(issue.repo))#\(String(issue.number))").foregroundStyle(.secondary).monospacedDigit()
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - Release page
+
+/// A GitHub Release: its facts, the milestone it shipped, and its notes.
+struct ReleasePage: View {
+    @Environment(ReleaseStore.self) private var store
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(\.navigate) private var navigate
+    @Environment(\.openURL) private var openURL
+    let org: String
+    let repo: String
+    let tag: String
+
+    var body: some View {
+        let history = store.history(for: org)
+        if let release = history?.releases.first(where: { $0.repo == repo && $0.tagName == tag }) {
+            let groups = MilestoneGroup.groups(history?.milestones ?? [], excluding: configs.config(for: org).repoExclusion)
+            Form {
+                Section {
+                    LabeledContent("Repository", value: repo)
+                    LabeledContent("Tag") { Text(release.tagName).monospaced() }
+                    LabeledContent(release.isDraft ? "Drafted" : "Published", value: release.date.formatted(date: .abbreviated, time: .shortened))
+                    if let author = release.author { LabeledContent("Author", value: author) }
+                    if release.isLatest || release.isPrerelease || release.isDraft {
+                        LabeledContent("Marked") { ReleaseBadges(release: release) }
+                    }
+                    if let milestone = ReleaseLink.milestone(for: release, in: groups) {
+                        LabeledContent("Milestone") {
+                            Button {
+                                navigate?(.milestone(milestone.title))
+                            } label: {
+                                Label(milestone.title, systemImage: "flag.checkered")
+                            }
+                            .linkButton()
+                        }
+                    }
+                    LabeledContent("GitHub") {
+                        Button("Open on GitHub") { openURL(release.url) }.linkButton()
+                    }
+                }
+                Section("Notes") {
+                    if let notes = release.notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        MarkdownText(source: notes)
+                    } else {
+                        Text("No release notes.").foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .formStyle(.grouped)
+        } else if history == nil {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ContentUnavailableView("No release \(tag)", systemImage: "shippingbox", description: Text("Only each repository's ten latest releases are kept."))
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}

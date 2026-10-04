@@ -175,6 +175,7 @@ struct CommandPalette: View {
     @Environment(MetricsStore.self) private var metricsStore
     @Environment(WorkLogStore.self) private var workLog
     @Environment(ActionsStore.self) private var actions
+    @Environment(ReleaseStore.self) private var releases
     @Environment(\.openWindow) private var openWindow
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
 
@@ -507,7 +508,7 @@ struct CommandPalette: View {
         case .refresh(let org, let full):
             OrgRefresh(
                 orgs: orgs, metricsStore: metricsStore, workLog: workLog, issueStore: issues,
-                actions: actions, projects: projects, configs: configs.root, harness: harness, windowDays: windowDays
+                actions: actions, releases: releases, projects: projects, configs: configs.root, harness: harness, windowDays: windowDays
             )(org, mode: full ? .full : .manual)
         case .newWindow:
             openWindow(id: "main")
