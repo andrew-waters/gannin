@@ -46,11 +46,19 @@ struct ProjectBoardView: View {
         .toolbar {
             ToolbarItem { NewIssueButton(context: NewIssueContext(org: org, board: number, boardFilter: appliedFilter)) }
         }
-        .task(id: "\(org)#\(number) \(appliedFilter)") {
-            await store.sync(org: org, number: number, filter: appliedFilter)
-            if viewID == nil, let first = store.cache(org: org, number: number)?.board.views.first {
+        .task(id: "\(org)#\(number)") {
+            await store.loadDefinition(org: org, number: number)
+            guard viewID == nil else { return }
+            if let first = store.cache(org: org, number: number)?.board.views.first {
                 select(first)
+            } else if store.cache(org: org, number: number) != nil {
+                // A board with no saved views at all: fall back to everything.
+                viewID = ""
             }
+        }
+        .task(id: "\(org)#\(number) \(viewID ?? "") \(appliedFilter)") {
+            guard viewID != nil else { return }
+            await store.sync(org: org, number: number, filter: appliedFilter)
         }
     }
 
