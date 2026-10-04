@@ -31,11 +31,14 @@ final class ProjectStore {
 
     func cache(org: String, number: Int) -> BoardCache? { caches[Self.key(org, number)] }
 
-    func items(org: String, number: Int, filter: String) -> BoardItems? {
-        caches[Self.key(org, number)]?.items[filter]
+    func items(org: String, number: Int, filter: String) -> [BoardItem]? {
+        caches[Self.key(org, number)]?.resolvedItems(for: filter)
     }
 
-    func isLoading(org: String, number: Int) -> Bool { loading.contains(Self.key(org, number)) }
+    func isLoading(org: String, number: Int) -> Bool {
+        let key = Self.key(org, number)
+        return loading.contains { $0 == key || $0.hasPrefix(key + "|") }
+    }
 
     /// The org's open boards: from disk at once, then fetched again.
     func loadBoards(org: String) async {
@@ -124,22 +127,32 @@ final class ProjectStore {
     func loadDefinition(org: String, number: Int, force: Bool = false) async {
         let key = Self.key(org, number)
         loadCached(key)
-        guard let api = auth.api, !loading.contains(key) else { return }
+        guard let api = auth.api else { return }
         if !force, let cached = caches[key], Date.now.timeIntervalSince(cached.fetchedAt) < Self.maxAge { return }
-        guard let board = try? await api.board(org: org, number: number) else { return }
-        var cache = caches[key] ?? BoardCache(board: board, fetchedAt: .now)
-        cache.board = board
-        cache.fetchedAt = .now
-        caches[key] = cache
-        save(cache, key: key)
+        do {
+            guard let board = try await api.board(org: org, number: number) else {
+                errors[key] = "Couldn't find project \(number)."
+                return
+            }
+            var cache = caches[key] ?? BoardCache(board: board, fetchedAt: .now)
+            cache.board = board
+            cache.fetchedAt = .now
+            caches[key] = cache
+            errors[key] = nil
+            save(cache, key: key)
+        } catch is CancellationError {
+        } catch {
+            errors[key] = error.localizedDescription
+        }
     }
 
     /// The board's definition and the items for `filter`, from cache when
     /// fresh enough.
     func sync(org: String, number: Int, filter: String, force: Bool = false) async {
         let key = Self.key(org, number)
+        let loadKey = "\(key)|\(filter)"
         loadCached(key)
-        guard let api = auth.api, !loading.contains(key) else { return }
+        guard let api = auth.api, !loading.contains(loadKey) else { return }
         let now = Date.now
         let cached = caches[key]
         let boardStale = cached.map { now.timeIntervalSince($0.fetchedAt) >= Self.maxAge } ?? true
@@ -147,24 +160,25 @@ final class ProjectStore {
         guard force || boardStale || itemsStale else { return }
         if cached?.items[filter] != nil, !force, auth.shouldHoldOff { return }
 
-        loading.insert(key)
-        defer { loading.remove(key) }
+        loading.insert(loadKey)
+        defer { loading.remove(loadKey) }
         let run = activity.begin(.projects, org: org)
         if force || boardStale { run.add("board", title: "Board and views") }
         run.add("items", title: "Items", detail: filter.isEmpty ? "Everything" : filter)
         do {
-            var cache = cached
-            if force || boardStale || cache == nil {
+            if force || boardStale || cached == nil {
                 if let board = try await run.track("board", count: { $0.map { $0.views.count } }, { _ in try await api.board(org: org, number: number) }) {
-                    if cache == nil {
-                        cache = BoardCache(board: board, fetchedAt: now)
-                    } else {
-                        cache?.board = board
-                        cache?.fetchedAt = now
-                    }
+                    // Written as soon as it's fetched, ahead of the (often
+                    // slower) items fetch below, so the board's tabs can
+                    // show while its items are still loading.
+                    var cache = caches[key] ?? BoardCache(board: board, fetchedAt: now)
+                    cache.board = board
+                    cache.fetchedAt = now
+                    caches[key] = cache
+                    save(cache, key: key)
                 }
             }
-            guard var cache else {
+            guard caches[key] != nil else {
                 run.finish()
                 errors[key] = "Couldn't find project \(number)."
                 return
@@ -172,7 +186,15 @@ final class ProjectStore {
             let items = try await run.track("items", count: \.count) {
                 try await api.boardItems(org: org, number: number, filter: filter, onPage: $0)
             }
-            cache.items[filter] = BoardItems(fetchedAt: now, items: items)
+            // A sync for another filter (switching view tabs) can finish
+            // while this one awaited, so merge onto the cache as it is now
+            // rather than the snapshot taken before those awaits, or its
+            // write would be lost.
+            guard var cache = caches[key] else {
+                run.finish()
+                return
+            }
+            cache.merge(items, for: filter, at: now)
             caches[key] = cache
             errors[key] = nil
             save(cache, key: key)
