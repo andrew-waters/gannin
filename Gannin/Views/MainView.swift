@@ -376,7 +376,12 @@ struct MainView: View {
             workspace = id
         case .org:
             break
-        case .page, .harnessDocument, .newIssue:
+        case .harnessDocument(let repo, _, _):
+            // A project with its own harness only shows that one's
+            // documents: open others with All.
+            if !orgConfigs.config(for: destination.org).harnesses.contains(where: { $0.repo == repo }) { workspace = nil }
+            paletteDelivery = destination
+        case .page, .newIssue:
             paletteDelivery = destination
         }
     }
@@ -577,6 +582,7 @@ struct PageTitles {
 /// what it links to in a new tab or window with the trail that led there.
 private struct PageStack: View {
     @Environment(ActionsStore.self) private var actionsStore
+    @Environment(HarnessStore.self) private var harnessStore
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(\.openWindow) private var openWindow
@@ -684,10 +690,14 @@ private struct PageStack: View {
         case .page(let page):
             navigate(at: path.count)(page)
         case .harnessDocument(let repo, let documentPath, _):
-            // The combined index has the first harness's documents as they
-            // are, the others' under `owner/name:path`.
-            let isFirst = configs.config(for: org).harnesses.first?.repo == repo
-            navigate(at: path.count)(.harnessDocument(isFirst ? documentPath : "\(repo):\(documentPath)"))
+            // As the combined index has it: the first loaded harness's
+            // documents as they are, the others' under `owner/name:path`.
+            let index = harnessStore.combined(org: org, configs.config(for: org).harnesses)
+            let document = index?.documents.first { document in
+                let split = HarnessIndex.split(document.path)
+                return split.path == documentPath && (split.repo ?? index?.repo) == repo
+            }
+            navigate(at: path.count)(.harnessDocument(document?.path ?? documentPath))
         case .newIssue:
             newIssueAction()
         default:

@@ -82,9 +82,9 @@ enum PaletteRouter {
 extension View {
     /// The palette over this window, opened with ⌘K. `homeOrg` is the org
     /// results are opened in without asking, read as it opens; `open` opens
-    /// a result.
-    func commandPalette(homeOrg: @escaping () -> String?, open: @escaping (PaletteDestination, PalettePlacement) -> Void) -> some View {
-        modifier(CommandPaletteHost(homeOrg: homeOrg, open: open))
+    /// a result. `isMainWindow` is false where results go to another window.
+    func commandPalette(homeOrg: @escaping () -> String?, isMainWindow: Bool = true, open: @escaping (PaletteDestination, PalettePlacement) -> Void) -> some View {
+        modifier(CommandPaletteHost(homeOrg: homeOrg, isMainWindow: isMainWindow, open: open))
     }
 
     /// The palette in a window that isn't a main window: results go to the
@@ -98,7 +98,7 @@ private struct RoutedCommandPalette: ViewModifier {
     @Environment(\.openWindow) private var openWindow
 
     func body(content: Content) -> some View {
-        content.commandPalette(homeOrg: { PaletteRouter.mostRecent?.org() }) { destination, placement in
+        content.commandPalette(homeOrg: { PaletteRouter.mostRecent?.org() }, isMainWindow: false) { destination, placement in
             if let main = PaletteRouter.mostRecent {
                 main.window?.makeKeyAndOrderFront(nil)
                 main.open(destination, placement)
@@ -117,6 +117,7 @@ private final class ResponderBox {
 
 private struct CommandPaletteHost: ViewModifier {
     let homeOrg: () -> String?
+    let isMainWindow: Bool
     let open: (PaletteDestination, PalettePlacement) -> Void
 
     @State private var isPresented = false
@@ -132,7 +133,7 @@ private struct CommandPaletteHost: ViewModifier {
                             .contentShape(Rectangle())
                             .onTapGesture(perform: close)
                             .accessibilityHidden(true)
-                        CommandPalette(homeOrg: homeOrg(), open: open, dismiss: close)
+                        CommandPalette(homeOrg: homeOrg(), isMainWindow: isMainWindow, open: open, dismiss: close)
                             .padding(.top, 72)
                             .padding(.horizontal, 16)
                     }
@@ -178,10 +179,19 @@ struct CommandPalette: View {
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
 
     let homeOrg: String?
+    /// False in the issue, PR and Claude Code windows, whose results open in
+    /// the main window used last.
+    let isMainWindow: Bool
     let open: (PaletteDestination, PalettePlacement) -> Void
     let dismiss: () -> Void
 
     @State private var query = ""
+    /// The results for `query`, worked out when it, the items or the
+    /// description matches change, not on every redraw.
+    @State private var sections: [PaletteSection] = []
+    /// The highlight moved by the keyboard, so the list follows it; hovering
+    /// leaves the list where it is.
+    @State private var scrollsToHighlight = false
     @State private var items: [PaletteItem] = []
     @State private var byID: [String: PaletteItem] = [:]
     @State private var unloaded: [Organisation] = []
@@ -224,7 +234,9 @@ struct CommandPalette: View {
         .onChange(of: query) {
             confirming = nil
             highlighted = nil
+            updateSections()
         }
+        .onChange(of: descriptionHits) { updateSections() }
         .task(id: query) { await searchDescriptions() }
         .onChange(of: rows.count) { announce(rows.count) }
     }
@@ -288,7 +300,11 @@ struct CommandPalette: View {
                             row(item, isHighlighted: rowID == (highlighted ?? firstRow(sections)))
                                 .id(rowID)
                                 .onTapGesture { perform(item, placement: nil) }
-                                .onHover { if $0 { highlighted = rowID } }
+                                .onHover { hovering in
+                                    guard hovering else { return }
+                                    scrollsToHighlight = false
+                                    highlighted = rowID
+                                }
                         }
                     }
                     if sections.isEmpty && !isLoading {
@@ -298,7 +314,8 @@ struct CommandPalette: View {
                 .padding(.bottom, 6)
             }
             .onChange(of: highlighted) { _, row in
-                if let row { proxy.scrollTo(row) }
+                if scrollsToHighlight, let row { proxy.scrollTo(row) }
+                scrollsToHighlight = false
             }
         }
     }
@@ -394,7 +411,7 @@ struct CommandPalette: View {
                 .font(.callout)
                 .lineLimit(2)
             ForEach(Array(Self.promptChoices.enumerated()), id: \.offset) { index, entry in
-                let title = index == 0 ? "Switch This Window to \(orgName(destination.org))" : entry.title
+                let title = index == 0 ? "\(switchTitle) to \(orgName(destination.org))" : entry.title
                 Text(title)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -425,6 +442,7 @@ struct CommandPalette: View {
         }
         guard !rows.isEmpty else { return .handled }
         let current = rows.firstIndex(of: highlighted ?? rows[0]) ?? 0
+        scrollsToHighlight = true
         highlighted = rows[min(max(current + step, 0), rows.count - 1)]
         return .handled
     }
@@ -464,12 +482,16 @@ struct CommandPalette: View {
             } else if let homeOrg, destination.org != homeOrg, !isAction(item) {
                 choice = 0
                 confirming = item
-                announce("\(item.title) is in \(orgName(destination.org)). Switch this window, open in a new tab, or open in a new window.")
+                announce("\(item.title) is in \(orgName(destination.org)). \(switchTitle), open in a new tab, or open in a new window.")
             } else {
                 finish(item, destination, placement: .thisWindow)
             }
         }
     }
+
+    /// The first choice for another org's result: the window the palette is
+    /// over, or the main window results go to.
+    private var switchTitle: String { isMainWindow ? "Switch This Window" : "Switch Main Window" }
 
     /// Actions in another org (New Issue, a project) switch the window to it.
     private func isAction(_ item: PaletteItem) -> Bool { item.group == .actions || item.id.hasPrefix("action:") }
@@ -505,9 +527,13 @@ struct CommandPalette: View {
 
     // MARK: Results
 
+    private func updateSections() {
+        sections = rankedSections()
+    }
+
     /// Typed: every group's best matches, up to six each, then those found
     /// in descriptions. Empty: recent results, then suggested actions.
-    private var sections: [PaletteSection] {
+    private func rankedSections() -> [PaletteSection] {
         let query = PaletteQuery(query)
         if query.isEmpty {
             var result: [PaletteSection] = []
@@ -545,17 +571,32 @@ struct CommandPalette: View {
         PaletteSources(orgs: orgs, issues: issues, projects: projects, harness: harness, configs: configs.root, sessions: sessions)
     }
 
-    /// Every org's caches from disk, after the panel's first frame, then
-    /// the items from them.
+    /// What's cached on disk, after the panel's first frame: every org's
+    /// snapshot and board list (small) at once, then the issue histories
+    /// not yet in memory one org at a time, a frame apart, so the panel
+    /// keeps answering while they decode on the main actor.
     private func load() async {
-        await Task.yield()
+        try? await Task.sleep(for: .milliseconds(16))
         let sources = sources
-        sources.loadCaches()
+        sources.loadSnapshots()
+        rebuild(sources)
+        let pending = sources.orgsWithoutIssueHistory
+        for org in pending {
+            try? await Task.sleep(for: .milliseconds(16))
+            guard !Task.isCancelled else { return }
+            issues.loadCached(org)
+        }
+        if !pending.isEmpty { rebuild(sources) }
+        isLoading = false
+        updateSections()
+    }
+
+    private func rebuild(_ sources: PaletteSources) {
         let built = sources.items()
         items = built
         byID = Dictionary(built.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
         unloaded = sources.unloadedOrgs
-        isLoading = false
+        updateSections()
     }
 
     /// Matches inside descriptions and comments, a moment after typing stops.
@@ -565,7 +606,7 @@ struct CommandPalette: View {
         guard text.count >= 3 else { return }
         try? await Task.sleep(for: .milliseconds(250))
         guard !Task.isCancelled else { return }
-        let listed = Set(items.ranked(PaletteQuery(text), homeOrg: homeOrg).filter { $0.group == .issues }.prefix(Self.perGroup).map(\.id))
+        let listed = Set(sections.first { $0.group == .issues }?.items.map(\.id) ?? [])
         // The window's org first.
         let logins = orgs.orgs.map(\.login)
         let orgLogins = logins.filter { $0 == homeOrg } + logins.filter { $0 != homeOrg }

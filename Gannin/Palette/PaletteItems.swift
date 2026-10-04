@@ -199,7 +199,7 @@ struct PaletteQuery {
     func rank(_ item: PaletteItem) -> Int? {
         if let number, item.number == number {
             if let repo {
-                if item.repo?.lowercased().hasSuffix(repo) == true { return 0 }
+                if let itemRepo = item.repo?.lowercased(), itemRepo == repo || itemRepo.hasSuffix("/" + repo) { return 0 }
             } else {
                 return 0
             }
@@ -272,14 +272,19 @@ struct PaletteSources {
     let configs: OrgConfigStore
     let sessions: SessionStore
 
-    /// Pulls each org's snapshot, issue history and board list from disk,
-    /// where a previous launch saved them. Nothing is fetched.
-    func loadCaches() {
+    /// Pulls each org's snapshot and board list from disk, where a previous
+    /// launch saved them. Nothing is fetched.
+    func loadSnapshots() {
         for org in orgs.orgs {
             orgs.loadCached(org.login)
-            issues.loadCached(org.login)
             projects.loadCachedBoards(org.login)
         }
+    }
+
+    /// Orgs whose issue history isn't in memory yet, for `IssueStore.loadCached`
+    /// one at a time (they're the large ones).
+    var orgsWithoutIssueHistory: [String] {
+        orgs.orgs.map(\.login).filter { issues.history(for: $0) == nil }
     }
 
     /// Orgs with neither a snapshot nor an issue history cached.
