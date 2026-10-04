@@ -77,7 +77,8 @@ final class ProjectStore {
         }
     }
 
-    private func loadCachedBoards(_ org: String) {
+    /// Pulls the board list saved by a previous launch into memory.
+    func loadCachedBoards(_ org: String) {
         guard allBoardLists[org] == nil,
               let data = try? Data(contentsOf: Self.boardListURL(org)),
               let projects = try? Self.decoder.decode([OrgProject].self, from: data) else { return }

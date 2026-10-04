@@ -1,6 +1,6 @@
 ---
 type: plan
-status: Draft
+status: In Review
 summary: A ⌘K command palette in every window that finds pages, people, PRs, issues, harness documents, boards and settings from what Gannin has loaded, and runs common actions, all from the keyboard.
 issues: [andrew-waters/gannin#4]
 domains: [navigation, accessibility]
@@ -63,8 +63,8 @@ What's there already:
 - **Ranking:** an exact number first, then a title starting with the query, then a word starting with it,
   then a match anywhere. Every word typed has to match, as `IssueSearch` does. Open items rank above
   closed ones on a tie.
-- **Grouping:** Actions, Pages, People, Pull Requests, Issues, Harness, Boards, Sessions and In
-  descriptions, each with a heading and up to six results, best matches first, with an icon and a type label on every row so results and actions read differently.
+- **Grouping:** Actions, Pages (with Settings panes), People, Pull Requests, Issues, Harness, Boards and
+  Views, Repositories, Claude Code Sessions and In Descriptions, each with a heading and up to six results, best matches first, with an icon and a type label on every row so results and actions read differently.
 - **Empty query:** up to eight recently picked results (kept on this Mac, the window's org's first, then
   other orgs', each labelled), then suggested actions.
 - **Presentation:** a Spotlight-style panel over the page, the field focused. ↑/↓ move, ↩ picks, Esc
@@ -74,16 +74,16 @@ What's there already:
 
 ## Tasks
 
-- [ ] `Gannin/Palette/PaletteItems.swift`: the item model (search hit or action, with a destination),
+- [x] `Gannin/Palette/PaletteItems.swift`: the item model (search hit or action, with a destination),
       sources per entity, ranking and grouping, recent items
-- [ ] `Gannin/Palette/CommandPalette.swift`: the panel, keyboard handling, empty state and accessibility
-- [ ] Host it in `PageStack`, with closures from `MainView` for switching org and project
-- [ ] Host it in the issue, PR and Claude Code windows, opening results in a main window
-- [ ] `FocusedValues` entry and View › Command Palette (⌘K) in `GanninApp`
-- [ ] Results across every cached org, labelled, with the footer for orgs with nothing loaded
-- [ ] The prompt for a result from another org (switch, new tab, new window)
-- [ ] Issue description and comment matches from `IssueTextIndex`
-- [ ] CLAUDE.md
+- [x] `Gannin/Palette/CommandPalette.swift`: the panel, keyboard handling, empty state and accessibility
+- [x] Host it in `PageStack`, with closures from `MainView` for switching org and project
+- [x] Host it in the issue, PR and Claude Code windows, opening results in a main window
+- [x] `FocusedValues` entry and View › Command Palette (⌘K) in `GanninApp`
+- [x] Results across every cached org, labelled, with the footer for orgs with nothing loaded
+- [x] The prompt for a result from another org (switch, new tab, new window)
+- [x] Issue description and comment matches from `IssueTextIndex`
+- [x] CLAUDE.md
 - [ ] Try it in the app: every kind of result and action, keyboard only, and with VoiceOver
 
 ## Follow-ups

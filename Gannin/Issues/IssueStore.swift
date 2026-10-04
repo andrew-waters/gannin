@@ -219,7 +219,8 @@ final class IssueStore {
 
     // MARK: Disk cache
 
-    private func loadCached(_ org: String) {
+    /// Pulls the history saved by a previous launch into memory.
+    func loadCached(_ org: String) {
         guard histories[org] == nil,
               let data = try? Data(contentsOf: Self.fileURL(org)),
               let history = try? Self.decoder.decode(IssueHistory.self, from: data) else {

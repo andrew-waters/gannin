@@ -118,6 +118,37 @@ added, removed or created, and the tracked board field set), and commits to the 
   the work log, boards and issue history push `pullRequestReference` or `issueReference`,
   which show those windows' views embedded (`isEmbedded`).
 
+## Command palette
+
+- `Gannin/Palette/`: View › Command Palette (⌘K, `CommandPaletteCommand`) opens a panel over any
+  window (`.commandPalette` on `MainView`; `.commandPaletteOpeningInMainWindow()` on the issue, PR
+  and Claude Code windows). In the Claude Code window a focused terminal keeps ⌘K: the command
+  passes the key on to SwiftTerm's `TerminalView`.
+- `PaletteSources` builds `PaletteItem`s from what's cached for every org, never fetching: it pulls
+  each org's snapshot, issue history and board list from disk first (`loadCached`,
+  `loadCachedBoards`), and the footer names orgs with nothing cached. Items are actions (New Issue,
+  Refresh, Full Refresh, Switch to an org or project, New Window and Tab, Open Claude Code, Next
+  Session Waiting on You, the Exclude drafts and Show hidden toggles), pages and Settings panes per
+  org, people, open and recently merged PRs, the issue history, harness documents that follow the
+  standard, boards and views, repos and sessions, each labelled with its org. The window's project
+  is ignored. `IssueTextIndex` adds In Descriptions matches a moment after typing stops.
+- `PaletteQuery` needs every word typed, and `#123` or `repo#123` finds that number first; then a
+  title starting with the text, a word starting with it, anything else, the window's org, open
+  items and shorter titles breaking ties. Groups (`PaletteGroup`) show six each. With nothing
+  typed: recent picks (`PaletteRecents`, by item ID on this Mac, the window's org first) and
+  suggested actions.
+- Results open as `PaletteDestination`s (an org and a `PaletteTarget`). In a main window
+  (`MainView.openFromPalette`, `deliver`), a sidebar row, Settings pane (`orgSettingsPane`, the
+  scene storage `OrgSettingsView` reads) or project is set there, and PRs, issues, documents and
+  New Issue go to `PageStack` (`paletteDelivery`) for its drawers. A result in another org asks
+  each time: switch this window, new tab or new window (`NavigationRequest.palette` carries it to
+  the new one); ⌘↩ and ⌥↩ skip the question, and actions just switch. Other windows send results
+  to the main window used last (`PaletteRouter`, kept in order by `controlActiveState`), else a
+  new one. Refresh is `OrgRefresh`, shared with the sidebar's Refresh link.
+- Arrows move, Return picks, Esc closes (or leaves the question) and focus goes back to what had
+  it. Rows are labelled with what they are and their org for VoiceOver, the highlighted one
+  selected, and the number of results is announced once typing settles.
+
 ## Behaviour worth knowing
 
 - Your personal GitHub account is listed first (`OrgStore.loadOrgs`, `Organisation.isUser`, under

@@ -133,6 +133,10 @@ struct GanninApp: App {
                 NewTabCommand()
                 RenameTabCommand()
             }
+            CommandGroup(before: .sidebar) {
+                CommandPaletteCommand()
+                Divider()
+            }
             SessionCommands(sessions: sessions)
         }
 
@@ -140,7 +144,9 @@ struct GanninApp: App {
         WindowGroup("Pull Request", for: PullRequestReference.self) { $reference in
             if let reference {
                 PullRequestWindow(reference: reference)
+                    .commandPaletteOpeningInMainWindow()
                     .environment(sessions)
+                    .environment(actions)
                     .environment(auth)
                     .environment(orgs)
                     .environment(details)
@@ -162,6 +168,8 @@ struct GanninApp: App {
         WindowGroup("Issue", for: IssueReference.self) { $reference in
             if let reference {
                 IssueWindow(reference: reference)
+                    .commandPaletteOpeningInMainWindow()
+                    .environment(actions)
                     .environment(auth)
                     .environment(orgs)
                     .environment(details)
@@ -185,8 +193,12 @@ struct GanninApp: App {
         // outlive their tabs and the window.
         Window("Claude Code", id: SessionStore.windowID) {
             SessionsWindow()
+                .commandPaletteOpeningInMainWindow()
                 .capturesOpenWindow()
                 .environment(sessions)
+                .environment(metrics)
+                .environment(workLog)
+                .environment(actions)
                 .environment(orgs)
                 .environment(auth)
                 .environment(issues)
