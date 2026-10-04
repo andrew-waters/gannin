@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: Keep watching a session's PRs across launches, notice new replies on review threads, announce everything new at once, and optionally send it to Claude.
 issues: [andrew-waters/gannin#12]
 domains: [sessions]
