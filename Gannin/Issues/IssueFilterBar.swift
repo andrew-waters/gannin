@@ -208,7 +208,7 @@ struct IssueFilterBar<Leading: View>: View {
             }
         case .repository: value.split(separator: "/").last.map(String.init) ?? value
         case .label: value
-        case .milestone: value == IssueFilters.noMilestone ? "No milestone" : value
+        case .milestone: value == IssueFilters.noMilestone ? "No Milestone" : value
         }
     }
 }

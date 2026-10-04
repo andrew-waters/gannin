@@ -18,6 +18,8 @@ extension GitHubAPI {
               id number title description dueOn state closedAt updatedAt url
               openIssues: issues(states: [OPEN]) { totalCount }
               closedIssues: issues(states: [CLOSED]) { totalCount }
+              openPullRequests: pullRequests(states: [OPEN]) { totalCount }
+              closedPullRequests: pullRequests(states: [CLOSED, MERGED]) { totalCount }
             }
             """
         var reachedOlder = false
@@ -68,6 +70,8 @@ private struct RawReleaseRepository: Decodable {
         let url: URL
         let openIssues: Count
         let closedIssues: Count
+        let openPullRequests: Count
+        let closedPullRequests: Count
     }
     struct Release: Decodable {
         struct Actor: Decodable { let login: String }
@@ -96,7 +100,8 @@ private struct RawReleaseRepository: Decodable {
                 id: milestone.id, repo: nameWithOwner, number: milestone.number, title: milestone.title,
                 description: milestone.description, dueOn: milestone.dueOn, isOpen: milestone.state == "OPEN",
                 closedAt: milestone.closedAt, updatedAt: milestone.updatedAt, url: milestone.url,
-                openIssues: milestone.openIssues.totalCount, closedIssues: milestone.closedIssues.totalCount
+                openIssues: milestone.openIssues.totalCount, closedIssues: milestone.closedIssues.totalCount,
+                openPullRequests: milestone.openPullRequests.totalCount, closedPullRequests: milestone.closedPullRequests.totalCount
             )
         }
     }

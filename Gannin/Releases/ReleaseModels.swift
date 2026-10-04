@@ -1,6 +1,7 @@
 import Foundation
 
-/// A repo's milestone, with GitHub's own counts of its issues.
+/// A repo's milestone, with GitHub's own counts of its issues and pull
+/// requests, which its progress counts together.
 struct RepoMilestone: Codable, Hashable, Identifiable {
     let id: String
     let repo: String
@@ -14,9 +15,13 @@ struct RepoMilestone: Codable, Hashable, Identifiable {
     let url: URL
     let openIssues: Int
     let closedIssues: Int
+    let openPullRequests: Int
+    /// Merged ones too.
+    let closedPullRequests: Int
 
-    var total: Int { openIssues + closedIssues }
-    var progress: Double { total == 0 ? 0 : Double(closedIssues) / Double(total) }
+    var open: Int { openIssues + openPullRequests }
+    var closed: Int { closedIssues + closedPullRequests }
+    var total: Int { open + closed }
 }
 
 /// A GitHub Release: a tag with its notes.
@@ -47,7 +52,8 @@ struct RepoRelease: Codable, Hashable, Identifiable {
 /// Each org's milestones (open ones and those closed lately) and latest
 /// releases, per repo.
 struct ReleaseHistory: Codable {
-    static let currentVersion = 1
+    /// 2 added pull request counts.
+    static let currentVersion = 2
 
     let version: Int
     let orgLogin: String
@@ -72,10 +78,11 @@ struct MilestoneGroup: Identifiable, Hashable {
 
     var repos: [String] { milestones.map(\.repo) }
     var isOpen: Bool { milestones.contains(where: \.isOpen) }
-    var openIssues: Int { milestones.reduce(0) { $0 + $1.openIssues } }
-    var closedIssues: Int { milestones.reduce(0) { $0 + $1.closedIssues } }
-    var total: Int { openIssues + closedIssues }
-    var progress: Double { total == 0 ? 0 : Double(closedIssues) / Double(total) }
+    /// Issues and pull requests, as GitHub's progress counts them.
+    var closed: Int { milestones.reduce(0) { $0 + $1.closed } }
+    var total: Int { milestones.reduce(0) { $0 + $1.total } }
+    /// Issues alone, which is all the issue history holds.
+    var issueTotal: Int { milestones.reduce(0) { $0 + $1.openIssues + $1.closedIssues } }
     /// The soonest due among the open ones, else the latest.
     var dueOn: Date? {
         milestones.filter(\.isOpen).compactMap(\.dueOn).min() ?? milestones.compactMap(\.dueOn).max()
@@ -110,14 +117,24 @@ struct MilestoneGroup: Identifiable, Hashable {
             }
     }
 
-    /// The issue history's issues in it: those in one of its repos with its
-    /// title. Closed ones before the history's start aren't there.
-    func issues(in history: IssueHistory?) -> [IssueRecord] {
-        guard let history else { return [] }
-        let repos = Set(repos)
-        return history.issues.values.filter { issue in
-            repos.contains(issue.repo) && issue.milestone.map(Self.key) == key
+    /// The issue history's issues with a milestone, by repo and milestone
+    /// key, built once per render rather than scanned for each group.
+    static func index(_ history: IssueHistory?) -> [String: [IssueRecord]] {
+        guard let history else { return [:] }
+        var index: [String: [IssueRecord]] = [:]
+        for issue in history.issues.values {
+            guard let milestone = issue.milestone else { continue }
+            index[indexKey(repo: issue.repo, key: key(milestone)), default: []].append(issue)
         }
+        return index
+    }
+
+    private static func indexKey(repo: String, key: String) -> String { "\(repo)\u{0}\(key)" }
+
+    /// Its issues in the history: those in one of its repos with its title.
+    /// Closed ones before the history's start aren't there.
+    func issues(in index: [String: [IssueRecord]]) -> [IssueRecord] {
+        repos.flatMap { index[Self.indexKey(repo: $0, key: key)] ?? [] }
     }
 }
 
@@ -127,8 +144,9 @@ struct MilestoneActivity {
     let inProgress: [IssueRecord]
     let withMergedPullRequest: Int
 
-    init(group: MilestoneGroup, history: IssueHistory?, workflow: IssueWorkflow) {
-        issues = group.issues(in: history)
+    /// `index` is `MilestoneGroup.index` of the issue history.
+    init(group: MilestoneGroup, index: [String: [IssueRecord]], workflow: IssueWorkflow) {
+        issues = group.issues(in: index)
         inProgress = issues.filter { issue in
             issue.isOpen && (issue.statusChanges.last(where: workflow.counts).map { workflow.isInProgress($0.status) } ?? false)
         }

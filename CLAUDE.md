@@ -348,21 +348,23 @@ added, removed or created, and the tracked board field set), and commits to the 
   and Releases picked in the toolbar (`releasesPart` per window). Read-only: nothing is written.
 - `ReleaseStore` fetches, in one paged query (`GitHubAPI.milestonesAndReleases`, 25 repos a page),
   every non-archived repo pushed to in the last year, most recent first: its open milestones (25),
-  the ten closed most lately, and its ten latest releases, with GitHub's open and closed issue
-  counts per milestone. Cached as JSON in Application Support/Releases, fetched again after 10
+  the ten closed most lately, and its ten latest releases, with GitHub's open and closed counts of
+  issues and of pull requests (merged ones closed) per milestone. Cached as JSON in Application Support/Releases, fetched again after 10
   minutes, only once the page has been opened for an org; Refresh includes it from then on. It's
   its own sync run (Releases, one step). Excluded repos no project names aren't kept
   (`unfetchedRepos`); the page leaves out the rest through `repoExclusion`.
 - Milestones with the same title (case aside) in different repos are one `MilestoneGroup`: counts
-  added up, due the soonest open one's. Progress is GitHub's, closed issues of all issues in the
-  milestone; `MilestoneActivity` adds from the issue history how many are in progress (the
+  added up, due the soonest open one's. Progress is GitHub's, closed of all issues and pull requests
+  in the milestone; `MilestoneActivity` (looking groups up in `MilestoneGroup.index`, the history's
+  issues by repo and milestone, built once per render) adds from the issue history how many are in progress (the
   workflow's statuses on its board) and how many have a merged PR. Open ones first by due date
   (red overdue, orange within the week, `DueLabel`), Closed too for the rest.
 - `ReleaseLink` matches a milestone to the release whose tag or name is its title (case and a
   leading `v` aside) in one of its repos, the first published. A milestone's page
   (`DetailSelection.milestone(title)`, `MilestonePage`) has its state, due date, progress, the
   release, each repo's milestone, the description and its issues from the history (in progress,
-  open, closed; fewer than GitHub counts when closed ones predate the history). A release's page
+  open, closed, each with its status on the workflow's board; fewer than GitHub's issue count when
+  closed ones predate the history). A release's page
   (`DetailSelection.release`, `ReleasePage`) has its tag, dates, author, Latest, Pre-release and
   Draft, the milestone it shipped and its notes in `MarkdownText`.
 

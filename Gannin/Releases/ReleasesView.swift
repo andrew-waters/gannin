@@ -102,11 +102,11 @@ struct ReleasesView: View {
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            let issues = issueStore.history(for: org)
+            let index = MilestoneGroup.index(issueStore.history(for: org))
             List(shown) { group in
                 MilestoneRow(
                     group: group,
-                    activity: MilestoneActivity(group: group, history: issues, workflow: config.workflow),
+                    activity: MilestoneActivity(group: group, index: index, workflow: config.workflow),
                     release: ReleaseLink.release(for: group, in: releases)
                 ) {
                     navigate?(.milestone(group.title))
@@ -208,7 +208,7 @@ private struct MilestoneRow: View {
                         .font(.callout)
                         .foregroundStyle(ChartPalette.blue)
                 }
-                MilestoneProgress(closed: group.closedIssues, total: group.total)
+                MilestoneProgress(closed: group.closed, total: group.total)
             }
             .contentShape(Rectangle())
         }
@@ -299,14 +299,14 @@ struct MilestoneProgress: View {
     var body: some View {
         let progress = total == 0 ? 0 : Double(closed) / Double(total)
         VStack(alignment: .trailing, spacing: 3) {
-            Text(total == 0 ? "No issues" : "\(closed) of \(total)")
+            Text(total == 0 ? "Empty" : "\(closed) of \(total)")
                 .font(.callout.monospacedDigit())
                 .foregroundStyle(total == 0 ? .secondary : .primary)
             ProgressView(value: progress)
                 .frame(width: width)
                 .tint(total > 0 && progress >= 1 ? ChartPalette.good : .accentColor)
         }
-        .help("Closed issues of all issues in the milestone, as GitHub counts them")
+        .help("Closed of all the issues and pull requests in the milestone, as GitHub counts them")
     }
 }
 
@@ -355,7 +355,7 @@ struct MilestonePage: View {
 
     private func content(_ group: MilestoneGroup, releases: [RepoRelease], config: OrgConfig) -> some View {
         let issueHistory = issueStore.history(for: org)
-        let activity = MilestoneActivity(group: group, history: issueHistory, workflow: config.workflow)
+        let activity = MilestoneActivity(group: group, index: MilestoneGroup.index(issueHistory), workflow: config.workflow)
         let release = ReleaseLink.release(for: group, in: releases)
         let inProgress = Set(activity.inProgress.map(\.id))
         let open = activity.issues.filter { $0.isOpen && !inProgress.contains($0.id) }.sorted { $0.number > $1.number }
@@ -371,7 +371,7 @@ struct MilestonePage: View {
                 if let closedAt = group.closedAt {
                     LabeledContent("Closed", value: closedAt.formatted(date: .abbreviated, time: .omitted))
                 }
-                LabeledContent("Progress") { MilestoneProgress(closed: group.closedIssues, total: group.total, width: 200) }
+                LabeledContent("Progress") { MilestoneProgress(closed: group.closed, total: group.total, width: 200) }
                 LabeledContent("In progress", value: "\(activity.inProgress.count)")
                 LabeledContent("With a merged PR", value: "\(activity.withMergedPullRequest)")
                 if let release {
@@ -397,7 +397,7 @@ struct MilestonePage: View {
                             }
                         }
                         Spacer()
-                        MilestoneProgress(closed: milestone.closedIssues, total: milestone.total)
+                        MilestoneProgress(closed: milestone.closed, total: milestone.total)
                         Button("GitHub") { openURL(milestone.url) }
                             .linkButton()
                     }
@@ -408,12 +408,12 @@ struct MilestonePage: View {
                     MarkdownText(source: description)
                 }
             }
-            issueSection("In progress", activity.inProgress.sorted { $0.number > $1.number })
-            issueSection("Open", open)
-            issueSection("Closed", closed)
-            if issueHistory != nil && activity.issues.count < group.total {
+            issueSection("In progress", activity.inProgress.sorted { $0.number > $1.number }, workflow: config.workflow)
+            issueSection("Open", open, workflow: config.workflow)
+            issueSection("Closed", closed, workflow: config.workflow)
+            if issueHistory != nil && activity.issues.count < group.issueTotal {
                 Section {
-                    Text("GitHub counts \(group.total) issue\(group.total == 1 ? "" : "s"); the issue history has \(activity.issues.count), as it keeps only those closed since the window's start.")
+                    Text("GitHub counts \(group.issueTotal) issue\(group.issueTotal == 1 ? "" : "s"); the issue history has \(activity.issues.count), as it keeps only those closed since the window's start.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -423,7 +423,9 @@ struct MilestonePage: View {
     }
 
     @ViewBuilder
-    private func issueSection(_ title: String, _ issues: [IssueRecord]) -> some View {
+    /// Each issue with its status on the workflow's board, as In progress
+    /// reads it.
+    private func issueSection(_ title: String, _ issues: [IssueRecord], workflow: IssueWorkflow) -> some View {
         if !issues.isEmpty {
             Section("\(title) (\(issues.count))") {
                 ForEach(issues) { issue in
@@ -438,7 +440,7 @@ struct MilestonePage: View {
                             if !issue.assignees.isEmpty {
                                 Text(issue.assignees.joined(separator: ", ")).foregroundStyle(.secondary).lineLimit(1)
                             }
-                            if let status = issue.statusChanges.last?.status {
+                            if let status = issue.statusChanges.last(where: workflow.counts)?.status {
                                 Text(status).foregroundStyle(.secondary)
                             }
                             Text("\(ReleasesView.repoName(issue.repo))#\(String(issue.number))").foregroundStyle(.secondary).monospacedDigit()
