@@ -565,12 +565,14 @@ added, removed or created, and the tracked board field set), and commits to the 
   folder, `.worktrees/<branch>/.gannin/`, then run `claude --session-id` (or `--resume` once it
   has had a prompt) in the harness root. The brief tells claude to add a worktree per repo the
   issue touches at `.worktrees/<branch>/<name>` from the shared clone in `projects/<name>`
-  (suggesting the linked PRs' repos), and where plans go. Sessions from before keep the old
+  (suggesting the linked PRs' repos), and where plans go; a harness with no `projects/` is the
+  code repo too, so it gets one worktree of itself there, the plan included. Sessions from before keep the old
   layout (one repo's clone in the workspace, the worktree beside it). Inherited
   `CLAUDE_CODE_*` variables are stripped.
 - The harness checkout on this Mac is set per org in Settings > Harness
   (`HarnessCheckoutSection`, `sessionsHarnessPath.<org>`): by default a checkout already in a
-  usual place (`~/Code/<owner>/<name>` and the like, found by its origin), else
+  usual place (`~/Code/<owner>/<name>` and the like, found by its origin's whole repo name, so
+  `gannin` never matches a clone of `gannin-legacy`), else
   `<workspace>/<org>-harness`. The workspace (`~/Gannin` by default) is set in Settings >
   General, with Connect with (`sessionsConnect`, such as `ssh -t devbox`): sessions then run
   on that server, their script, brief and settings packed into one command

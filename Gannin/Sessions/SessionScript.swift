@@ -54,9 +54,10 @@ enum SessionScript {
         let folder = ".worktrees/\(session.branch)"
         let prompt = firstPrompt(session, otherwise: """
             You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
-            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos under projects/ \
-            it touches and look through their code, then propose a plan before changing anything. Make the changes in a worktree \
-            per repo under \(folder)/, as the brief says, never in projects/.
+            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
+            (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
+            code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
+            the brief says, never in projects/ or the harness checkout itself.
             """)
         // A server session's brief comes from the harness once it's there.
         let briefSource = session.harnessFolder.map { recorded in
@@ -361,6 +362,7 @@ enum SessionBrief {
                 "  ```",
                 "",
                 "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
+                "- If the harness has no `projects/` folder, it's the code repo too: the code is \(harnessRepo) itself. Don't work in its checkout; give it one worktree in the issue's folder the same way, with `git -C . fetch origin` and `git -C . worktree add \"$PWD/\(folder)/\(harnessRepo.split(separator: "/").last ?? "")\" -b \(session.branch) origin/HEAD`, and do everything there, the plan included.",
             ]
             if !linkedRepos.isEmpty {
                 working.append("- The issue's linked pull requests are in \(linkedRepos.map { "`\($0)`" }.joined(separator: ", ")), so start there.")
@@ -370,7 +372,7 @@ enum SessionBrief {
             }
             working += [
                 "- Commit in each worktree, and open a pull request per repo with `gh pr create`, putting \"Closes \(reference.reference)\" in its body so it links to the issue.",
-                "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land.",
+                "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land. When the harness is the code repo, the plan goes in its worktree and ships in the same pull request, and only if the repo keeps a `plans/` folder.",
                 "- `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` and `projects/` are kept out of the harness's git.",
                 "",
             ]
