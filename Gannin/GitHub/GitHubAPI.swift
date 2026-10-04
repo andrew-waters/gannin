@@ -19,8 +19,10 @@ enum APIError: Error, LocalizedError {
     }
 
     /// GitHub error bodies are JSON with a `message`, and often `errors`
-    /// saying why (a 422's message is only "Unprocessable Entity"), as
-    /// strings or objects with their own `message`; fall back to the raw text.
+    /// saying why (a 422's message is only "Unprocessable Entity"): strings,
+    /// or objects with their own `message` or else a `field` and `code`
+    /// (`title missing_field`). The message leads, then the reasons; fall
+    /// back to the raw text.
     private static func message(from body: String) -> String {
         guard let data = body.data(using: .utf8),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -29,9 +31,12 @@ enum APIError: Error, LocalizedError {
         }
         let reasons = (json["errors"] as? [Any] ?? []).compactMap { error -> String? in
             if let text = error as? String { return text }
-            return (error as? [String: Any])?["message"] as? String
+            guard let error = error as? [String: Any] else { return nil }
+            if let text = error["message"] as? String { return text }
+            let parts = [error["resource"], error["field"], error["code"]].compactMap { $0 as? String }
+            return parts.isEmpty ? nil : parts.joined(separator: " ")
         }
-        return reasons.isEmpty ? message : reasons.joined(separator: "; ")
+        return reasons.isEmpty ? message : "\(message): \(reasons.joined(separator: "; "))"
     }
 }
 
