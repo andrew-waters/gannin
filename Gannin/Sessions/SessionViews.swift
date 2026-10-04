@@ -1262,6 +1262,9 @@ struct SessionSettingsSection: View {
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
     @AppStorage(EngineerWatch.intervalKey) private var reviewCheck = 5
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
+    @AppStorage(AutoReview.enabledKey) private var autoReview = false
+    @AppStorage(AutoReview.watchKey) private var watchesReviews = true
+    @AppStorage(AutoReview.postKey) private var postsReviews = false
     /// Typing a model ID of your own, rather than picking one.
     @State private var customModel = false
 
@@ -1292,14 +1295,26 @@ struct SessionSettingsSection: View {
             Text("Sessions run Claude Code with this model (--model), from their next start or Restart. Its default is what Claude Code's own settings say; /model in a session changes it there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Picker("Check for review requests", selection: $reviewCheck) {
+            Picker("Check pull requests", selection: $reviewCheck) {
                 Text("Every minute").tag(1)
                 Text("Every 5 minutes").tag(5)
                 Text("Every 15 minutes").tag(15)
                 Text("Every 30 minutes").tag(30)
                 Text("Never").tag(0)
             }
-            Text("Looks for PRs your review is asked on, and on your own PRs' checks and reviews. A new request notifies, with Review with Claude to start a review when you choose.")
+            Text("Looks for PRs your review is asked on, on your own PRs' checks and reviews, and on reviewed PRs you're watching. A new request notifies, with Review with Claude to start a review when you choose.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Review requests automatically", isOn: $autoReview)
+            Text("A new review request starts Claude's review in the background, in the PR's harness, two at a time. Each org can say otherwise in its Settings, under Harness.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Watch reviewed pull requests", isOn: $watchesReviews)
+            Text("Once a review finishes, new commits or comments on its PR start another, after a couple of quiet minutes, until it's merged or closed. Each review can turn it off. The Inbox lists what happened while you were away.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Post automatic reviews to GitHub", isOn: $postsReviews)
+            Text("Reviews Gannin starts by itself are posted as comments, marked as written by Claude. They never approve or request changes. Off, they wait for you to Post Review.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Show in the menu bar", isOn: $showsMenuBar)
@@ -1353,6 +1368,8 @@ struct HarnessCheckoutSection: View {
     @AppStorage private var localPath: String
     @AppStorage private var remotePath: String
     @AppStorage private var recordWithoutAsking: Bool
+    /// `on`, `off`, or empty for Settings > General's.
+    @AppStorage private var autoReview: String
     let org: String
     let repo: String
     /// Says which harness, when there are several.
@@ -1368,6 +1385,7 @@ struct HarnessCheckoutSection: View {
         _localPath = AppStorage(wrappedValue: "", SessionStore.harnessPathKey(org, repo: repo))
         _remotePath = AppStorage(wrappedValue: "", SessionStore.remoteHarnessPathKey(org, repo: repo))
         _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(org))
+        _autoReview = AppStorage(wrappedValue: "", AutoReview.orgKey(org))
     }
 
     var body: some View {
@@ -1402,6 +1420,14 @@ struct HarnessCheckoutSection: View {
             if showsRecording {
                 Toggle("Ask before recording a session", isOn: Binding(get: { !recordWithoutAsking }, set: { recordWithoutAsking = !$0 }))
                 Text("Work on This commits the session's brief and a session.json to its harness's sessions folder, and adds its pull request later. Off, it does so without asking.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Picker("Review requests automatically", selection: $autoReview) {
+                    Text("As in Settings (\(AutoReview.isOnByDefault ? "on" : "off"))").tag("")
+                    Text("On").tag("on")
+                    Text("Off").tag("off")
+                }
+                Text("Your own choice for this org, on this Mac: whether a review request here starts Claude's review by itself.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

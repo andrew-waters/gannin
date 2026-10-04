@@ -5,6 +5,7 @@ import SwiftUI
 /// for those who want them.
 enum InboxSection: String, CaseIterable, Identifiable {
     case sessions = "Claude Code"
+    case catchUp = "While you were away"
     case reviews = "Needs your review"
     case pullRequests = "Your pull requests"
     case issues = "Your issues"
@@ -16,7 +17,7 @@ enum InboxSection: String, CaseIterable, Identifiable {
 
     var isOnByDefault: Bool {
         switch self {
-        case .sessions, .reviews, .pullRequests, .issues: true
+        case .sessions, .catchUp, .reviews, .pullRequests, .issues: true
         case .opened, .plans, .uncategorised: false
         }
     }
@@ -24,6 +25,7 @@ enum InboxSection: String, CaseIterable, Identifiable {
     var help: String {
         switch self {
         case .sessions: "Claude Code sessions waiting on you"
+        case .catchUp: "Comments, commits and automatic reviews on PRs Claude reviewed, since you last opened each review"
         case .reviews: "PRs you've been asked to review, longest waiting first"
         case .pullRequests: "Your open PRs and where each stands"
         case .issues: "Open issues assigned to you, in progress first"
@@ -285,6 +287,19 @@ struct InboxView: View {
                     id: "session-\(session.id)", title: session.issue.title, reference: session.repo,
                     people: [], checks: nil, state: state.label, stateColor: state == .needsYou ? .orange : .secondary,
                     tint: state.color, since: nil, sinceLabel: "", size: nil, page: nil, session: session.id
+                )
+            }))
+        }
+        let news = sessions.activity.unseen(org: org)
+        if shown.contains(.catchUp), !news.isEmpty {
+            sections.append((InboxSection.catchUp.rawValue, news.compactMap { item in
+                guard let pr = item.events.last?.pullRequest else { return nil }
+                let failed = item.events.contains { $0.kind == .failed }
+                return InboxRow(
+                    id: "news-\(item.session)", title: pr.title, reference: Self.number(pr.repo, pr.number),
+                    people: [], checks: nil, state: ReviewActivity.summary(item.events), stateColor: failed ? .orange : .secondary,
+                    tint: failed ? .orange : ChartPalette.blue, since: item.events.first?.at, sinceLabel: "Since", size: nil,
+                    page: .pullRequest(pr.id), session: item.session
                 )
             }))
         }
