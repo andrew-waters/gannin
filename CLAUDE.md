@@ -546,6 +546,26 @@ added, removed or created, and the tracked board field set), and commits to the 
   (`engineerWork`). New requests notify with Review with Claude (`startReview`, wired in
   `GanninApp`); your PRs notify when they start failing, get changes requested or are
   approved. The menu bar extra (`EngineerMenu`, `MenuBarLabel`) and Agents show them.
+- Auto review (`Sessions/AutoReview.swift`, all the user's own settings on this Mac): with
+  Settings > General > Review requests automatically (`autoReviewRequests`), or the org's own
+  choice in Settings > Harness (`autoReviewRequests.<org>`: on, off, or the default), a request
+  `EngineerWatch` finds (not a draft, not dismissed, not started before: `autoReviewedRequests`)
+  starts a review in the background (`startAutomaticReview`: `startReview(reveals: false)`, then
+  `open` launches claude without a tab), two at a time (`AutoReview.maxRunning`); the rest wait
+  for a later check. A review's first result (`reviewFinished`, from `store`) sets
+  `CodeSession.watch` (`ReviewWatch`, on by default: `watchReviewedPullRequests`; Watch for
+  changes on the review). After each check (`EngineerWatch.afterCheck`, held off when the budget
+  is low) `checkWatchedReviews` asks for every watched PR by node ID (`watchedPullRequests`: head
+  commit, state, conversation comments, reviews and their line comments, and the viewer's
+  login). The first look notes what's there; then new commits and others' comments (not yours,
+  not bots') are noted, and once nothing new has come for `quietPeriod` and the reviewer isn't
+  busy, it's asked to look again (`reviewAgain`: pasted when it's idle, else resumed from the
+  history and sent once `SessionStart` reports idle, `pendingPrompts`). Merged or closed stops
+  the watch. Runs Gannin started (`automaticRuns`) are posted as a COMMENT review when Post
+  automatic reviews (`autoPostReviews`) is on, marked as Claude's, never approving or requesting
+  changes; otherwise they wait for Post Review. What happened (`ReviewActivity`, `ReviewEvent`,
+  newest 500 in Sessions/ReviewActivity.json) is the Inbox's While you were away section, one
+  row per review, until its tab is looked at (`looked`, `markSeen`).
 - Reviews keep a history: the result (`CodeSession.reviewResult`, from the transcript), your
   decisions and comments and when it was posted (`reviewDraft`) are saved with the session.
   Finish (`SessionStore.archiveReview`) ends the reviewer and removes its checkout but keeps it
@@ -831,7 +851,8 @@ added, removed or created, and the tracked board field set), and commits to the 
 - Inbox (`InboxView`, first in the sidebar) is the signed-in person's share of the workload, in
   sections under a bar like the issue pages' (a search across them, and Sections: a popover to
   tick which show and drag them into order, `InboxSection`, per org on this Mac,
-  `inboxSections.<org>` and `inboxSectionOrder.<org>`): Claude Code sessions waiting on them, reviews
+  `inboxSections.<org>` and `inboxSectionOrder.<org>`): Claude Code sessions waiting on them, what
+  happened on PRs Claude reviewed while they were away (`ReviewActivity`), reviews
   requested of them (longest waiting first), their open PRs and where each stands, their
   assigned issues (in progress first, with status, time in status and Attention flags), all on
   by default; and, off until wanted, issues they opened, their harness plans (owner, not done)

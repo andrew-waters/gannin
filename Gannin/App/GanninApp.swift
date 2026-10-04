@@ -79,6 +79,18 @@ struct GanninApp: App {
             let session = sessions.startReview(of: reference, harness: setup, harnessPath: path)
             if let openWindow = GanninAppDelegate.openWindow { sessions.show(session.id, with: openWindow) }
         }
+        // Auto review: a request found starts a review in the background, in
+        // the PR's org's harness, when it's on for that org.
+        watch.autoReview = { [weak sessions, weak orgConfigs] reference in
+            guard AutoReview.isOn(for: reference.org), let sessions,
+                  let setup = orgConfigs?.config(for: reference.org).harness(covering: [reference.repo]),
+                  let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return false }
+            return sessions.startAutomaticReview(of: reference, harness: setup, harnessPath: path)
+        }
+        watch.afterCheck = { [weak sessions, weak auth] in
+            guard auth?.shouldHoldOff != true else { return }
+            await sessions?.checkWatchedReviews()
+        }
         watch.start()
         TabMenuRename.shared.install()
     }

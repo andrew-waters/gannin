@@ -63,6 +63,9 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var reviewDraft: ReviewDraft? = nil
     /// Finished: in the history, its claude ended and worktrees gone.
     var archivedAt: Date? = nil
+    /// A review's PR, watched for new commits and comments to review
+    /// again; nil until its first review finishes.
+    var watch: ReviewWatch? = nil
 
     var isRemote: Bool { connect != nil }
     var isHelper: Bool { parentID != nil }
@@ -110,6 +113,7 @@ extension CodeSession {
         reviewResult = try container.decodeIfPresent(SessionTranscript.ReviewResult.self, forKey: .reviewResult)
         reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
+        watch = try container.decodeIfPresent(ReviewWatch.self, forKey: .watch)
     }
 }
 
@@ -349,6 +353,14 @@ final class SessionStore {
     @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
     /// GitHub, once signed in; set by the app.
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }
+    /// Reviews Gannin started or asked to look again by itself, until
+    /// their result arrives (`AutoReview.swift`).
+    @ObservationIgnored var automaticRuns: Set<UUID> = []
+    /// What to tell claude once it has started (a review asked to look
+    /// again while it wasn't running).
+    @ObservationIgnored var pendingPrompts: [UUID: String] = [:]
+    /// What happened on reviewed PRs, for the Inbox's catch-up.
+    let activity = ReviewActivity()
     /// Every session at once instead of a tab.
     var showingOverview = false
     /// A second tab shown beside the selected one.
@@ -658,6 +670,8 @@ final class SessionStore {
         case .needsYou:
             let asking = transcripts[id]?.question != nil
             flag(id, title: "Claude needs you", body: asking ? (transcripts[id]?.question?.items.first?.question ?? "") : "It's asking for permission to go on.", replies: true)
+        case .idle where pendingPrompts[id] != nil:
+            sendPendingPrompt(id)
         case .idle where old == .working:
             flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false)
         case .working, .starting, .stopped:
@@ -717,7 +731,10 @@ final class SessionStore {
 
     /// The tab showing in the key window has been seen.
     private func looked() {
-        if windowIsKey, let selectedTab { unflag(selectedTab) }
+        if windowIsKey, let selectedTab {
+            unflag(selectedTab)
+            activity.markSeen(session: selectedTab)
+        }
     }
 
     private func updateBadge() {
@@ -878,6 +895,7 @@ final class SessionStore {
         if sessions[id]?.isPullRequestReview == true, let review = reader.summary.review, sessions[id]?.reviewResult != review {
             sessions[id]?.reviewResult = review
             save()
+            reviewFinished(id)
         }
     }
 
@@ -1017,6 +1035,9 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
 
     func launch(executable: String, args: [String], environment: [String], directory: String) {
         view?.removeFromSuperview()
+        // Launched with no tab showing it (an automatic review): a usual
+        // size, so claude doesn't lay out for a terminal of no columns.
+        if container.bounds.isEmpty { container.frame = NSRect(x: 0, y: 0, width: 960, height: 640) }
         let view = LocalProcessTerminalView(frame: container.bounds)
         view.autoresizingMask = [.width, .height]
         view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)

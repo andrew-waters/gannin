@@ -74,12 +74,21 @@ final class EngineerWatch {
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }
     /// Starts Claude's review of a PR, as Review with Claude does.
     @ObservationIgnored var startReview: (PullRequestReference) -> Void = { NSWorkspace.shared.open($0.url) }
+    /// Starts a review in the background when auto review is on for the
+    /// PR's org; true if it started (`AutoReview`, wired in `GanninApp`).
+    @ObservationIgnored var autoReview: (PullRequestReference) -> Bool = { _ in false }
+    /// Run after each check: watched reviews looked at again.
+    @ObservationIgnored var afterCheck: () async -> Void = {}
+    /// Requests already started automatically, by PR ID, so one whose review
+    /// was removed isn't started again.
+    @ObservationIgnored private var autoReviewed: Set<String>
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var known: Set<String>?
     @ObservationIgnored private var lastNeeds: [String: String] = [:]
 
     private init() {
         dismissed = Set(UserDefaults.standard.stringArray(forKey: "dismissedReviewRequests") ?? [])
+        autoReviewed = Set(UserDefaults.standard.stringArray(forKey: "autoReviewedRequests") ?? [])
     }
 
     static var interval: Int {
@@ -131,9 +140,11 @@ final class EngineerWatch {
                 UserDefaults.standard.set(Array(dismissed), forKey: "dismissedReviewRequests")
             }
         } catch is CancellationError {
+            return
         } catch {
             self.error = error.localizedDescription
         }
+        await afterCheck()
     }
 
     // MARK: Notifying
@@ -147,11 +158,24 @@ final class EngineerWatch {
             known = Set(reviews.map(\.id))
             lastNeeds = Dictionary(uniqueKeysWithValues: mine.map { ($0.id, $0.needs ?? "") })
         }
+        // Automatic reviews: every request not yet started, the first
+        // check's too, as there's room (`AutoReview.maxRunning`).
+        var started: Set<String> = []
+        for pr in reviews where !pr.isDraft && !dismissed.contains(pr.id) && !autoReviewed.contains(pr.id) && autoReview(pr.reference) {
+            started.insert(pr.id)
+        }
+        let requested = Set(reviews.map(\.id))
+        let remembered = autoReviewed.union(started).intersection(requested)
+        if remembered != autoReviewed {
+            autoReviewed = remembered
+            UserDefaults.standard.set(Array(remembered), forKey: "autoReviewedRequests")
+        }
         // The first check learns what's there.
         guard let known, notifies else { return }
         registerCategories()
         for pr in reviews where !known.contains(pr.id) && !dismissed.contains(pr.id) {
-            post(id: "review-\(pr.id)", title: "Review requested", subtitle: "\(pr.repo.split(separator: "/").last ?? "")#\(pr.number) \(pr.title)",
+            let auto = started.contains(pr.id)
+            post(id: "review-\(pr.id)", title: auto ? "Review requested: Claude is reviewing it" : "Review requested", subtitle: "\(pr.repo.split(separator: "/").last ?? "")#\(pr.number) \(pr.title)",
                  body: pr.author.map { "From \($0)" } ?? "", category: Self.reviewCategory, info: ["review": pr.id])
         }
         for pr in mine {

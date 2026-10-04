@@ -70,9 +70,10 @@ extension SessionStore {
     /// JSON for the review tab.
     /// `choice` is what was picked from the team's prompts and skills; nil
     /// takes the defaults for the PR's repo.
-    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil) -> CodeSession {
+    /// `reveals` false starts it without showing its tab (an automatic review).
+    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true) -> CodeSession {
         if let existing = review(of: pr.id) {
-            reveal(existing.id)
+            if reveals { reveal(existing.id) }
             return existing
         }
         let branch = Self.reviewBranch(pr)
@@ -90,7 +91,7 @@ extension SessionStore {
         let brief = "# Review of \(pr.repo)#\(pr.number): \(pr.title)\n\n\(pr.url.absoluteString)\n"
         try? Data(brief.utf8).write(to: directory.appending(path: "brief.md"))
         add(session)
-        reveal(session.id)
+        if reveals { reveal(session.id) }
         return session
     }
 
@@ -149,6 +150,42 @@ struct ReviewedPullRequest: Equatable {
     let deletions: Int
     let state: String
     let files: [File]
+
+    /// The inline comments GitHub will take (findings kept or edited on
+    /// lines the diff shows, and your own), and the findings it won't.
+    func comments(for review: SessionTranscript.ReviewResult?, draft: ReviewDraft) -> ([[String: Any]], [SessionTranscript.Finding]) {
+        var inline: [[String: Any]] = []
+        var general: [SessionTranscript.Finding] = []
+        for finding in review?.findings ?? [] {
+            let decision = draft.decisions[finding.key]
+            if decision == .dismissed { continue }
+            var text = finding.comment
+            if case .edited(let edited) = decision { text = edited }
+            guard let line = finding.line, let file = files.first(where: { $0.path == finding.path }), file.hasLine(line, isOld: false) else {
+                general.append(.init(path: finding.path, line: finding.line, comment: text, severity: finding.severity))
+                continue
+            }
+            if let suggestion = finding.suggestion, decision == nil {
+                text += "\n\n```suggestion\n\(suggestion)\n```"
+            }
+            inline.append(["path": finding.path, "line": line, "side": "RIGHT", "body": text])
+        }
+        for comment in draft.comments {
+            inline.append(["path": comment.path, "line": comment.line, "side": comment.isOld ? "LEFT" : "RIGHT", "body": comment.body])
+        }
+        return (inline, general)
+    }
+
+    /// A review's body: the summary, then findings that can't go on a line.
+    static func body(summary: String, general: [SessionTranscript.Finding]) -> String {
+        var text = summary
+        if !general.isEmpty {
+            text += "\n\n" + general.map { finding in
+                "- `\(finding.path)\(finding.line.map { ":\($0)" } ?? "")`: \(finding.comment)"
+            }.joined(separator: "\n")
+        }
+        return text
+    }
 }
 
 extension GitHubAPI {
@@ -189,6 +226,7 @@ extension GitHubAPI {
     }
 
     /// Posts a review with inline comments. A write: not retried.
+    /// (Comments are built by `ReviewedPullRequest.comments(for:draft:)`.)
     func postReview(repo: String, number: Int, commit: String, event: String, body: String, comments: [[String: Any]]) async throws -> URL? {
         struct Posted: Decodable { let htmlUrl: URL? }
         let posted: Posted = try await restWrite("POST", "repos/\(repo)/pulls/\(number)/reviews", body: [
@@ -395,6 +433,14 @@ struct PullRequestReviewView: View {
                             .foregroundStyle(label.color)
                     }
                     .help("Open the review on GitHub")
+                }
+                if review != nil {
+                    Toggle("Watch for changes", isOn: Binding(
+                        get: { sessions.sessions[session.id]?.watch?.isOn ?? false },
+                        set: { sessions.setWatching(session.id, $0) }
+                    ))
+                    .checkboxToggle()
+                    .help("Review it again by itself when new commits are pushed or someone comments, until it's merged or closed")
                 }
                 if session.archivedAt != nil {
                     Button("Resume") {
@@ -885,39 +931,13 @@ private struct PostReviewSheet: View {
             case "request_changes": "REQUEST_CHANGES"
             default: "COMMENT"
             }
-            var text = review?.summary ?? ""
-            if !general.isEmpty {
-                text += "\n\n" + general.map { finding in
-                    "- `\(finding.path)\(finding.line.map { ":\($0)" } ?? "")`: \(finding.comment)"
-                }.joined(separator: "\n")
-            }
-            bodyText = text
+            bodyText = ReviewedPullRequest.body(summary: review?.summary ?? "", general: general)
         }
     }
 
     /// The inline comments GitHub will take, and the findings it won't.
     private func comments() -> ([[String: Any]], [SessionTranscript.Finding]) {
-        let draft = sessions.reviewDrafts[session.id] ?? ReviewDraft()
-        var inline: [[String: Any]] = []
-        var general: [SessionTranscript.Finding] = []
-        for finding in review?.findings ?? [] {
-            let decision = draft.decisions[finding.key]
-            if decision == .dismissed { continue }
-            var text = finding.comment
-            if case .edited(let edited) = decision { text = edited }
-            guard let line = finding.line, let file = pullRequest.files.first(where: { $0.path == finding.path }), file.hasLine(line, isOld: false) else {
-                general.append(.init(path: finding.path, line: finding.line, comment: text, severity: finding.severity))
-                continue
-            }
-            if let suggestion = finding.suggestion, decision == nil {
-                text += "\n\n```suggestion\n\(suggestion)\n```"
-            }
-            inline.append(["path": finding.path, "line": line, "side": "RIGHT", "body": text])
-        }
-        for comment in draft.comments {
-            inline.append(["path": comment.path, "line": comment.line, "side": comment.isOld ? "LEFT" : "RIGHT", "body": comment.body])
-        }
-        return (inline, general)
+        pullRequest.comments(for: review, draft: sessions.reviewDrafts[session.id] ?? ReviewDraft())
     }
 
     private func post(_ inline: [[String: Any]]) {
