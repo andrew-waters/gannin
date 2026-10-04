@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: A ⌘K command palette in every window that finds pages, people, PRs, issues, harness documents, boards and settings from what Gannin has loaded, and runs common actions, all from the keyboard.
 issues: [andrew-waters/gannin#4]
 domains: [navigation, accessibility]
@@ -84,7 +84,7 @@ What's there already:
 - [x] The prompt for a result from another org (switch, new tab, new window)
 - [x] Issue description and comment matches from `IssueTextIndex`
 - [x] CLAUDE.md
-- [ ] Try it in the app: every kind of result and action, keyboard only, and with VoiceOver
+- [x] Try it in the app: every kind of result and action, keyboard only, and with VoiceOver
 
 ## Follow-ups
 
