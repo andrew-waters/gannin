@@ -123,15 +123,32 @@ struct BoardItem: Codable, Hashable, Identifiable {
     }
 }
 
-/// A view's items as last fetched, keyed by the filter used.
+/// A view's items as last fetched: which items matched, in order, resolved
+/// through `BoardCache.itemsByID`.
 struct BoardItems: Codable {
     var fetchedAt: Date
-    var items: [BoardItem]
+    var ids: [String]
 }
 
-/// Everything saved for one board.
+/// Everything saved for one board. Items are kept once, by ID, in
+/// `itemsByID` and shared between filters' results, since views' filters
+/// often overlap and would otherwise each store their own copy of the same
+/// issue.
 struct BoardCache: Codable {
     var board: Board
     var fetchedAt: Date
     var items: [String: BoardItems] = [:]
+    var itemsByID: [String: BoardItem] = [:]
+
+    /// The items matching `filter`, in the order last fetched.
+    func resolvedItems(for filter: String) -> [BoardItem]? {
+        items[filter]?.ids.compactMap { itemsByID[$0] }
+    }
+
+    /// Drops items no filter currently references, so a view's result
+    /// shrinking doesn't leave the items it dropped cached forever.
+    mutating func pruneOrphanedItems() {
+        let referenced = Set(items.values.flatMap(\.ids))
+        itemsByID = itemsByID.filter { referenced.contains($0.key) }
+    }
 }

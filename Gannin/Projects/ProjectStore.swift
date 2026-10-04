@@ -31,8 +31,8 @@ final class ProjectStore {
 
     func cache(org: String, number: Int) -> BoardCache? { caches[Self.key(org, number)] }
 
-    func items(org: String, number: Int, filter: String) -> BoardItems? {
-        caches[Self.key(org, number)]?.items[filter]
+    func items(org: String, number: Int, filter: String) -> [BoardItem]? {
+        caches[Self.key(org, number)]?.resolvedItems(for: filter)
     }
 
     func isLoading(org: String, number: Int) -> Bool {
@@ -177,7 +177,9 @@ final class ProjectStore {
                 cache.board = board
                 cache.fetchedAt = now
             }
-            cache.items[filter] = BoardItems(fetchedAt: now, items: items)
+            for item in items { cache.itemsByID[item.id] = item }
+            cache.items[filter] = BoardItems(fetchedAt: now, ids: items.map(\.id))
+            cache.pruneOrphanedItems()
             caches[key] = cache
             errors[key] = nil
             save(cache, key: key)

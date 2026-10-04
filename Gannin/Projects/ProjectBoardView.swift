@@ -80,7 +80,7 @@ struct ProjectBoardView: View {
                 }
                 Spacer()
                 if let items = store.items(org: org, number: number, filter: appliedFilter) {
-                    Text("\(items.items.count) items").foregroundStyle(.secondary).monospacedDigit()
+                    Text("\(items.count) items").foregroundStyle(.secondary).monospacedDigit()
                 }
                 Link(destination: currentView(board).flatMap { URL(string: "\(board.url.absoluteString)/views/\($0.number)") } ?? board.url) {
                     Label("Open on GitHub", systemImage: "arrow.up.right.square")
@@ -180,7 +180,7 @@ struct ProjectBoardView: View {
 
     @ViewBuilder
     private func content(_ board: Board) -> some View {
-        if let items = store.items(org: org, number: number, filter: appliedFilter)?.items {
+        if let items = store.items(org: org, number: number, filter: appliedFilter) {
             let visible = currentView(board)?.visibleFields ?? ["Title", "Assignees", "Status"]
             let sorted = BoardLayout.sorted(items, by: sortBy)
             switch mode {
