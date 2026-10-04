@@ -184,9 +184,9 @@ enum SessionState: String {
 /// Each session has a folder holding its brief, the hooks claude reports
 /// through (they write its state to a file, read here every second while
 /// anything runs) and the script its terminal runs: clone or pull the
-/// harness, clone the repo into its `projects/` if it isn't yet, add the
-/// worktree under `.worktrees/`, copy the brief in, then start or resume
-/// claude.
+/// harness, clone the repo into its `projects/` if it isn't yet (unless the
+/// harness is the code repo itself), add the worktree under `.worktrees/`,
+/// copy the brief in, then start or resume claude.
 @Observable
 final class SessionStore {
     /// Where Gannin clones a harness that isn't checked out on this Mac yet,
@@ -271,7 +271,15 @@ final class SessionStore {
             let config = URL(filePath: (candidate as NSString).expandingTildeInPath).appending(path: ".git/config")
             guard let text = (try? String(contentsOf: config, encoding: .utf8))?.lowercased() else { return false }
             let target = "\(owner)/\(name)".lowercased()
-            return text.contains("github.com/\(target)") || text.contains("github.com:\(target)")
+            // The whole name: `gannin` mustn't match a clone of `gannin-legacy`.
+            return text.split(whereSeparator: \.isNewline).contains { line in
+                let parts = line.split(separator: "=", maxSplits: 1)
+                guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == "url" else { return false }
+                var url = parts[1].trimmingCharacters(in: .whitespaces)
+                if url.hasSuffix("/") { url.removeLast() }
+                if url.hasSuffix(".git") { url.removeLast(4) }
+                return url.hasSuffix("github.com/\(target)") || url.hasSuffix("github.com:\(target)")
+            }
         }
     }
 
