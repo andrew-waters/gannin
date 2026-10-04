@@ -35,7 +35,10 @@ final class ProjectStore {
         caches[Self.key(org, number)]?.items[filter]
     }
 
-    func isLoading(org: String, number: Int) -> Bool { loading.contains(Self.key(org, number)) }
+    func isLoading(org: String, number: Int) -> Bool {
+        let key = Self.key(org, number)
+        return loading.contains { $0 == key || $0.hasPrefix(key + "|") }
+    }
 
     /// The org's open boards: from disk at once, then fetched again.
     func loadBoards(org: String) async {
@@ -138,8 +141,9 @@ final class ProjectStore {
     /// fresh enough.
     func sync(org: String, number: Int, filter: String, force: Bool = false) async {
         let key = Self.key(org, number)
+        let loadKey = "\(key)|\(filter)"
         loadCached(key)
-        guard let api = auth.api, !loading.contains(key) else { return }
+        guard let api = auth.api, !loading.contains(loadKey) else { return }
         let now = Date.now
         let cached = caches[key]
         let boardStale = cached.map { now.timeIntervalSince($0.fetchedAt) >= Self.maxAge } ?? true
@@ -147,8 +151,8 @@ final class ProjectStore {
         guard force || boardStale || itemsStale else { return }
         if cached?.items[filter] != nil, !force, auth.shouldHoldOff { return }
 
-        loading.insert(key)
-        defer { loading.remove(key) }
+        loading.insert(loadKey)
+        defer { loading.remove(loadKey) }
         let run = activity.begin(.projects, org: org)
         if force || boardStale { run.add("board", title: "Board and views") }
         run.add("items", title: "Items", detail: filter.isEmpty ? "Everything" : filter)
