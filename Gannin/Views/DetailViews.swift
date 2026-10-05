@@ -210,7 +210,7 @@ struct PersonColumn: View {
     private func issueSection(_ title: String, _ issues: [Issue]) -> some View {
         Section(header: SectionHeader(title: title, count: issues.count)) {
             ForEach(issues) { issue in
-                IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
+                IssueRow(issue: issue, linked: workload.linkedPullRequests(for: issue))
                     .tag(DetailSelection.issue(issue.id))
             }
         }
@@ -248,7 +248,7 @@ struct RepositoryColumn: View {
             }
             Section(header: SectionHeader(title: "Issues", count: repository.issues.count)) {
                 ForEach(repository.issues) { issue in
-                    IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
+                    IssueRow(issue: issue, linked: workload.linkedPullRequests(for: issue))
                         .tag(DetailSelection.issue(issue.id))
                 }
             }
@@ -347,7 +347,7 @@ struct PullRequestColumn: View {
                 Section(header: SectionHeader(title: "Linked issues", count: pr.linkedIssues.count)) {
                     ForEach(pr.linkedIssues) { item in
                         if let issue = workload.issue(id: item.id) {
-                            IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
+                            IssueRow(issue: issue, linked: workload.linkedPullRequests(for: issue))
                                 .tag(DetailSelection.issue(issue.id))
                         } else {
                             ExternalItemRow(item: item, systemImage: "smallcircle.filled.circle")

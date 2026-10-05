@@ -41,9 +41,11 @@ private struct RawIssueRecord: Decodable {
         let createdAt: Date
         let mergedAt: Date?
         let state: String
+        let repository: Repository
         let commits: Connection<CommitNode>?
         let reviews: Connection<Review>?
     }
+    struct MentionEvent: Decodable { let source: Lossy<PullRequest> }
 
     let id: String
     let number: Int
@@ -64,6 +66,7 @@ private struct RawIssueRecord: Decodable {
     struct Milestone: Decodable { let title: String }
     struct Parent: Decodable { let id: String }
     let closedByPullRequestsReferences: Connection<Lossy<PullRequest>>?
+    let mentionedInPullRequests: Connection<MentionEvent>?
     let projectItems: Connection<Lossy<ProjectItem>>?
 
     struct Named: Decodable { let name: String }
@@ -154,8 +157,21 @@ private struct RawIssueRecord: Decodable {
           closedByPullRequestsReferences(first: 5, includeClosedPrs: true) {
             nodes {
               number url createdAt mergedAt state
+              repository { nameWithOwner }
               commits(last: 50) { nodes { commit { authoredDate } } }
               reviews(last: 20) { nodes { submittedAt } }
+            }
+          }
+          mentionedInPullRequests: timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], first: 20) {
+            nodes {
+              ... on CrossReferencedEvent {
+                source {
+                  ... on PullRequest {
+                    number url createdAt mergedAt state
+                    repository { nameWithOwner }
+                  }
+                }
+              }
             }
           }
         }
@@ -198,11 +214,31 @@ private struct RawIssueRecord: Decodable {
                     createdAt: pr.createdAt,
                     mergedAt: pr.mergedAt,
                     state: pr.state,
+                    repo: pr.repository.nameWithOwner == repository.nameWithOwner ? nil : pr.repository.nameWithOwner,
                     activityAt: ((pr.commits?.nodes ?? []).map(\.commit.authoredDate) + (pr.reviews?.nodes ?? []).compactMap(\.submittedAt)).sorted()
                 )
             },
+            mentionedInPullRequests: mentionedPullRequests(issueRepo: repository.nameWithOwner),
             projectFields: (projectItems?.nodes ?? []).compactMap(\.value).map(\.model)
         )
+    }
+
+    /// Cross-referencing PRs (GitHub's `CrossReferencedEvent`), less any
+    /// already counted as closing the issue.
+    private func mentionedPullRequests(issueRepo: String) -> [IssueLinkedPullRequest] {
+        var seen = Set((closedByPullRequestsReferences?.nodes ?? []).compactMap(\.value?.url))
+        return (mentionedInPullRequests?.nodes ?? []).compactMap(\.source.value).compactMap { pr in
+            guard seen.insert(pr.url).inserted else { return nil }
+            return IssueLinkedPullRequest(
+                number: pr.number,
+                url: pr.url,
+                createdAt: pr.createdAt,
+                mergedAt: pr.mergedAt,
+                state: pr.state,
+                repo: pr.repository.nameWithOwner == issueRepo ? nil : pr.repository.nameWithOwner,
+                activityAt: []
+            )
+        }
     }
 }
 
