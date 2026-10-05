@@ -102,6 +102,12 @@ extension GitHubAPI {
         return jobs
     }
 
+    /// Re-runs a workflow run: its failed jobs only, or every job.
+    func rerunWorkflow(repo: String, runID: Int, failedOnly: Bool) async throws {
+        let suffix = failedOnly ? "rerun-failed-jobs" : "rerun"
+        try await restWrite("POST", "repos/\(repo)/actions/runs/\(runID)/\(suffix)")
+    }
+
     /// GitHub's search date syntax, to the second in UTC.
     private static func restTimestamp(_ date: Date) -> String {
         date.formatted(.iso8601)
@@ -165,7 +171,7 @@ extension GitHubAPI {
 
     /// A write through the REST API (creating a repo), with a JSON body. Not
     /// retried, since it may have gone through.
-    func restWrite<T: Decodable>(_ method: String, _ path: String, body: [String: Any]) async throws -> T {
+    private func performWrite(_ method: String, _ path: String, body: [String: Any]) async throws -> Data {
         var request = URLRequest(url: Self.restBase.appending(path: path))
         request.httpMethod = method
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -186,11 +192,22 @@ extension GitHubAPI {
         guard (200..<300).contains(status) else {
             throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
         }
+        return data
+    }
+
+    func restWrite<T: Decodable>(_ method: String, _ path: String, body: [String: Any]) async throws -> T {
+        let data = try await performWrite(method, path, body: body)
         do {
             return try Self.restDecoder.decode(T.self, from: data)
         } catch {
             throw APIError.decoding(String(describing: error))
         }
+    }
+
+    /// A write whose response body is empty, such as GitHub's workflow
+    /// re-run endpoints.
+    func restWrite(_ method: String, _ path: String, body: [String: Any] = [:]) async throws {
+        _ = try await performWrite(method, path, body: body)
     }
 
     private static func restRateLimit(_ response: HTTPURLResponse) -> RateLimit? {
