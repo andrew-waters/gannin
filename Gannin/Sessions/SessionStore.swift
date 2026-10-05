@@ -361,6 +361,9 @@ final class SessionStore {
     @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
     /// GitHub, once signed in; set by the app.
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }
+    /// The signed-in login, so a session's own feedback on a PR it isn't
+    /// the author of (reviewing someone else's) doesn't notify; set by the app.
+    @ObservationIgnored var viewerLogin: () -> String? = { nil }
     /// Reviews Gannin started or asked to look again by itself, until
     /// their result arrives (`AutoReview.swift`).
     @ObservationIgnored var automaticRuns: Set<UUID> = []

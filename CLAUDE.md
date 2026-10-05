@@ -578,8 +578,11 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   notification (`noticeNews`). What's been seen is kept with the session
   (`CodeSession.pullRequestsSeen`, so a relaunch flags what came while Gannin was closed; the
   first look only learns), a thread by its latest comment (`comments(last: 20)`, older keys
-  dropped), so a reply from anyone but the PR's author is new again. Conversation comments,
-  approvals and conflicts aren't flagged. With Send new feedback to Claude (the PRs pane,
+  dropped), so a comment from anyone but the PR's author or the signed-in viewer is new again:
+  every comment since the one last seen is checked, not only the latest, so a quick reply of
+  your own (or the session's Claude's, running gh as you) between checks doesn't swallow
+  someone else's. Conversation comments, approvals and conflicts aren't flagged. With Send new
+  feedback to Claude (the PRs pane,
   `CodeSession.sendsFeedback`, defaulting to Settings > General > Agent, `sessionsSendFeedback`,
   off) it's also pasted into the session: now when claude is waiting for a prompt, else queued
   (`pendingFeedback`) until its turn ends, dropped if claude exits first, and marked sent only

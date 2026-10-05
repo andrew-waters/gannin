@@ -65,6 +65,7 @@ struct GanninApp: App {
         _sessions = State(initialValue: sessions)
         GanninAppDelegate.sessions = sessions
         sessions.api = { [weak auth] in auth?.api }
+        sessions.viewerLogin = { [weak auth] in auth?.viewer?.login }
         sessions.watchPullRequests()
         // Sparkle starts checking now, not when a menu is first built.
         _ = Updater.shared

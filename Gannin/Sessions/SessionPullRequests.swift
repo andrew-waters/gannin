@@ -139,9 +139,16 @@ enum SessionPrompts {
 /// with Send to Claude), and the review feedback still open, ticked to send.
 struct SessionPullRequestsPane: View {
     @Environment(SessionStore.self) private var sessions
+    @Environment(AuthStore.self) private var auth
     let session: CodeSession
     /// Feedback left unticked, by ID.
     @State private var unticked: Set<String> = []
+    /// The PR whose "Re-run Failed Checks" confirmation is open, by ID.
+    @State private var confirmingRerun: String?
+    /// The PR currently re-running checks, by ID.
+    @State private var rerunningPR: String?
+    /// The PR a re-run failed for, and why.
+    @State private var rerunError: (prID: String, message: String)?
 
     /// A helper's are its issue session's.
     private var owner: UUID { session.parentID ?? session.id }
@@ -214,9 +221,15 @@ struct SessionPullRequestsPane: View {
                 }
                 if !pr.failed.isEmpty, pr.state == "OPEN" {
                     let key = "checks:\(pr.id):" + pr.failed.map(\.id).joined(separator: ",")
+                    let runIDs = Set(pr.failed.compactMap(\.runID))
                     HStack {
                         if sent.contains(key) { Text("Sent to Claude").font(.caption).foregroundStyle(.secondary) }
                         Spacer()
+                        if !runIDs.isEmpty {
+                            Button("Re-run Failed Checks") { confirmingRerun = pr.id }
+                                .disabled(rerunningPR == pr.id)
+                                .help("Ask GitHub to run the failed jobs again")
+                        }
                         Button("Send Failures to Claude") {
                             if sessions.submit(SessionPrompts.failures(pr, in: session), to: session.id) {
                                 sessions.markSent([key], for: session.id)
@@ -224,6 +237,17 @@ struct SessionPullRequestsPane: View {
                         }
                         .disabled(!running)
                         .help(running ? "Paste the failing checks, with how to read their logs, into claude's prompt" : "Start the session first")
+                    }
+                    .confirmationDialog(
+                        "Re-run the failed checks on \(pr.repo)#\(pr.number)?",
+                        isPresented: Binding(get: { confirmingRerun == pr.id }, set: { if !$0 { confirmingRerun = nil } })
+                    ) {
+                        Button("Re-run Failed Checks") { rerun(runIDs, in: pr) }
+                    } message: {
+                        Text("GitHub re-runs the jobs that failed.")
+                    }
+                    if let rerunError, rerunError.prID == pr.id {
+                        Text(rerunError.message).font(.caption).foregroundStyle(.red)
                     }
                 }
             }
@@ -288,6 +312,22 @@ struct SessionPullRequestsPane: View {
                     .foregroundStyle(sent ? .secondary : .primary)
                     .lineLimit(5)
             }
+        }
+    }
+
+    private func rerun(_ runIDs: Set<Int>, in pr: SessionPullRequest) {
+        guard let api = auth.api else { return }
+        rerunError = nil
+        rerunningPR = pr.id
+        Task {
+            do {
+                for runID in runIDs {
+                    try await api.rerunWorkflow(repo: pr.repo, runID: runID, failedOnly: true)
+                }
+            } catch {
+                rerunError = (pr.id, "GitHub didn't take it: \(error.localizedDescription)")
+            }
+            rerunningPR = nil
         }
     }
 
