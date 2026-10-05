@@ -346,6 +346,11 @@ final class SessionStore {
     @ObservationIgnored private var polling: Task<Void, Never>?
     /// The last `changed` value each session's hook wrote.
     @ObservationIgnored private var lastChanged: [UUID: String] = [:]
+    /// Each session's real context limit, from its statusLine: kept apart
+    /// from `transcripts` so `store` can lay it back over `reader.summary`
+    /// (whose own guess is a 200K default) whenever an async transcript
+    /// read lands after the statusLine was read.
+    @ObservationIgnored private var contextWindows: [UUID: Int] = [:]
     /// Server sessions whose hook files are being read over ssh now.
     @ObservationIgnored private var readingRemote: Set<UUID> = []
     @ObservationIgnored private var pollTick = 0
@@ -836,11 +841,12 @@ final class SessionStore {
             if lastChanged[id] != nil { changeCounts[id, default: 0] += 1 }
             lastChanged[id] = changed
         }
-        if let contextWindow, let (tokens, limit) = SessionTranscript.contextWindow(from: contextWindow) {
-            var summary = transcripts[id] ?? SessionTranscript()
-            summary.contextTokens = tokens
-            summary.contextLimit = limit
-            if transcripts[id] != summary { transcripts[id] = summary }
+        if let contextWindow, let limit = SessionTranscript.contextLimit(from: contextWindow) {
+            contextWindows[id] = limit
+            if var summary = transcripts[id], summary.contextLimit != limit {
+                summary.contextLimit = limit
+                transcripts[id] = summary
+            }
         }
     }
 
@@ -914,7 +920,9 @@ final class SessionStore {
 
     private func store(_ reader: TranscriptReader, for id: UUID) {
         readers[id] = reader
-        if transcripts[id] != reader.summary { transcripts[id] = reader.summary }
+        var summary = reader.summary
+        if let limit = contextWindows[id] { summary.contextLimit = limit }
+        if transcripts[id] != summary { transcripts[id] = summary }
         // A review's result is kept with it, for the history.
         if sessions[id]?.isPullRequestReview == true, let review = reader.summary.review, sessions[id]?.reviewResult != review {
             sessions[id]?.reviewResult = review
