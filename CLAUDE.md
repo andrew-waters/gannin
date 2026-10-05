@@ -99,12 +99,12 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
   (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Inbox, Ask (the
   Mac's) and Overview at the top; Work (Pull Requests, Issues with All and Not on a board,
-  Epics, Boards, Views); Delivery (Scorecard, PR flow, Issue flow, Releases, Investments, CI,
+  Epics, Projects (the boards), Views); Delivery (Scorecard, PR flow, Issue flow, Releases, Investments, CI,
   Repositories); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
   Prioritisation, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, once set);
   and Agents (Waiting on You, then sessions grouped as working on issues, reviews and
-  planning). `WorkloadTab.title` is the name shown (Overview, Boards, CI, Waiting on You);
+  planning). `WorkloadTab.title` is the name shown (Overview, CI, Waiting on You);
   raw values stay as windows saved them. The Dashboard is two pages (`OverviewView.Part`):
   Overview (right now, and delivery, investments and CI in short) and PR flow (delivery in
   full). The Issues row is the issue lists; Issue flow is the metrics. Picking a person shows their

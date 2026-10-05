@@ -274,7 +274,7 @@ struct ProjectsSettingsSection: View {
                     .task(id: repo) { await boards.loadRepoBoards(org: org, repo: repo) }
             }
         } footer: {
-            Text("With this project picked, Boards in the sidebar lists these. A repo's boards are those linked to it on GitHub (the repo's Projects tab) that \(org) owns.")
+            Text("With this project picked, Projects in the sidebar lists these. A repo's boards are those linked to it on GitHub (the repo's Projects tab) that \(org) owns.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

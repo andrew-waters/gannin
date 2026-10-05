@@ -66,7 +66,6 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .dashboard: "Overview"
-        case .projects: "Boards"
         case .actions: "CI"
         case .agents: "Waiting on You"
         default: rawValue
