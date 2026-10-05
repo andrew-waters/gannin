@@ -98,6 +98,20 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         contextTokens.map { Double($0) / Double(contextLimit) }
     }
 
+    /// The model's real context window and how full it is, from Claude
+    /// Code's own `statusLine` hook input: the number it computes for
+    /// whatever model is running, rather than Gannin guessing from the
+    /// model's name (a prior generation's opt-in 1M-context beta showed up
+    /// as a `[1m]` suffix on the model ID; current models don't carry one,
+    /// so that check never bumped the limit past its 200K default for them).
+    static func contextWindow(from statusLine: String) -> (tokens: Int, limit: Int)? {
+        guard let object = try? JSONSerialization.jsonObject(with: Data(statusLine.utf8)) as? [String: Any],
+              let window = object["context_window"] as? [String: Any],
+              let limit = (window["context_window_size"] as? NSNumber)?.intValue,
+              let used = (window["used_percentage"] as? NSNumber)?.doubleValue else { return nil }
+        return (tokens: Int((used / 100) * Double(limit)), limit: limit)
+    }
+
     /// Findings in the last reply's fenced JSON (a list of `path`, `line`,
     /// `comment`), as an agent review is asked to end.
     var findings: [Finding] {
@@ -164,9 +178,6 @@ nonisolated struct TranscriptReader: Sendable {
         case "cost-state":
             if let total = object["totalCostUSD"] as? Double {
                 runCosts["\(object["startTime"] ?? "run")"] = total
-            }
-            if let usage = object["modelUsage"] as? [String: Any], usage.keys.contains(where: { $0.contains("[1m]") }) {
-                summary.contextLimit = 1_000_000
             }
         case "user":
             guard (object["isMeta"] as? Bool) != true, (object["isSidechain"] as? Bool) != true,

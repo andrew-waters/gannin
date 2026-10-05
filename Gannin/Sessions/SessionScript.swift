@@ -188,8 +188,9 @@ enum SessionScript {
     }
 
     /// Claude Code settings for the session: hooks that write its state to
-    /// the session's folder and send it through the terminal, and the PR
-    /// it opens.
+    /// the session's folder and send it through the terminal, the PR it
+    /// opens, and a statusLine command that saves Claude Code's own
+    /// context-window stats for `SessionTranscript.contextWindow(from:)`.
     static func settings(directory dir: String) -> String {
         func signal(_ payload: String) -> String {
             #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
@@ -224,7 +225,14 @@ enum SessionScript {
             "Stop": [group([write(.idle)])],
             "SessionEnd": [group([write(.exited)])],
         ]
-        let data = (try? JSONSerialization.data(withJSONObject: ["hooks": hooks], options: [.prettyPrinted, .sortedKeys])) ?? Data()
+        // Its `context_window` tells Gannin the model's real limit and how
+        // full it is; echoing the model's name back keeps the terminal's own
+        // status row useful.
+        let statusLine = #"input=$(cat); printf '%s' "$input" > \#(dir)/statusline 2>/dev/null; printf '%s' "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p' | head -n1"#
+        let data = (try? JSONSerialization.data(
+            withJSONObject: ["hooks": hooks, "statusLine": ["type": "command", "command": statusLine]],
+            options: [.prettyPrinted, .sortedKeys]
+        )) ?? Data()
         return String(decoding: data, as: UTF8.self)
     }
 
