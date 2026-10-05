@@ -117,7 +117,7 @@ extension SessionStore {
             Look for bugs, missed cases, security problems, and code that doesn't fit the repo or the issue it's for. Comment only on lines the diff changes or shows. Say what's good in the summary, not as findings.
 
             End your reply with one fenced ```json block, findings most important first:
-            {"summary": "<a few sentences for the PR's author>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"]}
+            {"summary": "<a few sentences for the PR's author. When writing lists, use bullet points>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"]}
 
             If I ask you to look again, end the same way. Before you do, list the PR's review threads with `\(threads)`. In `resolved`, give the ID of each thread that isn't resolved yet, was started by `viewer` (the account you review as), and whose point is now dealt with: fixed in the code, or answered so that nothing more is needed. Check the code rather than taking a reply's word for it. Leave out threads whose point still stands, and don't raise them again as findings unless something about them has changed. On a first review, `resolved` is empty.
             """
