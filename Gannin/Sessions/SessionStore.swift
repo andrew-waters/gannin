@@ -601,6 +601,7 @@ final class SessionStore {
         drafts[id] = nil
         transcripts[id] = nil
         readers[id] = nil
+        contextWindows[id] = nil
         transcriptFiles[id] = nil
         pullRequestInfo[id] = nil
         if besideTab == id { besideTab = nil }
@@ -629,7 +630,7 @@ final class SessionStore {
                 directory: remoteDirectory,
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
-                settings: SessionScript.settings(directory: remoteDirectory)
+                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true)
             )
             command = SessionScript.connecting(connect, to: remote)
         } else {
@@ -637,7 +638,7 @@ final class SessionStore {
             // The harness is cloned into it, when it isn't there yet.
             try? fm.createDirectory(at: session.harnessPath == nil ? root : root.deletingLastPathComponent(), withIntermediateDirectories: true)
             let local = SessionScript.quoted(directory.path)
-            try? Data(SessionScript.settings(directory: local).utf8).write(to: directory.appending(path: "settings.json"))
+            try? Data(SessionScript.settings(directory: local, isRemote: false).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"
