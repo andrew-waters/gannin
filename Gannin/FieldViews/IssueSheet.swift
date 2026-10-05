@@ -82,28 +82,15 @@ struct IssueSheet: View {
         IssueTimelineSection(reference: reference)
         if let record, !record.linkedPullRequests.isEmpty {
             Section(header: SectionHeader(title: "Linked pull requests", count: record.linkedPullRequests.count)) {
-                ForEach(record.linkedPullRequests, id: \.url) { pr in linkedPullRequestRow(pr) }
+                ForEach(record.linkedPullRequests, id: \.url) { pr in LinkedPullRequestRow(pr: pr) }
             }
         }
         if let record, let mentioned = record.mentionedInPullRequests, !mentioned.isEmpty {
             Section(header: SectionHeader(title: "Mentioned in pull requests", count: mentioned.count)) {
-                ForEach(mentioned, id: \.url) { pr in linkedPullRequestRow(pr, systemImage: "at") }
+                ForEach(mentioned, id: \.url) { pr in LinkedPullRequestRow(pr: pr, systemImage: "at") }
             }
         }
         DescriptionSections(id: reference.id, url: reference.url)
-    }
-
-    private func linkedPullRequestRow(_ pr: IssueLinkedPullRequest, systemImage: String = "arrow.triangle.pull") -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage).foregroundStyle(pr.statusColor)
-            Link(pr.repo.map { "\($0)#\(pr.number)" } ?? "#\(String(pr.number))", destination: pr.url)
-            Pill(text: pr.statusText, color: pr.statusColor)
-            Spacer()
-            if let last = pr.activityAt.max() {
-                Text("active").font(.caption).foregroundStyle(.secondary)
-                RelativeDate(date: last).font(.caption).foregroundStyle(.secondary)
-            }
-        }
     }
 
     @ViewBuilder

@@ -110,6 +110,11 @@ struct IssueLinkedPullRequest: Codable, Hashable {
 
 /// Issues per org: those closed since `coveredFrom`, and every open one.
 struct IssueHistory: Codable {
+    /// Bumped when the stored shape gains fields old caches can't fill in,
+    /// so they're fetched again.
+    static let currentVersion = 1
+
+    var version: Int? = Self.currentVersion
     let orgLogin: String
     var coveredFrom: Date
     /// When closed and changed issues were last fetched.
