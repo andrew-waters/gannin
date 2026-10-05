@@ -1173,15 +1173,28 @@ struct HarnessSettingsSection: View {
             .task { await harness.loadRepositories(org: org) }
             .loadsHarness(org: org)
         if let teamHarness = harnesses.first {
-            TeamDataSection(org: org, setup: teamHarness)
-            ForEach(harnesses, id: \.repo) { setup in
-                HarnessPromptsSection(org: org, setup: setup, showsName: harnesses.count > 1)
+            HarnessTeamSections(org: org, teamHarness: teamHarness, harnesses: harnesses)
             }
-            HarnessAuthoringSection(org: org)
         }
         let checkouts = config.allHarnesses
         ForEach(checkouts, id: \.repo) { setup in
             HarnessCheckoutSection(org: org, repo: setup.repo, showsName: checkouts.count > 1, showsRecording: setup.repo == checkouts.first?.repo)
+    }
+}
+
+/// The team's data, prompts and drafting settings.
+struct HarnessTeamSections: View {
+    let org: String
+    let teamHarness: HarnessConfig
+    let harnesses: [HarnessConfig]
+
+    var body: some View {
+        TeamDataSection(org: org, setup: teamHarness)
+        ForEach(harnesses, id: \.repo) { setup in
+            HarnessPromptsSection(org: org, setup: setup, showsName: harnesses.count > 1)
+        }
+        ForEach([org], id: \.self) { org in
+            HarnessAuthoringSection(org: org)
         }
     }
 }
