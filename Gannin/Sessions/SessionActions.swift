@@ -159,15 +159,19 @@ extension SessionStore {
     /// New failures and feedback since the last look, kept with the
     /// session so a relaunch catches up on what came while Gannin was
     /// closed; the very first look only learns what's there. A thread is
-    /// new again when someone other than the PR's author replies, and
-    /// never when it's your own reply (a session can be reviewing a PR
-    /// that isn't yours, so the author alone isn't enough to exclude you).
+    /// new again when someone other than the PR's author or the signed-in
+    /// viewer comments on it since the one last seen: not just its latest
+    /// comment, so a quick reply of your own (or the session's Claude's,
+    /// running gh as you) between checks doesn't swallow someone else's.
     private func noticeNews(in pullRequests: [SessionPullRequest], for id: UUID) {
         guard let session = sessions[id] else { return }
         let me = viewerLogin()
         var keys: Set<String> = []
         var failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])] = []
         var said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])] = []
+        // What to show for a new item: the latest comment on it from
+        // someone other than the author or you, keyed by the item's ID.
+        var highlights: [String: SessionPullRequest.Comment] = [:]
         let seen = session.pullRequestsSeen
         // Each thread's or review's key now, to drop its older ones.
         var current: [String: String] = [:]
@@ -185,9 +189,14 @@ extension SessionStore {
                 keys.insert(item.key)
                 current[item.id] = item.key
                 guard let seen, !seen.contains(item.key) else { continue }
-                if seen.contains(where: { $0.hasPrefix(item.keyPrefix) }) { replies.insert(item.id) }
-                let isMine = me.map { item.latestAuthor.caseInsensitiveCompare($0) == .orderedSame } ?? false
-                if item.latestAuthor != pr.author && !isMine { newItems.append(item) }
+                let priorKey = seen.first { $0.hasPrefix(item.keyPrefix) }
+                if priorKey != nil { replies.insert(item.id) }
+                let priorURL = priorKey.map { $0.dropFirst(item.keyPrefix.count) }
+                let newComments = priorURL.flatMap { url in item.comments.firstIndex { $0.url.absoluteString == url } }
+                    .map { Array(item.comments[($0 + 1)...]) } ?? item.comments
+                guard let theirs = newComments.last(where: { !isFromAuthorOrViewer($0.author, of: pr, me: me) }) else { continue }
+                highlights[item.id] = theirs
+                newItems.append(item)
             }
             if !newChecks.isEmpty { failed.append((pr, newChecks)) }
             if !newItems.isEmpty { said.append((pr, newItems)) }
@@ -204,8 +213,9 @@ extension SessionStore {
         var news = failed.map { ("Checks failed on \($0.pr.repo)#\($0.pr.number)", $0.checks.map(\.name).joined(separator: ", ")) }
         for (pr, items) in said {
             for item in items {
+                guard let comment = highlights[item.id] else { continue }
                 let what = replies.contains(item.id) ? "replied" : item.verdict ?? (item.location == nil ? "reviewed" : "commented")
-                news.append(("@\(item.latestAuthor) \(what) on \(pr.repo)#\(pr.number)", item.comments.last?.body ?? ""))
+                news.append(("@\(comment.author) \(what) on \(pr.repo)#\(pr.number)", comment.body))
             }
         }
         let sent = sendNews(failed: failed, said: said, to: id)
@@ -220,6 +230,14 @@ extension SessionStore {
         case nil: break
         }
         flag(id, title: title, body: body, replies: false)
+    }
+
+    /// Whether a login is the PR's own author or the signed-in viewer,
+    /// both compared case-insensitively as GitHub's own casing may differ.
+    private func isFromAuthorOrViewer(_ login: String, of pr: SessionPullRequest, me: String?) -> Bool {
+        if let author = pr.author, login.caseInsensitiveCompare(author) == .orderedSame { return true }
+        if let me, login.caseInsensitiveCompare(me) == .orderedSame { return true }
+        return false
     }
 
     enum FeedbackDelivery { case pasted, queued }
