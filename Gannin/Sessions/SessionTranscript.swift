@@ -98,18 +98,17 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         contextTokens.map { Double($0) / Double(contextLimit) }
     }
 
-    /// The model's real context window and how full it is, from Claude
-    /// Code's own `statusLine` hook input: the number it computes for
-    /// whatever model is running, rather than Gannin guessing from the
-    /// model's name (a prior generation's opt-in 1M-context beta showed up
-    /// as a `[1m]` suffix on the model ID; current models don't carry one,
-    /// so that check never bumped the limit past its 200K default for them).
-    static func contextWindow(from statusLine: String) -> (tokens: Int, limit: Int)? {
+    /// The model's real context window, from Claude Code's own `statusLine`
+    /// hook input: the number it computes for whatever model is running,
+    /// rather than Gannin guessing from the model's name. Only the limit —
+    /// `contextTokens` stays the transcript's own count of the last reply's
+    /// usage, which is exact, where the statusLine's `used_percentage` is
+    /// rounded and would fight the transcript over the same field.
+    static func contextLimit(from statusLine: String) -> Int? {
         guard let object = try? JSONSerialization.jsonObject(with: Data(statusLine.utf8)) as? [String: Any],
               let window = object["context_window"] as? [String: Any],
-              let limit = (window["context_window_size"] as? NSNumber)?.intValue,
-              let used = (window["used_percentage"] as? NSNumber)?.doubleValue else { return nil }
-        return (tokens: Int((used / 100) * Double(limit)), limit: limit)
+              let limit = (window["context_window_size"] as? NSNumber)?.intValue else { return nil }
+        return limit
     }
 
     /// Findings in the last reply's fenced JSON (a list of `path`, `line`,
@@ -178,6 +177,14 @@ nonisolated struct TranscriptReader: Sendable {
         case "cost-state":
             if let total = object["totalCostUSD"] as? Double {
                 runCosts["\(object["startTime"] ?? "run")"] = total
+            }
+            // A fallback for a Claude Code too old to send `context_window`
+            // on its statusLine, or before the first one's arrived: a prior
+            // generation's opt-in 1M-context beta suffixed the model ID
+            // this way. `SessionStore.store` overrides it as soon as a real
+            // statusLine value is read.
+            if let usage = object["modelUsage"] as? [String: Any], usage.keys.contains(where: { $0.contains("[1m]") }) {
+                summary.contextLimit = 1_000_000
             }
         case "user":
             guard (object["isMeta"] as? Bool) != true, (object["isSidechain"] as? Bool) != true,

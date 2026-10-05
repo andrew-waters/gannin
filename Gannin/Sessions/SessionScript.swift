@@ -190,7 +190,7 @@ enum SessionScript {
     /// Claude Code settings for the session: hooks that write its state to
     /// the session's folder and send it through the terminal, the PR it
     /// opens, and a statusLine command that saves Claude Code's own
-    /// context-window stats for `SessionTranscript.contextWindow(from:)`.
+    /// context-window stats for `SessionTranscript.contextLimit(from:)`.
     static func settings(directory dir: String) -> String {
         func signal(_ payload: String) -> String {
             #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
@@ -225,15 +225,31 @@ enum SessionScript {
             "Stop": [group([write(.idle)])],
             "SessionEnd": [group([write(.exited)])],
         ]
-        // Its `context_window` tells Gannin the model's real limit and how
-        // full it is; echoing the model's name back keeps the terminal's own
-        // status row useful.
-        let statusLine = #"input=$(cat); printf '%s' "$input" > \#(dir)/statusline 2>/dev/null; printf '%s' "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p' | head -n1"#
+        // Its `context_window` tells Gannin the model's real limit.
+        // `--settings` replaces rather than merges a scalar key like
+        // `statusLine`, so this would otherwise blank out a statusLine the
+        // user set up themselves: run theirs in turn, on the same input,
+        // and print its output instead of the model's name.
+        let render = usersStatusLineCommand().map { #"printf '%s' "$input" | "# + $0 }
+            ?? #"printf '%s' "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p' | head -n1"#
+        let statusLine = #"input=$(cat); printf '%s' "$input" | tr -d '\n' > \#(dir)/statusline 2>/dev/null; \#(render)"#
         let data = (try? JSONSerialization.data(
             withJSONObject: ["hooks": hooks, "statusLine": ["type": "command", "command": statusLine]],
             options: [.prettyPrinted, .sortedKeys]
         )) ?? Data()
         return String(decoding: data, as: UTF8.self)
+    }
+
+    /// The command behind the user's own statusLine, if they've set one in
+    /// `~/.claude/settings.json`.
+    private static func usersStatusLineCommand() -> String? {
+        let url = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/settings.json")
+        guard let data = try? Data(contentsOf: url),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let statusLine = object["statusLine"] as? [String: Any],
+              statusLine["type"] as? String == "command",
+              let command = statusLine["command"] as? String else { return nil }
+        return command
     }
 
     /// What the terminal runs on a server: unpack the script, brief and
