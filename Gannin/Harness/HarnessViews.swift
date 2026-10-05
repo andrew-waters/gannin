@@ -1161,6 +1161,8 @@ struct HarnessSettingsSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     let org: String
+    
+    @State private var isCheckoutsExpanded = true
 
     var body: some View {
         let config = configs.config(for: org)
@@ -1174,11 +1176,13 @@ struct HarnessSettingsSection: View {
             .loadsHarness(org: org)
         if let teamHarness = harnesses.first {
             HarnessTeamSections(org: org, teamHarness: teamHarness, harnesses: harnesses)
+        }
+        DisclosureGroup("Checkouts", isExpanded: $isCheckoutsExpanded) {
+            let checkouts = config.allHarnesses
+            ForEach(checkouts, id: \.repo) { setup in
+                HarnessCheckoutSection(org: org, repo: setup.repo, showsName: checkouts.count > 1, showsRecording: setup.repo == checkouts.first?.repo)
             }
         }
-        let checkouts = config.allHarnesses
-        ForEach(checkouts, id: \.repo) { setup in
-            HarnessCheckoutSection(org: org, repo: setup.repo, showsName: checkouts.count > 1, showsRecording: setup.repo == checkouts.first?.repo)
     }
 }
 
