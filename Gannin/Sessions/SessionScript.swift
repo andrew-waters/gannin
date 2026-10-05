@@ -191,7 +191,9 @@ enum SessionScript {
     /// the session's folder and send it through the terminal, the PR it
     /// opens, and a statusLine command that saves Claude Code's own
     /// context-window stats for `SessionTranscript.contextLimit(from:)`.
-    static func settings(directory dir: String) -> String {
+    /// `isRemote` is whether this runs on a server: the user's own
+    /// statusLine command, read from this Mac, wouldn't exist there.
+    static func settings(directory dir: String, isRemote: Bool) -> String {
         func signal(_ payload: String) -> String {
             #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
         }
@@ -229,8 +231,10 @@ enum SessionScript {
         // `--settings` replaces rather than merges a scalar key like
         // `statusLine`, so this would otherwise blank out a statusLine the
         // user set up themselves: run theirs in turn, on the same input,
-        // and print its output instead of the model's name.
-        let render = usersStatusLineCommand().map { #"printf '%s' "$input" | "# + $0 }
+        // and print its output instead of the model's name. Only for a
+        // local session: a server's own command (and its own statusLine)
+        // live on that box, not this Mac's `~/.claude/settings.json`.
+        let render = (isRemote ? nil : usersStatusLineCommand()).map { #"printf '%s' "$input" | { "# + $0 + "\n}" }
             ?? #"printf '%s' "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p' | head -n1"#
         let statusLine = #"input=$(cat); printf '%s' "$input" | tr -d '\n' > \#(dir)/statusline 2>/dev/null; \#(render)"#
         let data = (try? JSONSerialization.data(
