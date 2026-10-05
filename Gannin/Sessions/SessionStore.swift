@@ -824,7 +824,7 @@ final class SessionStore {
     // MARK: Hook state
 
     /// What a session's hooks last wrote, as read from its folder.
-    private func apply(state: String?, pullRequest: String?, changed: String?, for id: UUID) {
+    private func apply(state: String?, pullRequest: String?, changed: String?, contextWindow: String?, for id: UUID) {
         if let state = state.flatMap(SessionState.init(rawValue:)) {
             setState(state, for: id)
         }
@@ -835,6 +835,12 @@ final class SessionStore {
             // The first read only learns where it was.
             if lastChanged[id] != nil { changeCounts[id, default: 0] += 1 }
             lastChanged[id] = changed
+        }
+        if let contextWindow, let (tokens, limit) = SessionTranscript.contextWindow(from: contextWindow) {
+            var summary = transcripts[id] ?? SessionTranscript()
+            summary.contextTokens = tokens
+            summary.contextLimit = limit
+            if transcripts[id] != summary { transcripts[id] = summary }
         }
     }
 
@@ -848,7 +854,7 @@ final class SessionStore {
         readingRemote.insert(session.id)
         let reader = readers[session.id] ?? TranscriptReader()
         let script = #"d="$HOME"/.gannin/sessions/"# + session.id.uuidString + "\n"
-            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(cat "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)""# + "\n"
+            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(cat "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)""# + "\n"
             + #"f=$(ls "$HOME"/.claude/projects/*/"# + session.claudeID + #".jsonl 2>/dev/null | head -n 1)"# + "\n"
             + #"if [ -n "$f" ]; then s=$(wc -c < "$f" | tr -d ' '); echo "$s"; [ "$s" -gt "# + "\(reader.offset)"
             + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c 4000000; else echo -1; fi; exit 0"#
@@ -856,14 +862,14 @@ final class SessionStore {
         Task {
             let result = await Task.detached { () -> (SessionChanges.ShellResult, TranscriptReader?) in
                 let result = SessionChanges.run(script, .ssh(arguments))
-                // After four lines (state, PR, change, size), the new bytes.
+                // After five lines (state, PR, change, statusline, size), the new bytes.
                 var newlines = 0
                 var index = result.data.startIndex
-                while newlines < 4, let next = result.data[index...].firstIndex(of: 10) {
+                while newlines < 5, let next = result.data[index...].firstIndex(of: 10) {
                     newlines += 1
                     index = result.data.index(after: next)
                 }
-                guard newlines == 4, result.data.count > index else { return (result, nil) }
+                guard newlines == 5, result.data.count > index else { return (result, nil) }
                 var reader = reader
                 reader.consume(result.data[index...])
                 return (result, reader)
@@ -872,10 +878,10 @@ final class SessionStore {
             // Ended while it was read: the terminal's end is the truth.
             guard result.0.ok, terminals[id]?.isRunning == true, sessions[id] != nil else { return }
             if let reader = result.1 { store(reader, for: id) }
-            let lines = result.0.data.prefix(4096).split(separator: 10, maxSplits: 4, omittingEmptySubsequences: false)
-                .prefix(3).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
+            let lines = result.0.data.prefix(8192).split(separator: 10, maxSplits: 5, omittingEmptySubsequences: false)
+                .prefix(4).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
             func line(_ index: Int) -> String? { index < lines.count && !lines[index].isEmpty ? lines[index] : nil }
-            apply(state: line(0), pullRequest: line(1), changed: line(2), for: id)
+            apply(state: line(0), pullRequest: line(1), changed: line(2), contextWindow: line(3), for: id)
         }
     }
 
@@ -953,17 +959,17 @@ final class SessionStore {
             func read(_ name: String) -> String? {
                 (try? String(contentsOf: directory.appending(path: name), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            let state = read("state"), pullRequest = read("pr"), changed = read("changed")
+            let state = read("state"), pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
             if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
                 // What it's asking is in the transcript: read it first, so
                 // the notification can offer the answers.
                 readLocalTranscript(id) { [weak self] in
-                    self?.apply(state: state, pullRequest: pullRequest, changed: changed, for: id)
+                    self?.apply(state: state, pullRequest: pullRequest, changed: changed, contextWindow: statusLine, for: id)
                 }
                 continue
             }
             if pollTick % 2 == 0 { readLocalTranscript(id) }
-            apply(state: state, pullRequest: pullRequest, changed: changed, for: id)
+            apply(state: state, pullRequest: pullRequest, changed: changed, contextWindow: statusLine, for: id)
         }
         return anyRunning
     }
