@@ -86,6 +86,36 @@ struct MarkdownText: View {
         case details(summary: String, body: String)
         /// `---`, `***` or `___` on a line of its own.
         case rule
+        /// `>` lines, as Markdown of their own; a GitHub alert when the
+        /// first is `[!NOTE]`, `[!WARNING]` and the like.
+        case quote(body: String, alert: Alert?)
+    }
+
+    /// GitHub's alerts, the blockquotes it draws as callouts.
+    enum Alert: String, CaseIterable {
+        case note, tip, important, warning, caution
+
+        var title: String { rawValue.capitalized }
+
+        var symbol: String {
+            switch self {
+            case .note: "info.circle"
+            case .tip: "lightbulb"
+            case .important: "exclamationmark.bubble"
+            case .warning: "exclamationmark.triangle"
+            case .caution: "exclamationmark.octagon"
+            }
+        }
+
+        var color: Color {
+            switch self {
+            case .note: .blue
+            case .tip: .green
+            case .important: .purple
+            case .warning: .orange
+            case .caution: .red
+            }
+        }
     }
 
     private static func blocks(_ source: String, reflows: Bool) -> [Block] {
@@ -109,9 +139,35 @@ struct MarkdownText: View {
         }
 
         var details: (summary: String?, lines: [String], depth: Int)?
+        var quote: [String]?
+
+        func flushQuote() {
+            guard var lines = quote else { return }
+            quote = nil
+            var alert: Alert?
+            if let first = lines.first?.trimmingCharacters(in: .whitespaces),
+               let match = first.wholeMatch(of: /(?i)\[!(note|tip|important|warning|caution)\]/) {
+                alert = Alert(rawValue: match.1.lowercased())
+                lines.removeFirst()
+            }
+            result.append(.quote(body: lines.joined(separator: "\n"), alert: alert))
+        }
 
         for rawLine in strippingHTMLComments(source).components(separatedBy: .newlines) {
             let rawTrimmed = rawLine.trimmingCharacters(in: .whitespaces)
+            // A blockquote: gather its lines, without their `>`, to read on
+            // their own (details, lists and all).
+            if !inCode, details == nil, rawTrimmed.hasPrefix(">") {
+                if quote == nil {
+                    flushParagraph()
+                    flushTable()
+                }
+                var inner = rawTrimmed.dropFirst()
+                if inner.first == " " { inner = inner.dropFirst() }
+                quote = (quote ?? []) + [String(inner)]
+                continue
+            }
+            flushQuote()
             // Inside a <details>: gather it whole, nested ones and all.
             if var open = details, !inCode {
                 let opens = rawTrimmed.ranges(of: /(?i)<details\b/).count
@@ -209,6 +265,7 @@ struct MarkdownText: View {
         if let open = details {
             result.append(.details(summary: open.summary ?? "Details", body: open.lines.joined(separator: "\n")))
         }
+        flushQuote()
         flushTable()
         flushParagraph()
         return result
@@ -243,10 +300,11 @@ struct MarkdownText: View {
         var text = text
         text = text.replacing(/(?i)<br\s*\/?>/, with: "\n")
         text = text.replacing(/(?i)<hr\s*\/?>/, with: "")
-        text = text.replacing(/(?i)<\/?(strong|b)>/, with: "**")
-        text = text.replacing(/(?i)<\/?(em|i)>/, with: "*")
-        text = text.replacing(/(?i)<\/?(del|s|strike)>/, with: "~~")
-        text = text.replacing(/(?i)<\/?code>/, with: "`")
+        // Attributes too: `<strong title="...">`.
+        text = text.replacing(/(?i)<\/?(strong|b)(\s[^>]*)?>/, with: "**")
+        text = text.replacing(/(?i)<\/?(em|i)(\s[^>]*)?>/, with: "*")
+        text = text.replacing(/(?i)<\/?(del|s|strike)(\s[^>]*)?>/, with: "~~")
+        text = text.replacing(/(?i)<\/?code(\s[^>]*)?>/, with: "`")
         text = text.replacing(/(?i)<a\s[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/) { match in
             "[\(match.2)](\(match.1))"
         }
@@ -372,7 +430,29 @@ struct MarkdownText: View {
             }
         case .rule:
             Divider().padding(.vertical, 4)
+        case .quote(let body, let alert):
+            quote(body, alert: alert, size: nil)
         }
+    }
+
+    /// A blockquote with a bar down its side, or a GitHub alert with its
+    /// icon and title in the alert's colour.
+    private func quote(_ body: String, alert: Alert?, size: CGFloat?) -> some View {
+        HStack(alignment: .top, spacing: size.map { $0 * 0.8 } ?? 10) {
+            RoundedRectangle(cornerRadius: 1.5)
+                .fill(alert?.color ?? Color.secondary.opacity(0.5))
+                .frame(width: 3)
+            VStack(alignment: .leading, spacing: size.map { $0 * 0.4 } ?? 4) {
+                if let alert {
+                    Label(alert.title, systemImage: alert.symbol)
+                        .font(size.map { .system(size: $0, weight: .semibold) } ?? .body.weight(.semibold))
+                        .foregroundStyle(alert.color)
+                }
+                MarkdownText(source: body, reflows: reflows, reading: size)
+                    .foregroundStyle(alert == nil ? .secondary : .primary)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
     }
 
     private func table(_ rows: [[String]], size: CGFloat? = nil) -> some View {
@@ -421,7 +501,7 @@ struct MarkdownText: View {
             case .bullet, .ordered: return size * 0.4
             default: return size * 0.7
             }
-        case .code, .table, .details, .rule:
+        case .code, .table, .details, .rule, .quote:
             return size * 0.9
         case .paragraph:
             if case .heading = previous { return size * 0.5 }
@@ -526,6 +606,8 @@ struct MarkdownText: View {
             }
         case .rule:
             Divider().padding(.vertical, size * 0.4)
+        case .quote(let body, let alert):
+            quote(body, alert: alert, size: size)
         }
     }
 
