@@ -293,7 +293,7 @@ struct PullRequestRow: View {
 
 struct IssueRow: View {
     let issue: Issue
-    let linkedCount: Int
+    let linked: [LinkedItem]
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -306,9 +306,10 @@ struct IssueRow: View {
                     }
                     Text("·")
                     RelativeDate(date: issue.updatedAt)
-                    if linkedCount > 0 {
-                        Label("\(linkedCount)", systemImage: "arrow.triangle.pull")
-                            .help("Linked pull requests")
+                    if !linked.isEmpty {
+                        Label("\(linked.count)", systemImage: "arrow.triangle.pull")
+                            .foregroundStyle(linked.linkedPullRequestsTint)
+                            .help(linked.contains { $0.state == "MERGED" } ? "Linked pull requests, including one merged" : "Linked pull requests")
                     }
                     ForEach(issue.labels.prefix(3), id: \.self) { LabelChip(label: $0) }
                 }

@@ -29,6 +29,11 @@ struct IssueRecord: Codable, Hashable, Identifiable {
     /// When each sub-issue was added, for scope creep.
     let subIssuesAddedAt: [Date]
     let linkedPullRequests: [IssueLinkedPullRequest]
+    /// PRs that mention the issue (GitHub's cross-reference) without formally
+    /// closing it, such as a PR in another repo with no closing keyword.
+    /// Optional so records from before it was fetched still load; they gain
+    /// it when next fetched.
+    let mentionedInPullRequests: [IssueLinkedPullRequest]?
     /// The issue's field values on each project board it's on. A var so edits
     /// from the issue window show before the next fetch.
     var projectFields: [IssueProjectFields]
@@ -96,6 +101,9 @@ struct IssueLinkedPullRequest: Codable, Hashable {
     let createdAt: Date
     let mergedAt: Date?
     let state: String
+    /// `owner/name`, when it's known to differ from the issue's own repo
+    /// (a cross-repo mention). Optional so older cached records still load.
+    let repo: String?
     /// Days with commits or reviews, for flow efficiency.
     let activityAt: [Date]
 }

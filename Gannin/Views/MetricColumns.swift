@@ -89,7 +89,7 @@ struct MetricColumn: View {
             let issues = workload?.unassignedIssues ?? []
             Section(header: SectionHeader(title: "Issues", count: issues.count)) {
                 ForEach(issues) { issue in
-                    IssueRow(issue: issue, linkedCount: workload?.linkedPullRequests(for: issue).count ?? 0)
+                    IssueRow(issue: issue, linked: workload?.linkedPullRequests(for: issue) ?? [])
                         .tag(DetailSelection.issue(issue.id))
                 }
             }

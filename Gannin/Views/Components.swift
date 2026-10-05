@@ -104,6 +104,38 @@ extension LinkedItem {
     }
 }
 
+extension Array where Element == LinkedItem {
+    /// Purple once one has merged, green while one's still open, grey when
+    /// every one is closed unmerged: a list's badge colour without opening it.
+    var linkedPullRequestsTint: Color {
+        if contains(where: { $0.state == "MERGED" }) { return .purple }
+        if contains(where: { $0.state == "OPEN" }) { return .green }
+        return .secondary
+    }
+}
+
+extension IssueLinkedPullRequest {
+    var isMerged: Bool { mergedAt != nil }
+
+    var statusText: String { isMerged ? "Merged" : state.capitalized }
+
+    var statusColor: Color {
+        if isMerged { return .purple }
+        if state == "CLOSED" { return .red }
+        return .green
+    }
+}
+
+extension Array where Element == IssueLinkedPullRequest {
+    /// Purple once one has merged, green while one's still open, grey when
+    /// every one is closed unmerged: a list's badge colour without opening it.
+    var linkedPullRequestsTint: Color {
+        if contains(where: \.isMerged) { return .purple }
+        if contains(where: { $0.state == "OPEN" }) { return .green }
+        return .secondary
+    }
+}
+
 extension Color {
     /// Parses GitHub's six-digit hex label colours.
     init?(hex: String) {

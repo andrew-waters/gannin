@@ -90,7 +90,13 @@ struct OpenIssuesView: View {
                     RelativeDate(date: issue.closedAt ?? issue.createdAt)
                     if !issue.linkedPullRequests.isEmpty {
                         Label("\(issue.linkedPullRequests.count)", systemImage: "arrow.triangle.pull")
-                            .help("Linked pull requests")
+                            .foregroundStyle(issue.linkedPullRequests.linkedPullRequestsTint)
+                            .help(issue.linkedPullRequests.contains(where: \.isMerged) ? "Linked pull requests, including one merged" : "Linked pull requests")
+                    }
+                    if let mentioned = issue.mentionedInPullRequests, !mentioned.isEmpty {
+                        Label("\(mentioned.count)", systemImage: "at")
+                            .foregroundStyle(mentioned.linkedPullRequestsTint)
+                            .help(mentioned.contains(where: \.isMerged) ? "Mentioned in pull requests, including one merged" : "Mentioned in pull requests")
                     }
                     if !issue.labels.isEmpty {
                         Text("· \(issue.labels.prefix(3).joined(separator: ", "))")

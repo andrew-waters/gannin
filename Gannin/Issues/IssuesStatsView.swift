@@ -280,7 +280,10 @@ struct IssuesStatsView: View {
                                 Text("\(timing.record.repo)#\(String(timing.record.number))")
                                 if let author = timing.record.author { Text("by \(author)") }
                                 if let status = timing.currentStatus { Text("· \(status)") }
-                                if let pr = timing.record.linkedPullRequests.last { Text("· PR #\(String(pr.number)) \(pr.state.lowercased())") }
+                                if let pr = timing.record.linkedPullRequests.last {
+                                    Text("· PR #\(String(pr.number)) \(pr.statusText.lowercased())")
+                                        .foregroundStyle(pr.statusColor)
+                                }
                             }
                             .font(.caption)
                             .foregroundStyle(.secondary)
