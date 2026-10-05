@@ -75,7 +75,7 @@ extension PullRequest {
         if isMerged { return "Merged" }
         if state == "CLOSED" { return "Closed" }
         if isDraft { return "Draft" }
-        switch reviewDecision {
+        switch review {
         case .approved: return "Approved"
         case .changesRequested: return "Changes requested"
         case .reviewRequired, nil: return "In review"
@@ -86,7 +86,7 @@ extension PullRequest {
         if isMerged { return .purple }
         if state == "CLOSED" { return .red }
         if isDraft { return .gray }
-        switch reviewDecision {
+        switch review {
         case .approved: return .green
         case .changesRequested: return .orange
         case .reviewRequired, nil: return .blue

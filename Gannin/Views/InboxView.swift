@@ -539,20 +539,20 @@ struct Inbox {
     }
 
     private static func urgency(_ pr: PullRequest) -> Int {
-        if pr.reviewDecision == .changesRequested { return 0 }
+        if pr.review == .changesRequested { return 0 }
         if pr.checks == .failure || pr.checks == .error { return 1 }
         return 2
     }
 
     /// Reviews waiting on you, and your PRs with changes asked for.
     var count: Int {
-        reviews.count + pullRequests.filter { $0.reviewDecision == .changesRequested }.count
+        reviews.count + pullRequests.filter { $0.review == .changesRequested }.count
     }
 
     /// Where a PR of yours stands, in words and a colour.
     static func standing(_ pr: PullRequest, needsReview: Bool = true) -> (text: String, color: Color) {
         if pr.isDraft { return ("Draft", .secondary) }
-        switch pr.reviewDecision {
+        switch pr.review {
         case .changesRequested: return ("Changes requested", ChartPalette.critical)
         case .approved: return ("Approved", ChartPalette.good)
         default:

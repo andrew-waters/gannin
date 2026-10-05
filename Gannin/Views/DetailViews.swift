@@ -329,58 +329,29 @@ struct PullRequestColumn: View {
                     url: pr.url,
                     pill: Pill(text: pr.statusText, color: pr.statusColor)
                 )
-                Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                    if let author = pr.author {
-                        PeopleGridRow(title: "Author", people: [author], selection: $selection)
+                // Side by side when there's room, else one under the other.
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .top, spacing: 40) {
+                        peopleFacts
+                        workFacts(detail)
                     }
-                    PeopleGridRow(title: "Assignees", people: pr.assignees, selection: $selection)
-                    PeopleGridRow(title: "Review requested", people: pr.requestedReviewers, selection: $selection)
-                    PeopleGridRow(title: "Reviewed by", people: pr.reviewers, selection: $selection)
-                    if let head = detail?.headRef, let base = detail?.baseRef {
-                        GridRow {
-                            Text("Branch").foregroundStyle(.secondary)
-                            Text("\(head) → \(base)")
-                                .font(.callout.monospaced())
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                                .textSelection(.enabled)
-                        }
-                    }
-                    if let checks = detail?.checks {
-                        GridRow {
-                            Text("Checks").foregroundStyle(.secondary)
-                            ChecksLabel(state: checks)
-                        }
-                    }
-                    GridRow {
-                        Text("Size").foregroundStyle(.secondary)
-                        HStack(spacing: 6) {
-                            Text("+\(pr.additions)").foregroundStyle(.green)
-                            Text("-\(pr.deletions)").foregroundStyle(.red)
-                        }
-                        .monospacedDigit()
-                    }
-                    DateGridRow(title: "Opened", date: pr.createdAt)
-                    GridRow {
-                        Text(pr.isMerged ? "Merged" : "Last activity").foregroundStyle(.secondary)
-                        HStack(spacing: 6) {
-                            RelativeDate(date: pr.mergedAt ?? pr.updatedAt)
-                            if Workload.isStale(pr) {
-                                Pill(text: "Stale", color: .orange)
-                            }
-                        }
+                    VStack(alignment: .leading, spacing: 8) {
+                        peopleFacts
+                        workFacts(detail)
                     }
                 }
                 .padding(.vertical, 4)
             }
 
-            Section(header: SectionHeader(title: "Linked issues", count: pr.linkedIssues.count)) {
-                ForEach(pr.linkedIssues) { item in
-                    if let issue = workload.issue(id: item.id) {
-                        IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
-                            .tag(DetailSelection.issue(issue.id))
-                    } else {
-                        ExternalItemRow(item: item, systemImage: "smallcircle.filled.circle")
+            if !pr.linkedIssues.isEmpty {
+                Section(header: SectionHeader(title: "Linked issues", count: pr.linkedIssues.count)) {
+                    ForEach(pr.linkedIssues) { item in
+                        if let issue = workload.issue(id: item.id) {
+                            IssueRow(issue: issue, linkedCount: workload.linkedPullRequests(for: issue).count)
+                                .tag(DetailSelection.issue(issue.id))
+                        } else {
+                            ExternalItemRow(item: item, systemImage: "smallcircle.filled.circle")
+                        }
                     }
                 }
             }
@@ -392,6 +363,105 @@ struct PullRequestColumn: View {
             DescriptionSections(id: pr.id, url: pr.url)
         }
         .task(id: pr.id) { await details.load(pr.id, updatedAt: pr.updatedAt) }
+    }
+
+    private var peopleFacts: some View {
+        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+            if let author = pr.author {
+                PeopleGridRow(title: "Author", people: [author], selection: $selection)
+            }
+            if !pr.assignees.isEmpty {
+                PeopleGridRow(title: "Assignees", people: pr.assignees, selection: $selection)
+            }
+            ReviewersGridRow(pr: pr, selection: $selection)
+        }
+    }
+
+    private func workFacts(_ detail: ItemDetail?) -> some View {
+        Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+            if let head = detail?.headRef, let base = detail?.baseRef {
+                GridRow {
+                    Text("Branch").foregroundStyle(.secondary)
+                    Text("\(head) → \(base)")
+                        .font(.callout.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+            GridRow {
+                Text(detail?.checks == nil ? "Size" : "Checks").foregroundStyle(.secondary)
+                HStack(spacing: 12) {
+                    if let checks = detail?.checks {
+                        ChecksLabel(state: checks)
+                    }
+                    HStack(spacing: 6) {
+                        Text("+\(pr.additions)").foregroundStyle(.green)
+                        Text("-\(pr.deletions)").foregroundStyle(.red)
+                    }
+                    .monospacedDigit()
+                }
+            }
+            GridRow {
+                Text("Opened").foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    RelativeDate(date: pr.createdAt)
+                    Text("·").foregroundStyle(.tertiary)
+                    Text(pr.isMerged ? "merged" : "active").foregroundStyle(.secondary)
+                    RelativeDate(date: pr.mergedAt ?? pr.updatedAt)
+                    if Workload.isStale(pr) {
+                        Pill(text: "Stale", color: .orange)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Everyone asked to review a PR or who has, once each, marked with where
+/// their review stands: asked (again) and waiting, or their latest review.
+private struct ReviewersGridRow: View {
+    let pr: PullRequest
+    @Binding var selection: DetailSelection?
+
+    var body: some View {
+        let requested = Set(pr.requestedReviewers.map(\.login))
+        let people = pr.reviewers.filter { !requested.contains($0.login) } + pr.requestedReviewers
+        GridRow {
+            Text("Reviewers").foregroundStyle(.secondary)
+            if people.isEmpty {
+                Text("None").foregroundStyle(.tertiary)
+            } else {
+                HStack(spacing: 10) {
+                    ForEach(people) { person in
+                        let mark = Self.mark(requested.contains(person.login) ? nil : pr.reviewStates?[person.login],
+                                             waiting: requested.contains(person.login))
+                        Button {
+                            selection = .person(person.login)
+                        } label: {
+                            HStack(spacing: 4) {
+                                Avatar(url: person.avatarUrl, size: 18)
+                                Text(person.login)
+                                if let mark {
+                                    Image(systemName: mark.symbol).foregroundStyle(mark.color)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .help("\(person.login): \(mark?.words ?? "reviewed")")
+                    }
+                }
+            }
+        }
+    }
+
+    private static func mark(_ state: String?, waiting: Bool) -> (symbol: String, color: Color, words: String)? {
+        if waiting { return ("clock", .secondary, "review requested") }
+        switch state.flatMap(PullRequest.ReviewState.init(rawValue:)) {
+        case .approved: return ("checkmark.circle.fill", .green, "approved")
+        case .changesRequested: return ("exclamationmark.circle.fill", .orange, "changes requested")
+        default: return state == "COMMENTED" ? ("text.bubble", .secondary, "commented") : nil
+        }
     }
 }
 

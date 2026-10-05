@@ -508,7 +508,7 @@ private struct RawPullRequest: Decodable {
         let createdAt: Date?
         let requestedReviewer: RawActor?
     }
-    struct Review: Decodable { let author: RawActor? }
+    struct Review: Decodable { let author: RawActor?; let state: String? }
 
     let id: String
     let number: Int
@@ -547,7 +547,7 @@ private struct RawPullRequest: Decodable {
           author { login avatarUrl }
           assignees(first: 10) { nodes { login avatarUrl } }
           reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
-          latestReviews(first: 10) { nodes { author { login avatarUrl } } }
+          latestReviews(first: 10) { nodes { state author { login avatarUrl } } }
           closingIssuesReferences(first: 10) { nodes { \(RawLinked.fields) } }
           timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) {
             nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } } } }
@@ -581,7 +581,13 @@ private struct RawPullRequest: Decodable {
             reviewRequestedAt: requestedAt,
             reviewers: (latestReviews?.nodes ?? []).compactMap { $0.author?.person },
             linkedIssues: (closingIssuesReferences?.nodes ?? []).map(\.model),
-            checks: commits?.nodes.first?.commit.statusCheckRollup.flatMap { ItemDetail.CheckState(rawValue: $0.state) }
+            checks: commits?.nodes.first?.commit.statusCheckRollup.flatMap { ItemDetail.CheckState(rawValue: $0.state) },
+            reviewStates: Dictionary(
+                (latestReviews?.nodes ?? []).compactMap { review in
+                    review.author?.login.flatMap { login in review.state.map { (login, $0) } }
+                },
+                uniquingKeysWith: { first, _ in first }
+            )
         )
     }
 }

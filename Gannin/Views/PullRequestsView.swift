@@ -31,7 +31,7 @@ struct PullRequestFilters {
             if pr.isMerged { self = .merged }
             else if pr.isDraft { self = .draft }
             else {
-                switch pr.reviewDecision {
+                switch pr.review {
                 case .changesRequested: self = .changesRequested
                 case .approved: self = .approved
                 default: self = .needsReview

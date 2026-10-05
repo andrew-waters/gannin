@@ -89,8 +89,21 @@ struct PullRequest: Codable, Hashable, Identifiable {
     /// The latest commit's checks, as of the fetch (checks finishing don't
     /// touch `updatedAt`, so the detail store has fresher ones for pending).
     var checks: ItemDetail.CheckState? = nil
+    /// Each reviewer's latest review state (`APPROVED`, `CHANGES_REQUESTED`,
+    /// `COMMENTED`), for repos whose rules leave `reviewDecision` empty.
+    var reviewStates: [String: String]? = nil
 
     var isMerged: Bool { mergedAt != nil }
+
+    /// GitHub's review decision, else what the latest reviews say: a repo
+    /// that doesn't require reviews gets no decision however it's reviewed.
+    var review: ReviewState? {
+        if let reviewDecision { return reviewDecision }
+        let states = (reviewStates ?? [:]).values
+        if states.contains(ReviewState.changesRequested.rawValue) { return .changesRequested }
+        if states.contains(ReviewState.approved.rawValue) { return .approved }
+        return nil
+    }
 
     /// Everyone doing work on this PR: author and assignees.
     var workers: Set<String> {
