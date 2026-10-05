@@ -104,18 +104,22 @@ extension LinkedItem {
     }
 }
 
-extension Array where Element == LinkedItem {
-    /// Purple once one has merged, green while one's still open, grey when
-    /// every one is closed unmerged: a list's badge colour without opening it.
-    var linkedPullRequestsTint: Color {
-        if contains(where: { $0.state == "MERGED" }) { return .purple }
-        if contains(where: { $0.state == "OPEN" }) { return .green }
-        return .secondary
-    }
+/// A PR-like state used to tint a list's linked-PR badge, shared by the
+/// workload world's `LinkedItem` and the issue history's
+/// `IssueLinkedPullRequest`.
+protocol PullRequestStateProviding {
+    var isMerged: Bool { get }
+    var isOpenState: Bool { get }
 }
 
-extension IssueLinkedPullRequest {
+extension LinkedItem: PullRequestStateProviding {
+    var isMerged: Bool { state == "MERGED" }
+    var isOpenState: Bool { state == "OPEN" }
+}
+
+extension IssueLinkedPullRequest: PullRequestStateProviding {
     var isMerged: Bool { mergedAt != nil }
+    var isOpenState: Bool { state == "OPEN" }
 
     var statusText: String { isMerged ? "Merged" : state.capitalized }
 
@@ -126,13 +130,49 @@ extension IssueLinkedPullRequest {
     }
 }
 
-extension Array where Element == IssueLinkedPullRequest {
+extension Array where Element: PullRequestStateProviding {
     /// Purple once one has merged, green while one's still open, grey when
     /// every one is closed unmerged: a list's badge colour without opening it.
     var linkedPullRequestsTint: Color {
         if contains(where: \.isMerged) { return .purple }
-        if contains(where: { $0.state == "OPEN" }) { return .green }
+        if contains(where: \.isOpenState) { return .green }
         return .secondary
+    }
+}
+
+/// A list row's linked- or mentioned-PR count, tinted and captioned by
+/// whether any of them have merged.
+struct LinkedPullRequestsBadge: View {
+    let count: Int
+    let tint: Color
+    let anyMerged: Bool
+    var systemImage = "arrow.triangle.pull"
+    var label = "Linked pull requests"
+
+    var body: some View {
+        Label("\(count)", systemImage: systemImage)
+            .foregroundStyle(tint)
+            .help(anyMerged ? "\(label), some merged" : label)
+    }
+}
+
+/// One linked or mentioned PR in an issue's drawer or window: its number,
+/// status and, when it has any, its most recent commit or review.
+struct LinkedPullRequestRow: View {
+    let pr: IssueLinkedPullRequest
+    var systemImage = "arrow.triangle.pull"
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: systemImage).foregroundStyle(pr.statusColor)
+            Link(pr.repo.map { "\($0)#\(pr.number)" } ?? "#\(pr.number)", destination: pr.url)
+            Pill(text: pr.statusText, color: pr.statusColor)
+            Spacer()
+            if let last = pr.activityAt.max() {
+                Text("active").font(.caption).foregroundStyle(.secondary)
+                RelativeDate(date: last).font(.caption).foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

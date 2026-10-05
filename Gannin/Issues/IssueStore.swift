@@ -223,7 +223,8 @@ final class IssueStore {
     func loadCached(_ org: String) {
         guard histories[org] == nil,
               let data = try? Data(contentsOf: Self.fileURL(org)),
-              let history = try? Self.decoder.decode(IssueHistory.self, from: data) else {
+              let history = try? Self.decoder.decode(IssueHistory.self, from: data),
+              history.version == IssueHistory.currentVersion else {
             return
         }
         histories[org] = history

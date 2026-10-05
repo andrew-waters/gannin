@@ -307,9 +307,11 @@ struct IssueRow: View {
                     Text("·")
                     RelativeDate(date: issue.updatedAt)
                     if !linked.isEmpty {
-                        Label("\(linked.count)", systemImage: "arrow.triangle.pull")
-                            .foregroundStyle(linked.linkedPullRequestsTint)
-                            .help(linked.contains { $0.state == "MERGED" } ? "Linked pull requests, including one merged" : "Linked pull requests")
+                        LinkedPullRequestsBadge(
+                            count: linked.count,
+                            tint: linked.linkedPullRequestsTint,
+                            anyMerged: linked.contains(where: \.isMerged)
+                        )
                     }
                     ForEach(issue.labels.prefix(3), id: \.self) { LabelChip(label: $0) }
                 }

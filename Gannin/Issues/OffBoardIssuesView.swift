@@ -174,14 +174,20 @@ struct OffBoardIssuesView: View {
                         Text("· \(issue.labels.prefix(3).joined(separator: ", "))")
                     }
                     if !issue.linkedPullRequests.isEmpty {
-                        Label("\(issue.linkedPullRequests.count)", systemImage: "arrow.triangle.pull")
-                            .foregroundStyle(issue.linkedPullRequests.linkedPullRequestsTint)
-                            .help(issue.linkedPullRequests.contains(where: \.isMerged) ? "Linked pull requests, including one merged" : "Linked pull requests")
+                        LinkedPullRequestsBadge(
+                            count: issue.linkedPullRequests.count,
+                            tint: issue.linkedPullRequests.linkedPullRequestsTint,
+                            anyMerged: issue.linkedPullRequests.contains(where: \.isMerged)
+                        )
                     }
                     if let mentioned = issue.mentionedInPullRequests, !mentioned.isEmpty {
-                        Label("\(mentioned.count)", systemImage: "at")
-                            .foregroundStyle(mentioned.linkedPullRequestsTint)
-                            .help(mentioned.contains(where: \.isMerged) ? "Mentioned in pull requests, including one merged" : "Mentioned in pull requests")
+                        LinkedPullRequestsBadge(
+                            count: mentioned.count,
+                            tint: mentioned.linkedPullRequestsTint,
+                            anyMerged: mentioned.contains(where: \.isMerged),
+                            systemImage: "at",
+                            label: "Mentioned in pull requests"
+                        )
                     }
                 }
                 .font(.caption)

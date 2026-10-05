@@ -162,7 +162,7 @@ private struct RawIssueRecord: Decodable {
               reviews(last: 20) { nodes { submittedAt } }
             }
           }
-          mentionedInPullRequests: timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], first: 20) {
+          mentionedInPullRequests: timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 20) {
             nodes {
               ... on CrossReferencedEvent {
                 source {
