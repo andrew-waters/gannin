@@ -159,9 +159,12 @@ extension SessionStore {
     /// New failures and feedback since the last look, kept with the
     /// session so a relaunch catches up on what came while Gannin was
     /// closed; the very first look only learns what's there. A thread is
-    /// new again when someone other than the PR's author replies.
+    /// new again when someone other than the PR's author replies, and
+    /// never when it's your own reply (a session can be reviewing a PR
+    /// that isn't yours, so the author alone isn't enough to exclude you).
     private func noticeNews(in pullRequests: [SessionPullRequest], for id: UUID) {
         guard let session = sessions[id] else { return }
+        let me = viewerLogin()
         var keys: Set<String> = []
         var failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])] = []
         var said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])] = []
@@ -183,7 +186,8 @@ extension SessionStore {
                 current[item.id] = item.key
                 guard let seen, !seen.contains(item.key) else { continue }
                 if seen.contains(where: { $0.hasPrefix(item.keyPrefix) }) { replies.insert(item.id) }
-                if item.latestAuthor != pr.author { newItems.append(item) }
+                let isMine = me.map { item.latestAuthor.caseInsensitiveCompare($0) == .orderedSame } ?? false
+                if item.latestAuthor != pr.author && !isMine { newItems.append(item) }
             }
             if !newChecks.isEmpty { failed.append((pr, newChecks)) }
             if !newItems.isEmpty { said.append((pr, newItems)) }
