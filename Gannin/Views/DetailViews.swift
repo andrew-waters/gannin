@@ -327,7 +327,7 @@ struct PullRequestColumn: View {
                     title: pr.title,
                     reference: "\(pr.repo)#\(pr.number)",
                     url: pr.url,
-                    pill: Pill(text: pr.statusText, color: pr.statusColor)
+                    pill: nil
                 )
                 // Side by side when there's room, else one under the other.
                 ViewThatFits(in: .horizontal) {
@@ -379,6 +379,10 @@ struct PullRequestColumn: View {
 
     private func workFacts(_ detail: ItemDetail?) -> some View {
         Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+            GridRow {
+                Text("Status").foregroundStyle(.secondary)
+                Pill(text: pr.statusText, color: pr.statusColor)
+            }
             if let head = detail?.headRef, let base = detail?.baseRef {
                 GridRow {
                     Text("Branch").foregroundStyle(.secondary)
@@ -547,10 +551,12 @@ struct SectionHeader: View {
 }
 
 struct ItemHeader: View {
+    @Environment(\.isInDrawer) private var isInDrawer
     let title: String
     let reference: String
     let url: URL
-    let pill: Pill
+    /// Left out where the page shows its status elsewhere.
+    let pill: Pill?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -558,12 +564,17 @@ struct ItemHeader: View {
                 .font(.title3.weight(.semibold))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
-            HStack(spacing: 8) {
-                pill
-                Text(reference).foregroundStyle(.secondary)
-                Spacer()
-                Link(destination: url) {
-                    Label("Open on GitHub", systemImage: "arrow.up.right.square")
+            // A drawer's bar has the reference and Open on GitHub.
+            if isInDrawer {
+                if let pill { pill }
+            } else {
+                HStack(spacing: 8) {
+                    if let pill { pill }
+                    Text(reference).foregroundStyle(.secondary)
+                    Spacer()
+                    Link(destination: url) {
+                        Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                    }
                 }
             }
         }

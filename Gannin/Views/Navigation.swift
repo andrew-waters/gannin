@@ -43,6 +43,9 @@ extension EnvironmentValues {
     /// drawer: the drawer's own Open as Page.
     @Entry var openAsPage: NavigateAction?
     @Entry var openElsewhere: OpenElsewhereAction?
+    /// Set on a page shown in a drawer, whose bar already has the item's
+    /// reference and Open on GitHub, so `ItemHeader` leaves them out.
+    @Entry var isInDrawer = false
 }
 
 /// What a new main window or tab opens on.

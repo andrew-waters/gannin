@@ -597,6 +597,7 @@ private struct PageStack: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.openURL) private var openURL
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
 
     let org: String
@@ -983,10 +984,23 @@ private struct PageStack: View {
                     .id(path)
             } else {
                 HStack(spacing: 10) {
+                    let shown = drawnPullRequest(item)
+                    if let shown {
+                        Text("\(shown.repo)#\(shown.number)")
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    Spacer()
                     if let reference = pullRequestReference(item) {
                         ReviewWithClaudeButton(reference: reference)
                     }
-                    Spacer()
+                    if let shown {
+                        Button {
+                            openURL(shown.url)
+                        } label: {
+                            Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                        }
+                    }
                     Button("Open as Page") {
                         drawers = []
                         push(at: path.count)(item)
@@ -1005,8 +1019,21 @@ private struct PageStack: View {
                 Divider()
                 page(for: item, index: path.count)
                     .id(item)
+                    .environment(\.isInDrawer, true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+    }
+
+    /// The repo, number and link of a PR drawer's item, for its bar.
+    private func drawnPullRequest(_ item: DetailSelection) -> (repo: String, number: Int, url: URL)? {
+        switch item {
+        case .pullRequestReference(let reference):
+            return (reference.repo, reference.number, reference.url)
+        case .pullRequest(let id):
+            return workload?.pullRequest(id: id).map { ($0.repo, $0.number, $0.url) }
+        default:
+            return nil
         }
     }
 
