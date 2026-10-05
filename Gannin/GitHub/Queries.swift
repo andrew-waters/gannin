@@ -508,7 +508,8 @@ private struct RawPullRequest: Decodable {
         let createdAt: Date?
         let requestedReviewer: RawActor?
     }
-    struct Review: Decodable { let author: RawActor?; let state: String? }
+    struct Review: Decodable { let author: RawActor?; let state: String?; let submittedAt: Date? }
+    struct CommentNode: Decodable { let author: RawActor?; let createdAt: Date }
 
     let id: String
     let number: Int
@@ -530,11 +531,13 @@ private struct RawPullRequest: Decodable {
     let closingIssuesReferences: Connection<RawLinked>?
     let timelineItems: Connection<Lossy<RequestedEvent>>?
     let commits: Connection<CommitNode>?
+    let comments: Connection<CommentNode>?
 
     struct CommitNode: Decodable {
         struct Commit: Decodable {
             struct Rollup: Decodable { let state: String }
             let statusCheckRollup: Rollup?
+            let committedDate: Date
         }
         let commit: Commit
     }
@@ -542,16 +545,17 @@ private struct RawPullRequest: Decodable {
     static let fields = """
         ... on PullRequest {
           id number title url isDraft state createdAt updatedAt mergedAt reviewDecision additions deletions
-          commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+          commits(last: 1) { nodes { commit { statusCheckRollup { state } committedDate } } }
           repository { nameWithOwner }
           author { login avatarUrl }
           assignees(first: 10) { nodes { login avatarUrl } }
           reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
-          latestReviews(first: 10) { nodes { state author { login avatarUrl } } }
+          latestReviews(first: 10) { nodes { state submittedAt author { login avatarUrl } } }
           closingIssuesReferences(first: 10) { nodes { \(RawLinked.fields) } }
           timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) {
             nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } } } }
           }
+          comments(last: 10) { nodes { createdAt author { login avatarUrl } } }
         }
         """
 
@@ -561,6 +565,16 @@ private struct RawPullRequest: Decodable {
             guard let login = event.requestedReviewer?.login, let at = event.createdAt else { continue }
             requestedAt[login] = max(requestedAt[login] ?? .distantPast, at)
         }
+        let reviews = latestReviews?.nodes ?? []
+        let authorRepliesFromReviews = reviews.compactMap { review -> Date? in
+            guard let login = review.author?.login, login == author?.login else { return nil }
+            return review.submittedAt
+        }
+        let authorComments = (comments?.nodes ?? []).compactMap { comment -> Date? in
+            guard comment.author?.login == author?.login else { return nil }
+            return comment.createdAt
+        }
+        let authorRepliedAt = (authorRepliesFromReviews + authorComments).max()
         return PullRequest(
             id: id,
             number: number,
@@ -587,7 +601,15 @@ private struct RawPullRequest: Decodable {
                     review.author?.login.flatMap { login in review.state.map { (login, $0) } }
                 },
                 uniquingKeysWith: { first, _ in first }
-            )
+            ),
+            reviewedAt: Dictionary(
+                reviews.compactMap { review in
+                    review.author?.login.flatMap { login in review.submittedAt.map { (login, $0) } }
+                },
+                uniquingKeysWith: { first, _ in first }
+            ),
+            lastCommitAt: commits?.nodes.first?.commit.committedDate,
+            authorRepliedAt: authorRepliedAt
         )
     }
 }

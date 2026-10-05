@@ -92,6 +92,13 @@ struct PullRequest: Codable, Hashable, Identifiable {
     /// Each reviewer's latest review state (`APPROVED`, `CHANGES_REQUESTED`,
     /// `COMMENTED`), for repos whose rules leave `reviewDecision` empty.
     var reviewStates: [String: String]? = nil
+    /// When each reviewer's latest review was submitted.
+    var reviewedAt: [String: Date]? = nil
+    /// The latest commit's `committedDate`.
+    var lastCommitAt: Date? = nil
+    /// The latest of the author's own reviews (thread replies arrive as
+    /// `COMMENTED` reviews) and conversation comments.
+    var authorRepliedAt: Date? = nil
 
     var isMerged: Bool { mergedAt != nil }
 

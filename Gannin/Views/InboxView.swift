@@ -7,6 +7,7 @@ enum InboxSection: String, CaseIterable, Identifiable {
     case sessions = "Claude Code"
     case catchUp = "While you were away"
     case reviews = "Needs your review"
+    case changed = "Changed since your review"
     case pullRequests = "Your pull requests"
     case issues = "Your issues"
     case opened = "Issues you opened"
@@ -17,7 +18,7 @@ enum InboxSection: String, CaseIterable, Identifiable {
 
     var isOnByDefault: Bool {
         switch self {
-        case .sessions, .catchUp, .reviews, .pullRequests, .issues: true
+        case .sessions, .catchUp, .reviews, .changed, .pullRequests, .issues: true
         case .opened, .plans, .uncategorised: false
         }
     }
@@ -27,6 +28,7 @@ enum InboxSection: String, CaseIterable, Identifiable {
         case .sessions: "Claude Code sessions waiting on you"
         case .catchUp: "Comments, commits and automatic reviews on PRs Claude reviewed, since you last opened each review"
         case .reviews: "PRs you've been asked to review, longest waiting first"
+        case .changed: "PRs you asked changes of that have new commits or replies since"
         case .pullRequests: "Your open PRs and where each stands"
         case .issues: "Open issues assigned to you, in progress first"
         case .opened: "Open issues you opened that aren't assigned to you"
@@ -114,8 +116,8 @@ struct InboxView: View {
             // Checks finishing don't touch a PR's updatedAt, so running or
             // unknown ones are asked for; the detail store re-asks pending
             // ones after a couple of minutes.
-            .task(id: (inbox.reviews.map(\.pr) + inbox.pullRequests).map(\.id)) {
-                for pr in inbox.reviews.map(\.pr) + inbox.pullRequests where pr.checks == nil || pr.checks == .pending || pr.checks == .expected {
+            .task(id: (inbox.reviews.map(\.pr) + inbox.changed.map(\.pr) + inbox.pullRequests).map(\.id)) {
+                for pr in inbox.reviews.map(\.pr) + inbox.changed.map(\.pr) + inbox.pullRequests where pr.checks == nil || pr.checks == .pending || pr.checks == .expected {
                     await details.load(pr.id, updatedAt: pr.updatedAt)
                 }
             }
@@ -312,6 +314,15 @@ struct InboxView: View {
                 page: .pullRequest(item.pr.id)
             )
         })) }
+        if shown.contains(.changed), let login = auth.viewer?.login { sections.append((InboxSection.changed.rawValue, inbox.changed.map { item in
+            InboxRow(
+                id: "changed-\(item.pr.id)", title: item.pr.title, reference: Self.number(item.pr.repo, item.pr.number),
+                people: item.pr.author.map { [$0] } ?? [], checks: checks(item.pr),
+                state: changedState(item.pr, login: login), stateColor: .secondary,
+                tint: ChartPalette.blue, since: item.askedAt, sinceLabel: "Changed", size: (item.pr.additions, item.pr.deletions),
+                page: .pullRequest(item.pr.id)
+            )
+        })) }
         if shown.contains(.pullRequests) { sections.append((InboxSection.pullRequests.rawValue, inbox.pullRequests.map { pr in
             let standing = Inbox.standing(pr, needsReview: configs.config(for: org).needsReview(pr.repo))
             return InboxRow(
@@ -415,6 +426,19 @@ struct InboxView: View {
         details.detail(for: pr.id)?.checks ?? pr.checks
     }
 
+    /// What's happened since your review: new commits, a reply, or both.
+    private func changedState(_ pr: PullRequest, login: String) -> String {
+        let reviewedAt = pr.reviewedAt?[login] ?? .distantPast
+        let newCommits = (pr.lastCommitAt ?? .distantPast) > reviewedAt
+        let replied = (pr.authorRepliedAt ?? .distantPast) > reviewedAt
+        switch (newCommits, replied) {
+        case (true, true): return "New commits and replies"
+        case (true, false): return "New commits"
+        case (false, true): return "Replied"
+        case (false, false): return "Changed"
+        }
+    }
+
     static func number(_ repo: String, _ number: Int) -> String {
         "\(repo.split(separator: "/").last.map(String.init) ?? repo)#\(String(number))"
     }
@@ -509,6 +533,9 @@ struct Inbox {
     }
 
     let reviews: [Review]
+    /// PRs you asked changes of that have had new commits or a reply since,
+    /// with no pending review request of your own.
+    let changed: [Review]
     let pullRequests: [PullRequest]
     let issues: [AssignedIssue]
 
@@ -518,6 +545,10 @@ struct Inbox {
             .filter { $0.requestedReviewers.contains { $0.login == login } }
             .map { Review(pr: $0, askedAt: $0.reviewRequestedAt[login]) }
             .sorted { ($0.askedAt ?? $0.pr.createdAt) < ($1.askedAt ?? $1.pr.createdAt) }
+        changed = open
+            .filter { $0.author?.login != login && !$0.requestedReviewers.contains { $0.login == login } }
+            .compactMap { pr in Self.changedSince(pr, login: login).map { Review(pr: pr, askedAt: $0) } }
+            .sorted { ($0.askedAt ?? .distantPast) < ($1.askedAt ?? .distantPast) }
         pullRequests = open
             .filter { $0.workers.contains(login) }
             // What needs you first: changes asked for, failing checks, then
@@ -536,6 +567,14 @@ struct Inbox {
             .sorted { a, b in
                 a.inProgress != b.inProgress ? a.inProgress : (a.signals.timeInStatus ?? 0) > (b.signals.timeInStatus ?? 0)
             }
+    }
+
+    /// When you last asked for changes, has had new commits or a reply,
+    /// else nil: the latest of the two, or nil if nothing's happened since.
+    private static func changedSince(_ pr: PullRequest, login: String) -> Date? {
+        guard pr.reviewStates?[login] == PullRequest.ReviewState.changesRequested.rawValue else { return nil }
+        guard let reviewedAt = pr.reviewedAt?[login] else { return nil }
+        return [pr.lastCommitAt, pr.authorRepliedAt].compactMap { $0 }.filter { $0 > reviewedAt }.max()
     }
 
     private static func urgency(_ pr: PullRequest) -> Int {
