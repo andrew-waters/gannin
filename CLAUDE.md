@@ -68,7 +68,10 @@ Support folder and token across once.
   reads except the project board writes in `ProjectFields.swift` (adding an issue to or
   removing it from a board, and saving its fields, from the issue window's
   `ProjectFieldsSections`), which need the `project` scope, the investment writes in `InvestmentWrites.swift` (labels
-added, removed or created, and the tracked board field set), and commits to the harness
+added, removed or created, and the tracked board field set), review requests
+(`ReviewRequests.swift`, REST, from the PR drawer's `ReviewerPickerButton`: GitHub's
+suggestions, then members, confirmed when the popover closes, and laid onto the snapshot by
+`OrgStore.updatePullRequest`), and commits to the harness
 (`HarnessWrites.swift`), always confirmed first. Mutations skip the injected
   `rateLimit` field. Raw GraphQL shapes are private to `Queries.swift` and mapped onto the models.
 - `Gannin/Workload/`: models (`Models.swift`), `OrgStore` (org list, stars, per-org snapshots

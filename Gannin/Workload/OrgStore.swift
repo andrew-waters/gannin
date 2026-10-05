@@ -165,6 +165,18 @@ final class OrgStore {
         }
     }
 
+    /// Changes an open PR in the snapshot after a write to GitHub, so it
+    /// shows before the next refresh.
+    func updatePullRequest(_ id: String, org login: String, _ change: (inout PullRequest) -> Void) {
+        guard var snapshot = snapshots[login],
+              let index = snapshot.openPullRequests.firstIndex(where: { $0.id == id }) else { return }
+        change(&snapshot.openPullRequests[index])
+        snapshots[login] = snapshot
+        if let data = try? Self.encoder.encode(snapshot) {
+            try? data.write(to: Self.snapshotURL(login), options: .atomic)
+        }
+    }
+
     /// Shows the cached snapshot straight away, then refreshes when there is
     /// none or it is older than `maxAge`. With a cached snapshot, waits out a
     /// low rate limit rather than spending the last of it.

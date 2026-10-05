@@ -81,9 +81,9 @@ struct PullRequest: Codable, Hashable, Identifiable {
     let additions: Int
     let deletions: Int
     let assignees: [Person]
-    let requestedReviewers: [Person]
+    var requestedReviewers: [Person]
     /// When each requested reviewer was (most recently) asked.
-    let reviewRequestedAt: [String: Date]
+    var reviewRequestedAt: [String: Date]
     let reviewers: [Person]
     let linkedIssues: [LinkedItem]
     /// The latest commit's checks, as of the fetch (checks finishing don't
@@ -142,7 +142,7 @@ struct OrgSnapshot: Codable {
     let lookbackDays: Int
     let members: [Person]
     let teams: [Team]
-    let openPullRequests: [PullRequest]
+    var openPullRequests: [PullRequest]
     let mergedPullRequests: [PullRequest]
     let issues: [Issue]
     /// Non-fatal problems (e.g. teams hidden from this token).

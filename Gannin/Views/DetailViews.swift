@@ -373,7 +373,7 @@ struct PullRequestColumn: View {
             if !pr.assignees.isEmpty {
                 PeopleGridRow(title: "Assignees", people: pr.assignees, selection: $selection)
             }
-            ReviewersGridRow(pr: pr, selection: $selection)
+            ReviewersGridRow(pr: pr, workload: workload, selection: $selection)
         }
     }
 
@@ -426,6 +426,7 @@ struct PullRequestColumn: View {
 /// their review stands: asked (again) and waiting, or their latest review.
 private struct ReviewersGridRow: View {
     let pr: PullRequest
+    let workload: Workload
     @Binding var selection: DetailSelection?
 
     var body: some View {
@@ -433,27 +434,32 @@ private struct ReviewersGridRow: View {
         let people = pr.reviewers.filter { !requested.contains($0.login) } + pr.requestedReviewers
         GridRow {
             Text("Reviewers").foregroundStyle(.secondary)
-            if people.isEmpty {
-                Text("None").foregroundStyle(.tertiary)
-            } else {
-                HStack(spacing: 10) {
-                    ForEach(people) { person in
-                        let mark = Self.mark(requested.contains(person.login) ? nil : pr.reviewStates?[person.login],
-                                             waiting: requested.contains(person.login))
-                        Button {
-                            selection = .person(person.login)
-                        } label: {
-                            HStack(spacing: 4) {
-                                Avatar(url: person.avatarUrl, size: 18)
-                                Text(person.login)
-                                if let mark {
-                                    Image(systemName: mark.symbol).foregroundStyle(mark.color)
+            HStack(spacing: 10) {
+                if people.isEmpty {
+                    Text("None").foregroundStyle(.tertiary)
+                } else {
+                    HStack(spacing: 10) {
+                        ForEach(people) { person in
+                            let mark = Self.mark(requested.contains(person.login) ? nil : pr.reviewStates?[person.login],
+                                                 waiting: requested.contains(person.login))
+                            Button {
+                                selection = .person(person.login)
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Avatar(url: person.avatarUrl, size: 18)
+                                    Text(person.login)
+                                    if let mark {
+                                        Image(systemName: mark.symbol).foregroundStyle(mark.color)
+                                    }
                                 }
                             }
+                            .buttonStyle(.plain)
+                            .help("\(person.login): \(mark?.words ?? "reviewed")")
                         }
-                        .buttonStyle(.plain)
-                        .help("\(person.login): \(mark?.words ?? "reviewed")")
                     }
+                }
+                if pr.state == "OPEN", !pr.isMerged {
+                    ReviewerPickerButton(pr: pr, org: workload.snapshot.orgLogin, members: workload.snapshot.members)
                 }
             }
         }
