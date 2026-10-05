@@ -332,12 +332,12 @@ struct PullRequestColumn: View {
                 // Side by side when there's room, else one under the other.
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .top, spacing: 40) {
-                        peopleFacts
                         workFacts(detail)
+                        peopleFacts
                     }
                     VStack(alignment: .leading, spacing: 8) {
-                        peopleFacts
                         workFacts(detail)
+                        peopleFacts
                     }
                 }
                 .padding(.vertical, 4)
