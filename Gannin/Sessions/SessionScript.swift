@@ -224,8 +224,15 @@ enum SessionScript {
             // A permission prompt or a dialog, not the reminder after a
             // minute idle, which is still your turn.
             "Notification": [group([write(.needsYou)], matcher: "permission_prompt|elicitation_dialog")],
-            // Its questions, as they're shown.
-            "PreToolUse": [group([write(.needsYou)], matcher: "AskUserQuestion")],
+            // A permission prompt clears the moment its tool is let through,
+            // not once it's finished running: a slow command would otherwise
+            // leave the card up for as long as the command takes.
+            "PreToolUse": [
+                group([write(.working)], matcher: "*"),
+                // Its questions, as they're shown; listed after "*" so this
+                // wins when both match AskUserQuestion's own tool call.
+                group([write(.needsYou)], matcher: "AskUserQuestion"),
+            ],
             "Stop": [group([write(.idle)])],
             "SessionEnd": [group([write(.exited)])],
         ]
