@@ -147,6 +147,9 @@ struct SessionQuestionCard: View {
     @State private var picked: [Int: Set<Int>] = [:]
     /// Answers of your own, by question.
     @State private var other: [Int: String] = [:]
+    /// The permission or plan prompt's own choices, read off the terminal
+    /// once it's drawn.
+    @State private var choices: [PermissionChoice] = []
 
     var body: some View {
         let transcript = sessions.transcripts[session.id]
@@ -322,13 +325,34 @@ struct SessionQuestionCard: View {
             Spacer()
             Button("Deny") { sessions.sendKeys("\u{1B}", to: session.id) }
                 .help("Esc: say no, then tell claude what to do instead")
-            Button("Allow, and Don't Ask Again") { sessions.allowAlways(session.id) }
-                .help("The prompt's second choice, for this kind of thing from now on")
-            Button("Allow") { sessions.sendKeys("\r", to: session.id) }
+            // Whatever the terminal's own prompt offers besides its first
+            // and last choice: usually one way not to ask again, but
+            // exiting plan mode offers something else entirely, and not
+            // every prompt has a middle choice at all.
+            ForEach(choices.dropFirst().dropLast()) { choice in
+                Button(choice.label) { sessions.selectChoice(choice.number, to: session.id) }
+                    .lineLimit(1)
+                    .help("The prompt's choice \(choice.number)")
+            }
+            Button(choices.first?.label ?? "Allow") { sessions.sendKeys("\r", to: session.id) }
                 .buttonStyle(.borderedProminent)
-                .help("Return, on the prompt's first choice (Yes)")
+                .lineLimit(1)
+                .help("Return, on the prompt's first choice")
         }
         .controlSize(.large)
+        .task(id: tool?.id) {
+            choices = []
+            // The prompt can take a moment to draw after the hook that
+            // flags it; a few short tries catch it without a fixed delay.
+            for _ in 0..<6 {
+                let found = sessions.permissionChoices(for: session.id)
+                if !found.isEmpty {
+                    choices = found
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+        }
     }
 
     private func permissionTitle(_ tool: String?) -> String {
@@ -336,6 +360,7 @@ struct SessionQuestionCard: View {
         case "Bash": "Claude wants to run a command"
         case "Edit", "MultiEdit", "Write", "NotebookEdit": "Claude wants to change a file"
         case "WebFetch", "WebSearch": "Claude wants to go online"
+        case "ExitPlanMode": "Claude wants to leave planning and start making changes"
         case let tool?: "Claude wants to use \(tool)"
         case nil: "Claude needs your permission"
         }

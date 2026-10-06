@@ -1103,6 +1103,16 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
         view?.terminate()
     }
 
+    /// The screen's own last rows as plain text, bottom row last: for
+    /// reading claude's own rendered permission or plan prompt, which
+    /// hooks can't see since they run with no terminal attached.
+    func screenLines(last count: Int) -> [String] {
+        guard let view, let terminal = view.terminal else { return [] }
+        return (max(0, terminal.rows - count)..<terminal.rows).map {
+            terminal.getLine(row: $0)?.translateToString(trimRight: true) ?? ""
+        }
+    }
+
     /// Pastes the text at claude's prompt and presses Return: bracketed, so
     /// its lines stay one prompt, then Return a moment later, once the
     /// paste has landed.

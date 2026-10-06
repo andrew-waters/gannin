@@ -11,6 +11,15 @@ struct QuickReply: Identifiable, Hashable {
     var id: String { keys + title }
 }
 
+/// One of a permission or plan prompt's own numbered choices, read off the
+/// terminal's screen rather than assumed: claude draws these as "1. Yes",
+/// "2. ...", and so on, inside a box near the cursor.
+struct PermissionChoice: Identifiable, Equatable {
+    let number: Int
+    let label: String
+    var id: Int { number }
+}
+
 /// A prompt kept for sending to any session: "run the tests".
 struct PromptSnippet: Codable, Identifiable, Hashable {
     var id = UUID()
@@ -69,9 +78,32 @@ extension SessionStore {
         }
     }
 
-    /// The permission prompt's second choice: allow, and don't ask again.
-    func allowAlways(_ id: UUID) {
-        sendKeys("\u{1B}[B", to: id)
+    /// The permission or plan prompt's own choices, read off the terminal's
+    /// screen: a run of lines reading "1.", "2." and so on, in its last
+    /// rows (claude draws its prompt box near the cursor, at the bottom of
+    /// what's shown). Empty until the real prompt has drawn, or if its
+    /// wording ever changes enough that this can't find it.
+    func permissionChoices(for id: UUID) -> [PermissionChoice] {
+        guard let terminal = terminals[id] else { return [] }
+        var choices: [PermissionChoice] = []
+        for line in terminal.screenLines(last: 20) {
+            let trimmed = line.trimmingCharacters(in: CharacterSet(charactersIn: "❯>").union(.whitespaces))
+            guard let dot = trimmed.firstIndex(of: "."), let number = Int(trimmed[..<dot]), number == choices.count + 1 else { continue }
+            let label = trimmed[trimmed.index(after: dot)...].trimmingCharacters(in: CharacterSet(charactersIn: "│").union(.whitespaces))
+            guard !label.isEmpty else { continue }
+            choices.append(PermissionChoice(number: number, label: label))
+        }
+        return choices
+    }
+
+    /// Picks one of the prompt's own choices: Return for the first, else
+    /// down arrows to it first, as a person reading the same menu would.
+    func selectChoice(_ number: Int, to id: UUID) {
+        guard number > 1 else {
+            sendKeys("\r", to: id)
+            return
+        }
+        sendKeys(String(repeating: "\u{1B}[B", count: number - 1), to: id)
         Task {
             try? await Task.sleep(for: .milliseconds(120))
             sendKeys("\r", to: id)
