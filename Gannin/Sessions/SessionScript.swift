@@ -200,8 +200,10 @@ enum SessionScript {
         func write(_ state: SessionState) -> [String: Any] {
             ["type": "command", "command": "printf \(state.rawValue) > \(dir)/state 2>/dev/null; \(signal("state:" + state.rawValue)); exit 0"] as [String: Any]
         }
-        // `gh pr create` prints the new PR's URL; keep the last one seen.
-        let pullRequest = #"input=$(cat); case "$input" in *'gh pr create'*) url=$(printf '%s' "$input" | grep -Eo 'https://github\.com/[^"\\ ]+/pull/[0-9]+' | tail -n 1); if [ -n "$url" ]; then printf '%s' "$url" > \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$url" > /dev/tty 2>/dev/null; fi ;; esac; exit 0"#
+        // `gh pr create` prints the new PR's URL; a tool call can open more
+        // than one (a PR per repo in one command), so keep every one seen,
+        // one per line, not just the last.
+        let pullRequest = #"input=$(cat); case "$input" in *'gh pr create'*) printf '%s' "$input" | grep -Eo 'https://github\.com/[^"\\ ]+/pull/[0-9]+' | while IFS= read -r url; do grep -qxF "$url" \#(dir)/pr 2>/dev/null || { printf '%s\n' "$url" >> \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$url" > /dev/tty 2>/dev/null; }; done ;; esac; exit 0"#
         func command(_ command: String) -> [String: Any] { ["type": "command", "command": command] }
         func group(_ hooks: [[String: Any]], matcher: String? = nil) -> [String: Any] {
             var group: [String: Any] = ["hooks": hooks]

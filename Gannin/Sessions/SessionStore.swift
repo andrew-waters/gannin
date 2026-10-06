@@ -834,8 +834,10 @@ final class SessionStore {
         if let state = state.flatMap(SessionState.init(rawValue:)) {
             setState(state, for: id)
         }
-        if let url = pullRequest.flatMap(URL.init(string:)), url.scheme == "https" {
-            opened(url, for: id)
+        for token in (pullRequest ?? "").split(whereSeparator: \.isWhitespace) {
+            if let url = URL(string: String(token)), url.scheme == "https" {
+                opened(url, for: id)
+            }
         }
         if let changed, !changed.isEmpty, lastChanged[id] != changed {
             // The first read only learns where it was.
@@ -861,7 +863,7 @@ final class SessionStore {
         readingRemote.insert(session.id)
         let reader = readers[session.id] ?? TranscriptReader()
         let script = #"d="$HOME"/.gannin/sessions/"# + session.id.uuidString + "\n"
-            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(cat "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)""# + "\n"
+            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)""# + "\n"
             + #"f=$(ls "$HOME"/.claude/projects/*/"# + session.claudeID + #".jsonl 2>/dev/null | head -n 1)"# + "\n"
             + #"if [ -n "$f" ]; then s=$(wc -c < "$f" | tr -d ' '); echo "$s"; [ "$s" -gt "# + "\(reader.offset)"
             + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c 4000000; else echo -1; fi; exit 0"#
