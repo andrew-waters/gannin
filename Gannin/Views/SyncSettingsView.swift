@@ -149,7 +149,9 @@ private struct SyncSourceRow: View {
                         .controlSize(.mini)
                         .disabled(parentOff)
                 } else {
-                    Color.clear
+                    // Fixed, as a bare Color.clear takes all the height
+                    // it's offered and throws out the Form's row heights.
+                    Color.clear.frame(width: 1, height: 1)
                 }
             }
             .frame(width: 32, alignment: .leading)
