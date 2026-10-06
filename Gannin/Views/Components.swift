@@ -171,6 +171,9 @@ struct LinkedPullRequestRow: View {
             if let last = pr.activityAt.max() {
                 Text("active").font(.caption).foregroundStyle(.secondary)
                 RelativeDate(date: last).font(.caption).foregroundStyle(.secondary)
+            } else {
+                Text("opened").font(.caption).foregroundStyle(.secondary)
+                RelativeDate(date: pr.createdAt).font(.caption).foregroundStyle(.secondary)
             }
         }
     }
