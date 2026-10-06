@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Progress
+status: Done
 summary: gannin.ai and its downloads move from andrew-waters/gannin-site to this repo's Pages and releases, so every download counts on the release.
 issues: [andrew-waters/gannin#25]
 domains: [delivery]
@@ -44,7 +44,7 @@ This repo is public now.
       drops the gannin-site push and `SITE_DEPLOY_KEY`, and deploys the site afterwards
 - [x] The site's Download buttons point at the latest release's `Gannin.dmg`
 - [x] docs/RELEASING.md and CLAUDE.md
-- [ ] Cutover: attach `Gannin.dmg` and a rewritten `appcast.xml` to v0.0.2
-- [ ] Cutover: Pages from GitHub Actions here, `pages.yml` run, custom domain moved
-- [ ] Cutover: `https://gannin.ai/appcast.xml` and Download for Mac checked
-- [ ] Cutover: `SITE_DEPLOY_KEY` and gannin-site's deploy key removed, gannin-site archived
+- [x] Cutover: attach `Gannin.dmg` and a rewritten `appcast.xml` to v0.0.2
+- [x] Cutover: Pages from GitHub Actions here, `pages.yml` run, custom domain moved
+- [x] Cutover: `https://gannin.ai/appcast.xml` and Download for Mac checked
+- [x] Cutover: `SITE_DEPLOY_KEY` and gannin-site's deploy key removed, gannin-site archived
