@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "24-releases-page-shows-every-release-with",
+  "issue" : "andrew-waters/gannin#24",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-06T13:07:31Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Releases page shows every release, with download and star stats for each repository",
+  "url" : "https://github.com/andrew-waters/gannin/issues/24"
+}
