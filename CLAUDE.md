@@ -959,7 +959,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   tick which show and drag them into order, `InboxSection`, per org on this Mac,
   `inboxSections.<org>` and `inboxSectionOrder.<org>`): Claude Code sessions waiting on them, what
   happened on PRs Claude reviewed while they were away (`ReviewActivity`), reviews
-  requested of them (longest waiting first), their open PRs and where each stands, their
+  requested of them (longest waiting first), PRs they asked changes of with new commits or a
+  reply since (Changed since your review), their open PRs and where each stands, their
   assigned issues (in progress first, with status, time in status and Attention flags), all on
   by default; and, off until wanted, issues they opened, their harness plans (owner, not done)
   and uncategorised investments (open issues and those completed in the window that
