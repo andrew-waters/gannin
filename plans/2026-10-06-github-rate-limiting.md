@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: One Sync pane in Settings turns each GitHub data source on or off and sets how often it's fetched again, with what each spent in the last hour, and Gannin stops fetching when GitHub says it's over its limit.
 issues: [andrew-waters/gannin#28]
 domains: [sync]

@@ -19,63 +19,111 @@ struct SyncSettingsView: View {
         var seconds: TimeInterval { self == .hour ? 60 * 60 : 24 * 60 * 60 }
     }
 
+    /// The settings' sections, each a few sources: rows beneath another
+    /// are its parts, not indented under it.
+    private struct SourceGroup: Identifiable {
+        let title: String
+        let sources: [SyncSource]
+        let footer: String?
+
+        var id: String { title }
+
+        init(_ title: String, _ sources: [SyncSource], _ footer: String?) {
+            self.title = title
+            self.sources = sources
+            self.footer = footer
+        }
+    }
+
+    private static let groups: [SourceGroup] = [
+        SourceGroup("Workload", [.workload, .members, .fullSearch], "Open PRs and issues: what changed since the last fetch, its members, and now and then everything again. Always on."),
+        SourceGroup("Issues", [.issues, .openIssues, .issueText], nil),
+        SourceGroup("Pages", [.metrics, .workLog, .boards, .releases, .actions, .harness], "Fetched when a page that shows them opens and they're older than this. Off means not fetched at all, Refresh included: pages show what was fetched before."),
+        SourceGroup("In the background", [.reviewRequests, .watchedReviews, .sessionPullRequests, .sessionChecks], "Checked on these intervals while Gannin runs, and held off when the budget is low."),
+    ]
+
     var body: some View {
         // Redrawn now and then so "the last hour" keeps moving.
         TimelineView(.periodic(from: .now, by: 30)) { context in
-            let usage = APIUsage.shared.totals(since: context.date.addingTimeInterval(-span.seconds))
-            let lastHour = span == .hour ? usage : APIUsage.shared.totals(since: context.date.addingTimeInterval(-3600))
-            Form {
+            form(at: context.date)
+        }
+    }
+
+    private func form(at now: Date) -> some View {
+        let usage = APIUsage.shared.totals(since: now.addingTimeInterval(-span.seconds))
+        let lastHour = span == .hour ? usage : APIUsage.shared.totals(since: now.addingTimeInterval(-3600))
+        return Form {
                 budget(lastHour: lastHour.all)
-                Section {
-                    ForEach(SyncSource.settings) { source in
-                        SyncSourceRow(source: source, spent: source.parent == nil ? usage.bySource[source] ?? .init() : nil)
-                    }
-                } header: {
-                    HStack {
-                        Text("What's fetched")
-                        Spacer()
-                        Picker("Spent", selection: $span) {
-                            ForEach(Span.allCases) { Text($0.rawValue).tag($0) }
+                spent(usage.bySource)
+                ForEach(Self.groups) { group in
+                    Section {
+                        ForEach(group.sources) { SyncSourceRow(source: $0) }
+                    } header: {
+                        Text(group.title)
+                    } footer: {
+                        if let footer = group.footer {
+                            Text(footer)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
-                        .pickerStyle(.segmented)
-                        .labelsHidden()
-                        .fixedSize()
                     }
-                } footer: {
-                    Text("Pages fetch what they show when it's older than its interval; the background checks run on theirs. Off means not fetched at all, Refresh included: pages show what was fetched before.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                Section("How much") {
+                Section {
                     Stepper(value: $lookbackDays, in: 1...90) {
                         LabeledContent("Merged work from the last", value: "\(lookbackDays) days")
                     }
-                    Text("The workload's merged PRs. Applies on the next refresh.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                     Picker("Actions jobs per workflow", selection: $jobRunLimit) {
                         ForEach(ActionsStore.jobRunLimitOptions, id: \.self) { limit in
                             Text(limit == 0 ? "Every run in the window" : "Latest \(limit) runs").tag(limit)
                         }
                     }
-                    Text("When you open a workflow on the Actions page, each run's jobs are one REST request, so a busy workflow over 90 days can take thousands. Lower this to fetch fewer; jobs already fetched are kept.")
+                } header: {
+                    Text("How much")
+                } footer: {
+                    Text("The lookback applies on the next refresh. Each Actions run's jobs are a REST request when you open a workflow; jobs already fetched are kept.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                Section("Not on a schedule") {
-                    ForEach(SyncSource.ledger.filter { !$0.isSetting }) { source in
-                        LabeledContent {
-                            Text(SyncSourceRow.describe(usage.bySource[source] ?? .init(), rest: false))
-                                .monospacedDigit()
-                        } label: {
-                            Text(source.title)
-                            Text(source.detail)
-                        }
-                    }
-                }
             }
             .formStyle(.grouped)
+    }
+
+    /// What each source spent, most first; those that spent nothing left out.
+    private func spent(_ bySource: [SyncSource: APIUsage.Total]) -> some View {
+        let rows = SyncSource.ledger
+            .compactMap { source in bySource[source].map { (source, $0) } }
+            .filter { $0.1.points > 0 || $0.1.restRequests > 0 }
+            .sorted { ($0.1.points + $0.1.restRequests) > ($1.1.points + $1.1.restRequests) }
+        return Section {
+            if rows.isEmpty {
+                Text("Nothing yet.").foregroundStyle(.secondary)
+            }
+            ForEach(rows.map(\.0)) { source in
+                LabeledContent(source.title) {
+                    Text(Self.describe(bySource[source] ?? .init(), rest: source.usesREST))
+                        .monospacedDigit()
+                }
+            }
+        } header: {
+            HStack {
+                Text("Spent")
+                Spacer()
+                Picker("Spent", selection: $span) {
+                    ForEach(Span.allCases) { Text($0.rawValue).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+            }
         }
+    }
+
+    /// "120 points" or "40 REST requests".
+    static func describe(_ total: APIUsage.Total, rest: Bool) -> String {
+        if rest || (total.points == 0 && total.restRequests > 0) {
+            return "\(total.restRequests.formatted()) REST request\(total.restRequests == 1 ? "" : "s")"
+        }
+        return "\(total.points.formatted()) point\(total.points == 1 ? "" : "s")"
     }
 
     @ViewBuilder
@@ -120,69 +168,51 @@ struct SyncSettingsView: View {
     }
 }
 
-/// One source: its switch, what it is, how often, and what it spent.
+/// One source: what it is, and a menu of how often, with Off first for
+/// those that can be turned off.
 private struct SyncSourceRow: View {
     let source: SyncSource
-    /// Nil for a sub-row, whose spend is its parent's.
-    let spent: APIUsage.Total?
     @AppStorage private var off: Bool
     @AppStorage private var parentOff: Bool
     @AppStorage private var interval: Double
 
-    init(source: SyncSource, spent: APIUsage.Total?) {
+    /// The menu's tag for Off.
+    private static let offTag: TimeInterval = -1
+
+    init(source: SyncSource) {
         self.source = source
-        self.spent = spent
         _off = AppStorage(wrappedValue: false, source.offKey)
         _parentOff = AppStorage(wrappedValue: false, source.parent?.offKey ?? "sync.none.off")
         _interval = AppStorage(wrappedValue: 0, source.intervalKey)
     }
 
-    private var isOn: Bool { !parentOff && (!source.canTurnOff || !off) }
-
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 10) {
-            Group {
-                if source.canTurnOff {
-                    Toggle(source.title, isOn: Binding(get: { !off }, set: { off = !$0 }))
-                        .labelsHidden()
-                        .toggleStyle(.switch)
-                        .controlSize(.mini)
-                        .disabled(parentOff)
+        Picker(selection: Binding(
+            get: { source.canTurnOff && off ? Self.offTag : current },
+            set: { picked in
+                if picked == Self.offTag {
+                    off = true
                 } else {
-                    // Fixed, as a bare Color.clear takes all the height
-                    // it's offered and throws out the Form's row heights.
-                    Color.clear.frame(width: 1, height: 1)
+                    off = false
+                    interval = picked
                 }
             }
-            .frame(width: 32, alignment: .leading)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(source.title)
-                Text(source.detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        )) {
+            if source.canTurnOff {
+                Text("Off").tag(Self.offTag)
+                Divider()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            Picker(source.title, selection: Binding(
-                get: { interval > 0 ? interval : source.defaultInterval },
-                set: { interval = $0 }
-            )) {
-                ForEach(options, id: \.self) { option in
-                    Text("\(isPolled ? "Every" : "After") \(SyncSettings.describe(option))").tag(option)
-                }
+            ForEach(options, id: \.self) { option in
+                Text("\(isPolled ? "Every" : "After") \(SyncSettings.describe(option))").tag(option)
             }
-            .labelsHidden()
-            .fixedSize()
-            .disabled(!isOn)
-            Text(spent.map { Self.describe($0, rest: source.usesREST) } ?? "")
-                .font(.callout)
-                .monospacedDigit()
-                .foregroundStyle(.secondary)
-                .frame(width: 80, alignment: .trailing)
+        } label: {
+            Text(source.title)
+            Text(parentOff ? "Off with \(source.parent?.title ?? "")." : source.detail)
         }
-        .padding(.leading, source.parent == nil ? 0 : 24)
-        .opacity(isOn ? 1 : 0.6)
+        .disabled(parentOff)
     }
+
+    private var current: TimeInterval { interval > 0 ? interval : source.defaultInterval }
 
     /// Background checks run every so often; the rest are fetched when a
     /// page wants them and they're older than this.
@@ -192,16 +222,7 @@ private struct SyncSourceRow: View {
 
     /// The choices, with the one stored kept even if it isn't among them.
     private var options: [TimeInterval] {
-        let current = interval > 0 ? interval : source.defaultInterval
-        return Set(source.intervalOptions + [current]).sorted()
-    }
-
-    /// "120 points", "40 requests", or a dash for nothing.
-    static func describe(_ total: APIUsage.Total, rest: Bool) -> String {
-        if rest || (total.points == 0 && total.restRequests > 0) {
-            return total.restRequests == 0 ? "None" : "\(total.restRequests.formatted()) req"
-        }
-        return total.points == 0 ? "None" : "\(total.points.formatted()) pts"
+        Set(source.intervalOptions + [current]).sorted()
     }
 }
 

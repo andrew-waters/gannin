@@ -191,12 +191,13 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 
 - GitHub's GraphQL budget (5,000 points an hour per token) is what runs out; the Actions sync
   alone uses REST, with its own. Settings › Sync (`SyncSettingsView`, app-wide since the budget
-  is the token's) lists every source (`SyncSource`, `Sync/SyncSettings.swift`): workload (with
-  members and teams, and the full search, beneath it), PR metrics, issue history (every open
-  issue, and descriptions and comments, beneath it), work log, project boards, harness, GitHub
-  Actions, milestones and releases, your reviews and PRs (`EngineerWatch`), watched reviews and
-  session pull requests (while checks run, beneath it). Each has a switch (`sync.<source>.off`)
-  and an interval (`sync.<source>.interval`, seconds), read through `SyncSettings.isOn`,
+  is the token's) lists every source (`SyncSource`, `Sync/SyncSettings.swift`) in sections:
+  Workload (with members and teams, and the full search), Issues (every open issue, and
+  descriptions and comments), Pages (PR metrics, work log, project boards, milestones and
+  releases, GitHub Actions, harness) and In the background (your reviews and PRs,
+  `EngineerWatch`; watched reviews; session pull requests and while checks run). Each row is
+  one menu: Off, where it can be turned off (`sync.<source>.off`), then intervals
+  (`sync.<source>.interval`, seconds); a part of a source turned off is disabled with it. They're read through `SyncSettings.isOn`,
   `interval` and `isDue` by the stores and pollers in place of fixed ages. Off means not fetched
   at all, Refresh included; the workload, its sub-rows and the harness (the team's settings are
   in it) only space out. A page whose source is off says so at its top (`.syncOffNotice`).
@@ -210,9 +211,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - `APIUsage` (`Sync/APIUsage.swift`, Application Support/APIUsage.json, the last day) records
   every GraphQL query's cost and every REST request by source: the `UsageContext.source`
   task-local a fetcher sets with `chargingTo(_:_:)`, else its sync run's kind, else Other.
-  Mutations are Changes you make (a point each). The pane shows each source's spend over the
-  last hour or day, the budget left, and a warning past half the hourly budget; things fetched
-  because you opened or did something are under Not on a schedule.
+  Mutations are Changes you make (a point each). The pane shows the budget left, a warning past
+  half the hourly budget, and Spent: each source's spend over the last hour or day, most first,
+  things fetched because you opened or did something included.
 - When GitHub refuses a request for its limit (403 or 429 with none left, `Retry-After`, or
   GraphQL's `RATE_LIMITED`, `RateLimit.refusal`), `APIError.rateLimited` pauses every request
   of that kind until it says (`AuthStore.pausedUntil`, `restPausedUntil`, asked by `GitHubAPI`
