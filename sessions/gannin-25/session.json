@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "25-serve-gannin-ai-and-its-downloads-from",
+  "issue" : "andrew-waters/gannin#25",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-06T13:49:41Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Serve gannin.ai and its downloads from this repo, so release downloads are counted",
+  "url" : "https://github.com/andrew-waters/gannin/issues/25"
+}
