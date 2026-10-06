@@ -51,9 +51,11 @@ report inside a person's view, which are one column of several.
 
 Tags (`v1.2.0`, annotated: the first line is the title, the rest the notes) run
 `.github/workflows/release.yml`: archive with the version from the tag and the run number as
-build, Developer ID export, notarise (both with the App Store Connect key), DMG, Sparkle signature and appcast, published to the public `andrew-waters/gannin-site`
-(DMGs on its `downloads` branch, `appcast.xml` on `main`) and a GitHub release here.
-`publish-site.yml` mirrors `site/` there; `ci.yml` builds pull requests and keeps project.yml's
+build, Developer ID export, notarise (both with the App Store Connect key), DMG, Sparkle signature and appcast, published as a GitHub release here
+(`Gannin-<version>.dmg`, `.sha256`, `Gannin.dmg` for the site's Download button through
+`releases/latest/download`, and `appcast.xml`, whose enclosure is the release's DMG, so every download counts on the release).
+gannin.ai is this repo's Pages: `pages.yml` deploys `site/` with the latest release's
+`appcast.xml`, on pushes to `site/` and after each release; `ci.yml` builds pull requests and keeps project.yml's
 `MARKETING_VERSION` at the `0.0.0` placeholder. Sparkle (`App/Updater.swift`, Gannin › Check
 for Updates) reads `https://gannin.ai/appcast.xml` with the key in `Info.plist`, and
 doesn't check by itself in a 0.0.0 build. `docs/RELEASING.md` has the secrets and DNS. The
@@ -366,8 +368,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - GitHub keeps only running download totals, so each sync records the day's per repo
   (`DownloadHistory`, Application Support/ReleaseDownloads, one snapshot a day, the day's last).
   It can't be fetched again, so Storage's Clear and signing out keep it, and only Erase
-  Everything removes it (`ReleaseStore.erase`). Downloads through gannin.ai don't count, as the
-  site serves the DMG from gannin-site rather than the release (andrew-waters/gannin#25).
+  Everything removes it (`ReleaseStore.erase`). gannin.ai's Download button and Sparkle download
+  the release's own assets, so they count (andrew-waters/gannin#25).
 - The Releases part (`ReleasesOverview`, `ReleaseUsageView.swift`, figures from
   `ReleaseUsage`) is tiles (downloads with the last 30 days once a snapshot is that old, stars
   with the last 30 days, releases, latest), Downloads over time from the snapshots, Downloads
