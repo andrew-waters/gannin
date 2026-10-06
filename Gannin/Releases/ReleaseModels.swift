@@ -24,6 +24,14 @@ struct RepoMilestone: Codable, Hashable, Identifiable {
     var total: Int { open + closed }
 }
 
+/// A file attached to a release, with GitHub's running count of its
+/// downloads.
+struct ReleaseAsset: Codable, Hashable {
+    let name: String
+    let downloadCount: Int
+    let size: Int
+}
+
 /// A GitHub Release: a tag with its notes.
 struct RepoRelease: Codable, Hashable, Identifiable {
     let id: String
@@ -39,6 +47,10 @@ struct RepoRelease: Codable, Hashable, Identifiable {
     let isLatest: Bool
     let author: String?
     let notes: String?
+    let assets: [ReleaseAsset]
+
+    /// Every asset's downloads, as GitHub counts them so far.
+    var downloads: Int { assets.reduce(0) { $0 + $1.downloadCount } }
 
     /// Its name, else its tag.
     var title: String {
@@ -49,17 +61,154 @@ struct RepoRelease: Codable, Hashable, Identifiable {
     var date: Date { publishedAt ?? createdAt }
 }
 
-/// Each org's milestones (open ones and those closed lately) and latest
-/// releases, per repo.
+/// A repo with releases: its stars now, and how many releases GitHub says
+/// it has.
+struct ReleaseRepository: Codable, Hashable, Identifiable {
+    let name: String
+    let stars: Int
+    let releaseCount: Int
+
+    var id: String { name }
+}
+
+/// Each org's milestones (open ones and those closed lately), every
+/// release of each repo, and the stars of those with releases.
 struct ReleaseHistory: Codable {
-    /// 2 added pull request counts.
-    static let currentVersion = 2
+    /// 2 added pull request counts; 3 every release, assets, repos and stars.
+    static let currentVersion = 3
 
     let version: Int
     let orgLogin: String
     var syncedAt: Date
     var milestones: [RepoMilestone]
     var releases: [RepoRelease]
+    /// Repos with at least one release.
+    var repositories: [ReleaseRepository]
+    /// By repo.
+    var stars: [String: StarHistory]
+}
+
+/// When a repo's current stargazers starred it, as stars per day, from
+/// GitHub's `starredAt`. Those who unstarred are gone from it, as they are
+/// from any star history built this way.
+struct StarHistory: Codable, Hashable {
+    /// Stars a day, by the day's start, oldest first.
+    var days: [StarDay]
+    /// The latest `starredAt` counted, where the next fetch stops.
+    var newest: Date?
+    /// Stars older than the backfill reached (it stops at
+    /// `ReleaseStore.starReach`), counted before the first day.
+    var before: Int
+
+    struct StarDay: Codable, Hashable {
+        let day: Date
+        var count: Int
+    }
+
+    /// Adds stars (any order) to their days.
+    mutating func add(_ dates: [Date], calendar: Calendar = .current) {
+        guard !dates.isEmpty else { return }
+        var counts = Dictionary(days.map { ($0.day, $0.count) }, uniquingKeysWith: +)
+        for date in dates { counts[calendar.startOfDay(for: date), default: 0] += 1 }
+        days = counts.map { StarDay(day: $0.key, count: $0.value) }.sorted { $0.day < $1.day }
+        newest = max(newest ?? .distantPast, dates.max() ?? .distantPast)
+    }
+
+    func gained(since start: Date) -> Int {
+        days.filter { $0.day >= start }.reduce(0) { $0 + $1.count }
+    }
+}
+
+/// Download totals recorded once a day: GitHub only keeps each asset's
+/// running count, so the history over time is Gannin's own, from the first
+/// sync on this Mac. Kept apart from the cache, as it can't be fetched again.
+struct DownloadHistory: Codable {
+    static let currentVersion = 1
+
+    let version: Int
+    let orgLogin: String
+    /// Oldest first, one a day.
+    var snapshots: [DownloadSnapshot]
+
+    /// Records the totals as the day's, replacing any recorded earlier that day.
+    mutating func record(_ totals: [String: Int], at date: Date, calendar: Calendar = .current) {
+        let day = calendar.startOfDay(for: date)
+        snapshots.removeAll { $0.day == day }
+        snapshots.append(DownloadSnapshot(day: day, repos: totals))
+        snapshots.sort { $0.day < $1.day }
+    }
+}
+
+struct DownloadSnapshot: Codable, Hashable {
+    let day: Date
+    /// Downloads by repo.
+    let repos: [String: Int]
+
+    func total(_ included: (String) -> Bool) -> Int {
+        repos.reduce(0) { included($1.key) ? $0 + $1.value : $0 }
+    }
+}
+
+/// What the Releases page charts, over the repos shown.
+struct ReleaseUsage {
+    struct Point: Hashable {
+        let date: Date
+        let value: Int
+    }
+
+    let repositories: [ReleaseRepository]
+    let downloads: Int
+    let stars: Int
+    /// Recorded totals, one a day.
+    let downloadsOverTime: [Point]
+    /// Downloads since the snapshot nearest 30 days ago, when one is that old.
+    let downloadsLately: Int?
+    /// Downloads of the releases published each month, by the month's start.
+    let downloadsByMonth: [Point]
+    /// Cumulative stars by day, ending today.
+    let starsOverTime: [Point]
+    let starsLately: Int
+    /// Stars in the last 30 days, by repo.
+    let starsGained: [String: Int]
+    /// Stars that came before the backfill's reach, counted at the start.
+    let starsBefore: Int
+
+    static let lately: TimeInterval = 30 * 24 * 60 * 60
+
+    init(history: ReleaseHistory, downloadHistory: DownloadHistory?, releases: [RepoRelease], included: (String) -> Bool, now: Date = .now, calendar: Calendar = .current) {
+        repositories = history.repositories.filter { included($0.name) }
+        let downloads = releases.reduce(0) { $0 + $1.downloads }
+        self.downloads = downloads
+        stars = repositories.reduce(0) { $0 + $1.stars }
+
+        let snapshots = downloadHistory?.snapshots ?? []
+        downloadsOverTime = snapshots.map { Point(date: $0.day, value: $0.total(included)) }
+        let cutoff = now.addingTimeInterval(-Self.lately)
+        downloadsLately = snapshots.last(where: { $0.day <= cutoff }).map { downloads - $0.total(included) }
+
+        var months: [Date: Int] = [:]
+        for release in releases where !release.isDraft {
+            let month = calendar.dateInterval(of: .month, for: release.date)?.start ?? release.date
+            months[month, default: 0] += release.downloads
+        }
+        downloadsByMonth = months.map { Point(date: $0.key, value: $0.value) }.sorted { $0.date < $1.date }
+
+        let histories = repositories.compactMap { history.stars[$0.name] }
+        starsBefore = histories.reduce(0) { $0 + $1.before }
+        starsGained = Dictionary(uniqueKeysWithValues: repositories.map { ($0.name, history.stars[$0.name]?.gained(since: cutoff) ?? 0) })
+        starsLately = starsGained.values.reduce(0, +)
+        let perDay = Dictionary(histories.flatMap(\.days).map { ($0.day, $0.count) }, uniquingKeysWith: +)
+        var running = starsBefore
+        var points: [Point] = []
+        for day in perDay.keys.sorted() {
+            running += perDay[day] ?? 0
+            points.append(Point(date: day, value: running))
+        }
+        if let last = points.last, last.date < calendar.startOfDay(for: now) {
+            points.append(Point(date: calendar.startOfDay(for: now), value: last.value))
+        }
+        starsOverTime = points
+    }
 }
 
 /// Milestones with the same title across repos, as one: teams often run a

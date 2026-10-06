@@ -2,9 +2,10 @@ import SwiftUI
 
 /// Delivery › Releases: the org's milestones, grouped by title across repos,
 /// with GitHub's progress (closed of all issues) and what the issue history
-/// says is in progress and merged; and its GitHub Releases, each linked to
-/// the milestone it shipped. Milestones and Releases are picked in the
-/// toolbar.
+/// says is in progress and merged; and its GitHub Releases, with downloads
+/// and stars over time, the repos with releases and every release, each
+/// linked to the milestone it shipped. Milestones and Releases are picked in
+/// the toolbar.
 struct ReleasesView: View {
     enum Part: String, CaseIterable {
         case milestones = "Milestones"
@@ -31,17 +32,29 @@ struct ReleasesView: View {
         VStack(spacing: 0) {
             bar(count: part == .milestones ? shownMilestones(groups).count : shownReleases(releases).count)
             Divider()
-            if history == nil {
+            if let history {
+                switch part {
+                case .milestones: milestoneList(groups, releases: releases, config: config)
+                case .releases:
+                    ReleasesOverview(
+                        usage: ReleaseUsage(
+                            history: history,
+                            downloadHistory: store.downloadHistory(for: org),
+                            releases: releases,
+                            included: { !config.repoExclusion.contains($0) }
+                        ),
+                        releases: releases,
+                        shown: shownReleases(releases),
+                        groups: groups,
+                        search: $search
+                    )
+                }
+            } else {
                 if let error = store.errors[org] {
                     ContentUnavailableView("Couldn't load milestones", systemImage: "exclamationmark.triangle", description: Text(error))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                }
-            } else {
-                switch part {
-                case .milestones: milestoneList(groups, releases: releases, config: config)
-                case .releases: releaseList(releases, groups: groups)
                 }
             }
         }
@@ -134,30 +147,6 @@ struct ReleasesView: View {
             .sorted { $0.date > $1.date }
     }
 
-    @ViewBuilder
-    private func releaseList(_ releases: [RepoRelease], groups: [MilestoneGroup]) -> some View {
-        let shown = shownReleases(releases)
-        if shown.isEmpty {
-            ContentUnavailableView(
-                releases.isEmpty ? "No releases" : "No matching releases",
-                systemImage: "shippingbox",
-                description: Text(releases.isEmpty ? "GitHub Releases in the org's repositories show here." : "Try another search.")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List(shown) { release in
-                ReleaseRow(release: release, milestone: ReleaseLink.milestone(for: release, in: groups)) {
-                    navigate?(.release(repo: release.repo, tag: release.tagName))
-                } openMilestone: { group in
-                    navigate?(.milestone(group.title))
-                }
-                .contextMenu {
-                    Button("Open on GitHub") { openURL(release.url) }
-                }
-            }
-        }
-    }
-
     static func repoName(_ repo: String) -> String {
         repo.split(separator: "/").last.map(String.init) ?? repo
     }
@@ -214,58 +203,6 @@ private struct MilestoneRow: View {
         }
         .buttonStyle(.plain)
         .padding(.vertical, 3)
-    }
-}
-
-private struct ReleaseRow: View {
-    let release: RepoRelease
-    let milestone: MilestoneGroup?
-    let open: () -> Void
-    let openMilestone: (MilestoneGroup) -> Void
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Button(action: open) {
-                HStack(spacing: 10) {
-                    Image(systemName: "tag")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 16)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text(release.title).fontWeight(.medium).lineLimit(1)
-                            if release.title != release.tagName {
-                                Text(release.tagName).font(.callout.monospaced()).foregroundStyle(.secondary)
-                            }
-                            ReleaseBadges(release: release)
-                        }
-                        Text(caption)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    }
-                    Spacer()
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            if let milestone {
-                Button {
-                    openMilestone(milestone)
-                } label: {
-                    Label(milestone.title, systemImage: "flag.checkered")
-                }
-                .linkButton()
-                .help("The milestone it shipped")
-            }
-        }
-        .padding(.vertical, 3)
-    }
-
-    private var caption: String {
-        var parts = [ReleasesView.repoName(release.repo)]
-        if let author = release.author { parts.append(author) }
-        parts.append(release.isDraft ? "drafted \(release.createdAt.formatted(.relative(presentation: .named)))" : release.date.formatted(.relative(presentation: .named)))
-        return parts.joined(separator: " · ")
     }
 }
 
@@ -476,6 +413,7 @@ struct ReleasePage: View {
                     LabeledContent("Tag") { Text(release.tagName).monospaced() }
                     LabeledContent(release.isDraft ? "Drafted" : "Published", value: release.date.formatted(date: .abbreviated, time: .shortened))
                     if let author = release.author { LabeledContent("Author", value: author) }
+                    LabeledContent("Downloads", value: release.assets.isEmpty ? "No assets" : release.downloads.formatted())
                     if release.isLatest || release.isPrerelease || release.isDraft {
                         LabeledContent("Marked") { ReleaseBadges(release: release) }
                     }
@@ -493,6 +431,18 @@ struct ReleasePage: View {
                         Button("Open on GitHub") { openURL(release.url) }.linkButton()
                     }
                 }
+                if !release.assets.isEmpty {
+                    Section("Assets") {
+                        ForEach(release.assets.sorted { $0.downloadCount > $1.downloadCount }, id: \.name) { asset in
+                            LabeledContent {
+                                Text("\(asset.downloadCount.formatted()) downloads").monospacedDigit()
+                            } label: {
+                                Text(asset.name)
+                                Text(asset.size.formatted(.byteCount(style: .file)))
+                            }
+                        }
+                    }
+                }
                 Section("Notes") {
                     if let notes = release.notes, !notes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         MarkdownText(source: notes)
@@ -505,7 +455,7 @@ struct ReleasePage: View {
         } else if history == nil {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ContentUnavailableView("No release \(tag)", systemImage: "shippingbox", description: Text("Only each repository's ten latest releases are kept."))
+            ContentUnavailableView("No release \(tag)", systemImage: "shippingbox", description: Text("It may have been deleted, or be in a repository not pushed to in the last year."))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }

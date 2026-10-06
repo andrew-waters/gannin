@@ -351,11 +351,29 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   and Releases picked in the toolbar (`releasesPart` per window). Read-only: nothing is written.
 - `ReleaseStore` fetches, in one paged query (`GitHubAPI.milestonesAndReleases`, 25 repos a page),
   every non-archived repo pushed to in the last year, most recent first: its open milestones (25),
-  the ten closed most lately, and its ten latest releases, with GitHub's open and closed counts of
-  issues and of pull requests (merged ones closed) per milestone. Cached as JSON in Application Support/Releases, fetched again after 10
-  minutes, only once the page has been opened for an org; Refresh includes it from then on. It's
-  its own sync run (Releases, one step). Excluded repos no project names aren't kept
+  the ten closed most lately, its stars and its 25 newest releases with their assets'
+  `downloadCount`, with GitHub's open and closed counts of issues and of pull requests (merged
+  ones closed) per milestone. Repos with more releases are paged to the end
+  (`GitHubAPI.releases(repo:after:)`, 50 a page), and repos with releases
+  (`ReleaseRepository`) get their star history (`StarHistory`, stars per day from the
+  stargazers' `starredAt`, newest first and only those since the last sync; the first backfill
+  stops at `ReleaseStore.starReach`, counting older stars at its start), both four repos at once
+  (`eachRepo`). A repo whose stars can't be read keeps what it had. Cached as JSON in Application
+  Support/Releases, fetched again after 10 minutes, only once the page has been opened for an
+  org; Refresh includes it from then on. It's its own sync run (Releases: milestones and
+  releases, older releases, stars). Excluded repos no project names aren't kept
   (`unfetchedRepos`); the page leaves out the rest through `repoExclusion`.
+- GitHub keeps only running download totals, so each sync records the day's per repo
+  (`DownloadHistory`, Application Support/ReleaseDownloads, one snapshot a day, the day's last).
+  It can't be fetched again, so Storage's Clear and signing out keep it, and only Erase
+  Everything removes it (`ReleaseStore.erase`). Downloads through gannin.ai don't count, as the
+  site serves the DMG from gannin-site rather than the release (andrew-waters/gannin#25).
+- The Releases part (`ReleasesOverview`, `ReleaseUsageView.swift`, figures from
+  `ReleaseUsage`) is tiles (downloads with the last 30 days once a snapshot is that old, stars
+  with the last 30 days, releases, latest), Downloads over time from the snapshots, Downloads
+  by release month (each release's downloads so far, by the month it came out) and Stars (a
+  cumulative step line), then Repositories and Releases as `StatsTable`s: clicking a repo
+  searches the releases for it, and a release's downloads cell lists its assets.
 - Milestones with the same title (case aside) in different repos are one `MilestoneGroup`: counts
   added up, due the soonest open one's. Progress is GitHub's, closed of all issues and pull requests
   in the milestone; `MilestoneActivity` (looking groups up in `MilestoneGroup.index`, the history's
@@ -368,8 +386,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   release, each repo's milestone, the description and its issues from the history (in progress,
   open, closed, each with its status on the workflow's board; fewer than GitHub's issue count when
   closed ones predate the history). A release's page
-  (`DetailSelection.release`, `ReleasePage`) has its tag, dates, author, Latest, Pre-release and
-  Draft, the milestone it shipped and its notes in `MarkdownText`.
+  (`DetailSelection.release`, `ReleasePage`) has its tag, dates, author, downloads, Latest,
+  Pre-release and Draft, the milestone it shipped, its assets with their downloads and its notes
+  in `MarkdownText`.
 
 ## Work log
 

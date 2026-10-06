@@ -49,7 +49,7 @@ struct StorageSettings: View {
             case .workLog: "PRs with their commits and reviews, behind Activity"
             case .projects: "Project board definitions and items"
             case .actions: "Workflow runs and the jobs of those opened, behind Actions"
-            case .releases: "Milestones and GitHub Releases per repository, behind Releases"
+            case .releases: "Milestones, every GitHub Release and stars per repository, behind Releases (the daily download totals are kept)"
             case .details: "Bodies, comments and checks of items you've opened"
             case .bankHolidays: "Public holidays by country and year, from date.nager.at"
             }
@@ -221,6 +221,7 @@ struct StorageSettings: View {
 
     private func eraseEverything() {
         clearCaches()
+        releases.erase()
         deleteYourData()
         auth.signOut()
         orgs.clear()
