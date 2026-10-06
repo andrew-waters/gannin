@@ -5,9 +5,6 @@ import Observation
 /// Application Support. Only fetched once the page has been opened.
 @Observable
 final class IssueStore {
-    private static let maxAge: TimeInterval = 10 * 60
-    /// Open issues are refetched in full this often (see `openFetchedAt`).
-    private static let openMaxAge: TimeInterval = 60 * 60
     private static let overlap: TimeInterval = 5 * 60
     private static let concurrency = 4
 
@@ -49,7 +46,7 @@ final class IssueStore {
     /// only fetches what changed.
     func sync(_ org: String, windowDays: Int, force: Bool = false) async {
         loadCached(org)
-        guard let api = auth.api, !syncing.contains(org) else { return }
+        guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.issues) else { return }
         let now = Date.now
         let start = MetricsStore.coverageStart(windowDays: windowDays, now: now)
         let history = histories[org]
@@ -60,11 +57,12 @@ final class IssueStore {
             if start < history.coveredFrom {
                 searches += Self.weeks(from: start, to: history.coveredFrom).map { ("closed", "\(scope) closed:\(Self.stamp($0.0))..\(Self.stamp($0.1))") }
             }
-            let due = now.timeIntervalSince(history.syncedAt) >= Self.maxAge
+            let due = SyncSettings.isDue(.issues, since: history.syncedAt, now: now)
             if force || (due && !auth.shouldHoldOff) {
                 searches.append(("changed", "\(scope) updated:>=\(Self.stamp(history.syncedAt.addingTimeInterval(-Self.overlap)))"))
             }
-            if force || now.timeIntervalSince(history.openFetchedAt) >= Self.openMaxAge {
+            // Open issues in full every so often (see `openFetchedAt`).
+            if force || (SyncSettings.isDue(.openIssues, since: history.openFetchedAt, now: now) && !auth.shouldHoldOff) {
                 searches.append(("open", "\(scope) is:open"))
             }
         } else {
@@ -282,22 +280,31 @@ extension IssueStore {
     /// bumps an issue's `updatedAt`), found with one cheap search. Fifty
     /// issues a query; it stops when the budget runs low and carries on
     /// next time.
+    /// Issues not yet indexed every time; the search for changed ones only
+    /// once its interval (Settings › Sync) has passed since the last.
     func deepSync(_ org: String) async {
-        guard let api = auth.api, let history = histories[org], !deepSyncing.contains(org), !auth.shouldHoldOff else { return }
+        guard let api = auth.api, let history = histories[org], !deepSyncing.contains(org), !auth.shouldHoldOff,
+              SyncSettings.isOn(.issueText) else { return }
         deepSyncing.insert(org)
         defer { deepSyncing.remove(org) }
+        await chargingTo(.issueText) { await deepSync(org, history: history, api: api) }
+    }
+
+    private func deepSync(_ org: String, history: IssueHistory, api: GitHubAPI) async {
         let index = IssueTextIndex.shared
         let started = Date.now
         let indexed = await index.indexed(org: org)
         var ids = Set(history.issues.keys).subtracting(indexed)
-        if let last = await index.lastSync(org: org) {
+        let last = await index.lastSync(org: org)
+        let due = SyncSettings.isDue(.issueText, since: last, now: started)
+        if let last, due {
             let since = Self.stamp(last.addingTimeInterval(-Self.overlap))
             if let changed: [Lossy<ChangedIssue>] = try? await api.search("\(GitHubAccounts.scope(org)) archived:false is:issue updated:>=\(since)", fields: "... on Issue { id }") {
                 ids.formUnion(changed.compactMap { $0.value?.id }.filter { history.issues[$0] != nil })
             }
         }
         guard !ids.isEmpty else {
-            await index.setLastSync(org: org, started)
+            if due { await index.setLastSync(org: org, started) }
             return
         }
         let run = activity.begin(.issueText, org: org)
@@ -325,7 +332,7 @@ extension IssueStore {
             }
             // Only once everything changed is in, else the next run would
             // skip what this one didn't get to.
-            if finished.complete { await index.setLastSync(org: org, started) }
+            if finished.complete && due { await index.setLastSync(org: org, started) }
             run.finish()
         } catch {
             run.finish(error: error)

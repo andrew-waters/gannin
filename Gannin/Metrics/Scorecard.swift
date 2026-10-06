@@ -474,6 +474,7 @@ struct ScorecardView: View {
             }
         }
         .toolbar { toolbar(all) }
+        .syncOffNotice(.metrics)
         .sheet(isPresented: $adding) {
             MeasurableEditor(org: org, measurable: nil, cadence: cadence)
         }

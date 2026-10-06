@@ -216,8 +216,8 @@ struct ProjectsLandingView: View {
             } catch {
                 self.error = error.localizedDescription
             }
-            await store.loadBoards(org: org)
-            if let repo = configs.config(for: org).boardsRepo { await store.loadRepoBoards(org: org, repo: repo) }
+            await store.loadBoards(org: org, force: true)
+            if let repo = configs.config(for: org).boardsRepo { await store.loadRepoBoards(org: org, repo: repo, force: true) }
             working = false
         }
     }

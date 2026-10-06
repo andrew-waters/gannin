@@ -6,6 +6,9 @@ enum APIError: Error, LocalizedError {
     case network(String)
     case graphQL([String])
     case decoding(String)
+    /// GitHub refused the request for its rate limit; nothing more is
+    /// asked until `until`.
+    case rateLimited(until: Date)
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +18,7 @@ enum APIError: Error, LocalizedError {
         case .network(let message): "Network error: \(message)"
         case .graphQL(let messages): messages.joined(separator: "\n")
         case .decoding(let reason): "Could not read GitHub's response: \(reason)"
+        case .rateLimited(let until): "GitHub's rate limit has been reached. Gannin waits until \(until.formatted(date: .omitted, time: .shortened)) before asking again."
         }
     }
 
@@ -48,8 +52,27 @@ nonisolated struct RateLimit: Decodable, Equatable, Sendable {
     let limit: Int
     let resetAt: Date
 
-    /// Low enough that automatic refreshes should wait for the reset.
-    var isLow: Bool { remaining < max(250, limit / 10) && resetAt > .now }
+    /// Low enough that automatic refreshes should wait for the reset: under
+    /// the reserve kept for what you do by hand (Settings › Sync).
+    var isLow: Bool { remaining < min(SyncSettings.reserve(), limit / 2) && resetAt > .now }
+
+    /// When GitHub says to stop: a 403 or 429 with no requests left (until
+    /// the reset) or a `Retry-After` (the secondary limit), or a body naming
+    /// the secondary limit with neither (a minute). Nil for any other refusal.
+    static func refusal(_ response: HTTPURLResponse, body: Data) -> Date? {
+        guard response.statusCode == 403 || response.statusCode == 429 else { return nil }
+        if let wait = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init) {
+            return .now.addingTimeInterval(max(wait, 1))
+        }
+        if response.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0",
+           let reset = response.value(forHTTPHeaderField: "X-RateLimit-Reset").flatMap(TimeInterval.init) {
+            return Date(timeIntervalSince1970: reset)
+        }
+        if String(data: body, encoding: .utf8)?.localizedCaseInsensitiveContains("rate limit") == true {
+            return .now.addingTimeInterval(60)
+        }
+        return nil
+    }
 }
 
 /// Thin GitHub GraphQL client. Every call is a read, except the confirmed
@@ -65,6 +88,11 @@ struct GitHubAPI {
     var onScopes: (@MainActor @Sendable (Set<String>) -> Void)?
     /// Told the REST budget after every REST request (Actions runs and jobs).
     var onRESTRateLimit: (@MainActor @Sendable (RateLimit) -> Void)?
+    /// Told when GitHub refuses a request for its rate limit, and until when
+    /// (`rest` for the REST budget).
+    var onRefused: (@MainActor @Sendable (_ until: Date, _ rest: Bool) -> Void)?
+    /// Until when requests are held back, after a refusal; asked before each.
+    var pausedUntil: (@MainActor @Sendable (_ rest: Bool) -> Date?)?
 
     private static let endpoint = URL(string: "https://api.github.com/graphql")!
 
@@ -103,6 +131,9 @@ struct GitHubAPI {
     }
 
     private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> T {
+        if let until = pausedUntil?(false), until > .now { throw APIError.rateLimited(until: until) }
+        let isMutation = query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("mutation")
+        let source = isMutation ? .writes : APIUsage.currentSource
         var request = URLRequest(url: Self.endpoint)
         request.httpMethod = "POST"
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -120,6 +151,11 @@ struct GitHubAPI {
             throw APIError.network(error.localizedDescription)
         }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if let http = response as? HTTPURLResponse, let until = RateLimit.refusal(http, body: data) {
+            APIUsage.shared.record(cost: 0, isREST: false, source: source)
+            onRefused?(until, false)
+            throw APIError.rateLimited(until: until)
+        }
         if let scopes = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "X-OAuth-Scopes") {
             onScopes?(Set(scopes.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }))
         }
@@ -134,11 +170,22 @@ struct GitHubAPI {
         } catch {
             throw APIError.decoding(String(describing: error))
         }
+        // A mutation can't ask its cost; GitHub charges one point.
+        APIUsage.shared.record(cost: envelope.data?.rateLimit?.cost ?? 1, isREST: false, source: source)
         if let rateLimit = envelope.data?.rateLimit {
             onRateLimit?(rateLimit)
             if let step = SyncContext.step {
                 step.run.addCost(rateLimit.cost, to: step.id)
             }
+        }
+        // Over the budget, GraphQL answers 200 with a RATE_LIMITED error.
+        if envelope.errors?.contains(where: { $0.type == "RATE_LIMITED" }) == true {
+            let http = response as? HTTPURLResponse
+            let until = http?.value(forHTTPHeaderField: "X-RateLimit-Reset").flatMap(TimeInterval.init).map { Date(timeIntervalSince1970: $0) }
+                ?? envelope.data?.rateLimit?.resetAt
+                ?? .now.addingTimeInterval(60)
+            onRefused?(until, false)
+            throw APIError.rateLimited(until: until)
         }
         guard let result = envelope.data?.value else {
             throw APIError.graphQL(envelope.errors?.map(\.message) ?? ["Empty response"])
@@ -177,6 +224,7 @@ struct GitHubAPI {
 
     private struct Message: Decodable {
         let message: String
+        let type: String?
     }
 }
 

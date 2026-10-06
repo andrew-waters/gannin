@@ -7,7 +7,6 @@ import Observation
 final class WorkLogStore {
     /// Days fetched up front; paging further back fetches more.
     static let keptDays = 28
-    private static let maxAge: TimeInterval = 10 * 60
     /// Overlap on the changes search, so an update landing mid-fetch isn't missed.
     private static let overlap: TimeInterval = 5 * 60
 
@@ -40,7 +39,7 @@ final class WorkLogStore {
         guard let api = auth.api, !missing.isEmpty else { return }
         fetchingLinked.formUnion(missing)
         defer { fetchingLinked.subtract(missing) }
-        for pr in (try? await api.workLogPullRequests(urls: missing)) ?? [] {
+        for pr in (try? await chargingTo(.details) { try await api.workLogPullRequests(urls: missing) }) ?? [] {
             linked[pr.url] = pr
         }
     }
@@ -53,7 +52,7 @@ final class WorkLogStore {
     /// several at once; a stored range only needs what changed since.
     func sync(_ org: String, from requested: Date? = nil, force: Bool = false) async {
         loadCached(org)
-        guard let api = auth.api, !syncing.contains(org) else { return }
+        guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.workLog) else { return }
         let now = Date.now
         let calendar = Calendar.current
         let defaultStart = calendar.date(byAdding: .day, value: -Self.keptDays, to: calendar.startOfDay(for: now)) ?? now
@@ -66,7 +65,7 @@ final class WorkLogStore {
             if start < history.coveredFrom {
                 searches += Self.weeks(from: start, to: history.coveredFrom).map { GitHubAPI.workLogSearch(org: org, from: $0.0, to: $0.1) }
             }
-            let isStale = now.timeIntervalSince(history.fetchedAt) >= Self.maxAge
+            let isStale = SyncSettings.isDue(.workLog, since: history.fetchedAt, now: now)
             if force || (isStale && !auth.shouldHoldOff) {
                 searches.append(GitHubAPI.workLogSearch(org: org, from: history.fetchedAt.addingTimeInterval(-Self.overlap)))
             }

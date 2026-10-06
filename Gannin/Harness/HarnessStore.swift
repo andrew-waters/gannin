@@ -7,7 +7,7 @@ import Observation
 /// documents whose blobs changed, 30 to a GraphQL query.
 @Observable
 final class HarnessStore {
-    private static let maxAge: TimeInterval = 10 * 60
+    private static var maxAge: TimeInterval { SyncSettings.interval(.harness) }
     private static let batchSize = 30
 
     /// By `key(org, repo)`: an org can have several harnesses.
@@ -77,7 +77,7 @@ final class HarnessStore {
     func load(org: String, setup: HarnessConfig, force: Bool = false, expecting: String? = nil) async {
         let indexKey = Self.key(org, setup.repo)
         loadCached(org, repo: setup.repo)
-        if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge { return }
+        if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge || auth.shouldHoldOff { return }
         if let running = fetches[indexKey] {
             await running.value
             // A forced fetch (after a commit, say) wants what's there now,
@@ -99,12 +99,12 @@ final class HarnessStore {
                 fetches[indexKey] = nil
             }
             do {
-                var index = try await Self.fetch(setup: setup, previous: previous, api: api)
+                var index = try await chargingTo(.harness) { try await Self.fetch(setup: setup, previous: previous, api: api) }
                 var attempt = 0
                 while let expecting, index.commit != expecting, attempt < 5 {
                     attempt += 1
                     try await Task.sleep(for: .seconds(attempt))
-                    index = try await Self.fetch(setup: setup, previous: index, api: api)
+                    index = try await chargingTo(.harness) { try await Self.fetch(setup: setup, previous: index, api: api) }
                 }
                 indexes[indexKey] = index
                 errors[indexKey] = nil

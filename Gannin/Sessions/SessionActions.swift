@@ -105,20 +105,23 @@ extension SessionStore {
 
     // MARK: Pull requests, watched
 
-    /// Fetches every session's PRs every minute or so (30 seconds while
-    /// checks run), flagging a session when a check newly fails or a
-    /// reviewer says something new. Sessions with nothing running and no
-    /// open PR are left alone.
+    /// Fetches every session's PRs on the interval in Settings › Sync (a
+    /// shorter one while checks run), flagging a session when a check newly
+    /// fails or a reviewer says something new. Sessions with nothing running
+    /// and no open PR are left alone, and nothing is fetched while it's
+    /// turned off or the budget is low.
     func watchPullRequests() {
         guard watchingPullRequests == nil else { return }
         watchingPullRequests = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                for session in self.sessions.values where !session.isHelper && self.needsWatching(session) {
-                    await self.refreshPullRequests(session.id)
+                if SyncSettings.isOn(.sessionPullRequests) && !self.holdsOff() {
+                    for session in self.sessions.values where !session.isHelper && self.needsWatching(session) {
+                        await self.refreshPullRequests(session.id)
+                    }
                 }
                 let pending = self.pullRequestInfo.values.joined().contains { $0.state == "OPEN" && !$0.pending.isEmpty }
-                try? await Task.sleep(for: .seconds(pending ? 30 : 90))
+                try? await Task.sleep(for: .seconds(SyncSettings.interval(pending ? .sessionChecks : .sessionPullRequests)))
             }
         }
     }
@@ -132,8 +135,16 @@ extension SessionStore {
     /// The session's PRs now, from GitHub.
     func refreshPullRequests(_ id: UUID) async {
         guard let session = sessions[id], let api = api() else { return }
+        // PRs the branch search found last time are found by it again, so
+        // only the others are looked up by URL.
+        let searched = foundBySearch[id] ?? []
+        let urls = session.pullRequests.filter { !searched.contains($0) }
         do {
-            let found = try await api.sessionPullRequests(org: session.org, branch: session.branch, urls: session.pullRequests)
+            let result = try await chargingTo(.sessionPullRequests) {
+                try await api.sessionPullRequests(org: session.org, branch: session.branch, urls: urls)
+            }
+            let found = result.pullRequests
+            foundBySearch[id] = result.searched
             pullRequestErrors[id] = nil
             if pullRequestInfo[id] != found { pullRequestInfo[id] = found }
             noticeNews(in: found, for: id)

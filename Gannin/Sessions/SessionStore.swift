@@ -363,12 +363,17 @@ final class SessionStore {
     /// new reviews flag it like a question would.
     var pullRequestInfo: [UUID: [SessionPullRequest]] = [:]
     var pullRequestErrors: [UUID: String] = [:]
+    /// The URLs of each session's PRs its branch search found last time,
+    /// which needn't be looked up by URL as well.
+    @ObservationIgnored var foundBySearch: [UUID: Set<URL>] = [:]
     @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
     /// GitHub, once signed in; set by the app.
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }
     /// The signed-in login, so a session's own feedback on a PR it isn't
     /// the author of (reviewing someone else's) doesn't notify; set by the app.
     @ObservationIgnored var viewerLogin: () -> String? = { nil }
+    /// The budget is low or GitHub has refused: background PR checks wait.
+    @ObservationIgnored var holdsOff: () -> Bool = { false }
     /// Reviews Gannin started or asked to look again by itself, until
     /// their result arrives (`AutoReview.swift`).
     @ObservationIgnored var automaticRuns: Set<UUID> = []

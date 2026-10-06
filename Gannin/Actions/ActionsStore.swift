@@ -8,7 +8,6 @@ import Observation
 /// fetched when a workflow is opened.
 @Observable
 final class ActionsStore {
-    private static let maxAge: TimeInterval = 10 * 60
     /// Top-ups reach back this far, for re-runs and runs that were still
     /// going at the last sync.
     private static let overlap: TimeInterval = 24 * 60 * 60
@@ -69,7 +68,7 @@ final class ActionsStore {
     /// `excluding` repos aren't fetched.
     func sync(_ org: String, windowDays: Int, excluding excluded: Set<String> = [], force: Bool = false) async {
         loadCached(org)
-        guard let api = auth.api, !syncing.contains(org) else { return }
+        guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.actions) else { return }
 
         let now = Date.now
         let start = Self.coverageStart(windowDays: windowDays, now: now)
@@ -82,7 +81,7 @@ final class ActionsStore {
             jobs: [:],
             jobsAttempt: [:]
         )
-        let isFresh = now.timeIntervalSince(history.syncedAt) < Self.maxAge
+        let isFresh = !SyncSettings.isDue(.actions, since: history.syncedAt, now: now)
         let covered = history.repositories.values.allSatisfy { $0.coveredFrom <= start }
         if !force && isFresh && covered && !history.repositories.isEmpty { return }
         // Wait out a low budget unless asked, as long as there's history to show.
@@ -244,19 +243,19 @@ final class ActionsStore {
             .sorted { $0.createdAt > $1.createdAt }
         let limit = Self.jobRunLimit
         if limit > 0 { runs = Array(runs.prefix(limit)) }
-        await loadJobs(org: org, runs: runs, key: workflowKey)
+        await chargingTo(.actions) { await loadJobs(org: org, runs: runs, key: workflowKey) }
     }
 
     /// Fetches one run's jobs, when it hasn't got them for its latest
     /// attempt or is still going.
     func loadJobs(org: String, run: WorkflowRun) async {
-        await loadJobs(org: org, runs: [run], key: Self.jobsKey(run))
+        await chargingTo(.actions) { await loadJobs(org: org, runs: [run], key: Self.jobsKey(run)) }
     }
 
     static func jobsKey(_ run: WorkflowRun) -> String { "run-\(run.id)" }
 
     private func loadJobs(org: String, runs: [WorkflowRun], key: String) async {
-        guard let api = auth.api, let stored = histories[org], !loadingJobs.contains(key) else { return }
+        guard let api = auth.api, let stored = histories[org], !loadingJobs.contains(key), SyncSettings.isOn(.actions) else { return }
         // A finished run's jobs never change until it's re-run.
         let pending = runs.filter { !$0.isCompleted || stored.jobsAttempt[$0.id] != $0.attempt }
         guard !pending.isEmpty else { return }

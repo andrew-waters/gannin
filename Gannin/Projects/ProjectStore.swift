@@ -5,7 +5,7 @@ import Observation
 /// and each view's items (fetched with the view's own filter), on disk.
 @Observable
 final class ProjectStore {
-    private static let maxAge: TimeInterval = 10 * 60
+    private static var maxAge: TimeInterval { SyncSettings.interval(.boards) }
 
     /// Every board each org has, closed ones too.
     private(set) var allBoardLists: [String: [OrgProject]] = [:]
@@ -40,11 +40,19 @@ final class ProjectStore {
         return loading.contains { $0 == key || $0.hasPrefix(key + "|") }
     }
 
-    /// The org's open boards: from disk at once, then fetched again.
-    func loadBoards(org: String) async {
+    /// When each org's board list, and each repo's, was last fetched this
+    /// launch, so pages opening don't fetch it again within the interval.
+    @ObservationIgnored private var listFetchedAt: [String: Date] = [:]
+
+    /// The org's open boards: from disk at once, then fetched again when
+    /// older than the boards' interval (Settings › Sync), or `force`d after
+    /// a change.
+    func loadBoards(org: String, force: Bool = false) async {
         loadCachedBoards(org)
-        guard let api = auth.api else { return }
-        if let projects = try? await api.orgProjects(org: org) {
+        guard let api = auth.api, SyncSettings.isOn(.boards) else { return }
+        guard force || (SyncSettings.isDue(.boards, since: listFetchedAt[org]) && !(auth.shouldHoldOff && allBoardLists[org] != nil)) else { return }
+        listFetchedAt[org] = .now
+        if let projects = try? await chargingTo(.boards, { try await api.orgProjects(org: org) }) {
             allBoardLists[org] = projects
             if let data = try? Self.encoder.encode(projects) {
                 try? data.write(to: Self.boardListURL(org), options: .atomic)
@@ -64,15 +72,19 @@ final class ProjectStore {
         return allRepoBoardLists[repo] ?? []
     }
 
-    /// The boards linked to a repo: from disk at once, then fetched again.
-    func loadRepoBoards(org: String, repo: String) async {
+    /// The boards linked to a repo: from disk at once, then fetched again
+    /// as `loadBoards` is.
+    func loadRepoBoards(org: String, repo: String, force: Bool = false) async {
         if allRepoBoardLists[repo] == nil,
            let data = try? Data(contentsOf: Self.repoBoardListURL(repo)),
            let projects = try? Self.decoder.decode([OrgProject].self, from: data) {
             allRepoBoardLists[repo] = projects
         }
-        guard let api = auth.api else { return }
-        if let projects = try? await api.repoProjects(org: org, repo: repo) {
+        guard let api = auth.api, SyncSettings.isOn(.boards) else { return }
+        let key = "repo:\(repo)"
+        guard force || (SyncSettings.isDue(.boards, since: listFetchedAt[key]) && !(auth.shouldHoldOff && allRepoBoardLists[repo] != nil)) else { return }
+        listFetchedAt[key] = .now
+        if let projects = try? await chargingTo(.boards, { try await api.repoProjects(org: org, repo: repo) }) {
             allRepoBoardLists[repo] = projects
             if let data = try? Self.encoder.encode(projects) {
                 try? data.write(to: Self.repoBoardListURL(repo), options: .atomic)
@@ -91,8 +103,9 @@ final class ProjectStore {
     /// Part of Refresh: the board list, and the definitions of boards the
     /// org's settings depend on (the tracked investments board).
     func refresh(org: String, definitions: [Int]) async {
-        guard let api = auth.api else { return }
+        guard let api = auth.api, SyncSettings.isOn(.boards) else { return }
         loadCachedBoards(org)
+        listFetchedAt[org] = .now
         let tracked = definitions.filter { $0 != 0 }
         let run = activity.begin(.projects, org: org)
         run.add("boards", title: "Boards")
@@ -129,8 +142,9 @@ final class ProjectStore {
         loadCached(key)
         guard let api = auth.api else { return }
         if !force, let cached = caches[key], Date.now.timeIntervalSince(cached.fetchedAt) < Self.maxAge { return }
+        guard SyncSettings.isOn(.boards) else { return }
         do {
-            guard let board = try await api.board(org: org, number: number) else {
+            guard let board = try await chargingTo(.boards, { try await api.board(org: org, number: number) }) else {
                 errors[key] = "Couldn't find project \(number)."
                 return
             }
@@ -152,7 +166,7 @@ final class ProjectStore {
         let key = Self.key(org, number)
         let loadKey = "\(key)|\(filter)"
         loadCached(key)
-        guard let api = auth.api, !loading.contains(loadKey) else { return }
+        guard let api = auth.api, !loading.contains(loadKey), SyncSettings.isOn(.boards) else { return }
         let now = Date.now
         let cached = caches[key]
         let boardStale = cached.map { now.timeIntervalSince($0.fetchedAt) >= Self.maxAge } ?? true

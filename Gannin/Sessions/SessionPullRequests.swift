@@ -366,14 +366,17 @@ private struct DotLabelStyle: LabelStyle {
 
 extension GitHubAPI {
     /// The org's PRs from the branch, and those at the URLs given, each
-    /// once: newest first.
-    func sessionPullRequests(org: String, branch: String, urls: [URL]) async throws -> [SessionPullRequest] {
+    /// once: newest first, with the URLs of those the branch search found.
+    /// GitHub charges for what's asked, not what comes back, so the search
+    /// asks for five PRs and 50 threads each, which a session's branch
+    /// never needs more of.
+    func sessionPullRequests(org: String, branch: String, urls: [URL]) async throws -> (pullRequests: [SessionPullRequest], searched: Set<URL>) {
         let known = urls.prefix(10).enumerated().map { ("u\($0.offset)", $0.element) }
         let definitions = (["$q: String!"] + known.map { "$\($0.0): URI!" }).joined(separator: ", ")
         let lookups = known.map { "\($0.0): resource(url: $\($0.0)) { ...SessionPR }" }.joined(separator: "\n")
         let query = """
             query(\(definitions)) {
-              search(type: ISSUE, query: $q, first: 10) { nodes { ...SessionPR } }
+              search(type: ISSUE, query: $q, first: 5) { nodes { ...SessionPR } }
               \(lookups)
             }
             fragment SessionPR on PullRequest {
@@ -386,7 +389,7 @@ extension GitHubAPI {
                 ... on StatusContext { context state targetUrl }
               } } } } } }
               reviews(last: 30) { nodes { id author { login } state body url } }
-              reviewThreads(first: 60) { nodes { id isResolved isOutdated path line originalLine
+              reviewThreads(first: 50) { nodes { id isResolved isOutdated path line originalLine
                 comments(last: 20) { nodes { author { login } body url } } } }
             }
             """
@@ -394,16 +397,19 @@ extension GitHubAPI {
         for (name, url) in known { values[name] = url.absoluteString }
         let response: SessionPRResponse = try await self.query(query, values: values)
         var seen: Set<String> = []
-        return response.pullRequests
+        let pullRequests = response.pullRequests
             .compactMap { $0.model }
             .filter { seen.insert($0.id).inserted }
             .sorted { $0.number > $1.number }
+        return (pullRequests, Set(response.searched.compactMap { $0.model?.url }))
     }
 }
 
 /// The search's nodes and each looked-up URL, keyed `u0`, `u1` and so on.
 private struct SessionPRResponse: Decodable {
     let pullRequests: [RawPullRequest]
+    /// The search's alone.
+    let searched: [RawPullRequest]
 
     private struct Key: CodingKey {
         let stringValue: String
@@ -417,14 +423,17 @@ private struct SessionPRResponse: Decodable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: Key.self)
         var found: [RawPullRequest] = []
+        var searched: [RawPullRequest] = []
         for key in container.allKeys {
             if key.stringValue == "search" {
-                found += (try? container.decode(Search.self, forKey: key).nodes) ?? []
+                searched = (try? container.decode(Search.self, forKey: key).nodes) ?? []
+                found += searched
             } else if key.stringValue.hasPrefix("u"), let pr = try? container.decode(RawPullRequest.self, forKey: key) {
                 found.append(pr)
             }
         }
         pullRequests = found
+        self.searched = searched
     }
 }
 

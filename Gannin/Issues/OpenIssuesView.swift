@@ -50,6 +50,7 @@ struct OpenIssuesView: View {
                 }
             }
         }
+        .syncOffNotice(.issues)
         .task(id: org) { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
     }
 

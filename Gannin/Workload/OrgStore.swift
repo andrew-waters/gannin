@@ -80,6 +80,10 @@ final class OrgStore {
         guard let api = auth.api else { return }
         isLoadingOrgs = true
         defer { isLoadingOrgs = false }
+        await chargingTo(.account) { await loadOrgs(api) }
+    }
+
+    private func loadOrgs(_ api: GitHubAPI) async {
         do {
             // Your own account first, then the orgs.
             let viewer = try await api.viewer()
@@ -117,8 +121,6 @@ final class OrgStore {
         case full
     }
 
-    private static let peopleMaxAge: TimeInterval = 60 * 60
-    private static let fullMaxAge: TimeInterval = 24 * 60 * 60
     /// Overlap on the changes search, so an update landing while the
     /// previous refresh ran isn't missed.
     private static let changesOverlap: TimeInterval = 5 * 60
@@ -132,11 +134,11 @@ final class OrgStore {
         let previous = snapshots[login]
         var plan = GitHubAPI.SnapshotPlan()
         if let previous, mode != .full {
-            plan.people = mode == .manual || previous.peopleFetchedAt.map { -$0.timeIntervalSinceNow > Self.peopleMaxAge } ?? true
+            plan.people = mode == .manual || SyncSettings.isDue(.members, since: previous.peopleFetchedAt)
             // Changes only while the last full search is recent and for the
             // same lookback; otherwise search everything again.
             if let full = previous.fullFetchedAt,
-               -full.timeIntervalSinceNow < Self.fullMaxAge,
+               !SyncSettings.isDue(.fullSearch, since: full),
                previous.lookbackDays == lookbackDays {
                 plan.changesSince = previous.fetchedAt.addingTimeInterval(-Self.changesOverlap)
             }
@@ -178,12 +180,13 @@ final class OrgStore {
     }
 
     /// Shows the cached snapshot straight away, then refreshes when there is
-    /// none or it is older than `maxAge`. With a cached snapshot, waits out a
-    /// low rate limit rather than spending the last of it.
-    func refreshIfStale(_ login: String, maxAge: TimeInterval = 5 * 60) async {
+    /// none or it is older than the workload's interval (Settings › Sync).
+    /// With a cached snapshot, waits out a low rate limit rather than
+    /// spending the last of it.
+    func refreshIfStale(_ login: String) async {
         loadCached(login)
         if let snapshot = snapshots[login] {
-            if snapshot.fetchedAt.timeIntervalSinceNow > -maxAge || auth.shouldHoldOff { return }
+            if !SyncSettings.isDue(.workload, since: snapshot.fetchedAt) || auth.shouldHoldOff { return }
         }
         await refresh(login, mode: .automatic)
     }

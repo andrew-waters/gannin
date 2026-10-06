@@ -32,7 +32,7 @@ final class MetricsStore {
 
     func sync(_ org: String, windowDays: Int, force: Bool = false) async {
         loadCached(org)
-        guard let api = auth.api, !syncing.contains(org) else { return }
+        guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.metrics) else { return }
 
         let now = Date.now
         let start = Self.coverageStart(windowDays: windowDays, now: now)
@@ -44,7 +44,7 @@ final class MetricsStore {
             pullRequests: [:],
             openedPerWeek: [:]
         )
-        let isFresh = now.timeIntervalSince(history.syncedAt) < 10 * 60
+        let isFresh = !SyncSettings.isDue(.metrics, since: history.syncedAt, now: now)
         if !force && isFresh && history.coveredFrom <= start { return }
         // Wait out a low rate limit unless asked, as long as there's history to show.
         if !force && auth.shouldHoldOff && histories[org] != nil { return }

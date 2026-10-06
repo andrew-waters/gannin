@@ -3,13 +3,12 @@ import Observation
 
 /// Each org's milestones and GitHub Releases (every release of each repo,
 /// with its assets' downloads, and the stars of repos with releases),
-/// persisted as JSON in Application Support and fetched again after 10
-/// minutes. Only fetched once the Releases page has been opened for an org;
+/// persisted as JSON in Application Support and fetched again after its
+/// interval (Settings › Sync). Only fetched once the Releases page has been opened for an org;
 /// Refresh includes it from then on. Each sync records the day's download
 /// totals (`DownloadHistory`), kept apart from the cache.
 @Observable
 final class ReleaseStore {
-    private static let maxAge: TimeInterval = 10 * 60
     /// Repos not pushed to for this long are left out.
     private static let quietReach: TimeInterval = 365 * 24 * 60 * 60
     /// A star history's backfill stops after this many stars, the older ones
@@ -41,9 +40,9 @@ final class ReleaseStore {
     /// `excluding` repos are left out.
     func sync(_ org: String, excluding excluded: Set<String> = [], force: Bool = false) async {
         loadCached(org)
-        guard let api = auth.api, !syncing.contains(org) else { return }
+        guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.releases) else { return }
         let now = Date.now
-        if !force, let history = histories[org], now.timeIntervalSince(history.syncedAt) < Self.maxAge { return }
+        if !force, let history = histories[org], !SyncSettings.isDue(.releases, since: history.syncedAt, now: now) { return }
         // Wait out a low budget unless asked, as long as there's something to show.
         if !force && auth.shouldHoldOff && histories[org] != nil { return }
 

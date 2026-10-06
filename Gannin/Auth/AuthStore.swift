@@ -11,6 +11,11 @@ final class AuthStore {
     private(set) var rateLimit: RateLimit?
     /// GitHub's REST budget (Actions runs and jobs) as of the latest request.
     private(set) var restRateLimit: RateLimit?
+    /// Until when GitHub has refused GraphQL requests for its rate limit:
+    /// nothing is asked before then.
+    private(set) var pausedUntil: Date?
+    /// The same for REST.
+    private(set) var restPausedUntil: Date?
     /// The token's scopes, as GitHub last reported them.
     private(set) var grantedScopes: Set<String>?
 
@@ -28,16 +33,25 @@ final class AuthStore {
                 onScopes: { [weak self] scopes in
                     if self?.grantedScopes != scopes { self?.grantedScopes = scopes }
                 },
-                onRESTRateLimit: { [weak self] in self?.restRateLimit = $0 }
+                onRESTRateLimit: { [weak self] in self?.restRateLimit = $0 },
+                onRefused: { [weak self] until, rest in
+                    if rest { self?.restPausedUntil = until } else { self?.pausedUntil = until }
+                },
+                pausedUntil: { [weak self] rest in rest ? self?.restPausedUntil : self?.pausedUntil }
             )
         }
     }
 
-    /// Automatic refreshes hold off until the budget resets.
-    var shouldHoldOff: Bool { rateLimit?.isLow ?? false }
+    /// GitHub refused a request for its rate limit, and it isn't time yet.
+    var isPaused: Bool { pausedUntil.map { $0 > .now } ?? false }
+    var isRESTPaused: Bool { restPausedUntil.map { $0 > .now } ?? false }
+
+    /// Automatic refreshes hold off until the budget resets: under the
+    /// reserve, or refused.
+    var shouldHoldOff: Bool { isPaused || (rateLimit?.isLow ?? false) }
 
     /// The same for the REST budget, which only the Actions sync spends.
-    var shouldHoldOffREST: Bool { restRateLimit?.isLow ?? false }
+    var shouldHoldOffREST: Bool { isRESTPaused || (restRateLimit?.isLow ?? false) }
 
     init() {
         token = Keychain.token()
@@ -47,7 +61,7 @@ final class AuthStore {
     }
 
     func completeSignIn(token: String) async throws {
-        let viewer = try await GitHubAPI(token: token).viewer()
+        let viewer = try await chargingTo(.account) { try await GitHubAPI(token: token).viewer() }
         Keychain.setToken(token)
         self.token = token
         setViewer(viewer)
@@ -59,6 +73,8 @@ final class AuthStore {
         viewer = nil
         rateLimit = nil
         restRateLimit = nil
+        pausedUntil = nil
+        restPausedUntil = nil
         grantedScopes = nil
         UserDefaults.standard.removeObject(forKey: Self.viewerKey)
     }
@@ -68,7 +84,7 @@ final class AuthStore {
     func validate() async {
         guard let api else { return }
         do {
-            setViewer(try await api.viewer())
+            setViewer(try await chargingTo(.account) { try await api.viewer() })
         } catch APIError.unauthorized {
             signOut()
         } catch {}

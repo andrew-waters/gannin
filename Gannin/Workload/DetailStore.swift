@@ -38,7 +38,7 @@ final class DetailStore {
         loading.insert(id)
         defer { loading.remove(id) }
         do {
-            if let detail = try await api.itemDetail(id: id) {
+            if let detail = try await chargingTo(.details, { try await api.itemDetail(id: id) }) {
                 details[id] = detail
                 fetchedAt[id] = .now
                 save()
