@@ -204,8 +204,8 @@ struct NewBoardSheet: View {
                         self.error = "Created \(title), but couldn't link it to \(linkTo): \(error.localizedDescription)"
                     }
                 }
-                await projects.loadBoards(org: org)
-                if let linkTo { await projects.loadRepoBoards(org: org, repo: linkTo) }
+                await projects.loadBoards(org: org, force: true)
+                if let linkTo { await projects.loadRepoBoards(org: org, repo: linkTo, force: true) }
                 working = nil
                 if self.error == nil {
                     dismiss()

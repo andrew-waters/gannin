@@ -102,7 +102,15 @@ struct SyncFooter: View {
                 .lineLimit(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let rateLimit = auth.rateLimit {
+            if let until = [auth.pausedUntil, auth.restPausedUntil].compactMap({ $0 }).filter({ $0 > .now }).max() {
+                Text("Paused to \(until.formatted(date: .omitted, time: .shortened))")
+                    .font(.caption)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize()
+                    .foregroundStyle(.orange)
+                    .help("GitHub refused a request for its rate limit, so Gannin asks nothing more until then. What it spends is in Settings › Sync.")
+            } else if let rateLimit = auth.rateLimit {
                 RateLimitBadge(rateLimit: rateLimit)
             }
             Button {
@@ -282,6 +290,7 @@ private struct RateLimitBadge: View {
         var text = "\(percent) of the GitHub API budget left (\(rateLimit.remaining.formatted()) of \(rateLimit.limit.formatted()) points). "
             + "Resets in \(Self.untilReset(rateLimit.resetAt)), at \(rateLimit.resetAt.formatted(date: .omitted, time: .shortened))."
         if rateLimit.isLow { text += " Automatic refreshes wait until then." }
+        text += " What each source spends is in Settings › Sync."
         return text
     }
 

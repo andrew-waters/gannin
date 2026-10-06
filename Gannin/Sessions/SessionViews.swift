@@ -1261,7 +1261,6 @@ struct SessionSettingsSection: View {
     @AppStorage(SessionStore.modelKey) private var model = ""
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
     @AppStorage(SessionStore.sendsFeedbackKey) private var sendsFeedback = false
-    @AppStorage(EngineerWatch.intervalKey) private var reviewCheck = 5
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
     @AppStorage(AutoReview.enabledKey) private var autoReview = false
     @AppStorage(AutoReview.watchKey) private var watchesReviews = true
@@ -1296,14 +1295,7 @@ struct SessionSettingsSection: View {
             Text("Sessions run Claude Code with this model (--model), from their next start or Restart. Its default is what Claude Code's own settings say; /model in a session changes it there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Picker("Check pull requests", selection: $reviewCheck) {
-                Text("Every minute").tag(1)
-                Text("Every 5 minutes").tag(5)
-                Text("Every 15 minutes").tag(15)
-                Text("Every 30 minutes").tag(30)
-                Text("Never").tag(0)
-            }
-            Text("Looks for PRs your review is asked on, on your own PRs' checks and reviews, and on reviewed PRs you're watching. A new request notifies, with Review with Claude to start a review when you choose.")
+            Text("Gannin looks for PRs your review is asked on, your own PRs' checks and reviews, and reviewed PRs you're watching, as often as Settings › Sync says. A new request notifies, with Review with Claude to start a review when you choose.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Review requests automatically", isOn: $autoReview)

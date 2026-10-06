@@ -19,6 +19,7 @@ struct ActionsView: View {
 
     var body: some View {
         dashboard
+            .syncOffNotice(.actions)
             .task(id: "\(org) \(windowDays)") { await sync(force: false) }
     }
 

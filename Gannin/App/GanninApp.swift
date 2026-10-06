@@ -28,6 +28,7 @@ struct GanninApp: App {
     init() {
         // Before anything reads preferences, the keychain or the store.
         BundleMove.run()
+        SyncSettings.migrate()
         let auth = AuthStore()
         let activity = SyncActivity()
         _auth = State(initialValue: auth)
@@ -66,6 +67,7 @@ struct GanninApp: App {
         GanninAppDelegate.sessions = sessions
         sessions.api = { [weak auth] in auth?.api }
         sessions.viewerLogin = { [weak auth] in auth?.viewer?.login }
+        sessions.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
         sessions.watchPullRequests()
         // Sparkle starts checking now, not when a menu is first built.
         _ = Updater.shared
@@ -90,10 +92,8 @@ struct GanninApp: App {
                   let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return false }
             return sessions.startAutomaticReview(of: reference, harness: setup, harnessPath: path)
         }
-        watch.afterCheck = { [weak sessions, weak auth] in
-            guard auth?.shouldHoldOff != true else { return }
-            await sessions?.checkWatchedReviews()
-        }
+        watch.checkWatched = { [weak sessions] in await sessions?.checkWatchedReviews() }
+        watch.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
         watch.start()
         TabMenuRename.shared.install()
     }

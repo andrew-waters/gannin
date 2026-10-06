@@ -4,7 +4,7 @@ import SwiftUI
 import UserNotifications
 
 /// What you, as an engineer, need to act on, checked every few minutes
-/// (Settings › General › Agent): PRs your review is requested on (yours or
+/// (Settings › Sync, Your reviews and PRs): PRs your review is requested on (yours or
 /// a team's), your open PRs with their checks and review, and issues
 /// assigned to you. A new review request notifies with Review with Claude,
 /// which starts nothing until you choose it; your PR notifies when its
@@ -15,8 +15,6 @@ import UserNotifications
 final class EngineerWatch {
     static let shared = EngineerWatch()
 
-    /// Minutes between checks; 0 turns them off.
-    static let intervalKey = "reviewCheckMinutes"
     static let menuBarKey = "showsMenuBarExtra"
 
     struct PullRequestItem: Identifiable, Hashable {
@@ -77,8 +75,12 @@ final class EngineerWatch {
     /// Starts a review in the background when auto review is on for the
     /// PR's org; true if it started (`AutoReview`, wired in `GanninApp`).
     @ObservationIgnored var autoReview: (PullRequestReference) -> Bool = { _ in false }
-    /// Run after each check: watched reviews looked at again.
-    @ObservationIgnored var afterCheck: () async -> Void = {}
+    /// Watched reviews looked at again, on their own interval (`AutoReview`).
+    @ObservationIgnored var checkWatched: () async -> Void = {}
+    /// The budget is low or GitHub has refused: automatic checks wait.
+    @ObservationIgnored var holdsOff: () -> Bool = { false }
+    @ObservationIgnored private var attemptedAt: Date?
+    @ObservationIgnored private var watchedAt: Date?
     /// Requests already started automatically, by PR ID, so one whose review
     /// was removed isn't started again.
     @ObservationIgnored private var autoReviewed: Set<String>
@@ -89,10 +91,6 @@ final class EngineerWatch {
     private init() {
         dismissed = Set(UserDefaults.standard.stringArray(forKey: "dismissedReviewRequests") ?? [])
         autoReviewed = Set(UserDefaults.standard.stringArray(forKey: "autoReviewedRequests") ?? [])
-    }
-
-    static var interval: Int {
-        UserDefaults.standard.object(forKey: intervalKey) as? Int ?? 5
     }
 
     var waitingReviews: [PullRequestItem] { reviewRequests.filter { !dismissed.contains($0.id) } }
@@ -108,10 +106,22 @@ final class EngineerWatch {
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }
-                let minutes = Self.interval
-                if minutes > 0 { await self.check() }
-                try? await Task.sleep(for: .seconds(max(minutes, 1) * 60))
+                await self.tick()
+                try? await Task.sleep(for: .seconds(30))
             }
+        }
+    }
+
+    /// Each check when it's on and its interval (Settings › Sync) has
+    /// passed since the last attempt, unless the budget says wait.
+    private func tick() async {
+        guard !holdsOff() else { return }
+        if SyncSettings.isOn(.reviewRequests), SyncSettings.isDue(.reviewRequests, since: attemptedAt) {
+            await check()
+        }
+        if SyncSettings.isOn(.watchedReviews), SyncSettings.isDue(.watchedReviews, since: watchedAt) {
+            watchedAt = .now
+            await chargingTo(.watchedReviews) { await checkWatched() }
         }
     }
 
@@ -124,9 +134,10 @@ final class EngineerWatch {
     func check() async {
         guard let api = api(), !checking else { return }
         checking = true
+        attemptedAt = .now
         defer { checking = false }
         do {
-            let found = try await api.engineerWork()
+            let found = try await chargingTo(.reviewRequests) { try await api.engineerWork() }
             error = nil
             checkedAt = .now
             notice(found.reviews, mine: found.mine)
@@ -144,7 +155,6 @@ final class EngineerWatch {
         } catch {
             self.error = error.localizedDescription
         }
-        await afterCheck()
     }
 
     // MARK: Notifying
@@ -381,7 +391,7 @@ struct EngineerMenu: View {
                         Text("Checking GitHub")
                     } else if let checkedAt = watch.checkedAt {
                         Text("\(count == 0 ? "Nothing" : "\(count) thing\(count == 1 ? "" : "s")") waiting · checked \(checkedAt.formatted(.relative(presentation: .named)))")
-                    } else if EngineerWatch.interval == 0 {
+                    } else if !SyncSettings.isOn(.reviewRequests) {
                         Text("Checks are off in Settings")
                     } else {
                         Text("Not checked yet")

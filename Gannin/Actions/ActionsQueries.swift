@@ -125,8 +125,11 @@ extension GitHubAPI {
     }()
 
     /// A GET against the REST API. Timeouts are retried twice, and a
-    /// secondary rate limit is waited out once when GitHub says how long.
+    /// secondary rate limit is waited out once when GitHub says it's a
+    /// minute or less; a longer refusal pauses REST requests until then.
     func rest<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
+        if let until = pausedUntil?(true), until > .now { throw APIError.rateLimited(until: until) }
+        let source = APIUsage.currentSource
         var components = URLComponents(url: Self.restBase.appending(path: path), resolvingAgainstBaseURL: false)!
         components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         var request = URLRequest(url: components.url!)
@@ -145,6 +148,7 @@ extension GitHubAPI {
             }
             let http = response as? HTTPURLResponse
             let status = http?.statusCode ?? 0
+            APIUsage.shared.record(cost: 1, isREST: true, source: source)
             if let http, let budget = Self.restRateLimit(http) { onRESTRateLimit?(budget) }
             if status == 401 { throw APIError.unauthorized }
             if (502...504).contains(status), attempt < 2 {
@@ -152,11 +156,14 @@ extension GitHubAPI {
                 try await Task.sleep(for: .seconds(attempt * 2))
                 continue
             }
-            if status == 403 || status == 429, attempt == 0,
-               let wait = http?.value(forHTTPHeaderField: "Retry-After").flatMap(Int.init), wait <= 60 {
-                attempt += 1
-                try await Task.sleep(for: .seconds(wait))
-                continue
+            if let http, let until = RateLimit.refusal(http, body: data) {
+                if attempt == 0, until.timeIntervalSinceNow <= 60 {
+                    attempt += 1
+                    try await Task.sleep(for: .seconds(max(until.timeIntervalSinceNow, 1)))
+                    continue
+                }
+                onRefused?(until, true)
+                throw APIError.rateLimited(until: until)
             }
             guard (200..<300).contains(status) else {
                 throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
@@ -187,6 +194,7 @@ extension GitHubAPI {
         }
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
+        APIUsage.shared.record(cost: 1, isREST: true, source: .writes)
         if let http, let budget = Self.restRateLimit(http) { onRESTRateLimit?(budget) }
         if status == 401 { throw APIError.unauthorized }
         guard (200..<300).contains(status) else {

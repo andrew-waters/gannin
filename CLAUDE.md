@@ -37,7 +37,9 @@ newest wins, time off merges by its UUID. It was copied from `UserDefaults` once
 (`userDataMigrated`). GitHub caches stay local JSON. The app has no entitlements beyond the
 hardened runtime.
 
-The app's settings (`SettingsView`) are General and Storage panes. Storage (`StorageSettings`) shows each cache's size on disk with Clear
+The app's settings (`SettingsView`) are General, Sync and Storage panes. Sync (`SyncSettingsView`)
+holds everything that decides what's fetched from GitHub and how often (see Fetching and the rate
+limit). Storage (`StorageSettings`) shows each cache's size on disk with Clear
 (the stores' `clear()`, fetched again when next needed), what's been entered in Gannin with
 Delete Your Data, and Erase Everything and Sign Out.
 
@@ -89,7 +91,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `SyncRun.track`. Before fetching, one aliased counts query (`GitHubAPI.counts`) sets every
   step's total, so overall progress is weighted by items from the start.
   `SyncFooter` (`SyncPanel.swift`) sits at the bottom of the sidebar: a Refresh link (⌘R;
-  Option-click or right-click for Full Refresh), the API budget and reset, and a chevron. The
+  Option-click or right-click for Full Refresh), the API budget and reset (or Paused to, in
+  orange, while GitHub is refusing requests), and a chevron. The
   step detail slides up while a sync runs and closes itself a few seconds after; overall
   progress runs along the divider above the row.
 - Windows are independent: the selected org, project (`workspace`), section and metrics window
@@ -176,12 +179,44 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   fetch (five minutes' overlap), in any state, merged into the previous snapshot by
   `OrgSnapshot.merging`. A full search happens daily, when the lookback changes, when the
   changes search passes 1000 results, or via Full Refresh. Members and teams are refetched
-  hourly, or on every manual Refresh.
+  hourly, or on every manual Refresh. Each of those intervals is a setting (Settings › Sync).
 - Every query also asks for `rateLimit` (injected in `GitHubAPI.send`). The budget lives on
   `AuthStore.rateLimit`; each query's cost is charged to the running `SyncStep` through the
-  `SyncContext.step` task-local. Automatic refreshes and syncs hold off when it's low
-  (`RateLimit.isLow`) and there's cached data to show.
+  `SyncContext.step` task-local, and to the usage ledger (see Fetching and the rate limit).
+  Automatic refreshes and syncs hold off when it's low (`RateLimit.isLow`, under the reserve)
+  and there's cached data to show.
 - People are org members; activity from non-members still shows in the PR and issue lists.
+
+## Fetching and the rate limit
+
+- GitHub's GraphQL budget (5,000 points an hour per token) is what runs out; the Actions sync
+  alone uses REST, with its own. Settings › Sync (`SyncSettingsView`, app-wide since the budget
+  is the token's) lists every source (`SyncSource`, `Sync/SyncSettings.swift`): workload (with
+  members and teams, and the full search, beneath it), PR metrics, issue history (every open
+  issue, and descriptions and comments, beneath it), work log, project boards, harness, GitHub
+  Actions, milestones and releases, your reviews and PRs (`EngineerWatch`), watched reviews and
+  session pull requests (while checks run, beneath it). Each has a switch (`sync.<source>.off`)
+  and an interval (`sync.<source>.interval`, seconds), read through `SyncSettings.isOn`,
+  `interval` and `isDue` by the stores and pollers in place of fixed ages. Off means not fetched
+  at all, Refresh included; the workload, its sub-rows and the harness (the team's settings are
+  in it) only space out. A page whose source is off says so at its top (`.syncOffNotice`).
+  Pages fetch what they show when it's older than its interval, not on a timer; the pollers
+  (review requests and watched reviews every 30 seconds' tick, session PRs) run on theirs and
+  hold off when the budget is low (`holdsOff`). The old review check minutes
+  (`reviewCheckMinutes`) moved across once (`SyncSettings.migrate`). The lookback and the
+  Actions jobs per workflow are on the same pane, under How much.
+- The reserve (`sync.reserve`, 500 points by default) is what automatic fetches leave for what
+  you do by hand: `RateLimit.isLow` is under it.
+- `APIUsage` (`Sync/APIUsage.swift`, Application Support/APIUsage.json, the last day) records
+  every GraphQL query's cost and every REST request by source: the `UsageContext.source`
+  task-local a fetcher sets with `chargingTo(_:_:)`, else its sync run's kind, else Other.
+  Mutations are Changes you make (a point each). The pane shows each source's spend over the
+  last hour or day, the budget left, and a warning past half the hourly budget; things fetched
+  because you opened or did something are under Not on a schedule.
+- When GitHub refuses a request for its limit (403 or 429 with none left, `Retry-After`, or
+  GraphQL's `RATE_LIMITED`, `RateLimit.refusal`), `APIError.rateLimited` pauses every request
+  of that kind until it says (`AuthStore.pausedUntil`, `restPausedUntil`, asked by `GitHubAPI`
+  before sending); REST still waits out a minute or less once.
 - A person's load (`inFlight`) is their open PRs, review requests and assigned issues with an open
   PR. Assigned issues nobody has started are backlog and not counted; an issue closed by one of
   their own PRs counts once.
@@ -320,7 +355,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   fetched once the page has been opened for an org, and Refresh includes it from then on.
   Runs older than 190 days are dropped.
 - Jobs (every attempt, `filter=all`) are fetched when a workflow is opened: every completed
-  run in the window, or the latest N when Settings > General > GitHub Actions lowers it
+  run in the window, or the latest N when Settings › Sync lowers it
   (`ActionsStore.jobRunLimitKey`, 0 for all). They're fetched 40 runs a batch with progress
   (`jobProgress`), saved every few batches and on leaving, fetched again when a run is
   re-run, and stop when the REST budget drops under 300 (`jobNotices`).
@@ -361,7 +396,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   stargazers' `starredAt`, newest first and only those since the last sync; the first backfill
   stops at `ReleaseStore.starReach`, counting older stars at its start), both four repos at once
   (`eachRepo`). A repo whose stars can't be read keeps what it had. Cached as JSON in Application
-  Support/Releases, fetched again after 10 minutes, only once the page has been opened for an
+  Support/Releases, fetched again after its interval (Settings › Sync), only once the page has been opened for an
   org; Refresh includes it from then on. It's its own sync run (Releases: milestones and
   releases, older releases, stars). Excluded repos no project names aren't kept
   (`unfetchedRepos`); the page leaves out the rest through `repoExclusion`.
@@ -540,7 +575,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`linkProjectV2ToRepository`, `unlinkProjectV2FromRepository`, `updateProjectV2`).
 - Items are fetched with the view's filter passed to GitHub (`items(query:)`), so GitHub
   applies its own filter syntax; `ProjectStore` caches each board's definition and each
-  filter's items on disk, refreshed after 10 minutes. Layouts: Table (`StatsTable` per group),
+  filter's items on disk, refreshed after the boards' interval (Settings › Sync), as are the
+  board lists. Layouts: Table (`StatsTable` per group),
   Board (columns in board option order with GitHub's option colours) and Insights (time in
   each status from the issue history's board status changes). Roadmap views show as tables.
 - Issues carry their board field values (`IssueRecord.projectFields`), which "In progress now"
@@ -568,8 +604,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Gannin talks to claude by pasting at its prompt (`SessionStore.submit`, bracketed paste then
   Return; claude queues it while working). The PRs pane (`SessionPullRequests.swift`) finds the
   session's PRs by `head:<branch>` across the org plus the URLs its hooks caught
-  (`CodeSession.pullRequests`), with state, review, conflicts and checks, read again every 30
-  seconds while checks run, else 2 minutes. Send Failures to Claude passes the failed checks
+  (`CodeSession.pullRequests`; those the search found last time aren't looked up again,
+  `foundBySearch`), with state, review, conflicts and checks, read when the pane opens and by
+  `watchPullRequests`. Send Failures to Claude passes the failed checks
   with `gh run view --log-failed`; open review threads and reviews with words are ticked and
   sent as one prompt (`SessionPrompts`). In Changes, clicking a line's number leaves a comment
   (`DiffComment`, `SessionStore.drafts`), sent together from the bar under the list.
@@ -595,7 +632,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   to interrupt, the context gauge with /compact, and the last test result. The `Notification`
   hook only marks permission prompts and dialogs; a `PreToolUse` hook marks AskUserQuestion.
 - `SessionStore.watchPullRequests` fetches every running session's PRs (and any with one open)
-  every 90 seconds, 30 while checks run, and flags new failures and new review feedback in one
+  every 2 minutes, 1 while checks run (Settings › Sync), and flags new failures and new review feedback in one
   notification (`noticeNews`). What's been seen is kept with the session
   (`CodeSession.pullRequestsSeen`, so a relaunch flags what came while Gannin was closed; the
   first look only learns), a thread by its latest comment (`comments(last: 20)`, older keys
@@ -646,7 +683,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   terminal or picked in the panel are each confirmed (`ShareDocumentsSheet`: share, and
   separately whether it may be committed), copied to `.worktrees/plan-<slug>/docs/` (Word and
   RTF with a textutil `.txt`), and claude is told which may go in `plans/assets/<slug>/`.
-- `EngineerWatch` checks every few minutes (Settings, `reviewCheckMinutes`) for PRs your review
+- `EngineerWatch` checks every few minutes (Settings › Sync, Your reviews and PRs) for PRs your review
   is requested on, your open PRs (checks, review, conflicts) and your issues, in one query
   (`engineerWork`). New requests notify with Review with Claude (`startReview`, wired in
   `GanninApp`); your PRs notify when they start failing, get changes requested or are
@@ -659,8 +696,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `open` launches claude without a tab), two at a time (`AutoReview.maxRunning`); the rest wait
   for a later check. A review's first result (`reviewFinished`, from `store`) sets
   `CodeSession.watch` (`ReviewWatch`, on by default: `watchReviewedPullRequests`; Watch for
-  changes on the review). After each check (`EngineerWatch.afterCheck`, held off when the budget
-  is low) `checkWatchedReviews` asks for every watched PR by node ID (`watchedPullRequests`: head
+  changes on the review). On its own interval (Settings › Sync, Watched reviews;
+  `EngineerWatch.checkWatched`, held off when the budget is low) `checkWatchedReviews` asks for every watched PR by node ID (`watchedPullRequests`: head
   commit, state, conversation comments, reviews and their line comments, and the viewer's
   login). The first look notes what's there; then new commits and others' comments (not yours,
   not bots') are noted, and once nothing new has come for `quietPeriod` and the reviewer isn't
@@ -756,8 +793,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   none is picked) are chosen from GitHub's lists in the org's Settings (`OrgConfig.harness`).
   `HarnessStore` indexes it from GitHub, so it's the same for everyone: the branch's head
   commit (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
-  parsed off the main thread. Cached in Application Support/Harness, fetched again after 10
-  minutes. The fetch is the store's own task, so a view going away doesn't cancel it.
+  parsed off the main thread. Cached in Application Support/Harness, fetched again after its
+  interval (Settings › Sync, 10 minutes by default). The fetch is the store's own task, so a view going away doesn't cancel it.
 - The org has one harness of its own (`OrgConfig.harness`, the user's own setting, where the team's
   data is kept), set in Settings > Harness (`HarnessesSection`: Add or Create Harness while there's
   none, its branch, Remove), and each project can have its own (`RepoProject.harness`, team data,

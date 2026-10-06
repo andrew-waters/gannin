@@ -178,6 +178,7 @@ struct StandupPage: View {
                 build: { standup(day).map(StandupNotes.markdown) ?? "The work log hasn't loaded yet." }
             )
         }
+        .syncOffNotice(.workLog)
         .task(id: "\(org) \(day.start.timeIntervalSince1970)") {
             async let log: Void = workLog.sync(org, from: Calendar.current.date(byAdding: .day, value: -1, to: day.start))
             let days = max(14, Int(Date.now.timeIntervalSince(day.start) / 86_400) + 2)
