@@ -59,4 +59,12 @@ every request and held automatic syncs back under 500 points left, but:
 - [x] Pollers: their own intervals, hold back when low, a cheaper session PR query
 - [x] Settings › Sync pane, and the footer and pages saying when something's off or paused
 - [x] CLAUDE.md
-- [ ] Measured with the defaults against the target
+- [x] Measured with the defaults against the target
+
+## Measured
+
+Three hours of normal use with the defaults on 6 October 2026 (18:00 to 21:00): 1,501, 1,296 and
+1,270 points an hour, under the target of 2,500. Session pull requests were nearly all of it
+(1,272 of 1,296 in the last hour): 424 queries at 3 points each, down from 7 to 13 before. One
+session's checks running puts every watched session on the 1 minute interval, so that's the next
+place to save if it's needed.
