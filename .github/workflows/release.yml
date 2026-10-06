@@ -2,9 +2,10 @@ name: Release
 
 # A tag (v1.2.0) is a release: the Mac app archived and signed with
 # Developer ID, notarised, packed in a DMG, signed for Sparkle, and published
-# to gannin.ai through the public andrew-waters/gannin-site repo (the DMG on
-# its downloads branch, appcast.xml on main, deployed by its Pages workflow).
-# A GitHub release here keeps the record, with the DMG attached.
+# as a GitHub release here: the DMG, its checksum, the same DMG as Gannin.dmg
+# (gannin.ai's Download button, through releases/latest/download) and the
+# appcast, whose enclosure is the release's DMG, so every download counts on
+# the release. pages.yml then deploys gannin.ai with the new appcast.xml.
 #
 # The tag's message is the release: its first line the title, the rest the
 # notes, shown on GitHub and in Sparkle's update panel. Tag with
@@ -15,13 +16,13 @@ name: Release
 #   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8  App Store Connect API key, for
 #     Developer ID signing and notarisation
 #   SPARKLE_PRIVATE_KEY  the update signing key (account "gannin")
-#   SITE_DEPLOY_KEY  write deploy key for andrew-waters/gannin-site
 on:
   push:
     tags: ["v*"]
 
 permissions:
   contents: write
+  actions: write # to start pages.yml
 
 concurrency:
   group: release
@@ -210,7 +211,7 @@ jobs:
           xcrun stapler staple "$DMG"
           shasum -a 256 "$DMG" > "$DMG.sha256"
           # The same DMG under a name that never changes, for the site's
-          # Download button.
+          # Download button (releases/latest/download/Gannin.dmg).
           cp "$DMG" Gannin.dmg
 
       - name: Sign for Sparkle and write the appcast
@@ -244,46 +245,12 @@ jobs:
           ${NOTES}
           ]]></description>
                 <pubDate>$(date -u +"%a, %d %b %Y %H:%M:%S +0000")</pubDate>
-                <enclosure url="https://gannin.ai/downloads/Gannin-${VERSION}.dmg" type="application/octet-stream" ${SIGNATURE} />
+                <enclosure url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/Gannin-${VERSION}.dmg" type="application/octet-stream" ${SIGNATURE} />
               </item>
             </channel>
           </rss>
           EOF
           cat appcast.xml
-
-      # The DMG first, then the appcast that points at it, so an update
-      # never names a file that isn't there yet. The downloads branch holds
-      # only the latest release, replaced each time.
-      - name: Publish to gannin.ai
-        env:
-          SITE_DEPLOY_KEY: ${{ secrets.SITE_DEPLOY_KEY }}
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SITE_DEPLOY_KEY" > ~/.ssh/site_key
-          chmod 600 ~/.ssh/site_key
-          export GIT_SSH_COMMAND="ssh -i $HOME/.ssh/site_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new"
-          REMOTE=git@github.com:andrew-waters/gannin-site.git
-
-          mkdir downloads && cd downloads
-          git init -q -b downloads
-          git config user.name "Andrew Waters"
-          git config user.email "501976+andrew-waters@users.noreply.github.com"
-          cp "../Gannin-$VERSION.dmg" "../Gannin-$VERSION.dmg.sha256" ../Gannin.dmg .
-          git add -A
-          git commit -qm "Gannin $VERSION"
-          git push -f "$REMOTE" downloads
-          cd ..
-
-          git clone -q --depth 1 --branch main "$REMOTE" site-repo
-          cp appcast.xml site-repo/appcast.xml
-          cd site-repo
-          git config user.name "Andrew Waters"
-          git config user.email "501976+andrew-waters@users.noreply.github.com"
-          git add appcast.xml
-          git commit -qm "Appcast for Gannin $VERSION"
-          git push -q origin main
-          rm -f ~/.ssh/site_key
 
       - name: Create the release
         env:
@@ -293,4 +260,12 @@ jobs:
           gh release create "$GITHUB_REF_NAME" \
             --title "$(cat release-title.txt)" \
             --notes-file release-notes.md \
-            "Gannin-$VERSION.dmg" "Gannin-$VERSION.dmg.sha256"
+            "Gannin-$VERSION.dmg" "Gannin-$VERSION.dmg.sha256" Gannin.dmg appcast.xml
+
+      # Only once the release, its DMG and appcast are up, so gannin.ai's
+      # appcast never names a file that isn't there yet. Run from main, which
+      # the github-pages environment deploys from.
+      - name: Deploy gannin.ai
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

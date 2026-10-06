@@ -18,14 +18,15 @@ number from the workflow's run, so it only goes up.
 
 ## Where things go
 
-- **andrew-waters/gannin-site** is public and holds only what gannin.ai serves. Its Pages
-  workflow deploys `main` with the `downloads` branch under `/downloads/`.
-- `site/` here is the site's source. `publish-site.yml` mirrors it into gannin-site's `main`
-  on every push to `main` that touches it, leaving `appcast.xml` alone.
-- A release force-pushes `downloads` with the new `Gannin-<version>.dmg`, its `.sha256` and
-  `Gannin.dmg` (the site's Download button), then commits `appcast.xml` to `main`, in that
-  order, so the appcast never points at a file that isn't there. Only the latest DMG is
-  served; every release's DMG is also attached to the GitHub release here.
+- **The GitHub release here** has everything: `Gannin-<version>.dmg`, its `.sha256`, the same
+  DMG as `Gannin.dmg`, and `appcast.xml`. The appcast's enclosure is the release's
+  `Gannin-<version>.dmg`, and the site's Download for Mac button is
+  `releases/latest/download/Gannin.dmg`, so every download, by hand or by Sparkle, counts in
+  the release's download numbers (which Delivery › Releases reads).
+- **gannin.ai** is this repo's GitHub Pages site, deployed by `pages.yml`: `site/` plus the
+  latest release's `appcast.xml`, so `https://gannin.ai/appcast.xml` is always the newest. It
+  deploys on every push to `main` that touches `site/`, and a release starts it once the
+  release is up, so the appcast never points at a file that isn't there.
 
 ## Secrets
 
@@ -37,7 +38,6 @@ Set on this repo (Settings › Secrets and variables › Actions), or with `gh s
 | `DEVELOPER_ID_CERTIFICATE_PASSWORD` | Its export password. |
 | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | An App Store Connect API key (Users and Access › Integrations › App Store Connect API, Admin role): its ID, the issuer ID and the .p8's contents. xcodebuild signs the Developer ID export with it, and notarytool notarises with it. |
 | `SPARKLE_PRIVATE_KEY` | The update signing key, kept in the login keychain under the account `gannin` (`generate_keys --account gannin -x key.txt` exports it). Its public half is `SUPublicEDKey` in `Gannin/Info.plist`. |
-| `SITE_DEPLOY_KEY` | The private half of gannin-site's write deploy key ("Publish from andrew-waters/gannin"). |
 
 ## Before the first release
 
@@ -48,9 +48,26 @@ Set on this repo (Settings › Secrets and variables › Actions), or with `gh s
   - a `CNAME` for `www` to `andrew-waters.github.io`
 
   all **DNS only** (grey cloud) until GitHub has issued the certificate and Enforce HTTPS is
-  on in gannin-site's Pages settings. Proxying through Cloudflare after that is fine with SSL
+  on in this repo's Pages settings (Settings › Pages, with GitHub Actions as the source and
+  `gannin.ai` as the custom domain). Proxying through Cloudflare after that is fine with SSL
   set to Full (strict). For a verified domain, add the `TXT` record GitHub shows under your
   account's Settings › Pages › Verified domains.
+
+## Moving from gannin-site
+
+gannin.ai used to be served from a separate public repo, andrew-waters/gannin-site, while this
+one was private: `publish-site.yml` mirrored `site/` there and releases pushed the DMGs to its
+`downloads` branch (andrew-waters/gannin#25). To move over:
+
+1. Attach `Gannin.dmg` and an `appcast.xml` to the latest release. The appcast is gannin-site's
+   with only the enclosure URL changed to the release's DMG, which is the same file, so its
+   signature and length still hold.
+2. In this repo's Settings › Pages, pick GitHub Actions as the source, and run `pages.yml`.
+3. Remove `gannin.ai` from gannin-site's Pages, then set it here and turn on Enforce HTTPS once
+   the certificate is issued. DNS doesn't change: both repos are this account's Pages.
+4. Check `https://gannin.ai/appcast.xml` and the Download for Mac button.
+5. Delete the `SITE_DEPLOY_KEY` secret here and the deploy key on gannin-site, and archive
+   gannin-site.
 
 ## The bundle ID
 
