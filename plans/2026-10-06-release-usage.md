@@ -45,4 +45,4 @@ stars.
 - [x] Releases part: tiles, downloads and stars over time, Repositories and Releases tables
 - [x] Release page: downloads and assets
 - [x] CLAUDE.md
-- [ ] Decisions noted on the issue
+- [x] Decisions noted on the issue
