@@ -156,6 +156,13 @@ struct OrgSnapshot: Codable {
     let issues: [Issue]
     /// Non-fatal problems (e.g. teams hidden from this token).
     let warnings: [String]
+
+    /// Cached before PRs' files changed were fetched: a changes search
+    /// would leave the PRs it doesn't touch without them, so the next
+    /// refresh searches everything.
+    var lacksFileCounts: Bool {
+        (openPullRequests + mergedPullRequests).contains { $0.changedFiles == nil }
+    }
 }
 
 struct Comment: Codable, Hashable, Identifiable {

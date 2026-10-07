@@ -139,7 +139,8 @@ final class OrgStore {
             // same lookback; otherwise search everything again.
             if let full = previous.fullFetchedAt,
                !SyncSettings.isDue(.fullSearch, since: full),
-               previous.lookbackDays == lookbackDays {
+               previous.lookbackDays == lookbackDays,
+               !previous.lacksFileCounts {
                 plan.changesSince = previous.fetchedAt.addingTimeInterval(-Self.changesOverlap)
             }
         }
