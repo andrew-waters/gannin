@@ -15,16 +15,41 @@ struct MeasurableEditor: View {
     @State private var draft = Measurable(name: "", cadence: .weekly)
     @State private var confirmingDelete = false
 
+    /// Ticked for the metric picked; ticking one picks it.
+    private func choosing(_ metric: ScorecardMetric?) -> Binding<Bool> {
+        Binding(get: { draft.metric == metric }, set: { if $0 { pick(metric) } })
+    }
+
+    /// Metrics another goal already has at this cadence for this team (or
+    /// the org), shown but not offered again.
+    private var taken: Set<ScorecardMetric> {
+        Set(configs.config(for: org).measurables.filter {
+            $0.id != draft.id && $0.cadence == draft.cadence && $0.team == draft.team
+        }.compactMap(\.metric))
+    }
+
     var body: some View {
         let snapshot = orgs.snapshot(for: org)
         let teams = (snapshot?.teams ?? []).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         let members = (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        let taken = taken
         Form {
             Section {
-                Picker("Measures", selection: Binding(get: { draft.metric }, set: { pick($0) })) {
-                    Text("A number entered by hand").tag(ScorecardMetric?.none)
-                    Divider()
-                    ForEach(ScorecardMetric.allCases) { Text($0.title).tag(Optional($0)) }
+                // A menu rather than a picker: a picker's menu can't disable
+                // the metrics other goals already have.
+                LabeledContent("Measures") {
+                    Menu(draft.metric?.title ?? "A number entered by hand") {
+                        Toggle("A number entered by hand", isOn: choosing(nil))
+                        ForEach(ScorecardMetric.groups(), id: \.title) { group in
+                            Section(group.title) {
+                                ForEach(group.metrics) { metric in
+                                    Toggle(taken.contains(metric) ? "\(metric.title) (already a goal)" : metric.title, isOn: choosing(metric))
+                                        .disabled(taken.contains(metric))
+                                }
+                            }
+                        }
+                    }
+                    .fixedSize()
                 }
                 TextField("Name", text: $draft.name, prompt: Text(draft.metric?.title ?? "AWS costs"))
                 Picker("Every", selection: $draft.cadence) {
@@ -94,7 +119,7 @@ struct MeasurableEditor: View {
             }
         }
         .confirmationDialog("Delete \(draft.name)?", isPresented: $confirmingDelete) {
-            Button("Delete Measurable", role: .destructive) {
+            Button("Delete Goal", role: .destructive) {
                 configs.updateMeasurables(org) { $0.removeAll { $0.id == draft.id } }
                 dismiss()
             }

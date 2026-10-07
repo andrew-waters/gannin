@@ -15,6 +15,7 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
+        AppAppearance.current.apply()
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {

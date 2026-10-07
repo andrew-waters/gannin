@@ -28,9 +28,17 @@ struct GeneralSettings: View {
     @Environment(OrgStore.self) private var orgs
     @AppStorage("excludeDrafts") private var excludeDrafts = false
     @AppStorage("showHidden") private var showHidden = false
+    @AppStorage(AppAppearance.key) private var appearance: AppAppearance = .system
 
     var body: some View {
         Form {
+            Section {
+                Picker("Appearance", selection: $appearance) {
+                    ForEach(AppAppearance.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: appearance) { _, value in value.apply() }
+            }
             Section("Account") {
                 if let viewer = auth.viewer {
                     LabeledContent("Signed in as") {

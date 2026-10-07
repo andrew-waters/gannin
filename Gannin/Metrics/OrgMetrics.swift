@@ -315,6 +315,20 @@ struct OrgMetrics {
     let timeToFirstReview: DurationStat
     let stages: [CycleStage: StageSummary]
     let mergedWithoutReview: [MetricPullRequest]
+    /// Merged PRs in repos that need a review: what the unreviewed are a
+    /// share of.
+    let mergedNeedingReview: Int
+
+    /// Unreviewed, of the PRs merged in repos that need a review; nil with
+    /// none.
+    var unreviewedShare: Double? {
+        mergedNeedingReview == 0 ? nil : Double(mergedWithoutReview.count) / Double(mergedNeedingReview)
+    }
+
+    static func unreviewedShare(_ prs: [MetricPullRequest], config: OrgConfig) -> Double? {
+        let needing = prs.filter { config.needsReview($0.repo) }
+        return needing.isEmpty ? nil : Double(needing.filter { $0.firstReviewAt == nil }.count) / Double(needing.count)
+    }
     let weeks: [WeekMetrics]
     let people: [PersonMetrics]
     let repos: [RepoMetrics]
@@ -390,6 +404,7 @@ struct OrgMetrics {
         })
         // Repos that don't need a review aren't counted against.
         mergedWithoutReview = merged.filter { $0.firstReviewAt == nil && config.needsReview($0.repo) }
+        mergedNeedingReview = merged.filter { config.needsReview($0.repo) }.count
 
         // Weekly buckets cover whole weeks, so they use the full stored range.
         let weekly = Dictionary(grouping: coverage) {
@@ -522,7 +537,7 @@ struct OrgMetrics {
                     (stage, StageSummary(before.compactMap { $0.duration(of: stage) }))
                 }),
                 reworkShare: before.isEmpty ? nil : rework.share,
-                unreviewedShare: before.isEmpty ? nil : Double(before.filter { $0.firstReviewAt == nil && config.needsReview($0.repo) }.count) / Double(before.count),
+                unreviewedShare: Self.unreviewedShare(before, config: config),
                 prSizeMedian: sizes.isEmpty ? nil : sizes[sizes.count / 2],
                 prFilesMedian: SizeStat(before).medianFiles,
                 answeredShare: requests == 0 ? nil : Double(answered) / Double(requests),
@@ -546,7 +561,7 @@ struct OrgMetrics {
         return DeliverySummary(
             merged: merged.count, cycleTime: cycleTime, timeToFirstReview: timeToFirstReview, stages: stages,
             reworkShare: merged.isEmpty ? nil : stages[.rework]?.share,
-            unreviewedShare: merged.isEmpty ? nil : Double(mergedWithoutReview.count) / Double(merged.count),
+            unreviewedShare: unreviewedShare,
             prSizeMedian: prSize.median, prFilesMedian: prSize.medianFiles, answeredShare: answeredShare, opened: opened,
             repos: breakdown(\.repo), authors: breakdown { $0.author?.login ?? "" }
         )

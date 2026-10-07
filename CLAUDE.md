@@ -37,7 +37,8 @@ newest wins, time off merges by its UUID. It was copied from `UserDefaults` once
 (`userDataMigrated`). GitHub caches stay local JSON. The app has no entitlements beyond the
 hardened runtime.
 
-The app's settings (`SettingsView`) are General, Sync and Storage panes. Sync (`SyncSettingsView`)
+The app's settings (`SettingsView`) are General, Sync and Storage panes. General starts with
+Appearance: System, Light or Dark (`AppAppearance`, set on `NSApp` at launch and when changed). Sync (`SyncSettingsView`)
 holds everything that decides what's fetched from GitHub and how often (see Fetching and the rate
 limit). Storage (`StorageSettings`) shows each cache's size on disk with Clear
 (the stores' `clear()`, fetched again when next needed), what's been entered in Gannin with
@@ -278,23 +279,39 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Goals) are targets for the org and per team (under Velocity: PRs merged a week, held to as many
   weeks' worth as the window, cycle time and first review; then rework, unreviewed, PR size,
   files changed (median per PR, `prSizeFiles`, also a Scorecard metric), requests answered), shown on the Dashboard as on track or not.
-- Scorecard (`Metrics/Scorecard.swift`, Delivery › Scorecard, `WorkloadTab.scorecard`), in the
-  spirit of Strety's: `Measurable`s (`OrgConfig.scorecard`, a team file, `.gannin/scorecard.json`;
-  until edited, `OrgConfig.measurables` seeds weekly ones from the Goals), each with a cadence
-  (`ScorecardCadence`: weekly, monthly, quarterly, annual, tabs with counts), a source (a
-  `ScorecardMetric` worked out from merged PRs as `OrgMetrics` does, author for PR numbers and
-  reviewer for requests answered, or a number entered by hand in a unit: number, money, percentage,
-  hours, days), a team, an owner, a target (at least or at most, in the unit) and notes
-  (`MeasurableEditor`). Columns per period newest first, the one under way shaded (a count such as
-  PRs merged held to its share so far), green on target and red off it, N/A with nothing and a dash
-  before the history; Hit is whole periods on target. Hand-entered cells take a value in a popover,
-  kept by the period's first day (`Measurable.values`). Ranges up to 104 weeks, 36 months, 12
-  quarters, 5 years or All time, which syncs the metrics history back to the org's first issue
-  (`MetricsStore.sync` backfills newest first, saving every eight weeks). Group by team, owner or
-  none. A metric's cells (or Compare People in its menu) open `ScorecardPeopleSheet`: the same periods per
-  person (`Scorecard.Data.people`, the author, or the reviewer for requests answered, within its team),
-  worst first (most whole periods off target, then furthest off in the latest), a count like PRs
-  merged not judged per person (`Measurable.personal`); a person opens their PRs and reviews.
+- Scorecards (`Metrics/Scorecard.swift`, `ScorecardCharts.swift`, Delivery › Scorecards,
+  `WorkloadTab.scorecard`), in the spirit of Strety's: `Measurable`s (goals in the UI;
+  `OrgConfig.scorecard`, a team file, `.gannin/scorecard.json`; until edited, `OrgConfig.measurables`
+  seeds weekly ones from the Goals), each with a cadence (`ScorecardCadence`: weekly, monthly,
+  quarterly, annual), a source (a `ScorecardMetric`, grouped as pull requests, reviews, issues and
+  CI, or a number entered by hand in a unit: number, money, percentage, hours, days), a team, an
+  owner, a target (at least or at most) and notes (`MeasurableEditor`, whose Measures menu shows
+  metrics another goal has at that cadence and team disabled). Metrics: from merged PRs as
+  `OrgMetrics` works them out (merged without review a share of PRs in repos that need one); and
+  from `Scorecard.Sources`: reviews waiting over a day (requested in the period, answered after a
+  day, never, or still pending on an open PR), open PRs at the period's end (rebuilt from merged
+  PRs' dates and the open snapshot), issue cycle time (`IssueTiming`, the issue history, synced
+  only for such a goal) and flaky CI runs (passed on a re-run, or a commit both failed and passed,
+  the Actions runs, synced only for such a goal). A bar at the top of the page, as the PR and
+  issue pages have (search, Team and Owner filters when there's a choice, Goals, View by, range,
+  grouping, Add Goal), all in the page, not the toolbar. Goals picks the cadence; View by
+  (`ScorecardResolution`: day to year) sets the columns, tiles and ranges (Yesterday or The last
+  week, then counts, or All time, which syncs the metrics history back to the org's first issue).
+  A count's target is held to the column's length (`Cell.share`, `Measurable.goal(share:)`: 20 a
+  week is 2 a day) and to its share of the period under way; a hand-entered number is entered and
+  judged only by its own periods, added up (unjudged) in longer ones. Tiles first
+  (`ScorecardTiles`, laid out by `EvenGrid` so rows are even and fill the width): the last whole
+  period's value, the change on the one before (the same weekday last week by day; red only when
+  off target), the target, and a sparkline of a dozen periods coloured green and red against it
+  with a hover cursor. Then the table: columns per period newest first, the one under way shaded,
+  green on target and red off it, N/A with nothing and a dash before the history; Hit is whole
+  periods on target; the name, target and hit columns stay put scrolling sideways (`StickyScroll`,
+  read only by their modifiers so a scroll doesn't redraw the page). Hand-entered cells take a
+  value in a popover, kept by the period's first day (`Measurable.values`). Clicking a metric's
+  name or chevron expands it into a row per person by name (`Scorecard.Data.people`: the author,
+  the reviewer for requests, the assignee for issues, within its team; a count like PRs merged not
+  judged per person, `Measurable.personal`), or per repo for flaky runs (opening its CI page); a
+  person opens their PRs and reviews. Editing is in the row's context menu.
 - Weekly Digest (`WeeklyDigest`, `DigestSheet` on `NotesSheet`) is the week as Markdown:
   delivery against the week before and goals, what shipped by investment category, notable
   PRs, CI and who's off next week, to copy, rewrite with Claude, or commit to the harness as

@@ -120,7 +120,7 @@ extension MetricGoals.Targets {
             ))
         }
         if let target = unreviewedShare {
-            let actual = metrics.merged.isEmpty ? nil : Double(metrics.mergedWithoutReview.count) / Double(metrics.merged.count)
+            let actual = metrics.unreviewedShare
             results.append(.init(
                 name: "Merged without review",
                 target: "≤ \(share(target))",

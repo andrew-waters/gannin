@@ -68,6 +68,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .dashboard: "Overview"
         case .actions: "CI"
         case .agents: "Waiting on You"
+        case .scorecard: "Scorecards"
         default: rawValue
         }
     }

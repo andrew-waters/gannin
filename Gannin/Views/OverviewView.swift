@@ -144,7 +144,7 @@ struct OverviewView: View {
                 )
                 StatTile(
                     title: "Merged without review", value: "\(metrics.mergedWithoutReview.count)",
-                    detail: metrics.merged.isEmpty ? nil : percent(metrics.mergedWithoutReview.count, of: metrics.merged.count),
+                    detail: metrics.mergedNeedingReview == 0 ? nil : percent(metrics.mergedWithoutReview.count, of: metrics.mergedNeedingReview),
                     drill: .mergedWithoutReview, selection: $selection
                 )
             }
@@ -266,10 +266,10 @@ struct OverviewView: View {
             StatTile(
                 title: "Merged without review",
                 value: "\(metrics.mergedWithoutReview.count)",
-                detail: metrics.merged.isEmpty ? nil : percent(metrics.mergedWithoutReview.count, of: metrics.merged.count),
+                detail: metrics.mergedNeedingReview == 0 ? nil : percent(metrics.mergedWithoutReview.count, of: metrics.mergedNeedingReview),
                 drill: .mergedWithoutReview,
                 selection: $selection,
-                change: StatChange.points(metrics.merged.isEmpty ? nil : Double(metrics.mergedWithoutReview.count) / Double(metrics.merged.count), previous?.unreviewedShare, higherIsWorse: true)
+                change: StatChange.points(metrics.unreviewedShare, previous?.unreviewedShare, higherIsWorse: true)
             )
         }
     }
