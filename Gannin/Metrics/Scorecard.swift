@@ -149,6 +149,16 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// What a count is of, beside its target: "PRs a week", "lines".
+    func countUnit(per cadence: ScorecardCadence) -> String {
+        switch self {
+        case .throughput: "PRs a \(cadence.noun)"
+        case .prSize: "lines"
+        case .prFiles: "files"
+        case .cycleTime, .firstReview, .rework, .unreviewed, .answered: ""
+        }
+    }
+
     var higherIsBetter: Bool { self == .throughput || self == .answered }
 
     /// A count, so a period under way is held to its share of the target.
