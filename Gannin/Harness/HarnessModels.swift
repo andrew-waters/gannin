@@ -55,6 +55,9 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
     case skills = "Skills"
     /// The team's prompts for Claude Code sessions (`HarnessPrompt`).
     case prompts = "Prompts"
+    /// Rules and reasons people gave in review, scoped to the code they're
+    /// about (`HarnessLearning`), for later reviews to follow.
+    case learnings = "Learnings"
 
     var id: Self { self }
 
@@ -65,10 +68,12 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .findings: "magnifyingglass"
         case .skills: "wand.and.stars"
         case .prompts: "text.bubble"
+        case .learnings: "lightbulb"
         }
     }
 
-    /// A front matter `type`: `plan`, `requirement`, `finding`, `skill`.
+    /// A front matter `type`: `plan`, `requirement`, `finding`, `skill`,
+    /// `prompt`, `learning`.
     init?(type: String) {
         guard let kind = Self.allCases.first(where: { $0.singular == type.lowercased() }) else { return nil }
         self = kind
@@ -81,12 +86,13 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .findings: "finding"
         case .skills: "skill"
         case .prompts: "prompt"
+        case .learnings: "learning"
         }
     }
 
     /// The harness's layout: `plans/` for plans (and, until they're moved,
     /// `requirements/<module>/plans/`), the rest of `requirements/` for
-    /// requirements, `findings/`, `skills/` and `prompts/`. READMEs and templates
+    /// requirements, `findings/`, `skills/`, `prompts/` and `learnings/`. READMEs and templates
     /// describe the layout rather than being part of it.
     init?(path: String) {
         let parts = path.split(separator: "/")
@@ -98,6 +104,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case "findings": self = .findings
         case "skills": self = .skills
         case "prompts": self = .prompts
+        case "learnings": self = .learnings
         default: return nil
         }
     }
@@ -120,7 +127,8 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
     let kind: HarnessKind
     let title: String
     let text: String
-    /// `requirements/<module>/`.
+    /// `requirements/<module>/`, or for a learning its repo's folder,
+    /// `learnings/<repo>/`.
     let module: String?
     /// From a `YYYY-MM-DD-` file or folder name.
     let date: Date?
@@ -156,7 +164,7 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 6
+    static let parserVersion = 7
 
     /// The status in a word or two, for a table: an older document's
     /// sentence cut at its first clause.
@@ -326,7 +334,7 @@ nonisolated extension HarnessDocument {
         self.sha = sha
         self.text = text
         let parts = path.split(separator: "/").map(String.init)
-        module = parts.first == "requirements" && parts.count > 2 ? parts[1] : nil
+        module = (parts.first == "requirements" || parts.first == "learnings") && parts.count > 2 ? parts[1] : nil
         date = parts.reversed().lazy.compactMap(Self.leadingDate).first
 
         let lines = text.components(separatedBy: .newlines)

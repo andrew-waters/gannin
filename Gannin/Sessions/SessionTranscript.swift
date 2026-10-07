@@ -67,6 +67,38 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         /// Review threads (node IDs) the reviewer's account started that are
         /// now dealt with, for Gannin to resolve when the review is posted.
         var resolved: [String]? = nil
+        /// Explanations people gave in the PR, for keeping as learnings.
+        var learnings: [ProposedLearning]? = nil
+        /// The harness's learnings that shaped the review, and how.
+        var applied: [AppliedLearning]? = nil
+    }
+
+    /// A learning the reviewer followed: which, where and what it changed,
+    /// with any doubt about it.
+    nonisolated struct AppliedLearning: Sendable, Hashable, Codable {
+        /// Its file in the harness, `learnings/...`.
+        let learning: String
+        let path: String?
+        let line: Int?
+        let note: String?
+        let concern: String?
+    }
+
+    /// A learning a reviewer suggests keeping: what someone said in the PR
+    /// about why code is the way it is.
+    nonisolated struct ProposedLearning: Sendable, Hashable, Codable {
+        let path: String?
+        let line: Int?
+        let endLine: Int?
+        let rule: String
+        let reason: String?
+        let source: String?
+        let author: String?
+
+        enum CodingKeys: String, CodingKey {
+            case path, line, rule, reason, source, author
+            case endLine = "end_line"
+        }
     }
 
     /// The newest events, oldest first.
@@ -314,5 +346,19 @@ nonisolated struct TranscriptReader: Sendable {
             summary.question = nil
             questionToolID = nil
         }
+    }
+}
+
+nonisolated extension SessionTranscript.ReviewResult {
+    /// As synthesised, except that learnings Gannin can't read are
+    /// left out rather than losing the review.
+    init(from decoder: any Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        summary = try container.decode(String.self, forKey: .summary)
+        verdict = try container.decodeIfPresent(String.self, forKey: .verdict)
+        findings = try container.decode([SessionTranscript.Finding].self, forKey: .findings)
+        resolved = try container.decodeIfPresent([String].self, forKey: .resolved)
+        learnings = (try? container.decodeIfPresent([SessionTranscript.ProposedLearning].self, forKey: .learnings)) ?? nil
+        applied = (try? container.decodeIfPresent([SessionTranscript.AppliedLearning].self, forKey: .applied)) ?? nil
     }
 }

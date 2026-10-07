@@ -157,7 +157,7 @@ struct SessionActivityPane: View {
             }
             HStack {
                 Button("Review the Changes") {
-                    _ = sessions.startHelper(for: parent.id, role: "Review", prompt: SessionStore.reviewPrompt(for: parent), reviewer: true)
+                    _ = sessions.startHelper(for: parent.id, role: "Review", prompt: SessionStore.reviewPrompt(for: parent, learnings: sessions.harnessStore.anyIndex(org: parent.org, repo: parent.harnessRepo ?? parent.repo)?.documents(.learnings).compactMap(HarnessLearning.init(document:)).filter(\.isActive) ?? []), reviewer: true)
                 }
                 .help("Start a second agent that reads the changes, can't edit, and reports findings you can send back")
                 Spacer()

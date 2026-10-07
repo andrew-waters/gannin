@@ -254,7 +254,7 @@ struct SessionPullRequestsPane: View {
 
             if !pr.feedback.isEmpty, pr.state == "OPEN" {
                 ForEach(pr.feedback) { item in
-                    feedbackRow(item, sent: sent.contains(item.key))
+                    feedbackRow(item, on: pr, sent: sent.contains(item.key))
                 }
                 let picked = pr.feedback.filter { !unticked.contains($0.id) && !sent.contains($0.key) }
                 HStack {
@@ -285,7 +285,7 @@ struct SessionPullRequestsPane: View {
         .font(.callout)
     }
 
-    private func feedbackRow(_ item: SessionPullRequest.Feedback, sent: Bool) -> some View {
+    private func feedbackRow(_ item: SessionPullRequest.Feedback, on pr: SessionPullRequest, sent: Bool) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 8) {
             Toggle("", isOn: Binding(
                 get: { !sent && !unticked.contains(item.id) },
@@ -312,7 +312,23 @@ struct SessionPullRequestsPane: View {
                     .foregroundStyle(sent ? .secondary : .primary)
                     .lineLimit(5)
             }
+            Spacer(minLength: 4)
+            SaveAsLearningButton(org: session.org, draft: learningDraft(item, on: pr), iconOnly: true)
+                .buttonStyle(.borderless)
         }
+    }
+
+    /// A thread's words as a learning, scoped to its line: what was said
+    /// after the first comment is usually the why.
+    private func learningDraft(_ item: SessionPullRequest.Feedback, on pr: SessionPullRequest) -> HarnessLearningDraft {
+        let location = item.location?.split(separator: ":", maxSplits: 1).map(String.init) ?? []
+        let quote = item.comments.map { "@\($0.author): \($0.body)" }.joined(separator: "\n\n")
+        var draft = HarnessLearningDraft.from(
+            comment: quote, author: item.comments.last?.author ?? item.author, url: item.comments.last?.url ?? pr.url, repo: pr.repo,
+            path: location.first, line: location.count > 1 ? Int(location[1]) : nil
+        )
+        draft.issues = ["\(pr.repo)#\(pr.number)"]
+        return draft
     }
 
     private func rerun(_ runIDs: Set<Int>, in pr: SessionPullRequest) {

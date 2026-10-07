@@ -533,6 +533,14 @@ private struct CommentView: View {
                 RelativeDate(date: comment.createdAt)
                     .foregroundStyle(.secondary)
                 Spacer()
+                if let repo = HarnessLearningDraft.repo(of: comment.url), let org = repo.split(separator: "/").first {
+                    SaveAsLearningButton(
+                        org: String(org),
+                        draft: .from(comment: comment.body, author: comment.author?.login, url: comment.url, repo: repo),
+                        iconOnly: true
+                    )
+                    .buttonStyle(.borderless)
+                }
                 Link(destination: comment.url) {
                     Image(systemName: "arrow.up.right.square")
                 }

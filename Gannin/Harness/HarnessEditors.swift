@@ -18,6 +18,8 @@ struct HarnessNewDocumentSheet: View {
             HarnessDocumentEditor(kind: kind, org: org, setup: setup)
         case .plans:
             NewPlanningSheet(org: org)
+        case .learnings:
+            HarnessLearningEditor(org: org, setup: setup, draft: HarnessLearningDraft())
         }
     }
 
@@ -413,6 +415,7 @@ struct DraftWithClaudeSection: View {
         case .skills: "Rotate a tenant's API keys and check nothing breaks"
         case .prompts: "Reviews of the billing service should check money handling and idempotency"
         case .findings: "Exports time out for orgs with over 10k jobs; it's the N+1 in job_exports"
+        case .learnings: "Sync writes go through the actor in SyncStore because two windows can refresh at once"
         default: "What it should cover"
         }
     }

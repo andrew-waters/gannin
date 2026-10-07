@@ -107,7 +107,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Epics, Projects (the boards), Views); Delivery (Scorecard, PR flow, Issue flow, Releases, Investments, CI,
   Repositories); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
-  Prioritisation, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, once set);
+  Prioritisation, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, once set);
   and Agents (Waiting on You, then sessions grouped as working on issues, reviews and
   planning). `WorkloadTab.title` is the name shown (Overview, CI, Waiting on You);
   raw values stay as windows saved them. The Dashboard is two pages (`OverviewView.Part`):
@@ -676,6 +676,26 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`ReviewResult.resolved`); Post Review offers them ticked and resolves them once the review is
   posted (`resolveReviewThread`). Only unresolved threads on that PR that you started are
   resolved (`GitHubAPI.resolvableThreads`), whatever IDs claude gives.
+- Learnings (`Harness/HarnessLearnings.swift`, `HarnessLearning`, `HarnessKind.learnings`) are
+  rules and reasons people gave in review, `learnings/<repo>/<date>-<slug>.md` in the harness with
+  front matter `repo`, `paths` (folders ending `/`, files, `path#L10-L24`; none for the whole repo,
+  `HarnessLearning.Scope`), `commit`, `source`, `author` and `status` (`active` or `retired`), the
+  rule as the summary and `## Rule`, `## Reason`, `## Source` below (`learnings/README.md`).
+  `HarnessIndex.learnings(for:)` is a repo's active ones. A review's prompt lists those for the
+  PR's repo (`HarnessLearning.reviewInstructions`; the helper reviewer gets the harness's, and
+  Work on This briefs those for the issue's and linked PRs' repos) and its JSON gains `applied`
+  (each learning that shaped it, where, what it changed, and any `concern`) and `learnings`
+  (explanations people gave in the PR, `ProposedLearning`), both read leniently so a bad entry
+  never loses the review. The review tab has a Learnings row in its file list (those covering
+  the diff, applied, and suggested, each with Save as Learning) and the diff shows them in place
+  (`ReviewDiff.learningPlacement`): file and folder ones at the top, line ones at their first
+  shown line with the lines marked down the edge, and what the reviewer applied as
+  `AppliedLearningCard` on its line, with Challenge (`SessionStore.challengePrompt`, your
+  objection pasted to the reviewer to look again) and Edit Learning. Files with learnings are
+  marked in the file list. Save as Learning (`SaveAsLearningButton`, a lightbulb) is also on
+  comments in issue and PR drawers and on the PRs pane's review threads; it and Edit Learning
+  (`EditLearningButton`, also on a learning's page, which shows its repo, scope and source) open
+  `HarnessLearningEditor`, committing one file only when you say so.
 - `ClaudeRunner` asks Claude Code one-off questions (`claude -p`), on this Mac when claude is
   installed here, else on the Connect with server: a bash script on standard input writes the
   prompt and any files into a folder and runs claude there with only the tools given. It
@@ -777,7 +797,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Harness > Prompts (`HarnessPromptsSection`, `HarnessPromptEditor`) edits them, each save one commit.
 - Each Harness page has New in its toolbar (`HarnessNewDocumentSheet`, `HarnessEditors.swift`):
   `HarnessSkillEditor` and `HarnessPromptEditor` (also Edit in a skill's or prompt's context
-  menu), `HarnessDocumentEditor` for requirements and findings (front matter as STANDARDS.md has
+  menu), `HarnessLearningEditor` for learnings, `HarnessDocumentEditor` for requirements and findings (front matter as STANDARDS.md has
   it, the body from the folder's `_template.md`), and Plan with Claude for plans. Each commits one
   file. `DraftWithClaudeSection` drafts it with Claude as a conversation (`ClaudeRunner`
   with one session per sheet, `--resume` in the same folder; the guides sent as files on the first
@@ -788,7 +808,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   For plans it's the planning session's first prompt (`{{topic}}`, `{{plan}}`, `{{docs}}`,
   `{{assets}}`, `{{starting_point}}`).
 - `SessionBrief` is what Gannin knows: the issue's facts, board fields, parent, linked PRs,
-  description and comments, and the harness documents about it (in full) or mentioning it.
+  description and comments, the harness documents about it (in full) or mentioning it, and the
+  learnings for its repos.
 
 ## Harness
 
@@ -868,12 +889,12 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Settings > Harness offers Create Harness when there's none (`CreateHarnessSheet`): REST
   `POST /orgs/{org}/repos` (private, `auto_init` so there's a branch), then one commit of
   `HarnessSkeleton` (README, a starter CLAUDE.md listing the org's busiest repos, a generic
-  `STANDARDS.md`, requirements, plans and findings with front matter templates, skills,
+  `STANDARDS.md`, requirements, plans, findings and learnings with front matter templates, skills,
   sessions, `.gannin/`, and a `.gitignore` keeping out
   `projects/` and `.worktrees/`), and it's picked as the org's harness.
 - The layout (`HarnessKind`): plans in a flat `plans/` (and, until they're moved, under
   `requirements/<module>/plans/`), requirements the rest of `requirements/`, `findings/`,
-  `skills/`, `prompts/`; READMEs and `_templates` left out. A front matter `type` overrides the folder, and
+  `skills/`, `prompts/`, `learnings/` (grouped by their repo folder); READMEs and `_templates` left out. A front matter `type` overrides the folder, and
   plans and requirements are grouped by their first domain, else their module folder
   (`HarnessDocument.area`). A document is
   about an issue named in its file name (`prd-123`) or its header table's GitHub row
@@ -886,7 +907,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Harness page and a document's page, and a session's brief gives the summary of documents that
   only mention its issue. `HarnessDocument.parserVersion` makes a cached index read its
   documents again when the reading changes.
-- Plans, Requirements, Findings and Skills are rows under Harness in the sidebar
+- Plans, Requirements, Findings, Skills, Prompts and Learnings are rows under Harness in the sidebar
   (`SidebarItem.harnessKind`, with counts of standard documents), sharing the `harnessKind` scene
   storage the Harness page reads; the Harness row itself shows the kind last picked.
 - The Harness page has a bar at the top: search over title, summary, path, domains and issues;

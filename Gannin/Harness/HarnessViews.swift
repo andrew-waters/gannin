@@ -569,8 +569,12 @@ struct HarnessDocumentPage: View {
                 Button("Draft Issues") { draftingIssues = true }
                     .help("Claude breaks it into issues for you to edit, then makes them on GitHub")
             }
-            Button("Plan with Claude") { planning = true }
-                .help("Start a planning session in the harness from this document")
+            if document.kind == .learnings, let learning = HarnessLearning(document: document) {
+                EditLearningButton(org: org, learning: learning, harnessRepo: nil)
+            } else {
+                Button("Plan with Claude") { planning = true }
+                    .help("Start a planning session in the harness from this document")
+            }
             if onClose != nil, let openAsPage {
                 Button("Open as Page") {
                     onClose?()
@@ -611,6 +615,20 @@ struct HarnessDocumentPage: View {
             }
             LabeledContent("Kind") {
                 Label(document.kind.singular.capitalized, systemImage: document.kind.systemImage)
+            }
+            if let learning = HarnessLearning(document: document) {
+                LabeledContent("Repository", value: learning.repo)
+                LabeledContent("Applies to") {
+                    Text(learning.scopeText).font(.callout.monospaced()).textSelection(.enabled).multilineTextAlignment(.trailing)
+                }
+                if let author = learning.author {
+                    LabeledContent("Given by", value: "@\(author)")
+                }
+                if let source = learning.source {
+                    LabeledContent("Source") {
+                        Link("The comment", destination: source)
+                    }
+                }
             }
             if document.tasks > 0 {
                 LabeledContent("Tasks") {
