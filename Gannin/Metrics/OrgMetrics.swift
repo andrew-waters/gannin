@@ -103,8 +103,38 @@ nonisolated struct PersonMetrics: Identifiable, Hashable {
     let timeToFirstReview: DurationStat
     /// Merged PRs they reviewed (not their own).
     let reviewsGiven: Int
+    /// How big their merged PRs were.
+    let size: PullRequestSizes
 
     var id: String { person.login }
+}
+
+/// The size of a set of merged PRs: medians per PR (as the other metrics
+/// are, so one huge PR doesn't skew it), p75 and totals.
+nonisolated struct PullRequestSizes: Hashable {
+    /// Median and p75 lines changed (added plus removed) per PR.
+    let medianLines: Int?
+    let p75Lines: Int?
+    /// Median files changed, over the PRs whose count is known.
+    let medianFiles: Int?
+    let filesKnown: Int
+    let added: Int
+    let removed: Int
+    /// PRs over `SizeStat.largeLines` lines.
+    let large: Int
+
+    /// Each PR's lines added, removed and files changed (nil when not known).
+    init(_ prs: [(added: Int, removed: Int, files: Int?)], largeLines: Int) {
+        let lines = prs.map { $0.added + $0.removed }.sorted()
+        let files = prs.compactMap(\.files).sorted()
+        medianLines = lines.isEmpty ? nil : lines[lines.count / 2]
+        p75Lines = lines.isEmpty ? nil : lines[min(lines.count - 1, lines.count * 3 / 4)]
+        medianFiles = files.isEmpty ? nil : files[files.count / 2]
+        filesKnown = files.count
+        added = prs.reduce(0) { $0 + $1.added }
+        removed = prs.reduce(0) { $0 + $1.removed }
+        large = lines.filter { $0 > largeLines }.count
+    }
 }
 
 /// One review request on a merged PR and how (or whether) it was answered.
@@ -358,7 +388,8 @@ struct OrgMetrics {
                 merged: prs.count,
                 cycleTime: DurationStat(prs.map(\.cycleTime)),
                 timeToFirstReview: DurationStat(prs.compactMap(\.timeToFirstReview)),
-                reviewsGiven: reviewed[login] ?? 0
+                reviewsGiven: reviewed[login] ?? 0,
+                size: PullRequestSizes(prs.map { ($0.additions, $0.deletions, $0.changedFiles) }, largeLines: SizeStat.largeLines)
             )
         }
         .sorted { ($0.merged + $0.reviewsGiven, $1.person.login) > ($1.merged + $1.reviewsGiven, $0.person.login) }

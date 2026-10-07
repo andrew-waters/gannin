@@ -243,7 +243,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Dashboard (`OverviewView`) is the org landing page: right now, delivery, and summaries of
   investment balance and GitHub Actions for the window (`DashboardSummaries.swift`), each
   linking to its page through `showSidebarItem`. Opening it syncs the issue history and the
-  Actions runs, so Refresh includes them from then on; the people table is the People page (`PeopleStatsView`). Tiles, the stage legend, chart weeks
+  Actions runs, so Refresh includes them from then on; the people table is the People page (`PeopleStatsView`), whose Size and Files columns are each person's median lines and files changed per PR merged in the window (`PullRequestSizes`: p75, totals and large PRs in the tooltip). Tiles, the stage legend, chart weeks
   and table rows
   set `DetailSelection.metric(MetricDrill)`, which `MetricColumn` renders as the PRs behind the
   number. Chart colours are categorical slots 1-4 of the dataviz reference palette
@@ -524,7 +524,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`IssueFilters`) are kept per window (`StoredIssueFilters`). Pull Requests (`PullRequestsView`)
   has the same bar: search, Author and Reviewer (Me first, No Reviewer), Status (draft, needs
   review, changes requested, approved, merged) and Repository, and Open, Merged or All over the
-  open PRs and those merged in the lookback. Both bars build on `FilterMenu`,
+  open PRs and those merged in the lookback. Its Files and Size columns are the PR's `changedFiles` (optional, so caches from before it load; the metrics history isn't fetched again for it) and lines added and removed, which PR rows show too. Both bars build on `FilterMenu`,
   `FilterSearchField` and `StoredSet` (`IssueFilterBar.swift`). The search (`IssueSearch`) needs
   every word typed in the title, repo, number, a person's login or name, or a label. `IssueStore` keeps issues closed since
   the window's starting Monday plus every open issue, with project board status changes

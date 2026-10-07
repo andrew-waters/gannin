@@ -80,6 +80,8 @@ struct PullRequest: Codable, Hashable, Identifiable {
     let reviewDecision: ReviewState?
     let additions: Int
     let deletions: Int
+    /// Files the PR changes; nil in snapshots cached before it was fetched.
+    var changedFiles: Int? = nil
     let assignees: [Person]
     var requestedReviewers: [Person]
     /// When each requested reviewer was (most recently) asked.

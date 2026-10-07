@@ -1129,13 +1129,18 @@ private struct DayStrip: View {
     }
 }
 
-/// "+243 -14", added in green and removed in red.
+/// "+243 -14", added in green and removed in red, after "6 files" when
+/// the number of files is known.
 struct LinesText: View {
     let added: Int
     let removed: Int
+    var files: Int? = nil
 
     var body: some View {
         HStack(spacing: 4) {
+            if let files {
+                Text(verbatim: files == 1 ? "1 file" : "\(files.formatted()) files").foregroundStyle(.secondary)
+            }
             Text(verbatim: "+\(added.formatted())").foregroundStyle(ChartPalette.good)
             Text(verbatim: "-\(removed.formatted())").foregroundStyle(ChartPalette.critical)
         }

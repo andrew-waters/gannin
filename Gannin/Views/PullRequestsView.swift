@@ -220,18 +220,29 @@ struct PullRequestsView: View {
             }
             .width(min: 50, ideal: 60)
             .customizationID("linked")
-            TableColumn("Updated", value: \.when) { row in
-                RelativeDate(date: row.when)
-                    .foregroundStyle(.secondary)
-                    .help(row.pr.isMerged ? "Merged" : "Last updated")
+            // A builder takes ten columns at most.
+            Group {
+                TableColumn("Updated", value: \PullRequestTableRow.when) { row in
+                    RelativeDate(date: row.when)
+                        .foregroundStyle(.secondary)
+                        .help(row.pr.isMerged ? "Merged" : "Last updated")
+                }
+                .width(min: 70, ideal: 100)
+                .customizationID("updated")
+                TableColumn("Files", value: \PullRequestTableRow.files) { row in
+                    if let files = row.pr.changedFiles {
+                        Text(verbatim: files.formatted()).font(.caption).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                }
+                .width(min: 40, ideal: 50)
+                .customizationID("files")
+                TableColumn("Size", value: \PullRequestTableRow.size) { row in
+                    LinesText(added: row.pr.additions, removed: row.pr.deletions)
+                        .help("\((row.pr.additions + row.pr.deletions).formatted()) lines changed")
+                }
+                .width(min: 70, ideal: 90)
+                .customizationID("size")
             }
-            .width(min: 70, ideal: 100)
-            .customizationID("updated")
-            TableColumn("Size", value: \.size) { row in
-                LinesText(added: row.pr.additions, removed: row.pr.deletions)
-            }
-            .width(min: 70, ideal: 90)
-            .customizationID("size")
         } rows: {
             ForEach(sections, id: \.title) { section in
                 Section("\(section.title) (\(section.rows.count))") {
@@ -346,4 +357,6 @@ struct PullRequestTableRow: Identifiable {
     var linkedCount: Int { pr.linkedIssues.count }
     var when: Date { pr.mergedAt ?? pr.updatedAt }
     var size: Int { pr.additions + pr.deletions }
+    /// Files changed, those not yet known sorting first.
+    var files: Int { pr.changedFiles ?? -1 }
 }

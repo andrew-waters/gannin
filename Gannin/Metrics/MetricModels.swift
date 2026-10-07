@@ -22,6 +22,9 @@ struct MetricPullRequest: Codable, Hashable, Identifiable {
     var reviewRequests: [MetricReviewRequest]
     let additions: Int
     let deletions: Int
+    /// Files the PR changed; nil for PRs stored before it was fetched (the
+    /// history isn't fetched again for it).
+    var changedFiles: Int? = nil
     /// When the PR started waiting for review.
     var reviewableAt: Date { readyAt ?? createdAt }
 
