@@ -83,6 +83,13 @@ struct OrgConfig: Codable, Hashable {
         return allHarnesses
     }
 
+    /// Where the team's data is kept: the org's harness, else one left
+    /// from before projects, else the first project's, so an org whose
+    /// only harness is a project's still shares its data.
+    var teamHarness: HarnessConfig? {
+        harness ?? otherHarnesses.first ?? repoProjects.lazy.compactMap(\.harness).first
+    }
+
     /// Every harness, the org's first, then any left from before projects,
     /// then each project's (for its repos).
     var allHarnesses: [HarnessConfig] {
@@ -334,8 +341,9 @@ final class OrgConfigStore {
         findProject(workspace, in: baseConfig(for: org))
     }
 
-    /// The org's harness, from the user's own settings.
-    func harness(for org: String) -> HarnessConfig? { storage.configs[org]?.harness }
+    /// Where the org's team data is kept (`OrgConfig.teamHarness`), from
+    /// the user's own settings, so it doesn't move with the team's.
+    func harness(for org: String) -> HarnessConfig? { storage.configs[org]?.teamHarness }
 
     /// Every org back to the defaults.
     func clear() {

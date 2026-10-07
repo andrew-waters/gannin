@@ -1192,7 +1192,7 @@ struct HarnessSettingsSection: View {
         HarnessesSection(org: org, harnesses: harnesses, repos: repos)
             .task { await harness.loadRepositories(org: org) }
             .loadsHarness(org: org)
-        if let teamHarness = harnesses.first {
+        if let teamHarness = configs.harness(for: org) {
             HarnessTeamSections(org: org, teamHarness: teamHarness, harnesses: harnesses)
         }
         DisclosureGroup("Checkouts", isExpanded: $isCheckoutsExpanded) {

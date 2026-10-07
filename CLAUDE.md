@@ -876,7 +876,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `prioritisation.json`, `field-notes.json`, `people/<login>.json`), keys sorted and calendar
   days as `2026-10-03` (`TeamCoding`). The index reads `.gannin/*.json` beside the documents
   (`HarnessIndex.dataFiles`), and every cached index loads at launch. It's always the harness's
-  once the org has one (`HarnessTeamStore.keepsData`, nothing copied from this device): a file
+  once the org has one (`HarnessTeamStore.keepsData`, nothing copied from this device; the org's
+  own, else the first project's, `OrgConfig.teamHarness`): a file
   that isn't there is the default, and `OrgConfigStore.config(for:)`, `PeopleDatesStore` and
   `FieldNotesStore` read the team's parts from `HarnessTeamStore`. Only an org with no harness
   keeps them on this device. Stars, hidden items, app settings and which harnesses it has stay
