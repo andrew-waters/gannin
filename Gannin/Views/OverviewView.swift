@@ -1,9 +1,8 @@
 import Charts
 import SwiftUI
 
-/// Two pages. Overview, the org landing page: the state of work right now,
-/// and summaries of delivery, investment balance and CI for the window,
-/// each linking to its page. PR flow (Delivery): the window's delivery
+/// Two pages. Overview, the org landing page: what needs attention,
+/// scorecard goals, the team and open PRs as a pipeline. PR flow (Delivery): the window's delivery
 /// metrics in full, against the period before and the goals. Every number
 /// opens the items behind it. The breakdowns by person and repo are on Team
 /// and Repositories.
@@ -16,47 +15,88 @@ struct OverviewView: View {
     @Environment(ActionsStore.self) private var actionsStore
     @Environment(IssueStore.self) private var issueStore
     @Environment(HiddenStore.self) private var hidden
-    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @State private var showsDigest = false
 
     let org: String
     let workload: Workload
     let metrics: OrgMetrics?
     @Binding var selection: DetailSelection?
+    /// The window the metrics passed in were worked out for: the page's,
+    /// so the Overview's picker changes them.
+    @Binding var windowDays: Int
     var part: Part = .overview
 
     var body: some View {
+        if part == .overview {
+            overview
+        } else {
+            deliveryPage
+        }
+    }
+
+    /// The Overview: what needs attention, every scorecard goal, the team
+    /// (with what's open right now), then open PRs as a pipeline, with what
+    /// they need fetched. The team's merges and the scorecard sparklines
+    /// follow the window picked on the metrics pages.
+    private var overview: some View {
+        sections
+        .syncOffNotice(.metrics)
+        .task(id: "\(org) \(windowDays)") {
+            let config = configs.config(for: org)
+            let days = MetricsWindow(code: windowDays).syncDays()
+            async let merged: Void = store.sync(org, windowDays: days)
+            async let issues: Void = issueStore.sync(org, windowDays: days)
+            async let runs: Void = actionsStore.sync(org, windowDays: (days + 1) / 2, excluding: config.unfetchedRepos)
+            _ = await (merged, issues, runs)
+        }
+    }
+
+    private var sections: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
-                if part == .overview {
-                    Section {
-                        rightNow.sectionContent()
-                    } header: {
-                        PinnedHeader { Text("Right now") }
-                    }
-                    let goals = configs.config(for: org).measurables
-                    if !goals.isEmpty {
-                        Section {
-                            ScorecardStanding(headlines: scorecard(goals)).sectionContent()
-                        } header: {
-                            PinnedHeader { SummaryHeader(title: "Scorecards", link: "Scorecards", item: .tab(.scorecard)) }
-                        }
-                    }
-                    Section {
-                        VStack(alignment: .leading, spacing: 16) {
-                            notices
-                            if let metrics {
-                                deliverySummary(metrics)
-                                PRSizeSummary(metrics: metrics, selection: $selection)
-                            } else if store.syncing.contains(org) {
-                                loading
-                            }
-                        }
+                Section {
+                    AttentionOverview(org: org, workload: workload, scorecard: scorecard(configs.config(for: org).measurables), selection: $selection)
                         .sectionContent()
+                } header: {
+                    PinnedHeader { Text("Needs attention") }
+                }
+                let goals = configs.config(for: org).measurables
+                if !goals.isEmpty {
+                    Section {
+                        ScorecardStanding(headlines: scorecard(goals), showsAll: true).sectionContent()
                     } header: {
-                        PinnedHeader { SummaryHeader(title: "Delivery · \(MetricsWindow(code: windowDays).phrase)", link: "PR flow", item: .tab(.delivery)) }
+                        PinnedHeader { SummaryHeader(title: "Scorecards", link: "Scorecards", item: .tab(.scorecard)) }
                     }
-                } else {
+                }
+                Section {
+                    TeamOverview(org: org, workload: workload, metrics: metrics, selection: $selection)
+                        .sectionContent()
+                } header: {
+                    PinnedHeader { SummaryHeader(title: "Team", link: "Everyone", item: .tab(.people)) }
+                }
+                Section {
+                    FlowOverview(org: org, workload: workload, metrics: metrics, selection: $selection)
+                        .sectionContent()
+                } header: {
+                    PinnedHeader { SummaryHeader(title: "Flow", link: "Pull Requests", item: .tab(.pullRequests)) }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var sources: Scorecard.Sources {
+        Scorecard.Sources(
+            openPullRequests: orgs.snapshot(for: org)?.openPullRequests ?? [],
+            runs: actionsStore.history(for: org).map { Array($0.runs.values) },
+            issues: issueStore.history(for: org)
+        )
+    }
+
+    /// PR flow: the window's delivery in full.
+    private var deliveryPage: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 Section {
                     VStack(alignment: .leading, spacing: 28) {
                         notices
@@ -105,21 +145,6 @@ struct OverviewView: View {
                         }
                     }
                 }
-                }
-                if part == .overview {
-                Section {
-                    InvestmentsSummary(org: org, windowDays: windowDays, selection: $selection)
-                        .sectionContent()
-                } header: {
-                    PinnedHeader { SummaryHeader(title: "Investments · \(MetricsWindow(code: windowDays).phrase)", link: "Investments", item: .tab(.investments)) }
-                }
-                Section {
-                    ActionsSummary(org: org, windowDays: windowDays, selection: $selection)
-                        .sectionContent()
-                } header: {
-                    PinnedHeader { SummaryHeader(title: "CI · \(MetricsWindow(code: windowDays).phrase)", link: "CI", item: .tab(.actions)) }
-                }
-                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -134,89 +159,10 @@ struct OverviewView: View {
     /// Each scorecard goal's last whole period at its own cadence.
     private func scorecard(_ goals: [Measurable]) -> [ScorecardHeadline] {
         ScorecardHeadline.latest(
-            goals, history: store.history(for: org), config: configs.config(for: org), hidden: hidden.keys,
+            goals, window: MetricsWindow(code: windowDays), history: store.history(for: org), config: configs.config(for: org), hidden: hidden.keys,
             teams: orgs.snapshot(for: org)?.teams ?? [],
-            sources: Scorecard.Sources(
-                openPullRequests: orgs.snapshot(for: org)?.openPullRequests ?? [],
-                runs: actionsStore.history(for: org).map { Array($0.runs.values) },
-                issues: issueStore.history(for: org)
-            )
+            sources: sources
         )
-    }
-
-    /// The headline numbers with their changes, and how the goals stand;
-    /// the rest is on PR flow.
-    private func deliverySummary(_ metrics: OrgMetrics) -> some View {
-        let previous = metrics.previous
-        let goals = configs.config(for: org).goals?.targets(for: workload.team).results(for: metrics) ?? []
-        return VStack(alignment: .leading, spacing: 12) {
-            TileGrid {
-                StatTile(
-                    title: "PRs merged", value: "\(metrics.merged.count)",
-                    detail: perWeek(metrics.merged.count, days: metrics.window.lengthInDays()),
-                    drill: .merged, selection: $selection,
-                    change: previous.flatMap { StatChange.percent(Double(metrics.merged.count), Double($0.merged), higherIsWorse: false) }
-                )
-                StatTile(
-                    title: "Cycle time", value: metrics.cycleTime.median?.compactDuration ?? "-", detail: "Median",
-                    drill: .cycleTime, selection: $selection,
-                    change: change(metrics.cycleTime.median, previous?.cycleTime.median)
-                )
-                StatTile(
-                    title: "Time to first review", value: metrics.timeToFirstReview.median?.compactDuration ?? "-", detail: "Median",
-                    drill: .timeToFirstReview, selection: $selection,
-                    change: change(metrics.timeToFirstReview.median, previous?.timeToFirstReview.median)
-                )
-                StatTile(
-                    title: "Merged without review", value: "\(metrics.mergedWithoutReview.count)",
-                    detail: metrics.mergedNeedingReview == 0 ? nil : percent(metrics.mergedWithoutReview.count, of: metrics.mergedNeedingReview),
-                    drill: .mergedWithoutReview, selection: $selection
-                )
-            }
-            if !goals.isEmpty {
-                let met = goals.filter { $0.onTrack == true }.count
-                Label("\(met) of \(goals.count) goals on track", systemImage: met == goals.count ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .foregroundStyle(met == goals.count ? ChartPalette.good : ChartPalette.warning)
-                    .font(.callout)
-            }
-        }
-    }
-
-    // MARK: Right now
-
-    private var rightNow: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TileGrid {
-                StatTile(
-                    title: "Open PRs",
-                    value: "\(workload.openPullRequests.count)",
-                    drill: .openPullRequests,
-                    selection: $selection
-                )
-                StatTile(
-                    title: "Awaiting first review",
-                    value: "\(workload.awaitingFirstReview.count)",
-                    detail: workload.awaitingFirstReview.first.map { "Oldest opened " + $0.createdAt.formatted(.relative(presentation: .named)) },
-                    drill: .awaitingFirstReview,
-                    selection: $selection
-                )
-                StatTile(
-                    title: "Stale PRs",
-                    value: "\(workload.openPullRequests.filter(Workload.isStale).count)",
-                    detail: "No activity for \(Workload.staleAfterDays)d",
-                    drill: .stalePullRequests,
-                    selection: $selection
-                )
-                if workload.team == nil {
-                    StatTile(
-                        title: "Unassigned issues",
-                        value: "\(workload.unassignedIssues.count)",
-                        drill: .unassignedIssues,
-                        selection: $selection
-                    )
-                }
-            }
-        }
     }
 
     // MARK: Notices

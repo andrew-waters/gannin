@@ -243,62 +243,6 @@ struct SizeRiskSection: View {
     }
 }
 
-/// PR size in short, for the Overview: the median against the period
-/// before, the smallest and largest (each opening the PR), median files,
-/// and how sizes spread.
-struct PRSizeSummary: View {
-    let metrics: OrgMetrics
-    @Binding var selection: DetailSelection?
-
-    var body: some View {
-        let size = metrics.prSize
-        VStack(alignment: .leading, spacing: 12) {
-            Text("PR size").font(.headline)
-            TileGrid {
-                StatTile(
-                    title: "Median PR size",
-                    value: size.median.map { $0.formatted() } ?? "-",
-                    detail: size.p75.map { "Lines changed · p75 \($0.formatted())" },
-                    change: metrics.previous.flatMap { previous in
-                        previous.prSizeMedian.flatMap { before in size.median.flatMap { StatChange.percent(Double($0), Double(before), higherIsWorse: true) } }
-                    }
-                )
-                pullRequestTile("Smallest", size.smallest)
-                pullRequestTile("Largest", size.largest)
-                StatTile(
-                    title: "Median files changed",
-                    value: size.medianFiles.map { $0.formatted() } ?? "-",
-                    detail: size.medianFiles == nil ? "Not known for these PRs yet" : "Per PR"
-                )
-            }
-            if !metrics.merged.isEmpty {
-                PRSizeDistribution(size: size)
-            }
-        }
-    }
-
-    /// A PR's lines changed, opening it when clicked.
-    @ViewBuilder
-    private func pullRequestTile(_ title: String, _ pr: MetricPullRequest?) -> some View {
-        let tile = StatTile(
-            title: title,
-            value: pr.map { $0.size.formatted() } ?? "-",
-            detail: pr.map { "Lines · \($0.repo.split(separator: "/").last ?? "")#\($0.number) \($0.title)" }
-        )
-        if let pr {
-            Button {
-                selection = .pullRequestReference(pr.reference)
-            } label: {
-                tile
-            }
-            .buttonStyle(.plain)
-            .help(pr.title)
-        } else {
-            tile
-        }
-    }
-}
-
 /// How merged PRs spread by lines changed and by files changed, side by
 /// side.
 struct PRSizeDistribution: View {

@@ -65,7 +65,6 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     /// they were, since windows keep the tab they show by them.
     var title: String {
         switch self {
-        case .dashboard: "Overview"
         case .actions: "CI"
         case .agents: "Waiting on You"
         case .scorecard: "Scorecards"
@@ -1212,9 +1211,9 @@ struct OrgSidebar: View {
             if let selectedOrg {
                 // What needs me, and quick answers.
                 Section {
+                    row(.dashboard)
                     row(.inbox)
                     row(.ask)
-                    row(.dashboard)
                 }
 
                 // What's in flight and what's next.

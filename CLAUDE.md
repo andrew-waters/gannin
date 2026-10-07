@@ -103,17 +103,16 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   the project last picked for it on this Mac (`lastWorkspace.<org>`). Preferences like chart
   granularity stay `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
-  (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Inbox, Ask (the
-  Mac's) and Overview at the top; Work (Pull Requests, Issues with All and Not on a board,
-  Epics, Projects (the boards), Views); Delivery (Scorecard, PR flow, Issue flow, Releases, Investments, CI,
+  (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Dashboard (the
+  page a window opens on), Inbox and Ask (the Mac's) at the top; Work (Pull Requests, Issues with All and Not on a board,
+  Epics, Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue flow, Releases, Investments, CI,
   Repositories); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
   Prioritisation, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, once set);
   and Agents (Waiting on You, then sessions grouped as working on issues, reviews and
-  planning). `WorkloadTab.title` is the name shown (Overview, CI, Waiting on You);
-  raw values stay as windows saved them. The Dashboard is two pages (`OverviewView.Part`):
-  Overview (right now, and delivery, investments and CI in short) and PR flow (delivery in
-  full). The Issues row is the issue lists; Issue flow is the metrics. Picking a person shows their
+  planning). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You);
+  raw values stay as windows saved them. `OverviewView` is two pages (`OverviewView.Part`):
+  the Dashboard and PR flow (delivery in full). The Issues row is the issue lists; Issue flow is the metrics. Picking a person shows their
   `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
   by the cog beside the account menu in the sidebar's footer, are panes picked from a segmented
   control in the toolbar: Repositories, Projects, People (exclusions, which apply to the workload
@@ -241,12 +240,21 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`StageSummary.isOccasional`) show their share and median-when-it-happens instead.
   Bot-authored PRs are excluded, as are logins ending `-bot` or `[bot]` (ordinary user accounts
   used for automation) unless re-included in the org's stats config (`includedAuthors`).
-- Dashboard (`OverviewView`) is the org landing page: right now, Scorecards (`ScorecardStanding`:
-  how many goals are on track, each judged on its last whole period at its own cadence,
-  `ScorecardHeadline.latest`, and a tile for each off track, opening Scorecards), delivery, and summaries of
-  investment balance and GitHub Actions for the window (`DashboardSummaries.swift`), PR size (`PRSizeSummary`: median, smallest, largest, median files, and `PRSizeDistribution`, merged PRs by lines changed and by files changed in `SizeStat`'s buckets, also on PR flow), each
-  linking to its page through `showSidebarItem`. Opening it syncs the issue history and the
-  Actions runs, so Refresh includes them from then on; the people table is the People page (`PeopleStatsView`), whose Size and Files columns are each person's median lines and files changed per PR merged in the window (`PullRequestSizes`: p75, totals and large PRs in the tooltip). Tiles, the stage legend, chart weeks
+- Dashboard (`OverviewView`, `OverviewLayouts.swift`) is the org landing page, with no window
+  picker of its own (it follows the one picked on the metrics pages), in sections:
+  Needs attention (`AttentionOverview`: ranked items in two columns, Act now, Today and Keep an
+  eye on: CI red on a default branch, scorecard goals off target, review requests waiting over a
+  day, or on someone off today, approved PRs not merged, changes asked for and not answered, stale
+  PRs, committed issues overdue, people carrying far more than usual, each opening what it's
+  about); Scorecards (`ScorecardStanding` with every goal's tile, each judged on its last whole
+  period at its own cadence, `ScorecardHeadline.latest`, the sparkline over the window); Team
+  (`TeamOverview`: tiles for who's in and off, reviews owed, who's free, open, awaiting review,
+  stale and unassigned, then a card per person with today's status, in flight against the
+  busiest, PRs, reviews owed, issues, and what they merged and reviewed in the window); and Flow
+  (`FlowOverview`: open PRs by stage, draft, waiting for review, in review, changes asked,
+  approved, with their counts, median time there and the oldest, then what merged in the window).
+  Opening it syncs the issue history and the Actions runs, so Refresh includes them from then on;
+  the people table is the People page (`PeopleStatsView`), whose Size and Files columns are each person's median lines and files changed per PR merged in the window (`PullRequestSizes`: p75, totals and large PRs in the tooltip). Tiles, the stage legend, chart weeks
   and table rows
   set `DetailSelection.metric(MetricDrill)`, which `MetricColumn` renders as the PRs behind the
   number. Chart colours are categorical slots 1-4 of the dataviz reference palette

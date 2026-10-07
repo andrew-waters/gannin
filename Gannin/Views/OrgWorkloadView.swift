@@ -174,7 +174,8 @@ struct OrgWorkloadView: View {
     private var hasWindowPicker: Bool {
         switch tab {
         // Investments has its own range.
-        case .dashboard, .delivery, .issueFlow, .actions: true
+        // Not the Overview, which uses whatever was picked elsewhere.
+        case .delivery, .issueFlow, .actions: true
         case .people: person == nil && peopleView == nil
         case .repositories: repository == nil
         default: false
@@ -193,9 +194,9 @@ struct OrgWorkloadView: View {
         case .inbox:
             InboxView(org: org, workload: workload)
         case .dashboard:
-            OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection)
+            OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection, windowDays: $windowDays)
         case .delivery:
-            OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection, part: .delivery)
+            OverviewView(org: org, workload: workload, metrics: metrics, selection: $selection, windowDays: $windowDays, part: .delivery)
         case .issueFlow:
             IssuesStatsView(org: org, workload: workload, selection: $selection)
         case .people: personView(workload)

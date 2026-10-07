@@ -286,14 +286,16 @@ struct EvenGrid: Layout {
 
 extension ScorecardHeadline {
     /// Every goal's last whole period at its own cadence (a weekly goal's
-    /// last week, a monthly one's last month), for the Overview.
-    static func latest(_ measurables: [Measurable], history: MetricsHistory?, config: OrgConfig, hidden: Set<String>, teams: [Team], sources: Scorecard.Sources) -> [ScorecardHeadline] {
+    /// last week, a monthly one's last month), for the Overview, its
+    /// sparkline over the window (four periods at least).
+    static func latest(_ measurables: [Measurable], window: MetricsWindow, history: MetricsHistory?, config: OrgConfig, hidden: Set<String>, teams: [Team], sources: Scorecard.Sources) -> [ScorecardHeadline] {
         Dictionary(grouping: measurables, by: \.cadence)
             .sorted { a, b in (ScorecardCadence.allCases.firstIndex(of: a.key) ?? 0) < (ScorecardCadence.allCases.firstIndex(of: b.key) ?? 0) }
             .flatMap { cadence, measurables in
                 let resolution = cadence.resolution
+                let count = max(4, Int((window.lengthInDays() / resolution.days).rounded(.up)) + 1)
                 let data = Scorecard.Data(
-                    history: history, periods: resolution.periods(count: 13, earliest: nil), resolution: resolution,
+                    history: history, periods: resolution.periods(count: count, earliest: nil), resolution: resolution,
                     config: config, hidden: hidden, teams: teams, sources: sources
                 )
                 return measurables.map { ScorecardHeadline(measurable: $0, data: data, resolution: resolution) }
@@ -302,16 +304,19 @@ extension ScorecardHeadline {
 }
 
 /// The Overview's Scorecards section: how many goals are on track, then
-/// a tile for each one off track, which opens Scorecards.
+/// a tile for each one off track (or every goal), which opens Scorecards.
 struct ScorecardStanding: View {
     @Environment(\.showSidebarItem) private var showSidebarItem
     let headlines: [ScorecardHeadline]
+    var showsAll = false
 
     var body: some View {
         let judged = headlines.filter { $0.met != nil }
         let offTrack = judged.filter { $0.met == false }
         VStack(alignment: .leading, spacing: 12) {
-            if judged.isEmpty {
+            // Every tile says how it stands when they're all shown.
+            if showsAll {
+            } else if judged.isEmpty {
                 Text("Nothing to judge yet: no goal has a whole period measured.")
                     .foregroundStyle(.secondary)
             } else {
@@ -322,9 +327,10 @@ struct ScorecardStanding: View {
                 )
                 .foregroundStyle(offTrack.isEmpty ? ChartPalette.good : ChartPalette.warning)
             }
-            if !offTrack.isEmpty {
+            let shown = showsAll ? headlines : offTrack
+            if !shown.isEmpty {
                 EvenGrid(minWidth: 190, spacing: 12) {
-                    ForEach(offTrack) { headline in
+                    ForEach(shown) { headline in
                         Button { showSidebarItem?(.tab(.scorecard)) } label: { ScorecardHeadlineTile(headline: headline) }
                             .buttonStyle(.plain)
                             .help("Open Scorecards")
