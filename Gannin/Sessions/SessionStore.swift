@@ -343,6 +343,9 @@ final class SessionStore {
     /// Why a session's last commit to the harness failed, to show on it.
     private(set) var recordErrors: [UUID: String] = [:]
     @ObservationIgnored var terminals: [UUID: SessionTerminal] = [:]
+    /// Each session's Changes pane: which file is open and what's been read,
+    /// kept here so switching tabs away and back doesn't lose either.
+    @ObservationIgnored var changesPanes: [UUID: SessionChanges] = [:]
     @ObservationIgnored private var polling: Task<Void, Never>?
     /// The last `changed` value each session's hook wrote.
     @ObservationIgnored private var lastChanged: [UUID: String] = [:]
@@ -582,6 +585,15 @@ final class SessionStore {
     /// The session's terminal, if it has been opened since launch.
     func terminal(_ id: UUID) -> SessionTerminal? { terminals[id] }
 
+    /// The session's Changes pane, created the first time it's shown. Call
+    /// from an event or `onAppear`, not from a view's body.
+    func changes(for session: CodeSession) -> SessionChanges {
+        if let existing = changesPanes[session.id] { return existing }
+        let changes = SessionChanges()
+        changesPanes[session.id] = changes
+        return changes
+    }
+
     func isRunning(_ id: UUID) -> Bool { terminals[id]?.isRunning == true }
 
     /// Sessions with a terminal running, which quitting would end.
@@ -600,6 +612,7 @@ final class SessionStore {
         for helper in helpers(of: id) { remove(helper.id) }
         terminals[id]?.terminate()
         terminals[id] = nil
+        changesPanes[id] = nil
         unflag(id)
         sessions[id] = nil
         states[id] = nil

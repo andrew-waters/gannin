@@ -265,7 +265,9 @@ struct SessionTab: View {
     @Environment(SessionStore.self) private var sessions
     let session: CodeSession
     var compact = false
-    @State private var changes = SessionChanges()
+    /// Kept in the store, not local state, so switching tabs away and back
+    /// doesn't lose the open file or make it read the diff again.
+    private var changes: SessionChanges { sessions.changes(for: session) }
     @State private var panelShown: Bool?
     /// The question put away to answer in the terminal, by its ID (or the
     /// permission prompt's tool).
