@@ -93,11 +93,17 @@ struct OrgWorkloadView: View {
             }
         }
         .task {
-            await orgs.refreshIfStale(org)
-            // The investments board's fields, when stale; the board list
-            // loads with the sidebar.
-            if case .projectField(let number, _, _) = configs.config(for: org).investmentConfig.trackedBy, number != 0 {
-                await projects.loadDefinition(org: org, number: number)
+            // Loops rather than running once, so a window left open on this
+            // org keeps picking up new PRs and issues as the workload
+            // interval passes, not just when the org is next opened.
+            while !Task.isCancelled {
+                await orgs.refreshIfStale(org)
+                // The investments board's fields, when stale; the board list
+                // loads with the sidebar.
+                if case .projectField(let number, _, _) = configs.config(for: org).investmentConfig.trackedBy, number != 0 {
+                    await projects.loadDefinition(org: org, number: number)
+                }
+                try? await Task.sleep(for: .seconds(30))
             }
         }
         .task(id: windowDays) { await metricsStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
