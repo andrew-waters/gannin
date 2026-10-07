@@ -59,10 +59,13 @@ struct FieldNote: Codable, Identifiable, Hashable {
     var issue: LinkedIssue?
 }
 
-/// What's been heard from the field, per org, on this Mac.
+/// What's been heard from the field, per org: in the harness for an org
+/// with one (`.gannin/field-notes.json`, committed with the rest of the
+/// team's data), else on this Mac.
 @Observable
 final class FieldNotesStore {
     private(set) var notes: [String: [FieldNote]] = [:]
+    @ObservationIgnored var team: HarnessTeamStore?
 
     init() {
         if let data = UserDefaults.standard.data(forKey: Self.key),
@@ -71,25 +74,27 @@ final class FieldNotesStore {
         }
     }
 
-    func notes(for org: String) -> [FieldNote] { notes[org] ?? [] }
+    func notes(for org: String) -> [FieldNote] {
+        if let team = team?.data(for: org) { return team.fieldNotes ?? [] }
+        return notes[org] ?? []
+    }
 
     func add(_ text: String, in org: String) {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        notes[org, default: []].append(FieldNote(text: text, raisedAt: .now))
-        save()
+        change(org) { $0.append(FieldNote(text: text, raisedAt: .now)) }
     }
 
     func add(_ note: FieldNote, in org: String) {
         guard !note.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        notes[org, default: []].append(note)
-        save()
+        change(org) { $0.append(note) }
     }
 
     func update(_ id: UUID, in org: String, _ change: (inout FieldNote) -> Void) {
-        guard let index = notes[org]?.firstIndex(where: { $0.id == id }) else { return }
-        change(&notes[org]![index])
-        save()
+        self.change(org) { notes in
+            guard let index = notes.firstIndex(where: { $0.id == id }) else { return }
+            change(&notes[index])
+        }
     }
 
     /// Customers named before, most used first, for suggestions.
@@ -99,13 +104,23 @@ final class FieldNotesStore {
     }
 
     func setDone(_ id: UUID, _ isDone: Bool, in org: String) {
-        guard let index = notes[org]?.firstIndex(where: { $0.id == id }) else { return }
-        notes[org]?[index].doneAt = isDone ? .now : nil
-        save()
+        update(id, in: org) { $0.doneAt = isDone ? .now : nil }
     }
 
     func remove(_ id: UUID, in org: String) {
-        notes[org]?.removeAll { $0.id == id }
+        change(org) { $0.removeAll { $0.id == id } }
+    }
+
+    private func change(_ org: String, _ change: (inout [FieldNote]) -> Void) {
+        let before = notes(for: org)
+        var after = before
+        change(&after)
+        guard after != before else { return }
+        if let team, team.keepsData(org) {
+            team.stage(org: org, [TeamFile.fieldNotes: HarnessTeamData.fieldNotesFile(after)])
+            return
+        }
+        notes[org] = after.isEmpty ? nil : after
         save()
     }
 
@@ -130,34 +145,16 @@ struct PrioritisationView: View {
     let workload: Workload
     @Binding var selection: DetailSelection?
 
-    /// The board's date field that says an issue's committed to, for the
-    /// org on this Mac.
-    @AppStorage private var orgDateField: String
     @State private var triaging: [IssueRecord]?
     /// On screen in the meeting: the summary larger, capture and search
     /// put away.
     @AppStorage("prioritisationPresenting") private var presenting = false
     @State private var search = ""
 
-    init(org: String, workload: Workload, selection: Binding<DetailSelection?>) {
-        self.org = org
-        self.workload = workload
-        _selection = selection
-        _orgDateField = AppStorage(wrappedValue: "Committed", Self.dateFieldKey(org))
-    }
-
-    private static func dateFieldKey(_ org: String) -> String { "prioritisationDateField.\(org)" }
-
-    /// The org's committed date field on this Mac, which a project's own
-    /// starts from.
-    static func orgDateField(_ org: String) -> String {
-        UserDefaults.standard.string(forKey: dateFieldKey(org)) ?? "Committed"
-    }
-
     /// The committed date field: the window's project's, if it keeps its
     /// own, else the org's.
     private var dateField: String {
-        configs.currentProject(org)?.committedDateField ?? orgDateField
+        configs.currentProject(org)?.committedDateField ?? configs.baseConfig(for: org).committedDate
     }
 
     private var dateFieldBinding: Binding<String> {
@@ -167,7 +164,7 @@ struct PrioritisationView: View {
             if let project = configs.currentProject(org), project.committedDateField != nil {
                 configs.updateProject(project.id, in: org) { $0.committedDateField = field }
             } else {
-                orgDateField = field
+                configs.update(org) { $0.committedDateField = field == "Committed" ? nil : field }
             }
         }
     }

@@ -43,6 +43,11 @@ struct OrgConfig: Codable, Hashable {
     var recap: RecapCadence?
 
     var recapCadence: RecapCadence { recap ?? RecapCadence() }
+    /// The board's date field that says an issue's committed to
+    /// (Prioritisation); nil means `Committed`.
+    var committedDateField: String?
+
+    var committedDate: String { committedDateField ?? "Committed" }
     /// Projects: named groups of repos (a product, a side project), each
     /// with its own harness and settings if it wants them. A window picks
     /// one to narrow to it.
@@ -218,7 +223,7 @@ struct OrgConfig: Codable, Hashable {
         repoProjects = try container.decodeIfPresent([RepoProject].self, forKey: .repoProjects) ?? []
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.
@@ -239,10 +244,11 @@ struct OrgConfig: Codable, Hashable {
 /// Each org's settings, in memory and written through to the synced
 /// `UserDatabase`; loaded again when another device's changes arrive.
 ///
-/// An org that keeps its team data in its harness (`HarnessTeamStore`) has
-/// its views, investments, issue workflow, working week, leave policy and
-/// exclusions from there instead, and changes to them wait to be committed
-/// there. Which harness it is stays the user's own.
+/// An org with a harness keeps its team data there (`HarnessTeamStore`):
+/// its views, investments, issue workflow, working week, leave policy,
+/// exclusions, goals, scorecard and the rest come from there instead, and
+/// changes to them wait to be committed there. Which harness it is stays
+/// the user's own.
 ///
 /// The app shares one store, for All. A main window with a project picked
 /// puts that project's store (`scoped`) in its environment instead: the

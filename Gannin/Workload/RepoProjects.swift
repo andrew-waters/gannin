@@ -394,7 +394,7 @@ struct ProjectsSettingsSection: View {
             case .goals: project.goals = isOwn ? config.goals ?? MetricGoals() : nil
             case .scorecard: project.scorecard = isOwn ? config.measurables : nil
             case .recap: project.recap = isOwn ? config.recapCadence : nil
-            case .committedDate: project.committedDateField = isOwn ? PrioritisationView.orgDateField(org) : nil
+            case .committedDate: project.committedDateField = isOwn ? config.committedDate : nil
             }
         }
     }

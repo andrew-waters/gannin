@@ -2,8 +2,8 @@ import Observation
 import SwiftUI
 
 /// Dates GitHub doesn't know about a person: when they started and left,
-/// and days off (holiday or sick). Recorded by hand, kept on this device, or in
-/// the org's harness once it keeps the team's data there.
+/// and days off (holiday or sick). Recorded by hand, kept in the org's
+/// harness, or on this device for an org with none.
 struct PersonDates: Codable, Hashable {
     var startDate: Date?
     var endDate: Date?
@@ -184,10 +184,6 @@ final class PeopleDatesStore {
     func all(in org: String) -> [String: PersonDates] {
         team?.data(for: org)?.people ?? dates[org] ?? [:]
     }
-
-    /// What's kept on this device, whichever the org reads: for moving it
-    /// into the harness.
-    func own(in org: String) -> [String: PersonDates] { dates[org] ?? [:] }
 
     func clear() {
         dates = [:]
