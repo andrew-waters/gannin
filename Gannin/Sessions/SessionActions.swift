@@ -85,11 +85,20 @@ extension SessionStore {
     /// wording ever changes enough that this can't find it.
     func permissionChoices(for id: UUID) -> [PermissionChoice] {
         guard let terminal = terminals[id] else { return [] }
+        // Box drawing (─│┌┐└┘├┤┬┴┼ and their heavy or double forms): when
+        // the box redraws shorter than its last frame, the terminal can
+        // leave a stale row's border un-erased past the real text, which
+        // would otherwise stick to the label with nothing to trim it on.
+        let boxDrawing = CharacterSet(charactersIn: UnicodeScalar(0x2500)!...UnicodeScalar(0x257F)!)
         var choices: [PermissionChoice] = []
         for line in terminal.screenLines(last: 20) {
             let trimmed = line.trimmingCharacters(in: CharacterSet(charactersIn: "❯>").union(.whitespaces))
             guard let dot = trimmed.firstIndex(of: "."), let number = Int(trimmed[..<dot]), number == choices.count + 1 else { continue }
-            let label = trimmed[trimmed.index(after: dot)...].trimmingCharacters(in: CharacterSet(charactersIn: "│").union(.whitespaces))
+            var label = String(trimmed[trimmed.index(after: dot)...])
+            if let stray = label.unicodeScalars.firstIndex(where: boxDrawing.contains) {
+                label = String(label.unicodeScalars[..<stray])
+            }
+            label = label.trimmingCharacters(in: .whitespaces)
             guard !label.isEmpty else { continue }
             choices.append(PermissionChoice(number: number, label: label))
         }
