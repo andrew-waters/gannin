@@ -15,6 +15,8 @@ struct MetricGoals: Codable, Hashable {
         var unreviewedShare: Double?
         /// Median PR size, in lines changed.
         var prSizeLines: Int?
+        /// Median PR size, in files changed.
+        var prSizeFiles: Int?
         /// Share of review requests answered, 0 to 1 (higher is better).
         var answeredShare: Double?
         /// PRs merged a week, at least; a longer span is held to as many
@@ -23,7 +25,7 @@ struct MetricGoals: Codable, Hashable {
 
         var isEmpty: Bool {
             cycleTimeHours == nil && firstReviewHours == nil && reworkShare == nil && unreviewedShare == nil
-                && prSizeLines == nil && answeredShare == nil && mergedPerWeek == nil
+                && prSizeLines == nil && prSizeFiles == nil && answeredShare == nil && mergedPerWeek == nil
         }
     }
 
@@ -42,6 +44,7 @@ struct MetricGoals: Codable, Hashable {
             reworkShare: own.reworkShare ?? org.reworkShare,
             unreviewedShare: own.unreviewedShare ?? org.unreviewedShare,
             prSizeLines: own.prSizeLines ?? org.prSizeLines,
+            prSizeFiles: own.prSizeFiles ?? org.prSizeFiles,
             answeredShare: own.answeredShare ?? org.answeredShare,
             mergedPerWeek: own.mergedPerWeek ?? org.mergedPerWeek
         )
@@ -112,6 +115,14 @@ extension MetricGoals.Targets {
             results.append(.init(
                 name: "PR size", target: "≤ \(target) lines", actual: actual.map { "\($0) lines" } ?? "-",
                 onTrack: actual.map { $0 <= target }, previous: metrics.previous?.prSizeMedian.map { "\($0) lines" }, drill: nil
+            ))
+        }
+        if let target = prSizeFiles {
+            let actual = metrics.prSize.medianFiles
+            func files(_ count: Int) -> String { count == 1 ? "1 file" : "\(count) files" }
+            results.append(.init(
+                name: "Files changed", target: "≤ \(files(target))", actual: actual.map(files) ?? "-",
+                onTrack: actual.map { $0 <= target }, previous: metrics.previous?.prFilesMedian.map(files), drill: nil
             ))
         }
         if let target = answeredShare {

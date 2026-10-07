@@ -205,6 +205,8 @@ struct DeliverySummary: Hashable {
     let reworkShare: Double?
     let unreviewedShare: Double?
     let prSizeMedian: Int?
+    /// Median files changed, over the PRs whose count is known.
+    let prFilesMedian: Int?
     let answeredShare: Double?
     let opened: Int?
     /// By repo and by author, for explaining a change.
@@ -231,6 +233,9 @@ struct SizeStat: Hashable {
     /// the buckets after it are the large PRs.
     static let bucketBounds = [10, 50, 100, 200, 400, 1000]
     static let bucketLabels = ["0-10", "11-50", "51-100", "101-200", "201-400", "401-1,000", "Over 1,000"]
+    /// The same for files changed.
+    static let fileBucketBounds = [1, 3, 5, 10, 20, 50]
+    static let fileBucketLabels = ["1", "2-3", "4-5", "6-10", "11-20", "21-50", "Over 50"]
 
     let median: Int?
     let p75: Int?
@@ -242,6 +247,8 @@ struct SizeStat: Hashable {
     let medianFiles: Int?
     /// PRs in each of `bucketLabels`.
     let buckets: [Int]
+    /// PRs whose files changed are known, in each of `fileBucketLabels`.
+    let fileBuckets: [Int]
 
     init(_ prs: [MetricPullRequest]) {
         let sizes = prs.map(\.size).sorted()
@@ -255,6 +262,9 @@ struct SizeStat: Hashable {
         var buckets = Array(repeating: 0, count: Self.bucketLabels.count)
         for size in sizes { buckets[Self.bucket(size)] += 1 }
         self.buckets = buckets
+        var fileBuckets = Array(repeating: 0, count: Self.fileBucketLabels.count)
+        for count in files { fileBuckets[Self.fileBucketBounds.firstIndex { count <= $0 } ?? Self.fileBucketBounds.count] += 1 }
+        self.fileBuckets = fileBuckets
     }
 
     static func bucket(_ lines: Int) -> Int {
@@ -514,6 +524,7 @@ struct OrgMetrics {
                 reworkShare: before.isEmpty ? nil : rework.share,
                 unreviewedShare: before.isEmpty ? nil : Double(before.filter { $0.firstReviewAt == nil && config.needsReview($0.repo) }.count) / Double(before.count),
                 prSizeMedian: sizes.isEmpty ? nil : sizes[sizes.count / 2],
+                prFilesMedian: SizeStat(before).medianFiles,
                 answeredShare: requests == 0 ? nil : Double(answered) / Double(requests),
                 opened: {
                     let weeks = history.openedPerWeek.filter { $0.key >= Calendar.metrics.startOfWeek(for: previousInterval.start) && $0.key < Calendar.metrics.startOfWeek(for: windowStart) }
@@ -536,7 +547,7 @@ struct OrgMetrics {
             merged: merged.count, cycleTime: cycleTime, timeToFirstReview: timeToFirstReview, stages: stages,
             reworkShare: merged.isEmpty ? nil : stages[.rework]?.share,
             unreviewedShare: merged.isEmpty ? nil : Double(mergedWithoutReview.count) / Double(merged.count),
-            prSizeMedian: prSize.median, answeredShare: answeredShare, opened: opened,
+            prSizeMedian: prSize.median, prFilesMedian: prSize.medianFiles, answeredShare: answeredShare, opened: opened,
             repos: breakdown(\.repo), authors: breakdown { $0.author?.login ?? "" }
         )
     }

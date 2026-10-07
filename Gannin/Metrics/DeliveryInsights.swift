@@ -299,53 +299,82 @@ struct PRSizeSummary: View {
     }
 }
 
-/// How many merged PRs fall in each size bucket; hover a bar for its
-/// count and share.
+/// How merged PRs spread by lines changed and by files changed, side by
+/// side.
 struct PRSizeDistribution: View {
     let size: SizeStat
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 24) {
+            SizeDistributionChart(
+                title: "Lines changed per PR", unit: "lines", labels: SizeStat.bucketLabels, counts: size.buckets,
+                note: "Over \(SizeStat.largeLines) lines counts as large."
+            )
+            SizeDistributionChart(
+                title: "Files changed per PR", unit: "files", labels: SizeStat.fileBucketLabels, counts: size.fileBuckets,
+                note: size.fileBuckets.reduce(0, +) < size.buckets.reduce(0, +) ? "Only PRs whose files changed are known." : nil
+            )
+        }
+    }
+}
+
+/// How many merged PRs fall in each bucket, one series; hover a bar for
+/// its count and share.
+struct SizeDistributionChart: View {
+    let title: String
+    let unit: String
+    let labels: [String]
+    let counts: [Int]
+    var note: String?
     @State private var hovered: String?
 
     var body: some View {
-        let total = max(size.buckets.reduce(0, +), 1)
-        let rows = Array(zip(SizeStat.bucketLabels, size.buckets))
+        let total = counts.reduce(0, +)
+        let rows = Array(zip(labels, counts))
         VStack(alignment: .leading, spacing: 8) {
-            Text("Lines changed per PR").font(.callout.weight(.medium))
-            Chart {
-                ForEach(rows, id: \.0) { label, count in
-                    BarMark(x: .value("Lines changed", label), y: .value("PRs", count))
-                        .foregroundStyle(ChartPalette.blue.opacity(hovered == nil || hovered == label ? 1 : 0.5))
-                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
-                }
-            }
-            .chartYAxis {
-                AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
-                    AxisGridLine().foregroundStyle(.quaternary)
-                    AxisValueLabel()
-                }
-            }
-            .chartOverlay { proxy in
-                Rectangle().fill(.clear).contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location): hovered = proxy.value(atX: location.x, as: String.self)
-                        case .ended: hovered = nil
-                        }
+            Text(title).font(.callout.weight(.medium))
+            if total == 0 {
+                Text("Not known for these PRs yet.").font(.callout).foregroundStyle(.secondary)
+                    .frame(height: 140, alignment: .topLeading)
+            } else {
+                Chart {
+                    ForEach(rows, id: \.0) { label, count in
+                        BarMark(x: .value(title, label), y: .value("PRs", count))
+                            .foregroundStyle(ChartPalette.blue.opacity(hovered == nil || hovered == label ? 1 : 0.5))
+                            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
                     }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
+                        AxisGridLine().foregroundStyle(.quaternary)
+                        AxisValueLabel()
+                    }
+                }
+                .chartOverlay { proxy in
+                    Rectangle().fill(.clear).contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let location): hovered = proxy.value(atX: location.x, as: String.self)
+                            case .ended: hovered = nil
+                            }
+                        }
+                }
+                .frame(height: 140)
+                .accessibilityLabel("Merged PRs by \(unit) changed")
+                .accessibilityValue(rows.map { "\($0.0) \(unit): \($0.1)" }.joined(separator: ", "))
             }
-            .frame(height: 140)
-            .accessibilityLabel("Merged PRs by lines changed")
-            .accessibilityValue(rows.map { "\($0.0) lines: \($0.1)" }.joined(separator: ", "))
-            if let hovered, let index = SizeStat.bucketLabels.firstIndex(of: hovered) {
-                let count = size.buckets[index]
-                Text("\(hovered) lines: \(count) PR\(count == 1 ? "" : "s"), \((Double(count) / Double(total)).formatted(.percent.precision(.fractionLength(0)))) of merged")
+            if let hovered, let index = labels.firstIndex(of: hovered), total > 0 {
+                let count = counts[index]
+                Text("\(hovered) \(unit): \(count) PR\(count == 1 ? "" : "s"), \((Double(count) / Double(total)).formatted(.percent.precision(.fractionLength(0))))")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
             } else {
-                Text("Over \(SizeStat.largeLines) lines counts as large. Hover for values.")
+                Text([note, "Hover for values."].compactMap { $0 }.joined(separator: " "))
                     .font(.callout)
                     .foregroundStyle(.tertiary)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -636,6 +665,8 @@ struct GoalsSettingsSection: View {
                 value: targets.unreviewedShare.map { $0 * 100 }, fallback: fallback?.unreviewedShare.map { $0 * 100 }) { value in update { $0.unreviewedShare = value.map { min($0, 100) / 100 } } }
             row("PR size", "Median lines changed", unit: "lines", at: "at most",
                 value: targets.prSizeLines.map(Double.init), fallback: fallback?.prSizeLines.map(Double.init)) { value in update { $0.prSizeLines = value.map { Int($0.rounded()) } } }
+            row("Files changed", "Median files changed per PR", unit: "files", at: "at most",
+                value: targets.prSizeFiles.map(Double.init), fallback: fallback?.prSizeFiles.map(Double.init)) { value in update { $0.prSizeFiles = value.map { Int($0.rounded()) } } }
         }
         Section("Reviewing") {
             row("Review requests answered", "Before the PR merged, or the request was withdrawn", unit: "%", at: "at least",

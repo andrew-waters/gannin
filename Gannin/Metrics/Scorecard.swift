@@ -109,6 +109,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
     case rework
     case unreviewed
     case prSize
+    case prFiles
     case answered
 
     var id: Self { self }
@@ -121,6 +122,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         case .rework: "PRs with rework"
         case .unreviewed: "Merged without review"
         case .prSize: "PR size"
+        case .prFiles: "Files changed"
         case .answered: "Review requests answered"
         }
     }
@@ -133,6 +135,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         case .rework: "Changes asked for after the first review"
         case .unreviewed: "In repos that need a review"
         case .prSize: "Median lines changed"
+        case .prFiles: "Median files changed per PR"
         case .answered: "Before the PR merged, or the request was withdrawn"
         }
     }
@@ -140,7 +143,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
     /// What a target is entered in.
     var unit: Measurable.Unit {
         switch self {
-        case .throughput, .prSize: .number
+        case .throughput, .prSize, .prFiles: .number
         case .cycleTime, .firstReview: .hours
         case .rework, .unreviewed, .answered: .percent
         }
@@ -259,7 +262,7 @@ extension OrgConfig {
             let pairs: [(ScorecardMetric, Double?)] = [
                 (.throughput, targets.mergedPerWeek), (.cycleTime, targets.cycleTimeHours), (.firstReview, targets.firstReviewHours),
                 (.rework, targets.reworkShare.map { $0 * 100 }), (.unreviewed, targets.unreviewedShare.map { $0 * 100 }),
-                (.prSize, targets.prSizeLines.map(Double.init)), (.answered, targets.answeredShare.map { $0 * 100 }),
+                (.prSize, targets.prSizeLines.map(Double.init)), (.prFiles, targets.prSizeFiles.map(Double.init)), (.answered, targets.answeredShare.map { $0 * 100 }),
             ]
             return pairs.compactMap { metric, target in
                 target.map {
@@ -382,6 +385,8 @@ enum Scorecard {
                 return (prs.isEmpty ? nil : Double(prs.filter { $0.firstReviewAt == nil && config.needsReview($0.repo) }.count) / Double(prs.count), prs.count)
             case .prSize:
                 return (SizeStat(prs).median.map(Double.init), prs.count)
+            case .prFiles:
+                return (SizeStat(prs).medianFiles.map(Double.init), prs.filter { $0.changedFiles != nil }.count)
             case .answered:
                 var requests = 0
                 var answered = 0
