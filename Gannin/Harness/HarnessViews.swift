@@ -1272,16 +1272,10 @@ struct HarnessesSection: View {
         .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org) }
         .confirmationDialog("Keep the team's data in \(moving?.repo ?? "")?", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } })) {
             if let target = moving {
-                if team.keepsData(org) {
-                    Button("Copy and Keep It There") { move(to: target) }
-                } else {
-                    Button("Keep It There") { configs.update(org) { $0.keepTeamData(in: target.repo) } }
-                }
+                Button("Copy and Keep It There") { move(to: target) }
             }
         } message: {
-            Text(team.keepsData(org)
-                 ? "Gannin commits a copy of .gannin/ from \(harnesses.first?.repo ?? "") to \(moving?.repo ?? "") and reads it from there. The old copy stays where it is until you remove it."
-                 : "Moving the team's settings into a harness (below) puts them there from then on.")
+            Text("Gannin commits a copy of .gannin/ from \(harnesses.first?.repo ?? "") to \(moving?.repo ?? "") and reads it from there. The old copy stays where it is until you remove it.")
         }
     }
 
@@ -1297,7 +1291,7 @@ struct HarnessesSection: View {
                         .padding(.vertical, 1)
                         .background(Capsule().fill(Color.accentColor.opacity(0.15)))
                         .foregroundStyle(Color.accentColor)
-                        .help("The team's settings and people's dates are read from and committed to this harness")
+                        .help("The team's settings, people's dates and notes from the field are read from and committed to this harness")
                 }
                 Spacer()
                 if harness.isLoading(org, setup) { ProgressView().controlSize(.small) }

@@ -17,7 +17,7 @@ struct GanninApp: App {
     @State private var orgConfigs: OrgConfigStore
     @State private var peopleDates: PeopleDatesStore
     @State private var bankHolidays = BankHolidayStore()
-    @State private var fieldNotes = FieldNotesStore()
+    @State private var fieldNotes: FieldNotesStore
     @State private var activity: SyncActivity
     @State private var harness: HarnessStore
     @State private var team: HarnessTeamStore
@@ -50,11 +50,14 @@ struct GanninApp: App {
         _releases = State(initialValue: ReleaseStore(auth: auth, activity: activity))
         let harness = HarnessStore(auth: auth)
         _harness = State(initialValue: harness)
-        // Team data from the harness, for orgs that keep it there.
+        // Team data from the harness, for orgs that have one.
         let team = HarnessTeamStore(harness: harness)
         team.setup = { [weak orgConfigs] org in orgConfigs?.harness(for: org) }
         orgConfigs.team = team
         peopleDates.team = team
+        let fieldNotes = FieldNotesStore()
+        fieldNotes.team = team
+        _fieldNotes = State(initialValue: fieldNotes)
         _team = State(initialValue: team)
         // Checkouts set when an org had one harness, now that it can have several.
         for (org, config) in orgConfigs.configs {

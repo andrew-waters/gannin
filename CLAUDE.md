@@ -29,8 +29,8 @@ It's a Mac app only (`platform: macOS`): AppKit is used directly, with no `#if o
 
 What's entered in Gannin (people's dates and time off, org settings, hidden items, stars) is
 kept in SwiftData on this device only (`Sync/UserDatabase.swift`, `UserData/Gannin.store`); no
-iCloud. What the team shares belongs in the org's harness (team data, `HarnessTeamData.swift`),
-which is how it's shared between people and Macs; stars, hidden items and which harnesses
+iCloud. What the team shares lives in the org's harness whenever it has one (team data,
+`HarnessTeamData.swift`), which is how it's shared between people and Macs; stars, hidden items and which harnesses
 are yours stay here. The stores keep their data in memory and write through. Records have no
 unique constraints (the store once synced through CloudKit), so duplicates are merged on load:
 newest wins, time off merges by its UUID. It was copied from `UserDefaults` once
@@ -867,16 +867,20 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   own starts as a copy), and the workflow, investments and goals editors given the project's
   store. The scorecard, recap cadence and committed date field are edited where they're used,
   with the project picked.
-- Team data in the harness (`HarnessTeamData.swift`): an org can keep its views, investments,
-  issue workflow, working week, leave policy, exclusions and people's dates (time off with sick
-  days included) as JSON under `.gannin/` (`TeamFile`: `views.json`, `investments.json`,
-  `workflow.json`, `working-week.json`, `leave.json`, `exclusions.json`,
-  `people/<login>.json`), keys sorted and calendar days as `2026-10-03` (`TeamCoding`). The
-  index reads `.gannin/*.json` beside the documents (`HarnessIndex.dataFiles`), and every
-  cached index loads at launch. Once any is there (Settings > Harness > Move to Harness,
-  `TeamDataSection`, one commit from what's on this device), `OrgConfigStore.config(for:)` and
-  `PeopleDatesStore` read the team's parts from `HarnessTeamStore` instead; stars, hidden
-  items, app settings and which harnesses it has stay the user's own, on this device.
+- Team data in the harness (`HarnessTeamData.swift`): an org with a harness keeps its views,
+  investments, issue workflow, working week, leave policy, exclusions, goals, authoring prompts,
+  recap cadence, scorecard, projects, committed date field, field notes and people's dates (time
+  off with sick days included) as JSON under `.gannin/` (`TeamFile`: `views.json`,
+  `investments.json`, `workflow.json`, `working-week.json`, `leave.json`, `exclusions.json`,
+  `goals.json`, `authoring.json`, `recap.json`, `scorecard.json`, `repo-projects.json`,
+  `prioritisation.json`, `field-notes.json`, `people/<login>.json`), keys sorted and calendar
+  days as `2026-10-03` (`TeamCoding`). The index reads `.gannin/*.json` beside the documents
+  (`HarnessIndex.dataFiles`), and every cached index loads at launch. It's always the harness's
+  once the org has one (`HarnessTeamStore.keepsData`, nothing copied from this device): a file
+  that isn't there is the default, and `OrgConfigStore.config(for:)`, `PeopleDatesStore` and
+  `FieldNotesStore` read the team's parts from `HarnessTeamStore`. Only an org with no harness
+  keeps them on this device. Stars, hidden items, app settings and which harnesses it has stay
+  the user's own, on this device (`TeamDataSection` says what's where).
 - Edits to that data apply at once and wait as pending changes (`HarnessTeamStore.pending`,
   kept on disk in Application Support/<bundle ID>/HarnessPending) until reviewed: the sidebar
   shows "N changes to commit" above the sync row (`HarnessPendingRow`), whose Review
@@ -976,9 +980,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Under Meetings in the sidebar: Standup (`StandupView`, as before) and Prioritisation
   (`Gannin/Meetings/PrioritisationView.swift`), for the morning session with CS. Under a bar (a
   search, and which of the board's date fields is the committed date, `Committed` by default,
-  `prioritisationDateField.<org>`, or the project's own, `RepoProject.committedDateField`): Triage, the open issues with no Status on the workflow board
+  `OrgConfig.committedDateField`, a team file, `.gannin/prioritisation.json`, or the project's own, `RepoProject.committedDateField`): Triage, the open issues with no Status on the workflow board
   or not on it, newest first; From the field, points raised in the meeting (`FieldNotesStore`,
-  per org on this Mac), ticked off when dealt with, those still open carrying over; and the
+  per org, a team file, `.gannin/field-notes.json`), ticked off when dealt with, those still open carrying over; and the
   open issues with the committed date set, soonest first, red once overdue and orange within
   the week. Issues open in the drawer, where their Status and fields are set.
 - Recap (`Meetings/RecapView.swift`, Rituals › Recap, `WorkloadTab.recap`) is the issues closed

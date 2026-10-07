@@ -101,63 +101,19 @@ struct HarnessCommitSheet: View {
     }
 }
 
-/// Settings > Harness: where the team's data is kept, and Move to Harness
-/// for an org still keeping it on this device.
+/// Settings > Harness: where the team's data is kept.
 struct TeamDataSection: View {
-    @Environment(HarnessTeamStore.self) private var team
-    @Environment(HarnessStore.self) private var harness
-    @Environment(OrgConfigStore.self) private var configs
-    @Environment(PeopleDatesStore.self) private var peopleDates
     let org: String
     let setup: HarnessConfig
-    @State private var confirmingMove = false
-    @State private var isMoving = false
-    @State private var error: String?
 
     var body: some View {
         Section {
-            if team.keepsData(org) {
-                LabeledContent("Team data") {
-                    Text("In \(setup.repo)")
-                }
-                Text("Views, investment categories, the issue workflow, working week, leave policy, repos and people left out, and people's dates and time off are read from .gannin in the harness. Changes wait in the sidebar until you review and commit them.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } else {
-                LabeledContent {
-                    Button("Move to Harness") { confirmingMove = true }
-                        .disabled(isMoving || harness.index(for: org, setup) == nil)
-                } label: {
-                    Text("Team data")
-                    Text("Kept on this device")
-                }
-                Text("Move the team's settings and people's dates into \(setup.repo), so everyone in \(org) works from the same, versioned copy. Your stars, hidden items and app settings stay your own.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                if isMoving {
-                    ProgressView().controlSize(.small)
-                }
-                if let error {
-                    Text(error).font(.caption).foregroundStyle(.red)
-                }
+            LabeledContent("Team data") {
+                Text("In \(setup.repo)")
             }
-        }
-        .confirmationDialog("Move team data to \(setup.repo)?", isPresented: $confirmingMove) {
-            Button("Commit to Harness") { Task { await move() } }
-        } message: {
-            let people = peopleDates.own(in: org).values.filter { !$0.isEmpty }.count
-            Text("Gannin commits the org's views, investment categories, issue workflow, working week, leave policy and exclusions, and \(people == 1 ? "1 person's" : "\(people) people's") dates and time off, sick days included, as JSON under .gannin. From then on they're read from there, and every change is committed after you confirm it.")
-        }
-    }
-
-    private func move() async {
-        isMoving = true
-        error = nil
-        defer { isMoving = false }
-        do {
-            try await team.moveIn(org: org, config: configs.config(for: org), people: peopleDates.own(in: org))
-        } catch {
-            self.error = error.localizedDescription
+            Text("Views, investment categories, the issue workflow, working week, leave policy, repos and people left out, goals, the scorecard, recap cadence, projects, drafting prompts, the committed date field, notes from the field, and people's dates and time off are read from .gannin in the harness, so everyone in \(org) works from the same copy. Changes wait in the sidebar until you review and commit them.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }
