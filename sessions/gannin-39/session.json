@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "39-store-scorecards-and-other-team-data-in",
+  "issue" : "andrew-waters/gannin#39",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-07T17:21:42Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Store scorecards and other team data in the harness so changes are shared with everyone",
+  "url" : "https://github.com/andrew-waters/gannin/issues/39"
+}
