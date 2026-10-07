@@ -291,7 +291,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   kept by the period's first day (`Measurable.values`). Ranges up to 104 weeks, 36 months, 12
   quarters, 5 years or All time, which syncs the metrics history back to the org's first issue
   (`MetricsStore.sync` backfills newest first, saving every eight weeks). Group by team, owner or
-  none.
+  none. A metric's cells (or Compare People in its menu) open `ScorecardPeopleSheet`: the same periods per
+  person (`Scorecard.Data.people`, the author, or the reviewer for requests answered, within its team),
+  worst first (most whole periods off target, then furthest off in the latest), a count like PRs
+  merged not judged per person (`Measurable.personal`); a person opens their PRs and reviews.
 - Weekly Digest (`WeeklyDigest`, `DigestSheet` on `NotesSheet`) is the week as Markdown:
   delivery against the week before and goals, what shipped by investment category, notable
   PRs, CI and who's off next week, to copy, rewrite with Claude, or commit to the harness as
