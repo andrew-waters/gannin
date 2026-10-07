@@ -474,7 +474,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   count what falls outside. Weeks still start on Monday everywhere.
 - People's dates (`PeopleDates.swift`, `PeopleDatesStore`, per org and login): start and end
   dates and time off (holiday or sick, inclusive day ranges with a note), entered by hand, kept
-  on this device or, for an org that keeps its team data there, in the harness. The Time off part of the person view (`PersonColumn`, Work
+  in the org's harness, or on this device for an org with none. The Time off part of the person view (`PersonColumn`, Work
   or Time off) has Calendar (`TimeOffCalendarView` with `fixedPerson`), Report
   (`PersonLeaveReport`: allowance tiles, holiday and sick by month, the year's entries, past
   leave years) and Details, where they're edited, from a person's context menu on the work log, threads or
