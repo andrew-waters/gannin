@@ -157,6 +157,20 @@ struct ReviewedPullRequest: Equatable {
         }
     }
 
+    /// A review comment already on GitHub, on a diff line: from an earlier
+    /// review (anyone's, including an earlier pass of this one).
+    struct ExistingComment: Identifiable, Equatable {
+        let id: Int
+        let path: String
+        let line: Int
+        let isOld: Bool
+        let body: String
+        let author: String
+        let avatarURL: URL?
+        let createdAt: Date
+        let url: URL?
+    }
+
     let title: String
     let body: String
     let author: String?
@@ -165,6 +179,7 @@ struct ReviewedPullRequest: Equatable {
     let deletions: Int
     let state: String
     let files: [File]
+    var existingComments: [ExistingComment] = []
 
     /// The inline comments GitHub will take (findings kept or edited on
     /// lines the diff shows, and your own), and the findings it won't.
@@ -236,8 +251,42 @@ extension GitHubAPI {
         return ReviewedPullRequest(
             title: pull.title, body: pull.body ?? "", author: pull.user?.login, headSHA: pull.head.sha,
             additions: pull.additions, deletions: pull.deletions,
-            state: pull.merged == true ? "merged" : pull.state, files: files
+            state: pull.merged == true ? "merged" : pull.state, files: files,
+            existingComments: try await existingComments(repo: repo, number: number)
         )
+    }
+
+    /// Review comments already on GitHub, on the lines they're anchored to.
+    /// One left on a line a later push made outdated keeps its original
+    /// line and side, since GitHub drops `line`/`side` once that happens.
+    private func existingComments(repo: String, number: Int) async throws -> [ReviewedPullRequest.ExistingComment] {
+        struct Comment: Decodable {
+            struct User: Decodable { let login: String; let avatarUrl: URL? }
+            let id: Int
+            let path: String
+            let line: Int?
+            let originalLine: Int?
+            let side: String?
+            let originalSide: String?
+            let body: String
+            let user: User?
+            let createdAt: Date
+            let htmlUrl: URL?
+        }
+        var comments: [ReviewedPullRequest.ExistingComment] = []
+        for page in 1...30 {
+            let batch: [Comment] = try await rest("repos/\(repo)/pulls/\(number)/comments", query: ["per_page": "100", "page": "\(page)"])
+            comments += batch.compactMap { comment in
+                guard let line = comment.line ?? comment.originalLine else { return nil }
+                return .init(
+                    id: comment.id, path: comment.path, line: line, isOld: (comment.side ?? comment.originalSide) == "LEFT",
+                    body: comment.body, author: comment.user?.login ?? "ghost", avatarURL: comment.user?.avatarUrl,
+                    createdAt: comment.createdAt, url: comment.htmlUrl
+                )
+            }
+            if batch.count < 100 { break }
+        }
+        return comments
     }
 
     /// Posts a review with inline comments. A write: not retried.
@@ -376,15 +425,17 @@ struct ReviewWithClaudeButton: View {
 
 // MARK: - The review tab
 
-/// A review's tab: the PR's files and diff with claude's findings on their
-/// lines, its summary and verdict, and beneath, the conversation for
-/// asking it more. Findings are kept, edited or dismissed, comments of your
-/// own added on any line, and Post Review sends what's kept to GitHub as
-/// one review.
+/// A review's tab: the PR's files and diff with claude's findings and any
+/// existing review comments on their lines, its summary and verdict, and
+/// beneath, the conversation for asking it more. The file list's first row
+/// is the PR's own conversation comments. Findings are kept, edited or
+/// dismissed, comments of your own added on any line, and Post Review sends
+/// what's kept to GitHub as one review.
 struct PullRequestReviewView: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(AuthStore.self) private var auth
     @Environment(HarnessStore.self) private var harness
+    @Environment(DetailStore.self) private var details
     let session: CodeSession
     @State private var pullRequest: ReviewedPullRequest?
     @State private var error: String?
@@ -424,6 +475,7 @@ struct PullRequestReviewView: View {
             }
         }
         .task(id: session.id) { await load() }
+        .task(id: reference.id) { await details.load(reference.id) }
         .confirmationDialog("Finish this review?", isPresented: $confirmingFinish) {
             Button("Finish Review") { Task { await sessions.archiveReview(session.id) } }
         } message: {
@@ -601,6 +653,9 @@ struct PullRequestReviewView: View {
         let drafts = sessions.reviewDrafts[session.id] ?? ReviewDraft()
         return List(selection: $selectedFile) {
             if let pullRequest {
+                Label("Comments on this PR", systemImage: "bubble.left.and.bubble.right")
+                    .foregroundStyle(.secondary)
+                    .tag("\u{0}conversation")
                 let general = findings.filter { finding in !pullRequest.files.contains { $0.path == finding.path } }
                 if !general.isEmpty {
                     Label("\(general.count) not on a changed file", systemImage: "text.bubble")
@@ -617,6 +672,7 @@ struct PullRequestReviewView: View {
                 ForEach(pullRequest.files) { file in
                     let here = findings.filter { $0.path == file.path && drafts.decisions[$0.key] != .dismissed }
                     let mine = drafts.comments.filter { $0.path == file.path }.count
+                    let existing = pullRequest.existingComments.filter { $0.path == file.path }.count
                     HStack(spacing: 6) {
                         VStack(alignment: .leading, spacing: 1) {
                             Text((file.path as NSString).lastPathComponent).lineLimit(1)
@@ -632,6 +688,10 @@ struct PullRequestReviewView: View {
                                 .font(.caption.weight(.semibold).monospacedDigit())
                                 .padding(.horizontal, 6)
                                 .background(worst.severityColor.opacity(0.25), in: Capsule())
+                        }
+                        if existing > 0 {
+                            Image(systemName: "text.bubble").foregroundStyle(.secondary).font(.caption)
+                                .help("\(existing) existing comment\(existing == 1 ? "" : "s")")
                         }
                         if mine > 0 {
                             Image(systemName: "text.bubble.fill").foregroundStyle(Color.accentColor).font(.caption)
@@ -659,7 +719,9 @@ struct PullRequestReviewView: View {
     private func diffColumn(review: SessionTranscript.ReviewResult?) -> some View {
         let findings = review?.findings ?? []
         if let pullRequest {
-            if selectedFile == "\u{0}general" {
+            if selectedFile == "\u{0}conversation" {
+                List { DescriptionSections(id: reference.id, url: reference.url) }
+            } else if selectedFile == "\u{0}general" {
                 let general = findings.filter { finding in !pullRequest.files.contains { $0.path == finding.path } }
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
@@ -678,9 +740,10 @@ struct PullRequestReviewView: View {
                 ReviewDiff(
                     session: session, file: file, findings: findings.filter { $0.path == file.path }, learnings: learnings(on: file),
                     applied: (review?.applied ?? []).filter { $0.path == file.path }, resolve: { appliedLearning($0) },
-                    learningURL: { harnessIndex?.url(for: $0.document) }
+                    learningURL: { harnessIndex?.url(for: $0.document) },
+                    existingComments: pullRequest.existingComments.filter { $0.path == file.path }
                 )
-                    .id(file.path)
+                .id(file.path)
             } else {
                 ContentUnavailableView("Pick a file", systemImage: "doc.text.magnifyingglass")
             }
@@ -905,7 +968,8 @@ extension SessionStore {
     }
 }
 
-/// One file's diff with the findings and your comments on their lines.
+/// One file's diff with the findings and your comments on their lines, and
+/// any review comments already on GitHub.
 private struct ReviewDiff: View {
     @Environment(SessionStore.self) private var sessions
     let session: CodeSession
@@ -917,6 +981,7 @@ private struct ReviewDiff: View {
     let applied: [SessionTranscript.AppliedLearning]
     let resolve: (String) -> HarnessLearning?
     let learningURL: (HarnessLearning) -> URL?
+    let existingComments: [ReviewedPullRequest.ExistingComment]
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
     @State private var showsFileLearnings = true
@@ -929,9 +994,12 @@ private struct ReviewDiff: View {
         let fileWide = placement.fileWide
         let appliedAt = placement.appliedAt
         let appliedTop = placement.appliedTop
-        // Findings on lines the diff doesn't show, at the top.
+        // Findings, and existing comments, on lines the diff doesn't show
+        // (GitHub keeps an outdated comment's original line, but not in the
+        // current diff), at the top.
         let placed = Set(file.lines.compactMap(\.newLine))
         let unplaced = findings.filter { $0.line.map { !placed.contains($0) } ?? true }
+        let unplacedExisting = existingComments.filter { comment in !file.lines.contains { matches(comment, $0) } }
         VStack(spacing: 0) {
             HStack {
                 Text(file.path).font(.callout.monospaced()).lineLimit(1).truncationMode(.head)
@@ -966,6 +1034,10 @@ private struct ReviewDiff: View {
                         FindingCard(session: session, finding: finding, showsLocation: true)
                             .padding(8)
                     }
+                    ForEach(unplacedExisting) { comment in
+                        ExistingCommentCard(comment: comment, showsLocation: true)
+                            .padding(8)
+                    }
                     if file.lines.isEmpty {
                         Text(file.status == "renamed" && file.additions == 0 && file.deletions == 0
                              ? "Renamed, with no changes to its contents."
@@ -996,6 +1068,12 @@ private struct ReviewDiff: View {
                                     .padding(.trailing, 8)
                                     .padding(.vertical, 4)
                             }
+                        }
+                        ForEach(existingComments.filter { matches($0, line) }) { comment in
+                            ExistingCommentCard(comment: comment, showsLocation: false)
+                                .padding(.leading, 40)
+                                .padding(.trailing, 8)
+                                .padding(.vertical, 4)
                         }
                         ForEach(drafts.comments.filter { $0.path == file.path && matches($0, line) }) { comment in
                             OwnCommentCard(session: session, comment: comment)
@@ -1040,6 +1118,11 @@ private struct ReviewDiff: View {
     }
 
     private func matches(_ comment: ReviewDraft.Comment, _ line: DiffLine) -> Bool {
+        guard let anchor = line.anchor else { return false }
+        return anchor.line == comment.line && anchor.isOld == comment.isOld
+    }
+
+    private func matches(_ comment: ReviewedPullRequest.ExistingComment, _ line: DiffLine) -> Bool {
         guard let anchor = line.anchor else { return false }
         return anchor.line == comment.line && anchor.isOld == comment.isOld
     }
@@ -1204,6 +1287,39 @@ private struct FindingCard: View {
 
     private func set(_ decision: ReviewDraft.Decision?) {
         sessions.reviewDrafts[session.id, default: ReviewDraft()].decisions[finding.key] = decision
+    }
+}
+
+/// A review comment already on GitHub: read-only, with who left it and
+/// when, and a link to it.
+private struct ExistingCommentCard: View {
+    let comment: ReviewedPullRequest.ExistingComment
+    var showsLocation = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Avatar(url: comment.avatarURL, size: 16)
+                Text(comment.author).font(.callout.weight(.medium))
+                if showsLocation {
+                    Text("\(comment.path):\(comment.line)")
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                }
+                RelativeDate(date: comment.createdAt).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if let url = comment.url {
+                    Link(destination: url) { Image(systemName: "arrow.up.right.square") }
+                        .help("Open on GitHub")
+                }
+            }
+            MarkdownText(source: comment.body)
+        }
+        .padding(10)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        .overlay { RoundedRectangle(cornerRadius: 8).stroke(Color.separatorLine, lineWidth: 1) }
     }
 }
 
