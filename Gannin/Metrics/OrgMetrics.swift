@@ -226,16 +226,39 @@ struct SizeStat: Hashable {
     /// Lines changed above which a PR counts as large.
     static let largeLines = 400
 
+    /// Upper bounds of the distribution's buckets, in lines changed; the
+    /// last bucket is everything over the last bound. 400 is a bound, so
+    /// the buckets after it are the large PRs.
+    static let bucketBounds = [10, 50, 100, 200, 400, 1000]
+    static let bucketLabels = ["0-10", "11-50", "51-100", "101-200", "201-400", "401-1,000", "Over 1,000"]
+
     let median: Int?
     let p75: Int?
     /// Large PRs, biggest first.
     let large: [MetricPullRequest]
+    let smallest: MetricPullRequest?
+    let largest: MetricPullRequest?
+    /// Median files changed, over the PRs whose count is known.
+    let medianFiles: Int?
+    /// PRs in each of `bucketLabels`.
+    let buckets: [Int]
 
     init(_ prs: [MetricPullRequest]) {
         let sizes = prs.map(\.size).sorted()
         median = sizes.isEmpty ? nil : sizes[sizes.count / 2]
         p75 = sizes.isEmpty ? nil : sizes[min(sizes.count - 1, sizes.count * 3 / 4)]
         large = prs.filter { $0.size > Self.largeLines }.sorted { $0.size > $1.size }
+        smallest = prs.min { $0.size < $1.size }
+        largest = prs.max { $0.size < $1.size }
+        let files = prs.compactMap(\.changedFiles).sorted()
+        medianFiles = files.isEmpty ? nil : files[files.count / 2]
+        var buckets = Array(repeating: 0, count: Self.bucketLabels.count)
+        for size in sizes { buckets[Self.bucket(size)] += 1 }
+        self.buckets = buckets
+    }
+
+    static func bucket(_ lines: Int) -> Int {
+        bucketBounds.firstIndex { lines <= $0 } ?? bucketBounds.count
     }
 }
 

@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 import AppKit
 
@@ -187,6 +188,9 @@ struct SizeRiskSection: View {
                     detail: "Approved within 15 minutes, or unreviewed"
                 )
             }
+            if !metrics.merged.isEmpty {
+                PRSizeDistribution(size: size)
+            }
             if !metrics.repoRisks.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(metrics.repoRisks.prefix(5)) { risk in
@@ -213,7 +217,7 @@ struct SizeRiskSection: View {
                     Text("Largest").font(.callout.weight(.medium))
                     ForEach(size.large.prefix(5)) { pr in
                         Button {
-                            selection = .pullRequestReference(PullRequestReference(org: pr.repo.split(separator: "/").first.map(String.init) ?? "", id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url))
+                            selection = .pullRequestReference(pr.reference)
                         } label: {
                             HStack(spacing: 8) {
                                 Text("\(pr.size)")
@@ -236,6 +240,119 @@ struct SizeRiskSection: View {
                 }
             }
         }
+    }
+}
+
+/// PR size in short, for the Overview: the median against the period
+/// before, the smallest and largest (each opening the PR), median files,
+/// and how sizes spread.
+struct PRSizeSummary: View {
+    let metrics: OrgMetrics
+    @Binding var selection: DetailSelection?
+
+    var body: some View {
+        let size = metrics.prSize
+        VStack(alignment: .leading, spacing: 12) {
+            Text("PR size").font(.headline)
+            TileGrid {
+                StatTile(
+                    title: "Median PR size",
+                    value: size.median.map { $0.formatted() } ?? "-",
+                    detail: size.p75.map { "Lines changed · p75 \($0.formatted())" },
+                    change: metrics.previous.flatMap { previous in
+                        previous.prSizeMedian.flatMap { before in size.median.flatMap { StatChange.percent(Double($0), Double(before), higherIsWorse: true) } }
+                    }
+                )
+                pullRequestTile("Smallest", size.smallest)
+                pullRequestTile("Largest", size.largest)
+                StatTile(
+                    title: "Median files changed",
+                    value: size.medianFiles.map { $0.formatted() } ?? "-",
+                    detail: size.medianFiles == nil ? "Not known for these PRs yet" : "Per PR"
+                )
+            }
+            if !metrics.merged.isEmpty {
+                PRSizeDistribution(size: size)
+            }
+        }
+    }
+
+    /// A PR's lines changed, opening it when clicked.
+    @ViewBuilder
+    private func pullRequestTile(_ title: String, _ pr: MetricPullRequest?) -> some View {
+        let tile = StatTile(
+            title: title,
+            value: pr.map { $0.size.formatted() } ?? "-",
+            detail: pr.map { "Lines · \($0.repo.split(separator: "/").last ?? "")#\($0.number) \($0.title)" }
+        )
+        if let pr {
+            Button {
+                selection = .pullRequestReference(pr.reference)
+            } label: {
+                tile
+            }
+            .buttonStyle(.plain)
+            .help(pr.title)
+        } else {
+            tile
+        }
+    }
+}
+
+/// How many merged PRs fall in each size bucket; hover a bar for its
+/// count and share.
+struct PRSizeDistribution: View {
+    let size: SizeStat
+    @State private var hovered: String?
+
+    var body: some View {
+        let total = max(size.buckets.reduce(0, +), 1)
+        let rows = Array(zip(SizeStat.bucketLabels, size.buckets))
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Lines changed per PR").font(.callout.weight(.medium))
+            Chart {
+                ForEach(rows, id: \.0) { label, count in
+                    BarMark(x: .value("Lines changed", label), y: .value("PRs", count))
+                        .foregroundStyle(ChartPalette.blue.opacity(hovered == nil || hovered == label ? 1 : 0.5))
+                        .clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
+                }
+            }
+            .chartYAxis {
+                AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
+                    AxisGridLine().foregroundStyle(.quaternary)
+                    AxisValueLabel()
+                }
+            }
+            .chartOverlay { proxy in
+                Rectangle().fill(.clear).contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location): hovered = proxy.value(atX: location.x, as: String.self)
+                        case .ended: hovered = nil
+                        }
+                    }
+            }
+            .frame(height: 140)
+            .accessibilityLabel("Merged PRs by lines changed")
+            .accessibilityValue(rows.map { "\($0.0) lines: \($0.1)" }.joined(separator: ", "))
+            if let hovered, let index = SizeStat.bucketLabels.firstIndex(of: hovered) {
+                let count = size.buckets[index]
+                Text("\(hovered) lines: \(count) PR\(count == 1 ? "" : "s"), \((Double(count) / Double(total)).formatted(.percent.precision(.fractionLength(0)))) of merged")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Over \(SizeStat.largeLines) lines counts as large. Hover for values.")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+    }
+}
+
+extension MetricPullRequest {
+    /// For opening it in a drawer, outside the snapshot.
+    var reference: PullRequestReference {
+        PullRequestReference(org: repo.split(separator: "/").first.map(String.init) ?? "", id: id, number: number, title: title, repo: repo, url: url)
     }
 }
 

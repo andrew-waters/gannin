@@ -35,6 +35,7 @@ struct OverviewView: View {
                             notices
                             if let metrics {
                                 deliverySummary(metrics)
+                                PRSizeSummary(metrics: metrics, selection: $selection)
                             } else if store.syncing.contains(org) {
                                 loading
                             }
