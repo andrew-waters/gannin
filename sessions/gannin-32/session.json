@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "32-show-files-changed-and-lines-added",
+  "issue" : "andrew-waters/gannin#32",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-07T11:21:35Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Show files changed and lines added/removed in PR and people views to track PR size",
+  "url" : "https://github.com/andrew-waters/gannin/issues/32"
+}
