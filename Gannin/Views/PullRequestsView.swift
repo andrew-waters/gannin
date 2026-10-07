@@ -1,8 +1,8 @@
 import SwiftUI
 
 /// What the Pull Requests page narrows its PRs by: open or merged, a search,
-/// and authors, reviewers, statuses and repositories (several of each, any
-/// matching). Kept per window.
+/// authors, reviewers, statuses and repositories (several of each, any
+/// matching), and whether to hide the viewer's own. Kept per window.
 struct PullRequestFilters {
     enum State: String, CaseIterable {
         case open = "Open"
@@ -43,8 +43,9 @@ struct PullRequestFilters {
     var state: State = .open
     var search = ""
     var values: [Key: Set<String>] = [:]
+    var hideMine = false
 
-    var isNarrowed: Bool { !search.isEmpty || values.values.contains { !$0.isEmpty } }
+    var isNarrowed: Bool { !search.isEmpty || hideMine || values.values.contains { !$0.isEmpty } }
 
     func inState(_ pr: PullRequest) -> Bool {
         switch state {
@@ -61,7 +62,8 @@ struct PullRequestFilters {
 
     /// Everything but the state, less `key` (so a menu counts what picking
     /// among its values would give).
-    func matches(_ pr: PullRequest, except key: Key? = nil) -> Bool {
+    func matches(_ pr: PullRequest, except key: Key? = nil, viewerLogin: String? = nil) -> Bool {
+        if hideMine, let viewerLogin, pr.author?.login == viewerLogin { return false }
         for (filter, picked) in values where filter != key && !picked.isEmpty {
             let hit: Bool = switch filter {
             case .author: pr.author.map { picked.contains($0.login) } ?? false
@@ -86,6 +88,7 @@ struct StoredPullRequestFilters: DynamicProperty {
     @SceneStorage("pullRequests.reviewer") private var reviewer = ""
     @SceneStorage("pullRequests.status") private var status = ""
     @SceneStorage("pullRequests.repository") private var repository = ""
+    @SceneStorage("pullRequests.hideMine") private var hideMine = false
     @State private var search = ""
 
     var wrappedValue: PullRequestFilters {
@@ -93,7 +96,7 @@ struct StoredPullRequestFilters: DynamicProperty {
             PullRequestFilters(state: state, search: search, values: [
                 .author: StoredSet.set(author), .reviewer: StoredSet.set(reviewer),
                 .status: StoredSet.set(status), .repository: StoredSet.set(repository),
-            ])
+            ], hideMine: hideMine)
         }
         nonmutating set {
             state = newValue.state
@@ -102,6 +105,7 @@ struct StoredPullRequestFilters: DynamicProperty {
             reviewer = StoredSet.string(newValue.values[.reviewer] ?? [])
             status = StoredSet.string(newValue.values[.status] ?? [])
             repository = StoredSet.string(newValue.values[.repository] ?? [])
+            hideMine = newValue.hideMine
         }
     }
 
@@ -133,7 +137,7 @@ struct PullRequestsView: View {
     var body: some View {
         let filters = stored.wrappedValue
         let pool = (workload.openPullRequests + workload.mergedPullRequests).filter(filters.inState)
-        let shown = pool.filter { filters.matches($0) }
+        let shown = pool.filter { filters.matches($0, viewerLogin: auth.viewer?.login) }
         let open = shown.filter { !$0.isMerged }.sorted { $0.updatedAt > $1.updatedAt }.map(PullRequestTableRow.init)
         let merged = shown.filter(\.isMerged).sorted { ($0.mergedAt ?? $0.updatedAt) > ($1.mergedAt ?? $1.updatedAt) }.map(PullRequestTableRow.init)
         var sections: [(title: String, rows: [PullRequestTableRow])] = []
@@ -255,6 +259,8 @@ struct PullRequestsView: View {
         HStack(spacing: 8) {
             FilterSearchField(text: stored.projectedValue.search, prompt: "Title, number, person or repo")
             ForEach(PullRequestFilters.Key.allCases, id: \.self) { menu($0, filters: filters, pool: pool) }
+            Toggle("Hide mine", isOn: stored.projectedValue.hideMine)
+                .checkboxToggle()
             Spacer(minLength: 0)
             if filters.isNarrowed {
                 Button("Clear All") {
@@ -277,7 +283,7 @@ struct PullRequestsView: View {
     }
 
     private func menu(_ key: PullRequestFilters.Key, filters: PullRequestFilters, pool: [PullRequest]) -> some View {
-        let candidates = pool.filter { filters.matches($0, except: key) }
+        let candidates = pool.filter { filters.matches($0, except: key, viewerLogin: auth.viewer?.login) }
         var counts: [String: Int] = [:]
         var names: [String: String] = [:]
         for pr in candidates {
