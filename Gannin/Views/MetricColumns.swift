@@ -272,6 +272,8 @@ struct MetricPullRequestRow: View {
                     Text("·")
                     Text("merged")
                     RelativeDate(date: pr.mergedAt)
+                    Text("·")
+                    LinesText(added: pr.additions, removed: pr.deletions, files: pr.changedFiles)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -316,6 +318,9 @@ struct MetricPullRequestColumn: View {
                     GridRow {
                         Text("Size").foregroundStyle(.secondary)
                         HStack(spacing: 6) {
+                            if let files = pr.changedFiles {
+                                Text(files == 1 ? "1 file" : "\(files) files")
+                            }
                             Text("+\(pr.additions)").foregroundStyle(.green)
                             Text("-\(pr.deletions)").foregroundStyle(.red)
                         }

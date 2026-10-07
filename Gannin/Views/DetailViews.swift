@@ -400,6 +400,9 @@ struct PullRequestColumn: View {
                         ChecksLabel(state: checks)
                     }
                     HStack(spacing: 6) {
+                        if let files = pr.changedFiles {
+                            Text(files == 1 ? "1 file" : "\(files) files")
+                        }
                         Text("+\(pr.additions)").foregroundStyle(.green)
                         Text("-\(pr.deletions)").foregroundStyle(.red)
                     }

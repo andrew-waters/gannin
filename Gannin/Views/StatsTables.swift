@@ -11,6 +11,8 @@ nonisolated extension PersonStatsRow {
     var merged: Int { author?.merged ?? 0 }
     var cycle: Double { author?.cycleTime.median ?? -1 }
     var ttfr: Double { author?.timeToFirstReview.median ?? -1 }
+    var lines: Double { author?.size.medianLines.map(Double.init) ?? -1 }
+    var files: Double { author?.size.medianFiles.map(Double.init) ?? -1 }
     var reviewed: Int { author?.reviewsGiven ?? 0 }
     var asked: Int { reviewer?.requested ?? 0 }
     var answered: Double { reviewer?.responseRate ?? -1 }
@@ -67,6 +69,7 @@ struct PeopleStatsTable: View {
         let days = metrics.window.lengthInDays()
         let cycleScale = BarScale(rows.compactMap { $0.author?.cycleTime.median })
         let ttfrScale = BarScale(rows.compactMap { $0.author?.timeToFirstReview.median })
+        let sizeScale = BarScale(rows.compactMap { $0.author?.size.medianLines.map(Double.init) })
         let responseScale = BarScale(rows.compactMap { $0.reviewer?.responseTime.median })
 
         return [
@@ -115,6 +118,24 @@ struct PeopleStatsTable: View {
                 }
             ),
             StatsColumn(
+                id: "size", title: "Size", help: "Median lines changed (added plus removed) per merged PR",
+                width: 130, group: "Authoring",
+                sortKey: { .number($0.lines) },
+                cell: { row in
+                    AnyView(BarCell(value: row.author?.size.medianLines.map(Double.init), scale: sizeScale, format: { Int($0).formatted() })
+                        .help(Self.sizeHelp(row.author)))
+                }
+            ),
+            StatsColumn(
+                id: "files", title: "Files", help: "Median files changed per merged PR",
+                width: 60, group: "Authoring",
+                sortKey: { .number($0.files) },
+                cell: { row in
+                    AnyView(NumberCell(text: row.author?.size.medianFiles.map { $0.formatted() } ?? "-", dimmed: row.author?.size.medianFiles == nil)
+                        .help(Self.filesHelp(row.author)))
+                }
+            ),
+            StatsColumn(
                 id: "reviewed", title: "Reviewed", help: "Other people's merged PRs they reviewed",
                 width: 88, group: "Reviewing",
                 sortKey: { .number(Double($0.reviewed)) },
@@ -160,6 +181,26 @@ struct PeopleStatsTable: View {
                 cell: { row in AnyView(WaitingCell(reviewer: row.reviewer)) }
             ),
         ]
+    }
+
+    /// Median and p75 lines per PR, the totals and how many were large.
+    static func sizeHelp(_ author: PersonMetrics?) -> String {
+        guard let author, let median = author.size.medianLines else { return "No merged PRs in the window" }
+        let size = author.size
+        var text = "Median \(median.formatted()) lines changed over \(author.merged) PR\(author.merged == 1 ? "" : "s")"
+        if let p75 = size.p75Lines { text += ", p75 \(p75.formatted())" }
+        text += ". +\(size.added.formatted()) -\(size.removed.formatted()) in all"
+        if size.large > 0 { text += ", \(size.large) over \(SizeStat.largeLines) lines" }
+        return text
+    }
+
+    static func filesHelp(_ author: PersonMetrics?) -> String {
+        guard let author, let median = author.size.medianFiles else { return "Files changed not known yet" }
+        var text = "Median \(median.formatted()) file\(median == 1 ? "" : "s") changed per PR"
+        if author.size.filesKnown < author.merged {
+            text += " (\(author.size.filesKnown) of \(author.merged) PRs; older ones were fetched without it)"
+        }
+        return text
     }
 
     /// "Median X over N PRs, p75 Y", or a note when there's nothing to measure.
@@ -247,16 +288,18 @@ struct BarScale {
     }
 }
 
-/// A duration with its bar to the right, scaled against the rest of the
-/// column.
+/// A duration (or another number) with its bar to the right, scaled
+/// against the rest of the column.
 struct BarCell: View {
     let value: TimeInterval?
     let scale: BarScale
+    /// How the value reads; a duration unless told otherwise.
+    var format: (Double) -> String = { $0.compactDuration }
 
     var body: some View {
         if let value {
             HStack(spacing: 8) {
-                Text(value.compactDuration)
+                Text(format(value))
                     .monospacedDigit()
                     .frame(minWidth: 40, alignment: .leading)
                 GeometryReader { geometry in
@@ -383,6 +426,8 @@ struct ColumnGuideButton: View {
                 ("Merged", "PRs they merged in the window"),
                 ("Cycle", "Median first commit → merge"),
                 ("TTFR", "Median wait for a first review"),
+                ("Size", "Median lines changed per PR"),
+                ("Files", "Median files changed per PR"),
                 ("Reviewed", "Others' merged PRs they reviewed"),
             ]),
             Group(title: "Reviewing", entries: [

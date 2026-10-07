@@ -19,6 +19,35 @@ extension GitHubAPI {
         return nodes.compactMap { $0.value?.model }
     }
 
+    /// Files changed on PRs by node ID, for those stored before it was
+    /// fetched, handed over a batch at a time. `changedFiles` is slow for
+    /// GitHub to work out, so a batch is 25 and halved when GitHub times
+    /// out; a PR that times out alone is skipped.
+    func changedFiles(ids: [String], onBatch: (_ files: [String: Int], _ done: Int) -> Void) async throws {
+        struct Node: Decodable { let id: String; let changedFiles: Int }
+        struct Response: Decodable { let nodes: [Lossy<Node>] }
+        var size = 25
+        var done = 0
+        while done < ids.count {
+            let batch = Array(ids[done..<min(done + size, ids.count)])
+            do {
+                let response: Response = try await query("""
+                    query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequest { id changedFiles } } }
+                    """, values: ["ids": batch])
+                done += batch.count
+                onBatch(Dictionary(response.nodes.compactMap(\.value).map { ($0.id, $0.changedFiles) }, uniquingKeysWith: { first, _ in first }), done)
+                size = min(size * 2, 25)
+            } catch APIError.http(let status, _) where (502...504).contains(status) {
+                if batch.count == 1 {
+                    done += 1
+                    onBatch([:], done)
+                } else {
+                    size = max(batch.count / 2, 1)
+                }
+            }
+        }
+    }
+
     /// The search for PRs merged in `[from, to]`, by day.
     static func mergedSearch(org: String, from: Date, to: Date) -> String {
         "\(GitHubAccounts.scope(org)) archived:false is:pr is:merged merged:\(day(from))..\(day(to))"
@@ -111,6 +140,7 @@ private struct RawMetricPullRequest: Decodable {
     let mergedAt: Date
     let additions: Int
     let deletions: Int
+    let changedFiles: Int?
     let repository: Repository
     let author: Author?
     let commits: Connection<CommitNode>
@@ -120,7 +150,7 @@ private struct RawMetricPullRequest: Decodable {
 
     static let fields = """
         ... on PullRequest {
-          id number title url createdAt mergedAt additions deletions
+          id number title url createdAt mergedAt additions deletions changedFiles
           repository { nameWithOwner }
           author { __typename login avatarUrl }
           commits(first: 1) { nodes { commit { authoredDate } } }
@@ -180,7 +210,8 @@ private struct RawMetricPullRequest: Decodable {
             },
             reviewRequests: requests,
             additions: additions,
-            deletions: deletions
+            deletions: deletions,
+            changedFiles: changedFiles
         )
     }
 }

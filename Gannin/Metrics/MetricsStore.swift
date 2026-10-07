@@ -45,7 +45,8 @@ final class MetricsStore {
             openedPerWeek: [:]
         )
         let isFresh = !SyncSettings.isDue(.metrics, since: history.syncedAt, now: now)
-        if !force && isFresh && history.coveredFrom <= start { return }
+        let lackingFiles = history.lackingChangedFiles
+        if !force && isFresh && history.coveredFrom <= start && lackingFiles.isEmpty { return }
         // Wait out a low rate limit unless asked, as long as there's history to show.
         if !force && auth.shouldHoldOff && histories[org] != nil { return }
 
@@ -68,6 +69,10 @@ final class MetricsStore {
         if !weeks.isEmpty {
             run.add("opened", title: "Opened per week", detail: weeks.count == 1 ? "1 week" : "\(weeks.count) weeks")
             run.setTotal(weeks.count, for: "opened")
+        }
+        if !lackingFiles.isEmpty {
+            run.add("files", title: "Files changed", detail: "PRs stored before it was fetched")
+            run.setTotal(lackingFiles.count, for: "files")
         }
 
         syncing.insert(org)
@@ -120,6 +125,24 @@ final class MetricsStore {
                     try await api.openedCounts(org: org, weeks: weeks) { progress($0, weeks.count) }
                 }
                 for (week, count) in counts { history.openedPerWeek[week] = count }
+            }
+            if !lackingFiles.isEmpty {
+                // Saved as it goes, so a sync that stops carries on from
+                // there next time.
+                var batches = 0
+                _ = try await run.track("files", count: { $0 }) { progress in
+                    try await api.changedFiles(ids: lackingFiles) { files, done in
+                        for (id, count) in files { history.pullRequests[id]?.changedFiles = count }
+                        progress(done, lackingFiles.count)
+                        batches += 1
+                        if batches % 20 == 0 {
+                            histories[org] = history
+                            save(history)
+                        }
+                    }
+                    return lackingFiles.count
+                }
+                history.filledChangedFiles = true
             }
 
             history.syncedAt = now

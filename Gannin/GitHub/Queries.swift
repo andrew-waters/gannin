@@ -523,6 +523,7 @@ private struct RawPullRequest: Decodable {
     let reviewDecision: PullRequest.ReviewState?
     let additions: Int
     let deletions: Int
+    let changedFiles: Int?
     let repository: RawRepository
     let author: RawActor?
     let assignees: Connection<RawActor>
@@ -544,7 +545,7 @@ private struct RawPullRequest: Decodable {
 
     static let fields = """
         ... on PullRequest {
-          id number title url isDraft state createdAt updatedAt mergedAt reviewDecision additions deletions
+          id number title url isDraft state createdAt updatedAt mergedAt reviewDecision additions deletions changedFiles
           commits(last: 1) { nodes { commit { statusCheckRollup { state } committedDate } } }
           repository { nameWithOwner }
           author { login avatarUrl }
@@ -590,6 +591,7 @@ private struct RawPullRequest: Decodable {
             reviewDecision: reviewDecision,
             additions: additions,
             deletions: deletions,
+            changedFiles: changedFiles,
             assignees: assignees.nodes.compactMap(\.person),
             requestedReviewers: (reviewRequests?.nodes ?? []).compactMap { $0.requestedReviewer?.person },
             reviewRequestedAt: requestedAt,

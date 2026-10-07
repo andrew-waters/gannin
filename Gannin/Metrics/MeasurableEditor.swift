@@ -113,7 +113,7 @@ struct MeasurableEditor: View {
 
     private var unitLabel: String {
         switch draft.effectiveUnit {
-        case .number: draft.metric == .throughput ? "PRs a \(draft.cadence.noun)" : draft.metric == .prSize ? "lines" : ""
+        case .number: draft.metric?.countUnit(per: draft.cadence) ?? ""
         case .currency: draft.currency ?? Locale.current.currency?.identifier ?? "GBP"
         case .percent: "%"
         case .hours: "hours"

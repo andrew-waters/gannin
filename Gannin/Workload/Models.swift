@@ -80,6 +80,8 @@ struct PullRequest: Codable, Hashable, Identifiable {
     let reviewDecision: ReviewState?
     let additions: Int
     let deletions: Int
+    /// Files the PR changes; nil in snapshots cached before it was fetched.
+    var changedFiles: Int? = nil
     let assignees: [Person]
     var requestedReviewers: [Person]
     /// When each requested reviewer was (most recently) asked.
@@ -154,6 +156,13 @@ struct OrgSnapshot: Codable {
     let issues: [Issue]
     /// Non-fatal problems (e.g. teams hidden from this token).
     let warnings: [String]
+
+    /// Cached before PRs' files changed were fetched: a changes search
+    /// would leave the PRs it doesn't touch without them, so the next
+    /// refresh searches everything.
+    var lacksFileCounts: Bool {
+        (openPullRequests + mergedPullRequests).contains { $0.changedFiles == nil }
+    }
 }
 
 struct Comment: Codable, Hashable, Identifiable {

@@ -278,6 +278,8 @@ struct PullRequestRow: View {
                         Label("\(pr.linkedIssues.count)", systemImage: "link")
                             .help("Linked issues")
                     }
+                    Text("·")
+                    LinesText(added: pr.additions, removed: pr.deletions, files: pr.changedFiles)
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)

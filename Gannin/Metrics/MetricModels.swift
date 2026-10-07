@@ -22,6 +22,9 @@ struct MetricPullRequest: Codable, Hashable, Identifiable {
     var reviewRequests: [MetricReviewRequest]
     let additions: Int
     let deletions: Int
+    /// Files the PR changed; nil for PRs stored before it was fetched (the
+    /// history isn't fetched again for it).
+    var changedFiles: Int? = nil
     /// When the PR started waiting for review.
     var reviewableAt: Date { readyAt ?? createdAt }
 
@@ -70,4 +73,12 @@ struct MetricsHistory: Codable {
     var pullRequests: [String: MetricPullRequest]
     /// PRs opened per week, keyed by the week's start.
     var openedPerWeek: [Date: Int]
+    /// Set once the PRs stored before `changedFiles` was fetched have been
+    /// looked up for it, so those GitHub can't find aren't asked for again.
+    var filledChangedFiles: Bool?
+
+    /// Stored PRs still without a file count.
+    var lackingChangedFiles: [String] {
+        filledChangedFiles == true ? [] : pullRequests.values.filter { $0.changedFiles == nil }.map(\.id)
+    }
 }

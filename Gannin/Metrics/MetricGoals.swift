@@ -15,6 +15,8 @@ struct MetricGoals: Codable, Hashable {
         var unreviewedShare: Double?
         /// Median PR size, in lines changed.
         var prSizeLines: Int?
+        /// Median PR size, in files changed.
+        var prSizeFiles: Int?
         /// Share of review requests answered, 0 to 1 (higher is better).
         var answeredShare: Double?
         /// PRs merged a week, at least; a longer span is held to as many
@@ -23,7 +25,7 @@ struct MetricGoals: Codable, Hashable {
 
         var isEmpty: Bool {
             cycleTimeHours == nil && firstReviewHours == nil && reworkShare == nil && unreviewedShare == nil
-                && prSizeLines == nil && answeredShare == nil && mergedPerWeek == nil
+                && prSizeLines == nil && prSizeFiles == nil && answeredShare == nil && mergedPerWeek == nil
         }
     }
 
@@ -42,6 +44,7 @@ struct MetricGoals: Codable, Hashable {
             reworkShare: own.reworkShare ?? org.reworkShare,
             unreviewedShare: own.unreviewedShare ?? org.unreviewedShare,
             prSizeLines: own.prSizeLines ?? org.prSizeLines,
+            prSizeFiles: own.prSizeFiles ?? org.prSizeFiles,
             answeredShare: own.answeredShare ?? org.answeredShare,
             mergedPerWeek: own.mergedPerWeek ?? org.mergedPerWeek
         )
@@ -75,50 +78,90 @@ extension MetricGoals.Targets {
             // under way).
             let expected = target * metrics.interval.duration / (7 * 86_400)
             results.append(.init(
-                name: "PRs merged", target: "≥ \(MetricGoals.Targets.count(target)) a week", actual: "\(metrics.merged.count)",
-                onTrack: Double(metrics.merged.count) >= expected.rounded(.down), previous: metrics.previous.map { "\($0.merged)" }, drill: nil
+                name: "PRs merged",
+                target: "≥ \(MetricGoals.Targets.count(target)) a week",
+                actual: "\(metrics.merged.count)",
+                onTrack: Double(metrics.merged.count) >= expected.rounded(.down),
+                previous: metrics.previous.map { "\($0.merged)" },
+                drill: nil
             ))
         }
         if let target = cycleTimeHours {
             let actual = metrics.cycleTime.median
             results.append(.init(
-                name: "Cycle time", target: "≤ \(hours(target))", actual: actual?.compactDuration ?? "-",
-                onTrack: actual.map { $0 <= target * 3600 }, previous: metrics.previous?.cycleTime.median?.compactDuration, drill: .cycleTime
+                name: "Cycle time",
+                target: "≤ \(hours(target))",
+                actual: actual?.compactDuration ?? "-",
+                onTrack: actual.map { $0 <= target * 3600 },
+                previous: metrics.previous?.cycleTime.median?.compactDuration,
+                drill: .cycleTime
             ))
         }
         if let target = firstReviewHours {
             let actual = metrics.timeToFirstReview.median
             results.append(.init(
-                name: "First review", target: "≤ \(hours(target))", actual: actual?.compactDuration ?? "-",
-                onTrack: actual.map { $0 <= target * 3600 }, previous: metrics.previous?.timeToFirstReview.median?.compactDuration, drill: .timeToFirstReview
+                name: "First review",
+                target: "≤ \(hours(target))",
+                actual: actual?.compactDuration ?? "-",
+                onTrack: actual.map { $0 <= target * 3600 },
+                previous: metrics.previous?.timeToFirstReview.median?.compactDuration,
+                drill: .timeToFirstReview
             ))
         }
         if let target = reworkShare {
             let actual = metrics.stages[.rework]?.share
             results.append(.init(
-                name: "PRs with rework", target: "≤ \(share(target))", actual: actual.map(share) ?? "-",
-                onTrack: metrics.merged.isEmpty ? nil : actual.map { $0 <= target }, previous: metrics.previous?.reworkShare.map(share), drill: nil
+                name: "PRs with rework",
+                target: "≤ \(share(target))",
+                actual: actual.map(share) ?? "-",
+                onTrack: metrics.merged.isEmpty ? nil : actual.map { $0 <= target },
+                previous: metrics.previous?.reworkShare.map(share),
+                drill: nil
             ))
         }
         if let target = unreviewedShare {
             let actual = metrics.merged.isEmpty ? nil : Double(metrics.mergedWithoutReview.count) / Double(metrics.merged.count)
             results.append(.init(
-                name: "Merged without review", target: "≤ \(share(target))", actual: actual.map(share) ?? "-",
-                onTrack: actual.map { $0 <= target }, previous: metrics.previous?.unreviewedShare.map(share), drill: .mergedWithoutReview
+                name: "Merged without review",
+                target: "≤ \(share(target))",
+                actual: actual.map(share) ?? "-",
+                onTrack: actual.map { $0 <= target },
+                previous: metrics.previous?.unreviewedShare.map(share),
+                drill: .mergedWithoutReview
             ))
         }
         if let target = prSizeLines {
             let actual = metrics.prSize.median
             results.append(.init(
-                name: "PR size", target: "≤ \(target) lines", actual: actual.map { "\($0) lines" } ?? "-",
-                onTrack: actual.map { $0 <= target }, previous: metrics.previous?.prSizeMedian.map { "\($0) lines" }, drill: nil
+                name: "PR size",
+                target: "≤ \(target) lines",
+                actual: actual.map { "\($0) lines" } ?? "-",
+                onTrack: actual.map { $0 <= target },
+                previous: metrics.previous?.prSizeMedian.map { "\($0) lines" },
+                drill: nil
+            ))
+        }
+        if let target = prSizeFiles {
+            let actual = metrics.prSize.medianFiles
+            func files(_ count: Int) -> String { count == 1 ? "1 file" : "\(count) files" }
+            results.append(.init(
+                name: "Files changed",
+                target: "≤ \(files(target))",
+                actual: actual.map(files) ?? "-",
+                onTrack: actual.map { $0 <= target },
+                previous: metrics.previous?.prFilesMedian.map(files),
+                drill: nil
             ))
         }
         if let target = answeredShare {
             let actual = metrics.answeredShare
             results.append(.init(
-                name: "Review requests answered", target: "≥ \(share(target))", actual: actual.map(share) ?? "-",
-                onTrack: actual.map { $0 >= target }, previous: metrics.previous?.answeredShare.map(share), drill: .unansweredRequests
+                name: "Review requests answered",
+                target: "≥ \(share(target))",
+                actual: actual.map(share) ?? "-",
+                onTrack: actual.map { $0 >= target },
+                previous: metrics.previous?.answeredShare.map(share),
+                drill: .unansweredRequests
             ))
         }
         return results

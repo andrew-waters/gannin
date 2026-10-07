@@ -103,8 +103,38 @@ nonisolated struct PersonMetrics: Identifiable, Hashable {
     let timeToFirstReview: DurationStat
     /// Merged PRs they reviewed (not their own).
     let reviewsGiven: Int
+    /// How big their merged PRs were.
+    let size: PullRequestSizes
 
     var id: String { person.login }
+}
+
+/// The size of a set of merged PRs: medians per PR (as the other metrics
+/// are, so one huge PR doesn't skew it), p75 and totals.
+nonisolated struct PullRequestSizes: Hashable {
+    /// Median and p75 lines changed (added plus removed) per PR.
+    let medianLines: Int?
+    let p75Lines: Int?
+    /// Median files changed, over the PRs whose count is known.
+    let medianFiles: Int?
+    let filesKnown: Int
+    let added: Int
+    let removed: Int
+    /// PRs over `SizeStat.largeLines` lines.
+    let large: Int
+
+    /// Each PR's lines added, removed and files changed (nil when not known).
+    init(_ prs: [(added: Int, removed: Int, files: Int?)], largeLines: Int) {
+        let lines = prs.map { $0.added + $0.removed }.sorted()
+        let files = prs.compactMap(\.files).sorted()
+        medianLines = lines.isEmpty ? nil : lines[lines.count / 2]
+        p75Lines = lines.isEmpty ? nil : lines[min(lines.count - 1, lines.count * 3 / 4)]
+        medianFiles = files.isEmpty ? nil : files[files.count / 2]
+        filesKnown = files.count
+        added = prs.reduce(0) { $0 + $1.added }
+        removed = prs.reduce(0) { $0 + $1.removed }
+        large = lines.filter { $0 > largeLines }.count
+    }
 }
 
 /// One review request on a merged PR and how (or whether) it was answered.
@@ -175,6 +205,8 @@ struct DeliverySummary: Hashable {
     let reworkShare: Double?
     let unreviewedShare: Double?
     let prSizeMedian: Int?
+    /// Median files changed, over the PRs whose count is known.
+    let prFilesMedian: Int?
     let answeredShare: Double?
     let opened: Int?
     /// By repo and by author, for explaining a change.
@@ -196,16 +228,47 @@ struct SizeStat: Hashable {
     /// Lines changed above which a PR counts as large.
     static let largeLines = 400
 
+    /// Upper bounds of the distribution's buckets, in lines changed; the
+    /// last bucket is everything over the last bound. 400 is a bound, so
+    /// the buckets after it are the large PRs.
+    static let bucketBounds = [10, 50, 100, 200, 400, 1000]
+    static let bucketLabels = ["0-10", "11-50", "51-100", "101-200", "201-400", "401-1,000", "Over 1,000"]
+    /// The same for files changed.
+    static let fileBucketBounds = [1, 3, 5, 10, 20, 50]
+    static let fileBucketLabels = ["1", "2-3", "4-5", "6-10", "11-20", "21-50", "Over 50"]
+
     let median: Int?
     let p75: Int?
     /// Large PRs, biggest first.
     let large: [MetricPullRequest]
+    let smallest: MetricPullRequest?
+    let largest: MetricPullRequest?
+    /// Median files changed, over the PRs whose count is known.
+    let medianFiles: Int?
+    /// PRs in each of `bucketLabels`.
+    let buckets: [Int]
+    /// PRs whose files changed are known, in each of `fileBucketLabels`.
+    let fileBuckets: [Int]
 
     init(_ prs: [MetricPullRequest]) {
         let sizes = prs.map(\.size).sorted()
         median = sizes.isEmpty ? nil : sizes[sizes.count / 2]
         p75 = sizes.isEmpty ? nil : sizes[min(sizes.count - 1, sizes.count * 3 / 4)]
         large = prs.filter { $0.size > Self.largeLines }.sorted { $0.size > $1.size }
+        smallest = prs.min { $0.size < $1.size }
+        largest = prs.max { $0.size < $1.size }
+        let files = prs.compactMap(\.changedFiles).sorted()
+        medianFiles = files.isEmpty ? nil : files[files.count / 2]
+        var buckets = Array(repeating: 0, count: Self.bucketLabels.count)
+        for size in sizes { buckets[Self.bucket(size)] += 1 }
+        self.buckets = buckets
+        var fileBuckets = Array(repeating: 0, count: Self.fileBucketLabels.count)
+        for count in files { fileBuckets[Self.fileBucketBounds.firstIndex { count <= $0 } ?? Self.fileBucketBounds.count] += 1 }
+        self.fileBuckets = fileBuckets
+    }
+
+    static func bucket(_ lines: Int) -> Int {
+        bucketBounds.firstIndex { lines <= $0 } ?? bucketBounds.count
     }
 }
 
@@ -358,7 +421,8 @@ struct OrgMetrics {
                 merged: prs.count,
                 cycleTime: DurationStat(prs.map(\.cycleTime)),
                 timeToFirstReview: DurationStat(prs.compactMap(\.timeToFirstReview)),
-                reviewsGiven: reviewed[login] ?? 0
+                reviewsGiven: reviewed[login] ?? 0,
+                size: PullRequestSizes(prs.map { ($0.additions, $0.deletions, $0.changedFiles) }, largeLines: SizeStat.largeLines)
             )
         }
         .sorted { ($0.merged + $0.reviewsGiven, $1.person.login) > ($1.merged + $1.reviewsGiven, $0.person.login) }
@@ -460,6 +524,7 @@ struct OrgMetrics {
                 reworkShare: before.isEmpty ? nil : rework.share,
                 unreviewedShare: before.isEmpty ? nil : Double(before.filter { $0.firstReviewAt == nil && config.needsReview($0.repo) }.count) / Double(before.count),
                 prSizeMedian: sizes.isEmpty ? nil : sizes[sizes.count / 2],
+                prFilesMedian: SizeStat(before).medianFiles,
                 answeredShare: requests == 0 ? nil : Double(answered) / Double(requests),
                 opened: {
                     let weeks = history.openedPerWeek.filter { $0.key >= Calendar.metrics.startOfWeek(for: previousInterval.start) && $0.key < Calendar.metrics.startOfWeek(for: windowStart) }
@@ -482,7 +547,7 @@ struct OrgMetrics {
             merged: merged.count, cycleTime: cycleTime, timeToFirstReview: timeToFirstReview, stages: stages,
             reworkShare: merged.isEmpty ? nil : stages[.rework]?.share,
             unreviewedShare: merged.isEmpty ? nil : Double(mergedWithoutReview.count) / Double(merged.count),
-            prSizeMedian: prSize.median, answeredShare: answeredShare, opened: opened,
+            prSizeMedian: prSize.median, prFilesMedian: prSize.medianFiles, answeredShare: answeredShare, opened: opened,
             repos: breakdown(\.repo), authors: breakdown { $0.author?.login ?? "" }
         )
     }

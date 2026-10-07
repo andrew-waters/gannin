@@ -109,6 +109,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
     case rework
     case unreviewed
     case prSize
+    case prFiles
     case answered
 
     var id: Self { self }
@@ -121,6 +122,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         case .rework: "PRs with rework"
         case .unreviewed: "Merged without review"
         case .prSize: "PR size"
+        case .prFiles: "Files changed"
         case .answered: "Review requests answered"
         }
     }
@@ -133,6 +135,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         case .rework: "Changes asked for after the first review"
         case .unreviewed: "In repos that need a review"
         case .prSize: "Median lines changed"
+        case .prFiles: "Median files changed per PR"
         case .answered: "Before the PR merged, or the request was withdrawn"
         }
     }
@@ -140,9 +143,19 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
     /// What a target is entered in.
     var unit: Measurable.Unit {
         switch self {
-        case .throughput, .prSize: .number
+        case .throughput, .prSize, .prFiles: .number
         case .cycleTime, .firstReview: .hours
         case .rework, .unreviewed, .answered: .percent
+        }
+    }
+
+    /// What a count is of, beside its target: "PRs a week", "lines".
+    func countUnit(per cadence: ScorecardCadence) -> String {
+        switch self {
+        case .throughput: "PRs a \(cadence.noun)"
+        case .prSize: "lines"
+        case .prFiles: "files"
+        case .cycleTime, .firstReview, .rework, .unreviewed, .answered: ""
         }
     }
 
@@ -234,6 +247,15 @@ struct Measurable: Codable, Identifiable, Hashable {
         }
     }
 
+    /// The same measurable held to its target per person: a count (PRs
+    /// merged) is the team's, so a person isn't judged on it.
+    var personal: Measurable {
+        guard metric?.accumulates == true else { return self }
+        var copy = self
+        copy.target = nil
+        return copy
+    }
+
     var targetText: String? {
         target.map { "\(comparison.symbol) \(format($0))" }
     }
@@ -259,7 +281,7 @@ extension OrgConfig {
             let pairs: [(ScorecardMetric, Double?)] = [
                 (.throughput, targets.mergedPerWeek), (.cycleTime, targets.cycleTimeHours), (.firstReview, targets.firstReviewHours),
                 (.rework, targets.reworkShare.map { $0 * 100 }), (.unreviewed, targets.unreviewedShare.map { $0 * 100 }),
-                (.prSize, targets.prSizeLines.map(Double.init)), (.answered, targets.answeredShare.map { $0 * 100 }),
+                (.prSize, targets.prSizeLines.map(Double.init)), (.prFiles, targets.prSizeFiles.map(Double.init)), (.answered, targets.answeredShare.map { $0 * 100 }),
             ]
             return pairs.compactMap { metric, target in
                 target.map {
@@ -363,6 +385,52 @@ enum Scorecard {
             }
         }
 
+        /// A measurable's cells for each person behind it (the author for PR
+        /// numbers, the reviewer for requests answered, within its team), the
+        /// worst first: most whole periods off target, then furthest off in
+        /// the latest one measured. A count such as PRs merged has no
+        /// per-person target, so it's the fewest first.
+        func people(for measurable: Measurable, now: Date = .now) -> [(login: String, cells: [Cell])] {
+            guard let metric = measurable.metric else { return [] }
+            let team = measurable.team.flatMap { teams[$0] }.map { Set($0.members) }
+            var logins: Set<String> = []
+            for bucket in buckets {
+                for pr in bucket {
+                    if metric == .answered {
+                        logins.formUnion(pr.reviewRequests.map(\.login))
+                    } else if let author = pr.author?.login {
+                        logins.insert(author)
+                    }
+                }
+            }
+            if let team { logins.formIntersection(team) }
+            let judged = measurable.personal
+            let rows = logins.map { login in
+                (login: login, cells: periods.indices.map { index -> Cell in
+                    let period = periods[index]
+                    let share = min(max(now.timeIntervalSince(period.start) / period.duration, 0), 1)
+                    guard coveredFrom.map({ $0 <= period.start }) ?? false else { return Cell(value: nil, count: nil, covered: false, share: share) }
+                    let (raw, count) = Self.measure(metric, all: buckets[index], logins: [login], config: config)
+                    return Cell(value: raw.map(metric.display), count: count, covered: true, share: share)
+                })
+            }
+            func misses(_ cells: [Cell]) -> Int {
+                cells.dropFirst().filter { cell in cell.value.flatMap { judged.meets($0) } == false }.count
+            }
+            /// How far the latest whole period measured is on the wrong side.
+            func badness(_ cells: [Cell]) -> Double {
+                guard let value = cells.dropFirst().first(where: { $0.value != nil })?.value ?? cells.first?.value else { return -.infinity }
+                return measurable.comparison == .atMost ? value : -value
+            }
+            return rows.sorted { a, b in
+                let (missA, missB) = (misses(a.cells), misses(b.cells))
+                if missA != missB { return missA > missB }
+                let (badA, badB) = (badness(a.cells), badness(b.cells))
+                if badA != badB { return badA > badB }
+                return a.login < b.login
+            }
+        }
+
         /// One metric for one period, as `OrgMetrics` works it out: PR
         /// numbers follow the author, requests answered the reviewer.
         static func measure(_ metric: ScorecardMetric, all: [MetricPullRequest], logins: Set<String>?, config: OrgConfig) -> (Double?, Int) {
@@ -382,6 +450,8 @@ enum Scorecard {
                 return (prs.isEmpty ? nil : Double(prs.filter { $0.firstReviewAt == nil && config.needsReview($0.repo) }.count) / Double(prs.count), prs.count)
             case .prSize:
                 return (SizeStat(prs).median.map(Double.init), prs.count)
+            case .prFiles:
+                return (SizeStat(prs).medianFiles.map(Double.init), prs.filter { $0.changedFiles != nil }.count)
             case .answered:
                 var requests = 0
                 var answered = 0
@@ -420,6 +490,7 @@ struct ScorecardView: View {
     @AppStorage("scorecardGrouping") private var grouping: Grouping = .team
     @State private var editing: Measurable?
     @State private var adding = false
+    @State private var comparing: Measurable?
 
     enum Grouping: String, CaseIterable, Identifiable {
         case team = "Team"
@@ -480,6 +551,15 @@ struct ScorecardView: View {
         }
         .sheet(item: $editing) { measurable in
             MeasurableEditor(org: org, measurable: measurable, cadence: measurable.cadence)
+        }
+        .sheet(item: $comparing) { measurable in
+            let periods = cadence.periods(count: range, earliest: earliest)
+            ScorecardPeopleSheet(
+                measurable: measurable,
+                data: Scorecard.Data(history: metricsStore.history(for: org), periods: periods, config: config, hidden: hidden.keys, teams: teams),
+                members: orgs.snapshot(for: org)?.members ?? [],
+                heading: cadence.heading
+            )
         }
         .task(id: "\(org) \(cadence.rawValue) \(range) \(usesMetrics)") {
             guard usesMetrics else { return }
@@ -595,6 +675,8 @@ struct ScorecardView: View {
                     Divider()
                     MeasurableRow(org: org, measurable: measurable, cells: data.cells(for: measurable), periods: data.periods, teamName: teamName(measurable)) {
                         editing = measurable
+                    } compare: {
+                        comparing = measurable
                     }
                 }
             }
@@ -639,6 +721,7 @@ private struct MeasurableRow: View {
     let periods: [DateInterval]
     let teamName: String?
     let edit: () -> Void
+    let compare: () -> Void
 
     var body: some View {
         // Whole periods only: the one under way is still moving.
@@ -671,13 +754,20 @@ private struct MeasurableRow: View {
                 if measurable.isManual {
                     ManualCell(org: org, measurable: measurable, period: periods[index], cell: cell, isCurrent: index == 0)
                 } else {
-                    MetricCell(measurable: measurable, cell: cell, isCurrent: index == 0)
+                    Button(action: compare) {
+                        MetricCell(measurable: measurable, cell: cell, isCurrent: index == 0)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
                 }
             }
         }
         .font(.callout)
         .contextMenu {
             Button("Edit") { edit() }
+            if !measurable.isManual {
+                Button("Compare People") { compare() }
+            }
             Button("Duplicate") {
                 configs.updateMeasurables(org) { list in
                     var copy = measurable
@@ -704,6 +794,8 @@ private struct MetricCell: View {
     let measurable: Measurable
     let cell: Scorecard.Cell
     let isCurrent: Bool
+    /// Clicking it compares people.
+    var compares = true
 
     var body: some View {
         let met = cell.value.flatMap { measurable.meets($0, share: cell.share) }
@@ -724,7 +816,116 @@ private struct MetricCell: View {
         if measurable.metric?.accumulates == true, isCurrent, let target = measurable.target {
             return "\(verdict) so far: expected \(Int((target * cell.share).rounded(.down))) by now"
         }
-        return verdict + from + (isCurrent ? ", so far" : "")
+        return verdict + from + (isCurrent ? ", so far" : "") + (compares ? ". Click to compare people." : "")
+    }
+}
+
+/// A measurable person by person, over the same periods: who's off target
+/// most, to help them. A person opens their PRs and reviews.
+private struct ScorecardPeopleSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.navigate) private var navigate
+    let measurable: Measurable
+    let data: Scorecard.Data
+    let members: [Person]
+    let heading: (DateInterval) -> String
+
+    var body: some View {
+        let rows = data.people(for: measurable)
+        let team = data.cells(for: measurable)
+        let personal = measurable.personal
+        let byLogin = Dictionary(members.map { ($0.login, $0) }, uniquingKeysWith: { first, _ in first })
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(measurable.name) by person").font(.title3.weight(.semibold))
+                Text(caption).font(.callout).foregroundStyle(.secondary)
+            }
+            .padding(20)
+            Divider()
+            if rows.isEmpty {
+                ContentUnavailableView("No one to compare", systemImage: "person.2", description: Text("Nobody has merged PRs or review requests in these periods yet."))
+                    .frame(minHeight: 200)
+            } else {
+                ScrollView([.vertical, .horizontal]) {
+                    VStack(spacing: 0) {
+                        header
+                        Divider()
+                        row(title: "Everyone", person: nil, cells: team, judged: measurable)
+                            .background(Color.secondary.opacity(0.05))
+                        ForEach(rows, id: \.login) { entry in
+                            Divider()
+                            let person = byLogin[entry.login] ?? Person(login: entry.login, name: nil, avatarUrl: nil)
+                            Button {
+                                dismiss()
+                                navigate?(.metric(.personStats(entry.login)))
+                            } label: {
+                                row(title: person.displayName, person: person, cells: entry.cells, judged: personal)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .help("Open \(person.displayName)'s PRs and reviews")
+                        }
+                    }
+                    .fixedSize()
+                    .padding(20)
+                }
+            }
+            Divider()
+            HStack {
+                Spacer()
+                Button("Done") { dismiss() }.keyboardShortcut(.defaultAction)
+            }
+            .padding(16)
+        }
+        .frame(minWidth: 640, idealWidth: 900, minHeight: 420, idealHeight: 600)
+    }
+
+    private var caption: String {
+        let who = measurable.metric == .answered ? "Each reviewer's requests" : "Each author's merged PRs"
+        let order = measurable.metric?.accumulates == true
+            ? "fewest first; the target is the team's, so people aren't coloured against it"
+            : "most periods off target first, then furthest off in the latest"
+        return "\(who), \(order)."
+    }
+
+    private var header: some View {
+        HStack(spacing: 0) {
+            Text("PERSON").frame(width: ScorecardView.nameWidth, alignment: .leading).padding(.leading, 14)
+            Text("HIT").frame(width: ScorecardView.hitWidth).help("Whole periods on target, of those measured")
+            ForEach(Array(data.periods.enumerated()), id: \.offset) { index, period in
+                Text(heading(period))
+                    .multilineTextAlignment(.center)
+                    .frame(width: ScorecardView.cellWidth, height: 40)
+                    .background(index == 0 ? Color.secondary.opacity(0.1) : .clear)
+            }
+        }
+        .font(.caption.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.vertical, 6)
+    }
+
+    private func row(title: String, person: Person?, cells: [Scorecard.Cell], judged: Measurable) -> some View {
+        let results = cells.dropFirst().compactMap { cell in cell.value.flatMap { judged.meets($0) } }
+        return HStack(spacing: 0) {
+            HStack(spacing: 8) {
+                if let person {
+                    Avatar(url: person.avatarUrl, size: 20)
+                } else {
+                    Image(systemName: "person.3").foregroundStyle(.secondary).frame(width: 20)
+                }
+                Text(title).lineLimit(1)
+            }
+            .frame(width: ScorecardView.nameWidth, alignment: .leading)
+            .padding(.leading, 14)
+            Text(results.isEmpty ? "" : "\(results.filter { $0 }.count)/\(results.count)")
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .frame(width: ScorecardView.hitWidth)
+            ForEach(Array(cells.enumerated()), id: \.offset) { index, cell in
+                MetricCell(measurable: judged, cell: cell, isCurrent: index == 0, compares: false)
+            }
+        }
+        .font(.callout)
     }
 }
 

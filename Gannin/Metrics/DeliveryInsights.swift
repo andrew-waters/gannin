@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 import AppKit
 
@@ -187,6 +188,9 @@ struct SizeRiskSection: View {
                     detail: "Approved within 15 minutes, or unreviewed"
                 )
             }
+            if !metrics.merged.isEmpty {
+                PRSizeDistribution(size: size)
+            }
             if !metrics.repoRisks.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(metrics.repoRisks.prefix(5)) { risk in
@@ -213,7 +217,7 @@ struct SizeRiskSection: View {
                     Text("Largest").font(.callout.weight(.medium))
                     ForEach(size.large.prefix(5)) { pr in
                         Button {
-                            selection = .pullRequestReference(PullRequestReference(org: pr.repo.split(separator: "/").first.map(String.init) ?? "", id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url))
+                            selection = .pullRequestReference(pr.reference)
                         } label: {
                             HStack(spacing: 8) {
                                 Text("\(pr.size)")
@@ -236,6 +240,148 @@ struct SizeRiskSection: View {
                 }
             }
         }
+    }
+}
+
+/// PR size in short, for the Overview: the median against the period
+/// before, the smallest and largest (each opening the PR), median files,
+/// and how sizes spread.
+struct PRSizeSummary: View {
+    let metrics: OrgMetrics
+    @Binding var selection: DetailSelection?
+
+    var body: some View {
+        let size = metrics.prSize
+        VStack(alignment: .leading, spacing: 12) {
+            Text("PR size").font(.headline)
+            TileGrid {
+                StatTile(
+                    title: "Median PR size",
+                    value: size.median.map { $0.formatted() } ?? "-",
+                    detail: size.p75.map { "Lines changed · p75 \($0.formatted())" },
+                    change: metrics.previous.flatMap { previous in
+                        previous.prSizeMedian.flatMap { before in size.median.flatMap { StatChange.percent(Double($0), Double(before), higherIsWorse: true) } }
+                    }
+                )
+                pullRequestTile("Smallest", size.smallest)
+                pullRequestTile("Largest", size.largest)
+                StatTile(
+                    title: "Median files changed",
+                    value: size.medianFiles.map { $0.formatted() } ?? "-",
+                    detail: size.medianFiles == nil ? "Not known for these PRs yet" : "Per PR"
+                )
+            }
+            if !metrics.merged.isEmpty {
+                PRSizeDistribution(size: size)
+            }
+        }
+    }
+
+    /// A PR's lines changed, opening it when clicked.
+    @ViewBuilder
+    private func pullRequestTile(_ title: String, _ pr: MetricPullRequest?) -> some View {
+        let tile = StatTile(
+            title: title,
+            value: pr.map { $0.size.formatted() } ?? "-",
+            detail: pr.map { "Lines · \($0.repo.split(separator: "/").last ?? "")#\($0.number) \($0.title)" }
+        )
+        if let pr {
+            Button {
+                selection = .pullRequestReference(pr.reference)
+            } label: {
+                tile
+            }
+            .buttonStyle(.plain)
+            .help(pr.title)
+        } else {
+            tile
+        }
+    }
+}
+
+/// How merged PRs spread by lines changed and by files changed, side by
+/// side.
+struct PRSizeDistribution: View {
+    let size: SizeStat
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 24) {
+            SizeDistributionChart(
+                title: "Lines changed per PR", unit: "lines", labels: SizeStat.bucketLabels, counts: size.buckets,
+                note: "Over \(SizeStat.largeLines) lines counts as large."
+            )
+            SizeDistributionChart(
+                title: "Files changed per PR", unit: "files", labels: SizeStat.fileBucketLabels, counts: size.fileBuckets,
+                note: size.fileBuckets.reduce(0, +) < size.buckets.reduce(0, +) ? "Only PRs whose files changed are known." : nil
+            )
+        }
+    }
+}
+
+/// How many merged PRs fall in each bucket, one series; hover a bar for
+/// its count and share.
+struct SizeDistributionChart: View {
+    let title: String
+    let unit: String
+    let labels: [String]
+    let counts: [Int]
+    var note: String?
+    @State private var hovered: String?
+
+    var body: some View {
+        let total = counts.reduce(0, +)
+        let rows = Array(zip(labels, counts))
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.callout.weight(.medium))
+            if total == 0 {
+                Text("Not known for these PRs yet.").font(.callout).foregroundStyle(.secondary)
+                    .frame(height: 140, alignment: .topLeading)
+            } else {
+                Chart {
+                    ForEach(rows, id: \.0) { label, count in
+                        BarMark(x: .value(title, label), y: .value("PRs", count))
+                            .foregroundStyle(ChartPalette.blue.opacity(hovered == nil || hovered == label ? 1 : 0.5))
+                            .clipShape(UnevenRoundedRectangle(topLeadingRadius: 4, topTrailingRadius: 4))
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { _ in
+                        AxisGridLine().foregroundStyle(.quaternary)
+                        AxisValueLabel()
+                    }
+                }
+                .chartOverlay { proxy in
+                    Rectangle().fill(.clear).contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let location): hovered = proxy.value(atX: location.x, as: String.self)
+                            case .ended: hovered = nil
+                            }
+                        }
+                }
+                .frame(height: 140)
+                .accessibilityLabel("Merged PRs by \(unit) changed")
+                .accessibilityValue(rows.map { "\($0.0) \(unit): \($0.1)" }.joined(separator: ", "))
+            }
+            if let hovered, let index = labels.firstIndex(of: hovered), total > 0 {
+                let count = counts[index]
+                Text("\(hovered) \(unit): \(count) PR\(count == 1 ? "" : "s"), \((Double(count) / Double(total)).formatted(.percent.precision(.fractionLength(0))))")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            } else {
+                Text([note, "Hover for values."].compactMap { $0 }.joined(separator: " "))
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+extension MetricPullRequest {
+    /// For opening it in a drawer, outside the snapshot.
+    var reference: PullRequestReference {
+        PullRequestReference(org: repo.split(separator: "/").first.map(String.init) ?? "", id: id, number: number, title: title, repo: repo, url: url)
     }
 }
 
@@ -519,6 +665,8 @@ struct GoalsSettingsSection: View {
                 value: targets.unreviewedShare.map { $0 * 100 }, fallback: fallback?.unreviewedShare.map { $0 * 100 }) { value in update { $0.unreviewedShare = value.map { min($0, 100) / 100 } } }
             row("PR size", "Median lines changed", unit: "lines", at: "at most",
                 value: targets.prSizeLines.map(Double.init), fallback: fallback?.prSizeLines.map(Double.init)) { value in update { $0.prSizeLines = value.map { Int($0.rounded()) } } }
+            row("Files changed", "Median files changed per PR", unit: "files", at: "at most",
+                value: targets.prSizeFiles.map(Double.init), fallback: fallback?.prSizeFiles.map(Double.init)) { value in update { $0.prSizeFiles = value.map { Int($0.rounded()) } } }
         }
         Section("Reviewing") {
             row("Review requests answered", "Before the PR merged, or the request was withdrawn", unit: "%", at: "at least",

@@ -241,9 +241,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Bot-authored PRs are excluded, as are logins ending `-bot` or `[bot]` (ordinary user accounts
   used for automation) unless re-included in the org's stats config (`includedAuthors`).
 - Dashboard (`OverviewView`) is the org landing page: right now, delivery, and summaries of
-  investment balance and GitHub Actions for the window (`DashboardSummaries.swift`), each
+  investment balance and GitHub Actions for the window (`DashboardSummaries.swift`), PR size (`PRSizeSummary`: median, smallest, largest, median files, and `PRSizeDistribution`, merged PRs by lines changed and by files changed in `SizeStat`'s buckets, also on PR flow), each
   linking to its page through `showSidebarItem`. Opening it syncs the issue history and the
-  Actions runs, so Refresh includes them from then on; the people table is the People page (`PeopleStatsView`). Tiles, the stage legend, chart weeks
+  Actions runs, so Refresh includes them from then on; the people table is the People page (`PeopleStatsView`), whose Size and Files columns are each person's median lines and files changed per PR merged in the window (`PullRequestSizes`: p75, totals and large PRs in the tooltip). Tiles, the stage legend, chart weeks
   and table rows
   set `DetailSelection.metric(MetricDrill)`, which `MetricColumn` renders as the PRs behind the
   number. Chart colours are categorical slots 1-4 of the dataviz reference palette
@@ -277,7 +277,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Goals (`MetricGoals`, in `OrgConfig.goals` and the harness's `.gannin/goals.json`, Settings ›
   Goals) are targets for the org and per team (under Velocity: PRs merged a week, held to as many
   weeks' worth as the window, cycle time and first review; then rework, unreviewed, PR size,
-  requests answered), shown on the Dashboard as on track or not.
+  files changed (median per PR, `prSizeFiles`, also a Scorecard metric), requests answered), shown on the Dashboard as on track or not.
 - Scorecard (`Metrics/Scorecard.swift`, Delivery › Scorecard, `WorkloadTab.scorecard`), in the
   spirit of Strety's: `Measurable`s (`OrgConfig.scorecard`, a team file, `.gannin/scorecard.json`;
   until edited, `OrgConfig.measurables` seeds weekly ones from the Goals), each with a cadence
@@ -291,7 +291,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   kept by the period's first day (`Measurable.values`). Ranges up to 104 weeks, 36 months, 12
   quarters, 5 years or All time, which syncs the metrics history back to the org's first issue
   (`MetricsStore.sync` backfills newest first, saving every eight weeks). Group by team, owner or
-  none.
+  none. A metric's cells (or Compare People in its menu) open `ScorecardPeopleSheet`: the same periods per
+  person (`Scorecard.Data.people`, the author, or the reviewer for requests answered, within its team),
+  worst first (most whole periods off target, then furthest off in the latest), a count like PRs
+  merged not judged per person (`Measurable.personal`); a person opens their PRs and reviews.
 - Weekly Digest (`WeeklyDigest`, `DigestSheet` on `NotesSheet`) is the week as Markdown:
   delivery against the week before and goals, what shipped by investment category, notable
   PRs, CI and who's off next week, to copy, rewrite with Claude, or commit to the harness as
@@ -524,7 +527,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`IssueFilters`) are kept per window (`StoredIssueFilters`). Pull Requests (`PullRequestsView`)
   has the same bar: search, Author and Reviewer (Me first, No Reviewer), Status (draft, needs
   review, changes requested, approved, merged) and Repository, and Open, Merged or All over the
-  open PRs and those merged in the lookback. Both bars build on `FilterMenu`,
+  open PRs and those merged in the lookback. Its Files and Size columns are the PR's `changedFiles` (optional, so caches from before it load; a snapshot without it is searched in full on the next refresh, `OrgSnapshot.lacksFileCounts`, and the metrics history's PRs from before it are looked up once by node ID, 25 a query halved when GitHub times out and saved as it goes, `MetricsHistory.filledChangedFiles`) and lines added and removed, which PR rows show too. Both bars build on `FilterMenu`,
   `FilterSearchField` and `StoredSet` (`IssueFilterBar.swift`). The search (`IssueSearch`) needs
   every word typed in the title, repo, number, a person's login or name, or a label. `IssueStore` keeps issues closed since
   the window's starting Monday plus every open issue, with project board status changes
