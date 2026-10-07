@@ -83,7 +83,7 @@ extension SessionStore {
             id: UUID(), issue: IssueReference(org: pr.org, id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url),
             repo: setup.repo, branch: branch, createdAt: .now, pullRequests: [pr.url],
             connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
-            role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch),
+            role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch, learnings: harnessStore.anyIndex(org: pr.org, repo: setup.repo)?.learnings(for: pr.repo) ?? []),
             instructions: instructions.map(Self.reviewInstructions), isReviewer: true, reviewOf: pr
         )
         let directory = Self.directory(for: session.id)
@@ -105,19 +105,24 @@ extension SessionStore {
         "\(instructions)\n\nWhatever these ask, still end your reply with the fenced ```json block as set out above."
     }
 
-    static func pullRequestReviewPrompt(_ pr: PullRequestReference, branch: String) -> String {
+    /// `learnings` are the harness's for the PR's repo, which the reviewer
+    /// follows where they cover the diff.
+    static func pullRequestReviewPrompt(_ pr: PullRequestReference, branch: String, learnings: [HarnessLearning] = []) -> String {
         let name = pr.repo.split(separator: "/").last.map(String.init) ?? pr.repo
         let owner = pr.repo.split(separator: "/").first.map(String.init) ?? pr.repo
         let threads = "gh api graphql -f query='{ viewer { login } repository(owner: \"\(owner)\", name: \"\(name)\") { pullRequest(number: \(pr.number)) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }'"
+        let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
         return """
             Review pull request \(pr.repo)#\(pr.number), "\(pr.title)" (\(pr.url.absoluteString)). This is a review: don't edit any files.
 
             Read it with `gh pr view \(pr.number) --repo \(pr.repo) --comments` and `gh pr diff \(pr.number) --repo \(pr.repo)`. For more than the diff, the repo's shared clone is `projects/\(name)` (if it isn't there, `gh repo clone \(pr.repo) projects/\(name)`); check the PR out to read around it or run its tests with `git -C projects/\(name) fetch origin pull/\(pr.number)/head && git -C projects/\(name) worktree add --detach "$PWD/.worktrees/\(branch)/\(name)" FETCH_HEAD`. If the harness has no `projects/` folder and is \(pr.repo) itself, use `git -C .` in place of `git -C projects/\(name)` and don't clone it. Read the repo's CLAUDE.md, and the harness's STANDARDS.md, for how the team works.
 
-            Look for bugs, missed cases, security problems, and code that doesn't fit the repo or the issue it's for. Comment only on lines the diff changes or shows. Say what's good in the summary, not as findings.
+            Look for bugs, missed cases, security problems, and code that doesn't fit the repo or the issue it's for. Comment only on lines the diff changes or shows. Say what's good in the summary, not as findings.\(learned)
 
             End your reply with one fenced ```json block, findings most important first:
-            {"summary": "<a few sentences for the PR's author. When writing lists, use bullet points>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"]}
+            {"summary": "<a few sentences for the PR's author. When writing lists, use bullet points>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"], \(HarnessLearning.reviewJSONField)}
+
+            \(HarnessLearning.reviewJSONInstructions)
 
             If I ask you to look again, end the same way. Before you do, list the PR's review threads with `\(threads)`. In `resolved`, give the ID of each thread that isn't resolved yet, was started by `viewer` (the account you review as), and whose point is now dealt with: fixed in the code, or answered so that nothing more is needed. Check the code rather than taking a reply's word for it. Leave out threads whose point still stands, and don't raise them again as findings unless something about them has changed. On a first review, `resolved` is empty.
             """
@@ -136,6 +141,14 @@ struct ReviewedPullRequest: Equatable {
         let lines: [DiffLine]
 
         var id: String { path }
+
+        /// From the first line the diff shows to the last, as a learning's
+        /// lines are matched; nil when it shows none.
+        var shownLines: ClosedRange<Int>? {
+            let numbers = lines.compactMap { $0.newLine ?? $0.oldLine }
+            guard let low = numbers.min(), let high = numbers.max() else { return nil }
+            return low...high
+        }
 
         /// Whether a comment can sit on the line: GitHub only takes lines
         /// the diff shows.
@@ -371,6 +384,7 @@ struct ReviewWithClaudeButton: View {
 struct PullRequestReviewView: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(AuthStore.self) private var auth
+    @Environment(HarnessStore.self) private var harness
     let session: CodeSession
     @State private var pullRequest: ReviewedPullRequest?
     @State private var error: String?
@@ -593,6 +607,13 @@ struct PullRequestReviewView: View {
                         .foregroundStyle(.secondary)
                         .tag("\u{0}general")
                 }
+                let learningCount = Set(applied(to: pullRequest).map(\.id)).union((review?.applied ?? []).map { appliedLearning($0.learning)?.id ?? $0.learning }).count + (review?.learnings?.count ?? 0)
+                if learningCount > 0 {
+                    Label(learningCount == 1 ? "1 learning" : "\(learningCount) learnings", systemImage: HarnessKind.learnings.systemImage)
+                        .foregroundStyle(.secondary)
+                        .tag("\u{0}learnings")
+                        .help("Learnings from the harness that cover this PR's files, and any the reviewer suggests keeping")
+                }
                 ForEach(pullRequest.files) { file in
                     let here = findings.filter { $0.path == file.path && drafts.decisions[$0.key] != .dismissed }
                     let mine = drafts.comments.filter { $0.path == file.path }.count
@@ -614,6 +635,13 @@ struct PullRequestReviewView: View {
                         }
                         if mine > 0 {
                             Image(systemName: "text.bubble.fill").foregroundStyle(Color.accentColor).font(.caption)
+                        }
+                        let learned = learnings(on: file).count
+                        if learned > 0 {
+                            Image(systemName: HarnessKind.learnings.systemImage)
+                                .foregroundStyle(.yellow)
+                                .font(.caption)
+                                .help(learned == 1 ? "A learning covers this file" : "\(learned) learnings cover this file")
                         }
                     }
                     .tag(file.path)
@@ -644,8 +672,14 @@ struct PullRequestReviewView: View {
                     }
                     .padding(16)
                 }
+            } else if selectedFile == "\u{0}learnings" {
+                learningsColumn(pullRequest: pullRequest, review: review)
             } else if let file = pullRequest.files.first(where: { $0.path == selectedFile }) {
-                ReviewDiff(session: session, file: file, findings: findings.filter { $0.path == file.path })
+                ReviewDiff(
+                    session: session, file: file, findings: findings.filter { $0.path == file.path }, learnings: learnings(on: file),
+                    applied: (review?.applied ?? []).filter { $0.path == file.path }, resolve: { appliedLearning($0) },
+                    learningURL: { harnessIndex?.url(for: $0.document) }
+                )
                     .id(file.path)
             } else {
                 ContentUnavailableView("Pick a file", systemImage: "doc.text.magnifyingglass")
@@ -658,17 +692,243 @@ struct PullRequestReviewView: View {
     }
 }
 
+// MARK: Learnings
+
+extension PullRequestReviewView {
+    /// The harness the reviewer runs in, where its learnings are.
+    private var harnessIndex: HarnessIndex? {
+        harness.anyIndex(org: reference.org, repo: session.harnessRepo ?? session.repo)
+    }
+
+    /// The harness's learnings for the repo whose scope covers a file the PR
+    /// changes, on the lines its diff shows when a learning names lines.
+    func applied(to pullRequest: ReviewedPullRequest) -> [HarnessLearning] {
+        let learnings = harnessIndex?.learnings(for: reference.repo) ?? []
+        guard !learnings.isEmpty else { return [] }
+        return learnings.filter { learning in pullRequest.files.contains { learning.covers($0.path, lines: $0.shownLines) } }
+    }
+
+    /// The learning an `applied` entry names, by its path in the harness.
+    func appliedLearning(_ path: String) -> HarnessLearning? {
+        let path = path.trimmingCharacters(in: CharacterSet(charactersIn: "`/ "))
+        let documents = harnessIndex?.documents(.learnings) ?? []
+        let document = documents.first { $0.path == path } ?? documents.first { $0.path.hasSuffix("/" + path) || path.hasSuffix("/" + $0.path) }
+        return document.flatMap(HarnessLearning.init(document:))
+    }
+
+    /// The learnings covering one file, on the lines its diff shows.
+    func learnings(on file: ReviewedPullRequest.File) -> [HarnessLearning] {
+        (harnessIndex?.learnings(for: reference.repo) ?? []).filter { $0.covers(file.path, lines: file.shownLines) }
+    }
+
+    func learningsColumn(pullRequest: ReviewedPullRequest, review: SessionTranscript.ReviewResult?) -> some View {
+        let used = review?.applied ?? []
+        let usedPaths = Set(used.compactMap { appliedLearning($0.learning)?.id })
+        let applied = applied(to: pullRequest).filter { !usedPaths.contains($0.id) }
+        let proposed = review?.learnings ?? []
+        let saved = Set((harnessIndex?.documents(.learnings) ?? []).compactMap { $0.frontMatter?["source"]?.first })
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                if !used.isEmpty {
+                    Text("Applied by the reviewer").font(.headline)
+                    Text("What each learning changed in this review. Challenge one to have the reviewer look again without it, or edit the learning (or retire it) if it's wrong.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    ForEach(used, id: \.self) { entry in
+                        AppliedLearningCard(session: session, entry: entry, learning: appliedLearning(entry.learning), url: appliedLearning(entry.learning).flatMap { harnessIndex?.url(for: $0.document) }, showsLocation: true)
+                    }
+                }
+                if !applied.isEmpty {
+                    Text(used.isEmpty ? "Covering this PR" : "Also covering this PR").font(.headline)
+                    Text("Learnings in the harness whose scope covers files this PR changes. The reviewer was given them\(used.isEmpty ? "" : " and didn't say it applied these").")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    ForEach(applied) { learning in
+                        HarnessLearningRow(learning: learning, url: harnessIndex?.url(for: learning.document), org: reference.org, harnessRepo: session.harnessRepo)
+                        Divider()
+                    }
+                }
+                if !proposed.isEmpty {
+                    Text("Suggested by the reviewer").font(.headline)
+                    Text("Explanations people gave in this PR that later reviews should know. Save one to check and edit it, then commit it to the harness.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    ForEach(proposed, id: \.self) { learning in
+                        proposedCard(learning, pullRequest: pullRequest, isSaved: learning.source.map(saved.contains) ?? false)
+                    }
+                }
+            }
+            .padding(16)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func proposedCard(_ learning: SessionTranscript.ProposedLearning, pullRequest: ReviewedPullRequest, isSaved: Bool) -> some View {
+        var draft = HarnessLearningDraft()
+        draft.repo = reference.repo
+        draft.rule = learning.rule
+        draft.reason = learning.reason ?? ""
+        draft.source = learning.source ?? ""
+        draft.author = learning.author ?? ""
+        draft.issues = ["\(reference.repo)#\(reference.number)"]
+        if let path = learning.path, !path.isEmpty {
+            let lines = learning.line.map { $0...max($0, learning.endLine ?? $0) }
+            draft.paths = HarnessLearning.Scope(path: path, lines: lines).text
+            if lines != nil { draft.commit = pullRequest.headSHA }
+        }
+        return VStack(alignment: .leading, spacing: 6) {
+            Text(learning.rule).fixedSize(horizontal: false, vertical: true)
+            if let reason = learning.reason {
+                Text(reason).font(.callout).foregroundStyle(.secondary)
+            }
+            HStack(spacing: 8) {
+                if !draft.paths.isEmpty {
+                    Text(draft.paths).font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+                if let author = learning.author {
+                    Text("From @\(author)").font(.caption).foregroundStyle(.secondary)
+                }
+                if let source = learning.source.flatMap(URL.init(string:)) {
+                    Link(destination: source) { Image(systemName: "arrow.up.right.square") }
+                        .help("Open the comment on GitHub")
+                }
+                Spacer()
+                if isSaved {
+                    Label("In the harness", systemImage: "checkmark.circle.fill")
+                        .font(.caption)
+                        .foregroundStyle(ChartPalette.good)
+                } else {
+                    SaveAsLearningButton(org: reference.org, draft: draft)
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.yellow.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// A learning the reviewer applied: the rule, what it changed in the review
+/// and any doubt the reviewer had, with Challenge (your objection, sent to
+/// the reviewer to look again) and Edit Learning.
+private struct AppliedLearningCard: View {
+    @Environment(SessionStore.self) private var sessions
+    let session: CodeSession
+    let entry: SessionTranscript.AppliedLearning
+    let learning: HarnessLearning?
+    let url: URL?
+    let showsLocation: Bool
+    @State private var challenging = false
+    @State private var objection = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: HarnessKind.learnings.systemImage).foregroundStyle(.yellow)
+                Text("Applied: \(learning?.rule ?? entry.learning)")
+                    .fontWeight(.medium)
+                    .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+                if let url {
+                    Link(destination: url) { Image(systemName: "arrow.up.right.square") }
+                        .help("Open the learning in the harness on GitHub")
+                }
+            }
+            if showsLocation, let path = entry.path {
+                Text(entry.line.map { "\(path):\($0)" } ?? path)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            if let note = entry.note {
+                Text(note).font(.callout)
+            }
+            if let concern = entry.concern {
+                Label(concern, systemImage: "exclamationmark.triangle")
+                    .font(.callout)
+                    .foregroundStyle(.orange)
+            }
+            if let reason = learning?.reason {
+                Text("Why: \(reason)").font(.caption).foregroundStyle(.secondary).lineLimit(3)
+            }
+            HStack(spacing: 8) {
+                Button("Challenge") { challenging = true }
+                    .disabled(!sessions.isRunning(session.id))
+                    .help(sessions.isRunning(session.id) ? "Tell the reviewer why this learning shouldn't apply here, and have it look again" : "Resume the review to challenge it")
+                    .popover(isPresented: $challenging, arrowEdge: .bottom) { challengeEditor }
+                if let learning {
+                    EditLearningButton(org: session.org, learning: learning, harnessRepo: session.harnessRepo)
+                }
+                if learning == nil {
+                    Text("Not in the harness as last fetched").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(Color.yellow.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var challengeEditor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Why shouldn't it apply here?").font(.headline)
+            TextField("It was about the old sync path; this PR replaces it", text: $objection, axis: .vertical)
+                .lineLimit(3...8)
+                .frame(width: 360)
+            HStack {
+                Spacer()
+                Button("Cancel") { challenging = false }
+                Button("Send to Reviewer") {
+                    if sessions.submit(SessionStore.challengePrompt(entry, objection: objection), to: session.id) {
+                        objection = ""
+                        challenging = false
+                    }
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .buttonStyle(.borderedProminent)
+                .disabled(objection.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(14)
+    }
+}
+
+extension SessionStore {
+    /// Your objection to a learning the reviewer applied, for it to look again.
+    static func challengePrompt(_ entry: SessionTranscript.AppliedLearning, objection: String) -> String {
+        let place = entry.path.map { path in " on `\(path)\(entry.line.map { ":\($0)" } ?? "")`" } ?? ""
+        return """
+            You applied the learning `\(entry.learning)`\(place)\(entry.note.map { " (\($0))" } ?? ""). I'm challenging that: \(objection.trimmingCharacters(in: .whitespacesAndNewlines))
+
+            Read the learning and the code again in that light. If it doesn't hold here, take it out of `applied` and raise what it kept you from raising as findings. If the learning itself is wrong or stale, say so in the summary and how it should change. End the same way, with the full JSON block.
+            """
+    }
+}
+
 /// One file's diff with the findings and your comments on their lines.
 private struct ReviewDiff: View {
     @Environment(SessionStore.self) private var sessions
     let session: CodeSession
     let file: ReviewedPullRequest.File
     let findings: [SessionTranscript.Finding]
+    /// The harness's learnings covering this file.
+    let learnings: [HarnessLearning]
+    /// What the reviewer says learnings changed on this file.
+    let applied: [SessionTranscript.AppliedLearning]
+    let resolve: (String) -> HarnessLearning?
+    let learningURL: (HarnessLearning) -> URL?
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
+    @State private var showsFileLearnings = true
 
     var body: some View {
         let drafts = sessions.reviewDrafts[session.id] ?? ReviewDraft()
+        let placement = learningPlacement()
+        let firstLine = placement.firstLine
+        let marked = placement.marked
+        let fileWide = placement.fileWide
+        let appliedAt = placement.appliedAt
+        let appliedTop = placement.appliedTop
         // Findings on lines the diff doesn't show, at the top.
         let placed = Set(file.lines.compactMap(\.newLine))
         let unplaced = findings.filter { $0.line.map { !placed.contains($0) } ?? true }
@@ -685,6 +945,23 @@ private struct ReviewDiff: View {
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
+                    if !fileWide.isEmpty {
+                        DisclosureGroup(isExpanded: $showsFileLearnings) {
+                            ForEach(fileWide) { learning in
+                                HarnessLearningRow(learning: learning, url: learningURL(learning), org: session.org, harnessRepo: session.harnessRepo)
+                            }
+                        } label: {
+                            Label(fileWide.count == 1 ? "A learning covers this file" : "\(fileWide.count) learnings cover this file", systemImage: HarnessKind.learnings.systemImage)
+                                .font(.callout.weight(.medium))
+                        }
+                        .padding(10)
+                        .background(Color.yellow.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                        .padding(8)
+                    }
+                    ForEach(appliedTop, id: \.entry) { pair in
+                        AppliedLearningCard(session: session, entry: pair.entry, learning: pair.learning, url: pair.learning.flatMap(learningURL), showsLocation: true)
+                            .padding(8)
+                    }
                     ForEach(unplaced, id: \.key) { finding in
                         FindingCard(session: session, finding: finding, showsLocation: true)
                             .padding(8)
@@ -697,8 +974,22 @@ private struct ReviewDiff: View {
                             .padding(16)
                     }
                     ForEach(file.lines) { line in
-                        DiffRow(sessionID: session.id, filePath: file.path, line: line, hovered: $hovered, commenting: $commenting)
+                        ForEach(firstLine[line.id] ?? []) { learning in
+                            HarnessLearningRow(learning: learning, url: learningURL(learning), org: session.org, harnessRepo: session.harnessRepo)
+                                .padding(.horizontal, 10)
+                                .background(Color.yellow.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                                .padding(.leading, 40)
+                                .padding(.trailing, 8)
+                                .padding(.vertical, 4)
+                        }
+                        DiffRow(sessionID: session.id, filePath: file.path, line: line, isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting)
                         if let newLine = line.newLine {
+                            ForEach(appliedAt[newLine] ?? [], id: \.entry) { pair in
+                                AppliedLearningCard(session: session, entry: pair.entry, learning: pair.learning, url: pair.learning.flatMap(learningURL), showsLocation: false)
+                                    .padding(.leading, 40)
+                                    .padding(.trailing, 8)
+                                    .padding(.vertical, 4)
+                            }
                             ForEach(findings.filter { $0.line == newLine }, id: \.key) { finding in
                                 FindingCard(session: session, finding: finding, showsLocation: false)
                                     .padding(.leading, 40)
@@ -718,6 +1009,36 @@ private struct ReviewDiff: View {
         }
     }
 
+    private typealias Applied = (entry: SessionTranscript.AppliedLearning, learning: HarnessLearning?)
+
+    /// Where the file's learnings go: those on lines by the first shown line
+    /// in their range (the lines marked), the reviewer's own account on its
+    /// line (else the top) in place of the plain learning, and the rest
+    /// (folders, the whole file, lines the diff doesn't show) at the top.
+    private func learningPlacement() -> (firstLine: [DiffLine.ID: [HarnessLearning]], marked: Set<DiffLine.ID>, fileWide: [HarnessLearning], appliedAt: [Int: [Applied]], appliedTop: [Applied]) {
+        let appliedHere: [Applied] = applied.map { ($0, resolve($0.learning)) }
+        let shownApplied = Set(appliedHere.compactMap(\.learning?.id))
+        var firstLine: [DiffLine.ID: [HarnessLearning]] = [:]
+        var marked: Set<DiffLine.ID> = []
+        var placed: Set<String> = []
+        for learning in learnings {
+            let ranges = learning.scopes.filter { $0.covers(file.path) }.compactMap(\.lines)
+            guard !ranges.isEmpty else { continue }
+            for line in file.lines {
+                guard let number = line.newLine ?? line.oldLine, ranges.contains(where: { $0.contains(number) }) else { continue }
+                marked.insert(line.id)
+                if placed.insert(learning.id).inserted, !shownApplied.contains(learning.id) {
+                    firstLine[line.id, default: []].append(learning)
+                }
+            }
+        }
+        let shown = Set(file.lines.compactMap(\.newLine))
+        let appliedAt = Dictionary(grouping: appliedHere.filter { $0.entry.line.map(shown.contains) ?? false }) { $0.entry.line ?? 0 }
+        let appliedTop = appliedHere.filter { !($0.entry.line.map(shown.contains) ?? false) }
+        let fileWide = learnings.filter { !placed.contains($0.id) && !shownApplied.contains($0.id) }
+        return (firstLine, marked, fileWide, appliedAt, appliedTop)
+    }
+
     private func matches(_ comment: ReviewDraft.Comment, _ line: DiffLine) -> Bool {
         guard let anchor = line.anchor else { return false }
         return anchor.line == comment.line && anchor.isOld == comment.isOld
@@ -735,6 +1056,8 @@ private struct DiffRow: View {
     let sessionID: UUID
     let filePath: String
     let line: DiffLine
+    /// A learning's lines take it in: marked down the edge.
+    var isLearned = false
     @Binding var hovered: DiffLine.ID?
     @Binding var commenting: DiffLine.ID?
 
@@ -761,6 +1084,12 @@ private struct DiffRow: View {
         .font(.system(size: 11, design: .monospaced))
         .padding(.trailing, 6)
         .background(Self.background(line.kind))
+        .overlay(alignment: .leading) {
+            if isLearned {
+                Rectangle().fill(Color.yellow.opacity(0.7)).frame(width: 3)
+                    .help("A learning covers this line")
+            }
+        }
         .onHover { inside in
             if inside { hovered = line.id } else if hovered == line.id { hovered = nil }
         }

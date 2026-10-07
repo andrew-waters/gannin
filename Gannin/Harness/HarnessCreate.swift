@@ -82,6 +82,8 @@ enum HarnessSkeleton {
                 - `skills/`: reusable workflows for Claude Code (`skills/README.md`).
                 - `prompts/`: the team's prompts for Claude Code sessions, offered by Gannin when work, a
                   review or planning starts (`prompts/README.md`).
+                - `learnings/<repo>/`: rules and reasons people gave in review, scoped to the code they're
+                  about, which reviews follow (`learnings/README.md`).
                 - `sessions/`: Gannin's record of each Claude Code session, with the brief it started from.
                 - `.gannin/`: the team's settings and people's dates, kept by Gannin. Don't edit by hand.
 
@@ -113,13 +115,14 @@ enum HarnessSkeleton {
 
                 | Field | For | What it holds |
                 | ----- | --- | ------------- |
-                | `type` | all | `requirement`, `plan`, `finding` or `skill` |
+                | `type` | all | `requirement`, `plan`, `finding`, `skill` or `learning` |
                 | `status` | all but skills | One value from the list below, never a sentence |
                 | `summary` | all | A sentence or two for deciding whether to open it, as a `>` block |
                 | `domains` | all | The product areas it belongs to, from the list below, the main one first |
                 | `issues` | when there is one | The issues it's about, as `owner/repo#123` |
                 | `touches` | plans, findings | The code it changes, as `owner/repo` or `owner/repo:path` |
                 | `owner` | optional | The GitHub login driving it |
+                | `repo`, `paths`, `commit`, `source`, `author` | learnings | See `learnings/README.md` |
 
                 Statuses:
 
@@ -127,6 +130,7 @@ enum HarnessSkeleton {
                 - Plans: `draft`, `agreed`, `in-progress`, `blocked`, `done`, `abandoned`
                 - Findings: `open`, `investigating`, `fixing`, `fixed`, `wont-fix`, with a `severity` of
                   `low`, `medium`, `high` or `critical`
+                - Learnings: `active`, `retired`
 
                 ## Where documents go
 
@@ -136,6 +140,7 @@ enum HarnessSkeleton {
                 findings/YYYY-MM-DD-<slug>.md
                 skills/<name>.md
                 prompts/<name>.md
+                learnings/<repo>/YYYY-MM-DD-<slug>.md
                 ```
 
                 ## Domains
@@ -297,6 +302,70 @@ enum HarnessSkeleton {
                 What Claude is told.
 
                 """,
+            "learnings/README.md": """
+                # Learnings
+
+                Rules and reasons people gave in review ("we do x because of y"), kept so that later reviews,
+                people's and Claude's, follow them rather than asking the same question again or suggesting what
+                they rule out. One file each, in a folder for the repo it's about:
+                `learnings/<repo>/YYYY-MM-DD-<slug>.md`, from `_template.md`.
+
+                | Field | What it holds |
+                | ----- | ------------- |
+                | `type` | `learning` |
+                | `status` | `active`, or `retired` once it no longer holds (kept, so the history shows why) |
+                | `summary` | The rule, in a sentence |
+                | `repo` | The repo it applies to, as `owner/name` |
+                | `paths` | Where in it: folders ending in `/`, files, or lines as `path#L10-L24`; none for the whole repo |
+                | `commit` | The commit line numbers were given at, since code moves |
+                | `source` | The comment it came from |
+                | `author` | The GitHub login of whoever gave it |
+                | `issues` | Optional: the PR or issue it came up in |
+
+                The body has `## Rule`, `## Reason` (why, as the person put it) and `## Source` (their words, quoted).
+
+                How Gannin uses them:
+
+                - Review with Claude gives the reviewer the active learnings for the PR's repo. It follows those
+                  whose scope covers the diff, lists the ones it applied and any doubts about them, and suggests
+                  new ones from what people explained in the PR. The review tab shows them on the diff, where each
+                  can be challenged (the reviewer looks again) or edited.
+                - Work on This lists those for the issue's repos in the session's brief.
+                - Save as Learning on a PR comment, a review thread or a reviewer's suggestion opens the editor.
+                  Nothing is committed until you say so.
+
+                Line numbers drift: reviewers check the code is still what the learning was about, and say when one
+                looks stale. Retire a learning rather than deleting it.
+
+                """,
+            "learnings/_template.md": """
+                ---
+                type: learning
+                status: active
+                summary: >
+                  {The rule, in a sentence.}
+                repo: \(org)/{repo}
+                paths: [{folder/}, {file}, {file#L10-L24}]
+                commit: {the commit the line numbers are at}
+                source: {the comment's URL}
+                author: {who gave it}
+                ---
+
+                # {Short title}
+
+                ## Rule
+
+                {What reviews should do, or leave alone, here.}
+
+                ## Reason
+
+                {Why, as the person put it.}
+
+                ## Source
+
+                > {What they said.}
+
+                """,
             "sessions/README.md": """
                 # Sessions
 
@@ -385,7 +454,7 @@ struct CreateHarnessSheet: View {
             .frame(height: taken ? 96 : 70)
             VStack(alignment: .leading, spacing: 4) {
                 Text("Gannin creates \(org)/\(name) as a private repo, then commits:")
-                Text("README.md, a starter CLAUDE.md\(projects.isEmpty ? "" : " listing \(projects.count) of the org's repos"), STANDARDS.md for documents' front matter, requirements, plans and findings with their templates, skills, prompts, sessions, .gannin, and a .gitignore keeping out projects/ and .worktrees/.")
+                Text("README.md, a starter CLAUDE.md\(projects.isEmpty ? "" : " listing \(projects.count) of the org's repos"), STANDARDS.md for documents' front matter, requirements, plans, findings and learnings with their templates, skills, prompts, sessions, .gannin, and a .gitignore keeping out projects/ and .worktrees/.")
                     .foregroundStyle(.secondary)
             }
             .font(.callout)

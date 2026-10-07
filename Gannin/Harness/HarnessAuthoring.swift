@@ -58,6 +58,12 @@ enum HarnessAuthoring {
 
             Follow STANDARDS.md and the findings template: the symptom and its impact, how it was investigated, the cause, the evidence (logs, queries, code references), and what should be done, with a severity of low, medium, high or critical. Its status is open unless I say otherwise. Keep facts and guesses apart.
             """
+        case .learnings:
+            """
+            You're writing up a learning for {{org}}'s harness, {{harness}}: a rule or a reason a person gave in review ("we do x because of y"), so later reviews, Claude's included, follow it rather than asking again or suggesting what it rules out.
+
+            Give it a short title, the rule in one sentence as its summary, the repo (`owner/name`) and the narrowest scope it applies to: folders ending in `/`, files, or lines of a file as `path#L10-L24`. Keep the reason in the person's own terms; don't add reasons they didn't give. If the comment doesn't make a rule clear, ask me rather than guess. If an existing learning already says it, or contradicts it, tell me which.
+            """
         case .plans:
             """
             Let's plan "{{topic}}" together, here in the team's harness. Read STANDARDS.md and plans/_template.md first. {{starting_point}}
@@ -99,6 +105,7 @@ enum HarnessAuthoring {
         case .skills: #"{"name": "kebab-case", "description": "one line", "repos": ["name"] or [] for all, "body": "..."}"#
         case .prompts: #"{"title": "...", "summary": "one line", "uses": ["work" | "review" | "planning" | "session"], "skills": ["skill-name"], "body": "..."}"#
         case .findings: #"{"title": "...", "summary": "a sentence or two", "status": "open", "severity": "low" | "medium" | "high" | "critical", "domains": ["..."], "issues": ["owner/repo#123"], "body": "..."}"#
+        case .learnings: #"{"title": "...", "summary": "the rule, in a sentence", "repos": ["owner/name"], "paths": ["folder/", "file", "file#L10-L24"], "reason": "why, in Markdown"}"#
         default: #"{"title": "...", "summary": "a sentence or two", "status": "draft", "domains": ["..."], "issues": ["owner/repo#123"], "body": "..."}"#
         }
     }
@@ -114,6 +121,9 @@ enum HarnessAuthoring {
         var repos: [String]?
         var uses: [String]?
         var skills: [String]?
+        /// A learning's scopes and reason.
+        var paths: [String]?
+        var reason: String?
         var domains: [String]?
         var issues: [String]?
         var body: String?
@@ -122,8 +132,8 @@ enum HarnessAuthoring {
 
         /// Whether it drafted anything, rather than only asking.
         var hasDraft: Bool {
-            [name, title, description, summary, status, severity, body].contains { $0 != nil }
-                || [repos, uses, skills, domains, issues].contains { $0 != nil }
+            [name, title, description, summary, status, severity, body, reason].contains { $0 != nil }
+                || [repos, uses, skills, paths, domains, issues].contains { $0 != nil }
         }
     }
 }
@@ -157,6 +167,7 @@ struct HarnessDocumentDraft {
         switch kind {
         case .findings: ["open", "investigating", "fixing", "fixed", "wont-fix"]
         case .skills, .prompts: ["active", "draft", "archived"]
+        case .learnings: ["active", "retired"]
         case .plans, .requirements: ["draft", "in-progress", "done"]
         }
     }

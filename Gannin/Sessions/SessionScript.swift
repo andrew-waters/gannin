@@ -379,6 +379,23 @@ enum SessionBrief {
             }
         }
 
+        if let harness {
+            // The issue's repo and its linked PRs': where the code likely is.
+            let repos = [reference.repo] + (record?.linkedPullRequests ?? []).compactMap { HarnessLearningDraft.repo(of: $0.url) }
+            var seen: Set<String> = []
+            let learnings = repos.flatMap { harness.learnings(for: $0) }.filter { seen.insert($0.id).inserted }
+            if !learnings.isEmpty {
+                lines += [
+                    "## Learnings",
+                    "",
+                    "Rules and reasons people gave in earlier reviews, kept in the harness under `learnings/<repo>/`, each scoped to the code it's about. Follow those that cover code you change (each file has the reason in full); if one stands in the way of the issue, say so rather than working around it. Other repos' are in their own folders there.",
+                    "",
+                    HarnessLearning.list(learnings),
+                    "",
+                ]
+            }
+        }
+
         var working = ["## Working here", ""]
         if session.isInHarness, let harnessPath = session.harnessPath, let harnessRepo = session.harnessRepo {
             let folder = ".worktrees/\(session.branch)"

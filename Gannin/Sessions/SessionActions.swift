@@ -409,13 +409,14 @@ extension SessionStore {
     }
 
     /// What a reviewer is asked: read the changes, don't edit, and end with
-    /// its findings as JSON Gannin turns into comments.
-    static func reviewPrompt(for session: CodeSession) -> String {
+    /// its findings as JSON Gannin turns into comments. `learnings` are the
+    /// harness's, followed where they cover the changes.
+    static func reviewPrompt(for session: CodeSession, learnings: [HarnessLearning] = []) -> String {
         let folder = session.isInHarness ? ".worktrees/\(session.branch)/" : "this worktree"
         return """
             You're reviewing another agent's work on \(session.issue.reference), "\(session.issue.title)". The brief is in \(session.isInHarness ? "\(folder).gannin/brief.md" : ".gannin/brief.md"). \
             Look at every change in \(folder) (each repo's worktree, against where its branch left origin's default branch, committed or not) \
-            for bugs, missed cases, and code that doesn't fit the repo. Don't edit anything. \
+            for bugs, missed cases, and code that doesn't fit the repo. Don't edit anything.\(HarnessLearning.reviewInstructions(learnings, listsApplied: false).map { "\n\n\($0)\n\n" } ?? " ")\
             End your reply with your findings as a fenced ```json block: a list of {"path": "<repo folder>/<path in the repo>", "line": <line in the new file>, "comment": "<what's wrong and what to do>"}, most important first.
             """
     }
