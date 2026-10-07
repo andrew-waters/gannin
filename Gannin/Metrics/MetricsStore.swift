@@ -127,10 +127,21 @@ final class MetricsStore {
                 for (week, count) in counts { history.openedPerWeek[week] = count }
             }
             if !lackingFiles.isEmpty {
-                let files = try await run.track("files", count: \.count) { progress in
-                    try await api.changedFiles(ids: lackingFiles) { progress($0, lackingFiles.count) }
+                // Saved as it goes, so a sync that stops carries on from
+                // there next time.
+                var batches = 0
+                _ = try await run.track("files", count: { $0 }) { progress in
+                    try await api.changedFiles(ids: lackingFiles) { files, done in
+                        for (id, count) in files { history.pullRequests[id]?.changedFiles = count }
+                        progress(done, lackingFiles.count)
+                        batches += 1
+                        if batches % 20 == 0 {
+                            histories[org] = history
+                            save(history)
+                        }
+                    }
+                    return lackingFiles.count
                 }
-                for (id, count) in files { history.pullRequests[id]?.changedFiles = count }
                 history.filledChangedFiles = true
             }
 

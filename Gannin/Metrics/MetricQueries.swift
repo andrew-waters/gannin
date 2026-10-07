@@ -20,22 +20,32 @@ extension GitHubAPI {
     }
 
     /// Files changed on PRs by node ID, for those stored before it was
-    /// fetched: 100 a query, a point each.
-    func changedFiles(ids: [String], onBatch: (_ done: Int) -> Void = { _ in }) async throws -> [String: Int] {
+    /// fetched, handed over a batch at a time. `changedFiles` is slow for
+    /// GitHub to work out, so a batch is 25 and halved when GitHub times
+    /// out; a PR that times out alone is skipped.
+    func changedFiles(ids: [String], onBatch: (_ files: [String: Int], _ done: Int) -> Void) async throws {
         struct Node: Decodable { let id: String; let changedFiles: Int }
         struct Response: Decodable { let nodes: [Lossy<Node>] }
-        var files: [String: Int] = [:]
+        var size = 25
         var done = 0
-        for start in stride(from: 0, to: ids.count, by: 100) {
-            let batch = Array(ids[start..<min(start + 100, ids.count)])
-            let response: Response = try await query("""
-                query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequest { id changedFiles } } }
-                """, values: ["ids": batch])
-            for node in response.nodes.compactMap(\.value) { files[node.id] = node.changedFiles }
-            done += batch.count
-            onBatch(done)
+        while done < ids.count {
+            let batch = Array(ids[done..<min(done + size, ids.count)])
+            do {
+                let response: Response = try await query("""
+                    query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequest { id changedFiles } } }
+                    """, values: ["ids": batch])
+                done += batch.count
+                onBatch(Dictionary(response.nodes.compactMap(\.value).map { ($0.id, $0.changedFiles) }, uniquingKeysWith: { first, _ in first }), done)
+                size = min(size * 2, 25)
+            } catch APIError.http(let status, _) where (502...504).contains(status) {
+                if batch.count == 1 {
+                    done += 1
+                    onBatch([:], done)
+                } else {
+                    size = max(batch.count / 2, 1)
+                }
+            }
         }
-        return files
     }
 
     /// The search for PRs merged in `[from, to]`, by day.
