@@ -110,6 +110,27 @@ extension SessionStore {
         }
     }
 
+    /// Hides a permission prompt's card right away, optimistically, rather
+    /// than waiting for the hook that confirms it: `key` is the tool's id
+    /// it answered. Checked for a few seconds against the session's real
+    /// state, since the keys just sent could land on a prompt that's since
+    /// redrawn or closed; if the state never leaves `needsYou`, the approval
+    /// didn't go through, so the card comes back.
+    func confirmApproval(of key: String, for id: UUID) {
+        optimisticApprovals[id] = key
+        Task {
+            for _ in 0..<20 {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard optimisticApprovals[id] == key else { return }
+                if state(id) != .needsYou {
+                    optimisticApprovals[id] = nil
+                    return
+                }
+            }
+            optimisticApprovals[id] = nil
+        }
+    }
+
     /// What a notification offers as quick replies: a lone question's
     /// options, else Allow and Deny for a permission prompt. Several
     /// questions are answered in Gannin.

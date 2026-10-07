@@ -337,6 +337,11 @@ final class SessionStore {
         }
     }
     private(set) var states: [UUID: SessionState] = [:]
+    /// A permission prompt's approval, sent but not yet confirmed: the
+    /// tool's id just approved, so its card hides at once rather than
+    /// waiting on the hook, and comes back if the state never leaves
+    /// `needsYou` (`confirmApproval`).
+    var optimisticApprovals: [UUID: String] = [:]
     /// Bumped each time a session's hooks say claude edited a file or ran
     /// a command, so its Changes pane reads them again.
     private(set) var changeCounts: [UUID: Int] = [:]

@@ -140,8 +140,14 @@ struct SessionQuestionCard: View {
     var onHide: (() -> Void)? = nil
 
     /// Whether there's anything to ask: a question, or a permission prompt.
+    /// A permission prompt just approved hides at once, before the hook
+    /// that would otherwise confirm it (`SessionStore.confirmApproval`).
     static func isAsking(_ session: CodeSession, in sessions: SessionStore) -> Bool {
-        sessions.isRunning(session.id) && (sessions.transcripts[session.id]?.question != nil || sessions.state(session.id) == .needsYou)
+        guard sessions.isRunning(session.id) else { return false }
+        if sessions.transcripts[session.id]?.question != nil { return true }
+        guard sessions.state(session.id) == .needsYou else { return false }
+        if let tool = sessions.transcripts[session.id]?.pendingTool, sessions.optimisticApprovals[session.id] == tool.id { return false }
+        return true
     }
     /// The options picked for each question, by its index.
     @State private var picked: [Int: Set<Int>] = [:]
@@ -330,11 +336,11 @@ struct SessionQuestionCard: View {
             // exiting plan mode offers something else entirely, and not
             // every prompt has a middle choice at all.
             ForEach(choices.dropFirst().dropLast()) { choice in
-                Button(choice.label) { sessions.selectChoice(choice.number, to: session.id) }
+                Button(choice.label) { approve(choice.number, tool: tool) }
                     .lineLimit(1)
                     .help("The prompt's choice \(choice.number)")
             }
-            Button(choices.first?.label ?? "Allow") { sessions.sendKeys("\r", to: session.id) }
+            Button(choices.first?.label ?? "Allow") { approve(choices.first?.number ?? 1, tool: tool) }
                 .buttonStyle(.borderedProminent)
                 .lineLimit(1)
                 .help("Return, on the prompt's first choice")
@@ -353,6 +359,13 @@ struct SessionQuestionCard: View {
                 try? await Task.sleep(for: .milliseconds(150))
             }
         }
+    }
+
+    /// Picks one of the prompt's choices: the card hides at once, and the
+    /// keys go to the terminal to pick it for real.
+    private func approve(_ number: Int, tool: SessionTranscript.Event?) {
+        if let tool { sessions.confirmApproval(of: tool.id, for: session.id) }
+        sessions.selectChoice(number, to: session.id)
     }
 
     private func permissionTitle(_ tool: String?) -> String {
