@@ -131,26 +131,46 @@ extension SessionStore {
         }
     }
 
+    /// Picks one of a permission prompt's own choices, by number (1 for
+    /// its first, usually Allow): its card hides at once
+    /// (`confirmApproval`), and the keys that pick it for real go to the
+    /// terminal.
+    func approvePermission(_ number: Int, for id: UUID) {
+        if let tool = transcripts[id]?.pendingTool { confirmApproval(of: tool.id, for: id) }
+        selectChoice(number, to: id)
+    }
+
     /// What a notification offers as quick replies: a lone question's
-    /// options, else Allow and Deny for a permission prompt. Several
-    /// questions are answered in Gannin.
+    /// options, else a permission prompt's own choices read off the
+    /// terminal (`permissionChoices`, falling back to plain Allow while
+    /// they haven't drawn yet) and Deny. Several questions are answered
+    /// in Gannin.
     func quickReplies(for id: UUID) -> [QuickReply] {
         if let question = transcripts[id]?.question {
             guard question.items.count == 1, let item = question.items.first, !item.multiSelect else { return [] }
             return item.options.enumerated().map { QuickReply(title: $0.element.label, keys: "answer:\($0.offset)") }
         }
         guard state(id) == .needsYou else { return [] }
-        return [
-            QuickReply(title: "Allow", keys: "\r"),
-            QuickReply(title: "Deny", keys: "\u{1B}", isDestructive: true),
-        ]
+        let choices = permissionChoices(for: id)
+        guard let first = choices.first else {
+            return [
+                QuickReply(title: "Allow", keys: "\r"),
+                QuickReply(title: "Deny", keys: "\u{1B}", isDestructive: true),
+            ]
+        }
+        return [QuickReply(title: first.label, keys: "choice:\(first.number)")]
+            + choices.dropFirst().dropLast().map { QuickReply(title: $0.label, keys: "choice:\($0.number)") }
+            + [QuickReply(title: "Deny", keys: "\u{1B}", isDestructive: true)]
     }
 
-    /// A notification's reply: keys, or a lone question's option by index.
+    /// A notification's reply: keys, a lone question's option by index, or
+    /// one of a permission prompt's own choices by number.
     func handleQuickReply(_ keys: String, for id: UUID) {
         if keys.hasPrefix("answer:"), let index = Int(keys.dropFirst(7)),
            let item = transcripts[id]?.question?.items.first, item.options.indices.contains(index) {
             answer([(item.question, item.options[index].label.replacingOccurrences(of: " (Recommended)", with: ""))], to: id)
+        } else if keys.hasPrefix("choice:"), let number = Int(keys.dropFirst(7)) {
+            approvePermission(number, for: id)
         } else {
             sendKeys(keys, to: id)
         }
