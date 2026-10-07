@@ -336,11 +336,11 @@ struct SessionQuestionCard: View {
             // exiting plan mode offers something else entirely, and not
             // every prompt has a middle choice at all.
             ForEach(choices.dropFirst().dropLast()) { choice in
-                Button(choice.label) { approve(choice.number, tool: tool) }
+                Button(choice.label) { sessions.approvePermission(choice.number, for: session.id) }
                     .lineLimit(1)
                     .help("The prompt's choice \(choice.number)")
             }
-            Button(choices.first?.label ?? "Allow") { approve(choices.first?.number ?? 1, tool: tool) }
+            Button(choices.first?.label ?? "Allow") { sessions.approvePermission(choices.first?.number ?? 1, for: session.id) }
                 .buttonStyle(.borderedProminent)
                 .lineLimit(1)
                 .help("Return, on the prompt's first choice")
@@ -359,13 +359,6 @@ struct SessionQuestionCard: View {
                 try? await Task.sleep(for: .milliseconds(150))
             }
         }
-    }
-
-    /// Picks one of the prompt's choices: the card hides at once, and the
-    /// keys go to the terminal to pick it for real.
-    private func approve(_ number: Int, tool: SessionTranscript.Event?) {
-        if let tool { sessions.confirmApproval(of: tool.id, for: session.id) }
-        sessions.selectChoice(number, to: session.id)
     }
 
     private func permissionTitle(_ tool: String?) -> String {

@@ -751,17 +751,26 @@ final class SessionStore {
     }
 
     /// The quick replies a notification offers, as keys to send: the
-    /// options of the question claude is asking, else Allow and Deny for a
-    /// permission prompt. Categories are app-wide, so one per session.
+    /// options of the question claude is asking, else a permission
+    /// prompt's own choices and Deny. Categories are app-wide, so one per
+    /// session; registered once the prompt's choices are there to read
+    /// off the terminal (up to a second, as the card itself waits), so
+    /// the notification doesn't offer a plain Allow when the real prompt
+    /// has more useful choices.
     private func registerReplies(for id: UUID) -> String {
         let identifier = "session.\(id.uuidString)"
-        let actions: [UNNotificationAction] = quickReplies(for: id).prefix(4).map { reply in
-            UNNotificationAction(identifier: "keys:" + reply.keys, title: reply.title, options: reply.isDestructive ? [.destructive] : [])
-        }
-        notificationCategories[identifier] = UNNotificationCategory(identifier: identifier, actions: actions, intentIdentifiers: [])
-        // Categories are app-wide: keep the review watch's.
-        let ours = Set(notificationCategories.values)
         Task {
+            var tries = 0
+            while transcripts[id]?.question == nil, permissionChoices(for: id).isEmpty, state(id) == .needsYou, tries < 6 {
+                tries += 1
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            let actions: [UNNotificationAction] = quickReplies(for: id).prefix(4).map { reply in
+                UNNotificationAction(identifier: "keys:" + reply.keys, title: reply.title, options: reply.isDestructive ? [.destructive] : [])
+            }
+            notificationCategories[identifier] = UNNotificationCategory(identifier: identifier, actions: actions, intentIdentifiers: [])
+            // Categories are app-wide: keep the review watch's.
+            let ours = Set(notificationCategories.values)
             let center = UNUserNotificationCenter.current()
             let others = await center.notificationCategories().filter { !$0.identifier.hasPrefix("session.") }
             center.setNotificationCategories(others.union(ours))
