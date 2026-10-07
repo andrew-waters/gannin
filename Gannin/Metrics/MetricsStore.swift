@@ -45,7 +45,8 @@ final class MetricsStore {
             openedPerWeek: [:]
         )
         let isFresh = !SyncSettings.isDue(.metrics, since: history.syncedAt, now: now)
-        if !force && isFresh && history.coveredFrom <= start { return }
+        let lackingFiles = history.lackingChangedFiles
+        if !force && isFresh && history.coveredFrom <= start && lackingFiles.isEmpty { return }
         // Wait out a low rate limit unless asked, as long as there's history to show.
         if !force && auth.shouldHoldOff && histories[org] != nil { return }
 
@@ -68,6 +69,10 @@ final class MetricsStore {
         if !weeks.isEmpty {
             run.add("opened", title: "Opened per week", detail: weeks.count == 1 ? "1 week" : "\(weeks.count) weeks")
             run.setTotal(weeks.count, for: "opened")
+        }
+        if !lackingFiles.isEmpty {
+            run.add("files", title: "Files changed", detail: "PRs stored before it was fetched")
+            run.setTotal(lackingFiles.count, for: "files")
         }
 
         syncing.insert(org)
@@ -120,6 +125,13 @@ final class MetricsStore {
                     try await api.openedCounts(org: org, weeks: weeks) { progress($0, weeks.count) }
                 }
                 for (week, count) in counts { history.openedPerWeek[week] = count }
+            }
+            if !lackingFiles.isEmpty {
+                let files = try await run.track("files", count: \.count) { progress in
+                    try await api.changedFiles(ids: lackingFiles) { progress($0, lackingFiles.count) }
+                }
+                for (id, count) in files { history.pullRequests[id]?.changedFiles = count }
+                history.filledChangedFiles = true
             }
 
             history.syncedAt = now

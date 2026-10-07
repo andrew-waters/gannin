@@ -524,7 +524,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`IssueFilters`) are kept per window (`StoredIssueFilters`). Pull Requests (`PullRequestsView`)
   has the same bar: search, Author and Reviewer (Me first, No Reviewer), Status (draft, needs
   review, changes requested, approved, merged) and Repository, and Open, Merged or All over the
-  open PRs and those merged in the lookback. Its Files and Size columns are the PR's `changedFiles` (optional, so caches from before it load; a snapshot without it is searched in full on the next refresh, `OrgSnapshot.lacksFileCounts`, but the metrics history isn't fetched again for it) and lines added and removed, which PR rows show too. Both bars build on `FilterMenu`,
+  open PRs and those merged in the lookback. Its Files and Size columns are the PR's `changedFiles` (optional, so caches from before it load; a snapshot without it is searched in full on the next refresh, `OrgSnapshot.lacksFileCounts`, and the metrics history's PRs from before it are looked up once by node ID, 100 a query, `MetricsHistory.filledChangedFiles`) and lines added and removed, which PR rows show too. Both bars build on `FilterMenu`,
   `FilterSearchField` and `StoredSet` (`IssueFilterBar.swift`). The search (`IssueSearch`) needs
   every word typed in the title, repo, number, a person's login or name, or a label. `IssueStore` keeps issues closed since
   the window's starting Monday plus every open issue, with project board status changes

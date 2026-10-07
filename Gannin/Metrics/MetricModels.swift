@@ -73,4 +73,12 @@ struct MetricsHistory: Codable {
     var pullRequests: [String: MetricPullRequest]
     /// PRs opened per week, keyed by the week's start.
     var openedPerWeek: [Date: Int]
+    /// Set once the PRs stored before `changedFiles` was fetched have been
+    /// looked up for it, so those GitHub can't find aren't asked for again.
+    var filledChangedFiles: Bool?
+
+    /// Stored PRs still without a file count.
+    var lackingChangedFiles: [String] {
+        filledChangedFiles == true ? [] : pullRequests.values.filter { $0.changedFiles == nil }.map(\.id)
+    }
 }

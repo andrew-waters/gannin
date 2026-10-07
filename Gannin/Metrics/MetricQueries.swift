@@ -19,6 +19,25 @@ extension GitHubAPI {
         return nodes.compactMap { $0.value?.model }
     }
 
+    /// Files changed on PRs by node ID, for those stored before it was
+    /// fetched: 100 a query, a point each.
+    func changedFiles(ids: [String], onBatch: (_ done: Int) -> Void = { _ in }) async throws -> [String: Int] {
+        struct Node: Decodable { let id: String; let changedFiles: Int }
+        struct Response: Decodable { let nodes: [Lossy<Node>] }
+        var files: [String: Int] = [:]
+        var done = 0
+        for start in stride(from: 0, to: ids.count, by: 100) {
+            let batch = Array(ids[start..<min(start + 100, ids.count)])
+            let response: Response = try await query("""
+                query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequest { id changedFiles } } }
+                """, values: ["ids": batch])
+            for node in response.nodes.compactMap(\.value) { files[node.id] = node.changedFiles }
+            done += batch.count
+            onBatch(done)
+        }
+        return files
+    }
+
     /// The search for PRs merged in `[from, to]`, by day.
     static func mergedSearch(org: String, from: Date, to: Date) -> String {
         "\(GitHubAccounts.scope(org)) archived:false is:pr is:merged merged:\(day(from))..\(day(to))"
