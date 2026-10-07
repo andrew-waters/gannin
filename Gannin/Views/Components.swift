@@ -71,6 +71,14 @@ struct LabelChip: View {
 }
 
 extension PullRequest {
+    /// Someone other than the author has left a review, of any kind: a
+    /// comment-only review doesn't move `reviewDecision` or `review`, so
+    /// without this a PR someone has already looked at reads the same as
+    /// one nobody has touched.
+    var hasBeenReviewed: Bool {
+        (reviewStates ?? [:]).keys.contains { $0 != author?.login }
+    }
+
     var statusText: String {
         if isMerged { return "Merged" }
         if state == "CLOSED" { return "Closed" }
@@ -78,7 +86,7 @@ extension PullRequest {
         switch review {
         case .approved: return "Approved"
         case .changesRequested: return "Changes requested"
-        case .reviewRequired, nil: return "In review"
+        case .reviewRequired, nil: return hasBeenReviewed ? "Commented" : "In review"
         }
     }
 
