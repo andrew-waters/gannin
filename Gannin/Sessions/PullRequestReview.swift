@@ -697,7 +697,7 @@ private struct ReviewDiff: View {
                             .padding(16)
                     }
                     ForEach(file.lines) { line in
-                        row(line)
+                        DiffRow(sessionID: session.id, filePath: file.path, line: line, hovered: $hovered, commenting: $commenting)
                         if let newLine = line.newLine {
                             ForEach(findings.filter { $0.line == newLine }, id: \.key) { finding in
                                 FindingCard(session: session, finding: finding, showsLocation: false)
@@ -722,10 +722,25 @@ private struct ReviewDiff: View {
         guard let anchor = line.anchor else { return false }
         return anchor.line == comment.line && anchor.isOld == comment.isOld
     }
+}
 
-    private func row(_ line: DiffLine) -> some View {
+/// One line of the diff with its comment popover. A dedicated view (not a
+/// function on `ReviewDiff`) with narrow, stable inputs: while claude is
+/// actively writing the review, `ReviewDiff` rebuilds every row as
+/// `findings`/drafts change, but this row only re-renders when its own
+/// inputs do, so a comment popover left open doesn't lose the TextEditor's
+/// cursor position on every poll tick.
+private struct DiffRow: View {
+    @Environment(SessionStore.self) private var sessions
+    let sessionID: UUID
+    let filePath: String
+    let line: DiffLine
+    @Binding var hovered: DiffLine.ID?
+    @Binding var commenting: DiffLine.ID?
+
+    var body: some View {
         let anchor = line.anchor
-        return HStack(alignment: .firstTextBaseline, spacing: 0) {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
             ZStack(alignment: .trailing) {
                 Text(anchor.map { "\($0.line)" } ?? "")
                     .foregroundStyle(.tertiary)
@@ -745,15 +760,15 @@ private struct ReviewDiff: View {
         }
         .font(.system(size: 11, design: .monospaced))
         .padding(.trailing, 6)
-        .background(background(line.kind))
+        .background(Self.background(line.kind))
         .onHover { inside in
             if inside { hovered = line.id } else if hovered == line.id { hovered = nil }
         }
         .popover(isPresented: Binding(get: { commenting == line.id }, set: { if !$0 { commenting = nil } }), arrowEdge: .leading) {
             if let anchor {
-                ReviewCommentEditor(location: "\(file.path):\(anchor.line)") { body in
-                    sessions.reviewDrafts[session.id, default: ReviewDraft()].comments.append(
-                        .init(path: file.path, line: anchor.line, isOld: anchor.isOld, body: body)
+                ReviewCommentEditor(location: "\(filePath):\(anchor.line)") { body in
+                    sessions.reviewDrafts[sessionID, default: ReviewDraft()].comments.append(
+                        .init(path: filePath, line: anchor.line, isOld: anchor.isOld, body: body)
                     )
                     commenting = nil
                 } cancel: {
@@ -763,7 +778,7 @@ private struct ReviewDiff: View {
         }
     }
 
-    private func background(_ kind: DiffLine.Kind) -> Color {
+    private static func background(_ kind: DiffLine.Kind) -> Color {
         switch kind {
         case .added: ChartPalette.good.opacity(0.14)
         case .removed: ChartPalette.critical.opacity(0.14)
@@ -780,7 +795,8 @@ private struct FindingCard: View {
     let session: CodeSession
     let finding: SessionTranscript.Finding
     let showsLocation: Bool
-    @State private var editing: String?
+    @State private var isEditing = false
+    @State private var editingText = ""
 
     var body: some View {
         let decision = sessions.reviewDrafts[session.id]?.decisions[finding.key]
@@ -804,22 +820,22 @@ private struct FindingCard: View {
                 Spacer()
                 if dismissed {
                     Button("Restore") { set(nil) }.buttonStyle(.borderless)
-                } else if editing == nil {
-                    Button("Edit") { editing = text(decision) }.buttonStyle(.borderless)
+                } else if !isEditing {
+                    Button("Edit") { editingText = text(decision); isEditing = true }.buttonStyle(.borderless)
                     Button("Dismiss") { set(.dismissed) }.buttonStyle(.borderless)
                 }
             }
             .font(.callout)
-            if let editing {
-                TextEditor(text: Binding(get: { editing }, set: { self.editing = $0 }))
+            if isEditing {
+                TextEditor(text: $editingText)
                     .font(.callout)
                     .frame(minHeight: 70)
                 HStack {
                     Spacer()
-                    Button("Cancel") { self.editing = nil }
+                    Button("Cancel") { isEditing = false }
                     Button("Save") {
-                        set(editing == finding.comment ? nil : .edited(editing))
-                        self.editing = nil
+                        set(editingText == finding.comment ? nil : .edited(editingText))
+                        isEditing = false
                     }
                     .buttonStyle(.borderedProminent)
                 }

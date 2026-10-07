@@ -669,7 +669,7 @@ private struct DiffPane: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(changes.diff) { line in
-                            row(line, file: file, worktreeName: worktreeName)
+                            DiffPaneRow(session: session, changes: changes, file: file, worktreeName: worktreeName, line: line, hovered: $hovered, commenting: $commenting)
                             ForEach(drafts.filter { $0.matches(file, line) }) { comment in
                                 DraftCommentView(comment: comment) {
                                     sessions.removeDraft(comment.id, from: session.id)
@@ -684,10 +684,26 @@ private struct DiffPane: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
+}
 
-    private func row(_ line: DiffLine, file: ChangedFile, worktreeName: String) -> some View {
+/// One line of a file's diff with its comment popover. A dedicated view
+/// (not a function on `DiffPane`) with narrow inputs: adding or removing a
+/// draft comment on another line invalidates `DiffPane`, but this row only
+/// re-renders when its own inputs change, so a comment popover left open
+/// doesn't lose the TextEditor's cursor position.
+private struct DiffPaneRow: View {
+    @Environment(SessionStore.self) private var sessions
+    let session: CodeSession
+    let changes: SessionChanges
+    let file: ChangedFile
+    let worktreeName: String
+    let line: DiffLine
+    @Binding var hovered: DiffLine.ID?
+    @Binding var commenting: DiffLine.ID?
+
+    var body: some View {
         let anchor = line.anchor
-        return HStack(alignment: .firstTextBaseline, spacing: 0) {
+        HStack(alignment: .firstTextBaseline, spacing: 0) {
             ZStack(alignment: .trailing) {
                 Text(anchor.map { "\($0.line)" } ?? "")
                     .foregroundStyle(.tertiary)
@@ -703,7 +719,7 @@ private struct DiffPane: View {
             .onTapGesture { if anchor != nil { commenting = line.id } }
             .help(anchor != nil ? "Comment on this line for claude" : "")
             Text(line.text.isEmpty ? " " : line.text)
-                .foregroundStyle(foreground(line.kind))
+                .foregroundStyle(Self.foreground(line.kind))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             if line.kind == .hunk, changes.mode == .uncommitted, file.status != .untracked {
@@ -717,7 +733,7 @@ private struct DiffPane: View {
         }
         .font(.system(size: 11, design: .monospaced))
         .padding(.trailing, 6)
-        .background(background(line.kind))
+        .background(Self.background(line.kind))
         .onHover { inside in
             if inside { hovered = line.id } else if hovered == line.id { hovered = nil }
         }
@@ -746,14 +762,14 @@ private struct DiffPane: View {
         }
     }
 
-    private func foreground(_ kind: DiffLine.Kind) -> Color {
+    private static func foreground(_ kind: DiffLine.Kind) -> Color {
         switch kind {
         case .hunk, .note: .secondary
         default: .primary
         }
     }
 
-    private func background(_ kind: DiffLine.Kind) -> Color {
+    private static func background(_ kind: DiffLine.Kind) -> Color {
         switch kind {
         case .added: ChartPalette.good.opacity(0.14)
         case .removed: ChartPalette.critical.opacity(0.14)
