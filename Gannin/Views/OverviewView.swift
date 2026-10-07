@@ -12,6 +12,10 @@ struct OverviewView: View {
 
     @Environment(MetricsStore.self) private var store
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(OrgStore.self) private var orgs
+    @Environment(ActionsStore.self) private var actionsStore
+    @Environment(IssueStore.self) private var issueStore
+    @Environment(HiddenStore.self) private var hidden
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @State private var showsDigest = false
 
@@ -29,6 +33,14 @@ struct OverviewView: View {
                         rightNow.sectionContent()
                     } header: {
                         PinnedHeader { Text("Right now") }
+                    }
+                    let goals = configs.config(for: org).measurables
+                    if !goals.isEmpty {
+                        Section {
+                            ScorecardStanding(headlines: scorecard(goals)).sectionContent()
+                        } header: {
+                            PinnedHeader { SummaryHeader(title: "Scorecards", link: "Scorecards", item: .tab(.scorecard)) }
+                        }
                     }
                     Section {
                         VStack(alignment: .leading, spacing: 16) {
@@ -118,6 +130,19 @@ struct OverviewView: View {
     }
 
     // MARK: Delivery, in short
+
+    /// Each scorecard goal's last whole period at its own cadence.
+    private func scorecard(_ goals: [Measurable]) -> [ScorecardHeadline] {
+        ScorecardHeadline.latest(
+            goals, history: store.history(for: org), config: configs.config(for: org), hidden: hidden.keys,
+            teams: orgs.snapshot(for: org)?.teams ?? [],
+            sources: Scorecard.Sources(
+                openPullRequests: orgs.snapshot(for: org)?.openPullRequests ?? [],
+                runs: actionsStore.history(for: org).map { Array($0.runs.values) },
+                issues: issueStore.history(for: org)
+            )
+        )
+    }
 
     /// The headline numbers with their changes, and how the goals stand;
     /// the rest is on PR flow.

@@ -19,7 +19,7 @@ struct ScorecardTiles: View {
     }
 }
 
-/// What every tile design shows of a measurable's last whole period.
+/// What a tile shows of a measurable's last whole period.
 struct ScorecardHeadline: Identifiable {
     let measurable: Measurable
     let current: Scorecard.Cell?
@@ -101,7 +101,7 @@ struct ScorecardHeadline: Identifiable {
 
 /// A goal's tile. Whether it's on target is in the line's colours (and
 /// the tooltip), so there's no status badge.
-private struct ScorecardHeadlineTile: View {
+struct ScorecardHeadlineTile: View {
     let headline: ScorecardHeadline
     /// The period under the pointer, which the tile shows instead.
     @State private var hovered: Date?
@@ -280,6 +280,57 @@ struct EvenGrid: Layout {
                 subview.place(at: CGPoint(x: bounds.minX + CGFloat(offset) * (tile + spacing), y: y), proposal: ProposedViewSize(width: tile, height: height))
             }
             y += height + spacing
+        }
+    }
+}
+
+extension ScorecardHeadline {
+    /// Every goal's last whole period at its own cadence (a weekly goal's
+    /// last week, a monthly one's last month), for the Overview.
+    static func latest(_ measurables: [Measurable], history: MetricsHistory?, config: OrgConfig, hidden: Set<String>, teams: [Team], sources: Scorecard.Sources) -> [ScorecardHeadline] {
+        Dictionary(grouping: measurables, by: \.cadence)
+            .sorted { a, b in (ScorecardCadence.allCases.firstIndex(of: a.key) ?? 0) < (ScorecardCadence.allCases.firstIndex(of: b.key) ?? 0) }
+            .flatMap { cadence, measurables in
+                let resolution = cadence.resolution
+                let data = Scorecard.Data(
+                    history: history, periods: resolution.periods(count: 13, earliest: nil), resolution: resolution,
+                    config: config, hidden: hidden, teams: teams, sources: sources
+                )
+                return measurables.map { ScorecardHeadline(measurable: $0, data: data, resolution: resolution) }
+            }
+    }
+}
+
+/// The Overview's Scorecards section: how many goals are on track, then
+/// a tile for each one off track, which opens Scorecards.
+struct ScorecardStanding: View {
+    @Environment(\.showSidebarItem) private var showSidebarItem
+    let headlines: [ScorecardHeadline]
+
+    var body: some View {
+        let judged = headlines.filter { $0.met != nil }
+        let offTrack = judged.filter { $0.met == false }
+        VStack(alignment: .leading, spacing: 12) {
+            if judged.isEmpty {
+                Text("Nothing to judge yet: no goal has a whole period measured.")
+                    .foregroundStyle(.secondary)
+            } else {
+                let met = judged.count - offTrack.count
+                Label(
+                    offTrack.isEmpty ? "All \(judged.count) goals on track" : "\(met) of \(judged.count) goals on track",
+                    systemImage: offTrack.isEmpty ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
+                )
+                .foregroundStyle(offTrack.isEmpty ? ChartPalette.good : ChartPalette.warning)
+            }
+            if !offTrack.isEmpty {
+                EvenGrid(minWidth: 190, spacing: 12) {
+                    ForEach(offTrack) { headline in
+                        Button { showSidebarItem?(.tab(.scorecard)) } label: { ScorecardHeadlineTile(headline: headline) }
+                            .buttonStyle(.plain)
+                            .help("Open Scorecards")
+                    }
+                }
+            }
         }
     }
 }

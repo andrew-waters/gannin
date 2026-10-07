@@ -241,7 +241,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`StageSummary.isOccasional`) show their share and median-when-it-happens instead.
   Bot-authored PRs are excluded, as are logins ending `-bot` or `[bot]` (ordinary user accounts
   used for automation) unless re-included in the org's stats config (`includedAuthors`).
-- Dashboard (`OverviewView`) is the org landing page: right now, delivery, and summaries of
+- Dashboard (`OverviewView`) is the org landing page: right now, Scorecards (`ScorecardStanding`:
+  how many goals are on track, each judged on its last whole period at its own cadence,
+  `ScorecardHeadline.latest`, and a tile for each off track, opening Scorecards), delivery, and summaries of
   investment balance and GitHub Actions for the window (`DashboardSummaries.swift`), PR size (`PRSizeSummary`: median, smallest, largest, median files, and `PRSizeDistribution`, merged PRs by lines changed and by files changed in `SizeStat`'s buckets, also on PR flow), each
   linking to its page through `showSidebarItem`. Opening it syncs the issue history and the
   Actions runs, so Refresh includes them from then on; the people table is the People page (`PeopleStatsView`), whose Size and Files columns are each person's median lines and files changed per PR merged in the window (`PullRequestSizes`: p75, totals and large PRs in the tooltip). Tiles, the stage legend, chart weeks
