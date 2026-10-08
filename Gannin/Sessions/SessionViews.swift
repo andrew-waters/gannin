@@ -209,22 +209,22 @@ private struct TabKind {
             name = "Plan"
             symbol = "list.bullet"
             reference = planning.issue?.reference
-            title = planning.state?.title ?? planning.topic
+            title = session.name ?? planning.state?.title ?? planning.topic
         } else if session.isPullRequestReview {
             name = "Review"
             symbol = "arrow.triangle.pull"
             reference = session.issue.reference
-            title = session.issue.title
+            title = session.name ?? session.issue.title
         } else if session.isHelper {
             name = session.role ?? "Helper"
             symbol = session.isReviewer ? "arrow.triangle.pull" : "person.2"
             reference = session.issue.reference
-            title = session.issue.title
+            title = session.name ?? session.issue.title
         } else {
             name = "Code"
             symbol = "arrow.triangle.branch"
             reference = session.issue.reference
-            title = session.issue.title
+            title = session.name ?? session.issue.title
         }
     }
 }
@@ -295,6 +295,8 @@ private struct SessionTabItem: View {
     let session: CodeSession
     let isSelected: Bool
     @State private var hovering = false
+    @State private var renaming = false
+    @State private var newName = ""
 
     var body: some View {
         let state = sessions.state(session.id)
@@ -350,11 +352,19 @@ private struct SessionTabItem: View {
         // The tab shown, lighter than the rest.
         .background(isSelected ? Color.primary.opacity(0.1) : .clear)
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { startRenaming() }
         .onTapGesture {
             sessions.showingOverview = false
             sessions.selectedTab = session.id
         }
         .onHover { hovering = $0 }
+        .alert("Rename Tab", isPresented: $renaming) {
+            TextField("Name", text: $newName)
+            Button("Rename") { sessions.renameTab(session.id, to: newName) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(session.isAsk ? "The Ask's name, wherever it's listed." : "Leave it empty to go back to \(session.issue.title).")
+        }
         .help("\(session.issue.reference): \(session.issue.title). \(state.label).")
         .draggable(session.id.uuidString)
         .dropDestination(for: String.self) { items, _ in
@@ -363,6 +373,8 @@ private struct SessionTabItem: View {
             return true
         }
         .contextMenu {
+            Button("Rename Tab") { startRenaming() }
+            Divider()
             Button("Close Tab") { sessions.closeTab(session.id) }
             Button("Close Other Tabs") {
                 for id in sessions.tabs where id != session.id { sessions.closeTab(id) }
@@ -374,20 +386,27 @@ private struct SessionTabItem: View {
                 sessions.besideTab = session.id
             }
             .disabled(isSelected || sessions.tabs.count < 2)
-            Button("Open Issue") { openWindow(value: session.issue) }
+            if !session.isAsk && !session.isPlanning {
+                Button("Open Issue") { openWindow(value: session.issue) }
+            }
         }
+    }
+
+    private func startRenaming() {
+        newName = session.title
+        renaming = true
     }
 }
 
 /// What the side of a session's tab shows.
 private enum SessionPane: String {
-    case issue, changes, files, pullRequests, activity
+    case issue, changes, pullRequests, activity
 }
 
 /// One session's tab: the terminal claude runs in with a bar beneath for
 /// talking to it, and beside it the issue with its plans and requirements,
-/// the changes in its worktrees (an Ask session's files in their place),
-/// its PRs, or what claude has been doing. Changes are read again a moment
+/// the changes in its worktrees (an Ask session's artifacts and files in
+/// its Session pane instead), its PRs, or what claude has been doing. Changes are read again a moment
 /// after claude edits a file or runs a command (its hooks say so), and
 /// otherwise every so often while the tab shows. Shown beside another, the side panel starts hidden.
 struct SessionTab: View {
@@ -404,17 +423,24 @@ struct SessionTab: View {
     /// Documents dropped on a planning session, being confirmed.
     @State private var sharing: [URL]?
     @AppStorage("sessionsPane") private var pane: SessionPane = .issue
+    /// The side panel is never wider than this, however wide the window.
+    static let panelMaxWidth: CGFloat = 440
 
-    /// Files stands in for Changes in an Ask session, and the other way
-    /// about, so one remembered pane suits both.
+    /// An Ask's Session pane has its artifacts and files, so it has no
+    /// Changes, and PRs only once it has some; one remembered pane suits
+    /// every kind.
     private var shownPane: Binding<SessionPane> {
         Binding {
             switch pane {
-            case .changes where session.isAsk: .files
-            case .files where !session.isAsk: .changes
+            case .changes where session.isAsk: .issue
+            case .pullRequests where session.isAsk && !hasPullRequests: .issue
             default: pane
             }
         } set: { pane = $0 }
+    }
+
+    private var hasPullRequests: Bool {
+        !session.pullRequests.isEmpty || !(sessions.pullRequestInfo[session.parentID ?? session.id] ?? []).isEmpty
     }
 
     var body: some View {
@@ -442,17 +468,18 @@ struct SessionTab: View {
                 SessionComposer(session: session, panelShown: compact ? nil : Binding(get: { shown }, set: { panelShown = $0 }))
             }
             .frame(minWidth: compact ? 360 : 480, maxWidth: .infinity, maxHeight: .infinity)
+            // The terminal takes the room; the panel stays narrow.
+            .layoutPriority(1)
             if shown {
                 VStack(spacing: 0) {
                     Picker("Show", selection: shownPane) {
                         Text(session.isAsk ? "Session" : "Issue").tag(SessionPane.issue)
-                        if session.isAsk {
-                            let count = sessions.files(for: session).files.count
-                            Text(count > 0 ? "Files \(count)" : "Files").tag(SessionPane.files)
-                        } else {
+                        if !session.isAsk {
                             Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
                         }
-                        Text(pullRequestsLabel).tag(SessionPane.pullRequests)
+                        if !session.isAsk || hasPullRequests {
+                            Text(pullRequestsLabel).tag(SessionPane.pullRequests)
+                        }
                         Text("Activity").tag(SessionPane.activity)
                     }
                     .pickerStyle(.segmented)
@@ -462,12 +489,11 @@ struct SessionTab: View {
                     switch shownPane.wrappedValue {
                     case .issue: SessionPanel(session: session)
                     case .changes: SessionChangesPane(session: session, changes: changes)
-                    case .files: SessionFilesPane(session: session, files: sessions.files(for: session))
                     case .pullRequests: SessionPullRequestsPane(session: session)
                     case .activity: SessionActivityPane(session: session)
                     }
                 }
-                .frame(minWidth: 340, idealWidth: 440, maxWidth: 900, maxHeight: .infinity)
+                .frame(minWidth: 300, idealWidth: 360, maxWidth: SessionTab.panelMaxWidth, maxHeight: .infinity)
             }
         }
         // Each change signal starts this again: a short wait lets a burst of
@@ -1078,6 +1104,9 @@ private struct SessionPanel: View {
     let session: CodeSession
     @State private var confirmingRemove = false
     @State private var reading: HarnessReading?
+    /// An Ask's file picked for Commit to Harness, and Save a Copy's error.
+    @State private var committing: SessionFile?
+    @State private var fileError: String?
 
     var body: some View {
         let state = sessions.state(session.id)
@@ -1085,6 +1114,10 @@ private struct SessionPanel: View {
         let worktreePath = SessionStore.worktreePath(for: session)
         Form {
             PlanningSection(session: session)
+            if session.isAsk {
+                AskArtifactsSection(session: session)
+                AskFilesSections(session: session, files: sessions.files(for: session), committing: $committing, error: $fileError)
+            }
             if !session.isPlanning && !session.isAsk {
             Section("Issue") {
                 Text(session.issue.title)
@@ -1154,15 +1187,19 @@ private struct SessionPanel: View {
                         Button("Restart") { _ = sessions.open(session) }
                             .help("Start the terminal again, resuming claude's conversation")
                     }
-                    Button("Remove", role: .destructive) { confirmingRemove = true }
+                    // An Ask goes with its folder, from its list's Delete.
+                    if !session.isAsk {
+                        Button("Remove", role: .destructive) { confirmingRemove = true }
+                    }
                 }
             }
             SessionFinishSection(session: session)
             if !session.isPlanning && !session.isAsk {
-                HarnessIssueSection(reference: session.issue, showsEmpty: true)
+                HarnessIssueSection(reference: session.issue, showsEmpty: true, harnessRepo: session.harnessRepo)
             }
         }
         .formStyle(.grouped)
+        .modifier(AskFilesRefresh(session: session, files: sessions.files(for: session), committing: $committing, error: $fileError))
         // Documents open over the session; issues and PRs they name, in
         // windows of their own.
         .environment(\.navigate, NavigateAction { selection in

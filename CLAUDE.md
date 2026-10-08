@@ -703,8 +703,11 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   page's toolbar) starts the issue's session in the window's project's harness, no repo to pick, and opens it
   as a tab in the one Claude Code window (`SessionsWindow`, `SessionStore.tabs`, kept across
   launches; each tab two lines beside a large icon for its kind, the kind (Plan, Review, Code or a
-  helper's role) and issue or PR above its title, `TabKind`; + opens a session already started, ⌘W closes a tab, claude keeps running). Each tab
-  is a SwiftTerm terminal beside the issue (its session state, and its plans and requirements
+  helper's role) and issue or PR above its title, `TabKind`; + opens a session already started, ⌘W closes a tab, claude keeps running;
+  tabs are dragged into order, and Rename Tab or a double-click names one, `CodeSession.name`, in
+  place of its title everywhere, empty going back). Each tab
+  is a SwiftTerm terminal (taking the room) beside a side panel 300 to 440 points wide
+  (`SessionTab.panelMaxWidth`): the issue (its session state, and its plans and requirements
   from the harness, `HarnessIssueSection`, opening in a sheet) or its Changes: every worktree
   under the issue's folder diffed against its merge base with `origin/HEAD`, committed or not,
   new files included (`SessionChanges`). One bash script reads them all, git taking no optional
@@ -727,11 +730,15 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   view of the org (`OrgContext.files`, through `SessionStore.orgContext`, set by the app),
   written to the session's own folder on every start and resume (`writeAskContext`) and copied
   in by the start script. Its first prompt is your message with a short note of where things
-  are (`askPrompt`). Its tab is the terminal with Files in place of Changes (`SessionFilesPane`,
-  `SessionFiles`): everything in its folder but `.gannin/` and `context/` (at most 1000), and the
-  transcript's `filesEdited` outside it under Elsewhere, newest first with size and time. Read
-  400 ms after `changed`, when the transcript names a new file, and every two seconds while
-  shown (MCP writes fire no hook). Click opens; drag is the file (a promise as well as its URL);
+  are (`askPrompt`). Its tab's panel is Session (no Changes; PRs only once it has some; then
+  Activity), in sections (`AskSessionSections.swift`): Artifacts (`AskArtifactsSection`: the
+  claude.ai artifacts it published, `SessionTranscript.artifacts`, links from the results of its
+  Artifact tool's publishes, to open or copy, and Ask for an Artifact, with what it should show,
+  pasted as a prompt), Files (`AskFilesSections`, `SessionFiles`): everything in its folder but
+  `.gannin/` and `context/` (at most 1000), and the transcript's `filesEdited` outside it under
+  Written elsewhere, newest first with size and time; then its Claude Code controls (no Remove:
+  an Ask goes with its folder). Files are read (`AskFilesRefresh`) 400 ms after `changed`, when
+  the transcript names a new file, and every two seconds while shown (MCP writes fire no hook). Click opens; drag is the file (a promise as well as its URL);
   the menu has Open With, Show in Finder, Save a Copy and Copy, then, set apart, Commit to
   Harness (`CommitToHarnessSheet`, `AskCommit.swift`): a Quick Look preview, where it goes
   (`research/<date>-<id>/<name>`, `ResearchFolder`, with a README naming the conversation
@@ -988,6 +995,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `HarnessAuthoring.defaultGuidance`, edited in Settings > Harness (`HarnessAuthoringSection`).
   For plans it's the planning session's first prompt (`{{topic}}`, `{{plan}}`, `{{docs}}`,
   `{{assets}}`, `{{starting_point}}`).
+- A session's Plans and requirements (`HarnessIssueSection`, `harnessRepo`) are from the harness it
+  runs in: the Claude Code window belongs to no project, so its config is the org's home.
 - `SessionBrief` is what Gannin knows: the issue's facts, board fields, parent, linked PRs,
   description and comments, the harness documents about it (in full) or mentioning it, and the
   learnings for its repos.

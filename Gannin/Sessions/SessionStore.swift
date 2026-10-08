@@ -59,6 +59,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var planning: PlanningInfo? = nil
     /// An Ask session's title and first message.
     var ask: AskInfo? = nil
+    /// The name its tab was given, in place of the issue's or PR's title.
+    var name: String? = nil
     /// A review's result, kept from its transcript so it can be read again
     /// without starting claude; and what you made of it.
     var reviewResult: SessionTranscript.ReviewResult? = nil
@@ -80,7 +82,7 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var isHelper: Bool { parentID != nil }
     var isPullRequestReview: Bool { reviewOf != nil }
     /// As a tab or row names it.
-    var title: String { ask?.title ?? role.map { "\($0): \(issue.title)" } ?? issue.title }
+    var title: String { name ?? ask?.title ?? role.map { "\($0): \(issue.title)" } ?? issue.title }
     var isInHarness: Bool { harnessPath != nil && harnessRepo != nil }
 
     var org: String { issue.org }
@@ -120,6 +122,7 @@ extension CodeSession {
         reviewOf = try container.decodeIfPresent(PullRequestReference.self, forKey: .reviewOf)
         planning = try container.decodeIfPresent(PlanningInfo.self, forKey: .planning)
         ask = try container.decodeIfPresent(AskInfo.self, forKey: .ask)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
         reviewResult = try container.decodeIfPresent(SessionTranscript.ReviewResult.self, forKey: .reviewResult)
         reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
@@ -470,6 +473,17 @@ final class SessionStore {
             selectedTab = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)]
         }
         saveTabs()
+    }
+
+    /// Names a session's tab, as it's listed everywhere; empty goes back
+    /// to its own title. An Ask's name is its title.
+    func renameTab(_ id: UUID, to name: String) {
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if sessions[id]?.isAsk == true {
+            renameAsk(id, to: name)
+        } else {
+            update(id) { $0.name = name.isEmpty ? nil : name }
+        }
     }
 
     func moveTab(_ id: UUID, to target: UUID) {
