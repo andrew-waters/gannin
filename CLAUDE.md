@@ -195,7 +195,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   worktrees go in `<harness>/.worktrees/<branch>/<name>` for a clone in `projects/`, as sessions
   lay them out, else `<clone>.worktrees/<branch>`.
 - History (`RepositoryHistoryView`, `GitHistory`): the checked-out branch's commits (the bar's
-  branch button is the one branch control), newest first, 200 at a time, searchable, the list keeping the keyboard as a commit's
+  branch button is the one branch control), newest first, 200 at a time, searchable from the top of the list, the list keeping the keyboard as a commit's
   files load, each with its SHA, author, when, Not
   pushed (against its upstream), the other branches at it and its tags, orange while only here
   (`ls-remote --tags` when opened). Picking one shows its whole message, its files and a file's

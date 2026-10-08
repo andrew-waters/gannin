@@ -21,24 +21,25 @@ struct RepositoryHistoryView: View {
             }
         }
         let onlyHere = repository.remoteTags.map { remote in repository.tags.filter { !remote.contains($0.name) }.count } ?? 0
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                FilterSearchField(text: $search, prompt: "Commits")
-                Spacer()
-                if onlyHere > 0 {
-                    Button("Push \(onlyHere == 1 ? "1 Tag" : "\(onlyHere) Tags")") { Task { await repository.pushAllTags() } }
-                        .help("Push every tag that's only here to origin")
+        FixedSplit(key: "repositoryHistoryListWidth", width: 440, range: 280...760) {
+            VStack(spacing: 0) {
+                // Above the commits, so it costs the page no row of its own.
+                HStack(spacing: 8) {
+                    FilterSearchField(text: $search, prompt: "Commits")
+                    Spacer(minLength: 0)
+                    if onlyHere > 0 {
+                        Button("Push \(onlyHere == 1 ? "1 Tag" : "\(onlyHere) Tags")") { Task { await repository.pushAllTags() } }
+                            .help("Push every tag that's only here to origin")
+                    }
                 }
-            }
-            .controlSize(.small)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            Divider()
-            FixedSplit(key: "repositoryHistoryListWidth", width: 440, range: 280...760) {
+                .controlSize(.small)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                Divider()
                 commitList(commits)
-            } trailing: {
-                CommitDetailView(repository: repository, history: history)
             }
+        } trailing: {
+            CommitDetailView(repository: repository, history: history)
         }
         .task(id: reloadKey) {
             await history.load(path: repository.path, ref: shownRef, upstream: upstream)
