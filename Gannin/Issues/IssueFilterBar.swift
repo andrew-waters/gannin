@@ -286,13 +286,16 @@ struct FilterMenu: View {
 struct FilterSearchField: View {
     @Binding var text: String
     let prompt: String
+    /// Whether it stretches across the space it's given, rather than the
+    /// bars' usual 200 points.
+    var fills = false
 
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             TextField("Search", text: $text, prompt: Text(prompt))
                 .textFieldStyle(.plain)
-                .frame(width: 200)
+                .frame(minWidth: fills ? 80 : 200, maxWidth: fills ? .infinity : 200)
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)

@@ -151,7 +151,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   the parts: History (first), Changes and GitHub (its open PRs, issues and merged,
   `RepositoryColumn`), `repositoryPart` per window. History and Changes put their list beside the
   diff in a `FixedSplit`, a leading pane as wide as it's dragged (kept per part), which never
-  shifts as content loads, as `HSplitView` did. A repo's page pushed onto the trail (`DetailSelection.repository`)
+  shifts as content loads, as `HSplitView` did. Diffs scroll in a `DiffScroll`, every row as wide
+  as the longest line (worked out in the monospaced font, as a lazy stack can't measure rows it
+  hasn't drawn), so the colours run evenly; a hunk's buttons sit right after its header. A repo's page pushed onto the trail (`DetailSelection.repository`)
   has no switcher. Every control is in the page's bar (`RepositoryBar`), not the toolbar.
 - `LocalClones` finds a repo's clone: the folder saved for it (`localRepository.<owner/name>`,
   from Add Existing, Clone To or Use Another Folder), the harness checkout when the repo is the
@@ -195,7 +197,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   worktrees go in `<harness>/.worktrees/<branch>/<name>` for a clone in `projects/`, as sessions
   lay them out, else `<clone>.worktrees/<branch>`.
 - History (`RepositoryHistoryView`, `GitHistory`): the checked-out branch's commits (the bar's
-  branch button is the one branch control), newest first, 200 at a time, searchable from the top of the list, the list keeping the keyboard as a commit's
+  branch button is the one branch control), newest first, 200 at a time, searchable from a full-width field at the top of the list, the list keeping the keyboard as a commit's
   files load, each with its SHA, author, when, Not
   pushed (against its upstream), the other branches at it and its tags, orange while only here
   (`ls-remote --tags` when opened). Picking one shows its whole message, its files and a file's

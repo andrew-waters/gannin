@@ -174,3 +174,35 @@ struct FixedSplit<Leading: View, Trailing: View>: View {
         }
     }
 }
+
+/// A diff's lines, scrolling both ways, every row as wide as the widest
+/// line (or the pane, if that's wider), so the added and removed colours
+/// run evenly across. A lazy stack can't measure rows it hasn't drawn, so
+/// the width comes from the longest line in the monospaced font.
+struct DiffScroll<Row: View>: View {
+    let lines: [DiffLine]
+    @ViewBuilder let row: (DiffLine) -> Row
+
+    /// One character of the diff's 11pt monospaced font.
+    private static var characterWidth: CGFloat {
+        ("0" as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)]).width
+    }
+
+    /// Both line numbers' gutters and their gap, the longest line (a tab
+    /// counted as four), and room for a hunk's buttons.
+    private var contentWidth: CGFloat {
+        let longest = lines.lazy.map { $0.text.count + 3 * $0.text.filter { $0 == "\t" }.count }.max() ?? 0
+        return 84 + CGFloat(longest) * Self.characterWidth + 24
+    }
+
+    var body: some View {
+        GeometryReader { proxy in
+            ScrollView([.vertical, .horizontal]) {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    ForEach(lines) { row($0) }
+                }
+                .frame(width: max(proxy.size.width, contentWidth), alignment: .leading)
+            }
+        }
+    }
+}

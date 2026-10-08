@@ -25,8 +25,7 @@ struct RepositoryHistoryView: View {
             VStack(spacing: 0) {
                 // Above the commits, so it costs the page no row of its own.
                 HStack(spacing: 8) {
-                    FilterSearchField(text: $search, prompt: "Commits")
-                    Spacer(minLength: 0)
+                    FilterSearchField(text: $search, prompt: "Search commits, authors, SHAs and tags", fills: true)
                     if onlyHere > 0 {
                         Button("Push \(onlyHere == 1 ? "1 Tag" : "\(onlyHere) Tags")") { Task { await repository.pushAllTags() } }
                             .help("Push every tag that's only here to origin")
@@ -293,28 +292,23 @@ private struct CommitDetailView: View {
             ContentUnavailableView("No file selected", systemImage: "doc.text.magnifyingglass")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView([.vertical, .horizontal]) {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    ForEach(history.diff) { line in
-                        HStack(alignment: .firstTextBaseline, spacing: 0) {
-                            Text(line.oldLine.map(String.init) ?? "")
-                                .frame(width: 38, alignment: .trailing)
-                                .foregroundStyle(.tertiary)
-                            Text(line.newLine.map(String.init) ?? "")
-                                .frame(width: 38, alignment: .trailing)
-                                .foregroundStyle(.tertiary)
-                                .padding(.trailing, 8)
-                            Text(line.text.isEmpty ? " " : line.text)
-                                .foregroundStyle(DiffStyle.foreground(line.kind))
-                                .fixedSize(horizontal: true, vertical: false)
-                                .textSelection(.enabled)
-                        }
-                        .font(.system(size: 11, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DiffStyle.background(line.kind))
-                    }
+            DiffScroll(lines: history.diff) { line in
+                HStack(alignment: .firstTextBaseline, spacing: 0) {
+                    Text(line.oldLine.map(String.init) ?? "")
+                        .frame(width: 38, alignment: .trailing)
+                        .foregroundStyle(.tertiary)
+                    Text(line.newLine.map(String.init) ?? "")
+                        .frame(width: 38, alignment: .trailing)
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 8)
+                    Text(line.text.isEmpty ? " " : line.text)
+                        .foregroundStyle(DiffStyle.foreground(line.kind))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .textSelection(.enabled)
                 }
-                .frame(minWidth: 400, alignment: .leading)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(DiffStyle.background(line.kind))
             }
         }
     }

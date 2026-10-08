@@ -297,13 +297,8 @@ private struct GitDiffView: View {
                     ContentUnavailableView(repository.ignoresWhitespace ? "Only whitespace changed" : "No lines to show", systemImage: "doc.text")
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView([.vertical, .horizontal]) {
-                        LazyVStack(alignment: .leading, spacing: 0) {
-                            ForEach(repository.diff) { line in
-                                GitDiffRow(repository: repository, file: file, line: line) { discardingHunk = $0 }
-                            }
-                        }
-                        .frame(minWidth: 400, alignment: .leading)
+                    DiffScroll(lines: repository.diff) { line in
+                        GitDiffRow(repository: repository, file: file, line: line) { discardingHunk = $0 }
                     }
                 }
             }
@@ -349,7 +344,8 @@ private struct GitDiffRow: View {
                 .foregroundStyle(DiffStyle.foreground(line.kind))
                 .fixedSize(horizontal: true, vertical: false)
                 .textSelection(.enabled)
-            Spacer(minLength: 12)
+            // Right after the hunk's header, so a wide file never pushes
+            // them out of sight.
             if line.kind == .hunk, repository.hunksApply {
                 HStack(spacing: 10) {
                     if file.area == .staged {
@@ -361,7 +357,7 @@ private struct GitDiffRow: View {
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)
-                .padding(.trailing, 6)
+                .padding(.leading, 16)
             }
         }
         .font(.system(size: 11, design: .monospaced))
