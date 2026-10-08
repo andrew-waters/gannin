@@ -31,8 +31,8 @@ Harness (R6), Research under Harness (R7), and keeping, resuming and deleting th
   clone of a harness not checked out yet. The store gets it through `orgContext`, a closure the
   app sets, as it has the stores; the workload, metrics window and harness index are the defaults.
 - A New Ask is a draft tab like New Plan (`PlanningDraft.isAsk`), so the tab plumbing is shared.
-  The form (`NewAskForm`) is also the Ask sidebar page, with the Ask sessions beneath it, so the
-  row restored from a saved window lands on a way to start one.
+  The sidebar has no Ask row: a New Ask button at its top opens the tab straight away. A window
+  saved on the old row shows Agents, which lists the Ask sessions.
 - One-shot Ask (`AskOrgPage`, `AskConversations`) is gone; `OrgContext` stays.
 - `HarnessChange` gains `data` (bytes, base64 as they are) with a 5 MB limit checked before
   sending; existing callers are unchanged.
@@ -48,7 +48,7 @@ Harness (R6), Research under Harness (R7), and keeping, resuming and deleting th
 ## Tasks
 
 - [x] #56 `AskInfo`, `startAsk`, the folder with `files/` and `context/`, the brief, Ask tab kind
-- [x] #57 New Ask tab and form, + menu, Agents, palette, Ask sidebar page; one-shot Ask removed
+- [x] #57 New Ask tab and form, the sidebar's New Ask button, + menu, Agents, palette; one-shot Ask removed
 - [x] #59 Binary harness commits with a size limit; Commit to Harness sheet
 - [x] #60 `HarnessKind.research`, listed under Harness and in the palette
 - [x] #61 Ask sessions listed under Agents and the sidebar, with Open, Rename and Delete

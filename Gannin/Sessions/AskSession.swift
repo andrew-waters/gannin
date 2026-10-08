@@ -157,8 +157,7 @@ extension SessionStore {
 
 /// The box an Ask starts from: the project it runs in, the first message
 /// (Return starts it; Shift-Return is a new line) and the team's prompts and
-/// skills for Ask. In a New Ask tab of the Claude Code window, and on the
-/// Ask page.
+/// skills for Ask, in a New Ask tab of the Claude Code window.
 struct NewAskForm: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(OrgConfigStore.self) private var configs
@@ -401,46 +400,6 @@ private struct AskSessionRow: View {
         .task(id: sessions.changeCount(session.id)) {
             guard let folder = SessionStore.worktree(for: session) else { return }
             fileCount = await Task.detached { SessionFiles.scan(folder: folder, edited: []).0.count }.value
-        }
-    }
-}
-
-/// The Ask row in the main window's sidebar: a box to start one, and the
-/// Ask sessions already started.
-struct AskPage: View {
-    @Environment(SessionStore.self) private var sessions
-    @Environment(OrgConfigStore.self) private var configs
-    @Environment(\.openWindow) private var openWindow
-    let org: String
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                NewAskForm(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo) { session in
-                    sessions.show(session.id, with: openWindow)
-                }
-                .scrollDisabled(true)
-                if !sessions.askSessions(for: org).isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("Started").font(.headline)
-                        AskSessionsList(org: org)
-                    }
-                    .padding(.horizontal, 20)
-                }
-            }
-            .padding(.bottom, 20)
-            .frame(maxWidth: 900, alignment: .leading)
-            .frame(maxWidth: .infinity)
-        }
-        .toolbar {
-            ToolbarItem {
-                Button {
-                    sessions.showNewAsk(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo, with: openWindow)
-                } label: {
-                    Label("New Ask", systemImage: "plus")
-                }
-                .help("Start an Ask in a tab of the Claude Code window")
-            }
         }
     }
 }

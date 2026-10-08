@@ -1193,6 +1193,7 @@ struct OrgSidebar: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(AuthStore.self) private var auth
     @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
 
     /// Documents of the kind that follow the harness's standard, as the page
     /// lists them.
@@ -1214,7 +1215,6 @@ struct OrgSidebar: View {
                 Section {
                     row(.dashboard)
                     row(.inbox)
-                    row(.ask)
                 }
 
                 // What's in flight and what's next.
@@ -1324,6 +1324,22 @@ struct OrgSidebar: View {
         .task(id: selectedOrg.flatMap { configs.config(for: $0).boardsRepo }) {
             if let selectedOrg, let repo = configs.config(for: selectedOrg).boardsRepo {
                 await projectStore.loadRepoBoards(org: selectedOrg, repo: repo)
+            }
+        }
+        // Ask: straight into a New Ask tab of the Claude Code window.
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let selectedOrg, !configs.config(for: selectedOrg).allHarnesses.isEmpty {
+                Button {
+                    sessions.showNewAsk(org: selectedOrg, harnessRepo: configs.config(for: selectedOrg).harnesses.first?.repo, with: openWindow)
+                } label: {
+                    Label("New Ask", systemImage: "sparkle.magnifyingglass")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.large)
+                .buttonStyle(.bordered)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .help("Ask Claude anything in a new tab of the Claude Code window, in this project's harness")
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {

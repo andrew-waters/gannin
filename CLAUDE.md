@@ -104,7 +104,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   granularity stay `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
   (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Dashboard (the
-  page a window opens on), Inbox and Ask (a box to start an Ask session, and those started) at the top; Work (Pull Requests, Issues with All and Not on a board,
+  page a window opens on), Inbox at the top, under a New Ask button that opens a New Ask tab in the Claude Code window; Work (Pull Requests, Issues with All and Not on a board,
   Epics, Repositories (local git, see Local git), Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
@@ -714,9 +714,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   every 10 seconds, 30 over ssh.
 - Ask sessions (`Sessions/AskSession.swift`, `CodeSession.ask`, `AskInfo`: title, slug, first
   message; `plans/2026-10-08-ask-sessions.md`) are open-ended conversations about anything, not
-  tied to an issue, PR or plan, in place of the old one-shot Ask. New Ask (the Claude Code
-  window's +, Agents' toolbar, the palette's New Ask, and the Ask sidebar row, `AskPage`, whose
-  `WorkloadTab.ask` keeps its raw value) is a first-message box (`NewAskForm`, in a New Ask tab,
+  tied to an issue, PR or plan, in place of the old one-shot Ask. New Ask (the button at the top
+  of the sidebar, the Claude Code window's +, Agents' toolbar and the palette's New Ask; a window
+  saved on the old Ask row, `WorkloadTab.ask`, kept for its raw value, shows Agents) is a
+  first-message box (`NewAskForm`, in a New Ask tab,
   `NewAskView` over a `PlanningDraft` with `isAsk`) with the project and the team's prompts and
   skills for Ask (`PromptUse.ask`); Return starts it (`SessionStore.startAsk`), Shift-Return is a
   new line. It always runs on this Mac (`connect` nil, the local harness checkout), in the
@@ -736,8 +737,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   and its question and listing its files, added to on the next commit), a sensitive-data
   warning, a box to tick before Commit can be pressed, and Cancel as the default button, so
   Return never commits. Nothing else commits an Ask's files. Ask sessions are kept until
-  deleted: listed (`AskSessionsList`: title, first message, files, last active) on the Ask page,
-  under Agents and in the sidebar's Agents › Ask, opening to resume, with Rename and Delete
+  deleted: listed (`AskSessionsList`: title, first message, files, last active) under Agents and
+  in the sidebar's Agents › Ask, opening to resume, with Rename and Delete
   (confirmed; `finish` removes the folder and its files, Delete Anyway when it won't go). They
   never offer Finish Session.
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its

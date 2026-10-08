@@ -39,10 +39,10 @@ struct OrgWorkloadView: View {
                 ActionsView(org: org, selection: $selection)
             } else if tab == .harness {
                 HarnessView(org: org, selection: $selection)
-            } else if tab == .agents {
+            } else if tab == .agents || tab == .ask {
+                // Ask is the sidebar's New Ask button now; a window saved
+                // on its old row shows Agents, which lists Ask sessions.
                 AgentsPage(org: org)
-            } else if tab == .ask {
-                AskPage(org: org)
             } else if tab == .epics {
                 EpicsView(org: org)
             } else if tab == .releases {

@@ -349,7 +349,8 @@ struct PaletteSources {
         }
 
         // Pages, as the sidebar lists them.
-        for tab in WorkloadTab.allCases where tab != .harness {
+        // Ask is the New Ask action, not a page.
+        for tab in WorkloadTab.allCases where tab != .harness && tab != .ask {
             items.append(PaletteItem(id: "page:\(org):\(tab.rawValue)", group: .pages, title: tab.title, systemImage: tab.systemImage, org: org, keywords: [tab.rawValue], action: go(.sidebar(.tab(tab)))))
         }
         for list in IssueList.allCases {
