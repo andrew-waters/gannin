@@ -39,6 +39,7 @@ enum HarnessTour {
         Entry(name: "investments.json", depth: 1, text: "Investment categories and the rules that place issues in them."),
         Entry(name: "recap.json", depth: 1, text: "How often the team looks back on what it closed."),
         Entry(name: "prioritisation.json", depth: 1, text: "The board's date field that says an issue is committed to."),
+        Entry(name: "field-notes.json", depth: 1, text: "Points raised in prioritisation, until they're dealt with."),
     ]
 
     /// The org's, in the home project's harness only.
@@ -48,7 +49,6 @@ enum HarnessTour {
         Entry(name: "leave.json", depth: 1, text: "The holiday allowance and when the leave year starts."),
         Entry(name: "exclusions.json", depth: 1, text: "Repos and people left out, and repos that don't need review."),
         Entry(name: "views.json", depth: 1, text: "Saved views of the board."),
-        Entry(name: "field-notes.json", depth: 1, text: "Points raised in prioritisation, until they're dealt with."),
         Entry(name: "authoring.json", depth: 1, text: "What Claude is asked when drafting harness documents."),
     ]
 

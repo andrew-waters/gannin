@@ -153,6 +153,7 @@ struct MainView: View {
     @Environment(HiddenStore.self) private var hidden
     @Environment(MetricsStore.self) private var metricsStore
     @Environment(OrgConfigStore.self) private var rootConfigs
+    @Environment(FieldNotesStore.self) private var fieldNotes
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("excludeDrafts") private var excludeDrafts = false
     @AppStorage("showHidden") private var showHidden = false
@@ -273,6 +274,7 @@ struct MainView: View {
         .commandPalette(homeOrg: { selectedOrg }, open: openFromPalette)
         .investmentPrompt()
         .environment(orgConfigs)
+        .environment(fieldNotes.scoped(orgConfigs))
         .environment(\.showPerson, ShowPersonAction { login in sidebarSelection.wrappedValue = .person(login) })
         .environment(\.showSidebarItem, ShowSidebarAction { item in sidebarSelection.wrappedValue = item })
         .background(WindowAccessor { window in

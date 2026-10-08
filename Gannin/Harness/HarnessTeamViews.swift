@@ -125,7 +125,7 @@ struct TeamDataSection: View {
             LabeledContent(project.name) {
                 Text(project.harness.repo)
             }
-            Text("The project's name and repos, investment categories, issue workflow, goals, scorecard, recap cadence and committed date field are read from .gannin in its harness.")
+            Text("The project's name and repos, investment categories, issue workflow, goals, scorecard, recap cadence, committed date field and notes from the field are read from .gannin in its harness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if home.id != project.id {
@@ -133,7 +133,7 @@ struct TeamDataSection: View {
                     Text(home.harness.repo)
                 }
             }
-            Text("\(home.id == project.id ? "It's home, so it also keeps" : "Home keeps") what's the org's: views, the working week, leave policy, repos and people left out, drafting prompts, notes from the field, and people's dates and time off. Everyone in \(org) works from the same copies, and changes wait in the sidebar until you review and commit them. Projects are added and home picked under Projects.")
+            Text("\(home.id == project.id ? "It's home, so it also keeps" : "Home keeps") what's the org's: views, the working week, leave policy, repos and people left out, drafting prompts, and people's dates and time off. Everyone in \(org) works from the same copies, and changes wait in the sidebar until you review and commit them. Projects are added and home picked under Projects.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {

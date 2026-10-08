@@ -871,7 +871,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   sidebar's Boards and the Boards page show `ProjectStore.boards(org:repo:)`, the repo's boards
   that the org owns, `repoProjects`, cached per repo; nil for every board), kept in its harness as
   `.gannin/project.json` (`ProjectFile`). Its workflow board, investments, goals, scorecard, recap
-  cadence and committed date field are its harness's own team files. Org › Project is picked from
+  cadence, committed date field and notes from the field are its harness's own team files. Org › Project is picked from
   the project menu above the org in the sidebar's footer (`SidebarFooter.projectMenu`), per window
   (`@SceneStorage("workspace")`, the harness's repo, home when empty; not `selectedProject`, which
   is a board; carried by Open in New Tab and New Window through `NavigationRequest.workspace`,
@@ -893,9 +893,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Team data in the harnesses (`HarnessTeamData.swift`): an org with a harness keeps its team
   data as JSON under `.gannin/` (`TeamFile`), keys sorted and calendar days as `2026-10-03`
   (`TeamCoding`). Each project's harness has its own `project.json`, `investments.json`,
-  `workflow.json`, `goals.json`, `recap.json`, `scorecard.json` and `prioritisation.json`; the
+  `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json` and
+  `field-notes.json`; the
   home project's (the first) also has the org's (`TeamFile.isOrgWide`): `views.json`,
-  `working-week.json`, `leave.json`, `exclusions.json`, `authoring.json`, `field-notes.json` and
+  `working-week.json`, `leave.json`, `exclusions.json`, `authoring.json` and
   `people/<login>.json` (time off with sick days included). The index reads `.gannin/*.json`
   beside the documents (`HarnessIndex.dataFiles`), and every cached index loads at launch.
   `HarnessTeamStore` reads a harness at a time (`data(for:in:)`, `data(for:)` for home's), from the
@@ -1011,7 +1012,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   search, and which of the board's date fields is the committed date, `Committed` by default,
   `OrgConfig.committedDateField`, a team file, `.gannin/prioritisation.json`, or the project's own, `RepoProject.committedDateField`): Triage, the open issues with no Status on the workflow board
   or not on it, newest first; From the field, points raised in the meeting (`FieldNotesStore`,
-  per org, a team file, `.gannin/field-notes.json`), ticked off when dealt with, those still open carrying over; and the
+  per project, a team file, `.gannin/field-notes.json`, through the window's `FieldNotesStore.scoped`), ticked off when dealt with, those still open carrying over; and the
   open issues with the committed date set, soonest first, red once overdue and orange within
   the week. Issues open in the drawer, where their Status and fields are set.
 - Recap (`Meetings/RecapView.swift`, Rituals › Recap, `WorkloadTab.recap`) is the issues closed

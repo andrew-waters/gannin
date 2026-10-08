@@ -59,24 +59,62 @@ struct FieldNote: Codable, Identifiable, Hashable {
     var issue: LinkedIssue?
 }
 
-/// What's been heard from the field, per org: in the harness for an org
-/// with one (`.gannin/field-notes.json`, committed with the rest of the
-/// team's data), else on this Mac.
+/// What's been heard from the field, per project: in its harness for an
+/// org with one (`.gannin/field-notes.json`, committed with the rest of the
+/// team's data), else on this Mac, per org. The app shares one store, on
+/// the home project; a main window puts its project's (`scoped`) in its
+/// environment.
 @Observable
 final class FieldNotesStore {
-    private(set) var notes: [String: [FieldNote]] = [:]
-    @ObservationIgnored var team: HarnessTeamStore?
+    /// This Mac's notes, shared by every window's store.
+    @Observable
+    final class Storage {
+        var notes: [String: [FieldNote]] = [:]
+        @ObservationIgnored var team: HarnessTeamStore?
+        @ObservationIgnored var scopes: [String: FieldNotesStore] = [:]
+    }
+
+    private let storage: Storage
+    /// The window's settings, which say its project; nil for the store the
+    /// app shares.
+    private let configs: OrgConfigStore?
 
     init() {
+        storage = Storage()
+        configs = nil
         if let data = UserDefaults.standard.data(forKey: Self.key),
            let saved = try? JSONDecoder().decode([String: [FieldNote]].self, from: data) {
-            notes = saved
+            storage.notes = saved
         }
     }
 
+    private init(storage: Storage, configs: OrgConfigStore) {
+        self.storage = storage
+        self.configs = configs
+    }
+
+    var team: HarnessTeamStore? {
+        get { storage.team }
+        set { storage.team = newValue }
+    }
+
+    /// A window's store, for its project.
+    func scoped(_ configs: OrgConfigStore) -> FieldNotesStore {
+        guard let workspace = configs.workspace else { return self }
+        if let store = storage.scopes[workspace] { return store }
+        let store = FieldNotesStore(storage: storage, configs: configs)
+        storage.scopes[workspace] = store
+        return store
+    }
+
+    /// The window's project's harness, else home's.
+    private func project(_ org: String) -> HarnessConfig? {
+        configs?.currentProject(org)?.harness ?? team?.home(org)
+    }
+
     func notes(for org: String) -> [FieldNote] {
-        if let team = team?.data(for: org) { return team.fieldNotes ?? [] }
-        return notes[org] ?? []
+        if let team, let project = project(org) { return team.data(for: org, in: project).fieldNotes ?? [] }
+        return storage.notes[org] ?? []
     }
 
     func add(_ text: String, in org: String) {
@@ -116,18 +154,18 @@ final class FieldNotesStore {
         var after = before
         change(&after)
         guard after != before else { return }
-        if let team, team.keepsData(org) {
-            team.stage(org: org, [TeamFile.fieldNotes: HarnessTeamData.fieldNotesFile(after)])
+        if let team, let project = project(org) {
+            team.stage(org: org, project: project, [TeamFile.fieldNotes: HarnessTeamData.fieldNotesFile(after)])
             return
         }
-        notes[org] = after.isEmpty ? nil : after
+        storage.notes[org] = after.isEmpty ? nil : after
         save()
     }
 
     private static let key = "fieldNotes"
 
     private func save() {
-        if let data = try? JSONEncoder().encode(notes) { UserDefaults.standard.set(data, forKey: Self.key) }
+        if let data = try? JSONEncoder().encode(storage.notes) { UserDefaults.standard.set(data, forKey: Self.key) }
     }
 }
 

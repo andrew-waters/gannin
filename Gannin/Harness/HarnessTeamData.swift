@@ -25,7 +25,7 @@ enum TeamFile {
 
     /// The org's, in the home harness, rather than each project's.
     static func isOrgWide(_ path: String) -> Bool {
-        path.hasPrefix(peoplePrefix) || [views, workingWeek, leave, exclusions, authoring, fieldNotes].contains(path)
+        path.hasPrefix(peoplePrefix) || [views, workingWeek, leave, exclusions, authoring].contains(path)
     }
 
     static func person(_ login: String) -> String { "\(peoplePrefix)\(login).json" }

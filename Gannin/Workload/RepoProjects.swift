@@ -121,7 +121,7 @@ struct ProjectsSettingsSection: View {
         } header: {
             Text("Projects")
         } footer: {
-            Text("Each project's settings are kept in its harness, under .gannin. Home's also keeps what's the org's: people's dates and time off, leave, the working week, repos and people left out, views and notes from the field.")
+            Text("Each project's settings are kept in its harness, under .gannin. Home's also keeps what's the org's: people's dates and time off, leave, the working week, repos and people left out, and views.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -145,7 +145,7 @@ struct ProjectsSettingsSection: View {
                 Button("Make Home Without Copying") { makeHome(project, copying: false) }
             }
         } message: {
-            Text("People's dates, leave, the working week, exclusions, views and notes from the field are read from home's harness. Gannin can commit a copy of them from \(projects.first?.harness.repo ?? "") to \(homing?.harness.repo ?? "") first; the old copy stays where it is.")
+            Text("People's dates, leave, the working week, exclusions and views are read from home's harness. Gannin can commit a copy of them from \(projects.first?.harness.repo ?? "") to \(homing?.harness.repo ?? "") first; the old copy stays where it is.")
         }
         if let selected {
             details(selected)

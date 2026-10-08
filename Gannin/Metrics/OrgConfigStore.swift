@@ -25,7 +25,7 @@ struct OrgConfig: Codable, Hashable {
     /// The home project's harness, a repo of plans, requirements and
     /// skills beside the code: a project of its own, and where the
     /// org-wide data (people's dates, leave, the working week, exclusions,
-    /// views, notes from the field) is kept. Nil for none, when everything
+    /// views) is kept. Nil for none, when everything
     /// stays on this device. The user's own.
     var harness: HarnessConfig?
     /// Every other project's harness, each one project (`RepoProject`).
