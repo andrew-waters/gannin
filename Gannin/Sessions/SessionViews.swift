@@ -102,6 +102,14 @@ struct SessionsWindow: View {
     }
 }
 
+/// The tab bar's colours: the bar a shade lighter than the window's own
+/// bar, and the selected tab the page's colour, darker, so it reads as part
+/// of what's beneath it.
+enum SessionTabColors {
+    static let bar = AnyShapeStyle(Color.primary.opacity(0.09))
+    static let selected = Color(nsColor: .textBackgroundColor)
+}
+
 private struct SessionTabBar: View {
     @Environment(SessionStore.self) private var sessions
 
@@ -135,7 +143,9 @@ private struct SessionTabBar: View {
                 .padding(.horizontal, 8)
         }
         .frame(height: 56)
-        .background(.bar)
+        // Lighter than the window, with the selected tab cut from the page
+        // beneath it.
+        .background(SessionTabColors.bar)
     }
 
     /// Jumps to the session waiting on you longest.
@@ -279,7 +289,7 @@ private struct DraftTabItem: View {
         .padding(.trailing, 6)
         .frame(width: 250)
         .frame(maxHeight: .infinity)
-        .background(isSelected ? Color.primary.opacity(0.1) : .clear)
+        .background(isSelected ? SessionTabColors.selected : .clear)
         .contentShape(Rectangle())
         .onTapGesture {
             sessions.showingOverview = false
@@ -350,7 +360,7 @@ private struct SessionTabItem: View {
         .frame(width: 250)
         .frame(maxHeight: .infinity)
         // The tab shown, lighter than the rest.
-        .background(isSelected ? Color.primary.opacity(0.1) : .clear)
+        .background(isSelected ? SessionTabColors.selected : .clear)
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { startRenaming() }
         .onTapGesture {
