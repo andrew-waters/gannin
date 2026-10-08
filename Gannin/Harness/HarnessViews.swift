@@ -358,6 +358,15 @@ struct HarnessView: View {
                             .padding(.vertical, 4)
                             .help(document.path))
                         }),
+        ]
+        // Prompts have no status, owner or date: where they're offered,
+        // whether they're ticked to start with, and the skills they bring.
+        if kind == .prompts {
+            columns += promptColumns
+            if showsHarness { columns.append(harnessColumn(primary: primary)) }
+            return columns
+        }
+        columns += [
             StatsColumn(id: "status", title: "Status", help: "Its front matter status", width: 110,
                         sortKey: { .text(($0.statusLabel ?? "").lowercased()) },
                         cell: { document in
@@ -395,15 +404,7 @@ struct HarnessView: View {
                                            })
                                        }))
         }
-        if showsHarness {
-            columns.append(StatsColumn(id: "harness", title: "Harness", help: "The harness it's in", width: 120,
-                                       sortKey: { .text(($0.harnessRepo ?? primary).lowercased()) },
-                                       cell: { document in
-                                           AnyView(Text((document.harnessRepo ?? primary).split(separator: "/").last.map(String.init) ?? "")
-                                               .foregroundStyle(.secondary)
-                                               .lineLimit(1))
-                                       }))
-        }
+        if showsHarness { columns.append(harnessColumn(primary: primary)) }
         columns.append(StatsColumn(id: "owner", title: "Owner", help: "Who's driving it", width: 130,
                                    sortKey: { .text(($0.owner ?? "").lowercased()) },
                                    cell: { document in
@@ -418,6 +419,43 @@ struct HarnessView: View {
                                            .monospacedDigit())
                                    }))
         return columns
+    }
+
+    private func harnessColumn(primary: String) -> StatsColumn<HarnessDocument> {
+        StatsColumn(id: "harness", title: "Harness", help: "The harness it's in", width: 120,
+                    sortKey: { .text(($0.harnessRepo ?? primary).lowercased()) },
+                    cell: { document in
+                        AnyView(Text((document.harnessRepo ?? primary).split(separator: "/").last.map(String.init) ?? "")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1))
+                    })
+    }
+
+    private var promptColumns: [StatsColumn<HarnessDocument>] {
+        func prompt(_ document: HarnessDocument) -> HarnessPrompt? { HarnessPrompt(document: document) }
+        func uses(_ prompt: HarnessPrompt?) -> String {
+            guard let prompt else { return "" }
+            return Set(prompt.uses) == Set(PromptUse.allCases) ? "Everywhere" : prompt.uses.map(\.label).joined(separator: ", ")
+        }
+        func defaultLabel(_ prompt: HarnessPrompt?) -> String {
+            guard let prompt, prompt.isDefault else { return "" }
+            return prompt.repos.isEmpty ? "Yes" : prompt.repos.joined(separator: ", ")
+        }
+        return [
+            StatsColumn(id: "uses", title: "Used for", help: "Where it's offered: work on an issue, reviews, planning, or in a session", width: 220,
+                        sortKey: { .text(uses(prompt($0))) },
+                        cell: { document in AnyView(Text(uses(prompt(document))).lineLimit(1)) }),
+            StatsColumn(id: "default", title: "Default", help: "Ticked when a session starts; for the repos named, else everywhere it's offered", width: 120,
+                        sortKey: { .text(defaultLabel(prompt($0))) },
+                        cell: { document in AnyView(Text(defaultLabel(prompt(document))).lineLimit(1)) }),
+            StatsColumn(id: "skills", title: "Skills", help: "The harness skills it brings", width: 200,
+                        sortKey: { .text((prompt($0)?.skills ?? []).joined(separator: ", ")) },
+                        cell: { document in
+                            AnyView(Text((prompt(document)?.skills ?? []).joined(separator: ", "))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1))
+                        }),
+        ]
     }
 
     /// `data-capture` as "Data capture"; short names like `cdm` in capitals.
