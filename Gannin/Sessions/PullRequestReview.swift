@@ -763,6 +763,8 @@ struct PullRequestReviewView: View {
                     Label("Open on GitHub", systemImage: "arrow.up.right.square")
                 }
                 .buttonStyle(.bordered)
+                ExplainPullRequestButton(reference: reference)
+                    .buttonStyle(.bordered)
                 Button("Review Again") {
                     reviewingAgain = true
                     Task {
