@@ -21,6 +21,9 @@ struct HarnessNewDocumentSheet: View {
             EmptyView()
         case .learnings:
             HarnessLearningEditor(org: org, setup: setup, draft: HarnessLearningDraft())
+        case .research:
+            // Committed from an Ask's Files instead.
+            EmptyView()
         }
     }
 
@@ -486,7 +489,7 @@ struct HarnessAuthoringSection: View {
         let saved = config.authoring?[kind.singular] ?? HarnessAuthoring.defaultGuidance(kind)
         Section {
             Picker("For", selection: $kind) {
-                ForEach(HarnessKind.allCases) { Text($0.rawValue).tag($0) }
+                ForEach(HarnessKind.allCases.filter { $0 != .research }) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             TextEditor(text: $text)

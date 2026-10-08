@@ -104,13 +104,13 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   granularity stay `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
   (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Dashboard (the
-  page a window opens on), Inbox and Ask (the Mac's) at the top; Work (Pull Requests, Issues with All and Not on a board,
+  page a window opens on), Inbox and Ask (a box to start an Ask session, and those started) at the top; Work (Pull Requests, Issues with All and Not on a board,
   Epics, Repositories (local git, see Local git), Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
-  Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, once set);
-  and Agents (Waiting on You, then sessions grouped as working on issues, reviews and
-  planning). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You);
+  Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, once set);
+  and Agents (Waiting on You, then sessions grouped as working on issues, reviews,
+  planning and Ask). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You);
   raw values stay as windows saved them. `OverviewView` is two pages (`OverviewView.Part`):
   the Dashboard and PR flow (delivery in full). The Issues row is the issue lists; Issue flow is the metrics. Picking a person shows their
   `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
@@ -712,13 +712,34 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   session on a server, through its Connect with command when that's ssh (`-T`, `BatchMode`, one shared connection, `ControlPath=/tmp/gannin-ssh-%C`). A
   PostToolUse hook on edits and Bash writes `changed`, which reads them again; else
   every 10 seconds, 30 over ssh.
-- An Ask session (`CodeSession.isAsk`, by its `ask-` branch until andrew-waters/gannin#56 gives it
-  its own info) has Files in place of Changes (`SessionFilesPane`, `SessionFiles`): everything in
-  its folder but `.gannin/` and `context/` (at most 1000), and the transcript's `filesEdited`
-  outside it under Elsewhere, newest first with size and time. Read 400 ms after `changed`, when
-  the transcript names a new file, and every two seconds while shown (MCP writes fire no hook).
-  Click opens; drag is the file (a promise as well as its URL); the menu has Open With, Show in
-  Finder, Save a Copy and Copy (`plans/2026-10-08-ask-files-pane.md`).
+- Ask sessions (`Sessions/AskSession.swift`, `CodeSession.ask`, `AskInfo`: title, slug, first
+  message; `plans/2026-10-08-ask-sessions.md`) are open-ended conversations about anything, not
+  tied to an issue, PR or plan, in place of the old one-shot Ask. New Ask (the Claude Code
+  window's +, Agents' toolbar, the palette's New Ask, and the Ask sidebar row, `AskPage`, whose
+  `WorkloadTab.ask` keeps its raw value) is a first-message box (`NewAskForm`, in a New Ask tab,
+  `NewAskView` over a `PlanningDraft` with `isAsk`) with the project and the team's prompts and
+  skills for Ask (`PromptUse.ask`); Return starts it (`SessionStore.startAsk`), Shift-Return is a
+  new line. It always runs on this Mac (`connect` nil, the local harness checkout), in the
+  harness root with its folder `.worktrees/ask-<slug>/`: `.gannin/` (an Ask brief,
+  `askBrief`), `files/` where claude is told to save what it makes, and `context/`, Gannin's
+  view of the org (`OrgContext.files`, through `SessionStore.orgContext`, set by the app),
+  written to the session's own folder on every start and resume (`writeAskContext`) and copied
+  in by the start script. Its first prompt is your message with a short note of where things
+  are (`askPrompt`). Its tab is the terminal with Files in place of Changes (`SessionFilesPane`,
+  `SessionFiles`): everything in its folder but `.gannin/` and `context/` (at most 1000), and the
+  transcript's `filesEdited` outside it under Elsewhere, newest first with size and time. Read
+  400 ms after `changed`, when the transcript names a new file, and every two seconds while
+  shown (MCP writes fire no hook). Click opens; drag is the file (a promise as well as its URL);
+  the menu has Open With, Show in Finder, Save a Copy and Copy, then, set apart, Commit to
+  Harness (`CommitToHarnessSheet`, `AskCommit.swift`): a Quick Look preview, where it goes
+  (`research/<date>-<slug>/<name>`, `ResearchFolder`, with a README naming the conversation
+  and its question and listing its files, added to on the next commit), a sensitive-data
+  warning, a box to tick before Commit can be pressed, and Cancel as the default button, so
+  Return never commits. Nothing else commits an Ask's files. Ask sessions are kept until
+  deleted: listed (`AskSessionsList`: title, first message, files, last active) on the Ask page,
+  under Agents and in the sidebar's Agents › Ask, opening to resume, with Rename and Delete
+  (confirmed; `finish` removes the folder and its files, Delete Anyway when it won't go). They
+  never offer Finish Session.
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its
   tab is flagged (`SessionStore.attention`): its tab is marked, the Dock icon counts them, a
   notification (Settings > General > Agent) opens its tab, and the tab bar's "N waiting" or
@@ -817,9 +838,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - `ClaudeRunner` asks Claude Code one-off questions (`claude -p`), on this Mac when claude is
   installed here, else on the Connect with server: a bash script on standard input writes the
   prompt and any files into a folder and runs claude there with only the tools given. It
-  drafts issues and triage, rewrites notes, and answers Ask (`AskOrgPage`, under Claude Code:
-  `OrgContext` writes workload, issues, delivery, harness and time off as JSON; follow-ups
-  resume the conversation).
+  drafts issues and triage, and rewrites notes.
 - Planning sessions (`CodeSession.planning`, `PlanningInfo`, set up in a New Plan tab of the Claude
   Code window, `NewPlanningView` over a `PlanningDraft` in `SessionStore.planningDrafts`, opened by
   `showNewPlan` and not kept across launches, its session taking the tab, `replaceDraft`; from Rituals ›
@@ -935,7 +954,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Harness.
 - Harness writes (`Harness/HarnessWrites.swift`, `HarnessStore.commit`) are commits through
   GraphQL `createCommitOnBranch` (`GitHubAPI.mutate` takes object variables), several files
-  at once with `expectedHeadOid`; when the branch moved, the change is planned again on the new
+  at once with `expectedHeadOid` (texts in `HarnessChange.files`, and files byte for byte in
+  `data`, up to `HarnessChange.maxDataBytes`, 5 MB, refused before sending); when the branch moved, the change is planned again on the new
   head and retried once. The index is then fetched again until GitHub reports the new commit as
   the head (`load(expecting:)`, up to five tries a second longer apart each time), so what was
   written shows without a Refresh.
@@ -944,7 +964,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `gh pr create`. claude runs signed in as the user; Gannin never handles that login.
 - The team's prompts (`Harness/HarnessPrompts.swift`, `HarnessPrompt`, `HarnessPromptLibrary`) are
   `prompts/<name>.md` in the harness (`HarnessKind.prompts`, listed under Harness in the sidebar):
-  front matter `use` (work, review, planning, session; all when left out), `default`, `repos` (a
+  front matter `use` (work, review, planning, ask, session; all when left out), `default`, `repos` (a
   repo's own defaults replace the general ones for its issues, PRs and reviews) and `skills` (by
   name, from `skills/`, `HarnessSkill`), and the body, with `{{issue}}`, `{{title}}`, `{{url}}`,
   `{{repo}}`, `{{number}}` and `{{branch}}` filled in. Work on This and Review with Claude show
@@ -1060,7 +1080,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   it's the first.
 - The layout (`HarnessKind`): plans in a flat `plans/` (and, until they're moved, under
   `requirements/<module>/plans/`), requirements the rest of `requirements/`, `findings/`,
-  `skills/`, `prompts/`, `learnings/` (grouped by their repo folder); READMEs and `_templates` left out. A front matter `type` overrides the folder, and
+  `skills/`, `prompts/`, `learnings/` (grouped by their repo folder), `research/` (each
+  `research/<folder>/README.md` the document, `HarnessKind.research`, with no New: files come from
+  an Ask's Commit to Harness); other READMEs and `_templates` left out. A front matter `type` overrides the folder, and
   plans and requirements are grouped by their first domain, else their module folder
   (`HarnessDocument.area`). A document is
   about an issue named in its file name (`prd-123`) or its header table's GitHub row
@@ -1073,7 +1095,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Harness page and a document's page, and a session's brief gives the summary of documents that
   only mention its issue. `HarnessDocument.parserVersion` makes a cached index read its
   documents again when the reading changes.
-- Plans, Requirements, Findings, Skills, Prompts and Learnings are rows under Harness in the sidebar
+- Plans, Requirements, Findings, Skills, Prompts, Learnings and Research are rows under Harness in the sidebar
   (`SidebarItem.harnessKind`, with counts of standard documents), sharing the `harnessKind` scene
   storage the Harness page reads; the Harness row itself shows the kind last picked.
 - The Harness page has a bar at the top: search over title, summary, path, domains and issues;

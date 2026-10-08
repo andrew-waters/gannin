@@ -19,10 +19,8 @@ opened, opened with, revealed, saved elsewhere or dragged into another app witho
 
 ## Decisions
 
-- Ask sessions themselves (`CodeSession.adhoc`, the `ask-<slug>` folder with `files/` and
-  `context/`) come with andrew-waters/gannin#56, which hadn't landed. Until then
-  `CodeSession.isAsk` goes by the branch, `ask-` and not a review or plan, so the pane can be tried
-  on any session on such a branch; #56 can point it at its own info.
+- Ask sessions themselves came with andrew-waters/gannin#56 after this pane was written;
+  `CodeSession.isAsk` is now `ask != nil` (`plans/2026-10-08-ask-sessions.md`).
 - The list is the session's folder walked off the main actor (`SessionFiles.scan`): everything
   but `.gannin/` and `context/` (Gannin's), `.git`, `node_modules` and `.DS_Store`, at most 1000
   files, plus the transcript's `filesEdited` outside the folder that still exist, under Elsewhere.
@@ -35,7 +33,7 @@ opened, opened with, revealed, saved elsewhere or dragged into another app witho
 - Drag is an `NSItemProvider(contentsOf:)` for the file, which AppKit offers as a file promise as
   well as its URL. Copy puts the file URL on the pasteboard, as Finder's Copy does. Save a Copy
   asks with a save panel (Downloads first) and copies, the panel having asked about replacing.
-- Commit to Harness isn't in the menu yet: andrew-waters/gannin#59 adds it, set apart at the end.
+- Commit to Harness, set apart at the end of the menu, came with andrew-waters/gannin#59.
 
 ## Tasks
 

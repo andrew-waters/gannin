@@ -44,7 +44,7 @@ enum HarnessAuthoring {
             """
             You're writing a prompt for {{org}}'s Claude Code sessions, kept in the harness, {{harness}}. Gannin adds it to a session's first prompt when work on an issue, a PR review or a planning session starts, or sends it to a session already running.
 
-            Write it as direct instructions to the agent: what to focus on, what to check, and what to deliver, in a few short paragraphs or a list. Gannin's own prompt already covers the issue, the worktrees and, for reviews, the JSON the review ends with, so don't repeat those or ask for another format. Use {{issue}}, {{title}} or {{repo}} where naming the issue or PR helps. Say which uses it suits (work, review, planning, session) and which of the harness's skills it should bring, by name.
+            Write it as direct instructions to the agent: what to focus on, what to check, and what to deliver, in a few short paragraphs or a list. Gannin's own prompt already covers the issue, the worktrees and, for reviews, the JSON the review ends with, so don't repeat those or ask for another format. Use {{issue}}, {{title}} or {{repo}} where naming the issue or PR helps. Say which uses it suits (work, review, planning, ask, session) and which of the harness's skills it should bring, by name.
             """
         case .requirements:
             """
@@ -64,6 +64,9 @@ enum HarnessAuthoring {
 
             Give it a short title, the rule in one sentence as its summary, the repo (`owner/name`) and the narrowest scope it applies to: folders ending in `/`, files, or lines of a file as `path#L10-L24`. Keep the reason in the person's own terms; don't add reasons they didn't give. If the comment doesn't make a rule clear, ask me rather than guess. If an existing learning already says it, or contradicts it, tell me which.
             """
+        case .research:
+            // Committed from an Ask's Files, never drafted.
+            ""
         case .plans:
             """
             Let's plan "{{topic}}" together, here in the team's harness. Read STANDARDS.md and plans/_template.md first. {{starting_point}}
@@ -103,7 +106,7 @@ enum HarnessAuthoring {
     private static func replyShape(_ kind: HarnessKind) -> String {
         switch kind {
         case .skills: #"{"name": "kebab-case", "description": "one line", "repos": ["name"] or [] for all, "body": "..."}"#
-        case .prompts: #"{"title": "...", "summary": "one line", "uses": ["work" | "review" | "planning" | "session"], "skills": ["skill-name"], "body": "..."}"#
+        case .prompts: #"{"title": "...", "summary": "one line", "uses": ["work" | "review" | "planning" | "ask" | "session"], "skills": ["skill-name"], "body": "..."}"#
         case .findings: #"{"title": "...", "summary": "a sentence or two", "status": "open", "severity": "low" | "medium" | "high" | "critical", "domains": ["..."], "issues": ["owner/repo#123"], "body": "..."}"#
         case .learnings: #"{"title": "...", "summary": "the rule, in a sentence", "repos": ["owner/name"], "paths": ["folder/", "file", "file#L10-L24"], "reason": "why, in Markdown"}"#
         default: #"{"title": "...", "summary": "a sentence or two", "status": "draft", "domains": ["..."], "issues": ["owner/repo#123"], "body": "..."}"#
@@ -168,6 +171,7 @@ struct HarnessDocumentDraft {
         case .findings: ["open", "investigating", "fixing", "fixed", "wont-fix"]
         case .skills, .prompts: ["active", "draft", "archived"]
         case .learnings: ["active", "retired"]
+        case .research: []
         case .plans, .requirements: ["draft", "in-progress", "done"]
         }
     }

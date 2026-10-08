@@ -99,7 +99,7 @@ enum SessionScript {
 
             mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
             \(briefSource)cp "$session/brief.md" "$folder/.gannin/"
-            cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
+            \(session.isAsk ? askFolder : "")cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
             cd "$harness" || fail "The harness isn't there."
 
             command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
@@ -114,6 +114,16 @@ enum SessionScript {
             exec "${SHELL:-bash}" -l
             """
     }
+
+    /// An Ask session's `files/` for what it makes, and the org data Gannin
+    /// wrote for it (`SessionStore.writeAskContext`) as its `context/`,
+    /// fresh on every start and resume. Ends with a newline, as it's laid
+    /// in before the next line.
+    private static let askFolder = """
+        mkdir -p "$folder/files"
+        if [ -d "$session/context" ]; then rm -rf "$folder/context" && cp -R "$session/context" "$folder/context"; fi
+
+        """
 
     /// Sessions from before the harness: clone the repo into the workspace
     /// if it isn't yet, add the worktree beside it on the session's branch

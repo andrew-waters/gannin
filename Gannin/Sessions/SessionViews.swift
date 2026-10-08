@@ -38,8 +38,13 @@ struct SessionsWindow: View {
             if sessions.showingOverview {
                 SessionOverview()
             } else if let draftID = sessions.selectedTab, let draft = sessions.planningDrafts[draftID] {
-                NewPlanningView(draftID: draftID, draft: draft)
-                    .id(draftID)
+                if draft.isAsk {
+                    NewAskView(draftID: draftID, draft: draft)
+                        .id(draftID)
+                } else {
+                    NewPlanningView(draftID: draftID, draft: draft)
+                        .id(draftID)
+                }
             } else if let selected {
                 if let beside = sessions.besideTab.flatMap({ sessions.sessions[$0] }), beside.id != selected.id {
                     HSplitView {
@@ -55,8 +60,8 @@ struct SessionsWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 480)
-        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected?.issue.reference ?? "Claude Code")
-        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? (sessions.selectedTab.flatMap { sessions.planningDrafts[$0] } != nil ? "New plan" : ""))
+        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.isAsk ? "Ask" : $0.issue.reference } ?? "Claude Code")
+        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : "New plan" } ?? "")
         .background { shortcuts }
         .onChange(of: activeState, initial: true) { sessions.windowIsKey = activeState == .key }
         .onDisappear { sessions.windowIsKey = false }
@@ -160,8 +165,11 @@ private struct SessionTabBar: View {
         return Menu {
             if let org {
                 // In the harness of the session showing, when there is one.
+                let harness = sessions.selectedTab.flatMap { sessions.sessions[$0]?.harnessRepo }
+                Button("New Ask") {
+                    sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness, isAsk: true))
+                }
                 Button("New Plan") {
-                    let harness = sessions.selectedTab.flatMap { sessions.sessions[$0]?.harnessRepo }
                     sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness))
                 }
                 Divider()
@@ -192,7 +200,12 @@ private struct TabKind {
     let title: String
 
     init(_ session: CodeSession) {
-        if let planning = session.planning {
+        if let ask = session.ask {
+            name = "Ask"
+            symbol = "sparkle.magnifyingglass"
+            reference = nil
+            title = ask.title
+        } else if let planning = session.planning {
             name = "Plan"
             symbol = "list.bullet"
             reference = planning.issue?.reference
@@ -227,14 +240,14 @@ private struct DraftTabItem: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle().fill(Color.secondary.opacity(0.5)).frame(width: 7, height: 7)
-            Image(systemName: "list.bullet")
+            Image(systemName: draft.isAsk ? "sparkle.magnifyingglass" : "list.bullet")
                 .font(.system(size: 20))
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: 26)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text("New Plan")
+                    Text(draft.isAsk ? "New Ask" : "New Plan")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     if let issue = draft.issue {
@@ -432,7 +445,7 @@ struct SessionTab: View {
             if shown {
                 VStack(spacing: 0) {
                     Picker("Show", selection: shownPane) {
-                        Text("Issue").tag(SessionPane.issue)
+                        Text(session.isAsk ? "Session" : "Issue").tag(SessionPane.issue)
                         if session.isAsk {
                             let count = sessions.files(for: session).files.count
                             Text(count > 0 ? "Files \(count)" : "Files").tag(SessionPane.files)
@@ -1072,7 +1085,7 @@ private struct SessionPanel: View {
         let worktreePath = SessionStore.worktreePath(for: session)
         Form {
             PlanningSection(session: session)
-            if !session.isPlanning {
+            if !session.isPlanning && !session.isAsk {
             Section("Issue") {
                 Text(session.issue.title)
                     .fontWeight(.semibold)
@@ -1145,7 +1158,7 @@ private struct SessionPanel: View {
                 }
             }
             SessionFinishSection(session: session)
-            if !session.isPlanning {
+            if !session.isPlanning && !session.isAsk {
                 HarnessIssueSection(reference: session.issue, showsEmpty: true)
             }
         }
@@ -1322,16 +1335,18 @@ struct SessionSidebarRows: View {
     @AppStorage("sidebarSessionsIssues") private var issuesExpanded = true
     @AppStorage("sidebarSessionsReviews") private var reviewsExpanded = true
     @AppStorage("sidebarSessionsPlanning") private var planningExpanded = true
+    @AppStorage("sidebarSessionsAsk") private var askExpanded = true
 
     var body: some View {
         let all = sessions.sessions(for: org)
-        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning }, expanded: $issuesExpanded)
+        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning && !$0.isAsk }, expanded: $issuesExpanded)
         // Active reviews, newest first, then the history.
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }
         let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
         group("Reviews", symbol: "eye", sessions: active + finished, expanded: $reviewsExpanded)
         group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter(\.isPlanning), expanded: $planningExpanded)
+        group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
     }
 
     /// A kind of session, with how many are waiting on you; empty kinds

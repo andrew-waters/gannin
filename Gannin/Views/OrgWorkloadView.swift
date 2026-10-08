@@ -42,7 +42,7 @@ struct OrgWorkloadView: View {
             } else if tab == .agents {
                 AgentsPage(org: org)
             } else if tab == .ask {
-                AskOrgPage(org: org, workload: workload)
+                AskPage(org: org)
             } else if tab == .epics {
                 EpicsView(org: org)
             } else if tab == .releases {

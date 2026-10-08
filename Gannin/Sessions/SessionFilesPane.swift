@@ -11,6 +11,8 @@ struct SessionFilesPane: View {
     let session: CodeSession
     let files: SessionFiles
     @State private var error: String?
+    /// The file Commit to Harness was picked for.
+    @State private var committing: SessionFile?
 
     private var edited: [String] {
         (sessions.transcripts[session.id]?.filesEdited).map { $0.sorted() } ?? []
@@ -30,6 +32,7 @@ struct SessionFilesPane: View {
                     }
                 } catch {}
             }
+            .sheet(item: $committing) { CommitToHarnessSheet(session: session, file: $0) }
             .alert("Couldn't save a copy", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
                 Button("OK") { error = nil }
             } message: {
@@ -109,7 +112,11 @@ struct SessionFilesPane: View {
         Button("Show in Finder") { SessionFiles.reveal(file) }
         Button("Save a Copy") { error = SessionFiles.saveCopy(of: file) }
         Button("Copy") { SessionFiles.copy(file) }
-        // Commit to Harness goes here, set apart (andrew-waters/gannin#59).
+        // Set apart, and only from here: never a click, drag or Return.
+        if !file.isElsewhere, session.harnessRepo != nil {
+            Divider()
+            Button("Commit to Harness") { committing = file }
+        }
     }
 }
 

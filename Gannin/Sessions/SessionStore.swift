@@ -57,6 +57,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var reviewOf: PullRequestReference? = nil
     /// A planning session's topic and shared documents.
     var planning: PlanningInfo? = nil
+    /// An Ask session's title and first message.
+    var ask: AskInfo? = nil
     /// A review's result, kept from its transcript so it can be read again
     /// without starting claude; and what you made of it.
     var reviewResult: SessionTranscript.ReviewResult? = nil
@@ -77,12 +79,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var isRemote: Bool { connect != nil }
     var isHelper: Bool { parentID != nil }
     var isPullRequestReview: Bool { reviewOf != nil }
-    /// An ad hoc Ask session, its folder `.worktrees/ask-<slug>/`. By its
-    /// branch until Ask sessions carry their own info
-    /// (andrew-waters/gannin#56).
-    var isAsk: Bool { branch.hasPrefix("ask-") && reviewOf == nil && planning == nil }
     /// As a tab or row names it.
-    var title: String { role.map { "\($0): \(issue.title)" } ?? issue.title }
+    var title: String { ask?.title ?? role.map { "\($0): \(issue.title)" } ?? issue.title }
     var isInHarness: Bool { harnessPath != nil && harnessRepo != nil }
 
     var org: String { issue.org }
@@ -121,6 +119,7 @@ extension CodeSession {
         lastActiveAt = try container.decodeIfPresent(Date.self, forKey: .lastActiveAt)
         reviewOf = try container.decodeIfPresent(PullRequestReference.self, forKey: .reviewOf)
         planning = try container.decodeIfPresent(PlanningInfo.self, forKey: .planning)
+        ask = try container.decodeIfPresent(AskInfo.self, forKey: .ask)
         reviewResult = try container.decodeIfPresent(SessionTranscript.ReviewResult.self, forKey: .reviewResult)
         reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
@@ -375,6 +374,9 @@ final class SessionStore {
     @ObservationIgnored var viewerLogin: () -> String? = { nil }
     /// The budget is low or GitHub has refused: background PR checks wait.
     @ObservationIgnored var holdsOff: () -> Bool = { false }
+    /// Gannin's view of an org as files (`OrgContext`), for an Ask session
+    /// in a harness; set by the app, which has the stores.
+    @ObservationIgnored var orgContext: (_ org: String, _ harness: String) -> [String: Data] = { _, _ in [:] }
     /// Reviews Gannin started or asked to look again by itself, until
     /// their result arrives (`AutoReview.swift`).
     @ObservationIgnored var automaticRuns: Set<UUID> = []
@@ -673,6 +675,9 @@ final class SessionStore {
         try? Data(SessionState.starting.rawValue.utf8).write(to: directory.appending(path: "state"))
         setState(.starting, for: session.id)
         askToNotify()
+        // Fresh org data on every start and resume, which the script copies
+        // into its folder.
+        if session.isAsk { writeAskContext(session) }
 
         // What the login shell runs: the script here, or the Connect with
         // command carrying it to the server.
