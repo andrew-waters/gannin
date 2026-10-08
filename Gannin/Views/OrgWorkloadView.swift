@@ -6,7 +6,6 @@ struct OrgWorkloadView: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(MetricsStore.self) private var metricsStore
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
-    @SceneStorage(RepositoriesLanding.partKey) private var repositoriesPart: RepositoriesLanding.Part = .local
 
     let org: String
     let workload: Workload?
@@ -181,7 +180,8 @@ struct OrgWorkloadView: View {
         // Not the Overview, which uses whatever was picked elsewhere.
         case .delivery, .issueFlow, .actions: true
         case .people: person == nil && peopleView == nil
-        case .repositories: repository == nil && repositoriesPart == .delivery
+        // Repositories has its own, in the bar on its Delivery part.
+        case .repositories: false
         default: false
         }
     }

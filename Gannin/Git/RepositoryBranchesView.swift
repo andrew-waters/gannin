@@ -25,7 +25,7 @@ struct RepositoryBranchesView: View {
                 Button("New Branch") { repository.creatingBranch = CreateBranchRequest(base: repository.status?.branch ?? "HEAD") }
             }
             .controlSize(.small)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .padding(.vertical, 8)
             Divider()
             List {

@@ -27,24 +27,20 @@ struct RepositoryPage: View {
 
     var body: some View {
         Group {
-            if part == .github {
-                gitHub
-            } else if let local {
+            if part.isLocal, let local {
                 LocalRepositoryView(repository: local, part: $part) { locate() }
-            } else if looked {
-                NotClonedView(org: org, repo: repo) { locate() }
             } else {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-        }
-        .toolbar {
-            ToolbarItem {
-                Picker("Show", selection: $part) {
-                    ForEach(RepositoryPart.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                VStack(spacing: 0) {
+                    RepositoryBar { RepositoryPartPicker(part: $part) }
+                    Divider()
+                    if part == .github {
+                        gitHub
+                    } else if looked {
+                        NotClonedView(org: org, repo: repo) { locate() }
+                    } else {
+                        ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
             }
         }
         .task(id: repo) { locate() }
@@ -82,7 +78,7 @@ struct RepositoryPage: View {
     }
 }
 
-/// A clone's parts, with the toolbar's branch, sync and open controls, and
+/// A clone's parts, under a bar of its branch, sync and open controls, and
 /// everything they ask about.
 private struct LocalRepositoryView: View {
     @Bindable var repository: LocalRepository
@@ -91,34 +87,20 @@ private struct LocalRepositoryView: View {
     let relocate: () -> Void
 
     var body: some View {
-        Group {
-            if let error = repository.error, repository.snapshot == nil {
-                ContentUnavailableView {
-                    Label("Couldn't read the clone", systemImage: "exclamationmark.triangle")
-                } description: {
-                    Text("\(SessionStore.tildePath(URL(filePath: LocalClones.expand(repository.path)))): \(error)")
-                } actions: {
-                    Button("Try Again") { Task { await repository.refresh() } }
-                    Button("Use Another Folder") { chooseFolder() }
+        VStack(spacing: 0) {
+            RepositoryBar {
+                RepositoryPartPicker(part: $part)
+                Spacer()
+                Group {
+                    if repository.worktrees.count > 1 { worktreeMenu }
+                    branchMenu
+                    syncMenu
+                    openMenu
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if !repository.loaded {
-                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                switch part {
-                case .branches: RepositoryBranchesView(repository: repository)
-                case .tags: RepositoryTagsView(repository: repository)
-                case .changes, .github: RepositoryChangesView(repository: repository)
-                }
+                .fixedSize()
             }
-        }
-        .toolbar {
-            if repository.worktrees.count > 1 {
-                ToolbarItem { worktreeMenu }
-            }
-            ToolbarItem { branchMenu }
-            ToolbarItem { syncMenu }
-            ToolbarItem { openMenu }
+            Divider()
+            content
         }
         // Status every ten seconds, for edits made anywhere.
         .task(id: repository.path) {
@@ -184,7 +166,30 @@ private struct LocalRepositoryView: View {
         }
     }
 
-    // MARK: Toolbar
+    @ViewBuilder
+    private var content: some View {
+        if let error = repository.error, repository.snapshot == nil {
+            ContentUnavailableView {
+                Label("Couldn't read the clone", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text("\(SessionStore.tildePath(URL(filePath: LocalClones.expand(repository.path)))): \(error)")
+            } actions: {
+                Button("Try Again") { Task { await repository.refresh() } }
+                Button("Use Another Folder") { chooseFolder() }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if !repository.loaded {
+            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            switch part {
+            case .branches: RepositoryBranchesView(repository: repository)
+            case .tags: RepositoryTagsView(repository: repository)
+            case .changes, .github: RepositoryChangesView(repository: repository)
+            }
+        }
+    }
+
+    // MARK: Bar
 
     private var worktreeMenu: some View {
         Menu {
@@ -446,5 +451,33 @@ struct GitOutputSheet: View {
         }
         .padding(16)
         .frame(width: 520)
+    }
+}
+
+/// The bar at the top of a repo's page, as other pages have one: the part
+/// picker, then what acts on the clone.
+private struct RepositoryBar<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        HStack(spacing: 10) {
+            content
+        }
+        .controlSize(.small)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+}
+
+private struct RepositoryPartPicker: View {
+    @Binding var part: RepositoryPart
+
+    var body: some View {
+        Picker("Show", selection: $part) {
+            ForEach(RepositoryPart.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
     }
 }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Repositories before one is picked: the clones on this Mac, or the
-/// delivery stats by repo, picked in the toolbar.
+/// delivery stats by repo, picked in the bar at the top of the page.
 struct RepositoriesLanding: View {
     enum Part: String, CaseIterable {
         case local = "On This Mac"
@@ -10,28 +10,44 @@ struct RepositoriesLanding: View {
 
     static let partKey = "repositoriesPart"
     @SceneStorage(RepositoriesLanding.partKey) private var part: Part = .local
+    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     let org: String
     let workload: Workload?
     let metrics: OrgMetrics?
     @Binding var selection: DetailSelection?
 
     var body: some View {
-        Group {
-            switch part {
-            case .local: LocalRepositoriesView(org: org, workload: workload, selection: $selection)
-            case .delivery: RepositoryStatsView(org: org, metrics: metrics, selection: $selection)
-            }
-        }
-        .toolbar {
-            ToolbarItem {
-                Picker("Show", selection: $part) {
-                    ForEach(Part.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        switch part {
+        case .local:
+            LocalRepositoriesView(org: org, workload: workload, part: $part, selection: $selection)
+        case .delivery:
+            VStack(spacing: 0) {
+                HStack(spacing: 10) {
+                    RepositoriesPartPicker(part: $part)
+                    Spacer()
+                    MetricsWindowPicker(code: $windowDays)
+                        .fixedSize()
                 }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize()
+                .controlSize(.small)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                Divider()
+                RepositoryStatsView(org: org, metrics: metrics, selection: $selection)
             }
         }
+    }
+}
+
+private struct RepositoriesPartPicker: View {
+    @Binding var part: RepositoriesLanding.Part
+
+    var body: some View {
+        Picker("Show", selection: $part) {
+            ForEach(RepositoriesLanding.Part.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .fixedSize()
     }
 }
 
@@ -42,6 +58,7 @@ private struct LocalRepositoriesView: View {
     @Environment(OrgConfigStore.self) private var configs
     let org: String
     let workload: Workload?
+    @Binding var part: RepositoriesLanding.Part
     @Binding var selection: DetailSelection?
     @State private var search = ""
     @State private var clones: [String: String] = [:]
@@ -53,13 +70,14 @@ private struct LocalRepositoriesView: View {
         let here = repos.filter { clones[$0] != nil }
         let elsewhere = repos.filter { clones[$0] == nil }
         VStack(spacing: 0) {
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
+                RepositoriesPartPicker(part: $part)
                 FilterSearchField(text: $search, prompt: "Repositories")
                 Spacer()
                 Button("Clone a Repository") { cloning = true }
             }
             .controlSize(.small)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .padding(.vertical, 8)
             Divider()
             List(selection: $selection) {

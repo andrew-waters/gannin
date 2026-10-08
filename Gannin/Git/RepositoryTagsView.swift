@@ -22,7 +22,7 @@ struct RepositoryTagsView: View {
                 Button("New Tag") { repository.creatingTag = CreateTagRequest() }
             }
             .controlSize(.small)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 16)
             .padding(.vertical, 8)
             Divider()
             if repository.tags.isEmpty {

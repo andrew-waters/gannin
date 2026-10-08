@@ -144,14 +144,16 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   ahead and behind, worktrees, `LocalClones.summaries`, plus Clone a Repository) or Delivery (the
   stats by repo, with the metrics window picker). A repo's page (`RepositoryPage`, also
   `DetailSelection.repository`) has Changes, Branches and Tags parts beside GitHub (its open PRs,
-  issues and merged, `RepositoryColumn`), picked in the toolbar (`repositoryPart` per window).
+  issues and merged, `RepositoryColumn`), picked in the bar at the top (`repositoryPart` per
+  window). Every control is in the page's bar (`RepositoryBar`), not the toolbar, the landing's
+  window picker included.
 - `LocalClones` finds a repo's clone: the folder saved for it (`localRepository.<owner/name>`,
   from Add Existing, Clone To or Use Another Folder), the harness checkout when the repo is the
   harness, a harness's `projects/<name>` (or `projects/<group>/<name>`), then the usual places
   (`SessionStore.existingCheckout`), each checked by its remotes. Clone (gh when installed, else
   git over https) goes to the project's harness's `projects/<name>`, or
   `<workspace>/<owner>/<name>` with no harness checked out here.
-- `LocalRepository` is one clone, worked on one worktree at a time (`path`, the toolbar's
+- `LocalRepository` is one clone, worked on one worktree at a time (`path`, the bar's
   worktree menu, remembered per repo in `localRepositoryWorktree.<repo>`). One script reads a
   `GitSnapshot` (`GitParse`: `status --porcelain=v2`, numstat staged and not, untracked line
   counts, stashes, the operation in progress, branches with upstream tracking and worktree, worktrees,
@@ -159,7 +161,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   fetches every five minutes in the background (git's own, not the API budget), saying so only in
   the sync button's help. Actions refresh after running, and what git or a hook says on failing
   shows in full (`GitOutputSheet`).
-- Toolbar: the worktree menu (with more than one), the branch menu (recent branches, New Branch,
+- The bar, after the part picker: the worktree menu (with more than one), the branch menu (recent branches, New Branch,
   All Branches), sync (`syncAction`: Publish Branch, Pull with ↓ and ↑, Push ↑, else Fetch; its
   menu has Fetch, Pull, Push and Force Push with `--force-with-lease`, confirmed) and Open (editor,
   Terminal, Finder, GitHub). Pull follows `pull.rebase`; when git asks how to reconcile divergent
