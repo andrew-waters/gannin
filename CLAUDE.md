@@ -165,12 +165,15 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   worktree menu, remembered per repo in `localRepositoryWorktree.<repo>`). One script reads a
   `GitSnapshot` (`GitParse`: `status --porcelain=v2`, numstat staged and not, untracked line
   counts, stashes, the operation in progress, branches with upstream tracking and worktree, worktrees,
-  `origin/HEAD`, tags) every ten seconds and on coming back to the app. While the page is open it
+  `origin/HEAD`, tags, and whether HEAD is on any remote branch) every ten seconds while Gannin is
+  the active app, and on coming back to it. While the page is open it
   fetches every five minutes in the background (git's own, not the API budget), saying so only in
   the sync button's help. Actions refresh after running, and what git or a hook says on failing
   shows in full (`GitOutputSheet`).
 - The bar's right end: sync (`syncAction`: Publish Branch, Pull with ↓ and ↑, Push ↑, else Fetch; its
-  menu has Fetch, Pull, Push and Force Push with `--force-with-lease`, confirmed) and Open (editor,
+  menu has Fetch, Pull, Push and Force Push with `--force-with-lease --force-if-includes`, so a
+  background fetch can't let it overwrite commits you never had, confirmed). The background fetch
+  never runs beside something you started (`busy`) and Open (editor,
   Terminal, Finder, GitHub). Pull follows `pull.rebase`; when git asks how to reconcile divergent
   branches, Gannin asks Merge or Rebase.
 - Changes (`RepositoryChangesView`): Conflicted, Staged and Changes (unstaged and new) with Stage
@@ -181,13 +184,17 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   pictures for images. Banners: a merge or rebase under way (Continue once nothing's in
   conflict, Abort), changes left on this branch (Restore, Drop), detached HEAD. The commit
   composer: a summary with a length hint (orange past 50, red past 72), a description, Amend
-  (filled with the last message) and Undo for a commit not pushed (`reset --soft`, its message
-  back in the fields).
+  (filled with the last message) and Undo, both only for a commit not pushed
+  (`LocalRepository.headUnpushed`: ahead of its upstream, or with none, on no remote branch, so a
+  branch just made from `origin/main` can't take main's commit back); Undo is `reset --soft`, its
+  message back in the fields. Discarding a staged file that has unstaged edits too says both go.
 - Branches (the popover): a search field that keeps the keyboard (arrows move, Return switches),
   local branches (ahead and behind, Not published, Gone from origin, the worktree holding one) and
   those only on origin, New Branch at the foot, and Switch, New Worktree for, New Branch from,
-  Publish, Rename and Delete in a branch's context menu (here, on origin or both; Delete Anyway
-  when unmerged). Return on a branch held by another worktree works in that worktree. Worktrees
+  Publish, Rename and Delete in a branch's context menu (here, on its remote or both; Delete Anyway
+  when unmerged). The remote branch deleted is the branch's own ref or a local one's upstream
+  (`GitBranch.remoteRef`: `upstream/release`, or `fix` tracking `origin/feature/fix`), named in
+  the button. Return on a branch held by another worktree works in that worktree. Worktrees
   (the popover, arrows and Return too): Work Here by picking one, open, Remove (forced only after
   saying what's lost), New Worktree and Prune. What they ask (rename, delete, remove) shows over
   the page once the popover's closed (`BranchDialogs`, `LocalRepository.renamingBranch`,
@@ -199,7 +206,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - History (`RepositoryHistoryView`, `GitHistory`): the checked-out branch's commits (the bar's
   branch button is the one branch control), newest first, 200 at a time, searchable from a full-width field at the top of the list, the list keeping the keyboard as a commit's
   files load, each with its SHA, author, when, Not
-  pushed (against its upstream), the other branches at it and its tags, orange while only here
+  pushed (against its upstream, else what's on no remote branch), the other branches at it and its tags, orange while only here
   (`ls-remote --tags` when opened). Picking one shows its whole message, its files and a file's
   diff (a merge against its first parent). Tagging is done here: Tag This Commit (the commit's
   context menu or its header) opens `NewTagSheet` (annotated with a message, pushed straight away

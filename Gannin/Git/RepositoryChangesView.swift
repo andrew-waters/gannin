@@ -27,15 +27,20 @@ struct RepositoryChangesView: View {
                 Task { await repository.discard(file) }
             }
         } message: { file in
-            Text(Self.discardMessage(file))
+            Text(discardMessage(file))
         }
     }
 
-    private static func discardMessage(_ file: GitFileChange) -> String {
+    private func discardMessage(_ file: GitFileChange) -> String {
         switch file.area {
-        case .untracked: "It's new and not in git, so it's deleted."
-        case .unstaged: "It goes back to what's staged, or to the last commit if nothing is."
-        case .staged, .conflicted: "It goes back to the last commit, staged changes and all."
+        case .untracked: return "It's new and not in git, so it's deleted."
+        case .unstaged: return "It goes back to what's staged, or to the last commit if nothing is."
+        case .staged, .conflicted:
+            // The file's on disk too, so its unstaged edits go with it.
+            let alsoUnstaged = repository.status?.files.contains { $0.area == .unstaged && $0.path == file.path } == true
+            return alsoUnstaged
+                ? "It goes back to the last commit: its staged changes and its unstaged edits are both lost."
+                : "It goes back to the last commit, staged changes and all."
         }
     }
 
@@ -442,8 +447,10 @@ private struct CommitComposer: View {
             HStack(spacing: 8) {
                 Toggle("Amend", isOn: $amend)
                     .toggleStyle(.checkbox)
-                    .disabled(status?.head == nil)
-                    .help("Add what's staged to the last commit, with this message, instead of making a new one")
+                    .disabled(!repository.headUnpushed)
+                    .help(repository.headUnpushed
+                        ? "Add what's staged to the last commit, with this message, instead of making a new one"
+                        : "The last commit is on a remote already. Amending it would rewrite what others may have, and Pull would bring the old one back.")
                 if repository.canUndoLastCommit {
                     Button("Undo") { confirmingUndo = true }
                         .buttonStyle(.link)

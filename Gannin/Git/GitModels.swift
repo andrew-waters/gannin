@@ -60,6 +60,9 @@ nonisolated struct GitStatus: Hashable, Sendable {
     var files: [GitFileChange] = []
     var stashes: [GitStash] = []
     var operation: GitOperation?
+    /// HEAD is on no remote branch. With no upstream, that's what says
+    /// the last commit isn't pushed: a new branch's first commit is.
+    var headUnpushed = false
 
     func files(in area: GitFileChange.Area) -> [GitFileChange] {
         files.filter { $0.area == area }
@@ -94,6 +97,14 @@ nonisolated struct GitBranch: Identifiable, Hashable, Sendable {
     let subject: String
 
     var id: String { (isRemote ? "remote:" : "local:") + name }
+
+    /// Where it lives on a remote: a remote branch's own ref, else a local
+    /// branch's upstream, split at the remote's name (`upstream`,
+    /// `feature/fix`). Nil for a local branch with no upstream left.
+    var remoteRef: (remote: String, branch: String)? {
+        guard let ref = isRemote ? name : (upstreamGone ? nil : upstream), let slash = ref.firstIndex(of: "/") else { return nil }
+        return (String(ref[..<slash]), String(ref[ref.index(after: slash)...]))
+    }
 
     /// The name a local branch for it has: `main` for `origin/main`.
     var localName: String {
@@ -151,6 +162,7 @@ nonisolated enum GitParse {
           else printf '%s\t%s\n' "$(wc -l < "$f" | tr -d ' ')" "$f"; fi
         done
         printf '\036stashes\n'; g stash list --format='%H%x09%gs'
+        printf '\036unpushed\n'; g rev-list -n1 HEAD --not --remotes
         printf '\036operation\n'
         gd=$(g rev-parse --git-dir)
         if [ -d "$gd/rebase-merge" ] || [ -d "$gd/rebase-apply" ]; then echo rebase
@@ -242,6 +254,7 @@ nonisolated enum GitParse {
             return parts.count == 2 ? GitStash(sha: parts[0], subject: parts[1]) : nil
         }
         status.operation = (sections["operation"] ?? []).lazy.compactMap { GitOperation(rawValue: String($0)) }.first
+        status.headUnpushed = (sections["unpushed"] ?? []).contains { !$0.isEmpty }
         snapshot.status = status
 
         snapshot.worktrees = worktrees(sections["worktrees"] ?? [])

@@ -372,24 +372,6 @@ struct ExcludablePerson: ViewModifier {
     }
 }
 
-/// Exclude and Open on GitHub for a repo row's context menu.
-struct RepositoryMenu: View {
-    @Environment(OrgConfigStore.self) private var configs
-    @Environment(OrgStore.self) private var orgs
-    @Environment(\.openURL) private var openURL
-    let repository: String
-    let org: String
-
-    var body: some View {
-        Button("Exclude from \(orgs.org(login: org)?.displayName ?? org)") {
-            if !configs.config(for: org).excludedRepos.contains(repository) { configs.toggleRepo(repository, in: org) }
-        }
-        if let url = URL(string: "https://github.com/\(repository)") {
-            Button("Open on GitHub") { openURL(url) }
-        }
-    }
-}
-
 extension View {
     func excludable(login: String, org: String, opens: SidebarItem? = nil) -> some View {
         modifier(ExcludablePerson(login: login, org: org, opens: opens))

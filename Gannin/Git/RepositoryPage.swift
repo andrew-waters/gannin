@@ -96,7 +96,9 @@ private struct LocalRepositoryView: View {
         .task(id: repository.path) {
             do {
                 while true {
-                    await repository.refresh()
+                    // Coming back to the app reads it again, so nothing's
+                    // read while Gannin is in the background.
+                    if NSApp.isActive { await repository.refresh() }
                     try await Task.sleep(for: .seconds(10))
                 }
             } catch {}
@@ -140,7 +142,7 @@ private struct LocalRepositoryView: View {
         .confirmationDialog("Force push \(repository.status?.branch ?? "the branch")?", isPresented: $repository.confirmingForcePush) {
             Button("Force Push", role: .destructive) { Task { await repository.push(force: true) } }
         } message: {
-            Text("Your branch replaces the one on origin, unless someone has pushed to it since you last fetched (--force-with-lease).")
+            Text("Your branch replaces the one on its remote, unless it has commits you haven't had in this branch, even ones a background fetch brought in (--force-with-lease --force-if-includes).")
         }
         .modifier(BranchDialogs(repository: repository))
         .sheet(item: $repository.creatingBranch) { request in

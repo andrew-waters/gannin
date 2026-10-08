@@ -321,19 +321,26 @@ final class LocalRepository {
         return message
     }
 
-    /// Whether the last commit can be taken back: there's one before it,
-    /// and it isn't on the upstream.
-    var canUndoLastCommit: Bool {
-        guard let status, status.head != nil, status.operation == nil else { return false }
-        return status.upstream == nil || status.ahead > 0
+    /// The last commit isn't on a remote yet: ahead of its upstream, or,
+    /// with none, on no remote branch at all (a branch just made from
+    /// `origin/main` has no upstream, but its tip is pushed).
+    var headUnpushed: Bool {
+        guard let status, status.head != nil else { return false }
+        return status.ahead > 0 || (status.upstream == nil && status.headUnpushed)
     }
+
+    /// Whether the last commit can be taken back: it isn't pushed, and
+    /// nothing's part way through.
+    var canUndoLastCommit: Bool { headUnpushed && status?.operation == nil }
 
     // MARK: Syncing
 
     /// Fetches from every remote. A background fetch keeps quiet about
     /// failing, but says so in the toolbar's help.
     func fetch(quietly: Bool = false) async {
-        guard busy == nil || quietly else { return }
+        // Never beside a pull, push or switch, which would fight it for
+        // ref locks; a background fetch just waits for the next tick.
+        guard busy == nil else { return }
         let failure = await git("git fetch --all --prune --quiet", doing: quietly ? nil : "Fetching")
         lastFetched = .now
         fetchError = failure
@@ -357,7 +364,7 @@ final class LocalRepository {
         guard let status else { return }
         let command = status.upstream == nil
             ? "git push -u origin HEAD"
-            : force ? "git push --force-with-lease" : "git push"
+            : force ? "git push --force-with-lease --force-if-includes" : "git push"
         await act(command, doing: "Pushing")
     }
 
@@ -454,14 +461,19 @@ final class LocalRepository {
         await act("git push -u origin \(SessionScript.quoted(branch.name))", doing: "Publishing")
     }
 
-    /// Deletes a branch here, on origin, or both. Nil when it worked; a
-    /// branch with unmerged commits needs `force`.
-    func deleteBranch(_ branch: GitBranch, here: Bool, onOrigin: Bool, force: Bool = false) async -> String? {
+    /// Deletes a branch here, on its remote, or both. The remote one is
+    /// its own ref's, or a local branch's upstream (whatever it's called
+    /// there), never `origin` by guesswork. Nil when it worked; a branch
+    /// with unmerged commits needs `force`.
+    func deleteBranch(_ branch: GitBranch, here: Bool, onRemote: Bool, force: Bool = false) async -> String? {
         var commands: [String] = []
         if here, !branch.isRemote { commands.append("git branch \(force ? "-D" : "-d") \(SessionScript.quoted(branch.name))") }
-        if onOrigin { commands.append("git push origin --delete \(SessionScript.quoted(branch.localName))") }
+        if onRemote {
+            guard let remote = branch.remoteRef else { return "\(branch.name) has no branch on a remote to delete." }
+            commands.append("git push \(SessionScript.quoted(remote.remote)) --delete \(SessionScript.quoted(remote.branch))")
+        }
         guard !commands.isEmpty else { return nil }
-        return await git(commands.joined(separator: " && "), doing: onOrigin ? "Deleting" : nil)
+        return await git(commands.joined(separator: " && "), doing: onRemote ? "Deleting" : nil)
     }
 
     // MARK: Worktrees

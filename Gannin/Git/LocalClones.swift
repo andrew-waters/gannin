@@ -124,7 +124,7 @@ enum LocalClones {
         let script = """
             mkdir -p \(parent) || exit 1
             if [ -e \(target) ] && [ -n "$(ls -A \(target) 2>/dev/null)" ]; then
-              echo "Something's already in \(path.replacingOccurrences(of: "\"", with: "")). Add it as an existing clone instead." >&2; exit 1
+              echo "Something's already in "\(SessionScript.quoted(path))". Add it as an existing clone instead." >&2; exit 1
             fi
             if \(ghClone); then exit 0; fi
             git clone --quiet \(source) \(target)

@@ -46,7 +46,7 @@ private struct BranchPopover: View {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         if !local.isEmpty { heading("Branches") }
                         ForEach(local) { row($0) }
-                        if !remote.isEmpty { heading("Only on origin") }
+                        if !remote.isEmpty { heading("Only on a remote") }
                         ForEach(remote) { row($0) }
                         if all.isEmpty {
                             Text("No branch matches").foregroundStyle(.secondary).padding(10)
@@ -188,7 +188,7 @@ private struct BranchPopover: View {
             NSPasteboard.general.setString(branch.localName, forType: .string)
         }
         Divider()
-        Button(branch.isRemote ? "Delete on origin" : "Delete", role: .destructive) { close(); repository.deletingBranch = branch }
+        Button(branch.isRemote ? "Delete on \(branch.remoteRef?.remote ?? "Its Remote")" : "Delete", role: .destructive) { close(); repository.deletingBranch = branch }
             .disabled(isCurrent || elsewhere != nil)
     }
 }
@@ -366,7 +366,7 @@ struct PopoverSearchField: View {
 struct BranchDialogs: ViewModifier {
     @Bindable var repository: LocalRepository
     @State private var forcing: GitBranch?
-    @State private var forcingOnOrigin = false
+    @State private var forcingOnRemote = false
     @State private var forcingRemoval: GitWorktree?
 
     func body(content: Content) -> some View {
@@ -375,22 +375,22 @@ struct BranchDialogs: ViewModifier {
                 RenameBranchSheet(repository: repository, branch: branch)
             }
             .confirmationDialog("Delete \(repository.deletingBranch?.name ?? "the branch")?", isPresented: Binding(get: { repository.deletingBranch != nil }, set: { if !$0 { repository.deletingBranch = nil } }), presenting: repository.deletingBranch) { branch in
-                if branch.isRemote {
-                    Button("Delete on origin", role: .destructive) { delete(branch, here: false, onOrigin: true) }
-                } else {
-                    Button("Delete Here", role: .destructive) { delete(branch, here: true, onOrigin: false) }
-                    if branch.upstream != nil, !branch.upstreamGone {
-                        Button("Delete Here and on origin", role: .destructive) { delete(branch, here: true, onOrigin: true) }
+                if branch.isRemote, let remote = branch.remoteRef {
+                    Button("Delete \(remote.branch) on \(remote.remote)", role: .destructive) { delete(branch, here: false, onRemote: true) }
+                } else if !branch.isRemote {
+                    Button("Delete Here", role: .destructive) { delete(branch, here: true, onRemote: false) }
+                    if let remote = branch.remoteRef {
+                        Button("Delete Here and \(remote.branch) on \(remote.remote)", role: .destructive) { delete(branch, here: true, onRemote: true) }
                     }
                 }
             } message: { branch in
-                Text(branch.isRemote ? "It's deleted on GitHub for everyone." : "Deleting it on origin deletes it on GitHub for everyone, and closes any open pull request from it.")
+                Text(branch.isRemote ? "It's deleted on the remote for everyone." : "Deleting it on the remote deletes it for everyone, and closes any open pull request from it.")
             }
             .confirmationDialog("\(forcing?.name ?? "It") has commits that aren't merged", isPresented: Binding(get: { forcing != nil }, set: { if !$0 { forcing = nil } }), presenting: forcing) { branch in
                 Button("Delete Anyway", role: .destructive) {
-                    let onOrigin = forcingOnOrigin
+                    let onRemote = forcingOnRemote
                     Task {
-                        if let failure = await repository.deleteBranch(branch, here: true, onOrigin: onOrigin, force: true) {
+                        if let failure = await repository.deleteBranch(branch, here: true, onRemote: onRemote, force: true) {
                             repository.actionError = failure
                         }
                     }
@@ -423,11 +423,11 @@ struct BranchDialogs: ViewModifier {
             }
     }
 
-    private func delete(_ branch: GitBranch, here: Bool, onOrigin: Bool) {
+    private func delete(_ branch: GitBranch, here: Bool, onRemote: Bool) {
         Task {
-            guard let failure = await repository.deleteBranch(branch, here: here, onOrigin: onOrigin) else { return }
+            guard let failure = await repository.deleteBranch(branch, here: here, onRemote: onRemote) else { return }
             if failure.contains("not fully merged") {
-                forcingOnOrigin = onOrigin
+                forcingOnRemote = onRemote
                 forcing = branch
             } else {
                 repository.actionError = failure

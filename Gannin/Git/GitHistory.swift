@@ -81,9 +81,10 @@ final class GitHistory {
             printf '\\036log\\n'
             git -c core.quotepath=off --no-pager log \(quotedRef) -n \(limit + 1) --format='%H%x1f%h%x1f%an%x1f%at%x1f%D%x1f%P%x1f%s%x1d' -- || exit 1
             """
-        if let upstream {
-            body += "\nprintf '\\036unpushed\\n'; git rev-list \(SessionScript.quoted(upstream))..\(quotedRef) 2>/dev/null"
-        }
+        // Against the upstream when there is one; else whatever's on no
+        // remote branch, as a new branch's commits are.
+        let unpushedRange = upstream.map { "\(SessionScript.quoted($0))..\(quotedRef)" } ?? "\(quotedRef) --not --remotes"
+        body += "\nprintf '\\036unpushed\\n'; git rev-list -n \(limit + 1) \(unpushedRange) 2>/dev/null"
         let script = LocalRepository.script(in: path, reading: true, body + "\nexit 0")
         let result = await Task.detached { Shell.run(script, .local) }.value
         guard result.ok else {
