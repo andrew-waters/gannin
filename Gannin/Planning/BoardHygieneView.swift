@@ -152,7 +152,7 @@ struct BoardHygieneView: View {
                 try await FieldWriter.set(
                     "Status", to: done, on: issue, board: board.number, title: board.title,
                     boardID: projects.boardLists[org]?.first { $0.number == board.number }?.id ?? board.id,
-                    org: org, api: api, issues: issueStore
+                    org: org, api: api, issues: issueStore, projects: projects
                 )
             }
         } onClose: {

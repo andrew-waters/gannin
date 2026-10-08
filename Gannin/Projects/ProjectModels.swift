@@ -105,7 +105,7 @@ struct BoardItem: Codable, Hashable, Identifiable {
     let linkedPullRequests: Int
     let updatedAt: Date?
     /// Custom field values by field name.
-    let values: [String: IssueFieldValue]
+    var values: [String: IssueFieldValue]
 
     /// A field's value for grouping, sorting and display, built-ins included.
     func value(_ field: String) -> IssueFieldValue? {

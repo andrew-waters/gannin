@@ -530,7 +530,8 @@ struct FieldWriteSheet: View {
                 boardID: projects.boardLists[org]?.first { $0.number == board.number }?.id ?? board.id,
                 org: org,
                 api: api,
-                issues: issues
+                issues: issues,
+                projects: projects
             )
         } onClose: {
             onClose()
