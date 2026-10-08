@@ -140,6 +140,10 @@ struct SessionActivityPane: View {
     private var helpers: some View {
         let parent = session.parentID.flatMap { sessions.sessions[$0] } ?? session
         let others = ([parent] + sessions.helpers(of: parent.id)).filter { $0.id != session.id }
+        let repos = [parent.issue.repo] + (sessions.pullRequestInfo[parent.id] ?? []).map(\.repo)
+        var seen: Set<String> = []
+        let learnings = (sessions.harnessStore.anyIndex(org: parent.org, repo: parent.harnessRepo ?? parent.repo).map { index in repos.flatMap { index.learnings(for: $0) } } ?? [])
+            .filter { seen.insert($0.id).inserted }
         return Section("Agents on #\(String(session.issue.number))") {
             ForEach(others) { other in
                 Button {
@@ -157,7 +161,7 @@ struct SessionActivityPane: View {
             }
             HStack {
                 Button("Review the Changes") {
-                    _ = sessions.startHelper(for: parent.id, role: "Review", prompt: SessionStore.reviewPrompt(for: parent, learnings: sessions.harnessStore.anyIndex(org: parent.org, repo: parent.harnessRepo ?? parent.repo)?.documents(.learnings).compactMap(HarnessLearning.init(document:)).filter(\.isActive) ?? []), reviewer: true)
+                    _ = sessions.startHelper(for: parent.id, role: "Review", prompt: SessionStore.reviewPrompt(for: parent, learnings: learnings), reviewer: true)
                 }
                 .help("Start a second agent that reads the changes, can't edit, and reports findings you can send back")
                 Spacer()
