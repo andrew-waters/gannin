@@ -104,11 +104,17 @@ struct PullRequest: Codable, Hashable, Identifiable {
 
     var isMerged: Bool { mergedAt != nil }
 
+    /// `reviewStates` with automation accounts (coderabbitai and the like)
+    /// left out, so their reviews don't read as a teammate's.
+    var humanReviewStates: [String: String] {
+        (reviewStates ?? [:]).filter { !OrgConfig.looksLikeBot($0.key) }
+    }
+
     /// GitHub's review decision, else what the latest reviews say: a repo
     /// that doesn't require reviews gets no decision however it's reviewed.
     var review: ReviewState? {
         if let reviewDecision { return reviewDecision }
-        let states = (reviewStates ?? [:]).values
+        let states = humanReviewStates.values
         if states.contains(ReviewState.changesRequested.rawValue) { return .changesRequested }
         if states.contains(ReviewState.approved.rawValue) { return .approved }
         return nil
