@@ -1001,6 +1001,7 @@ private struct PageStack: View {
                     Spacer()
                     if let reference = pullRequestReference(item) {
                         ReviewWithClaudeButton(reference: reference)
+                        ExplainPullRequestButton(reference: reference)
                     }
                     if let shown {
                         Button {

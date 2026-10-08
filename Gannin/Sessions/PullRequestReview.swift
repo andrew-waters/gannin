@@ -476,6 +476,104 @@ struct ReviewWithClaudeButton: View {
     }
 }
 
+// MARK: - Explain with Claude
+
+/// Explain in a PR's right-click menu, toolbar or drawer: a one-off
+/// question, not a session, so it's available wherever a PR is shown.
+struct ExplainPullRequestButton: View {
+    let reference: PullRequestReference
+    @State private var explaining = false
+
+    var body: some View {
+        Button {
+            explaining = true
+        } label: {
+            Label("Explain", systemImage: "text.bubble")
+        }
+        .help("Have Claude explain what this PR changes and why, in plain terms")
+        .sheet(isPresented: $explaining) {
+            ExplainPullRequestSheet(reference: reference)
+        }
+    }
+}
+
+/// Claude's explanation of a PR, asked fresh each time the sheet opens
+/// (`ClaudeRunner.ask`, not a session): what it reads with `gh`, and what
+/// it's told to reply with.
+private struct ExplainPullRequestSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let reference: PullRequestReference
+
+    @State private var text = ""
+    @State private var working = false
+    @State private var status: String?
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Text("Explain \(reference.repo)#\(reference.number)").font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(12)
+            Divider()
+            ScrollView {
+                Group {
+                    if text.isEmpty {
+                        HStack(spacing: 8) {
+                            if working { ProgressView().controlSize(.small) }
+                            Text(working ? "Claude is reading it." : "Nothing yet.").foregroundStyle(.secondary)
+                        }
+                    } else {
+                        Text(text)
+                            .font(.body)
+                            .lineSpacing(4)
+                            .textSelection(.enabled)
+                    }
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Divider()
+            HStack {
+                if let status { Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
+                if working && !text.isEmpty { ProgressView().controlSize(.small) }
+                Spacer()
+                Button("Done") { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button(text.isEmpty ? "Explain" : "Explain Again") { explain() }
+                    .disabled(working)
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                    status = "Copied"
+                }
+                .disabled(text.isEmpty)
+            }
+            .padding(12)
+        }
+        .frame(minWidth: 560, idealWidth: 640, minHeight: 420, idealHeight: 480)
+        .onAppear { if text.isEmpty { explain() } }
+    }
+
+    private func explain() {
+        working = true
+        status = nil
+        let prompt = """
+            Explain pull request \(reference.repo)#\(reference.number), "\(reference.title)" (\(reference.url.absoluteString)), for someone who hasn't read it: explain the code, not just the PR description.
+
+            Read the actual changes with `gh pr diff \(reference.number) --repo \(reference.repo)` first, then `gh pr view \(reference.number) --repo \(reference.repo) --comments` for the stated intent and discussion. Base the explanation on what the diff does, not a reworded version of the title or description.
+
+            Reply with the explanation only, no preamble: a short paragraph on what the code does and why, then a few bullet points on the notable changes if there are several, naming the functions, types or files involved. Don't review it or suggest changes.
+            """
+        Task {
+            do {
+                text = try await ClaudeRunner.ask(prompt, org: reference.org, tools: ["Bash"])
+            } catch {
+                status = error.localizedDescription
+            }
+            working = false
+        }
+    }
+}
+
 // MARK: - The review tab
 
 /// A review's tab: the PR's files and diff with claude's findings and any

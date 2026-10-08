@@ -104,8 +104,8 @@ struct OpenElsewhereItems: View {
     }
 }
 
-/// Review with Claude (or Open Review) in a PR's right-click menu, wherever
-/// the PR is listed.
+/// Review with Claude (or Open Review) and Explain in a PR's right-click
+/// menu, wherever the PR is listed.
 private struct ReviewMenuItem: View {
     @Environment(OrgStore.self) private var orgs
     let destination: DetailSelection
@@ -113,6 +113,7 @@ private struct ReviewMenuItem: View {
     var body: some View {
         if let reference {
             ReviewWithClaudeButton(reference: reference)
+            ExplainPullRequestButton(reference: reference)
         }
     }
 

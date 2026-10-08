@@ -86,6 +86,7 @@ struct PullRequestWindow: View {
         .toolbar {
             if !isEmbedded {
                 ToolbarItem { ReviewWithClaudeButton(reference: reference) }
+                ToolbarItem { ExplainPullRequestButton(reference: reference) }
             }
         }
         .task(id: reference.id) { await details.load(reference.id, updatedAt: open?.updatedAt) }
