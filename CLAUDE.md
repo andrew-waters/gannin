@@ -712,6 +712,13 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   session on a server, through its Connect with command when that's ssh (`-T`, `BatchMode`, one shared connection, `ControlPath=/tmp/gannin-ssh-%C`). A
   PostToolUse hook on edits and Bash writes `changed`, which reads them again; else
   every 10 seconds, 30 over ssh.
+- An Ask session (`CodeSession.isAsk`, by its `ask-` branch until andrew-waters/gannin#56 gives it
+  its own info) has Files in place of Changes (`SessionFilesPane`, `SessionFiles`): everything in
+  its folder but `.gannin/` and `context/` (at most 1000), and the transcript's `filesEdited`
+  outside it under Elsewhere, newest first with size and time. Read 400 ms after `changed`, when
+  the transcript names a new file, and every two seconds while shown (MCP writes fire no hook).
+  Click opens; drag is the file (a promise as well as its URL); the menu has Open With, Show in
+  Finder, Save a Copy and Copy (`plans/2026-10-08-ask-files-pane.md`).
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its
   tab is flagged (`SessionStore.attention`): its tab is marked, the Dock icon counts them, a
   notification (Settings > General > Agent) opens its tab, and the tab bar's "N waiting" or
