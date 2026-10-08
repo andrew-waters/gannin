@@ -149,11 +149,11 @@ extension SessionStore {
     /// no tab is shown. False when the PR already has a review or enough
     /// automatic ones are running; a later check tries again.
     func startAutomaticReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String) async -> Bool {
-        // Not `startingReviews[pr.id] != nil` too: a review already being
-        // started by hand would join that in-flight task and come back as
-        // the manual session, which shouldn't count as automatic or be
-        // posted on its own. Leaving it be here means a later check finds
-        // it through `review(of:)` once that task's added its session.
+        // Also skip a PR whose review is still being started (`startingReviews`): a review
+        // already being started by hand would join that in-flight task and come back as the
+        // manual session, which shouldn't count as automatic or be posted on its own.
+        // Leaving it be here means a later check finds it through `review(of:)` once that
+        // task's added its session.
         guard review(of: pr.id) == nil, startingReviews[pr.id] == nil else { return false }
         guard automaticRuns.filter(isRunning).count < AutoReview.maxRunning else { return false }
         let session = await startReview(of: pr, harness: setup, harnessPath: harnessPath, reveals: false)
