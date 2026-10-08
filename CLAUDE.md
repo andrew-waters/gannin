@@ -29,7 +29,7 @@ It's a Mac app only (`platform: macOS`): AppKit is used directly, with no `#if o
 
 What's entered in Gannin (people's dates and time off, org settings, hidden items, stars) is
 kept in SwiftData on this device only (`Sync/UserDatabase.swift`, `UserData/Gannin.store`); no
-iCloud. What the team shares lives in the org's harness whenever it has one (team data,
+iCloud. What the team shares lives in its projects' harnesses whenever it has one (team data,
 `HarnessTeamData.swift`), which is how it's shared between people and Macs; stars, hidden items and which harnesses
 are yours stay here. The stores keep their data in memory and write through. Records have no
 unique constraints (the store once synced through CloudKit), so duplicates are merged on load:
@@ -501,7 +501,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   count what falls outside. Weeks still start on Monday everywhere.
 - People's dates (`PeopleDates.swift`, `PeopleDatesStore`, per org and login): start and end
   dates and time off (holiday or sick, inclusive day ranges with a note), entered by hand, kept
-  in the org's harness, or on this device for an org with none. The Time off part of the person view (`PersonColumn`, Work
+  in the home project's harness, or on this device for an org with none. The Time off part of the person view (`PersonColumn`, Work
   or Time off) has Calendar (`TimeOffCalendarView` with `fixedPerson`), Report
   (`PersonLeaveReport`: allowance tiles, holiday and sick by month, the year's entries, past
   leave years) and Details, where they're edited, from a person's context menu on the work log, threads or
@@ -617,7 +617,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 ## Claude Code sessions
 
 - `Gannin/Sessions/`: Work on This on an issue (`StartSessionButton`, the issue
-  page's toolbar) starts the issue's session in the org's harness, no repo to pick, and opens it
+  page's toolbar) starts the issue's session in the window's project's harness, no repo to pick, and opens it
   as a tab in the one Claude Code window (`SessionsWindow`, `SessionStore.tabs`, kept across
   launches; + opens a session already started, ⌘W closes a tab, claude keeps running). Each tab
   is a SwiftTerm terminal beside the issue (its session state, and its plans and requirements
@@ -772,7 +772,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - `SessionStore` keeps sessions (`CodeSession`: issue, branch `123-short-title`, the harness
   repo and its checkout path on the box it runs on) in Application Support/<bundle
   ID>/Sessions, and their terminals, so closing a window leaves claude running. Work on This
-  needs the org's harness set. Each session's folder holds its brief, settings and `start.sh`
+  needs a project. Each session's folder holds its brief, settings and `start.sh`
   (`SessionScript`), which a login, interactive shell runs: clone the harness (gh, else git) or
   `git pull --ff-only` it (warning, not failing, when it can't), keep `projects/` and
   `.worktrees/` out of its git (`info/exclude`), copy the brief and settings into the issue's
@@ -840,90 +840,91 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 
 ## Harness
 
-- `Gannin/Harness/`: the org's harness repo, a repo of plans,
+- `Gannin/Harness/`: each project's harness repo, a repo of plans,
   requirements, findings and skills beside the code. Its repo and branch (the default when
-  none is picked) are chosen from GitHub's lists in the org's Settings (`OrgConfig.harness`).
+  none is picked) are chosen from GitHub's lists in Settings > Projects.
   `HarnessStore` indexes it from GitHub, so it's the same for everyone: the branch's head
   commit (stopping if unchanged), the tree (REST), then changed blobs 30 to a query,
   parsed off the main thread. Cached in Application Support/Harness, fetched again after its
   interval (Settings › Sync, 10 minutes by default). The fetch is the store's own task, so a view going away doesn't cancel it.
-- The org has one harness of its own (`OrgConfig.harness`, the user's own setting, where the team's
-  data is kept), set in Settings > Harness (`HarnessesSection`: Add or Create Harness while there's
-  none, its branch, Remove), and each project can have its own (`RepoProject.harness`, team data,
-  set in Settings > Projects). `OrgConfig.allHarnesses` is every one, the org's first, each
-  project's covering its repos (`RepoProject.ownHarness`); `harnesses` is the ones in view: the
-  window's project's alone when it has one, else all. `harness(covering:)` picks the harness for
-  work: the window's project's, else the first naming the issue's or PR's repo (or its linked
-  PRs'), else one naming no repos (the org's), else the first; `harness(repo:)` looks through all.
-  Work on This, Review with Claude and planning offer a harness picker in their sheet when there
-  are several in view; notifications (the shared store) take the covering one. `HarnessStore` keys
-  indexes, loading and errors by `key(org, repo)` (cached as `org@owner~name.json`), `loadAll`
-  fetches every harness in view, and `combined(org:_:)` is the views' index across them: the
-  first's documents plus the others' under `owner/name:path` (`HarnessIndex.split`,
-  `HarnessDocument.harnessRepo`), so drawers, links, issue plans, epics, the Inbox and Ask see
-  them all. With All, the Harness page has a Harness filter and column, New asks which harness,
-  and Edit opens the document in its own; with a project that has a harness, it's that one's
-  alone. Checkouts are per harness (`SessionStore.harnessPathKey(org, repo:)`), listed in
-  Settings > Harness for every harness; the org's prompts are there and a project's on its page
-  in Projects. Harnesses beside the org's from before projects (`otherHarnesses`, only read)
-  become projects at launch (`OrgConfigStore.moveHarnessesToProjects`), once the org's harness
-  is indexed.
-- Projects (`Workload/RepoProjects.swift`, `RepoProject`, `OrgConfig.repoProjects`, a team file,
-  `.gannin/repo-projects.json`) are the unit a window works in: a name, repos, and optionally its
-  own harness, workflow board, investments, goals, scorecard measurables, recap cadence and
-  committed date field, each the org's while nil, and the repo whose linked boards it lists
-  (`boardsRepo`: the sidebar's Boards and the Boards page show `ProjectStore.boards(org:repo:)`,
-  the repo's boards that the org owns, `repoProjects`, cached per repo; nil for every board). Org › Project is picked from the project menu
-  above the org in the sidebar's footer (`SidebarFooter.projectMenu`, once the org has projects),
-  per window (`@SceneStorage("workspace")`, not `selectedProject`, which is a board;
-  carried by Open in New Tab and New Window through `NavigationRequest.workspace`, cleared when
-  the org changes); All is every repo. `MainView` puts the
-  project's store (`OrgConfigStore.scoped`, one per project, sharing `Storage` with the app's
-  store, `root`) in the window's environment, so every `configs.config(for:)` there has the
-  project laid over the org's settings (`OrgConfig.apply`: `focusRepos` from its repos, none
-  meaning every repo, its own settings in place of the org's, `scope`). Every view that leaves out
-  excluded repos checks `repoExclusion`, so the workload, metrics, scorecard, CI, Recap, issues and
-  Inbox narrow to the project; a project's repos count even when excluded for the org (it names
-  them), and CI fetches skip only excluded repos no project names (`unfetchedRepos`). Fetchers
-  stay org-wide. `update` on a project's store writes a
-  change to what the project keeps of its own into the project (`OrgConfig.separate`), the rest to
-  the org; `updateProject` changes a project directly; `baseConfig(for:)` is the saved settings.
-  Settings (shown with `root`, whichever project is picked) has a Projects pane
-  (`ProjectsSettingsSection`): one project at a time, its name and repos, its harness (the org's,
-  a repo, or Create Harness, with branch and prompts), The org's or Its own for each setting (its
-  own starts as a copy), and the workflow, investments and goals editors given the project's
-  store. The scorecard, recap cadence and committed date field are edited where they're used,
-  with the project picked.
-- Team data in the harness (`HarnessTeamData.swift`): an org with a harness keeps its views,
-  investments, issue workflow, working week, leave policy, exclusions, goals, authoring prompts,
-  recap cadence, scorecard, projects, committed date field, field notes and people's dates (time
-  off with sick days included) as JSON under `.gannin/` (`TeamFile`: `views.json`,
-  `investments.json`, `workflow.json`, `working-week.json`, `leave.json`, `exclusions.json`,
-  `goals.json`, `authoring.json`, `recap.json`, `scorecard.json`, `repo-projects.json`,
-  `prioritisation.json`, `field-notes.json`, `people/<login>.json`), keys sorted and calendar
-  days as `2026-10-03` (`TeamCoding`). The index reads `.gannin/*.json` beside the documents
-  (`HarnessIndex.dataFiles`), and every cached index loads at launch. It's always the harness's
-  once the org has one (`HarnessTeamStore.keepsData`, nothing copied from this device; the org's
-  own, else the first project's, `OrgConfig.teamHarness`): a file
-  that isn't there is the default, and `OrgConfigStore.config(for:)`, `PeopleDatesStore` and
-  `FieldNotesStore` read the team's parts from `HarnessTeamStore`. Only an org with no harness
-  keeps them on this device. Stars, hidden items, app settings and which harnesses it has stay
-  the user's own, on this device (`TeamDataSection` says what's where).
-- Edits to that data apply at once and wait as pending changes (`HarnessTeamStore.pending`,
-  kept on disk in Application Support/<bundle ID>/HarnessPending) until reviewed: the sidebar
-  shows "N changes to commit" above the sync row (`HarnessPendingRow`), whose Review
-  (`HarnessCommitSheet`) commits them together (`Gannin: time off for alex, 3 to 5 Oct`) or
+- Every harness is a project (`RepoProject`, identified by its harness's repo): which harnesses
+  are the org's projects is the user's own setting (`OrgConfig.harness`, home, then
+  `otherHarnesses`, `projectHarnesses`; changed through `OrgConfigStore.updateHarnesses`:
+  `addHarness`, `removeHarness`, `makeHome`, `updateHarness` for the branch). There's no org-wide
+  harness and no All: every window works in a project. `OrgConfig.allHarnesses` is every project's,
+  covering its repos (`RepoProject.ownHarness`); `harnesses` is the window's project's alone.
+  `harness(covering:)` picks the harness for work: the window's project's, or, from the app's
+  shared store with no window (notifications, auto review, `baseConfig`), the first naming the
+  PR's repo, else one naming none, else the first; `harness(repo:)` looks through all.
+  `HarnessStore` keys indexes, loading and errors by `key(org, repo)` (cached as
+  `org@owner~name.json`), `loadAll` fetches every harness in view, and `combined(org:_:)` is the
+  views' index across them: the first's documents plus the others' under `owner/name:path`
+  (`HarnessIndex.split`, `HarnessDocument.harnessRepo`). A palette result in another project's
+  harness switches the window to that project. Checkouts are per harness
+  (`SessionStore.harnessPathKey(org, repo:)`), listed in Settings > Harness.
+  Harnesses named by the old list of projects (`.gannin/repo-projects.json` in what was the org's
+  harness, or projects saved on this device) become projects (`OrgConfigStore.adoptProjects` at
+  launch, once home is indexed; `OrgConfig`'s decoding), and a harness with no `project.json`
+  takes its name and repos from that list.
+- Projects (`Workload/RepoProjects.swift`) are the unit a window works in: a harness, a name,
+  repos (none for every repo) and the repo whose linked boards it lists (`boardsRepo`: the
+  sidebar's Boards and the Boards page show `ProjectStore.boards(org:repo:)`, the repo's boards
+  that the org owns, `repoProjects`, cached per repo; nil for every board), kept in its harness as
+  `.gannin/project.json` (`ProjectFile`). Its workflow board, investments, goals, scorecard, recap
+  cadence and committed date field are its harness's own team files. Org › Project is picked from
+  the project menu above the org in the sidebar's footer (`SidebarFooter.projectMenu`), per window
+  (`@SceneStorage("workspace")`, the harness's repo, home when empty; not `selectedProject`, which
+  is a board; carried by Open in New Tab and New Window through `NavigationRequest.workspace`,
+  and the last picked per org on this Mac). `MainView` puts the project's store
+  (`OrgConfigStore.scoped`, one per project, sharing `Storage` with the app's store, `root`, which
+  reads home) in the window's environment, so every `configs.config(for:)` there is the org-wide
+  settings (`baseConfig(for:)`: home's, with every project in `repoProjects`) with the project's
+  own laid on (`HarnessTeamData.appliedProject`) and narrowed to it (`OrgConfig.apply`:
+  `focusRepos`, `scope`). Every view that leaves out excluded repos checks `repoExclusion`, so the
+  workload, metrics, scorecard, CI, Recap, issues and Inbox narrow to the project; a project's
+  repos count even when excluded for the org (it names them), and CI fetches skip only excluded
+  repos no project names (`unfetchedRepos`). Fetchers stay org-wide. `update` stages each changed
+  file in the right harness (`HarnessTeamStore.stage(org:project:)`: org-wide files to home, the
+  rest to the window's project); `updateProject` stages a project's `project.json`. So Settings'
+  Issues, Investments and Goals panes edit the window's project. Settings > Projects
+  (`ProjectsSettingsSection`): the projects, Home marked, Add Project (a repo the org has) and
+  Create Harness; then one at a time, its name and repos, boards, harness and branch, Make Home
+  (offering to copy the org-wide files first, `HarnessTeamStore.moveOrgWideData`) and its prompts.
+- Team data in the harnesses (`HarnessTeamData.swift`): an org with a harness keeps its team
+  data as JSON under `.gannin/` (`TeamFile`), keys sorted and calendar days as `2026-10-03`
+  (`TeamCoding`). Each project's harness has its own `project.json`, `investments.json`,
+  `workflow.json`, `goals.json`, `recap.json`, `scorecard.json` and `prioritisation.json`; the
+  home project's (the first) also has the org's (`TeamFile.isOrgWide`): `views.json`,
+  `working-week.json`, `leave.json`, `exclusions.json`, `authoring.json`, `field-notes.json` and
+  `people/<login>.json` (time off with sick days included). The index reads `.gannin/*.json`
+  beside the documents (`HarnessIndex.dataFiles`), and every cached index loads at launch.
+  `HarnessTeamStore` reads a harness at a time (`data(for:in:)`, `data(for:)` for home's), from the
+  user's list of project harnesses (`harnesses`): a file that isn't there is the default, and
+  `OrgConfigStore`, `PeopleDatesStore` and `FieldNotesStore` read the team's parts from it. Only
+  an org with no harness keeps them on this device. Stars, hidden items, app settings and which
+  harnesses are its projects stay the user's own (`TeamDataSection` in Settings > Harness says
+  what's where).
+- Edits to that data apply at once and wait as pending changes (`HarnessTeamStore.pending`, by
+  harness, kept on disk in Application Support/<bundle ID>/HarnessPending) until reviewed: the
+  sidebar shows "N changes to commit" above the sync row (`HarnessPendingRow`), whose Review
+  (`HarnessCommitSheet`, `changes(org:)`) commits each harness's together (`Gannin: time off for alex, 3 to 5 Oct`) or
   discards them. The commit merges each file three ways (`TeamCoding.merge`: objects by key,
   lists of objects by `id`, ours winning a clash) onto the harness's copy at the head, so
   changes made there since survive. What was written shows until the index catches up.
 - Time off can be requested (`Absence.approval`, holiday only): drawn pale and dashed, with
   Approve in its row and context menu, committed like any other change.
-- Settings > Harness offers Create Harness when there's none (`CreateHarnessSheet`): REST
-  `POST /orgs/{org}/repos` (private, `auto_init` so there's a branch), then one commit of
-  `HarnessSkeleton` (README, a starter CLAUDE.md listing the org's busiest repos, a generic
-  `STANDARDS.md`, requirements, plans, findings and learnings with front matter templates, skills,
-  sessions, `.gannin/`, and a `.gitignore` keeping out
-  `projects/` and `.worktrees/`), and it's picked as the org's harness.
+- Create Harness (`CreateHarnessSheet`, from Settings > Harness while there's none, and Settings >
+  Projects) is onboarding (`HarnessOnboarding.swift`): what a project and its harness are
+  (`HarnessIntroView`), the layout as an annotated tree of its folders and the `.gannin` files,
+  every project's and home's (`HarnessLayoutView`, `HarnessTreeView`, from `HarnessTour`), then
+  the project's name, the harness repo's (from the project's, `-harness`) and its code repos
+  (the busiest, ticked). Someone with no project starts at the beginning, anyone else at the name
+  with the tour a link away. Then REST `POST /orgs/{org}/repos` (private, `auto_init` so there's a
+  branch) and one commit of `HarnessSkeleton` (README, a starter CLAUDE.md listing its repos, a
+  generic `STANDARDS.md`, requirements, plans, findings and learnings with front matter templates,
+  skills, sessions, `.gannin/README.md` from `HarnessTour.readme`, and a `.gitignore` keeping out
+  `projects/` and `.worktrees/`) with its `project.json`; it's a project from then on, home if
+  it's the first.
 - The layout (`HarnessKind`): plans in a flat `plans/` (and, until they're moved, under
   `requirements/<module>/plans/`), requirements the rest of `requirements/`, `findings/`,
   `skills/`, `prompts/`, `learnings/` (grouped by their repo folder); READMEs and `_templates` left out. A front matter `type` overrides the folder, and

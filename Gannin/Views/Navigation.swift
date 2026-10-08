@@ -53,8 +53,9 @@ struct NavigationRequest {
     let org: String
     let sidebar: SidebarItem
     let path: [DetailSelection]
-    /// The project the window's narrowed to; nil for All.
-    var workspace: UUID? = nil
+    /// The project the window works in (its harness's repo); nil for the
+    /// one last picked, else home.
+    var workspace: String? = nil
     /// A command palette result to open once the window's on its org.
     var palette: PaletteDestination? = nil
 }

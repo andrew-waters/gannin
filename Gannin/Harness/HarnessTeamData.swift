@@ -1,8 +1,10 @@
 import Foundation
 import Observation
 
-/// Where the team's data sits in the harness: JSON under `.gannin/`, one
-/// concern a file, so commits and conflicts stay small.
+/// Where the team's data sits in a harness: JSON under `.gannin/`, one
+/// concern a file, so commits and conflicts stay small. Each project's
+/// harness has its own project files; the org-wide ones (`isOrgWide`) are
+/// read from and committed to the home project's.
 enum TeamFile {
     static let views = ".gannin/views.json"
     static let investments = ".gannin/investments.json"
@@ -14,10 +16,17 @@ enum TeamFile {
     static let authoring = ".gannin/authoring.json"
     static let recap = ".gannin/recap.json"
     static let scorecard = ".gannin/scorecard.json"
+    /// Every project, when the org's harness held them; only read.
     static let repoProjects = ".gannin/repo-projects.json"
+    static let project = ".gannin/project.json"
     static let prioritisation = ".gannin/prioritisation.json"
     static let fieldNotes = ".gannin/field-notes.json"
     static let peoplePrefix = ".gannin/people/"
+
+    /// The org's, in the home harness, rather than each project's.
+    static func isOrgWide(_ path: String) -> Bool {
+        path.hasPrefix(peoplePrefix) || [views, workingWeek, leave, exclusions, authoring, fieldNotes].contains(path)
+    }
 
     static func person(_ login: String) -> String { "\(peoplePrefix)\(login).json" }
 
@@ -40,6 +49,7 @@ enum TeamFile {
         case recap: "how often the team recaps"
         case scorecard: "the scorecard"
         case repoProjects: "projects"
+        case project: "the project's name and repos"
         case prioritisation: "the committed date field"
         case fieldNotes: "notes from the field"
         default: login(path).map { "dates for \($0)" } ?? path
@@ -77,7 +87,8 @@ struct HarnessTeamData {
     var authoring: [String: String]?
     var recap: RecapCadence?
     var scorecard: [Measurable]?
-    var repoProjects: [RepoProject]?
+    var project: ProjectFile?
+    var legacyProjects: [LegacyProject]?
     var prioritisation: TeamPrioritisation?
     var fieldNotes: [FieldNote]?
     var people: [String: PersonDates] = [:]
@@ -93,7 +104,8 @@ struct HarnessTeamData {
         authoring = files[TeamFile.authoring].flatMap { TeamCoding.decode([String: String].self, $0) }
         recap = files[TeamFile.recap].flatMap { TeamCoding.decode(RecapCadence.self, $0) }
         scorecard = files[TeamFile.scorecard].flatMap { TeamCoding.decode([Measurable].self, $0) }
-        repoProjects = files[TeamFile.repoProjects].flatMap { TeamCoding.decode([RepoProject].self, $0) }
+        project = files[TeamFile.project].flatMap { TeamCoding.decode(ProjectFile.self, $0) }
+        legacyProjects = files[TeamFile.repoProjects].flatMap { TeamCoding.decode([LegacyProject].self, $0) }
         prioritisation = files[TeamFile.prioritisation].flatMap { TeamCoding.decode(TeamPrioritisation.self, $0) }
         fieldNotes = files[TeamFile.fieldNotes].flatMap { TeamCoding.decode([FieldNote].self, $0) }
         for (path, text) in files {
@@ -103,24 +115,29 @@ struct HarnessTeamData {
         }
     }
 
-    /// The org's settings with the team's parts taken from here; the rest
-    /// (which harness, for one) stays the user's own.
-    func applied(to config: OrgConfig) -> OrgConfig {
+    /// The org-wide settings taken from here, the home harness's; the
+    /// rest (which harnesses, for one) stays the user's own.
+    func appliedOrgWide(to config: OrgConfig) -> OrgConfig {
         var config = config
         config.fieldViews = views ?? []
-        config.investments = investments
-        config.issueWorkflow = workflow
         config.workWeek = workWeek
         config.leave = leave
         config.excludedRepos = Set(exclusions?.repos ?? [])
         config.excludedAuthors = Set(exclusions?.people ?? [])
         config.includedAuthors = Set(exclusions?.includedPeople ?? [])
         config.reposWithoutReview = Set(exclusions?.reposWithoutReview ?? [])
-        config.goals = goals
         config.authoring = authoring
+        return config
+    }
+
+    /// A project's own settings taken from here, its harness's.
+    func appliedProject(to config: OrgConfig) -> OrgConfig {
+        var config = config
+        config.investments = investments
+        config.issueWorkflow = workflow
+        config.goals = goals
         config.recap = recap
         config.scorecard = scorecard
-        config.repoProjects = repoProjects ?? []
         config.committedDateField = prioritisation?.committedDateField
         return config
     }
@@ -139,7 +156,6 @@ struct HarnessTeamData {
         if before.authoring != after.authoring { files[TeamFile.authoring] = after.authoring.flatMap(TeamCoding.encode) }
         if before.recap != after.recap { files[TeamFile.recap] = after.recap.flatMap(TeamCoding.encode) }
         if before.scorecard != after.scorecard { files[TeamFile.scorecard] = after.scorecard.flatMap(TeamCoding.encode) }
-        if before.repoProjects != after.repoProjects { files[TeamFile.repoProjects] = after.repoProjects.isEmpty ? nil : TeamCoding.encode(after.repoProjects) }
         if before.leave != after.leave { files[TeamFile.leave] = after.leave.flatMap(TeamCoding.encode) }
         if before.committedDateField != after.committedDateField {
             files[TeamFile.prioritisation] = after.committedDateField.flatMap { TeamCoding.encode(TeamPrioritisation(committedDateField: $0)) }
@@ -279,14 +295,17 @@ enum TeamCoding {
 
 // MARK: - The store
 
-/// The team's data for orgs with a harness: read from the harness index, with edits applied at once and held as pending changes
-/// until they're reviewed and committed (one commit for however many edits,
-/// so a run of tweaks isn't a run of commits). Pending changes are kept on
-/// disk until then.
+/// The team's data for orgs with a harness, per harness: read from its
+/// index, with edits applied at once and held as pending changes until
+/// they're reviewed and committed (one commit a harness for however many
+/// edits, so a run of tweaks isn't a run of commits). Pending changes are
+/// kept on disk until then.
 ///
-/// Every org with a harness keeps its data there, from the start: a concern
-/// with no file is its default. `OrgConfigStore`, `PeopleDatesStore` and
-/// `FieldNotesStore` only keep it on this device for an org with none.
+/// Each project's harness keeps the project's own files and the home
+/// project's (the first) the org-wide ones, from the start: a concern with
+/// no file is its default. `OrgConfigStore`, `PeopleDatesStore` and
+/// `FieldNotesStore` only keep it on this device for an org with no
+/// harness.
 @Observable
 final class HarnessTeamStore {
     struct Pending: Codable, Equatable {
@@ -305,150 +324,195 @@ final class HarnessTeamStore {
         var before: Set<String>
     }
 
+    /// By harness (`key`), then path.
     private(set) var pending: [String: [String: Pending]] = [:]
+    /// By org.
     private(set) var committing: Set<String> = []
+    /// By org.
     private(set) var errors: [String: String] = [:]
     @ObservationIgnored private var written: [String: Written] = [:]
     @ObservationIgnored private var revision = 0
     @ObservationIgnored private var cache: [String: (key: String, data: HarnessTeamData)] = [:]
 
     let harness: HarnessStore
-    /// The org's harness, from its own settings (not the team's, which come
-    /// from here).
-    @ObservationIgnored var setup: (String) -> HarnessConfig? = { _ in nil }
+    /// The org's project harnesses, home first, from the user's own
+    /// settings (not the team's, which come from here).
+    @ObservationIgnored var harnesses: (String) -> [HarnessConfig] = { _ in [] }
 
     init(harness: HarnessStore) {
         self.harness = harness
         let files = (try? FileManager.default.contentsOfDirectory(at: Self.directory, includingPropertiesForKeys: nil)) ?? []
         for file in files where file.pathExtension == "json" {
-            if let data = try? Data(contentsOf: file), let changes = try? JSONDecoder().decode([String: Pending].self, from: data) {
-                pending[file.deletingPathExtension().lastPathComponent] = changes
+            let key = file.deletingPathExtension().lastPathComponent.replacingOccurrences(of: "~", with: "/")
+            if key.contains("@"), let data = try? Data(contentsOf: file), let changes = try? JSONDecoder().decode([String: Pending].self, from: data) {
+                pending[key] = changes
             }
         }
     }
 
-    /// The org's team data files as they stand here: the index's (none
+    private static func key(_ org: String, _ setup: HarnessConfig) -> String { "\(org)@\(setup.repo)" }
+
+    /// The home harness, where the org-wide data is kept.
+    func home(_ org: String) -> HarnessConfig? { harnesses(org).first }
+
+    /// Whether the org's team data is the harnesses': it has one.
+    func keepsData(_ org: String) -> Bool { home(org) != nil }
+
+    /// A harness's team data files as they stand here: the index's (none
     /// until it's loaded), then what was just committed, then what's
     /// pending.
-    private func files(for org: String, index: HarnessIndex?) -> [String: String] {
+    private func files(for key: String, index: HarnessIndex?) -> [String: String] {
         var files = Dictionary((index?.dataFiles ?? []).map { ($0.path, $0.text) }, uniquingKeysWith: { first, _ in first })
-        if let written = written[org] {
+        if let written = written[key] {
             if let commit = index?.commit, !written.before.contains(commit) {
-                self.written[org] = nil
+                self.written[key] = nil
             } else {
                 for (path, text) in written.files { files[path] = text }
             }
         }
-        for (path, change) in pending[org] ?? [:] { files[path] = change.ours }
+        for (path, change) in pending[key] ?? [:] { files[path] = change.ours }
         return files
     }
 
-    /// The team's data, for an org with a harness.
+    /// The home harness's team data, for an org with a harness.
     func data(for org: String) -> HarnessTeamData? {
-        guard let setup = setup(org) else { return nil }
+        home(org).map { data(for: org, in: $0) }
+    }
+
+    /// One harness's team data.
+    func data(for org: String, in setup: HarnessConfig) -> HarnessTeamData {
+        let key = Self.key(org, setup)
         let index = harness.index(for: org, setup)
-        let key = "\(setup.repo)|\(index?.commit ?? "")|\(index?.fetchedAt.timeIntervalSince1970 ?? 0)|\(revision)|\(pending[org]?.count ?? 0)"
-        if let cached = cache[org], cached.key == key { return cached.data }
-        let data = HarnessTeamData(files: files(for: org, index: index))
-        cache[org] = (key, data)
+        let stamp = "\(index?.commit ?? "")|\(index?.fetchedAt.timeIntervalSince1970 ?? 0)|\(revision)|\(pending[key]?.count ?? 0)"
+        if let cached = cache[key], cached.key == stamp { return cached.data }
+        let data = HarnessTeamData(files: files(for: key, index: index))
+        cache[key] = (stamp, data)
         return data
     }
 
-    /// Whether the org's team data is the harness's: it has one.
-    func keepsData(_ org: String) -> Bool { setup(org) != nil }
-
     // MARK: Changing
 
-    /// Applies changed files at once, pending until committed. A file
-    /// changed back to what the harness has is no longer pending.
-    func stage(org: String, _ changes: [String: String?]) {
-        guard !changes.isEmpty, let setup = setup(org) else { return }
+    /// Applies changed files at once, pending until committed: org-wide
+    /// ones in the home harness, the rest in `project` (home when nil). A
+    /// file changed back to what the harness has is no longer pending.
+    func stage(org: String, project: HarnessConfig? = nil, _ changes: [String: String?]) {
+        guard let home = home(org) else { return }
+        let orgWide = changes.filter { TeamFile.isOrgWide($0.key) }
+        stage(org: org, in: home, orgWide)
+        stage(org: org, in: project ?? home, changes.filter { !TeamFile.isOrgWide($0.key) })
+    }
+
+    private func stage(org: String, in setup: HarnessConfig, _ changes: [String: String?]) {
+        guard !changes.isEmpty else { return }
+        let key = Self.key(org, setup)
         let index = harness.index(for: org, setup)
         var current = Dictionary((index?.dataFiles ?? []).map { ($0.path, $0.text) }, uniquingKeysWith: { first, _ in first })
-        if let written = written[org], index.map({ written.before.contains($0.commit) }) ?? true {
+        if let written = written[key], index.map({ written.before.contains($0.commit) }) ?? true {
             for (path, text) in written.files { current[path] = text }
         }
-        var files = pending[org] ?? [:]
+        var files = pending[key] ?? [:]
         for (path, text) in changes {
             let base = files[path]?.base ?? current[path]
             files[path] = text == base ? nil : Pending(base: base, ours: text)
         }
-        pending[org] = files.isEmpty ? nil : files
+        pending[key] = files.isEmpty ? nil : files
         revision += 1
-        save(org)
+        save(key)
+    }
+
+    /// What's pending for the org, a harness at a time, home first. A
+    /// harness that's no longer one of its projects is left out.
+    func changes(org: String) -> [(setup: HarnessConfig, changes: [String: Pending])] {
+        harnesses(org).compactMap { setup in
+            pending[Self.key(org, setup)].flatMap { $0.isEmpty ? nil : (setup, $0) }
+        }
     }
 
     func discard(org: String) {
-        pending[org] = nil
+        for key in pending.keys where key.hasPrefix("\(org)@") {
+            pending[key] = nil
+            save(key)
+        }
         errors[org] = nil
         revision += 1
-        save(org)
     }
 
     /// Every org's pending changes, as Delete Your Data removes them. What's
     /// committed is the team's, and stays in the harness.
     func discardAll() {
-        for org in pending.keys { discard(org: org) }
+        for key in pending.keys {
+            pending[key] = nil
+            save(key)
+        }
+        errors = [:]
+        revision += 1
     }
 
-    /// Commits what's pending in one commit, on top of whatever the harness
-    /// has now: a file someone else changed meanwhile gets our change merged
-    /// into their copy. Called once the user has confirmed.
+    /// Commits what's pending, one commit a harness, on top of whatever
+    /// each has now: a file someone else changed meanwhile gets our change
+    /// merged into their copy. Called once the user has confirmed.
     func commit(org: String) async {
-        guard let setup = setup(org), let changes = pending[org], !changes.isEmpty, !committing.contains(org) else { return }
+        guard !committing.contains(org) else { return }
         committing.insert(org)
         defer { committing.remove(org) }
+        errors[org] = nil
+        for (setup, changes) in changes(org: org) {
+            do {
+                try await commit(org: org, setup: setup, changes: changes)
+            } catch {
+                errors[org] = "\(setup.repo): \(error.localizedDescription)"
+                return
+            }
+        }
+    }
+
+    private func commit(org: String, setup: HarnessConfig, changes: [String: Pending]) async throws {
+        let key = Self.key(org, setup)
         let message = Self.message(Self.notes(changes))
         let before = harness.index(for: org, setup)?.commit
         var head: String?
         var committed: [String: String?] = [:]
-        do {
-            try await harness.commit(org: org, setup: setup) { commit in
-                head = commit
-                let paths = Array(changes.keys)
-                let theirs = try await self.harness.files(setup: setup, at: commit, paths: paths)
-                var files: [String: String?] = [:]
-                for (path, change) in changes {
-                    let current = theirs[path] ?? nil
-                    let merged = current == change.base ? change.ours : TeamCoding.merge(base: change.base, ours: change.ours, theirs: current)
-                    if merged != current { files[path] = merged }
-                }
-                committed = files
-                return files.isEmpty ? nil : HarnessChange(message: message, files: files)
+        try await harness.commit(org: org, setup: setup) { commit in
+            head = commit
+            let paths = Array(changes.keys)
+            let theirs = try await self.harness.files(setup: setup, at: commit, paths: paths)
+            var files: [String: String?] = [:]
+            for (path, change) in changes {
+                let current = theirs[path] ?? nil
+                let merged = current == change.base ? change.ours : TeamCoding.merge(base: change.base, ours: change.ours, theirs: current)
+                if merged != current { files[path] = merged }
             }
-            written[org] = Written(files: committed, before: Set([before, head].compactMap { $0 }))
-            // Edits made while committing stay pending.
-            var remaining = pending[org] ?? [:]
-            for (path, change) in changes where remaining[path] == change {
-                remaining[path] = nil
-            }
-            pending[org] = remaining.isEmpty ? nil : remaining
-            errors[org] = nil
-            revision += 1
-            save(org)
-        } catch {
-            errors[org] = error.localizedDescription
+            committed = files
+            return files.isEmpty ? nil : HarnessChange(message: message, files: files)
         }
+        written[key] = Written(files: committed, before: Set([before, head].compactMap { $0 }))
+        // Edits made while committing stay pending.
+        var remaining = pending[key] ?? [:]
+        for (path, change) in changes where remaining[path] == change {
+            remaining[path] = nil
+        }
+        pending[key] = remaining.isEmpty ? nil : remaining
+        revision += 1
+        save(key)
     }
 
-    /// Copies the team's data (`.gannin/`) as committed into another of
-    /// the org's harnesses, in one commit, for keeping it there instead.
-    /// The caller then makes that the team data's harness; the old copy
-    /// stays where it was.
-    func moveData(org: String, to target: HarnessConfig) async throws {
-        guard let current = setup(org), current.repo != target.repo,
-              let files = harness.index(for: org, current)?.dataFiles, !files.isEmpty else { return }
+    /// Copies the org-wide data as committed into another project's
+    /// harness, in one commit, for making it home. The caller then makes
+    /// it home; the old copy stays where it was.
+    func moveOrgWideData(org: String, to target: HarnessConfig) async throws {
+        guard let current = home(org), current.repo != target.repo,
+              let files = harness.index(for: org, current)?.dataFiles?.filter({ TeamFile.isOrgWide($0.path) }), !files.isEmpty else { return }
         let texts = Dictionary(files.map { ($0.path, Optional($0.text)) }, uniquingKeysWith: { first, _ in first })
         let before = harness.index(for: org, target)?.commit
         var head: String?
         try await harness.commit(org: org, setup: target) { commit in
             head = commit
             return HarnessChange(
-                message: "Gannin: the team's settings and people's dates\n\nMoved from \(current.repo), where they were kept before.",
+                message: "Gannin: the org's settings and people's dates\n\nMoved from \(current.repo), where they were kept before.",
                 files: texts
             )
         }
-        written[org] = Written(files: texts, before: Set([before, head].compactMap { $0 }))
+        written[Self.key(org, target)] = Written(files: texts, before: Set([before, head].compactMap { $0 }))
         revision += 1
     }
 
@@ -523,9 +587,9 @@ final class HarnessTeamStore {
             .appending(path: "HarnessPending", directoryHint: .isDirectory)
     }
 
-    private func save(_ org: String) {
-        let file = Self.directory.appending(path: "\(org).json")
-        guard let changes = pending[org] else {
+    private func save(_ key: String) {
+        let file = Self.directory.appending(path: "\(key.replacingOccurrences(of: "/", with: "~")).json")
+        guard let changes = pending[key] else {
             try? FileManager.default.removeItem(at: file)
             return
         }

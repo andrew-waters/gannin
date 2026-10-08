@@ -239,7 +239,7 @@ struct AttentionOverview: View {
 
         // Committed work overdue.
         if let board = config.workflow.projectNumber, let history = issueStore.history(for: org) {
-            let field = configs.currentProject(org)?.committedDateField ?? configs.baseConfig(for: org).committedDate
+            let field = configs.config(for: org).committedDate
             for record in history.issues.values where record.isOpen && !config.repoExclusion.contains(record.repo) {
                 guard case .date(let due)? = record.fields(onProject: board)?.values[field], due < today else { continue }
                 items.append(Item(

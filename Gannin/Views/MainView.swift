@@ -158,12 +158,12 @@ struct MainView: View {
     @AppStorage("showHidden") private var showHidden = false
 
     @SceneStorage("selectedOrg") private var selectedOrg: String?
-    /// The project the window's narrowed to, by ID; empty for All. Not
-    /// `selectedProject`, which is a board.
+    /// The project the window works in, by its harness's repo; empty for
+    /// home. Not `selectedProject`, which is a board.
     @SceneStorage("workspace") private var workspaceID = ""
-    private var workspace: UUID? {
-        get { UUID(uuidString: workspaceID) }
-        nonmutating set { workspaceID = newValue?.uuidString ?? "" }
+    private var workspace: String? {
+        get { workspaceID.isEmpty ? nil : workspaceID }
+        nonmutating set { workspaceID = newValue ?? "" }
     }
 
     /// The last org picked in any window, for a window that opens with
@@ -171,8 +171,8 @@ struct MainView: View {
     @AppStorage("lastOrg") private var lastOrg = ""
 
     /// The last project picked for an org in any window, on this Mac.
-    private static func lastWorkspace(for org: String) -> UUID? {
-        UserDefaults.standard.string(forKey: "lastWorkspace.\(org)").flatMap(UUID.init(uuidString:))
+    private static func lastWorkspace(for org: String) -> String? {
+        UserDefaults.standard.string(forKey: "lastWorkspace.\(org)").flatMap { $0.isEmpty ? nil : $0 }
     }
 
     /// The settings as this window sees them, its project laid over them.
@@ -383,9 +383,9 @@ struct MainView: View {
         case .org:
             break
         case .harnessDocument(let repo, _, _):
-            // A project with its own harness only shows that one's
-            // documents: open others with All.
-            if !orgConfigs.config(for: destination.org).harnesses.contains(where: { $0.repo == repo }) { workspace = nil }
+            // A window shows its project's harness's documents: open
+            // another's in its project.
+            if !orgConfigs.config(for: destination.org).harnesses.contains(where: { $0.repo == repo }) { workspace = repo }
             paletteDelivery = destination
         case .page, .newIssue:
             paletteDelivery = destination
@@ -1171,7 +1171,7 @@ struct OrgSidebar: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(IssueStore.self) private var issueStore
     @Binding var selectedOrg: String?
-    @Binding var workspace: UUID?
+    @Binding var workspace: String?
     @Binding var selection: SidebarItem?
     let workload: Workload?
     @AppStorage("sidebarPeopleExpanded") private var peopleExpanded = true
@@ -1507,7 +1507,7 @@ private struct SidebarFooter: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(\.openURL) private var openURL
     @Binding var selectedOrg: String?
-    @Binding var workspace: UUID?
+    @Binding var workspace: String?
     @Binding var selection: SidebarItem?
     @State private var showingSettings = false
 
@@ -1538,24 +1538,22 @@ private struct SidebarFooter: View {
         .padding(.bottom, 10)
     }
 
-    /// The window's project, or All; other windows and tabs keep theirs.
+    /// The window's project; other windows and tabs keep theirs.
     private func projectMenu(_ org: String) -> some View {
         let projects = configs.baseConfig(for: org).repoProjects
         let project = configs.currentProject(org)
         return Menu {
             Picker("Project", selection: Binding(get: { project?.id }, set: { workspace = $0 })) {
-                Text("All").tag(UUID?.none)
-                Divider()
                 ForEach(projects) { Text($0.name).tag(Optional($0.id)) }
             }
             .pickerStyle(.inline)
             .labelsHidden()
         } label: {
             HStack(spacing: 8) {
-                Image(systemName: project == nil ? "square.stack.3d.up" : "folder")
-                    .foregroundStyle(project == nil ? Color.secondary : Color.accentColor)
+                Image(systemName: "folder")
+                    .foregroundStyle(Color.accentColor)
                     .frame(width: 20)
-                Text(project?.name ?? "All projects")
+                Text(project?.name ?? "Project")
                     .lineLimit(1)
                 Spacer(minLength: 4)
                 Image(systemName: "chevron.up.chevron.down")

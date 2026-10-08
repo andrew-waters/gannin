@@ -9,8 +9,9 @@ struct HarnessPendingRow: View {
     @State private var isReviewing = false
 
     var body: some View {
-        if let changes = team.pending[org], !changes.isEmpty {
-            let notes = HarnessTeamStore.notes(changes)
+        let pending = team.changes(org: org)
+        if !pending.isEmpty {
+            let notes = pending.flatMap { HarnessTeamStore.notes($0.changes) }
             VStack(spacing: 0) {
                 Divider()
                 HStack(spacing: 6) {
@@ -46,23 +47,34 @@ struct HarnessCommitSheet: View {
     @State private var confirmingDiscard = false
 
     var body: some View {
-        let changes = team.pending[org] ?? [:]
-        let notes = HarnessTeamStore.notes(changes)
-        let repo = configs.harness(for: org)?.repo ?? "the harness"
+        let pending = team.changes(org: org)
+        let repos = pending.map(\.setup.repo)
+        let repo = repos.count == 1 ? repos[0] : "\(repos.count) harnesses"
         let committing = team.committing.contains(org)
         VStack(alignment: .leading, spacing: 14) {
             Text("Commit to \(repo)").font(.title3.weight(.semibold))
-            Text("The team's settings and people's dates are kept in the harness, so everyone sees these once they're committed. Gannin commits them together, on top of any changes made there since.")
+            Text("The team's settings and people's dates are kept in the projects' harnesses, so everyone sees these once they're committed. Gannin commits each harness's together, on top of any changes made there since.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-            List(Array(notes.enumerated()), id: \.offset) { _, note in
-                Text(note.prefix(1).uppercased() + note.dropFirst())
+            List {
+                ForEach(pending, id: \.setup.repo) { harness in
+                    let notes = HarnessTeamStore.notes(harness.changes)
+                    Section {
+                        ForEach(Array(notes.enumerated()), id: \.offset) { _, note in
+                            Text(note.prefix(1).uppercased() + note.dropFirst())
+                        }
+                    } header: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(harness.setup.repo)
+                            Text(HarnessTeamStore.message(notes).components(separatedBy: "\n").first ?? "")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                }
             }
             .frame(minHeight: 100, maxHeight: 280)
-            Text(HarnessTeamStore.message(notes).components(separatedBy: "\n").first ?? "")
-                .font(.caption.monospaced())
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
             if let error = team.errors[org] {
                 Text("Couldn't commit: \(error)")
                     .font(.callout)
@@ -71,7 +83,7 @@ struct HarnessCommitSheet: View {
             }
             HStack {
                 Button("Discard Changes", role: .destructive) { confirmingDiscard = true }
-                    .disabled(committing || changes.isEmpty)
+                    .disabled(committing || pending.isEmpty)
                 Spacer()
                 if committing { ProgressView().controlSize(.small) }
                 Button("Cancel", role: .cancel) { dismiss() }
@@ -84,7 +96,7 @@ struct HarnessCommitSheet: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .disabled(committing || changes.isEmpty)
+                .disabled(committing || pending.isEmpty)
             }
         }
         .padding(20)
@@ -96,7 +108,7 @@ struct HarnessCommitSheet: View {
                 dismiss()
             }
         } message: {
-            Text("Everything goes back to what \(repo) has.")
+            Text("Everything goes back to what \(repos.count == 1 ? repo : "the harnesses have").")
         }
     }
 }
@@ -104,16 +116,28 @@ struct HarnessCommitSheet: View {
 /// Settings > Harness: where the team's data is kept.
 struct TeamDataSection: View {
     let org: String
-    let setup: HarnessConfig
+    /// The window's.
+    let project: RepoProject
+    let home: RepoProject
 
     var body: some View {
         Section {
-            LabeledContent("Team data") {
-                Text("In \(setup.repo)")
+            LabeledContent(project.name) {
+                Text(project.harness.repo)
             }
-            Text("Views, investment categories, the issue workflow, working week, leave policy, repos and people left out, goals, the scorecard, recap cadence, projects, drafting prompts, the committed date field, notes from the field, and people's dates and time off are read from .gannin in the harness, so everyone in \(org) works from the same copy. Changes wait in the sidebar until you review and commit them.")
+            Text("The project's name and repos, investment categories, issue workflow, goals, scorecard, recap cadence and committed date field are read from .gannin in its harness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            if home.id != project.id {
+                LabeledContent("Home (\(home.name))") {
+                    Text(home.harness.repo)
+                }
+            }
+            Text("\(home.id == project.id ? "It's home, so it also keeps" : "Home keeps") what's the org's: views, the working week, leave policy, repos and people left out, drafting prompts, notes from the field, and people's dates and time off. Everyone in \(org) works from the same copies, and changes wait in the sidebar until you review and commit them. Projects are added and home picked under Projects.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("Team data")
         }
     }
 }

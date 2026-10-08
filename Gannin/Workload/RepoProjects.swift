@@ -1,67 +1,54 @@
 import SwiftUI
 
-/// A project: a named set of repos (a product, a side project) that can
-/// have its own harness, workflow board, investments, goals, scorecard,
-/// recap cadence and committed date field, each the org's while unset. A
-/// window picks one (Org › Project in the sidebar's footer) and narrows to
-/// it: every other repo is left out of the workload, the stats, the
-/// scorecard, CI, Recap and the issue pages, as excluded repos are, and its
-/// sessions and Harness pages are its harness's. A team setting, so in the
-/// harness once the org keeps its data there.
+/// A project: one harness repo and the code repos it's for (a product, a
+/// side project). Its name, repos and boards are `.gannin/project.json` in
+/// its harness, and its workflow board, investments, goals, scorecard,
+/// recap cadence and committed date field are that harness's own team
+/// files. Every window works in one (Org › Project in the sidebar's
+/// footer) and narrows to it: every other repo is left out of the
+/// workload, the stats, the scorecard, CI, Recap and the issue pages, as
+/// excluded repos are, and its sessions and Harness pages are its
+/// harness's. Which harnesses are projects is the user's own
+/// (`OrgConfig.harness` and `otherHarnesses`); the first, home, also keeps
+/// the org-wide data.
 struct RepoProject: Codable, Hashable, Identifiable {
-    var id = UUID()
+    var harness: HarnessConfig
     var name: String
-    /// `owner/name`.
+    /// `owner/name`; none for every repo.
     var repos: [String]
-    /// Its own harness; nil for the org's.
-    var harness: HarnessConfig?
-    /// Its own workflow board; nil for the org's.
-    var workflow: IssueWorkflow?
-    /// Its own investment categories; nil for the org's.
-    var investments: InvestmentConfig?
-    /// Its own goals; nil for the org's.
-    var goals: MetricGoals?
-    /// Its own scorecard measurables; nil for the org's.
-    var scorecard: [Measurable]?
-    /// Its own recap cadence; nil for the org's.
-    var recap: RecapCadence?
     /// The repo whose linked boards it lists (`owner/name`); nil for every
     /// board the org has.
     var boardsRepo: String?
-    /// The board's date field Prioritisation reads as committed to; nil
-    /// for the one picked for the org on this Mac.
-    var committedDateField: String?
 
-    init(name: String, repos: [String], harness: HarnessConfig? = nil) {
-        self.name = name
-        self.repos = repos
-        self.harness = harness
-    }
-
-    /// Tolerates projects saved before a field existed.
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(UUID.self, forKey: .id)
-        name = try container.decode(String.self, forKey: .name)
-        repos = try container.decodeIfPresent([String].self, forKey: .repos) ?? []
-        harness = try container.decodeIfPresent(HarnessConfig.self, forKey: .harness)
-        workflow = try container.decodeIfPresent(IssueWorkflow.self, forKey: .workflow)
-        investments = try container.decodeIfPresent(InvestmentConfig.self, forKey: .investments)
-        goals = try container.decodeIfPresent(MetricGoals.self, forKey: .goals)
-        scorecard = try container.decodeIfPresent([Measurable].self, forKey: .scorecard)
-        recap = try container.decodeIfPresent(RecapCadence.self, forKey: .recap)
-        committedDateField = try container.decodeIfPresent(String.self, forKey: .committedDateField)
-        boardsRepo = try container.decodeIfPresent(String.self, forKey: .boardsRepo)
-    }
+    /// Its harness's repo: a harness is one project.
+    var id: String { harness.repo }
 
     /// Its harness, for its repos: where work in them runs.
-    var ownHarness: HarnessConfig? {
-        harness.map { setup in
-            var setup = setup
-            setup.repos = repos
-            return setup
-        }
+    var ownHarness: HarnessConfig {
+        var setup = harness
+        setup.repos = repos
+        return setup
     }
+
+    /// What `.gannin/project.json` holds.
+    var file: ProjectFile { ProjectFile(name: name, repos: repos, boardsRepo: boardsRepo) }
+}
+
+/// A project as its harness keeps it, `.gannin/project.json`.
+struct ProjectFile: Codable, Hashable {
+    var name: String
+    var repos: [String]
+    var boardsRepo: String?
+}
+
+/// A project as `.gannin/repo-projects.json` listed it, when the org's
+/// harness held every project: only read, for a harness with no
+/// `project.json` of its own yet.
+struct LegacyProject: Decodable {
+    var name: String
+    var repos: [String]?
+    var harness: HarnessConfig?
+    var boardsRepo: String?
 }
 
 /// What views check a repo against: with a project picked, anything
@@ -78,94 +65,123 @@ struct RepoExclusion: Hashable {
     }
 }
 
-/// Settings › Projects: the org's projects, one at a time: its name and
-/// repos, its harness, and which settings it keeps of its own, with their
-/// editors for the project's copy.
+/// Settings › Projects: the org's projects, each a harness, one at a time:
+/// its name and repos, boards, harness branch and prompts, and which is
+/// home. Its workflow, investments and goals are edited in their panes, and
+/// its scorecard, recap cadence and committed date field where they're
+/// used, with it picked for the window.
 struct ProjectsSettingsSection: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HarnessStore.self) private var harness
+    @Environment(HarnessTeamStore.self) private var team
     @Environment(ProjectStore.self) private var boards
     let org: String
     /// Every repo there is to pick from.
     let repos: [String]
-    let teams: [Team]
-    /// The project being edited, by ID.
+    /// The project being edited, by its harness's repo.
     @SceneStorage("settingsProject") private var selectedID = ""
     @State private var isCreatingHarness = false
+    @State private var isAddingProject = false
     /// Asked about before it goes.
     @State private var removing: RepoProject?
+    /// Asked about before it's home.
+    @State private var homing: RepoProject?
+    @State private var isMoving = false
+    @State private var moveError: String?
     @State private var isAddingRepo = false
-
-    /// The settings a project can keep of its own.
-    enum Own: String, CaseIterable, Identifiable {
-        case workflow = "Workflow board"
-        case investments = "Investments"
-        case goals = "Goals"
-        case scorecard = "Scorecard"
-        case recap = "Recap cadence"
-        case committedDate = "Committed date field"
-
-        var id: Self { self }
-    }
 
     var body: some View {
         let projects = configs.baseConfig(for: org).repoProjects
-        let selected = projects.first { $0.id.uuidString == selectedID } ?? projects.first
+        let selected = projects.first { $0.id == selectedID } ?? configs.currentProject(org)
         Section {
             if projects.isEmpty {
-                Text("A project is a set of repos (a product, a side project) that can have its own harness, workflow board, investments, goals and scorecard. Pick one at the bottom of the sidebar and the window narrows to it.")
+                Text("A project is a harness, a repo of plans, requirements, findings, skills and prompts, and the code repos it's for (a product, a side project). Its settings are kept in its harness, and every window works in one, picked at the bottom of the sidebar.")
                     .foregroundStyle(.secondary)
             }
             ForEach(projects) { project in
-                projectRow(project, isSelected: project.id == selected?.id)
+                projectRow(project, isSelected: project.id == selected?.id, isHome: project.id == projects.first?.id)
             }
-            Button("Add Project") {
-                let project = RepoProject(name: "New project", repos: [])
-                configs.update(org) { $0.repoProjects.append(project) }
-                selectedID = project.id.uuidString
+            HStack {
+                Button("Add Project") { isAddingProject = true }
+                    .popover(isPresented: $isAddingProject, arrowEdge: .bottom) {
+                        SearchableList(choices: harnessChoices(projects), selection: nil, prompt: "Search repositories", isLoading: harness.repositories[org] == nil) { repo in
+                            isAddingProject = false
+                            guard let repo else { return }
+                            configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: repo)) }
+                            selectedID = repo
+                        }
+                    }
+                    .help("Make a repo \(org) has a project's harness")
+                Button("Create Harness") { isCreatingHarness = true }
+                    .help("Create a repo for a new project's harness")
+            }
+            if let moveError {
+                Text(moveError).font(.caption).foregroundStyle(.red)
             }
         } header: {
             Text("Projects")
         } footer: {
-            Text("Click a project to edit it below. Each window picks a project, or All, at the bottom of the sidebar. Excluded repos stay out either way.")
+            Text("Each project's settings are kept in its harness, under .gannin. Home's also keeps what's the org's: people's dates and time off, leave, the working week, repos and people left out, views and notes from the field.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+        .task { await harness.loadRepositories(org: org) }
+        .loadsHarness(org: org)
+        .sheet(isPresented: $isCreatingHarness) { CreateHarnessSheet(org: org) }
         .confirmationDialog("Remove \(removing?.name ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             if let project = removing {
-                Button("Remove Project", role: .destructive) { remove(project) }
+                Button("Remove Project", role: .destructive) { remove(project, from: projects) }
             }
         } message: {
-            Text("Its repos and harness are untouched, and so is anything it kept of its own in the org's settings. Windows on it go back to All.")
+            if removing?.id == projects.first?.id, projects.count > 1 {
+                Text("\(removing?.harness.repo ?? "") and everything in it are untouched. It's home, so \(projects[1].name) becomes home, and the org's data is read from its harness from then on.")
+            } else {
+                Text("\(removing?.harness.repo ?? "") and everything in it are untouched; Gannin stops reading it.")
+            }
+        }
+        .confirmationDialog("Make \(homing?.name ?? "") home?", isPresented: Binding(get: { homing != nil }, set: { if !$0 { homing = nil } })) {
+            if let project = homing {
+                Button("Copy the Org's Data and Make Home") { makeHome(project, copying: true) }
+                Button("Make Home Without Copying") { makeHome(project, copying: false) }
+            }
+        } message: {
+            Text("People's dates, leave, the working week, exclusions, views and notes from the field are read from home's harness. Gannin can commit a copy of them from \(projects.first?.harness.repo ?? "") to \(homing?.harness.repo ?? "") first; the old copy stays where it is.")
         }
         if let selected {
             details(selected)
             boardsSection(selected)
-            harnessSection(selected)
-            if let setup = selected.harness {
-                HarnessPromptsSection(org: org, setup: setup)
-            }
-            ownSection(selected)
-            ownEditors(selected)
-                .environment(configs.scoped(selected.id))
+            harnessSection(selected, isHome: selected.id == projects.first?.id)
+            HarnessPromptsSection(org: org, setup: selected.harness)
         }
     }
 
     /// A project in the list: its name, what it has, picked to edit it,
     /// and removed from its button.
-    private func projectRow(_ project: RepoProject, isSelected: Bool) -> some View {
+    private func projectRow(_ project: RepoProject, isSelected: Bool, isHome: Bool) -> some View {
         HStack {
             Button {
-                selectedID = project.id.uuidString
+                selectedID = project.id
             } label: {
                 HStack {
                     Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                         .foregroundStyle(isSelected ? Color.accentColor : .secondary)
                     VStack(alignment: .leading, spacing: 1) {
-                        Text(project.name).fontWeight(isSelected ? .medium : .regular)
+                        HStack(spacing: 6) {
+                            Text(project.name).fontWeight(isSelected ? .medium : .regular)
+                            if isHome {
+                                Text("Home")
+                                    .font(.caption)
+                                    .padding(.horizontal, 6)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.accentColor.opacity(0.15)))
+                                    .foregroundStyle(Color.accentColor)
+                                    .help("The org's data, people's dates and time off among it, is kept in this project's harness")
+                            }
+                        }
                         Text(summary(project)).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if harness.isLoading(org, project.harness) { ProgressView().controlSize(.small) }
                 }
                 .contentShape(Rectangle())
             }
@@ -181,16 +197,43 @@ struct ProjectsSettingsSection: View {
         }
     }
 
-    /// "3 repos, own harness", for its row.
+    /// "harness: owner/name, 3 repos", for its row.
     private func summary(_ project: RepoProject) -> String {
-        let repos = project.repos.isEmpty ? "No repos yet" : "\(project.repos.count) \(project.repos.count == 1 ? "repo" : "repos")"
-        return project.harness.map { "\(repos), harness \($0.name)" } ?? repos
+        let repos = project.repos.isEmpty ? "every repo" : "\(project.repos.count) \(project.repos.count == 1 ? "repo" : "repos")"
+        return "\(project.harness.repo), \(repos)"
     }
 
-    private func remove(_ project: RepoProject) {
-        configs.update(org) { $0.repoProjects.removeAll { $0.id == project.id } }
-        if selectedID == project.id.uuidString { selectedID = "" }
+    /// Repos that aren't a project's harness yet.
+    private func harnessChoices(_ projects: [RepoProject]) -> [SearchableChoice] {
+        let taken = Set(projects.map(\.id))
+        return Set(harness.repositories[org] ?? []).subtracting(taken)
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map { SearchableChoice(value: $0, title: $0) }
+    }
+
+    private func remove(_ project: RepoProject, from projects: [RepoProject]) {
+        configs.updateHarnesses(org) { $0.removeHarness(project.id) }
+        if selectedID == project.id { selectedID = "" }
         removing = nil
+    }
+
+    private func makeHome(_ project: RepoProject, copying: Bool) {
+        homing = nil
+        guard copying else {
+            configs.updateHarnesses(org) { $0.makeHome(project.id) }
+            return
+        }
+        isMoving = true
+        moveError = nil
+        Task {
+            do {
+                try await team.moveOrgWideData(org: org, to: project.harness)
+                configs.updateHarnesses(org) { $0.makeHome(project.id) }
+            } catch {
+                moveError = "Couldn't copy the org's data: \(error.localizedDescription)"
+            }
+            isMoving = false
+        }
     }
 
     // MARK: Name and repos
@@ -237,6 +280,10 @@ struct ProjectsSettingsSection: View {
             }
         } header: {
             Text(project.name)
+        } footer: {
+            Text("Saved in \(project.harness.repo) as .gannin/project.json, so anyone who adds it as a project gets the same.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -282,44 +329,30 @@ struct ProjectsSettingsSection: View {
 
     // MARK: Harness
 
-    private func harnessSection(_ project: RepoProject) -> some View {
-        let config = configs.baseConfig(for: org)
-        // Any repo but the org's harness; what's saved stays listed even
-        // before GitHub's list loads.
-        let choices = Set(harness.repositories[org] ?? []).union(project.harness.map { [$0.repo] } ?? [])
-            .subtracting(config.harness.map { [$0.repo] } ?? [])
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        return Section {
+    private func harnessSection(_ project: RepoProject, isHome: Bool) -> some View {
+        Section {
             LabeledContent("Harness") {
-                SearchablePicker(
-                    choices: [SearchableChoice(value: nil, title: config.harness.map { "The org's (\($0.name))" } ?? "The org's")]
-                        + choices.map { SearchableChoice(value: $0, title: $0) },
-                    selection: project.harness?.repo,
-                    prompt: "Search repositories",
-                    isLoading: harness.repositories[org] == nil
-                ) { repo in
-                    update(project.id) { $0.harness = repo.map { HarnessConfig(repo: $0) } }
-                }
+                Text(project.harness.repo)
             }
-            if let setup = project.harness {
-                branchPicker(project, setup: setup)
-                if let error = harness.error(org, setup) {
-                    Text(error).font(.caption).foregroundStyle(.red)
+            branchPicker(project.harness)
+            if let error = harness.error(org, project.harness) {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+            if !isHome {
+                HStack {
+                    Button("Make Home") { homing = project }
+                        .disabled(isMoving)
+                    if isMoving { ProgressView().controlSize(.small) }
                 }
-            } else {
-                Button("Create Harness") { isCreatingHarness = true }
             }
         } footer: {
-            Text("Work on this project's issues and PRs runs in its harness, with its prompts and skills, and its Harness pages are that harness's. With the org's, they're as for All.")
+            Text("Work on this project's issues and PRs runs in its harness, with its prompts and skills, and its Harness pages are that harness's.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .task { await harness.loadRepositories(org: org) }
-        .loadsHarness(org: org)
-        .sheet(isPresented: $isCreatingHarness) { CreateHarnessSheet(org: org, project: project.id) }
     }
 
-    private func branchPicker(_ project: RepoProject, setup: HarnessConfig) -> some View {
+    private func branchPicker(_ setup: HarnessConfig) -> some View {
         let branches = harness.branches[setup.repo]
         // The default is Default's, so it isn't listed again.
         let listed = Set(branches?.all ?? []).union(setup.branch.map { [$0] } ?? [])
@@ -333,73 +366,13 @@ struct ProjectsSettingsSection: View {
                 prompt: "Search branches",
                 isLoading: branches == nil
             ) { branch in
-                update(project.id) { $0.harness?.branch = branch }
+                configs.updateHarnesses(org) { $0.updateHarness(setup.repo) { $0.branch = branch } }
             }
         }
         .task(id: setup.repo) { await harness.loadBranches(repo: setup.repo) }
     }
 
-    // MARK: Its own settings
-
-    private func ownSection(_ project: RepoProject) -> some View {
-        Section {
-            ForEach(Own.allCases) { own in
-                Picker(own.rawValue, selection: Binding(get: { owns(own, project) }, set: { setOwns(own, $0, project: project) })) {
-                    Text("The org's").tag(false)
-                    Text("Its own").tag(true)
-                }
-            }
-        } header: {
-            Text("Its own settings")
-        } footer: {
-            Text("Its own starts as a copy of the org's. Edit the workflow, investments and goals below; the scorecard, recap cadence and committed date field where they're used, with this project picked.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    /// The editors for what it keeps of its own, editing its copy (they're
-    /// given the project's store).
-    @ViewBuilder
-    private func ownEditors(_ project: RepoProject) -> some View {
-        if project.workflow != nil {
-            IssueWorkflowSection(org: org)
-        }
-        if project.investments != nil {
-            InvestmentCategoriesSection(org: org)
-        }
-        if project.goals != nil {
-            GoalsSettingsSection(org: org, teams: teams)
-        }
-    }
-
-    private func owns(_ own: Own, _ project: RepoProject) -> Bool {
-        switch own {
-        case .workflow: project.workflow != nil
-        case .investments: project.investments != nil
-        case .goals: project.goals != nil
-        case .scorecard: project.scorecard != nil
-        case .recap: project.recap != nil
-        case .committedDate: project.committedDateField != nil
-        }
-    }
-
-    /// Its own starts from the org's; the org's drops the project's copy.
-    private func setOwns(_ own: Own, _ isOwn: Bool, project: RepoProject) {
-        let config = configs.baseConfig(for: org)
-        update(project.id) { project in
-            switch own {
-            case .workflow: project.workflow = isOwn ? config.workflow : nil
-            case .investments: project.investments = isOwn ? config.investmentConfig : nil
-            case .goals: project.goals = isOwn ? config.goals ?? MetricGoals() : nil
-            case .scorecard: project.scorecard = isOwn ? config.measurables : nil
-            case .recap: project.recap = isOwn ? config.recapCadence : nil
-            case .committedDate: project.committedDateField = isOwn ? config.committedDate : nil
-            }
-        }
-    }
-
-    private func update(_ id: UUID, _ change: (inout RepoProject) -> Void) {
+    private func update(_ id: String, _ change: (inout RepoProject) -> Void) {
         configs.updateProject(id, in: org, change)
     }
 }

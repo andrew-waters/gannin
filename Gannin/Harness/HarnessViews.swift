@@ -1172,236 +1172,66 @@ struct HarnessIssueSection: View {
 
 // MARK: - Settings
 
-/// Settings › Harness: the org's harness (projects' are under Projects)
-/// with its branch, the team data, its prompts and drafting, then where
-/// every harness, projects' too, is checked out on this Mac.
+/// Settings › Harness: with no harness, adding or creating the first
+/// project's; then where the team's data is kept, the window's project's
+/// prompts, drafting, and where every project's harness is checked out on
+/// this Mac. Projects themselves are under Projects.
 struct HarnessSettingsSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     let org: String
-    
+
     @State private var isCheckoutsExpanded = true
 
     var body: some View {
         let config = configs.config(for: org)
-        // Any left from before projects show until they're moved.
-        let harnesses = (config.harness.map { [$0] } ?? []) + config.otherHarnesses
-        // What's saved stays listed even before GitHub's lists load.
-        let repos = Set(harness.repositories[org] ?? []).union(harnesses.map(\.repo))
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        HarnessesSection(org: org, harnesses: harnesses, repos: repos)
-            .task { await harness.loadRepositories(org: org) }
-            .loadsHarness(org: org)
-        if let teamHarness = configs.harness(for: org) {
-            HarnessTeamSections(org: org, teamHarness: teamHarness, harnesses: harnesses)
-        }
-        DisclosureGroup("Checkouts", isExpanded: $isCheckoutsExpanded) {
-            let checkouts = config.allHarnesses
-            ForEach(checkouts, id: \.repo) { setup in
-                HarnessCheckoutSection(org: org, repo: setup.repo, showsName: checkouts.count > 1, showsRecording: setup.repo == checkouts.first?.repo)
-            }
-        }
-    }
-}
-
-/// The team's data, prompts and drafting settings.
-struct HarnessTeamSections: View {
-    let org: String
-    let teamHarness: HarnessConfig
-    let harnesses: [HarnessConfig]
-
-    var body: some View {
-        TeamDataSection(org: org, setup: teamHarness)
-        ForEach(harnesses, id: \.repo) { setup in
-            HarnessPromptsSection(org: org, setup: setup, showsName: harnesses.count > 1)
-        }
-        ForEach([org], id: \.self) { org in
+        if let project = configs.currentProject(org), let home = config.repoProjects.first {
+            TeamDataSection(org: org, project: project, home: home)
+            HarnessPromptsSection(org: org, setup: project.harness)
             HarnessAuthoringSection(org: org)
+            DisclosureGroup("Checkouts", isExpanded: $isCheckoutsExpanded) {
+                let checkouts = config.repoProjects.map(\.harness)
+                ForEach(checkouts, id: \.repo) { setup in
+                    HarnessCheckoutSection(org: org, repo: setup.repo, showsName: checkouts.count > 1, showsRecording: setup.repo == checkouts.first?.repo)
+                }
+            }
+            .loadsHarness(org: org)
+        } else {
+            let repos = (harness.repositories[org] ?? [])
+                .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            FirstHarnessSection(org: org, repos: repos)
+                .task { await harness.loadRepositories(org: org) }
         }
     }
 }
 
-/// The org's harness and its branch, or Add and Create while there's none.
-/// Harnesses beside it from before projects list the repos they're for
-/// and can keep the team's data, until they're moved into projects.
-struct HarnessesSection: View {
-    @Environment(HarnessStore.self) private var harness
+/// With no harness yet: Add one the org has, or Create one, as its first
+/// project, home.
+struct FirstHarnessSection: View {
     @Environment(OrgConfigStore.self) private var configs
-    @Environment(HarnessTeamStore.self) private var team
     let org: String
-    let harnesses: [HarnessConfig]
     /// Every repo in the org, for picking from.
     let repos: [String]
     @State private var isCreating = false
-    @State private var moving: HarnessConfig?
-    @State private var isMoving = false
-    @State private var moveError: String?
 
     var body: some View {
         Section {
-            if harnesses.isEmpty {
-                Text("A harness is a repo of plans, requirements, findings, skills and prompts beside the code, where Claude Code sessions run. Add one \(org) has, or create one.")
-                    .foregroundStyle(.secondary)
-            }
-            ForEach(harnesses, id: \.repo) { setup in
-                row(setup, keepsTeamData: setup.repo == harnesses.first?.repo)
-            }
-            if harnesses.isEmpty {
-                HStack {
-                    Menu("Add Harness") {
-                        ForEach(repos.filter { repo in !harnesses.contains { $0.repo == repo } }, id: \.self) { repo in
-                            Button(repo) {
-                                configs.update(org) { $0.harness = HarnessConfig(repo: repo) }
-                            }
+            Text("A harness is a repo of plans, requirements, findings, skills and prompts beside the code, where Claude Code sessions run and the team's settings are kept. Each is a project; add one \(org) has, or create one.")
+                .foregroundStyle(.secondary)
+            HStack {
+                Menu("Add Harness") {
+                    ForEach(repos, id: \.self) { repo in
+                        Button(repo) {
+                            configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: repo)) }
                         }
                     }
-                    .fixedSize()
-                    Button("Create Harness") { isCreating = true }
                 }
-            }
-            if let moveError {
-                Text(moveError).font(.caption).foregroundStyle(.red)
+                .fixedSize()
+                Button("Create Harness") { isCreating = true }
             }
         } header: {
-            Text(harnesses.count > 1 ? "Harnesses" : "Harness")
-        } footer: {
-            Text("Work on an issue or PR runs in its project's harness, with that harness's prompts and skills, when a project with one names its repo; anything else runs here. A project gets its own harness in Projects.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Text("Harness")
         }
         .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org) }
-        .confirmationDialog("Keep the team's data in \(moving?.repo ?? "")?", isPresented: Binding(get: { moving != nil }, set: { if !$0 { moving = nil } })) {
-            if let target = moving {
-                Button("Copy and Keep It There") { move(to: target) }
-            }
-        } message: {
-            Text("Gannin commits a copy of .gannin/ from \(harnesses.first?.repo ?? "") to \(moving?.repo ?? "") and reads it from there. The old copy stays where it is until you remove it.")
-        }
-    }
-
-    private func row(_ setup: HarnessConfig, keepsTeamData: Bool) -> some View {
-        let covered = setup.repos ?? []
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label(setup.repo, systemImage: "text.book.closed").fontWeight(.medium)
-                if keepsTeamData && harnesses.count > 1 {
-                    Text("Team data")
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(Capsule().fill(Color.accentColor.opacity(0.15)))
-                        .foregroundStyle(Color.accentColor)
-                        .help("The team's settings, people's dates and notes from the field are read from and committed to this harness")
-                }
-                Spacer()
-                if harness.isLoading(org, setup) { ProgressView().controlSize(.small) }
-                Menu {
-                    if !keepsTeamData {
-                        Button("Keep Team Data Here") { moving = setup }
-                    }
-                    Button("Remove Harness", role: .destructive) {
-                        configs.update(org) { $0.removeHarness(setup.repo) }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .menuStyle(.button)
-                .buttonStyle(.borderless)
-                .menuIndicator(.hidden)
-                .fixedSize()
-                .disabled(isMoving)
-                .help("Remove it (nothing in it changes), or keep the team's data in it")
-            }
-            if let error = harness.error(org, setup) {
-                Text(error).font(.caption).foregroundStyle(.red)
-            }
-            branchPicker(setup)
-            if harnesses.count > 1 {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text("For").foregroundStyle(.secondary)
-                    if covered.isEmpty {
-                        Text(harnesses.count > 1 ? "any repo the others don't name" : "every repo").foregroundStyle(.secondary)
-                    }
-                    ForEach(covered, id: \.self) { repo in
-                        HStack(spacing: 2) {
-                            Text(repo.split(separator: "/").last.map(String.init) ?? repo)
-                            Button {
-                                update(setup.repo) { $0.repos = covered.filter { $0 != repo } }
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                            }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.tertiary)
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
-                        .help(repo)
-                    }
-                    Menu {
-                        let projects = configs.baseConfig(for: org).repoProjects
-                        if !projects.isEmpty {
-                            Section("Projects") {
-                                ForEach(projects) { project in
-                                    Button(project.name) { update(setup.repo) { $0.repos = Array(Set(covered + project.repos)).sorted() } }
-                                }
-                            }
-                        }
-                        Section("Repositories") {
-                            ForEach(repos.filter { !covered.contains($0) && !harnesses.map(\.repo).contains($0) }, id: \.self) { repo in
-                                Button(repo) { update(setup.repo) { $0.repos = covered + [repo] } }
-                            }
-                        }
-                    } label: {
-                        Image(systemName: "plus.circle")
-                    }
-                    .menuStyle(.button)
-                    .buttonStyle(.borderless)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
-                    .help("Keep this harness for a repo")
-                }
-                .font(.callout)
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func branchPicker(_ setup: HarnessConfig) -> some View {
-        let branches = harness.branches[setup.repo]
-        // The default is Default's, so it isn't listed again.
-        let listed = Set(branches?.all ?? []).union(setup.branch.map { [$0] } ?? [])
-            .subtracting(branches?.defaultBranch.map { [$0] } ?? [])
-            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-        return LabeledContent("Branch") {
-            SearchablePicker(
-                choices: [SearchableChoice(value: nil, title: branches?.defaultBranch.map { "Default (\($0))" } ?? "Default")]
-                    + listed.map { SearchableChoice(value: $0, title: $0) },
-                selection: setup.branch,
-                prompt: "Search branches",
-                isLoading: branches == nil
-            ) { branch in
-                update(setup.repo) { $0.branch = branch }
-            }
-        }
-        .task(id: setup.repo) { await harness.loadBranches(repo: setup.repo) }
-    }
-
-    private func update(_ repo: String, _ change: (inout HarnessConfig) -> Void) {
-        configs.update(org) { $0.updateHarness(repo, change) }
-    }
-
-    private func move(to target: HarnessConfig) {
-        isMoving = true
-        moveError = nil
-        Task {
-            do {
-                try await team.moveData(org: org, to: target)
-                configs.update(org) { $0.keepTeamData(in: target.repo) }
-            } catch {
-                moveError = "Couldn't copy the team's data: \(error.localizedDescription)"
-            }
-            isMoving = false
-        }
     }
 }

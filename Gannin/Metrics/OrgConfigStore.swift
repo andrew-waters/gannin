@@ -22,12 +22,13 @@ struct OrgConfig: Codable, Hashable {
     var week: WorkWeek { workWeek ?? WorkWeek() }
     /// Holiday allowance and leave year; nil means 25 days from January.
     var leave: LeavePolicy?
-    /// The org's harness, a repo of plans, requirements and skills beside
-    /// the code: where work in any repo no project's harness names runs,
-    /// and where the team's data is kept. Nil for none.
+    /// The home project's harness, a repo of plans, requirements and
+    /// skills beside the code: a project of its own, and where the
+    /// org-wide data (people's dates, leave, the working week, exclusions,
+    /// views, notes from the field) is kept. Nil for none, when everything
+    /// stays on this device. The user's own.
     var harness: HarnessConfig?
-    /// Harnesses beside the org's, from before projects had their own;
-    /// only read, and moved into projects (`moveHarnessesToProjects`).
+    /// Every other project's harness, each one project (`RepoProject`).
     /// The user's own, as `harness` is.
     var otherHarnesses: [HarnessConfig] = []
     /// Saved field views, in sidebar order.
@@ -48,16 +49,16 @@ struct OrgConfig: Codable, Hashable {
     var committedDateField: String?
 
     var committedDate: String { committedDateField ?? "Committed" }
-    /// Projects: named groups of repos (a product, a side project), each
-    /// with its own harness and settings if it wants them. A window picks
-    /// one to narrow to it.
+    /// Projects, one a harness, home first, as `OrgConfigStore` reads them
+    /// from their harnesses; never saved. A window works in one.
     var repoProjects: [RepoProject] = []
     /// The window's project's repos, set by `OrgConfigStore.config(for:)`
     /// and never saved: everything outside them is left out as excluded
     /// repos are.
     var focusRepos: Set<String>?
     /// The window's project, laid over the org's settings by
-    /// `OrgConfigStore.config(for:)` and never saved; nil for All.
+    /// `OrgConfigStore.config(for:)` and never saved; nil for an org with
+    /// no harness.
     var scope: RepoProject?
 
     /// The repo whose linked boards the window lists; nil for every board.
@@ -76,31 +77,24 @@ struct OrgConfig: Codable, Hashable {
 
     var leavePolicy: LeavePolicy { leave ?? LeavePolicy() }
 
-    /// The harnesses in view: the project's own, with one picked that has
-    /// one; else every harness, the org's first, then each project's.
+    /// Every project's harness, as it's saved here, home first.
+    var projectHarnesses: [HarnessConfig] {
+        var seen: Set<String> = []
+        return ((harness.map { [$0] } ?? []) + otherHarnesses).filter { seen.insert($0.repo).inserted }
+    }
+
+    /// The harnesses in view: the window's project's.
     var harnesses: [HarnessConfig] {
         if let own = scope?.ownHarness { return [own] }
         return allHarnesses
     }
 
-    /// Where the team's data is kept: the org's harness, else one left
-    /// from before projects, else the first project's, so an org whose
-    /// only harness is a project's still shares its data.
-    var teamHarness: HarnessConfig? {
-        harness ?? otherHarnesses.first ?? repoProjects.lazy.compactMap(\.harness).first
-    }
-
-    /// Every harness, the org's first, then any left from before projects,
-    /// then each project's (for its repos).
-    var allHarnesses: [HarnessConfig] {
-        var seen: Set<String> = []
-        let projects = repoProjects.compactMap(\.ownHarness)
-        return ((harness.map { [$0] } ?? []) + otherHarnesses + projects).filter { seen.insert($0.repo).inserted }
-    }
+    /// Every project's harness, for its repos, home first.
+    var allHarnesses: [HarnessConfig] { repoProjects.map(\.ownHarness) }
 
     /// Where work in these repos runs: the project's harness, with one
-    /// picked that has one; else the first harness that names one of them,
-    /// else one that names none (it takes any other repo), else the first.
+    /// picked; else the first harness that names one of them, else one that
+    /// names none (it takes any other repo), else the first.
     func harness(covering repos: [String]) -> HarnessConfig? {
         let all = harnesses
         for repo in repos {
@@ -109,17 +103,21 @@ struct OrgConfig: Codable, Hashable {
         return all.first { ($0.repos ?? []).isEmpty } ?? all.first
     }
 
-    /// Makes another harness the one the team's data is read from (the
-    /// org's, in `harness`): one left from before projects.
-    mutating func keepTeamData(in repo: String) {
+    /// Adds a project's harness: home if it's the first.
+    mutating func addHarness(_ setup: HarnessConfig) {
+        guard !projectHarnesses.contains(where: { $0.repo == setup.repo }) else { return }
+        if harness == nil { harness = setup } else { otherHarnesses.append(setup) }
+    }
+
+    /// Makes another project home, where the org-wide data is read from.
+    mutating func makeHome(_ repo: String) {
         guard let index = otherHarnesses.firstIndex(where: { $0.repo == repo }) else { return }
         let target = otherHarnesses.remove(at: index)
         if let current = harness { otherHarnesses.insert(current, at: 0) }
         harness = target
     }
 
-    /// Takes a harness away; the next keeps the team's data if it was this
-    /// one's.
+    /// Takes a project's harness away; the next is home if it was.
     mutating func removeHarness(_ repo: String) {
         if harness?.repo == repo {
             harness = otherHarnesses.isEmpty ? nil : otherHarnesses.removeFirst()
@@ -128,79 +126,24 @@ struct OrgConfig: Codable, Hashable {
         }
     }
 
-    /// Changes a harness, wherever it's kept: the org's, one left from
-    /// before projects, or a project's.
+    /// Changes a project's harness (its branch).
     mutating func updateHarness(_ repo: String, _ change: (inout HarnessConfig) -> Void) {
         if harness?.repo == repo, var setup = harness {
             change(&setup)
             harness = setup
         } else if let index = otherHarnesses.firstIndex(where: { $0.repo == repo }) {
             change(&otherHarnesses[index])
-        } else if let index = repoProjects.firstIndex(where: { $0.harness?.repo == repo }), var setup = repoProjects[index].harness {
-            change(&setup)
-            repoProjects[index].harness = setup
         }
     }
 
     /// Any of the org's harnesses by repo, whichever project is picked.
     func harness(repo: String) -> HarnessConfig? { allHarnesses.first { $0.repo == repo } }
 
-    /// Lays a project over the org's settings: its repos, and whatever it
-    /// keeps of its own. A project naming no repos yet leaves every repo in.
+    /// Narrows to a project: its repos (none leaves every repo in) and
+    /// harness. Its own settings are laid on by `OrgConfigStore`.
     mutating func apply(_ project: RepoProject) {
         scope = project
         if !project.repos.isEmpty { focusRepos = Set(project.repos) }
-        if let own = project.workflow { issueWorkflow = own }
-        if let own = project.investments { investments = own }
-        if let own = project.goals { goals = own }
-        if let own = project.scorecard { scorecard = own }
-        if let own = project.recap { recap = own }
-    }
-
-    /// Undoes `apply` after a change made with a project laid over the
-    /// settings (`before`, from the saved `base`): each setting the project
-    /// keeps of its own goes back to the org's, its change kept in the
-    /// project instead. The rest stay as changed, the org's.
-    mutating func separate(project id: UUID, base: OrgConfig, before: OrgConfig) {
-        focusRepos = nil
-        scope = nil
-        guard let index = repoProjects.firstIndex(where: { $0.id == id }) else { return }
-        var project = repoProjects[index]
-        route(\.issueWorkflow, \.workflow, empty: IssueWorkflow(), base: base, before: before, project: &project)
-        route(\.investments, \.investments, empty: .default, base: base, before: before, project: &project)
-        route(\.goals, \.goals, empty: MetricGoals(), base: base, before: before, project: &project)
-        route(\.scorecard, \.scorecard, empty: [], base: base, before: before, project: &project)
-        route(\.recap, \.recap, empty: RecapCadence(), base: base, before: before, project: &project)
-        repoProjects[index] = project
-    }
-
-    /// A setting the org leaves nil for its default stays the project's
-    /// own as that default (`empty`).
-    private mutating func route<Value: Equatable>(
-        _ setting: WritableKeyPath<OrgConfig, Value?>, _ own: WritableKeyPath<RepoProject, Value?>, empty: Value,
-        base: OrgConfig, before: OrgConfig, project: inout RepoProject
-    ) {
-        guard project[keyPath: own] != nil else { return }
-        let value = self[keyPath: setting]
-        if value != before[keyPath: setting] { project[keyPath: own] = value ?? empty }
-        self[keyPath: setting] = base[keyPath: setting]
-    }
-
-    /// Harnesses beside the org's, from before projects had harnesses,
-    /// become projects: one with the same repos takes the harness, else a
-    /// new one named after it. Names alone become `org/name`.
-    mutating func moveHarnessesToProjects(org: String) {
-        for setup in otherHarnesses where !repoProjects.contains(where: { $0.harness?.repo == setup.repo }) {
-            let repos = (setup.repos ?? []).map { $0.contains("/") ? $0 : "\(org)/\($0)" }
-            var own = setup
-            own.repos = nil
-            if !repos.isEmpty, let index = repoProjects.firstIndex(where: { $0.harness == nil && Set($0.repos) == Set(repos) }) {
-                repoProjects[index].harness = own
-            } else {
-                repoProjects.append(RepoProject(name: setup.name, repos: repos, harness: own))
-            }
-        }
-        otherHarnesses = []
     }
 
     var workflow: IssueWorkflow { issueWorkflow ?? IssueWorkflow() }
@@ -227,7 +170,11 @@ struct OrgConfig: Codable, Hashable {
         authoring = try container.decodeIfPresent([String: String].self, forKey: .authoring)
         recap = try container.decodeIfPresent(RecapCadence.self, forKey: .recap)
         scorecard = try container.decodeIfPresent([Measurable].self, forKey: .scorecard)
-        repoProjects = try container.decodeIfPresent([RepoProject].self, forKey: .repoProjects) ?? []
+        // Projects kept here before each was its own harness: their
+        // harnesses become projects.
+        let legacy = (try? container.decodeIfPresent([LegacyProject].self, forKey: .repoProjects)) ?? nil
+        for setup in (legacy ?? []).compactMap(\.harness) { addHarness(HarnessConfig(repo: setup.repo, branch: setup.branch)) }
+        committedDateField = try container.decodeIfPresent(String.self, forKey: .committedDateField)
     }
 
     var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil }
@@ -251,16 +198,18 @@ struct OrgConfig: Codable, Hashable {
 /// Each org's settings, in memory and written through to the synced
 /// `UserDatabase`; loaded again when another device's changes arrive.
 ///
-/// An org with a harness keeps its team data there (`HarnessTeamStore`):
-/// its views, investments, issue workflow, working week, leave policy,
-/// exclusions, goals, scorecard and the rest come from there instead, and
-/// changes to them wait to be committed there. Which harness it is stays
-/// the user's own.
+/// An org with a harness keeps its team data in its projects' harnesses
+/// (`HarnessTeamStore`): the org-wide parts (views, working week, leave
+/// policy, exclusions, drafting prompts) in the home project's, and each
+/// project's own (investments, issue workflow, goals, scorecard, recap
+/// cadence, committed date field, name and repos) in its own; changes wait
+/// to be committed there. Which harnesses are its projects stays the
+/// user's own.
 ///
-/// The app shares one store, for All. A main window with a project picked
-/// puts that project's store (`scoped`) in its environment instead: the
-/// same settings, read with the project laid over them, and changes to
-/// what the project keeps of its own written to the project.
+/// The app shares one store, on the home project. A main window puts its
+/// project's store (`scoped`) in its environment instead: the same
+/// settings, read with that project's laid over them, and changes to the
+/// project's own written to its harness.
 @Observable
 final class OrgConfigStore {
     /// The settings themselves, shared by every window's store.
@@ -270,7 +219,7 @@ final class OrgConfigStore {
         @ObservationIgnored let database: UserDatabase
         @ObservationIgnored var team: HarnessTeamStore?
         @ObservationIgnored weak var root: OrgConfigStore?
-        @ObservationIgnored var scopes: [UUID: OrgConfigStore] = [:]
+        @ObservationIgnored var scopes: [String: OrgConfigStore] = [:]
 
         init(database: UserDatabase) {
             self.database = database
@@ -284,9 +233,9 @@ final class OrgConfigStore {
     }
 
     private let storage: Storage
-    /// The project the window's picked (`RepoProject.id`); nil for All,
-    /// and for the store the app shares.
-    let workspace: UUID?
+    /// The project the window's picked (`RepoProject.id`, its harness's
+    /// repo); nil for the store the app shares, which reads home's.
+    let workspace: String?
 
     init(database: UserDatabase) {
         storage = Storage(database: database)
@@ -294,7 +243,7 @@ final class OrgConfigStore {
         storage.root = self
     }
 
-    private init(storage: Storage, workspace: UUID) {
+    private init(storage: Storage, workspace: String) {
         self.storage = storage
         self.workspace = workspace
     }
@@ -306,12 +255,12 @@ final class OrgConfigStore {
         set { storage.team = newValue }
     }
 
-    /// The store the app shares, for All: Settings, and anything outside
-    /// a main window.
+    /// The store the app shares, on the home project: anything outside a
+    /// main window.
     var root: OrgConfigStore { storage.root ?? self }
 
     /// A window's store for a project; nil is the one the app shares.
-    func scoped(_ workspace: UUID?) -> OrgConfigStore {
+    func scoped(_ workspace: String?) -> OrgConfigStore {
         guard let workspace else { return root }
         if let store = storage.scopes[workspace] { return store }
         let store = OrgConfigStore(storage: storage, workspace: workspace)
@@ -319,31 +268,61 @@ final class OrgConfigStore {
         return store
     }
 
-    /// The settings, with the window's project laid over them.
+    /// The settings, with the window's project laid over them: its own
+    /// settings from its harness, and its repos.
     func config(for org: String) -> OrgConfig {
         var config = baseConfig(for: org)
-        if let project = findProject(workspace, in: config) { config.apply(project) }
+        guard let project = findProject(workspace, in: config) else { return config }
+        if let team = storage.team { config = team.data(for: org, in: project.harness).appliedProject(to: config) }
+        config.apply(project)
         return config
     }
 
-    /// The settings as saved, with no project laid over them: for editing.
+    /// The org-wide settings as saved, with no project laid over them: this
+    /// device's for an org with no harness, else the home harness's with
+    /// every project listed.
     func baseConfig(for org: String) -> OrgConfig {
         let own = storage.configs[org] ?? OrgConfig()
-        return storage.team?.data(for: org)?.applied(to: own) ?? own
+        guard let team = storage.team, let home = own.harness else { return own }
+        var config = team.data(for: org, in: home).appliedOrgWide(to: own)
+        config.investments = nil
+        config.issueWorkflow = nil
+        config.goals = nil
+        config.recap = nil
+        config.scorecard = nil
+        config.committedDateField = nil
+        config.repoProjects = projects(org, own: own, team: team)
+        return config
     }
 
-    private func findProject(_ id: UUID?, in config: OrgConfig) -> RepoProject? {
-        id.flatMap { id in config.repoProjects.first { $0.id == id } }
+    /// A project per harness, as each harness describes itself
+    /// (`project.json`), else as the old list of projects did, else named
+    /// after its repo with every repo.
+    private func projects(_ org: String, own: OrgConfig, team: HarnessTeamStore) -> [RepoProject] {
+        let setups = own.projectHarnesses
+        let legacy = setups.lazy.compactMap { team.data(for: org, in: $0).legacyProjects }.first ?? []
+        return setups.map { setup in
+            if let file = team.data(for: org, in: setup).project {
+                return RepoProject(harness: setup, name: file.name, repos: file.repos, boardsRepo: file.boardsRepo)
+            }
+            let old = legacy.first { $0.harness?.repo == setup.repo }
+            return RepoProject(harness: setup, name: old?.name ?? setup.name, repos: old?.repos ?? [], boardsRepo: old?.boardsRepo)
+        }
     }
 
-    /// The window's project, if it still exists.
+    /// The project picked, else home.
+    private func findProject(_ id: String?, in config: OrgConfig) -> RepoProject? {
+        id.flatMap { id in config.repoProjects.first { $0.id == id } } ?? config.repoProjects.first
+    }
+
+    /// The window's project: the one picked, else home; nil with no harness.
     func currentProject(_ org: String) -> RepoProject? {
         findProject(workspace, in: baseConfig(for: org))
     }
 
-    /// Where the org's team data is kept (`OrgConfig.teamHarness`), from
-    /// the user's own settings, so it doesn't move with the team's.
-    func harness(for org: String) -> HarnessConfig? { storage.configs[org]?.teamHarness }
+    /// The org's project harnesses, home first, from the user's own
+    /// settings, so they don't move with the team's.
+    func harnesses(for org: String) -> [HarnessConfig] { storage.configs[org]?.projectHarnesses ?? [] }
 
     /// Every org back to the defaults.
     func clear() {
@@ -351,64 +330,74 @@ final class OrgConfigStore {
         storage.database.deleteAllConfigs()
     }
 
-    /// Changes the settings as the window sees them: with a project picked,
-    /// what it keeps of its own changes in the project, the rest in the org.
+    /// Changes the settings as the window sees them: the org-wide parts
+    /// in the home harness, the project's own in its harness.
     func update(_ org: String, _ change: (inout OrgConfig) -> Void) {
-        let base = baseConfig(for: org)
-        guard let workspace, let project = findProject(workspace, in: base) else {
-            return save(org, change)
-        }
-        var before = base
-        before.apply(project)
+        let before = config(for: org)
         var after = before
         change(&after)
-        save(org) { config in
-            config = after
-            config.separate(project: workspace, base: base, before: before)
+        guard after != before else { return }
+        guard let team, team.keepsData(org) else {
+            return saveOwn(org) { own in
+                own = after
+                own.focusRepos = nil
+                own.scope = nil
+            }
+        }
+        team.stage(org: org, project: currentProject(org)?.harness, HarnessTeamData.changedFiles(from: before, to: after))
+        // Only which harnesses are the user's own here.
+        if after.harness != before.harness || after.otherHarnesses != before.otherHarnesses {
+            saveOwn(org) { own in
+                own.harness = after.harness
+                own.otherHarnesses = after.otherHarnesses
+            }
         }
     }
 
-    /// Changes one project, whichever the window has picked.
-    func updateProject(_ id: UUID, in org: String, _ change: (inout RepoProject) -> Void) {
-        save(org) { config in
-            guard let index = config.repoProjects.firstIndex(where: { $0.id == id }) else { return }
-            change(&config.repoProjects[index])
-        }
-    }
-
-    /// Moves the harnesses left from before projects into projects, once
-    /// per org that has any, and forgets the account-wide focus each
-    /// window's project replaced. Team data waits to be committed, as any
-    /// change. An org whose harness isn't indexed yet waits for the next
-    /// launch, so projects kept in its team data aren't missed.
-    func moveHarnessesToProjects() {
-        UserDefaults.standard.removeObject(forKey: "repoFocus")
-        for (org, config) in storage.configs where !config.otherHarnesses.isEmpty {
-            if let setup = config.harness, storage.team?.harness.index(for: org, setup) == nil { continue }
-            save(org) { $0.moveHarnessesToProjects(org: org) }
-        }
-    }
-
-    /// Writes the org's settings as given, with no project laid over them.
-    private func save(_ org: String, _ change: (inout OrgConfig) -> Void) {
-        let before = baseConfig(for: org)
-        var config = before
-        change(&config)
-        // The window's project is its view, not a setting.
-        config.focusRepos = nil
-        config.scope = nil
-        guard config != before else { return }
-        if let team, team.keepsData(org) {
-            team.stage(org: org, HarnessTeamData.changedFiles(from: before, to: config))
-            // Only which harnesses are the user's own here.
-            guard config.harness != before.harness || config.otherHarnesses != before.otherHarnesses else { return }
-            var own = storage.configs[org] ?? OrgConfig()
+    /// Changes which harnesses are the org's projects (adding, removing,
+    /// home, a branch): the user's own, whatever the team's data says.
+    func updateHarnesses(_ org: String, _ change: (inout OrgConfig) -> Void) {
+        saveOwn(org) { own in
+            var config = own
+            change(&config)
             own.harness = config.harness
             own.otherHarnesses = config.otherHarnesses
-            storage.configs[org] = own.isEmpty ? nil : own
-            storage.database.saveConfig(org: org, own.isEmpty ? nil : own)
-            return
         }
+    }
+
+    /// Changes a project's name, repos or boards, in its harness.
+    func updateProject(_ id: String, in org: String, _ change: (inout RepoProject) -> Void) {
+        guard let team, let project = baseConfig(for: org).repoProjects.first(where: { $0.id == id }) else { return }
+        var after = project
+        change(&after)
+        guard after.file != project.file else { return }
+        team.stage(org: org, project: project.harness, [TeamFile.project: TeamCoding.encode(after.file)])
+    }
+
+    /// Harnesses projects named in the old list of projects (in the org's
+    /// harness, `repo-projects.json`) become projects of their own here,
+    /// once the home harness is indexed; until then, at the next launch.
+    func adoptProjects() {
+        guard let team else { return }
+        for (org, own) in storage.configs {
+            guard let home = own.harness, team.harness.index(for: org, home) != nil else { continue }
+            let named = (team.data(for: org, in: home).legacyProjects ?? []).compactMap(\.harness)
+            let missing = named.filter { setup in !own.projectHarnesses.contains { $0.repo == setup.repo } }
+            guard !missing.isEmpty else { continue }
+            saveOwn(org) { own in
+                for setup in missing { own.addHarness(HarnessConfig(repo: setup.repo, branch: setup.branch)) }
+            }
+        }
+    }
+
+    /// Writes this device's settings for the org: everything for an org
+    /// with no harness, else which harnesses are its projects.
+    private func saveOwn(_ org: String, _ change: (inout OrgConfig) -> Void) {
+        let before = storage.configs[org] ?? OrgConfig()
+        var config = before
+        change(&config)
+        config.repoProjects = []
+        guard config != before else { return }
         storage.configs[org] = config.isEmpty ? nil : config
         storage.database.saveConfig(org: org, config.isEmpty ? nil : config)
     }

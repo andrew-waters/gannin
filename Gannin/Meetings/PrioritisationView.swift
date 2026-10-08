@@ -151,21 +151,14 @@ struct PrioritisationView: View {
     @AppStorage("prioritisationPresenting") private var presenting = false
     @State private var search = ""
 
-    /// The committed date field: the window's project's, if it keeps its
-    /// own, else the org's.
-    private var dateField: String {
-        configs.currentProject(org)?.committedDateField ?? configs.baseConfig(for: org).committedDate
-    }
+    /// The committed date field: the window's project's.
+    private var dateField: String { configs.config(for: org).committedDate }
 
     private var dateFieldBinding: Binding<String> {
         Binding {
             dateField
         } set: { field in
-            if let project = configs.currentProject(org), project.committedDateField != nil {
-                configs.updateProject(project.id, in: org) { $0.committedDateField = field }
-            } else {
-                configs.update(org) { $0.committedDateField = field == "Committed" ? nil : field }
-            }
+            configs.update(org) { $0.committedDateField = field == "Committed" ? nil : field }
         }
     }
 

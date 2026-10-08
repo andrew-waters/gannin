@@ -52,7 +52,7 @@ struct GanninApp: App {
         _harness = State(initialValue: harness)
         // Team data from the harness, for orgs that have one.
         let team = HarnessTeamStore(harness: harness)
-        team.setup = { [weak orgConfigs] org in orgConfigs?.harness(for: org) }
+        team.harnesses = { [weak orgConfigs] org in orgConfigs?.harnesses(for: org) ?? [] }
         orgConfigs.team = team
         peopleDates.team = team
         let fieldNotes = FieldNotesStore()
@@ -63,8 +63,8 @@ struct GanninApp: App {
         for (org, config) in orgConfigs.configs {
             if let primary = config.harness { SessionStore.migrateHarnessPaths(org: org, primary: primary.repo) }
         }
-        // Harnesses beside the org's become projects with harnesses.
-        orgConfigs.moveHarnessesToProjects()
+        // Harnesses the old list of projects named become projects.
+        orgConfigs.adoptProjects()
         let sessions = SessionStore(harness: harness)
         _sessions = State(initialValue: sessions)
         GanninAppDelegate.sessions = sessions
@@ -77,9 +77,9 @@ struct GanninApp: App {
         let watch = EngineerWatch.shared
         watch.api = { [weak auth] in auth?.api }
         // Review with Claude from the menu bar or a notification: in the
-        // PR's org's harness, else the PR on GitHub.
+        // harness of the project with the PR's repo, else the PR on GitHub.
         watch.startReview = { [weak sessions, weak orgConfigs] reference in
-            guard let sessions, let setup = orgConfigs?.config(for: reference.org).harness(covering: [reference.repo]),
+            guard let sessions, let setup = orgConfigs?.baseConfig(for: reference.org).harness(covering: [reference.repo]),
                   let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else {
                 NSWorkspace.shared.open(reference.url)
                 return
@@ -88,10 +88,11 @@ struct GanninApp: App {
             if let openWindow = GanninAppDelegate.openWindow { sessions.show(session.id, with: openWindow) }
         }
         // Auto review: a request found starts a review in the background, in
-        // the PR's org's harness, when it's on for that org.
+        // the harness of the project with the PR's repo, when it's on for
+        // that org.
         watch.autoReview = { [weak sessions, weak orgConfigs] reference in
             guard AutoReview.isOn(for: reference.org), let sessions,
-                  let setup = orgConfigs?.config(for: reference.org).harness(covering: [reference.repo]),
+                  let setup = orgConfigs?.baseConfig(for: reference.org).harness(covering: [reference.repo]),
                   let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return false }
             return sessions.startAutomaticReview(of: reference, harness: setup, harnessPath: path)
         }

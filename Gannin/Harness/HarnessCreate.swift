@@ -374,14 +374,7 @@ enum HarnessSkeleton {
                 started it, where, on which branch, and its pull requests.
 
                 """,
-            ".gannin/README.md": """
-                # Gannin
-
-                The team's settings and people's dates, kept by Gannin as JSON, one concern to a file. Gannin
-                commits every change here through the GitHub API, after asking. Edit them in Gannin rather
-                than by hand.
-
-                """,
+            ".gannin/README.md": HarnessTour.readme,
             ".gitignore": """
                 # Code repos and the worktrees sessions make, each their own git repo.
                 /projects/*
@@ -415,8 +408,11 @@ extension GitHubAPI {
     }
 }
 
-/// Settings > Harness, when there's none: make one. Confirmed first, as every
-/// GitHub write is; then it's picked as the org's harness.
+/// Creates a project's harness, as onboarding: what a project is, what's in
+/// its harness, then the project's name, the harness repo's and the code
+/// repos it's for. The repo is private, its layout (`HarnessSkeleton`) and
+/// `.gannin/project.json` one commit, and it's a project from then on
+/// (home, if it's the first).
 struct CreateHarnessSheet: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
@@ -425,70 +421,153 @@ struct CreateHarnessSheet: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.dismiss) private var dismiss
     let org: String
-    /// The project it's for; nil makes it the org's harness.
-    var project: UUID? = nil
-    @State private var name = "harness"
+    @State private var step: HarnessOnboardingStep?
+    @State private var projectName = ""
+    @State private var name = ""
+    /// The code repos it's for; none for every repo.
+    @State private var picked: Set<String> = []
     @State private var isCreating = false
     @State private var status: String?
     @State private var error: String?
 
+    /// No project yet: the tour comes first.
+    private var isFirst: Bool { configs.harnesses(for: org).isEmpty }
+
     var body: some View {
-        let projects = self.projects
-        let taken = (harness.repositories[org] ?? []).contains { $0.lowercased() == "\(org)/\(name)".lowercased() }
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Create a Harness").font(.title3.weight(.semibold))
-            Text("A private repo in \(org) for plans, requirements, findings and skills beside the code, where Claude Code sessions start and the team's settings are kept.")
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Form {
-                TextField("Name", text: $name)
-                    .disabled(isCreating)
-                if taken {
-                    Text("\(org) already has a repo called \(name).")
-                        .font(.caption)
-                        .foregroundStyle(.red)
+        let current = step ?? (isFirst ? .intro : .create)
+        VStack(alignment: .leading, spacing: 0) {
+            ScrollView {
+                Group {
+                    switch current {
+                    case .intro: HarnessIntroView(org: org, isFirst: isFirst)
+                    case .layout: HarnessLayoutView()
+                    case .create: form
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(24)
             }
-            .formStyle(.grouped)
-            .scrollDisabled(true)
-            .frame(height: taken ? 96 : 70)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Gannin creates \(org)/\(name) as a private repo, then commits:")
-                Text("README.md, a starter CLAUDE.md\(projects.isEmpty ? "" : " listing \(projects.count) of the org's repos"), STANDARDS.md for documents' front matter, requirements, plans, findings and learnings with their templates, skills, prompts, sessions, .gannin, and a .gitignore keeping out projects/ and .worktrees/.")
-                    .foregroundStyle(.secondary)
-            }
-            .font(.callout)
-            .fixedSize(horizontal: false, vertical: true)
-            if let error {
-                Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            }
-            HStack {
-                if isCreating {
-                    ProgressView().controlSize(.small)
-                    Text(status ?? "").foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                    .disabled(isCreating)
-                Button("Create Harness") { Task { await create(projects: projects) } }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(isCreating || taken || !Self.isValid(name))
-            }
+            Divider()
+            footer(current)
+                .padding(16)
         }
-        .padding(20)
-        .frame(width: 520)
+        .frame(width: 640, height: 600)
         .interactiveDismissDisabled(isCreating)
         .task { await harness.loadRepositories(org: org) }
     }
 
-    /// The org's code repos (with PRs), busiest first, for CLAUDE.md's table.
-    private var projects: [String] {
-        let config = configs.config(for: org)
+    private func footer(_ current: HarnessOnboardingStep) -> some View {
+        HStack {
+            HStack(spacing: 6) {
+                ForEach(HarnessOnboardingStep.allCases, id: \.self) { item in
+                    Button {
+                        step = item
+                    } label: {
+                        Circle()
+                            .fill(item == current ? Color.accentColor : Color.secondary.opacity(0.3))
+                            .frame(width: 7, height: 7)
+                    }
+                    .buttonStyle(.plain)
+                    .help(item.title)
+                    .disabled(isCreating)
+                }
+            }
+            if isCreating {
+                ProgressView().controlSize(.small).padding(.leading, 8)
+                Text(status ?? "").foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+            Button("Cancel", role: .cancel) { dismiss() }
+                .keyboardShortcut(.cancelAction)
+                .disabled(isCreating)
+            if current != .intro {
+                Button("Back") { step = HarnessOnboardingStep(rawValue: current.rawValue - 1) }
+                    .disabled(isCreating)
+            }
+            if current == .create {
+                Button("Create Project") { Task { await create() } }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(isCreating || isTaken || !Self.isValid(repoName) || trimmedProjectName.isEmpty)
+            } else {
+                Button("Continue") { step = HarnessOnboardingStep(rawValue: current.rawValue + 1) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
+
+    // MARK: The form
+
+    private var trimmedProjectName: String { projectName.trimmingCharacters(in: .whitespaces) }
+
+    /// The repo's name: as typed, else from the project's.
+    private var repoName: String {
+        if !name.isEmpty { return name }
+        let slug = trimmedProjectName.lowercased()
+            .map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+            .split(separator: "-").joined(separator: "-")
+        return slug.isEmpty ? "harness" : "\(slug)-harness"
+    }
+
+    private var isTaken: Bool {
+        (harness.repositories[org] ?? []).contains { $0.lowercased() == "\(org)/\(repoName)".lowercased() }
+    }
+
+    private var form: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(isFirst ? "Name your first project" : "New project")
+                .font(.title2.weight(.semibold))
+            if !isFirst {
+                Button("What's in a harness?") { step = .layout }
+                    .linkButton()
+            }
+            Form {
+                TextField("Project", text: $projectName, prompt: Text("Platform, Mobile app"))
+                TextField("Harness repo", text: $name, prompt: Text(repoName))
+                if isTaken {
+                    Text("\(org) already has a repo called \(repoName). Add it under Settings › Projects instead.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else {
+                    Text("Gannin creates \(org)/\(repoName) as a private repo.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Section {
+                    let choices = repoChoices
+                    if choices.isEmpty {
+                        Text("No repos with recent pull requests yet. Add them later under Settings › Projects.")
+                            .foregroundStyle(.secondary)
+                    }
+                    ForEach(choices, id: \.self) { repo in
+                        Toggle(repo, isOn: Binding(
+                            get: { picked.contains(repo) },
+                            set: { if $0 { picked.insert(repo) } else { picked.remove(repo) } }
+                        ))
+                        .checkboxToggle()
+                    }
+                } header: {
+                    Text("Code repos")
+                } footer: {
+                    Text(picked.isEmpty ? "None picked: the project covers every repo. A window on it shows only its repos." : "A window on the project shows only these. CLAUDE.md lists them for Claude Code.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .formStyle(.grouped)
+            .disabled(isCreating)
+            if let error {
+                Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// The org's code repos with PRs, busiest first.
+    private var repoChoices: [String] {
+        let config = configs.baseConfig(for: org)
         return OrgSettingsView.repositories(snapshot: orgs.snapshot(for: org), history: metrics.history(for: org))
-            .filter { $0.openPullRequests + $0.merged > 0 && !config.repoExclusion.contains($0.name) }
+            .filter { $0.openPullRequests + $0.merged > 0 && !config.excludedRepos.contains($0.name) }
             .sorted { $0.openPullRequests + $0.merged > $1.openPullRequests + $1.merged }
-            .prefix(12)
+            .prefix(20)
             .map(\.name)
     }
 
@@ -496,29 +575,28 @@ struct CreateHarnessSheet: View {
         !name.isEmpty && name.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) }
     }
 
-    private func create(projects: [String]) async {
+    private func create() async {
         guard let api = auth.api else { return }
         isCreating = true
         error = nil
         defer { isCreating = false }
+        let name = repoName
+        let repos = repoChoices.filter(picked.contains)
         do {
             status = "Creating \(org)/\(name)"
             let created = try await api.createRepository(org: org, name: name, description: "Plans, requirements, findings and skills beside the code, kept with Gannin.")
             let setup = HarnessConfig(repo: created.nameWithOwner)
-            // It's the harness from here, even if the layout fails.
-            if let project {
-                configs.updateProject(project, in: org) { $0.harness = setup }
-            } else {
-                configs.update(org) { $0.harness = setup }
-            }
+            // It's a project from here, even if the layout fails.
+            configs.updateHarnesses(org) { $0.addHarness(setup) }
             status = "Committing the layout"
-            let files = HarnessSkeleton.files(org: org, repo: created.nameWithOwner, projects: projects)
+            var files = HarnessSkeleton.files(org: org, repo: created.nameWithOwner, projects: repos.isEmpty ? Array(repoChoices.prefix(12)) : repos)
+            files[TeamFile.project] = TeamCoding.encode(ProjectFile(name: trimmedProjectName, repos: repos))
             // The first commit GitHub makes can take a moment to show.
             var attempt = 0
             while true {
                 do {
                     try await harness.commit(org: org, setup: setup) { _ in
-                        HarnessChange(message: "Harness layout, from Gannin", files: files)
+                        HarnessChange(message: "Harness layout for \(trimmedProjectName), from Gannin", files: files)
                     }
                     break
                 } catch where attempt < 3 {
@@ -528,7 +606,7 @@ struct CreateHarnessSheet: View {
             }
             dismiss()
         } catch {
-            self.error = configs.config(for: org).harness(repo: "\(org)/\(name)") == nil
+            self.error = !configs.harnesses(for: org).contains { $0.repo == "\(org)/\(name)" }
                 ? error.localizedDescription
                 : "Created \(org)/\(name), but couldn't commit its layout: \(error.localizedDescription)"
         }

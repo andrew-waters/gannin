@@ -16,7 +16,7 @@ enum PaletteTarget: Hashable {
     case harnessDocument(repo: String, path: String, kind: HarnessKind)
     case settings(OrgSettingsView.Pane)
     /// The window's project; nil for All.
-    case project(UUID?)
+    case project(String)
     case newIssue
     /// The org alone, as the switcher picks it.
     case org
@@ -337,8 +337,7 @@ struct PaletteSources {
         items.append(PaletteItem(id: "action:\(org):refresh", group: .actions, title: "Refresh", systemImage: "arrow.clockwise", org: org, keywords: ["sync"], action: .run(.refresh(org: org, full: false))))
         items.append(PaletteItem(id: "action:\(org):full-refresh", group: .actions, title: "Full Refresh", systemImage: "arrow.clockwise.circle", org: org, keywords: ["sync"], action: .run(.refresh(org: org, full: true))))
         items.append(PaletteItem(id: "action:\(org):switch", group: .actions, title: "Switch to \(name)", systemImage: "building.2", org: org, keywords: ["organisation", "organization", "org"], action: go(.org)))
-        if !config.repoProjects.isEmpty {
-            items.append(PaletteItem(id: "action:\(org):project-all", group: .actions, title: "Switch to All Projects", systemImage: "square.stack", org: org, keywords: ["project"], action: go(.project(nil))))
+        if config.repoProjects.count > 1 {
             for project in config.repoProjects {
                 items.append(PaletteItem(id: "action:\(org):project:\(project.id)", group: .actions, title: "Switch to Project \(project.name)", systemImage: "square.stack", org: org, keywords: ["project"], action: go(.project(project.id))))
             }
