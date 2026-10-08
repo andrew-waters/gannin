@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: An Ask session's tab lists the files it wrote, in its folder and elsewhere, beside the terminal in place of Changes, each to open, drag out, open with, reveal, save a copy of or copy.
 issues: [andrew-waters/gannin#58]
 domains: [sessions]
@@ -43,4 +43,4 @@ opened, opened with, revealed, saved elsewhere or dragged into another app witho
 - [x] Refresh on `changed`, on new transcript paths and on a two-second poll
 - [x] Files in place of Changes for Ask sessions in `SessionTab`
 - [x] CLAUDE.md
-- [ ] Check in the app once #56 starts Ask sessions: Write, Bash and MCP files appear within seconds; drag into Mail attaches; Save a Copy writes elsewhere
+- [x] Check in the app once #56 starts Ask sessions: Write, Bash and MCP files appear within seconds; drag into Mail attaches; Save a Copy writes elsewhere

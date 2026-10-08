@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: done
 summary: "General-purpose Claude Code conversations in the same window as plans and reviews, about anything: the code, the harness, the business's data (how many users logged in today) or nothing in particular. Gannin's org data is on hand but isn't the frame. Files it writes are listed to grab, and committed only very explicitly."
 issues: [andrew-waters/gannin#55, andrew-waters/gannin#56, andrew-waters/gannin#57, andrew-waters/gannin#58, andrew-waters/gannin#59, andrew-waters/gannin#60, andrew-waters/gannin#61]
 touches: [andrew-waters/gannin]
@@ -118,12 +118,12 @@ Ad hoc sessions are a fourth kind of Claude Code session beside Code, Review and
 
 ## Tasks
 
-1. [andrew-waters/gannin#56](https://github.com/andrew-waters/gannin/issues/56) Ask sessions: model, folder and start (satisfies R2, R3, R11)
-2. [andrew-waters/gannin#57](https://github.com/andrew-waters/gannin/issues/57) New Ask: first-message tab and entry points, replacing one-shot Ask (satisfies R1, R10)
-3. [andrew-waters/gannin#58](https://github.com/andrew-waters/gannin/issues/58) Ask tab: Files pane listing what the session wrote (satisfies R4, R5)
-4. [andrew-waters/gannin#59](https://github.com/andrew-waters/gannin/issues/59) Commit to Harness: explicit one-file commit, binary files included (satisfies R6)
-5. [andrew-waters/gannin#60](https://github.com/andrew-waters/gannin/issues/60) Harness › Research lists committed research (satisfies R7)
-6. [andrew-waters/gannin#61](https://github.com/andrew-waters/gannin/issues/61) Agents › Ask: keep, resume and delete Ask sessions (satisfies R8, R9)
+- [x] [andrew-waters/gannin#56](https://github.com/andrew-waters/gannin/issues/56) Ask sessions: model, folder and start (satisfies R2, R3, R11)
+- [x] [andrew-waters/gannin#57](https://github.com/andrew-waters/gannin/issues/57) New Ask: first-message tab and entry points, replacing one-shot Ask (satisfies R1, R10)
+- [x] [andrew-waters/gannin#58](https://github.com/andrew-waters/gannin/issues/58) Ask tab: Files pane listing what the session wrote (satisfies R4, R5)
+- [x] [andrew-waters/gannin#59](https://github.com/andrew-waters/gannin/issues/59) Commit to Harness: explicit one-file commit, binary files included (satisfies R6)
+- [x] [andrew-waters/gannin#60](https://github.com/andrew-waters/gannin/issues/60) Harness › Research lists committed research (satisfies R7)
+- [x] [andrew-waters/gannin#61](https://github.com/andrew-waters/gannin/issues/61) Agents › Ask: keep, resume and delete Ask sessions (satisfies R8, R9)
 
 **Decisions:**
 
