@@ -712,7 +712,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   session on a server, through its Connect with command when that's ssh (`-T`, `BatchMode`, one shared connection, `ControlPath=/tmp/gannin-ssh-%C`). A
   PostToolUse hook on edits and Bash writes `changed`, which reads them again; else
   every 10 seconds, 30 over ssh.
-- Ask sessions (`Sessions/AskSession.swift`, `CodeSession.ask`, `AskInfo`: title, slug, first
+- Ask sessions (`Sessions/AskSession.swift`, `CodeSession.ask`, `AskInfo`: title, slug (the
+  day it started and the first 8 characters of the session's ID, `2026-10-08-3f9a2c1d`), first
   message; `plans/2026-10-08-ask-sessions.md`) are open-ended conversations about anything, not
   tied to an issue, PR or plan, in place of the old one-shot Ask. New Ask (the button at the top
   of the sidebar, the Claude Code window's +, Agents' toolbar and the palette's New Ask; a window
@@ -721,7 +722,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `NewAskView` over a `PlanningDraft` with `isAsk`) with the project and the team's prompts and
   skills for Ask (`PromptUse.ask`); Return starts it (`SessionStore.startAsk`), Shift-Return is a
   new line. It always runs on this Mac (`connect` nil, the local harness checkout), in the
-  harness root with its folder `.worktrees/ask-<slug>/`: `.gannin/` (an Ask brief,
+  harness root with its folder `.worktrees/ask-<date>-<id>/`: `.gannin/` (an Ask brief,
   `askBrief`), `files/` where claude is told to save what it makes, and `context/`, Gannin's
   view of the org (`OrgContext.files`, through `SessionStore.orgContext`, set by the app),
   written to the session's own folder on every start and resume (`writeAskContext`) and copied
@@ -733,7 +734,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   shown (MCP writes fire no hook). Click opens; drag is the file (a promise as well as its URL);
   the menu has Open With, Show in Finder, Save a Copy and Copy, then, set apart, Commit to
   Harness (`CommitToHarnessSheet`, `AskCommit.swift`): a Quick Look preview, where it goes
-  (`research/<date>-<slug>/<name>`, `ResearchFolder`, with a README naming the conversation
+  (`research/<date>-<id>/<name>`, `ResearchFolder`, with a README naming the conversation
   and its question and listing its files, added to on the next commit), a sensitive-data
   warning, a box to tick before Commit can be pressed, and Cancel as the default button, so
   Return never commits. Nothing else commits an Ask's files. Ask sessions are kept until

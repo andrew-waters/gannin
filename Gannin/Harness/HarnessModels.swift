@@ -59,7 +59,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
     /// about (`HarnessLearning`), for later reviews to follow.
     case learnings = "Learnings"
     /// Files committed from Ask sessions, a folder per conversation
-    /// (`research/<date>-<slug>/`), its README the document.
+    /// (`research/<date>-<id>/`), its README the document.
     case research = "Research"
 
     var id: Self { self }

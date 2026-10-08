@@ -2,14 +2,16 @@ import AppKit
 import SwiftUI
 
 /// An Ask session: an open-ended Claude Code conversation about anything,
-/// in its own folder of a project's harness (`.worktrees/ask-<slug>/`), so
+/// in its own folder of a project's harness (`.worktrees/ask-<date>-<id>/`), so
 /// the harness's CLAUDE.md, skills and MCP servers apply. Not tied to an
 /// issue, PR or plan.
 struct AskInfo: Codable, Hashable {
     /// From the first message; renamed as you like.
     var title: String
-    /// Short, for its folder and anything committed from it
-    /// (`research/<date>-<slug>/`).
+    /// The day it started and the start of the session's ID
+    /// (`2026-10-08-3f9a2c1d`), for its folder and anything committed from
+    /// it (`research/<slug>/`). Sessions from before were named from the
+    /// title.
     let slug: String
     /// What it was started with.
     let message: String
@@ -48,13 +50,14 @@ extension SessionStore {
     func startAsk(org: String, message: String, harness setup: HarnessConfig, choice: PromptChoice? = nil) -> CodeSession {
         let harnessPath = Self.localHarnessPath(org: org, repo: setup.repo)
         let title = Self.askTitle(message)
-        let slug = uniqueAskSlug(Self.slug(title), harnessPath: harnessPath)
+        let id = UUID()
+        let slug = "\(Date.now.formatted(.iso8601.year().month().day()))-\(id.uuidString.prefix(8).lowercased())"
         let branch = "ask-\(slug)"
         let info = AskInfo(title: title, slug: slug, message: message)
         let instructions = launchInstructions(org: org, setup: setup, use: .ask, repos: [], choice: choice,
                                               values: ["title": title, "repo": setup.repo, "branch": branch])
         let session = CodeSession(
-            id: UUID(), issue: IssueReference(org: org, id: "ask-\(UUID().uuidString)", number: 0, title: title, repo: setup.repo,
+            id: id, issue: IssueReference(org: org, id: "ask-\(id.uuidString)", number: 0, title: title, repo: setup.repo,
                                               url: URL(string: "https://github.com/\(setup.repo)")!),
             repo: setup.repo, branch: branch, createdAt: .now,
             connect: nil, harnessRepo: setup.repo, harnessPath: harnessPath,
@@ -74,18 +77,6 @@ extension SessionStore {
         guard line.count > 60 else { return line }
         let cut = line.prefix(60)
         return String(cut[..<(cut.lastIndex(of: " ") ?? cut.endIndex)])
-    }
-
-    /// The slug with a number after it when another Ask session, or a
-    /// folder left behind, has it.
-    private func uniqueAskSlug(_ base: String, harnessPath: String) -> String {
-        let taken = Set(sessions.values.compactMap(\.ask?.slug))
-        let folder = Self.expanded(harnessPath).appending(path: ".worktrees")
-        func free(_ slug: String) -> Bool {
-            !taken.contains(slug) && !FileManager.default.fileExists(atPath: folder.appending(path: "ask-\(slug)").path)
-        }
-        if free(base) { return base }
-        return (2...).lazy.map { "\(base)-\($0)" }.first(where: free)!
     }
 
     /// What claude is told first: your message, then where it is and where

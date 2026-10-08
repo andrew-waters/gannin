@@ -2,12 +2,15 @@ import AppKit
 import QuickLookUI
 import SwiftUI
 
-/// Where an Ask's files go in the harness: `research/<date>-<slug>/`, one
-/// folder per conversation, with a README naming it and listing its files.
+/// Where an Ask's files go in the harness: `research/<date>-<id>/`, as its
+/// folder is named, one per conversation, with a README naming it and
+/// listing its files.
 enum ResearchFolder {
     static func path(for session: CodeSession) -> String {
         let day = session.createdAt.formatted(.iso8601.year().month().day())
-        return "research/\(day)-\(session.ask?.slug ?? session.branch)"
+        let slug = session.ask?.slug ?? session.branch
+        // Older sessions' slugs were their titles, with no date.
+        return "research/\(slug.hasPrefix(day) ? slug : "\(day)-\(slug)")"
     }
 
     /// The folder's README: the conversation's title and question, and its
