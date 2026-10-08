@@ -1,13 +1,11 @@
 import SwiftUI
 
-/// A branch's commits, newest first, with their tags and the branches at
+/// The checked-out branch's commits, newest first, with their tags and the branches at
 /// them; picking one shows its message, files and each file's diff. Tags
 /// are made, pushed and deleted from here.
 struct RepositoryHistoryView: View {
     let repository: LocalRepository
     @State private var history = GitHistory()
-    /// The branch shown; nil for the one checked out.
-    @State private var ref: String?
     @State private var search = ""
     @State private var deletingTag: String?
     /// The commit list keeps the keyboard: picking a commit loads its files
@@ -25,7 +23,6 @@ struct RepositoryHistoryView: View {
         let onlyHere = repository.remoteTags.map { remote in repository.tags.filter { !remote.contains($0.name) }.count } ?? 0
         VStack(spacing: 0) {
             HStack(spacing: 10) {
-                branchPicker
                 FilterSearchField(text: $search, prompt: "Commits")
                 Spacer()
                 if onlyHere > 0 {
@@ -47,7 +44,7 @@ struct RepositoryHistoryView: View {
             await history.load(path: repository.path, ref: shownRef, upstream: upstream)
         }
         .task(id: repository.root) { await repository.loadRemoteTags() }
-        .onChange(of: ref) { history.reset() }
+        .onChange(of: repository.status?.branch) { history.reset() }
         .confirmationDialog("Delete the tag \(deletingTag ?? "")?", isPresented: Binding(get: { deletingTag != nil }, set: { if !$0 { deletingTag = nil } }), presenting: deletingTag) { tag in
             Button("Delete Here", role: .destructive) { Task { await repository.deleteTag(tag, here: true, onOrigin: false) } }
             if repository.remoteTags?.contains(tag) == true {
@@ -58,39 +55,15 @@ struct RepositoryHistoryView: View {
         }
     }
 
-    /// The ref given to git: the branch picked, else HEAD.
-    private var shownRef: String { ref ?? "HEAD" }
+    /// The branch checked out, as the bar's branch button shows it.
+    private var shownRef: String { "HEAD" }
 
     /// Where unpushed commits are counted from: the branch's upstream.
-    private var upstream: String? {
-        guard let ref else { return repository.status?.upstream }
-        return repository.branches.first { !$0.isRemote && $0.name == ref }?.upstream
-    }
+    private var upstream: String? { repository.status?.upstream }
 
     /// Read again when the branch moves or tags change.
     private var reloadKey: String {
-        let tip = ref.flatMap { name in repository.branches.first { $0.name == name }?.sha } ?? repository.status?.head ?? ""
-        return [repository.path, shownRef, tip, repository.tags.map(\.name).joined(separator: ",")].joined(separator: "|")
-    }
-
-    private var branchPicker: some View {
-        let local = repository.branches.filter { !$0.isRemote }
-        let remote = repository.branches.filter(\.isRemote)
-        return Menu {
-            Button("Checked Out (\(repository.status?.branch ?? "HEAD"))") { ref = nil }
-            Divider()
-            Section("Branches") {
-                ForEach(local) { branch in Button(branch.name) { ref = branch.name } }
-            }
-            Section("On origin") {
-                ForEach(remote) { branch in Button(branch.name) { ref = branch.name } }
-            }
-        } label: {
-            Label(ref ?? repository.status?.branch ?? "HEAD", systemImage: "clock.arrow.circlepath")
-                .labelStyle(.titleAndIcon)
-        }
-        .fixedSize()
-        .help("Whose history to show")
+        [repository.path, repository.status?.branch ?? "", repository.status?.head ?? "", repository.tags.map(\.name).joined(separator: ",")].joined(separator: "|")
     }
 
     @ViewBuilder
