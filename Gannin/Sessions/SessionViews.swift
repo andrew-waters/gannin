@@ -38,8 +38,13 @@ struct SessionsWindow: View {
             if sessions.showingOverview {
                 SessionOverview()
             } else if let draftID = sessions.selectedTab, let draft = sessions.planningDrafts[draftID] {
-                NewPlanningView(draftID: draftID, draft: draft)
-                    .id(draftID)
+                if draft.isAsk {
+                    NewAskView(draftID: draftID, draft: draft)
+                        .id(draftID)
+                } else {
+                    NewPlanningView(draftID: draftID, draft: draft)
+                        .id(draftID)
+                }
             } else if let selected {
                 if let beside = sessions.besideTab.flatMap({ sessions.sessions[$0] }), beside.id != selected.id {
                     HSplitView {
@@ -55,8 +60,8 @@ struct SessionsWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 480)
-        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected?.issue.reference ?? "Claude Code")
-        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? (sessions.selectedTab.flatMap { sessions.planningDrafts[$0] } != nil ? "New plan" : ""))
+        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.isAsk ? "Ask" : $0.issue.reference } ?? "Claude Code")
+        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : "New plan" } ?? "")
         .background { shortcuts }
         .onChange(of: activeState, initial: true) { sessions.windowIsKey = activeState == .key }
         .onDisappear { sessions.windowIsKey = false }
@@ -97,6 +102,14 @@ struct SessionsWindow: View {
     }
 }
 
+/// The tab bar's colours: the bar a shade lighter than the window's own
+/// bar, and the selected tab the page's colour, darker, so it reads as part
+/// of what's beneath it.
+enum SessionTabColors {
+    static let bar = AnyShapeStyle(Color.primary.opacity(0.09))
+    static let selected = Color(nsColor: .textBackgroundColor)
+}
+
 private struct SessionTabBar: View {
     @Environment(SessionStore.self) private var sessions
 
@@ -130,7 +143,9 @@ private struct SessionTabBar: View {
                 .padding(.horizontal, 8)
         }
         .frame(height: 56)
-        .background(.bar)
+        // Lighter than the window, with the selected tab cut from the page
+        // beneath it.
+        .background(SessionTabColors.bar)
     }
 
     /// Jumps to the session waiting on you longest.
@@ -160,8 +175,11 @@ private struct SessionTabBar: View {
         return Menu {
             if let org {
                 // In the harness of the session showing, when there is one.
+                let harness = sessions.selectedTab.flatMap { sessions.sessions[$0]?.harnessRepo }
+                Button("New Ask") {
+                    sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness, isAsk: true))
+                }
                 Button("New Plan") {
-                    let harness = sessions.selectedTab.flatMap { sessions.sessions[$0]?.harnessRepo }
                     sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness))
                 }
                 Divider()
@@ -192,26 +210,31 @@ private struct TabKind {
     let title: String
 
     init(_ session: CodeSession) {
-        if let planning = session.planning {
+        if let ask = session.ask {
+            name = "Ask"
+            symbol = "sparkle.magnifyingglass"
+            reference = nil
+            title = ask.title
+        } else if let planning = session.planning {
             name = "Plan"
             symbol = "list.bullet"
             reference = planning.issue?.reference
-            title = planning.state?.title ?? planning.topic
+            title = session.name ?? planning.state?.title ?? planning.topic
         } else if session.isPullRequestReview {
             name = "Review"
             symbol = "arrow.triangle.pull"
             reference = session.issue.reference
-            title = session.issue.title
+            title = session.name ?? session.issue.title
         } else if session.isHelper {
             name = session.role ?? "Helper"
             symbol = session.isReviewer ? "arrow.triangle.pull" : "person.2"
             reference = session.issue.reference
-            title = session.issue.title
+            title = session.name ?? session.issue.title
         } else {
             name = "Code"
             symbol = "arrow.triangle.branch"
             reference = session.issue.reference
-            title = session.issue.title
+            title = session.name ?? session.issue.title
         }
     }
 }
@@ -227,14 +250,14 @@ private struct DraftTabItem: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle().fill(Color.secondary.opacity(0.5)).frame(width: 7, height: 7)
-            Image(systemName: "list.bullet")
+            Image(systemName: draft.isAsk ? "sparkle.magnifyingglass" : "list.bullet")
                 .font(.system(size: 20))
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: 26)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text("New Plan")
+                    Text(draft.isAsk ? "New Ask" : "New Plan")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     if let issue = draft.issue {
@@ -266,7 +289,7 @@ private struct DraftTabItem: View {
         .padding(.trailing, 6)
         .frame(width: 250)
         .frame(maxHeight: .infinity)
-        .background(isSelected ? Color.primary.opacity(0.1) : .clear)
+        .background(isSelected ? SessionTabColors.selected : .clear)
         .contentShape(Rectangle())
         .onTapGesture {
             sessions.showingOverview = false
@@ -282,6 +305,8 @@ private struct SessionTabItem: View {
     let session: CodeSession
     let isSelected: Bool
     @State private var hovering = false
+    @State private var renaming = false
+    @State private var newName = ""
 
     var body: some View {
         let state = sessions.state(session.id)
@@ -335,13 +360,21 @@ private struct SessionTabItem: View {
         .frame(width: 250)
         .frame(maxHeight: .infinity)
         // The tab shown, lighter than the rest.
-        .background(isSelected ? Color.primary.opacity(0.1) : .clear)
+        .background(isSelected ? SessionTabColors.selected : .clear)
         .contentShape(Rectangle())
+        .onTapGesture(count: 2) { startRenaming() }
         .onTapGesture {
             sessions.showingOverview = false
             sessions.selectedTab = session.id
         }
         .onHover { hovering = $0 }
+        .alert("Rename Tab", isPresented: $renaming) {
+            TextField("Name", text: $newName)
+            Button("Rename") { sessions.renameTab(session.id, to: newName) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(session.isAsk ? "The Ask's name, wherever it's listed." : "Leave it empty to go back to \(session.issue.title).")
+        }
         .help("\(session.issue.reference): \(session.issue.title). \(state.label).")
         .draggable(session.id.uuidString)
         .dropDestination(for: String.self) { items, _ in
@@ -350,6 +383,8 @@ private struct SessionTabItem: View {
             return true
         }
         .contextMenu {
+            Button("Rename Tab") { startRenaming() }
+            Divider()
             Button("Close Tab") { sessions.closeTab(session.id) }
             Button("Close Other Tabs") {
                 for id in sessions.tabs where id != session.id { sessions.closeTab(id) }
@@ -361,20 +396,27 @@ private struct SessionTabItem: View {
                 sessions.besideTab = session.id
             }
             .disabled(isSelected || sessions.tabs.count < 2)
-            Button("Open Issue") { openWindow(value: session.issue) }
+            if !session.isAsk && !session.isPlanning {
+                Button("Open Issue") { openWindow(value: session.issue) }
+            }
         }
+    }
+
+    private func startRenaming() {
+        newName = session.title
+        renaming = true
     }
 }
 
 /// What the side of a session's tab shows.
 private enum SessionPane: String {
-    case issue, changes, files, pullRequests, activity
+    case issue, changes, pullRequests, activity
 }
 
 /// One session's tab: the terminal claude runs in with a bar beneath for
 /// talking to it, and beside it the issue with its plans and requirements,
-/// the changes in its worktrees (an Ask session's files in their place),
-/// its PRs, or what claude has been doing. Changes are read again a moment
+/// the changes in its worktrees (an Ask session's artifacts and files in
+/// its Session pane instead), its PRs, or what claude has been doing. Changes are read again a moment
 /// after claude edits a file or runs a command (its hooks say so), and
 /// otherwise every so often while the tab shows. Shown beside another, the side panel starts hidden.
 struct SessionTab: View {
@@ -391,70 +433,41 @@ struct SessionTab: View {
     /// Documents dropped on a planning session, being confirmed.
     @State private var sharing: [URL]?
     @AppStorage("sessionsPane") private var pane: SessionPane = .issue
+    /// The side panel opens at its widest and is dragged no wider than
+    /// this, however wide the window, nor narrower than the least.
+    static let panelMaxWidth: Double = 440
+    static let panelMinWidth: Double = 300
 
-    /// Files stands in for Changes in an Ask session, and the other way
-    /// about, so one remembered pane suits both.
+    /// An Ask's Session pane has its artifacts and files, so it has no
+    /// Changes, and PRs only once it has some; one remembered pane suits
+    /// every kind.
     private var shownPane: Binding<SessionPane> {
         Binding {
             switch pane {
-            case .changes where session.isAsk: .files
-            case .files where !session.isAsk: .changes
+            case .changes where session.isAsk: .issue
+            case .pullRequests where session.isAsk && !hasPullRequests: .issue
             default: pane
             }
         } set: { pane = $0 }
     }
 
+    private var hasPullRequests: Bool {
+        !session.pullRequests.isEmpty || !(sessions.pullRequestInfo[session.parentID ?? session.id] ?? []).isEmpty
+    }
+
     var body: some View {
         let shown = panelShown ?? !compact
-        HSplitView {
-            VStack(spacing: 0) {
-                if compact {
-                    SessionTabHeader(session: session, panelShown: Binding(get: { shown }, set: { panelShown = $0 }))
-                    Divider()
-                }
-                TerminalHost(session: session)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .bottom) { askOverlay }
-                    // A planning session takes documents dropped on it,
-                    // each confirmed before claude sees it.
-                    .dropDestination(for: URL.self) { urls, _ in
-                        guard session.isPlanning, !urls.isEmpty else { return false }
-                        sharing = urls.filter(\.isFileURL)
-                        return true
-                    }
-                    .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } })) {
-                        ShareDocumentsSheet(session: session, files: sharing ?? [])
-                    }
-                Divider()
-                SessionComposer(session: session, panelShown: compact ? nil : Binding(get: { shown }, set: { panelShown = $0 }))
-            }
-            .frame(minWidth: compact ? 360 : 480, maxWidth: .infinity, maxHeight: .infinity)
+        Group {
             if shown {
-                VStack(spacing: 0) {
-                    Picker("Show", selection: shownPane) {
-                        Text("Issue").tag(SessionPane.issue)
-                        if session.isAsk {
-                            let count = sessions.files(for: session).files.count
-                            Text(count > 0 ? "Files \(count)" : "Files").tag(SessionPane.files)
-                        } else {
-                            Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
-                        }
-                        Text(pullRequestsLabel).tag(SessionPane.pullRequests)
-                        Text("Activity").tag(SessionPane.activity)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .padding(8)
-                    Divider()
-                    switch shownPane.wrappedValue {
-                    case .issue: SessionPanel(session: session)
-                    case .changes: SessionChangesPane(session: session, changes: changes)
-                    case .files: SessionFilesPane(session: session, files: sessions.files(for: session))
-                    case .pullRequests: SessionPullRequestsPane(session: session)
-                    case .activity: SessionActivityPane(session: session)
-                    }
+                // The terminal takes the room; the panel opens at its widest
+                // and can be dragged narrower.
+                FixedSplit(key: "sessionPanelWidth", width: Self.panelMaxWidth, range: Self.panelMinWidth...Self.panelMaxWidth, fixing: .trailing) {
+                    terminal(shown: shown)
+                } trailing: {
+                    panel
                 }
-                .frame(minWidth: 340, idealWidth: 440, maxWidth: 900, maxHeight: .infinity)
+            } else {
+                terminal(shown: shown)
             }
         }
         // Each change signal starts this again: a short wait lets a burst of
@@ -477,6 +490,56 @@ struct SessionTab: View {
         // watches them in the background otherwise.
         .task(id: session.pullRequests) {
             await sessions.refreshPullRequests(session.parentID ?? session.id)
+        }
+    }
+
+    private func terminal(shown: Bool) -> some View {
+        VStack(spacing: 0) {
+            if compact {
+                SessionTabHeader(session: session, panelShown: Binding(get: { shown }, set: { panelShown = $0 }))
+                Divider()
+            }
+            TerminalHost(session: session)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottom) { askOverlay }
+                // A planning session takes documents dropped on it,
+                // each confirmed before claude sees it.
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard session.isPlanning, !urls.isEmpty else { return false }
+                    sharing = urls.filter(\.isFileURL)
+                    return true
+                }
+                .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } })) {
+                    ShareDocumentsSheet(session: session, files: sharing ?? [])
+                }
+            Divider()
+            SessionComposer(session: session, panelShown: compact ? nil : Binding(get: { shown }, set: { panelShown = $0 }))
+        }
+        .frame(minWidth: compact ? 360 : 480, maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var panel: some View {
+        VStack(spacing: 0) {
+            Picker("Show", selection: shownPane) {
+                Text(session.isAsk ? "Session" : "Issue").tag(SessionPane.issue)
+                if !session.isAsk {
+                    Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
+                }
+                if !session.isAsk || hasPullRequests {
+                    Text(pullRequestsLabel).tag(SessionPane.pullRequests)
+                }
+                Text("Activity").tag(SessionPane.activity)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(8)
+            Divider()
+            switch shownPane.wrappedValue {
+            case .issue: SessionPanel(session: session)
+            case .changes: SessionChangesPane(session: session, changes: changes)
+            case .pullRequests: SessionPullRequestsPane(session: session)
+            case .activity: SessionActivityPane(session: session)
+            }
         }
     }
 
@@ -1065,6 +1128,9 @@ private struct SessionPanel: View {
     let session: CodeSession
     @State private var confirmingRemove = false
     @State private var reading: HarnessReading?
+    /// An Ask's file picked for Commit to Harness, and Save a Copy's error.
+    @State private var committing: SessionFile?
+    @State private var fileError: String?
 
     var body: some View {
         let state = sessions.state(session.id)
@@ -1072,7 +1138,11 @@ private struct SessionPanel: View {
         let worktreePath = SessionStore.worktreePath(for: session)
         Form {
             PlanningSection(session: session)
-            if !session.isPlanning {
+            if session.isAsk {
+                AskArtifactsSection(session: session)
+                AskFilesSections(session: session, files: sessions.files(for: session), committing: $committing, error: $fileError)
+            }
+            if !session.isPlanning && !session.isAsk {
             Section("Issue") {
                 Text(session.issue.title)
                     .fontWeight(.semibold)
@@ -1141,15 +1211,19 @@ private struct SessionPanel: View {
                         Button("Restart") { _ = sessions.open(session) }
                             .help("Start the terminal again, resuming claude's conversation")
                     }
-                    Button("Remove", role: .destructive) { confirmingRemove = true }
+                    // An Ask goes with its folder, from its list's Delete.
+                    if !session.isAsk {
+                        Button("Remove", role: .destructive) { confirmingRemove = true }
+                    }
                 }
             }
             SessionFinishSection(session: session)
-            if !session.isPlanning {
-                HarnessIssueSection(reference: session.issue, showsEmpty: true)
+            if !session.isPlanning && !session.isAsk {
+                HarnessIssueSection(reference: session.issue, showsEmpty: true, harnessRepo: session.harnessRepo)
             }
         }
         .formStyle(.grouped)
+        .modifier(AskFilesRefresh(session: session, files: sessions.files(for: session), committing: $committing, error: $fileError))
         // Documents open over the session; issues and PRs they name, in
         // windows of their own.
         .environment(\.navigate, NavigateAction { selection in
@@ -1322,16 +1396,18 @@ struct SessionSidebarRows: View {
     @AppStorage("sidebarSessionsIssues") private var issuesExpanded = true
     @AppStorage("sidebarSessionsReviews") private var reviewsExpanded = true
     @AppStorage("sidebarSessionsPlanning") private var planningExpanded = true
+    @AppStorage("sidebarSessionsAsk") private var askExpanded = true
 
     var body: some View {
         let all = sessions.sessions(for: org)
-        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning }, expanded: $issuesExpanded)
+        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning && !$0.isAsk }, expanded: $issuesExpanded)
         // Active reviews, newest first, then the history.
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }
         let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
         group("Reviews", symbol: "eye", sessions: active + finished, expanded: $reviewsExpanded)
         group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter(\.isPlanning), expanded: $planningExpanded)
+        group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
     }
 
     /// A kind of session, with how many are waiting on you; empty kinds

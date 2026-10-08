@@ -254,6 +254,8 @@ struct PlanningDraft: Hashable {
     var issue: IssueReference? = nil
     /// The harness to plan in, when it was picked first (a Harness page).
     var harnessRepo: String? = nil
+    /// A New Ask rather than a plan (`NewAskView`).
+    var isAsk = false
 }
 
 extension SessionStore {

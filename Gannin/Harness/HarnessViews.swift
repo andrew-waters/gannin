@@ -104,7 +104,8 @@ struct HarnessView: View {
         }
         .loadsHarness(org: org)
         .toolbar {
-            if let setup {
+            // Research is committed from an Ask's Files, one file at a time.
+            if let setup, kind != .research {
                 ToolbarItem {
                     if harnesses.count > 1 {
                         // Which harness it goes in.
@@ -1152,6 +1153,20 @@ extension GitHubAPI {
 
 // MARK: - On an issue
 
+extension HarnessIssueSection {
+    /// The session's harness when it names one (the Claude Code window
+    /// belongs to no project, so its config is the org's home), else the
+    /// window's project's.
+    private var index: HarnessIndex? {
+        let config = configs.config(for: reference.org)
+        if let harnessRepo {
+            return config.harness(repo: harnessRepo).flatMap { harness.index(for: reference.org, $0) }
+                ?? harness.anyIndex(org: reference.org, repo: harnessRepo)
+        }
+        return harness.combined(org: reference.org, config.harnesses)
+    }
+}
+
 /// The harness documents about or mentioning an issue, in its page.
 struct HarnessIssueSection: View {
     @Environment(HarnessStore.self) private var harness
@@ -1162,9 +1177,12 @@ struct HarnessIssueSection: View {
     /// Shows the section with nothing in it yet, saying so, as a session
     /// does while claude writes the plan.
     var showsEmpty = false
+    /// The one harness to look in, as a session runs in its own; nil for
+    /// the window's project's.
+    var harnessRepo: String? = nil
 
     var body: some View {
-        if let index = harness.combined(org: reference.org, configs.config(for: reference.org).harnesses) {
+        if let index = index {
             // As the Harness page lists them: only those that follow the standard.
             let matches = index.matches(repo: reference.repo, number: reference.number).filter(\.document.followsStandard)
             if !matches.isEmpty || showsEmpty {

@@ -2,11 +2,13 @@ import Foundation
 
 /// Where a prompt in the harness is offered: starting a session on an
 /// issue, a review of a PR (or of a session's changes), a planning session,
-/// or sent to a session already running, from the menu under its terminal.
+/// an Ask, or sent to a session already running, from the menu under its
+/// terminal.
 nonisolated enum PromptUse: String, CaseIterable, Codable, Identifiable, Sendable {
     case work
     case review
     case planning
+    case ask
     case session
 
     var id: Self { self }
@@ -16,6 +18,7 @@ nonisolated enum PromptUse: String, CaseIterable, Codable, Identifiable, Sendabl
         case .work: "Work on an issue"
         case .review: "Reviews"
         case .planning: "Planning"
+        case .ask: "Ask"
         case .session: "In a session"
         }
     }

@@ -1,21 +1,30 @@
 import Foundation
 
 /// A commit Gannin makes to the harness through the GitHub API, never
-/// through a checkout: files added or replaced by path (nil removes one).
+/// through a checkout: files added or replaced by path (nil removes one),
+/// and files added as they are, byte for byte, which needn't be text.
 struct HarnessChange {
     var message: String
     var files: [String: String?]
+    var data: [String: Data] = [:]
+
+    /// The most a file added as data can be. `createCommitOnBranch` takes
+    /// the whole commit in one request, base64 encoded, so a larger one is
+    /// refused here with a reason rather than by GitHub.
+    nonisolated static let maxDataBytes = 5 * 1024 * 1024
 }
 
 enum HarnessWriteError: LocalizedError {
     /// Someone committed in between, twice.
     case headMoved(String)
     case invalidRepo(String)
+    case tooLarge(String)
 
     var errorDescription: String? {
         switch self {
         case .headMoved(let repo): "\(repo) changed while Gannin was writing to it, twice. Try again."
         case .invalidRepo(let repo): "\(repo) isn't owner/name."
+        case .tooLarge(let path): "\(path) is over \(ByteCountFormatter.string(fromByteCount: Int64(HarnessChange.maxDataBytes), countStyle: .file)), more than Gannin commits through GitHub's API."
         }
     }
 }
@@ -81,9 +90,12 @@ extension GitHubAPI {
             let body = lines[1].trimmingCharacters(in: .whitespacesAndNewlines)
             if !body.isEmpty { message["body"] = body }
         }
+        if let large = change.data.first(where: { $0.value.count > HarnessChange.maxDataBytes }) {
+            throw HarnessWriteError.tooLarge(large.key)
+        }
         let additions = change.files.compactMap { path, text in
             text.map { ["path": path, "contents": Data($0.utf8).base64EncodedString()] }
-        }
+        } + change.data.map { path, data in ["path": path, "contents": data.base64EncodedString()] }
         let deletions = change.files.compactMap { path, text in text == nil ? ["path": path] : nil }
         let input: [String: Any] = [
             "branch": ["repositoryNameWithOwner": repo, "branchName": branch],

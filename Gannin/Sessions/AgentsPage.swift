@@ -43,12 +43,27 @@ struct AgentsPage: View {
                         }
                     }
                 }
+                if !sessions.askSessions(for: org).isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Ask")
+                            .font(.headline)
+                        AskSessionsList(org: org)
+                    }
+                }
             }
             .padding(20)
             .frame(maxWidth: 980, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .toolbar {
+            ToolbarItem {
+                Button {
+                    sessions.showNewAsk(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo, with: openWindow)
+                } label: {
+                    Label("New Ask", systemImage: "sparkle.magnifyingglass")
+                }
+                .help("Ask Claude anything, in the harness, with what it makes listed to grab")
+            }
             ToolbarItem {
                 Button {
                     sessions.showNewPlan(PlanningDraft(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo), with: openWindow)

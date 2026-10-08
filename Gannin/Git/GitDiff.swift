@@ -127,28 +127,40 @@ enum DiffStyle {
     }
 }
 
-/// Two panes side by side, the leading one as wide as you drag it (kept
-/// under `key`). Unlike `HSplitView`, its width never shifts when either
-/// pane's content changes, as picking a commit or file does.
+/// Two panes side by side, one (the leading, unless `fixing` says the
+/// trailing) as wide as you drag it (kept under `key`), the other taking
+/// the rest. Unlike `HSplitView`, its width never shifts when either pane's
+/// content changes, as picking a commit or file does, and it opens at the
+/// width given.
 struct FixedSplit<Leading: View, Trailing: View>: View {
     @AppStorage private var width: Double
     private let range: ClosedRange<Double>
+    private let fixing: HorizontalEdge
     private let leading: Leading
     private let trailing: Trailing
     @State private var dragStart: Double?
 
-    init(key: String, width: Double, range: ClosedRange<Double>, @ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing) {
+    init(key: String, width: Double, range: ClosedRange<Double>, fixing: HorizontalEdge = .leading,
+         @ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing) {
         _width = AppStorage(wrappedValue: width, key)
         self.range = range
+        self.fixing = fixing
         self.leading = leading()
         self.trailing = trailing()
     }
 
+    private var fixedWidth: Double { min(max(width, range.lowerBound), range.upperBound) }
+
     var body: some View {
         HStack(spacing: 0) {
-            leading
-                .frame(width: min(max(width, range.lowerBound), range.upperBound))
-                .frame(maxHeight: .infinity)
+            if fixing == .leading {
+                leading
+                    .frame(width: fixedWidth)
+                    .frame(maxHeight: .infinity)
+            } else {
+                leading
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             Color.separatorLine
                 .frame(width: 1)
                 .overlay {
@@ -163,14 +175,23 @@ struct FixedSplit<Leading: View, Trailing: View>: View {
                                 .onChanged { drag in
                                     let start = dragStart ?? width
                                     dragStart = start
-                                    width = min(max(start + drag.translation.width, range.lowerBound), range.upperBound)
+                                    // Dragging right widens a leading pane and
+                                    // narrows a trailing one.
+                                    let moved = fixing == .leading ? drag.translation.width : -drag.translation.width
+                                    width = min(max(start + moved, range.lowerBound), range.upperBound)
                                 }
                                 .onEnded { _ in dragStart = nil }
                         )
                 }
                 .zIndex(1)
-            trailing
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            if fixing == .trailing {
+                trailing
+                    .frame(width: fixedWidth)
+                    .frame(maxHeight: .infinity)
+            } else {
+                trailing
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
     }
 }

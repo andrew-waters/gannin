@@ -35,16 +35,20 @@ struct GanninApp: App {
         _activity = State(initialValue: activity)
         let database = UserDatabase()
         _database = State(initialValue: database)
-        _hidden = State(initialValue: HiddenStore(database: database))
+        let hidden = HiddenStore(database: database)
+        _hidden = State(initialValue: hidden)
         let orgConfigs = OrgConfigStore(database: database)
         let peopleDates = PeopleDatesStore(database: database)
         _orgConfigs = State(initialValue: orgConfigs)
         _peopleDates = State(initialValue: peopleDates)
-        _orgs = State(initialValue: OrgStore(auth: auth, activity: activity, database: database))
+        let orgs = OrgStore(auth: auth, activity: activity, database: database)
+        _orgs = State(initialValue: orgs)
         _details = State(initialValue: DetailStore(auth: auth))
-        _metrics = State(initialValue: MetricsStore(auth: auth, activity: activity))
+        let metrics = MetricsStore(auth: auth, activity: activity)
+        _metrics = State(initialValue: metrics)
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
-        _issues = State(initialValue: IssueStore(auth: auth, activity: activity))
+        let issues = IssueStore(auth: auth, activity: activity)
+        _issues = State(initialValue: issues)
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))
         _releases = State(initialValue: ReleaseStore(auth: auth, activity: activity))
@@ -71,6 +75,12 @@ struct GanninApp: App {
         sessions.api = { [weak auth] in auth?.api }
         sessions.viewerLogin = { [weak auth] in auth?.viewer?.login }
         sessions.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
+        // An Ask's org data, written when it starts or resumes.
+        sessions.orgContext = { [weak orgs, weak metrics, weak issues, weak orgConfigs, weak harness, weak peopleDates, weak hidden] org, repo in
+            guard let orgs, let metrics, let issues, let orgConfigs, let harness, let peopleDates, let hidden else { return [:] }
+            return OrgContext.files(org: org, harnessRepo: repo, orgs: orgs, metrics: metrics, issues: issues, configs: orgConfigs,
+                                    harness: harness, peopleDates: peopleDates, hidden: hidden)
+        }
         sessions.watchPullRequests()
         // Sparkle starts checking now, not when a menu is first built.
         _ = Updater.shared

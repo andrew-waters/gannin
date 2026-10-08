@@ -22,6 +22,17 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         var failed: Bool?
     }
 
+    /// A Claude artifact the session published (a claude.ai page) with its
+    /// Artifact tool.
+    nonisolated struct Artifact: Identifiable, Sendable, Equatable {
+        let url: URL
+        /// What the tool was told it is, when it said.
+        var title: String?
+        let at: Date?
+
+        var id: URL { url }
+    }
+
     /// A test, build or lint command claude ran, and how it went.
     nonisolated struct Check: Sendable, Equatable {
         let command: String
@@ -116,6 +127,8 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
     /// Plans claude wrote or edited, as it named them (paths on its box).
     var plans: [String] = []
     var filesEdited: Set<String> = []
+    /// Artifacts published, oldest first, each once.
+    var artifacts: [Artifact] = []
     var lastReply: String?
     var lastActivity: Date?
 
@@ -178,6 +191,10 @@ nonisolated struct TranscriptReader: Sendable {
     private var turnStart: Date?
     private var turnEnd: Date?
     private var questionToolID: String?
+    /// Artifact tool calls waiting on their result, with what they said
+    /// the artifact is.
+    private var artifactCalls: [String: String?] = [:]
+    private static let artifactPattern = try! NSRegularExpression(pattern: #"https://claude\.ai/(?:code/)?artifact/[A-Za-z0-9_-]+"#)
     private static let checkPattern = try! NSRegularExpression(
         pattern: #"\b(test|tests|pytest|jest|vitest|rspec|phpunit|go (test|vet|build)|cargo (test|build|check|clippy)|swift (test|build)|xcodebuild|tsc|lint|eslint|golangci-lint|make|build)\b"#
     )
@@ -304,6 +321,15 @@ nonisolated struct TranscriptReader: Sendable {
                 summary.filesEdited.insert(path)
                 if path.contains("/plans/"), path.hasSuffix(".md"), !summary.plans.contains(path) { summary.plans.append(path) }
             }
+        case "Artifact":
+            // Only a publish makes one; a list or a read names others.
+            let file = (input["file_path"] as? String).map { ($0 as NSString).lastPathComponent }
+            text = (input["url"] as? String) ?? file ?? ""
+            let action = (input["action"] as? String) ?? "publish"
+            if action == "publish", input["asset"] as? Bool != true {
+                let title: String? = (input["title"] as? String) ?? (input["description"] as? String) ?? file
+                artifactCalls[id] = .some(title)
+            }
         case "Read":
             text = (input["file_path"] as? String) ?? ""
         case "Grep", "Glob":
@@ -345,6 +371,29 @@ nonisolated struct TranscriptReader: Sendable {
         if id == questionToolID {
             summary.question = nil
             questionToolID = nil
+        }
+        if let title = artifactCalls.removeValue(forKey: id), !failed {
+            noteArtifacts(in: Self.text(of: item["content"]), title: title, at: at)
+        }
+    }
+
+    /// A tool result's text: a string, or its text blocks.
+    private static func text(of content: Any?) -> String {
+        if let text = content as? String { return text }
+        return ((content as? [[String: Any]]) ?? []).compactMap { $0["text"] as? String }.joined(separator: "\n")
+    }
+
+    /// Each claude.ai artifact link in a publish's result, once; a title
+    /// fills in one already seen without one (published again).
+    private mutating func noteArtifacts(in text: String, title: String?, at: Date?) {
+        let range = NSRange(text.startIndex..., in: text)
+        for match in Self.artifactPattern.matches(in: text, range: range) {
+            guard let span = Range(match.range, in: text), let url = URL(string: String(text[span])) else { continue }
+            if let index = summary.artifacts.firstIndex(where: { $0.url == url }) {
+                if summary.artifacts[index].title == nil { summary.artifacts[index].title = title }
+            } else {
+                summary.artifacts.append(.init(url: url, title: title, at: at))
+            }
         }
     }
 }

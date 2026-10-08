@@ -58,6 +58,9 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
     /// Rules and reasons people gave in review, scoped to the code they're
     /// about (`HarnessLearning`), for later reviews to follow.
     case learnings = "Learnings"
+    /// Files committed from Ask sessions, a folder per conversation
+    /// (`research/<date>-<id>/`), its README the document.
+    case research = "Research"
 
     var id: Self { self }
 
@@ -69,6 +72,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .skills: "wand.and.stars"
         case .prompts: "text.bubble"
         case .learnings: "lightbulb"
+        case .research: "archivebox"
         }
     }
 
@@ -87,17 +91,24 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .skills: "skill"
         case .prompts: "prompt"
         case .learnings: "learning"
+        case .research: "research"
         }
     }
 
     /// The harness's layout: `plans/` for plans (and, until they're moved,
     /// `requirements/<module>/plans/`), the rest of `requirements/` for
     /// requirements, `findings/`, `skills/`, `prompts/` and `learnings/`. READMEs and templates
-    /// describe the layout rather than being part of it.
+    /// describe the layout rather than being part of it, except in
+    /// `research/`, where each folder's README is its document.
     init?(path: String) {
         let parts = path.split(separator: "/")
-        guard path.hasSuffix(".md"), let top = parts.first, let file = parts.last,
-              file != "README.md", !file.hasPrefix("_") else { return nil }
+        guard path.hasSuffix(".md"), let top = parts.first, let file = parts.last else { return nil }
+        if top == "research" {
+            guard parts.count == 3, file == "README.md" else { return nil }
+            self = .research
+            return
+        }
+        guard file != "README.md", !file.hasPrefix("_") else { return nil }
         switch top {
         case "plans": self = .plans
         case "requirements": self = parts.contains("plans") ? .plans : .requirements
@@ -164,7 +175,7 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 7
+    static let parserVersion = 8
 
     /// The status in a word or two, for a table: an older document's
     /// sentence cut at its first clause.

@@ -60,6 +60,8 @@ enum PaletteCommand: Hashable {
     case newWindow
     case newTab
     case openClaudeCode
+    /// A New Ask tab in the Claude Code window, in the org's project.
+    case newAsk(org: String)
     case nextSessionWaiting
     /// Flips a Bool preference (`excludeDrafts`, `showHidden`).
     case toggle(key: String)
@@ -337,6 +339,9 @@ struct PaletteSources {
         items.append(PaletteItem(id: "action:\(org):refresh", group: .actions, title: "Refresh", systemImage: "arrow.clockwise", org: org, keywords: ["sync"], action: .run(.refresh(org: org, full: false))))
         items.append(PaletteItem(id: "action:\(org):full-refresh", group: .actions, title: "Full Refresh", systemImage: "arrow.clockwise.circle", org: org, keywords: ["sync"], action: .run(.refresh(org: org, full: true))))
         items.append(PaletteItem(id: "action:\(org):switch", group: .actions, title: "Switch to \(name)", systemImage: "building.2", org: org, keywords: ["organisation", "organization", "org"], action: go(.org)))
+        if !config.allHarnesses.isEmpty {
+            items.append(PaletteItem(id: "action:\(org):new-ask", group: .actions, title: "New Ask", systemImage: "sparkle.magnifyingglass", org: org, keywords: ["claude", "question", "research", "agent"], action: .run(.newAsk(org: org))))
+        }
         if config.repoProjects.count > 1 {
             for project in config.repoProjects {
                 items.append(PaletteItem(id: "action:\(org):project:\(project.id)", group: .actions, title: "Switch to Project \(project.name)", systemImage: "square.stack", org: org, keywords: ["project"], action: go(.project(project.id))))
@@ -344,7 +349,8 @@ struct PaletteSources {
         }
 
         // Pages, as the sidebar lists them.
-        for tab in WorkloadTab.allCases where tab != .harness {
+        // Ask is the New Ask action, not a page.
+        for tab in WorkloadTab.allCases where tab != .harness && tab != .ask {
             items.append(PaletteItem(id: "page:\(org):\(tab.rawValue)", group: .pages, title: tab.title, systemImage: tab.systemImage, org: org, keywords: [tab.rawValue], action: go(.sidebar(.tab(tab)))))
         }
         for list in IssueList.allCases {
