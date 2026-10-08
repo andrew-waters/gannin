@@ -1,134 +1,52 @@
 import SwiftUI
 
-/// Repositories before one is picked: the clones on this Mac, or the
-/// delivery stats by repo, picked in the bar at the top of the page.
-struct RepositoriesLanding: View {
-    enum Part: String, CaseIterable {
-        case local = "On This Mac"
-        case delivery = "Delivery"
-    }
-
-    static let partKey = "repositoriesPart"
-    @SceneStorage(RepositoriesLanding.partKey) private var part: Part = .local
-    @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
-    let org: String
-    let workload: Workload?
-    let metrics: OrgMetrics?
-    @Binding var selection: DetailSelection?
-
-    var body: some View {
-        switch part {
-        case .local:
-            LocalRepositoriesView(org: org, workload: workload, part: $part, selection: $selection)
-        case .delivery:
-            VStack(spacing: 0) {
-                HStack(spacing: 10) {
-                    RepositoriesPartPicker(part: $part)
-                    Spacer()
-                    MetricsWindowPicker(code: $windowDays)
-                        .fixedSize()
-                }
-                .controlSize(.small)
-                .padding(.horizontal, 16)
-                .padding(.vertical, 8)
-                Divider()
-                RepositoryStatsView(org: org, metrics: metrics, selection: $selection)
-            }
-        }
-    }
-}
-
-private struct RepositoriesPartPicker: View {
-    @Binding var part: RepositoriesLanding.Part
-
-    var body: some View {
-        Picker("Show", selection: $part) {
-            ForEach(RepositoriesLanding.Part.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .fixedSize()
-    }
-}
-
-/// The project's repos and any with work in flight, each with its clone
-/// here: branch, changes, ahead and behind, worktrees. Picking one opens
-/// its page; those not on this Mac can be cloned.
-private struct LocalRepositoriesView: View {
+/// Work › Repositories: one repo at a time, the one picked in its switcher
+/// (or the sidebar, or the palette), remembered per org on this Mac.
+struct RepositoriesPage: View {
     @Environment(OrgConfigStore.self) private var configs
+    /// The repo this window shows, `owner/name`.
+    @SceneStorage("repositoriesRepo") private var stored = ""
     let org: String
     let workload: Workload?
-    @Binding var part: RepositoriesLanding.Part
+    /// A repo asked for by the sidebar or the palette.
+    let requested: String?
     @Binding var selection: DetailSelection?
-    @State private var search = ""
-    @State private var clones: [String: String] = [:]
-    @State private var summaries: [String: CloneSummary] = [:]
-    @State private var cloning = false
 
     var body: some View {
-        let repos = repos.filter { repo in search.lowercased().split(separator: " ").allSatisfy { repo.lowercased().contains($0) } }
-        let here = repos.filter { clones[$0] != nil }
-        let elsewhere = repos.filter { clones[$0] == nil }
-        VStack(spacing: 0) {
-            HStack(spacing: 10) {
-                RepositoriesPartPicker(part: $part)
-                FilterSearchField(text: $search, prompt: "Repositories")
-                Spacer()
-                Button("Clone a Repository") { cloning = true }
-            }
-            .controlSize(.small)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 8)
-            Divider()
-            List(selection: $selection) {
-                Section {
-                    if here.isEmpty {
-                        Text("None of them yet").foregroundStyle(.secondary)
-                    }
-                    ForEach(here, id: \.self) { repo in
-                        cloneRow(repo, path: clones[repo] ?? "")
-                            .tag(DetailSelection.repository(repo))
-                    }
-                } header: {
-                    SectionHeader(title: "On this Mac", count: here.count)
-                }
-                if !elsewhere.isEmpty {
-                    Section {
-                        ForEach(elsewhere, id: \.self) { repo in
-                            HStack {
-                                Label(repo, systemImage: "folder.badge.questionmark")
-                                Spacer()
-                                Text("Not cloned").font(.caption).foregroundStyle(.secondary)
-                            }
-                            .tag(DetailSelection.repository(repo))
-                        }
-                    } header: {
-                        SectionHeader(title: "Not on this Mac", count: elsewhere.count)
-                    }
-                }
+        Group {
+            if let repo = current {
+                RepositoryPage(org: org, repo: repo, workload: workload, selection: $selection) { pick($0) }
+                    .id(repo)
+            } else {
+                NoRepositoriesView(org: org) { pick($0) }
             }
         }
-        .sheet(isPresented: $cloning) {
-            CloneRepositorySheet(org: org) { repo in
-                locate()
-                selection = .repository(repo)
-            }
-        }
-        .task(id: repos) {
-            locate()
-            do {
-                while true {
-                    summaries = await LocalClones.summaries(clones)
-                    try await Task.sleep(for: .seconds(30))
-                }
-            } catch {}
+        .onChange(of: requested, initial: true) {
+            if let requested { pick(requested) }
         }
     }
 
-    /// The window's project's repos, those with work in flight, and any
-    /// with a clone saved here, in the org.
-    private var repos: [String] {
-        let config = configs.config(for: org)
+    static func lastKey(_ org: String) -> String { "lastRepository.\(org)" }
+
+    /// The window's repo when it's this org's, else the last picked here,
+    /// else the project's first.
+    private var current: String? {
+        let prefix = org.lowercased() + "/"
+        if stored.lowercased().hasPrefix(prefix) { return stored }
+        if let last = UserDefaults.standard.string(forKey: Self.lastKey(org)), last.lowercased().hasPrefix(prefix) { return last }
+        return RepositoryChoices.repos(org: org, config: configs.config(for: org), workload: workload).first
+    }
+
+    private func pick(_ repo: String) {
+        stored = repo
+        UserDefaults.standard.set(repo, forKey: Self.lastKey(org))
+    }
+}
+
+/// The repos the switcher offers: the window's project's, those with work
+/// in flight, and any with a clone saved here, in the org.
+enum RepositoryChoices {
+    static func repos(org: String, config: OrgConfig, workload: Workload?) -> [String] {
         var names = Set(config.focusRepos ?? [])
         for load in workload?.repositories ?? [] where !config.repoExclusion.contains(load.name) {
             names.insert(load.name)
@@ -138,61 +56,113 @@ private struct LocalRepositoriesView: View {
         }
         return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
     }
+}
 
-    private func locate() {
-        let config = configs.config(for: org)
-        var found: [String: String] = [:]
-        for repo in repos {
-            if let path = LocalClones.find(repo, org: org, config: config) { found[repo] = path }
+/// The repo menu at the top left of a repo's page: those cloned here with
+/// their branch, then those that aren't, and Clone a Repository.
+struct RepositorySwitcher: View {
+    @Environment(OrgConfigStore.self) private var configs
+    let org: String
+    let current: String
+    let workload: Workload?
+    let pick: (String) -> Void
+    @State private var clones: [String: String] = [:]
+    @State private var summaries: [String: CloneSummary] = [:]
+    @State private var cloning = false
+
+    var body: some View {
+        let repos = choices
+        let here = repos.filter { clones[$0] != nil }
+        let elsewhere = repos.filter { clones[$0] == nil }
+        Menu {
+            Section("On this Mac") {
+                ForEach(here, id: \.self) { repo in item(repo) }
+            }
+            if !elsewhere.isEmpty {
+                Section("Not cloned") {
+                    ForEach(elsewhere, id: \.self) { repo in item(repo) }
+                }
+            }
+            Divider()
+            Button("Clone a Repository") { cloning = true }
+        } label: {
+            Label(Self.shortName(current), systemImage: "folder")
+                .labelStyle(.titleAndIcon)
+                .fontWeight(.semibold)
         }
-        if found != clones { clones = found }
+        .fixedSize()
+        .help("\(current): switch repository")
+        .task(id: repos) {
+            let config = configs.config(for: org)
+            var found: [String: String] = [:]
+            for repo in repos {
+                if let path = LocalClones.find(repo, org: org, config: config) { found[repo] = path }
+            }
+            clones = found
+            summaries = await LocalClones.summaries(found)
+        }
+        .sheet(isPresented: $cloning) {
+            CloneRepositorySheet(org: org) { pick($0) }
+        }
     }
 
-    private func cloneRow(_ repo: String, path: String) -> some View {
-        let summary = summaries[repo]
-        return HStack(spacing: 12) {
-            VStack(alignment: .leading, spacing: 1) {
-                Label(repo.split(separator: "/").last.map(String.init) ?? repo, systemImage: "folder")
-                Text(path)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
+    private var choices: [String] {
+        let repos = RepositoryChoices.repos(org: org, config: configs.config(for: org), workload: workload)
+        return repos.contains(current) ? repos : (repos + [current]).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    private func item(_ repo: String) -> some View {
+        Button {
+            pick(repo)
+        } label: {
+            let title = Self.shortName(repo) + detail(repo)
+            if repo == current {
+                Label(title, systemImage: "checkmark")
+            } else {
+                Text(title)
             }
-            Spacer()
-            if let summary {
-                if summary.worktrees > 1 {
-                    Text("\(summary.worktrees) worktrees").font(.caption).foregroundStyle(.secondary)
-                }
-                Label(summary.branch ?? "Detached", systemImage: "arrow.triangle.branch")
-                    .font(.callout)
-                    .lineLimit(1)
-                    .frame(maxWidth: 220, alignment: .leading)
-                Text(summary.changes == 0 ? "No changes" : summary.changes == 1 ? "1 change" : "\(summary.changes) changes")
-                    .font(.caption)
-                    .foregroundStyle(summary.changes == 0 ? Color.secondary : Color.orange)
-                    .frame(width: 80, alignment: .trailing)
-                Group {
-                    if !summary.hasUpstream {
-                        Text("Not published")
-                    } else if summary.ahead > 0 || summary.behind > 0 {
-                        Text([summary.ahead > 0 ? "↑\(summary.ahead)" : nil, summary.behind > 0 ? "↓\(summary.behind)" : nil].compactMap { $0 }.joined(separator: " "))
-                    } else {
-                        Text("Up to date")
-                    }
-                }
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 90, alignment: .trailing)
-                .help("Against the branch's upstream, as of the last fetch")
-            }
+        }
+    }
+
+    /// `  main · 3 changes · ↑1`, for a clone.
+    private func detail(_ repo: String) -> String {
+        guard let summary = summaries[repo] else { return "" }
+        var parts = [summary.branch ?? "detached"]
+        if summary.changes > 0 { parts.append(summary.changes == 1 ? "1 change" : "\(summary.changes) changes") }
+        if summary.ahead > 0 { parts.append("↑\(summary.ahead)") }
+        if summary.behind > 0 { parts.append("↓\(summary.behind)") }
+        return "  " + parts.joined(separator: " · ")
+    }
+
+    static func shortName(_ repo: String) -> String {
+        repo.split(separator: "/").last.map(String.init) ?? repo
+    }
+}
+
+/// An org with no repos to offer yet.
+private struct NoRepositoriesView: View {
+    let org: String
+    let cloned: (String) -> Void
+    @State private var cloning = false
+
+    var body: some View {
+        ContentUnavailableView {
+            Label("No repositories", systemImage: "folder")
+        } description: {
+            Text("The project names no repos and nothing is in flight. Clone one to work on it here.")
+        } actions: {
+            Button("Clone a Repository") { cloning = true }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .sheet(isPresented: $cloning) {
+            CloneRepositorySheet(org: org, cloned: cloned)
         }
     }
 }
 
 /// Clone one of the org's repos, or any GitHub repo by URL, into the
 /// project's `projects/` folder or a folder chosen.
-private struct CloneRepositorySheet: View {
+struct CloneRepositorySheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs

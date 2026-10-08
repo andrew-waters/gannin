@@ -139,14 +139,16 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   nothing prompts) with your own config, hooks, signing and credential helper. Gannin never
   handles a git credential. `GitDiff` parses diffs and makes one hunk into a patch for `git apply`,
   for sessions' Changes too.
-- The sidebar lists the window's project's repos (`focusRepos`) and any with open PRs or
-  issues. The landing page (`RepositoriesLanding`) is On This Mac (each clone's branch, changes,
-  ahead and behind, worktrees, `LocalClones.summaries`, plus Clone a Repository) or Delivery (the
-  stats by repo, with the metrics window picker). A repo's page (`RepositoryPage`, also
-  `DetailSelection.repository`) has Changes, Branches and Tags parts beside GitHub (its open PRs,
-  issues and merged, `RepositoryColumn`), picked in the bar at the top (`repositoryPart` per
-  window). Every control is in the page's bar (`RepositoryBar`), not the toolbar, the landing's
-  window picker included.
+- Repositories is one sidebar row and one repo at a time (`RepositoriesPage`): the repo picked in
+  the switcher at the top left of the page's bar (`RepositorySwitcher`: the window's project's repos
+  (`focusRepos`), any with open PRs or issues and any with a clone saved here, those on this Mac
+  first with their branch, changes, ahead and behind, then those not cloned, and Clone a
+  Repository), kept per window (`repositoriesRepo`) and as the last picked per org
+  (`lastRepository.<org>`); the palette's repo results ask for one. A repo's page
+  (`RepositoryPage`, also `DetailSelection.repository`, there with no switcher) has Changes,
+  History and Branches parts beside GitHub (its open PRs, issues and merged, `RepositoryColumn`),
+  picked in the bar (`repositoryPart` per window). Every control is in the page's bar
+  (`RepositoryBar`), not the toolbar.
 - `LocalClones` finds a repo's clone: the folder saved for it (`localRepository.<owner/name>`,
   from Add Existing, Clone To or Use Another Folder), the harness checkout when the repo is the
   harness, a harness's `projects/<name>` (or `projects/<group>/<name>`), then the usual places
@@ -185,10 +187,14 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   SHA, never a bare pop) or bring them. New branches are made `--no-track`, so a first push
   publishes them under their own name. New worktrees go in `<harness>/.worktrees/<branch>/<name>`
   for a clone in `projects/`, as sessions lay them out, else `<clone>.worktrees/<branch>`.
-- Tags (`RepositoryTagsView`): newest first, annotated or not, on origin or only here
-  (`ls-remote --tags` when opened), Push, Push N Tags, New Tag (on HEAD or any ref, annotated
-  with a message, pushed straight away by default, the next patch version suggested), Delete here
-  or here and on origin.
+- History (`RepositoryHistoryView`, `GitHistory`): a branch's commits (the one checked out, or
+  any picked), newest first, 200 at a time, searchable, each with its SHA, author, when, Not
+  pushed (against its upstream), the other branches at it and its tags, orange while only here
+  (`ls-remote --tags` when opened). Picking one shows its whole message, its files and a file's
+  diff (a merge against its first parent). Tagging is done here: Tag This Commit (the commit's
+  context menu or its header) opens `NewTagSheet` (annotated with a message, pushed straight away
+  by default, the next patch version suggested); a tag's context menu pushes, branches from or
+  deletes it (here, or here and on origin), and Push N Tags pushes those only here.
 
 ## Command palette
 

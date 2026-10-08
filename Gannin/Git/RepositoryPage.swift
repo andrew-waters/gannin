@@ -3,8 +3,8 @@ import SwiftUI
 /// What a repo's page shows, picked in the toolbar.
 enum RepositoryPart: String, CaseIterable {
     case changes = "Changes"
+    case history = "History"
     case branches = "Branches"
-    case tags = "Tags"
     /// Its open PRs, issues and what merged, from the workload.
     case github = "GitHub"
 
@@ -12,7 +12,7 @@ enum RepositoryPart: String, CaseIterable {
 }
 
 /// A repo, picked under Repositories: its clone on this Mac (changes,
-/// branches and worktrees, tags) and what's in flight on GitHub.
+/// history and tags, branches and worktrees) and what's in flight on GitHub.
 struct RepositoryPage: View {
     @Environment(OrgConfigStore.self) private var configs
     @SceneStorage("repositoryPart") private var part: RepositoryPart = .changes
@@ -21,6 +21,9 @@ struct RepositoryPage: View {
     let repo: String
     let workload: Workload?
     @Binding var selection: DetailSelection?
+    /// Switches the page to another repo; nil for a repo pushed onto the
+    /// trail, which has no switcher.
+    var switchTo: ((String) -> Void)? = nil
     @State private var local: LocalRepository?
     /// Looked for a clone, and found none if `local` is still nil.
     @State private var looked = false
@@ -28,10 +31,13 @@ struct RepositoryPage: View {
     var body: some View {
         Group {
             if part.isLocal, let local {
-                LocalRepositoryView(repository: local, part: $part) { locate() }
+                LocalRepositoryView(repository: local, part: $part, switcher: switcher) { locate() }
             } else {
                 VStack(spacing: 0) {
-                    RepositoryBar { RepositoryPartPicker(part: $part) }
+                    RepositoryBar {
+                        if let switcher { switcher }
+                        RepositoryPartPicker(part: $part)
+                    }
                     Divider()
                     if part == .github {
                         gitHub
@@ -44,6 +50,10 @@ struct RepositoryPage: View {
             }
         }
         .task(id: repo) { locate() }
+    }
+
+    private var switcher: RepositorySwitcher? {
+        switchTo.map { RepositorySwitcher(org: org, current: repo, workload: workload, pick: $0) }
     }
 
     /// Finds the clone, working in the worktree last used.
@@ -83,12 +93,14 @@ struct RepositoryPage: View {
 private struct LocalRepositoryView: View {
     @Bindable var repository: LocalRepository
     @Binding var part: RepositoryPart
+    let switcher: RepositorySwitcher?
     /// The clone's folder changed or went: look for it again.
     let relocate: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
             RepositoryBar {
+                if let switcher { switcher }
                 RepositoryPartPicker(part: $part)
                 Spacer()
                 Group {
@@ -183,7 +195,7 @@ private struct LocalRepositoryView: View {
         } else {
             switch part {
             case .branches: RepositoryBranchesView(repository: repository)
-            case .tags: RepositoryTagsView(repository: repository)
+            case .history: RepositoryHistoryView(repository: repository)
             case .changes, .github: RepositoryChangesView(repository: repository)
             }
         }

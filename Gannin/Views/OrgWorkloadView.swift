@@ -219,16 +219,10 @@ struct OrgWorkloadView: View {
         }
     }
 
-    /// The repo picked in the sidebar, or the clones here and every repo's
-    /// stats until then.
-    @ViewBuilder
+    /// One repo at a time, picked in the page's switcher; the sidebar and
+    /// palette can ask for one.
     private func repositoryView(_ workload: Workload?) -> some View {
-        if let repository {
-            RepositoryPage(org: org, repo: repository, workload: workload, selection: $selection)
-                .id(repository)
-        } else {
-            RepositoriesLanding(org: org, workload: workload, metrics: metrics, selection: $selection)
-        }
+        RepositoriesPage(org: org, workload: workload, requested: repository, selection: $selection)
     }
 
     /// The person picked in the sidebar, or everyone's stats until then.

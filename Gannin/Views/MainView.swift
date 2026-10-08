@@ -436,7 +436,7 @@ struct MainView: View {
         case .people:
             return person.map { login in workload?.load(for: login)?.person.displayName ?? login } ?? peopleView?.rawValue ?? "People"
         case .repositories:
-            return repository.map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? "Repositories"
+            return "Repositories"
         case .issues:
             return issueList?.title ?? "Issues"
         case .harness:
@@ -1181,7 +1181,6 @@ struct OrgSidebar: View {
     @AppStorage("sidebarAllExpanded") private var allExpanded = false
     /// Team IDs opened under People, comma separated.
     @AppStorage("sidebarExpandedTeams") private var expandedTeamIDs = ""
-    @AppStorage("sidebarRepositoriesExpanded") private var repositoriesExpanded = false
     @AppStorage("sidebarIssuesExpanded") private var issuesExpanded = true
     @AppStorage("sidebarHarnessSectionExpanded") private var harnessExpanded = false
     @Environment(HarnessStore.self) private var harnessStore
@@ -1229,13 +1228,7 @@ struct OrgSidebar: View {
                         row(.issues)
                     }
                     row(.epics)
-                    DisclosureGroup(isExpanded: $repositoriesExpanded) {
-                        ForEach(repositories) { repository in
-                            repositoryRow(repository)
-                        }
-                    } label: {
-                        row(.repositories)
-                    }
+                    row(.repositories)
                     DisclosureGroup(isExpanded: $projectsExpanded) {
                         ForEach(projectStore.boards(org: selectedOrg, repo: configs.config(for: selectedOrg).boardsRepo)) { board in
                             Label(board.title, systemImage: "rectangle.split.3x1")
@@ -1359,33 +1352,6 @@ struct OrgSidebar: View {
         // Open ones on no board, once the issue history has loaded.
         case .notOnBoard: selectedOrg.flatMap { issueStore.history(for: $0) }?.issues.values.filter { $0.isOpen && $0.projectFields.isEmpty }.count ?? 0
         }
-    }
-
-    /// The project's repos and any others with open PRs or issues, by name.
-    private var repositories: [RepositoryLoad] {
-        let loads = workload?.repositories ?? []
-        let active = loads.filter { !$0.openPullRequests.isEmpty || !$0.issues.isEmpty }
-        let project = (selectedOrg.flatMap { configs.config(for: $0).focusRepos } ?? [])
-            .filter { name in !active.contains { $0.name == name } }
-            .map { name in loads.first { $0.name == name } ?? RepositoryLoad(name: name) }
-        return (active + project)
-            .sorted { $0.shortName.localizedCaseInsensitiveCompare($1.shortName) == .orderedAscending }
-    }
-
-    /// Its name, with open PRs as the count and the rest in the tooltip.
-    private func repositoryRow(_ repository: RepositoryLoad) -> some View {
-        Label(repository.shortName, systemImage: "folder")
-            .lineLimit(1)
-            .badge(repository.openPullRequests.count)
-            .help(summary([
-                count(repository.openPullRequests.count, "PR", "PRs"),
-                count(repository.issues.count, "issue", "issues"),
-            ], stale: repository.stalePullRequests.count))
-            .contextMenu {
-                OpenElsewhereItems(sidebar: .repository(repository.name))
-                RepositoryMenu(repository: repository.name, org: selectedOrg ?? "")
-            }
-            .tag(SidebarItem.repository(repository.name))
     }
 
     private func count(_ n: Int, _ singular: String, _ plural: String) -> String? {
