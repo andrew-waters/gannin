@@ -362,6 +362,9 @@ final class SessionStore {
     /// Server sessions whose hook files are being read over ssh now.
     @ObservationIgnored private var readingRemote: Set<UUID> = []
     @ObservationIgnored private var pollTick = 0
+    /// A review being started for a PR, by its ID, so concurrent starts for
+    /// the same PR (`startReview`) share one instead of making two.
+    @ObservationIgnored var startingReviews: [String: Task<CodeSession, Never>] = [:]
     /// What each session's transcript says, read while its terminal runs.
     var transcripts: [UUID: SessionTranscript] = [:]
     @ObservationIgnored var readers: [UUID: TranscriptReader] = [:]

@@ -242,11 +242,11 @@ extension SessionStore {
         guard let found = try? await api.watchedPullRequests(ids: watched.compactMap(\.reviewOf?.id)) else { return }
         for session in watched {
             guard let id = session.reviewOf?.id, let now = found.pullRequests[id] else { continue }
-            look(at: now, for: session.id, me: found.login)
+            await look(at: now, for: session.id, me: found.login)
         }
     }
 
-    private func look(at now: WatchedPullRequest, for id: UUID, me: String) {
+    private func look(at now: WatchedPullRequest, for id: UUID, me: String) async {
         guard var watch = sessions[id]?.watch, watch.isOn else { return }
         defer { update(id) { $0.watch = watch } }
         // The first look notes what's there.
@@ -284,7 +284,7 @@ extension SessionStore {
         var reasons: [String] = []
         if watch.hasNewCommits { reasons.append("new commits have been pushed") }
         if watch.newComments > 0 { reasons.append("\(watch.newComments) new comment\(watch.newComments == 1 ? " has" : "s have") been left") }
-        if reviewAgain(id, because: reasons.joined(separator: " and ")) {
+        if await reviewAgain(id, because: reasons.joined(separator: " and ")) {
             watch.changedAt = nil
             watch.hasNewCommits = false
             watch.newComments = 0
@@ -293,12 +293,19 @@ extension SessionStore {
 
     /// Asks the reviewer to look again: now if it's waiting, else once
     /// it's started (resumed from the history if it was finished).
-    private func reviewAgain(_ id: UUID, because reasons: String) -> Bool {
+    private func reviewAgain(_ id: UUID, because reasons: String) async -> Bool {
         guard let session = sessions[id], let pr = session.reviewOf else { return false }
+        // The PR's diff may have grown since the review started, so the
+        // learnings fixed into its first prompt may now fall short of
+        // what covers it.
+        let learnings = await reviewLearnings(org: pr.org, harnessRepo: session.harnessRepo, repo: pr.repo, number: pr.number)
+        let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
         let prompt = """
             Since your last review of \(pr.repo)#\(pr.number), \(reasons). Fetch the PR again with its comments and review it as it is now. \
             Answer what the comments ask of you. Leave out findings from your earlier review that still stand unchanged, and say in the \
-            summary which of them are now dealt with, and list their threads in `resolved`. End the same way with the fenced JSON block.
+            summary which of them are now dealt with, and list their threads in `resolved`.\(learned)
+
+            End the same way with the fenced JSON block.
             """
         if isRunning(id) {
             guard state(id) == .idle else {

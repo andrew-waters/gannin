@@ -140,10 +140,14 @@ final class EngineerWatch {
             let found = try await chargingTo(.reviewRequests) { try await api.engineerWork() }
             error = nil
             checkedAt = .now
-            await notice(found.reviews, mine: found.mine)
+            // Set before `notice` starts automatic reviews: each one waits
+            // on its PR's file pages, which can take a few seconds, and the
+            // menu bar and Agents should show the new list straight away
+            // rather than the old one until every review has started.
             reviewRequests = found.reviews
             myPullRequests = found.mine
             myIssues = found.issues
+            await notice(found.reviews, mine: found.mine)
             // Forget dismissals of requests that are gone.
             let ids = Set(found.reviews.map(\.id))
             if dismissed.contains(where: { !ids.contains($0) }) {
