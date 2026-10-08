@@ -280,20 +280,7 @@ final class SessionStore {
         let candidates = ["Code", "Developer", "Projects", "src", "code", "dev"]
             .flatMap { ["~/\($0)/\(owner)/\(name)", "~/\($0)/\(name)"] }
             + ["~/\(owner)/\(name)", "~/\(name)", defaultWorkspace + "/\(owner)/\(name)"]
-        return candidates.first { candidate in
-            let config = URL(filePath: (candidate as NSString).expandingTildeInPath).appending(path: ".git/config")
-            guard let text = (try? String(contentsOf: config, encoding: .utf8))?.lowercased() else { return false }
-            let target = "\(owner)/\(name)".lowercased()
-            // The whole name: `gannin` mustn't match a clone of `gannin-legacy`.
-            return text.split(whereSeparator: \.isNewline).contains { line in
-                let parts = line.split(separator: "=", maxSplits: 1)
-                guard parts.count == 2, parts[0].trimmingCharacters(in: .whitespaces) == "url" else { return false }
-                var url = parts[1].trimmingCharacters(in: .whitespaces)
-                if url.hasSuffix("/") { url.removeLast() }
-                if url.hasSuffix(".git") { url.removeLast(4) }
-                return url.hasSuffix("github.com/\(target)") || url.hasSuffix("github.com:\(target)")
-            }
-        }
+        return candidates.first { LocalClones.isCheckout($0, of: repo) }
     }
 
     /// Whether Work on This asks before committing a session's brief and
@@ -891,7 +878,7 @@ final class SessionStore {
     /// read: one call over the shared connection.
     private func readRemote(_ session: CodeSession) {
         guard !readingRemote.contains(session.id), let connect = session.connect,
-              let arguments = SessionChanges.sshArguments(connect) else { return }
+              let arguments = Shell.sshArguments(connect) else { return }
         readingRemote.insert(session.id)
         let reader = readers[session.id] ?? TranscriptReader()
         let script = #"d="$HOME"/.gannin/sessions/"# + session.id.uuidString + "\n"
@@ -901,8 +888,8 @@ final class SessionStore {
             + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c 4000000; else echo -1; fi; exit 0"#
         let id = session.id
         Task {
-            let result = await Task.detached { () -> (SessionChanges.ShellResult, TranscriptReader?) in
-                let result = SessionChanges.run(script, .ssh(arguments))
+            let result = await Task.detached { () -> (Shell.Result, TranscriptReader?) in
+                let result = Shell.run(script, .ssh(arguments))
                 // After five lines (state, PR, change, statusline, size), the new bytes.
                 var newlines = 0
                 var index = result.data.startIndex

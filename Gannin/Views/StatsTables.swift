@@ -212,64 +212,6 @@ struct PeopleStatsTable: View {
     }
 }
 
-// MARK: - Repositories
-
-struct RepoStatsTable: View {
-    @Environment(OrgConfigStore.self) private var configs
-    let org: String
-    let metrics: OrgMetrics
-    @Binding var selection: DetailSelection?
-
-    @State private var sort: StatsSort?
-
-    var body: some View {
-        let cycleScale = BarScale(metrics.repos.compactMap(\.cycleTime.median))
-        StatsTable(
-            rows: metrics.repos,
-            columns: [
-                StatsColumn(
-                    id: "repo", title: "Repository", help: "Repositories with PRs merged in the window",
-                    width: nil, minWidth: 200,
-                    sortKey: { .text($0.name.lowercased()) },
-                    cell: { repo in AnyView(Text(repo.name).lineLimit(1).help(repo.repo)) }
-                ),
-                StatsColumn(
-                    id: "merged", title: "Merged", help: "PRs merged in the window",
-                    width: 90,
-                    sortKey: { .number(Double($0.merged)) },
-                    cell: { repo in
-                        AnyView(NumberCell(text: "\(repo.merged)", dimmed: false)
-                            .help("\(repo.merged) PRs merged in the last \(metrics.window.lengthInDays()) days"))
-                    }
-                ),
-                StatsColumn(
-                    id: "cycle", title: "Cycle", help: "Median first commit to merge",
-                    width: 220,
-                    sortKey: { .number($0.cycle) },
-                    cell: { repo in
-                        AnyView(BarCell(value: repo.cycleTime.median, scale: cycleScale)
-                            .help(PeopleStatsTable.durationHelp("Median cycle time (first commit to merge)", repo.cycleTime)))
-                    }
-                ),
-            ],
-            sort: $sort,
-            selectedID: selectedRepo,
-            onSelect: { selection = .metric(.repo($0.repo)) },
-            contextMenu: { repo in
-                AnyView(Button("Exclude \(repo.repo) from Stats") {
-                    configs.toggleRepo(repo.repo, in: org)
-                })
-            },
-            destination: { .metric(.repo($0.repo)) }
-        )
-    }
-
-    private var selectedRepo: String? {
-        if case .metric(.repo(let repo)) = selection { return repo }
-        return nil
-    }
-}
-
 // MARK: - Cells
 
 /// Maps durations onto bar lengths. The 90th percentile is full width so one
@@ -438,15 +380,5 @@ struct ColumnGuideButton: View {
             ]),
         ],
         footnote: "Bars compare against the team (90th percentile = full). ⚠︎ answers under half, or over a day at the median."
-    )
-
-    static let repos = ColumnGuideButton(
-        groups: [
-            Group(title: nil, entries: [
-                ("Merged", "PRs merged in the window"),
-                ("Cycle", "Median first commit → merge"),
-            ]),
-        ],
-        footnote: "Bars compare repos (90th percentile = full)."
     )
 }

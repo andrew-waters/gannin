@@ -217,50 +217,6 @@ struct PersonColumn: View {
     }
 }
 
-// MARK: - Repository
-
-struct RepositoryColumn: View {
-    let repository: RepositoryLoad
-    let workload: Workload
-    @Binding var selection: DetailSelection?
-
-    var body: some View {
-        List(selection: $selection) {
-            Section {
-                HStack(spacing: 12) {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(repository.shortName).font(.title3.weight(.semibold))
-                        Text(repository.name).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    if let url = repository.url {
-                        Link(destination: url) {
-                            Label("Open on GitHub", systemImage: "arrow.up.right.square")
-                        }
-                    }
-                }
-                .padding(.vertical, 4)
-            }
-            Section(header: SectionHeader(title: "Open pull requests", count: repository.openPullRequests.count)) {
-                ForEach(repository.openPullRequests) { pr in
-                    PullRequestRow(pr: pr).tag(DetailSelection.pullRequest(pr.id))
-                }
-            }
-            Section(header: SectionHeader(title: "Issues", count: repository.issues.count)) {
-                ForEach(repository.issues) { issue in
-                    IssueRow(issue: issue, linked: workload.linkedPullRequests(for: issue))
-                        .tag(DetailSelection.issue(issue.id))
-                }
-            }
-            Section(header: SectionHeader(title: "Merged in the last \(workload.snapshot.lookbackDays) days", count: repository.mergedPullRequests.count)) {
-                ForEach(repository.mergedPullRequests) { pr in
-                    PullRequestRow(pr: pr).tag(DetailSelection.pullRequest(pr.id))
-                }
-            }
-        }
-    }
-}
-
 // MARK: - Issue
 
 struct IssueColumn: View {

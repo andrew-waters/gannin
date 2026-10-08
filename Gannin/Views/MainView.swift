@@ -436,7 +436,7 @@ struct MainView: View {
         case .people:
             return person.map { login in workload?.load(for: login)?.person.displayName ?? login } ?? peopleView?.rawValue ?? "People"
         case .repositories:
-            return repository.map { $0.split(separator: "/").last.map(String.init) ?? $0 } ?? "Repositories"
+            return "Repositories"
         case .issues:
             return issueList?.title ?? "Issues"
         case .harness:
@@ -1095,11 +1095,8 @@ private struct PageStack: View {
         case .issueReference(let reference):
             IssueWindow(reference: reference, isEmbedded: true)
         case .repository(let name):
-            if let workload, let repository = workload.repository(named: name) {
-                RepositoryColumn(repository: repository, workload: workload, selection: selection)
-            } else {
-                unavailable
-            }
+            RepositoryPage(org: org, repo: name, workload: workload, selection: selection)
+                .id(name)
         case .metric(let drill):
             MetricColumn(drill: drill, workload: workload, metrics: metrics, selection: selection)
         case .actionsRepository(let name):
@@ -1184,7 +1181,6 @@ struct OrgSidebar: View {
     @AppStorage("sidebarAllExpanded") private var allExpanded = false
     /// Team IDs opened under People, comma separated.
     @AppStorage("sidebarExpandedTeams") private var expandedTeamIDs = ""
-    @AppStorage("sidebarRepositoriesExpanded") private var repositoriesExpanded = false
     @AppStorage("sidebarIssuesExpanded") private var issuesExpanded = true
     @AppStorage("sidebarHarnessSectionExpanded") private var harnessExpanded = false
     @Environment(HarnessStore.self) private var harnessStore
@@ -1232,6 +1228,7 @@ struct OrgSidebar: View {
                         row(.issues)
                     }
                     row(.epics)
+                    row(.repositories)
                     DisclosureGroup(isExpanded: $projectsExpanded) {
                         ForEach(projectStore.boards(org: selectedOrg, repo: configs.config(for: selectedOrg).boardsRepo)) { board in
                             Label(board.title, systemImage: "rectangle.split.3x1")
@@ -1274,13 +1271,6 @@ struct OrgSidebar: View {
                     row(.releases)
                     row(.investments)
                     row(.actions)
-                    DisclosureGroup(isExpanded: $repositoriesExpanded) {
-                        ForEach(repositories) { repository in
-                            repositoryRow(repository)
-                        }
-                    } label: {
-                        row(.repositories)
-                    }
                 }
 
                 // Who's doing what.
@@ -1362,29 +1352,6 @@ struct OrgSidebar: View {
         // Open ones on no board, once the issue history has loaded.
         case .notOnBoard: selectedOrg.flatMap { issueStore.history(for: $0) }?.issues.values.filter { $0.isOpen && $0.projectFields.isEmpty }.count ?? 0
         }
-    }
-
-    /// Repos with open PRs or issues, by name.
-    private var repositories: [RepositoryLoad] {
-        (workload?.repositories ?? [])
-            .filter { !$0.openPullRequests.isEmpty || !$0.issues.isEmpty }
-            .sorted { $0.shortName.localizedCaseInsensitiveCompare($1.shortName) == .orderedAscending }
-    }
-
-    /// Its name, with open PRs as the count and the rest in the tooltip.
-    private func repositoryRow(_ repository: RepositoryLoad) -> some View {
-        Label(repository.shortName, systemImage: "folder")
-            .lineLimit(1)
-            .badge(repository.openPullRequests.count)
-            .help(summary([
-                count(repository.openPullRequests.count, "PR", "PRs"),
-                count(repository.issues.count, "issue", "issues"),
-            ], stale: repository.stalePullRequests.count))
-            .contextMenu {
-                OpenElsewhereItems(sidebar: .repository(repository.name))
-                RepositoryMenu(repository: repository.name, org: selectedOrg ?? "")
-            }
-            .tag(SidebarItem.repository(repository.name))
     }
 
     private func count(_ n: Int, _ singular: String, _ plural: String) -> String? {
