@@ -4,7 +4,7 @@ extension SessionStore {
     /// The org's prompts and skills, from its harness as last indexed
     /// (whichever branch: a session knows its repo, not the branch read).
     func promptLibrary(org: String, setup: HarnessConfig) -> HarnessPromptLibrary {
-        HarnessPromptLibrary(index: harnessStore.indexes[org].flatMap { $0.repo == setup.repo ? $0 : nil })
+        HarnessPromptLibrary(index: harnessStore.index(for: org, setup) ?? harnessStore.anyIndex(org: org, repo: setup.repo))
     }
 
     /// The placeholders for a prompt sent to a running session.

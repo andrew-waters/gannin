@@ -70,7 +70,7 @@ enum HarnessAuthoring {
 
             I may share documents (specs, notes, emails, exports). They'll be in {{docs}}, and I'll tell you each time, with which ones may be committed. Only those may go into the harness, in {{assets}}, linked from the plan. Never commit, copy into the harness, or quote at length a document I haven't marked for committing: it may hold sensitive details. Summarise what you need from it in your own words.
 
-            Ask me what you need to know, one or two questions at a time. Then write the plan as {{plan}}, following the standard, with its summary and any issues it's about in the front matter. Show me the plan before you commit, and commit and push it (with the assets marked for committing) on the harness's default branch when I say so.
+            Ask what you need to know, one question at a time. When we agree, Gannin writes the plan as {{plan}}, following the standard, from what you've kept. Commit only the assets marked for committing, and only when I say so.
             """
         }
     }

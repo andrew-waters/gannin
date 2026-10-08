@@ -42,6 +42,8 @@ private struct HarnessLoader: ViewModifier {
 /// the plans and requirements no issue claims, so they can be given one.
 struct HarnessView: View {
     @Environment(HarnessStore.self) private var harness
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(OrgStore.self) private var orgs
@@ -58,6 +60,16 @@ struct HarnessView: View {
     @State private var creatingIn: HarnessChoice?
     @State private var editingSkill: HarnessEdit<HarnessDocument>?
     @State private var editingPrompt: HarnessEdit<HarnessPrompt>?
+
+    /// New on the page: a plan opens as a new plan's tab in the Claude
+    /// Code window, in that harness; anything else, its editor.
+    private func create(in setup: HarnessConfig) {
+        if kind == .plans {
+            sessions.showNewPlan(PlanningDraft(org: org, harnessRepo: setup.repo), with: openWindow)
+        } else {
+            creatingIn = HarnessChoice(setup: setup)
+        }
+    }
     /// Only one harness's documents, by repo; nil for every harness.
     @State private var harnessFilter: String?
     let org: String
@@ -98,7 +110,7 @@ struct HarnessView: View {
                         // Which harness it goes in.
                         Menu {
                             ForEach(harnesses, id: \.repo) { choice in
-                                Button(choice.repo) { creatingIn = HarnessChoice(setup: choice) }
+                                Button(choice.repo) { create(in: choice) }
                                     .disabled(harness.index(for: org, choice) == nil)
                             }
                         } label: {
@@ -107,7 +119,7 @@ struct HarnessView: View {
                         .help("Write a new \(kind.singular) in one of the harnesses")
                     } else {
                         Button {
-                            creatingIn = HarnessChoice(setup: setup)
+                            create(in: setup)
                         } label: {
                             Label(HarnessNewDocumentSheet.title(kind), systemImage: "plus")
                         }
@@ -358,6 +370,15 @@ struct HarnessView: View {
                             .padding(.vertical, 4)
                             .help(document.path))
                         }),
+        ]
+        // Prompts have no status, owner or date: where they're offered,
+        // whether they're ticked to start with, and the skills they bring.
+        if kind == .prompts {
+            columns += promptColumns
+            if showsHarness { columns.append(harnessColumn(primary: primary)) }
+            return columns
+        }
+        columns += [
             StatsColumn(id: "status", title: "Status", help: "Its front matter status", width: 110,
                         sortKey: { .text(($0.statusLabel ?? "").lowercased()) },
                         cell: { document in
@@ -395,15 +416,7 @@ struct HarnessView: View {
                                            })
                                        }))
         }
-        if showsHarness {
-            columns.append(StatsColumn(id: "harness", title: "Harness", help: "The harness it's in", width: 120,
-                                       sortKey: { .text(($0.harnessRepo ?? primary).lowercased()) },
-                                       cell: { document in
-                                           AnyView(Text((document.harnessRepo ?? primary).split(separator: "/").last.map(String.init) ?? "")
-                                               .foregroundStyle(.secondary)
-                                               .lineLimit(1))
-                                       }))
-        }
+        if showsHarness { columns.append(harnessColumn(primary: primary)) }
         columns.append(StatsColumn(id: "owner", title: "Owner", help: "Who's driving it", width: 130,
                                    sortKey: { .text(($0.owner ?? "").lowercased()) },
                                    cell: { document in
@@ -418,6 +431,43 @@ struct HarnessView: View {
                                            .monospacedDigit())
                                    }))
         return columns
+    }
+
+    private func harnessColumn(primary: String) -> StatsColumn<HarnessDocument> {
+        StatsColumn(id: "harness", title: "Harness", help: "The harness it's in", width: 120,
+                    sortKey: { .text(($0.harnessRepo ?? primary).lowercased()) },
+                    cell: { document in
+                        AnyView(Text((document.harnessRepo ?? primary).split(separator: "/").last.map(String.init) ?? "")
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1))
+                    })
+    }
+
+    private var promptColumns: [StatsColumn<HarnessDocument>] {
+        func prompt(_ document: HarnessDocument) -> HarnessPrompt? { HarnessPrompt(document: document) }
+        func uses(_ prompt: HarnessPrompt?) -> String {
+            guard let prompt else { return "" }
+            return Set(prompt.uses) == Set(PromptUse.allCases) ? "Everywhere" : prompt.uses.map(\.label).joined(separator: ", ")
+        }
+        func defaultLabel(_ prompt: HarnessPrompt?) -> String {
+            guard let prompt, prompt.isDefault else { return "" }
+            return prompt.repos.isEmpty ? "Yes" : prompt.repos.joined(separator: ", ")
+        }
+        return [
+            StatsColumn(id: "uses", title: "Used for", help: "Where it's offered: work on an issue, reviews, planning, or in a session", width: 220,
+                        sortKey: { .text(uses(prompt($0))) },
+                        cell: { document in AnyView(Text(uses(prompt(document))).lineLimit(1)) }),
+            StatsColumn(id: "default", title: "Default", help: "Ticked when a session starts; for the repos named, else everywhere it's offered", width: 120,
+                        sortKey: { .text(defaultLabel(prompt($0))) },
+                        cell: { document in AnyView(Text(defaultLabel(prompt(document))).lineLimit(1)) }),
+            StatsColumn(id: "skills", title: "Skills", help: "The harness skills it brings", width: 200,
+                        sortKey: { .text((prompt($0)?.skills ?? []).joined(separator: ", ")) },
+                        cell: { document in
+                            AnyView(Text((prompt(document)?.skills ?? []).joined(separator: ", "))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1))
+                        }),
+        ]
     }
 
     /// `data-capture` as "Data capture"; short names like `cdm` in capitals.
@@ -479,6 +529,8 @@ enum IssueStateDot {
 /// Also the page Open as Page pushes, where `onClose` is nil.
 struct HarnessDocumentPage: View {
     @Environment(HarnessStore.self) private var harness
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(OrgStore.self) private var orgs
@@ -493,7 +545,6 @@ struct HarnessDocumentPage: View {
 
     @State private var width: CGFloat = 1000
     @State private var draftingIssues = false
-    @State private var planning = false
     @State private var editingDetails = false
     /// Folded sections, by index.
     @State private var folded: Set<Int> = []
@@ -511,9 +562,6 @@ struct HarnessDocumentPage: View {
                         header(document, index: index, sections: sections, proxy: proxy)
                             .sheet(isPresented: $draftingIssues) {
                                 DraftIssuesSheet(org: org, document: document, index: index)
-                            }
-                            .sheet(isPresented: $planning) {
-                                NewPlanningSheet(org: org, documentPath: document.path, topic: document.title)
                             }
                             .sheet(isPresented: $editingDetails) {
                                 if let (setup, own) = source(of: document) {
@@ -572,7 +620,9 @@ struct HarnessDocumentPage: View {
             if document.kind == .learnings, let learning = HarnessLearning(document: document) {
                 EditLearningButton(org: org, learning: learning, harnessRepo: nil)
             } else {
-                Button("Plan with Claude") { planning = true }
+                Button("Plan with Claude") {
+                    sessions.showNewPlan(PlanningDraft(org: org, documentPath: document.path, topic: document.title), with: openWindow)
+                }
                     .help("Start a planning session in the harness from this document")
             }
             if onClose != nil, let openAsPage {

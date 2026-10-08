@@ -70,6 +70,7 @@ struct IssueWindow: View {
         .loadsHarness(org: reference.org)
         .modifier(OwnInvestmentPrompt(isEnabled: !isEmbedded))
         .toolbar {
+            ToolbarItem { PlanThisButton(reference: reference) }
             ToolbarItem { StartSessionButton(reference: reference) }
         }
     }

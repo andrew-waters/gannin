@@ -41,6 +41,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case views = "Views"
     /// The morning session with CS, under Meetings.
     case prioritisation = "Prioritisation"
+    /// Planning with the team in the room, under Rituals.
+    case planning = "Planning"
     /// What the team closed over its period, under Rituals.
     case recap = "Recap"
     /// The goals period by period, under Delivery.
@@ -86,6 +88,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .harness: "text.book.closed"
         case .views: "square.grid.3x3"
         case .prioritisation: "list.number"
+        case .planning: "list.bullet.clipboard"
         case .recap: "calendar.badge.checkmark"
         case .scorecard: "target"
         case .agents: "questionmark.bubble"
@@ -1285,6 +1288,7 @@ struct OrgSidebar: View {
                     peopleViewRow(.standup)
                     row(.recap)
                     row(.prioritisation)
+                    row(.planning)
                     row(.hygiene)
                 }
 
@@ -1463,7 +1467,7 @@ struct OrgSidebar: View {
         case .agents:
             guard let selectedOrg else { return 0 }
             return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .recap, .scorecard, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .planning, .recap, .scorecard, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
         }
     }
 }

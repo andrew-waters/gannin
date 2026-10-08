@@ -152,6 +152,7 @@ struct IssueSheet: View {
                     }
                     .help("Write a new issue under this one")
                 }
+                PlanThisButton(reference: reference)
                 StartSessionButton(reference: reference)
             }
             if let record {
