@@ -1,6 +1,6 @@
 ---
 type: requirement
-status: in-progress
+status: done
 summary: "Start an open-ended Claude Code conversation about anything from the Claude Code window, beside plans and reviews, with the harness's skills and MCP, the code clones and Gannin's org data within reach, and grab what it produces without leaving Gannin."
 issues: [andrew-waters/gannin#55]
 plans: [plans/2026-10-08-in-the-window-with-plans-and-reviews-i.md]

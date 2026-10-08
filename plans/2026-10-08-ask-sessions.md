@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: Ask sessions are open-ended Claude Code conversations in a tab of the Claude Code window, run in a project's harness on this Mac, replacing one-shot Ask, with their files committed to research/ only one at a time by hand.
 issues: [andrew-waters/gannin#56, andrew-waters/gannin#57, andrew-waters/gannin#59, andrew-waters/gannin#60, andrew-waters/gannin#61]
 domains: [sessions, harness]
@@ -53,7 +53,7 @@ Harness (R6), Research under Harness (R7), and keeping, resuming and deleting th
 - [x] #60 `HarnessKind.research`, listed under Harness and in the palette
 - [x] #61 Ask sessions listed under Agents and the sidebar, with Open, Rename and Delete
 - [x] CLAUDE.md
-- [ ] Check in the app: start one with Connect with set (runs here), `context/` holds the JSON, an
+- [x] Check in the app: start one with Connect with set (runs here), `context/` holds the JSON, an
       old Sessions JSON loads, each entry point opens the draft, a CSV and a small PNG commit byte
       for byte with the README, an oversize file is refused, Research lists the folder, a
       relaunch lists and resumes Ask sessions, Delete leaves no folder
