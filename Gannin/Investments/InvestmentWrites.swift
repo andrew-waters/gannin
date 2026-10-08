@@ -84,7 +84,7 @@ enum InvestmentWriter {
 
     /// Writes to GitHub one issue at a time, reporting each as it starts
     /// and finishes (with its failure, if any); returns what failed.
-    static func applyOnGitHub(_ changes: [InvestmentChange], org: String, tracking: InvestmentTracking, api: GitHubAPI, issues: IssueStore, shouldContinue: () -> Bool = { true }, started: (String) -> Void = { _ in }, progress: (Int, Failure?) -> Void) async -> [Failure] {
+    static func applyOnGitHub(_ changes: [InvestmentChange], org: String, tracking: InvestmentTracking, api: GitHubAPI, issues: IssueStore, projects projectStore: ProjectStore, shouldContinue: () -> Bool = { true }, started: (String) -> Void = { _ in }, progress: (Int, Failure?) -> Void) async -> [Failure] {
         var failures: [Failure] = []
         var labelIDs: [String: String] = [:]
         var projects: [OrgProject]?
@@ -100,7 +100,7 @@ enum InvestmentWriter {
                     try await writeLabels(change, org: org, api: api, issues: issues, cache: &labelIDs)
                 case .projectField(let number, let title, let field):
                     if projects == nil, change.addsToBoard { projects = try await api.orgProjects(org: org) }
-                    try await writeField(change, org: org, number: number, title: title, field: field, projects: projects ?? [], api: api, issues: issues)
+                    try await writeField(change, org: org, number: number, title: title, field: field, projects: projects ?? [], api: api, issues: issues, projectStore: projectStore)
                 }
             } catch {
                 failures.append(Failure(issue: change.issue, message: error.localizedDescription))
@@ -141,7 +141,7 @@ enum InvestmentWriter {
         return id
     }
 
-    private static func writeField(_ change: InvestmentChange, org: String, number: Int, title: String, field name: String, projects: [OrgProject], api: GitHubAPI, issues: IssueStore) async throws {
+    private static func writeField(_ change: InvestmentChange, org: String, number: Int, title: String, field name: String, projects: [OrgProject], api: GitHubAPI, issues: IssueStore, projectStore: ProjectStore) async throws {
         try await FieldWriter.set(
             name,
             to: change.setOption,
@@ -151,7 +151,8 @@ enum InvestmentWriter {
             boardID: projects.first { $0.number == number }?.id,
             org: org,
             api: api,
-            issues: issues
+            issues: issues,
+            projects: projectStore
         )
     }
 }
@@ -279,6 +280,7 @@ private struct InvestmentPromptHost: ViewModifier {
 struct InvestmentConfirmation: View {
     @Environment(AuthStore.self) private var auth
     @Environment(IssueStore.self) private var issues
+    @Environment(ProjectStore.self) private var projects
 
     let pending: InvestmentPrompt.Pending
     let onClose: () -> Void
@@ -398,7 +400,7 @@ struct InvestmentConfirmation: View {
         guard let api = auth.api else { return }
         isApplying = true
         let result = await InvestmentWriter.applyOnGitHub(
-            pending.changes, org: pending.org, tracking: pending.tracking, api: api, issues: issues,
+            pending.changes, org: pending.org, tracking: pending.tracking, api: api, issues: issues, projects: projects,
             shouldContinue: { !stopping },
             started: { states[$0] = .writing }
         ) { count, failure in

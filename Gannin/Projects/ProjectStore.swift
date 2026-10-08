@@ -35,6 +35,17 @@ final class ProjectStore {
         caches[Self.key(org, number)]?.resolvedItems(for: filter)
     }
 
+    /// Records a board field saved from the app (nil clears it) onto the
+    /// item's cached copy, shared between every view's filter, so an open
+    /// board shows it before the next fetch. A no-op if the board or item
+    /// isn't cached yet.
+    func recordFieldValue(org: String, number: Int, itemID: String, field: String, value: IssueFieldValue?) {
+        let key = Self.key(org, number)
+        guard caches[key]?.itemsByID[itemID] != nil else { return }
+        caches[key]?.itemsByID[itemID]?.values[field] = value
+        if let cache = caches[key] { save(cache, key: key) }
+    }
+
     func isLoading(org: String, number: Int) -> Bool {
         let key = Self.key(org, number)
         return loading.contains { $0 == key || $0.hasPrefix(key + "|") }

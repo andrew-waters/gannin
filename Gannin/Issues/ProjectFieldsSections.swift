@@ -5,6 +5,7 @@ import SwiftUI
 struct ProjectFieldsSections: View {
     @Environment(AuthStore.self) private var auth
     @Environment(IssueStore.self) private var issueStore
+    @Environment(ProjectStore.self) private var projectStore
     let org: String
     let issueID: String
 
@@ -278,6 +279,7 @@ struct ProjectFieldsSections: View {
                     saved[snapshot.id, default: [:]][field.id] = field.value
                     recordIfStatus(field, item: snapshot)
                     issueStore.recordFieldValue(org: org, issueID: issueID, projectNumber: snapshot.projectNumber, projectTitle: snapshot.projectTitle, field: field.name, value: Self.issueValue(field))
+                    projectStore.recordFieldValue(org: org, number: snapshot.projectNumber, itemID: snapshot.id, field: field.name, value: Self.issueValue(field))
                 } catch {
                     saveErrors[snapshot.id] = "Couldn't save \(field.name): \(Self.message(for: error))"
                     return
