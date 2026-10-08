@@ -349,7 +349,16 @@ struct NewTagSheet: View {
         let exists = repository.tags.contains { $0.name == trimmedName }
         Form {
             Section {
-                TextField("Name", text: $name, prompt: Text(suggestion ?? "v1.0.0"))
+                HStack(spacing: 8) {
+                    TextField("Name", text: $name, prompt: Text(suggestion ?? "v1.0.0"))
+                    if let last = repository.tags.first {
+                        Text("Last: \(last.name)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .fixedSize()
+                            .help([last.sha, last.subject, last.date.map { $0.formatted(.relative(presentation: .named)) }].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · "))
+                    }
+                }
                 TextField("On", text: $target, prompt: Text("HEAD"))
                     .help("A branch, tag or commit; HEAD is the commit checked out")
                 TextField("Message", text: $message, prompt: Text("Optional: makes it an annotated tag"), axis: .vertical)
@@ -359,22 +368,6 @@ struct NewTagSheet: View {
                 Text("New tag in \(repository.repo)")
             }
             Section {
-                if let last = repository.tags.first {
-                    LabeledContent("Last tag") {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            HStack(spacing: 6) {
-                                Text(last.name).fontWeight(.semibold)
-                                Text(last.sha).font(.caption.monospaced()).foregroundStyle(.secondary)
-                            }
-                            Text([last.subject, last.date.map { $0.formatted(.relative(presentation: .named)) }].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · "))
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                } else {
-                    LabeledContent("Last tag", value: "None yet")
-                }
                 if target.count >= 7, let commit = repository.tags.first(where: { $0.sha.hasPrefix(String(target.prefix(7))) || target.hasPrefix($0.sha) }) {
                     Text("This commit is already tagged \(commit.name).")
                         .font(.caption)

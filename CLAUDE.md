@@ -199,7 +199,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`ls-remote --tags` when opened). Picking one shows its whole message, its files and a file's
   diff (a merge against its first parent). Tagging is done here: Tag This Commit (the commit's
   context menu or its header) opens `NewTagSheet` (annotated with a message, pushed straight away
-  by default, the next patch version suggested, the last tag shown, and a warning when the commit
+  by default, the next patch version suggested, the last tag beside the name, and a warning when the commit
   is tagged already); a tag's context menu pushes, branches from or
   deletes it (here, or here and on origin), and Push N Tags pushes those only here.
 
