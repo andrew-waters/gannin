@@ -37,11 +37,10 @@ struct RepositoryHistoryView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
             Divider()
-            HSplitView {
+            FixedSplit(key: "repositoryHistoryListWidth", width: 440, range: 280...760) {
                 commitList(commits)
-                    .frame(minWidth: 320, idealWidth: 460, maxWidth: 700, maxHeight: .infinity)
+            } trailing: {
                 CommitDetailView(repository: repository, history: history)
-                    .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
             }
         }
         .task(id: reloadKey) {

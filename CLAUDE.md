@@ -148,8 +148,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   commit). A project naming no repos covers them all, so it lists those with work in flight and
   clones saved here, with no Add. Beside the switcher, the branch and worktree buttons open
   popovers (`BranchPopoverButton`, `WorktreePopoverButton`, `Git/RepositoryBranches.swift`), then
-  the parts: Changes, History and GitHub (its open PRs, issues and merged, `RepositoryColumn`),
-  `repositoryPart` per window. A repo's page pushed onto the trail (`DetailSelection.repository`)
+  the parts: History (first), Changes and GitHub (its open PRs, issues and merged,
+  `RepositoryColumn`), `repositoryPart` per window. History and Changes put their list beside the
+  diff in a `FixedSplit`, a leading pane as wide as it's dragged (kept per part), which never
+  shifts as content loads, as `HSplitView` did. A repo's page pushed onto the trail (`DetailSelection.repository`)
   has no switcher. Every control is in the page's bar (`RepositoryBar`), not the toolbar.
 - `LocalClones` finds a repo's clone: the folder saved for it (`localRepository.<owner/name>`,
   from Add Existing, Clone To or Use Another Folder), the harness checkout when the repo is the

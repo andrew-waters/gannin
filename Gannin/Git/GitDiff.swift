@@ -126,3 +126,51 @@ enum DiffStyle {
         }
     }
 }
+
+/// Two panes side by side, the leading one as wide as you drag it (kept
+/// under `key`). Unlike `HSplitView`, its width never shifts when either
+/// pane's content changes, as picking a commit or file does.
+struct FixedSplit<Leading: View, Trailing: View>: View {
+    @AppStorage private var width: Double
+    private let range: ClosedRange<Double>
+    private let leading: Leading
+    private let trailing: Trailing
+    @State private var dragStart: Double?
+
+    init(key: String, width: Double, range: ClosedRange<Double>, @ViewBuilder leading: () -> Leading, @ViewBuilder trailing: () -> Trailing) {
+        _width = AppStorage(wrappedValue: width, key)
+        self.range = range
+        self.leading = leading()
+        self.trailing = trailing()
+    }
+
+    var body: some View {
+        HStack(spacing: 0) {
+            leading
+                .frame(width: min(max(width, range.lowerBound), range.upperBound))
+                .frame(maxHeight: .infinity)
+            Color.separatorLine
+                .frame(width: 1)
+                .overlay {
+                    Color.clear
+                        .frame(width: 9)
+                        .contentShape(Rectangle())
+                        .onHover { inside in
+                            if inside { NSCursor.resizeLeftRight.push() } else { NSCursor.pop() }
+                        }
+                        .gesture(
+                            DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                                .onChanged { drag in
+                                    let start = dragStart ?? width
+                                    dragStart = start
+                                    width = min(max(start + drag.translation.width, range.lowerBound), range.upperBound)
+                                }
+                                .onEnded { _ in dragStart = nil }
+                        )
+                }
+                .zIndex(1)
+            trailing
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}

@@ -2,8 +2,8 @@ import SwiftUI
 
 /// What a repo's page shows, picked in the toolbar.
 enum RepositoryPart: String, CaseIterable {
-    case changes = "Changes"
     case history = "History"
+    case changes = "Changes"
     /// Its open PRs, issues and what merged, from the workload.
     case github = "GitHub"
 
@@ -14,7 +14,7 @@ enum RepositoryPart: String, CaseIterable {
 /// history and tags, branches and worktrees) and what's in flight on GitHub.
 struct RepositoryPage: View {
     @Environment(OrgConfigStore.self) private var configs
-    @SceneStorage("repositoryPart") private var part: RepositoryPart = .changes
+    @SceneStorage("repositoryPart") private var part: RepositoryPart = .history
     let org: String
     /// `owner/name`.
     let repo: String

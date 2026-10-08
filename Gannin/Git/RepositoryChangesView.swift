@@ -8,16 +8,15 @@ struct RepositoryChangesView: View {
     @State private var discarding: GitFileChange?
 
     var body: some View {
-        HSplitView {
+        FixedSplit(key: "repositoryChangesListWidth", width: 360, range: 260...620) {
             VStack(spacing: 0) {
                 banners
                 fileList
                 Divider()
                 CommitComposer(repository: repository)
             }
-            .frame(minWidth: 260, idealWidth: 340, maxWidth: 520, maxHeight: .infinity)
+        } trailing: {
             GitDiffView(repository: repository)
-                .frame(minWidth: 360, maxWidth: .infinity, maxHeight: .infinity)
         }
         .confirmationDialog(
             "Discard the changes to \(discarding?.name ?? "the file")?",
