@@ -1,5 +1,7 @@
 ---
 type: prompt
+summary: >
+  Runs planning as a refinement session: problem first, the smallest scope worth shipping, existing patterns, risks, and pieces small enough to review.
 use: [planning]
 default: true
 ---
