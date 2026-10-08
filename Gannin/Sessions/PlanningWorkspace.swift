@@ -621,13 +621,14 @@ struct PlanningWorkspaceView: View {
                     if recheck {
                         Text("Recheck").foregroundStyle(.orange)
                     } else if step.isLoop, rounds > 0 {
-                        Label("Round \(rounds)", systemImage: "arrow.triangle.2.circlepath")
+                        Text("Round \(rounds)")
                             .foregroundStyle(.secondary)
                     } else {
                         Text(" ")
                     }
                 }
                 .font(.caption2)
+                // Under the name: past the 24pt circle and its 6pt gap.
                 .padding(.leading, 30)
             }
             .padding(.horizontal, 8)
