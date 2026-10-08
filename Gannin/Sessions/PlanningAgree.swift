@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Agreeing a planning session: who was in the room, the parent issue (the
-/// one planned, or a new one), the breakdown as sub-issues to edit or
+/// one planned, or a new one), the tasks as sub-issues to edit or
 /// untick, and the plan and requirement for the harness. Nothing's written
 /// until Agree and Write; then the issues are made and ticked off, and
 /// both documents go in one commit. Claude is told what was written.
@@ -23,6 +23,8 @@ struct PlanningAgreeSheet: View {
         var title: String
         var body: String
         var labels: String
+        /// The acceptance criteria it satisfies, by id.
+        var satisfies: [String] = []
         /// `owner/name#123` and its page, once made.
         var made: (reference: String, url: URL)?
         var failed: String?
@@ -58,7 +60,7 @@ struct PlanningAgreeSheet: View {
     /// have loaded), and the harness itself so there's always one.
     private var repos: [String] {
         let config = projectConfig
-        let named = (state?.breakdown ?? []).compactMap(\.repo) + (state?.scouting ?? []).compactMap(\.repo) + [planning?.issue?.repo].compactMap { $0 }
+        let named = (state?.tasks ?? []).compactMap(\.repo) + (state?.scouting ?? []).compactMap(\.repo) + [planning?.issue?.repo].compactMap { $0 }
         let ownRepos = config.repoProjects.first { $0.id == harnessRepo }?.repos ?? config.harness(repo: harnessRepo)?.repos ?? []
         let project = ownRepos.map { $0.contains("/") ? $0 : "\(org)/\($0)" }
         let snapshot = orgs.snapshot(for: org)
@@ -87,11 +89,12 @@ struct PlanningAgreeSheet: View {
             .padding(12)
             Divider()
             Form {
+                readiness
                 people
                 parentSection
                 Section("\(drafts.filter(\.include).count) of \(drafts.count) sub-issues") {
                     if drafts.isEmpty {
-                        Text("No breakdown yet: the plan is written with no sub-issues.").foregroundStyle(.secondary)
+                        Text("No tasks yet: the plan is written with no sub-issues.").foregroundStyle(.secondary)
                     }
                     ForEach($drafts) { $draft in
                         editor($draft)
@@ -136,6 +139,30 @@ struct PlanningAgreeSheet: View {
     }
 
     // MARK: Sections
+
+    /// What isn't settled: stages not approved (or reopened since) and
+    /// acceptance criteria no task covers. Agreeing anyway is allowed.
+    @ViewBuilder
+    private var readiness: some View {
+        let unapproved = PlanningStep.allCases.filter { step in step.isLoop && !(planning?.isApproved(step) ?? false) }
+        let uncovered = state?.uncovered ?? []
+        if !unapproved.isEmpty || !uncovered.isEmpty {
+            Section {
+                if !unapproved.isEmpty {
+                    Label("Not approved: \(unapproved.map(\.rawValue).joined(separator: ", ")).", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+                ForEach(uncovered) { criterion in
+                    Label("\(criterion.id) has no task: \(criterion.text)", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
+            } header: {
+                Text("Before you agree")
+            } footer: {
+                Text("You can agree anyway; the plan records what was approved.").font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
 
     private var people: some View {
         Section {
@@ -233,8 +260,8 @@ struct PlanningAgreeSheet: View {
 
     private func fill() {
         guard drafts.isEmpty else { return }
-        drafts = (state?.breakdown ?? []).map {
-            Draft(repo: $0.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: $0.title, body: $0.body ?? "", labels: $0.labels.joined(separator: ", "))
+        drafts = (state?.tasks ?? []).map {
+            Draft(repo: $0.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: $0.title, body: $0.body ?? "", labels: $0.labels.joined(separator: ", "), satisfies: $0.satisfies)
         }
         parentTitle = title
         parentRepo = repos.first ?? ""
@@ -273,7 +300,7 @@ struct PlanningAgreeSheet: View {
             let draft = drafts[index]
             drafts[index].failed = nil
             do {
-                let issue = try await api.createIssue(repo: draft.repo, title: draft.title, body: draft.body + planLink, labels: labels(draft.labels))
+                let issue = try await api.createIssue(repo: draft.repo, title: draft.title, body: draft.body + satisfies(draft) + planLink, labels: labels(draft.labels))
                 try await api.addSubIssue(parent: parent.id, child: issue.id)
                 if let boardID { try? await api.addToProject(projectID: boardID, contentID: issue.id) }
                 drafts[index].made = ("\(draft.repo)#\(issue.number)", issue.url)
@@ -288,11 +315,12 @@ struct PlanningAgreeSheet: View {
 
         let agreedBy = present.sorted()
         let made = drafts.compactMap(\.made)
+        let tasks = drafts.compactMap { draft in draft.made.map { (reference: $0.reference, url: $0.url, title: draft.title, satisfies: draft.satisfies) } }
         let requirement = writesRequirement && !startedFromRequirement ? requirementPath : nil
         let linkedRequirement = requirement ?? (startedFromRequirement ? planning.documentPath : nil)
         var files: [String: String?] = [
             planPath: PlanningDocuments.plan(
-                state: state, title: title, parent: parent.reference, issues: made, owner: auth.viewer?.login, agreedBy: agreedBy,
+                state: state, title: title, parent: parent.reference, tasks: tasks, owner: auth.viewer?.login, agreedBy: agreedBy,
                 requirementPath: linkedRequirement, dismissed: planning.dismissed ?? [], startedFrom: planning.documentPath,
                 comments: planning.comments ?? [], context: planning
             ),
@@ -323,6 +351,15 @@ struct PlanningAgreeSheet: View {
         dismiss()
     }
 
+    /// The criteria a task satisfies, as its issue says them.
+    private func satisfies(_ draft: Draft) -> String {
+        let criteria = state?.requirement.acceptance ?? []
+        let lines = draft.satisfies.map { id in
+            "- **\(id)**" + (criteria.first { $0.id.uppercased() == id.uppercased() }.map { ": \($0.text)" } ?? "")
+        }
+        return lines.isEmpty ? "" : "\n\nSatisfies:\n\n" + lines.joined(separator: "\n")
+    }
+
     private func labels(_ text: String) -> [String] {
         text.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
@@ -331,13 +368,13 @@ struct PlanningAgreeSheet: View {
 /// The plan and requirement written from a planning session's state, with
 /// front matter as the harness's STANDARDS.md has it.
 enum PlanningDocuments {
-    static func plan(state: PlanningState, title: String, parent: String, issues: [(reference: String, url: URL)], owner: String?, agreedBy: [String], requirementPath: String?, dismissed: Set<String>, startedFrom: String?, comments: [PlanningComment] = [], context: PlanningInfo? = nil) -> String {
-        let touches = Array(Set(state.breakdown.compactMap(\.repo) + state.scouting.compactMap(\.repo))).sorted()
+    static func plan(state: PlanningState, title: String, parent: String, tasks: [(reference: String, url: URL, title: String, satisfies: [String])], owner: String?, agreedBy: [String], requirementPath: String?, dismissed: Set<String>, startedFrom: String?, comments: [PlanningComment] = [], context: PlanningInfo? = nil) -> String {
+        let touches = Array(Set(state.tasks.compactMap(\.repo) + state.scouting.compactMap(\.repo))).sorted()
         var front = [
             "type: plan",
             "status: in-progress",
             "summary: \(yaml(state.summary ?? title))",
-            "issues: [\(([parent] + issues.map(\.reference)).joined(separator: ", "))]",
+            "issues: [\(([parent] + tasks.map(\.reference)).joined(separator: ", "))]",
         ]
         if !touches.isEmpty { front.append("touches: [\(touches.joined(separator: ", "))]") }
         if let owner { front.append("owner: \(owner)") }
@@ -368,30 +405,34 @@ enum PlanningDocuments {
         if let users = r.users { requirement.append("**Who it's for:** \(users)") }
         if !r.scope.isEmpty { requirement.append("**Scope:**\n\n" + numbered(r.scope)) }
         if !r.nonGoals.isEmpty { requirement.append("**Out of scope:**\n\n" + bullets(r.nonGoals)) }
-        if !r.acceptance.isEmpty { requirement.append("**Done when:**\n\n" + bullets(r.acceptance)) }
+        if !r.acceptance.isEmpty { requirement.append("**Acceptance criteria:**\n\n" + criteria(r.acceptance)) }
+        requirement += decisions(state, .requirements)
         body.append(requirement.joined(separator: "\n\n"))
 
+        var design = ["## Design"]
+        if let approach = state.design.approach { design.append(approach) }
         let findings = state.scouting.filter { !dismissed.contains($0.id) }
-        if !findings.isEmpty {
-            body.append("## Scouting\n\n" + findings.map { finding in
+        for (kind, heading) in [("area", "Areas it touches"), ("pattern", "Patterns to follow"), ("risk", "Risks")] {
+            let these = findings.filter { ($0.kind ?? "area").lowercased() == kind }
+            guard !these.isEmpty else { continue }
+            design.append("**\(heading):**\n\n" + these.map { finding in
                 let place = [finding.repo.map { "`\($0)`" }, finding.path.map { "`\($0)`" }].compactMap { $0 }.joined(separator: " ")
-                return "- **\(finding.label)**\(place.isEmpty ? "" : " \(place)"): \(finding.note)"
+                return "- \(place.isEmpty ? "" : "\(place): ")\(finding.note)"
             }.joined(separator: "\n"))
         }
+        design += decisions(state, .design)
+        if design.count > 1 { body.append(design.joined(separator: "\n\n")) }
 
-        if !issues.isEmpty {
-            body.append("## Breakdown\n\n" + issues.enumerated().map { index, issue in
-                "\(index + 1). [\(issue.reference)](\(issue.url.absoluteString))"
+        var taskList = ["## Tasks"]
+        if !tasks.isEmpty {
+            taskList.append(tasks.enumerated().map { index, task in
+                "\(index + 1). [\(task.reference)](\(task.url.absoluteString)) \(task.title)\(task.satisfies.isEmpty ? "" : " (satisfies \(task.satisfies.joined(separator: ", ")))")"
             }.joined(separator: "\n"))
-        } else if !state.breakdown.isEmpty {
-            body.append("## Breakdown\n\n" + numbered(state.breakdown.map(\.title)))
+        } else if !state.tasks.isEmpty {
+            taskList.append(numbered(state.tasks.map(\.title)))
         }
-
-        if !state.decisions.isEmpty {
-            body.append("## Decisions\n\n" + state.decisions.map { decision in
-                decision.question.map { "- \($0) **\(decision.answer)**" } ?? "- \(decision.answer)"
-            }.joined(separator: "\n"))
-        }
+        taskList += decisions(state, .tasks)
+        if taskList.count > 1 { body.append(taskList.joined(separator: "\n\n")) }
         if !comments.isEmpty {
             body.append("## From the room\n\n" + bullets(comments.map { "\($0.text) (\($0.step.lowercased()))" }))
         }
@@ -416,10 +457,23 @@ enum PlanningDocuments {
         if let users = r.users { body.append("## Who it's for\n\n\(users)") }
         if !r.scope.isEmpty { body.append("## Requirements\n\n" + numbered(r.scope)) }
         if !r.nonGoals.isEmpty { body.append("## Out of scope\n\n" + bullets(r.nonGoals)) }
-        if !r.acceptance.isEmpty { body.append("## Acceptance\n\n" + bullets(r.acceptance)) }
+        if !r.acceptance.isEmpty { body.append("## Acceptance criteria\n\n" + criteria(r.acceptance)) }
         if !r.openQuestions.isEmpty { body.append("## Open questions\n\n" + bullets(r.openQuestions)) }
         body.append("Planned in [\(planPath)](../\(planPath)).")
         return "---\n" + front.joined(separator: "\n") + "\n---\n\n" + body.joined(separator: "\n\n") + "\n"
+    }
+
+    private static func criteria(_ criteria: [PlanningState.Criterion]) -> String {
+        criteria.map { "- **\($0.id)** \($0.text)" }.joined(separator: "\n")
+    }
+
+    /// A stage's decisions, as a paragraph of the plan's section.
+    private static func decisions(_ state: PlanningState, _ step: PlanningStep) -> [String] {
+        let decisions = state.decisions(in: step)
+        guard !decisions.isEmpty else { return [] }
+        return ["**Decisions:**\n\n" + decisions.map { decision in
+            decision.question.map { "- \($0) **\(decision.answer)**" } ?? "- \(decision.answer)"
+        }.joined(separator: "\n")]
     }
 
     private static func bullets(_ items: [String]) -> String {

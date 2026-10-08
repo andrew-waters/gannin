@@ -1,19 +1,43 @@
 import AppKit
 import SwiftUI
 
-/// What claude keeps in a planning session's state file as the room
-/// answers: the requirement, what it found in the code, the pieces the work
-/// splits into and what was settled. Read leniently, so a field claude
-/// leaves out or gets wrong is empty rather than losing the rest. The file
-/// is snake case; the session keeps its copy as Swift names it.
+/// What claude keeps in a planning session's state file, as a spec built in
+/// stages: the requirement (with acceptance criteria to trace), the design
+/// and what was found in the code, the tasks, and what was settled. Read
+/// leniently, so a field claude leaves out or gets wrong is empty rather
+/// than losing the rest. The file is snake case; the session keeps its copy
+/// as Swift names it.
 struct PlanningState: Codable, Hashable {
+    /// One acceptance criterion, `R1`, testable: "When X, the system shall Y".
+    struct Criterion: Codable, Hashable, Identifiable {
+        var id: String
+        var text: String
+
+        init(id: String, text: String) {
+            self.id = id
+            self.text = text
+        }
+
+        /// An object, or a bare string (numbered by its place).
+        init(from decoder: Decoder) throws {
+            if let bare = try? decoder.singleValueContainer().decode(String.self) {
+                id = ""
+                text = bare
+            } else {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                id = c.lenient(String.self, .id) ?? ""
+                text = try c.decode(String.self, forKey: .text)
+            }
+        }
+    }
+
     struct Requirement: Codable, Hashable {
         var problem: String?
         var goal: String?
         var users: String?
         var scope: [String] = []
         var nonGoals: [String] = []
-        var acceptance: [String] = []
+        var acceptance: [Criterion] = []
         var openQuestions: [String] = []
 
         init() {}
@@ -25,12 +49,26 @@ struct PlanningState: Codable, Hashable {
             users = c.lenient(String.self, .users)
             scope = c.list(String.self, .scope)
             nonGoals = c.list(String.self, .nonGoals)
-            acceptance = c.list(String.self, .acceptance)
+            acceptance = c.list(Criterion.self, .acceptance).enumerated().map { index, criterion in
+                Criterion(id: criterion.id.isEmpty ? "R\(index + 1)" : criterion.id, text: criterion.text)
+            }
             openQuestions = c.list(String.self, .openQuestions)
         }
 
         var isEmpty: Bool {
             problem == nil && goal == nil && users == nil && scope.isEmpty && nonGoals.isEmpty && acceptance.isEmpty && openQuestions.isEmpty
+        }
+    }
+
+    /// How it'll be built, besides what the code showed (`scouting`).
+    struct Design: Codable, Hashable {
+        var approach: String?
+
+        init() {}
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            approach = c.lenient(String.self, .approach)
         }
     }
 
@@ -46,8 +84,8 @@ struct PlanningState: Codable, Hashable {
         }
     }
 
-    /// Something in the code that matters to the plan: an area it touches,
-    /// a pattern to follow or a risk.
+    /// Something in the code that matters to the design: an area it
+    /// touches, a pattern to follow or a risk.
     struct Finding: Codable, Hashable, Identifiable {
         var kind: String?
         var repo: String?
@@ -66,12 +104,14 @@ struct PlanningState: Codable, Hashable {
         }
     }
 
-    /// One piece of the work, to become a sub-issue.
-    struct Piece: Codable, Hashable, Identifiable {
+    /// One task, to become a sub-issue, and the criteria it satisfies.
+    struct PlanTask: Codable, Hashable, Identifiable {
         var title: String
         var body: String?
         var repo: String?
         var labels: [String] = []
+        /// Acceptance criteria by id (`R1`).
+        var satisfies: [String] = []
 
         var id: String { title }
 
@@ -81,23 +121,27 @@ struct PlanningState: Codable, Hashable {
             body = c.lenient(String.self, .body)
             repo = c.lenient(String.self, .repo)
             labels = c.list(String.self, .labels)
+            satisfies = c.list(String.self, .satisfies)
         }
     }
 
     struct Decision: Codable, Hashable {
         var question: String?
         var answer: String
+        /// The stage it was settled in: requirements, design or tasks.
+        var stage: String?
     }
 
     var title: String?
     var summary: String?
-    /// Where claude says it is: refining, scouting, requirements,
-    /// breakdown or ready.
+    /// The stage claude says it's on: context, requirements, design, tasks
+    /// or ready.
     var phase: String?
     var requirement = Requirement()
+    var design = Design()
     var scoutingNow: Scouting?
     var scouting: [Finding] = []
-    var breakdown: [Piece] = []
+    var tasks: [PlanTask] = []
     var decisions: [Decision] = []
     /// Claude has asked all it needs to.
     var done = false
@@ -108,29 +152,38 @@ struct PlanningState: Codable, Hashable {
         summary = c.lenient(String.self, .summary)
         phase = c.lenient(String.self, .phase)
         requirement = c.lenient(Requirement.self, .requirement) ?? Requirement()
+        design = c.lenient(Design.self, .design) ?? Design()
         scoutingNow = c.lenient(Scouting.self, .scoutingNow)
         scouting = c.list(Finding.self, .scouting)
-        breakdown = c.list(Piece.self, .breakdown)
+        tasks = c.list(PlanTask.self, .tasks)
         decisions = c.list(Decision.self, .decisions)
         done = c.lenient(Bool.self, .done) ?? false
     }
 
-    var isScouting: Bool { scoutingNow != nil || phase == "scouting" }
-
-    /// The step claude is on: as it says, else worked out from what's there.
+    /// The stage claude is on: as it says, else worked out from what's there.
     var step: PlanningStep {
         switch phase?.lowercased() {
         case "context": return .context
-        case "refining": return .refine
-        case "scouting": return .scout
         case "requirements": return .requirements
-        case "breakdown": return .breakdown
+        case "design": return .design
+        case "tasks": return .tasks
         case "ready": return .agree
         default:
             if done { return .agree }
-            if scoutingNow != nil { return .scout }
-            return breakdown.isEmpty ? .refine : .breakdown
+            if !tasks.isEmpty { return .tasks }
+            if design.approach != nil { return .design }
+            return .requirements
         }
+    }
+
+    /// Acceptance criteria no task says it satisfies.
+    var uncovered: [Criterion] {
+        let covered = Set(tasks.flatMap(\.satisfies).map { $0.uppercased() })
+        return requirement.acceptance.filter { !covered.contains($0.id.uppercased()) }
+    }
+
+    func decisions(in step: PlanningStep) -> [Decision] {
+        decisions.filter { ($0.stage ?? "requirements").lowercased() == step.phase }
     }
 
     /// Read from claude's file, whose keys are snake case.
@@ -141,30 +194,26 @@ struct PlanningState: Codable, Hashable {
     }
 
     /// What Gannin always tells a planning session, after the team's own
-    /// guidance: that the room is live, how to ask, how to scout, and the
-    /// state file the workspace draws.
+    /// guidance: that the room is live, the stages of the spec and how to
+    /// move between them, and the state file the workspace draws.
     static func instructions(path: String) -> String {
         """
-        This is a live planning session. The team is in the room watching Gannin's planning workspace on a shared screen, and one person, the facilitator, answers for the room.
+        This is a live planning session. The team is in the room watching Gannin's planning workspace on a shared screen, and one person, the facilitator, answers for the room. Together you're writing a spec in stages, and `phase` in the state file says which stage you're on:
 
-        Gannin shows the session as steps, and `phase` in the state file says which you're on:
+        - `context`: when the room has given you documents, links or places to look, read them first (you'll be told what they are).
+        - `requirements`: what's needed and why, not how. Interview the room with the AskUserQuestion tool, one question at a time: two to four options, each with a short description, and your recommendation marked "(Recommended)" when you have one. The room can always answer something else. Cover the problem and who has it, the goal, what's in and out of scope, and how they'll know it's done. Write acceptance criteria as testable statements ("When X, the system shall Y"), each with an id: R1, R2 and so on. Look at the code only when a question genuinely depends on it. When the requirements are clear, ask the room whether they're right; once they are, move to `design`.
+        - `design`: how it'll be built. Look at the code (read only, in the harness's `projects/<name>` clones or with `gh` for repos not cloned here; never edit, commit or push in a code repo), setting `scouting_now` while you do: the areas it touches, patterns to follow and risks go in `scouting`. Propose the approach in `design.approach`, put the design's open questions to the room, and ask whether the design is right; once it is, move to `tasks`.
+        - `tasks`: the pieces an engineer or an agent could each pick up and finish, in the order they'd be done, each in its repo, each naming the acceptance criteria it satisfies (`satisfies`). Every criterion should be covered by a task. Ask the room whether the tasks are right; once they are, set `phase` to `ready` and `done` to true, say so, and stop asking.
 
-        0. `context`: when the room has given you documents, links or places to look, read them first (you'll be told what they are).
-        1. `refining`: interview the room with the AskUserQuestion tool, one question at a time: two to four options, each with a short description, and your recommendation marked "(Recommended)" when you have one. The room can always answer something else. Cover the problem and who has it, the goal, what's in and out of scope, constraints, and how they'll know it's done; skip what you already know.
-        2. `scouting`: when a question depends on the code, say so in one line, set `scouting_now`, and look before asking: read only, in the harness's `projects/<name>` clones or with `gh` for repos not cloned here. Never edit, commit or push in a code repo. Add what you found to `scouting`, clear `scouting_now`, and go back to `refining`.
-        3. Refining and scouting are a loop: go round it as many times as it takes. When the requirement is clear, set `requirements` and ask the room, with AskUserQuestion, whether it's right. If not, back to `refining`.
-        4. `breakdown`: once the room agrees the requirements, propose the pieces and ask the room whether they're right.
-        5. `ready`: once the room agrees the breakdown, set `done` to true, say so, and stop asking.
+        Each stage is a loop: ask, look, revise, until the room approves it. Any stage can go back: if you find a gap in an earlier one (a missing requirement while designing, a design flaw while breaking it down), say so, set `phase` back to that stage, fix it with the room and ask them to approve it again, then recheck what came after against it. The room may send you back too.
 
-        The room can interject at any point with a message starting "From the room". Take it into account straight away, even mid-step: it may answer something, change direction, or send you back a step. Record anything it settles as a decision.
+        The room can interject at any point with a message starting "From the room". Take it into account straight away: it may answer something, change direction, or send you back a stage. Record anything settled as a decision, with the stage it was settled in.
 
-        Keep `\(path)` up to date after every answer and every scout, rewriting the whole file as JSON in this shape:
+        Keep `\(path)` up to date after every answer and every look at the code, rewriting the whole file as JSON in this shape:
 
-        {"title": "short title", "summary": "a sentence or two", "phase": "context" | "refining" | "scouting" | "requirements" | "breakdown" | "ready", "requirement": {"problem": "...", "goal": "...", "users": "who it's for", "scope": ["what it must do"], "non_goals": ["..."], "acceptance": ["how we'll know it's done"], "open_questions": ["..."]}, "scouting_now": {"why": "...", "paths": ["owner/name:path"]} or null, "scouting": [{"kind": "area" | "pattern" | "risk", "repo": "owner/name", "path": "path or path#L10-L24", "note": "what's there and why it matters"}], "breakdown": [{"title": "...", "body": "Markdown: what to do and how it'll be checked", "repo": "owner/name", "labels": ["..."]}], "decisions": [{"question": "...", "answer": "..."}], "done": false}
+        {"title": "short title", "summary": "a sentence or two", "phase": "context" | "requirements" | "design" | "tasks" | "ready", "requirement": {"problem": "...", "goal": "...", "users": "who it's for", "scope": ["what it must do"], "non_goals": ["..."], "acceptance": [{"id": "R1", "text": "When ..., the system shall ..."}], "open_questions": ["..."]}, "design": {"approach": "Markdown: how it'll be built and why"}, "scouting_now": {"why": "...", "paths": ["owner/name:path"]} or null, "scouting": [{"kind": "area" | "pattern" | "risk", "repo": "owner/name", "path": "path or path#L10-L24", "note": "what's there and why it matters"}], "tasks": [{"title": "...", "body": "Markdown: what to do and how it'll be checked", "repo": "owner/name", "labels": ["..."], "satisfies": ["R1"]}], "decisions": [{"question": "...", "answer": "...", "stage": "requirements" | "design" | "tasks"}], "done": false}
 
-        The breakdown is pieces an engineer or an agent could each pick up and finish, in the order they'd be done, each in its repo. Record each answer the room settles as a decision.
-
-        Don't write the plan, the requirement or any issues, and don't commit them: when the room agrees, Gannin writes the plan and requirement from the state file, makes the issues and tells you.
+        Don't write the plan, the requirement or any issues, and don't commit them: when the room agrees, Gannin writes them from the state file and tells you.
         """
     }
 }
@@ -208,11 +257,12 @@ extension SessionStore {
         }
         guard let data, !data.isEmpty, let state = PlanningState.read(data),
               sessions[id]?.planning?.state != state else { return }
-        let wasScouting = sessions[id]?.planning?.state?.isScouting ?? false
-        update(id) {
-            $0.planning?.state = state
-            let rounds = $0.planning?.rounds ?? 0
-            if state.isScouting && !wasScouting { $0.planning?.rounds = rounds + 1 }
+        update(id) { session in
+            guard var planning = session.planning else { return }
+            let from = planning.state?.step
+            planning.state = state
+            if from != state.step { planning.moved(from: from ?? .context, to: state.step) }
+            session.planning = planning
         }
     }
 
@@ -245,43 +295,90 @@ extension SessionStore {
 }
 
 
-/// The steps of planning, as the workspace shows them. Refine and Scout are
-/// a loop the room goes round until the requirements are clear; then the
-/// room confirms them, breaks the work down and agrees.
+extension PlanningInfo {
+    /// Claude moved stage: a round of the stage it's now on, and approvals.
+    /// Forward, the stages passed are approved (and no longer to recheck);
+    /// back, the stage and those after lose their approval, and those after
+    /// that had been worked on are to recheck.
+    mutating func moved(from: PlanningStep, to: PlanningStep) {
+        var rounds = stageRounds ?? [:]
+        if to.isLoop { rounds[to.rawValue, default: 0] += 1 }
+        stageRounds = rounds
+        var approved = approved ?? [:]
+        var recheck = recheck ?? []
+        if to.index > from.index {
+            for step in PlanningStep.allCases where step.isLoop && step.index >= from.index && step.index < to.index {
+                approved[step.rawValue] = .now
+                recheck.remove(step.rawValue)
+            }
+        } else {
+            for step in PlanningStep.allCases where step.isLoop && step.index >= to.index {
+                approved[step.rawValue] = nil
+                if step != to, (rounds[step.rawValue] ?? 0) > 0 { recheck.insert(step.rawValue) }
+            }
+            recheck.remove(to.rawValue)
+        }
+        self.approved = approved
+        self.recheck = recheck
+    }
+
+    func rounds(_ step: PlanningStep) -> Int { stageRounds?[step.rawValue] ?? 0 }
+    func isApproved(_ step: PlanningStep) -> Bool { approved?[step.rawValue] != nil && !(recheck ?? []).contains(step.rawValue) }
+    func needsRecheck(_ step: PlanningStep) -> Bool { (recheck ?? []).contains(step.rawValue) }
+}
+
+/// The stages of planning, as a spec: Context, then Requirements, Design
+/// and Tasks, each a loop until the room approves it (and any can send it
+/// back to an earlier one), then Agree.
 enum PlanningStep: String, CaseIterable, Identifiable {
     case context = "Context"
-    case refine = "Refine"
-    case scout = "Scout"
     case requirements = "Requirements"
-    case breakdown = "Break Down"
+    case design = "Design"
+    case tasks = "Tasks"
     case agree = "Agree"
 
     var id: Self { self }
 
     var index: Int { Self.allCases.firstIndex(of: self) ?? 0 }
 
+    /// A stage gone round until the room approves it.
+    var isLoop: Bool { [.requirements, .design, .tasks].contains(self) }
+
+    /// As claude's `phase` names it.
+    var phase: String { self == .agree ? "ready" : rawValue.lowercased() }
+
     var systemImage: String {
         switch self {
         case .context: "tray.full"
-        case .refine: "text.bubble"
-        case .scout: "magnifyingglass"
         case .requirements: "text.badge.checkmark"
-        case .breakdown: "list.number"
+        case .design: "square.on.square.squareshape.controlhandles"
+        case .tasks: "list.number"
         case .agree: "checkmark.seal"
         }
     }
 
-    /// What happens on the step, under its title.
+    /// What happens in the stage, under its title.
     var explanation: String {
         switch self {
         case .context: "What the room gave to read first: documents, links and places to look. The questions build on it."
-        case .refine: "Questions for the room, one at a time. Answer on the card, or say something else below."
-        case .scout: "Looking at the code a question depends on, then back to refining."
-        case .requirements: "Is this what we need? Confirm it to break the work down, or keep refining."
-        case .breakdown: "The pieces the work splits into. Each becomes a sub-issue when the room agrees."
+        case .requirements: "What's needed and why, not how: questions for the room until the problem, scope and acceptance criteria are clear."
+        case .design: "How it'll be built: the code it touches, patterns to follow, risks, and the approach the room settles on."
+        case .tasks: "The pieces, each a sub-issue when the room agrees, each naming the criteria it satisfies."
         case .agree: "Who was here, the issues to make and the plan to write, confirmed before anything's written."
         }
     }
+
+    /// What approving it says.
+    var approval: String {
+        switch self {
+        case .requirements: "Requirements Are Right"
+        case .design: "Design Is Right"
+        case .tasks: "Tasks Are Right"
+        default: "Approve"
+        }
+    }
+
+    var next: PlanningStep? { Self.allCases.first { $0.index == index + 1 } }
 }
 
 /// A planning session's tab, as a wizard: the steps across the top (Refine
@@ -304,6 +401,9 @@ struct PlanningWorkspaceView: View {
     /// question dims again, and clicking the card puts it back.
     @State private var undimmed: String?
     @State private var newContext = ""
+    /// A stage the room is going back to, and why.
+    @State private var backTo: PlanningStep?
+    @State private var backReason = ""
 
     private var openQuestion: String? {
         sessions.isRunning(session.id) ? sessions.transcripts[session.id]?.question?.id : nil
@@ -321,7 +421,7 @@ struct PlanningWorkspaceView: View {
 
     /// The step under way.
     private var current: PlanningStep {
-        planning?.agreed != nil ? .agree : state?.step ?? (planning?.hasContext == true ? .context : .refine)
+        planning?.agreed != nil ? .agree : state?.step ?? (planning?.hasContext == true ? .context : .requirements)
     }
 
     private var shown: PlanningStep { viewing ?? current }
@@ -406,6 +506,13 @@ struct PlanningWorkspaceView: View {
         .sheet(isPresented: $agreeing) {
             PlanningAgreeSheet(session: session)
         }
+        .alert("Back to \(backTo?.rawValue ?? "")", isPresented: Binding(get: { backTo != nil }, set: { if !$0 { backTo = nil } })) {
+            TextField("Why", text: $backReason, prompt: Text("What's missing or wrong"))
+            Button("Go Back", action: goBack)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It's reopened to fix with the room and approve again, and what came after is marked to recheck.")
+        }
         // Each change signal reads the file again (a short wait lets a
         // burst of writes settle), then every few seconds in case one
         // was missed.
@@ -457,94 +564,84 @@ struct PlanningWorkspaceView: View {
     // MARK: Stepper
 
     private var stepper: some View {
-        HStack(spacing: 10) {
-            stepChip(.context)
-                .padding(.bottom, 16)
-            Image(systemName: "chevron.right")
-                .foregroundStyle(.tertiary)
-                .padding(.bottom, 16)
-            VStack(spacing: 4) {
-                HStack(spacing: 8) {
-                    stepChip(.refine)
-                    loopMark
-                    stepChip(.scout)
+        HStack(alignment: .top, spacing: 10) {
+            ForEach(PlanningStep.allCases) { step in
+                if step != .context {
+                    Image(systemName: "chevron.right")
+                        .foregroundStyle(.tertiary)
+                        .padding(.top, 8)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background {
-                    RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.secondary.opacity(0.5), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                }
-                Text("Until the requirements are clear")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-            ForEach([PlanningStep.requirements, .breakdown, .agree]) { step in
-                Image(systemName: "chevron.right")
-                    .foregroundStyle(.tertiary)
-                    .padding(.bottom, 16)
                 stepChip(step)
-                    .padding(.bottom, 16)
             }
         }
-    }
-
-    /// Round and round: refining and scouting, with how many times.
-    private var loopMark: some View {
-        let inLoop = current == .refine || current == .scout
-        return VStack(spacing: 1) {
-            Image(systemName: "arrow.triangle.2.circlepath")
-                .foregroundStyle(inLoop ? Color.accentColor : .secondary)
-                .symbolEffect(.pulse, options: .repeating, isActive: inLoop && busy)
-            Text("Round \(max(1, planning?.rounds ?? 0))")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .monospacedDigit()
-        }
-        .help("Refining and scouting go round until the requirements are clear")
     }
 
     private func isDone(_ step: PlanningStep) -> Bool {
-        if planning?.agreed != nil { return true }
-        if current == .scout && step == .refine { return false }
-        return step.index < current.index
+        guard let planning else { return false }
+        if planning.agreed != nil { return true }
+        switch step {
+        case .context: return current.index > 0
+        case .agree: return false
+        default: return planning.isApproved(step)
+        }
     }
 
     private func stepChip(_ step: PlanningStep) -> some View {
         let isCurrent = step == current
         let done = isDone(step)
-        let picked = step == shown
+        let recheck = planning?.needsRecheck(step) ?? false
+        let rounds = planning?.rounds(step) ?? 0
         return Button {
             viewing = step == current ? nil : step
         } label: {
-            HStack(spacing: 6) {
-                ZStack {
-                    Circle()
-                        .fill(isCurrent ? Color.accentColor : done ? ChartPalette.good.opacity(0.2) : Color.secondary.opacity(0.15))
-                    if done {
-                        Image(systemName: "checkmark")
-                            .font(.caption.weight(.bold))
-                            .foregroundStyle(ChartPalette.good)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    ZStack {
+                        Circle()
+                            // Finished looks finished, even on the stage shown.
+                            .fill(done ? ChartPalette.good.opacity(0.2) : isCurrent ? Color.accentColor : recheck ? Color.orange.opacity(0.2) : Color.secondary.opacity(0.15))
+                        if done {
+                            Image(systemName: "checkmark")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(ChartPalette.good)
+                        } else {
+                            Image(systemName: recheck && !isCurrent ? "exclamationmark" : step.systemImage)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(isCurrent ? .white : recheck ? .orange : .secondary)
+                                .symbolEffect(.pulse, options: .repeating, isActive: isCurrent && busy)
+                        }
+                    }
+                    .frame(width: 24, height: 24)
+                    Text(label(step))
+                        .fontWeight(isCurrent ? .semibold : .regular)
+                        .foregroundStyle(isCurrent || done ? .primary : .secondary)
+                }
+                // How many times round, and whether it needs looking at again.
+                Group {
+                    if recheck {
+                        Text("Recheck").foregroundStyle(.orange)
+                    } else if step.isLoop, rounds > 0 {
+                        Label("Round \(rounds)", systemImage: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(.secondary)
                     } else {
-                        Image(systemName: step.systemImage)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(isCurrent ? .white : .secondary)
-                            .symbolEffect(.pulse, options: .repeating, isActive: isCurrent && busy)
+                        Text(" ")
                     }
                 }
-                .frame(width: 24, height: 24)
-                Text(step.rawValue)
-                    .fontWeight(isCurrent ? .semibold : .regular)
-                    .foregroundStyle(isCurrent || done ? .primary : .secondary)
+                .font(.caption2)
+                .padding(.leading, 30)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(picked ? Color.accentColor.opacity(0.12) : .clear, in: Capsule())
-            .contentShape(Capsule())
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(isCurrent ? "Under way: \(step.explanation)" : "Look at \(step.rawValue)")
-        .accessibilityLabel("\(step.rawValue)\(isCurrent ? ", under way" : done ? ", done" : "")")
+        .help(recheck ? "Changed since: an earlier stage was reopened, so this needs approving again" : isCurrent ? "Under way: \(step.explanation)" : "Look at \(step.rawValue)")
+        .accessibilityLabel("\(label(step))\(isCurrent && !done ? ", under way" : done ? ", done" : recheck ? ", to recheck" : "")\(rounds > 1 ? ", round \(rounds)" : "")")
+    }
+
+    /// The step's name; the last says Agreed once it is.
+    private func label(_ step: PlanningStep) -> String {
+        step == .agree && planning?.agreed != nil ? "Agreed" : step.rawValue
     }
 
     private func lookingBack(_ step: PlanningStep) -> some View {
@@ -622,7 +719,7 @@ struct PlanningWorkspaceView: View {
         case .needsYou, .idle:
             if state?.done == true {
                 statusLine("Ready to agree", symbol: "checkmark.circle", color: ChartPalette.good) {
-                    Text("Look over the requirements and breakdown, then Agree when the room's ready.")
+                    Text("Look over the requirements, design and tasks, then Agree when the room's ready.")
                 }
             } else {
                 statusLine("Waiting for the room", symbol: "text.bubble", color: .orange) {
@@ -701,10 +798,9 @@ struct PlanningWorkspaceView: View {
             }
             switch step {
             case .context: contextStep
-            case .refine: refineStep
-            case .scout: scoutStep
             case .requirements: requirementsStep
-            case .breakdown: breakdownStep
+            case .design: designStep
+            case .tasks: tasksStep
             case .agree: agreeStep
             }
         }
@@ -793,84 +889,101 @@ struct PlanningWorkspaceView: View {
     }
 
     @ViewBuilder
-    private var refineStep: some View {
-        actions {
-            Button("Look at the Code Now") { say("Look at the code for what we've covered so far, then carry on asking.") }
-                .help("Send it to scout before the next question")
-            Button("We've Covered It") { say("We think the requirements are clear now. Show us them to confirm.") }
-                .help("Move on to confirming the requirements")
+    private var requirementsStep: some View {
+        Label("The requirements are on the right, with their acceptance criteria.", systemImage: "arrow.right")
+            .foregroundStyle(.secondary)
+        stageActions(.requirements) {
+            Button("Look at the Code") { say("Look at the code for what we've covered so far, then carry on asking.") }
+                .help("Only when a question depends on it; the design stage is where the code is looked at properly")
         }
-        if let decisions = state?.decisions, !decisions.isEmpty {
-            sectionTitle("Decisions")
-            decisionList(Array(decisions.suffix(5)))
-        }
+        stageDecisions(.requirements)
     }
 
     @ViewBuilder
-    private var scoutStep: some View {
-        let findings = state?.scouting ?? []
-        if findings.isEmpty {
-            empty("Nothing found yet. The code is looked at when a question depends on it.")
+    private var designStep: some View {
+        if let approach = state?.design.approach {
+            sectionTitle("Approach")
+            MarkdownText(source: approach, reflows: true)
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                .overlay { RoundedRectangle(cornerRadius: 10).stroke(Color.separatorLine) }
         } else {
+            empty("The approach is proposed once the code's been looked at.")
+        }
+        stageActions(.design) {
+            Button("Look at the Code") { say("Look at the code again for the design: what else does it touch, and what should it follow?") }
+        }
+        let findings = state?.scouting ?? []
+        if !findings.isEmpty {
+            sectionTitle("In the code")
             VStack(alignment: .leading, spacing: 10) {
                 ForEach(findings) { finding in
                     findingRow(finding)
                 }
             }
         }
+        stageDecisions(.design)
     }
 
     @ViewBuilder
-    private var requirementsStep: some View {
-        Label("The requirement is on the right.", systemImage: "arrow.right")
-            .foregroundStyle(.secondary)
-        actions {
-            Button("Keep Refining") { say("The requirements aren't settled yet. Keep asking about what's missing.") }
-            Button("Requirements Are Right") { say("The requirements are right. Move on to breaking the work down.") }
-                .buttonStyle(.borderedProminent)
-        }
-    }
-
-    @ViewBuilder
-    private var breakdownStep: some View {
-        let pieces = state?.breakdown ?? []
-        if pieces.isEmpty {
-            empty("The pieces are proposed once the requirements are agreed.")
+    private var tasksStep: some View {
+        let tasks = state?.tasks ?? []
+        if tasks.isEmpty {
+            empty("The tasks are proposed once the design is approved.")
         } else {
+            coverage
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(Array(pieces.enumerated()), id: \.offset) { index, piece in
-                    pieceRow(index + 1, piece)
+                ForEach(Array(tasks.enumerated()), id: \.offset) { index, task in
+                    taskRow(index + 1, task)
                 }
             }
         }
-        actions {
-            Button("Rework It") { commenting = true }
-                .help("Say what to change in the comment bar")
-            Button("Breakdown Is Right") { say("The breakdown is right. We're ready to agree.") }
+        stageActions(.tasks) {
             Button("Agree") { agreeing = true }
-                .buttonStyle(.borderedProminent)
                 .disabled(state == nil || planning?.agreed != nil)
+        }
+        stageDecisions(.tasks)
+    }
+
+    /// Whether every acceptance criterion has a task satisfying it.
+    @ViewBuilder
+    private var coverage: some View {
+        if let state, !state.requirement.acceptance.isEmpty {
+            let uncovered = state.uncovered
+            if uncovered.isEmpty {
+                Label("Every acceptance criterion is covered by a task.", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(ChartPalette.good)
+            } else {
+                Label("Not covered by any task: \(uncovered.map(\.id).joined(separator: ", ")).", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                    .help(uncovered.map { "\($0.id): \($0.text)" }.joined(separator: "\n"))
+            }
         }
     }
 
     @ViewBuilder
     private var agreeStep: some View {
-        if let state {
-            let findings = state.scouting.filter { !(planning?.dismissed ?? []).contains($0.id) }.count
-            Text("\(count(state.breakdown.count, "piece")), \(count(findings, "finding")) and \(count(state.decisions.count, "decision")) from \(count(max(1, planning?.rounds ?? 0), "round")) of refining.")
+        if let state, let planning {
+            let findings = state.scouting.filter { !(planning.dismissed ?? []).contains($0.id) }.count
+            Text("\(count(state.requirement.acceptance.count, "acceptance criterion", plural: "acceptance criteria")), \(count(findings, "finding")), \(count(state.tasks.count, "task")) and \(count(state.decisions.count, "decision")).")
                 .foregroundStyle(.secondary)
+            let unapproved = PlanningStep.allCases.filter { $0.isLoop && !planning.isApproved($0) }
+            if planning.agreed == nil, !unapproved.isEmpty {
+                Label("Not approved yet: \(unapproved.map(\.rawValue).joined(separator: ", ")).", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+            }
+            coverage
         }
         if planning?.agreed == nil {
             actions {
                 Button("Agree") { agreeing = true }
                     .buttonStyle(.borderedProminent)
-                    .controlSize(.large)
                     .disabled(state == nil)
             }
         }
-        if let decisions = state?.decisions, !decisions.isEmpty {
-            sectionTitle("Decisions")
-            decisionList(decisions)
+        ForEach([PlanningStep.requirements, .design, .tasks]) { step in
+            stageDecisions(step, title: "\(step.rawValue) decisions", limit: nil)
         }
         if let comments = planning?.comments, !comments.isEmpty {
             sectionTitle("From the room")
@@ -886,8 +999,49 @@ struct PlanningWorkspaceView: View {
         }
     }
 
-    private func count(_ n: Int, _ noun: String) -> String {
-        n == 1 ? "1 \(noun)" : "\(n) \(noun)s"
+    /// A stage's own buttons, then Back to each stage before it (with a
+    /// reason) and its approval.
+    private func stageActions(_ step: PlanningStep, @ViewBuilder extra: () -> some View) -> some View {
+        actions {
+            extra()
+            ForEach(PlanningStep.allCases.filter { $0.isLoop && $0.index < step.index }) { earlier in
+                Button("Back to \(earlier.rawValue)") {
+                    backReason = ""
+                    backTo = earlier
+                }
+                .help("Reopen \(earlier.rawValue.lowercased()), saying why; what came after is marked to recheck")
+            }
+            if step.isLoop {
+                Button(step.approval) {
+                    let next = step.next.map { $0 == .agree ? "We're ready to agree." : "Move on to \($0.rawValue.lowercased())." } ?? ""
+                    say("The \(step.rawValue.lowercased()) are right. \(next)")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(step != current)
+                .help(step == current ? "The room approves it" : "Approve it when it's the stage under way")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stageDecisions(_ step: PlanningStep, title: String = "Decisions", limit: Int? = 6) -> some View {
+        let decisions = state?.decisions(in: step) ?? []
+        if !decisions.isEmpty {
+            sectionTitle(title)
+            decisionList(limit.map { Array(decisions.suffix($0)) } ?? decisions)
+        }
+    }
+
+    private func goBack() {
+        guard let step = backTo else { return }
+        let reason = backReason.trimmingCharacters(in: .whitespacesAndNewlines)
+        say("Back to \(step.rawValue.lowercased())\(reason.isEmpty ? "" : ": \(reason)"). Set `phase` to `\(step.phase)`, fix it with us and ask us to approve it again, then recheck what came after against it.")
+        backTo = nil
+        viewing = nil
+    }
+
+    private func count(_ n: Int, _ noun: String, plural: String? = nil) -> String {
+        n == 1 ? "1 \(noun)" : "\(n) \(plural ?? noun + "s")"
     }
 
     private func say(_ text: String) {
@@ -923,7 +1077,7 @@ struct PlanningWorkspaceView: View {
                 field("Who it's for", requirement.users)
                 list("Scope", requirement.scope, numbered: true)
                 list("Out of scope", requirement.nonGoals)
-                list("Done when", requirement.acceptance)
+                criteria(requirement.acceptance)
                 list("Open questions", requirement.openQuestions)
             }
             .padding(28)
@@ -955,6 +1109,27 @@ struct PlanningWorkspaceView: View {
                         .foregroundStyle(.secondary)
                         .monospacedDigit()
                     Text(item)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Acceptance criteria with their ids, for the tasks to name.
+    private func criteria(_ criteria: [PlanningState.Criterion]) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            heading("Acceptance criteria")
+            if criteria.isEmpty {
+                Text("Not settled yet").foregroundStyle(.tertiary)
+            }
+            ForEach(criteria) { criterion in
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(criterion.id)
+                        .font(.callout.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(minWidth: 30, alignment: .leading)
+                    Text(criterion.text)
                         .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -1006,7 +1181,7 @@ struct PlanningWorkspaceView: View {
         .opacity(dismissed ? 0.45 : 1)
     }
 
-    private func pieceRow(_ number: Int, _ piece: PlanningState.Piece) -> some View {
+    private func taskRow(_ number: Int, _ task: PlanningState.PlanTask) -> some View {
         HStack(alignment: .top, spacing: 12) {
             Text("\(number)")
                 .font(.callout.weight(.semibold))
@@ -1015,15 +1190,28 @@ struct PlanningWorkspaceView: View {
                 .background(Color.accentColor.opacity(0.15), in: Circle())
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(piece.title).fontWeight(.semibold)
+                    Text(task.title).fontWeight(.semibold)
                     Spacer()
-                    if let repo = piece.repo {
+                    if let repo = task.repo {
                         Text(repo).font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if let body = piece.body, !body.isEmpty {
+                if let body = task.body, !body.isEmpty {
                     MarkdownText(source: body)
                         .foregroundStyle(.secondary)
+                }
+                if !task.satisfies.isEmpty {
+                    HStack(spacing: 6) {
+                        Text("Satisfies").font(.caption).foregroundStyle(.secondary)
+                        ForEach(task.satisfies, id: \.self) { id in
+                            Text(id)
+                                .font(.caption.weight(.semibold).monospacedDigit())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(Color.secondary.opacity(0.15), in: Capsule())
+                                .help(state?.requirement.acceptance.first { $0.id.uppercased() == id.uppercased() }?.text ?? id)
+                        }
+                    }
                 }
             }
         }

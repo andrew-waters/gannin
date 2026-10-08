@@ -123,6 +123,26 @@ in its final output). Each one opens in its existing editor to adjust before it'
   scouting carries into the engineer's session.
 - **Epics:** a planned parent with sub-issues shows there with its plan.
 
+### Spec stages (revised 8 October 2026)
+
+After trying the first version, planning became a spec built in stages, in the spirit of spec-driven
+development (Kiro's requirements, design and tasks; spec-kit's specify, plan and tasks):
+
+- **Context:** what the room gives to read first.
+- **Requirements:** what and why, not how, ending in acceptance criteria with ids (R1, R2), each
+  testable ("When X, the system shall Y"). The code is looked at only when a question depends on it.
+- **Design:** how. This is where the code is scouted (areas, patterns, risks) and the approach is
+  settled.
+- **Tasks:** the pieces, each naming the criteria it satisfies, so Agree can flag any criterion no
+  task covers.
+- **Agree.**
+
+Requirements, Design and Tasks are each a loop that ends when the room approves it. Any stage can go
+back to an earlier one with a reason: that stage reopens with a new round, and the stages after it
+are marked Recheck until they're approved again. The plan is written as Requirement, Design and
+Tasks, with each task's issue listing the criteria it satisfies. The earlier refine and scout loop
+is gone; sessions from before it aren't carried over.
+
 ## Where it lives
 
 - **Rituals › Planning** (`WorkloadTab.planning`), beside Standup and Prioritisation. It lists

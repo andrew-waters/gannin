@@ -42,6 +42,8 @@ private struct HarnessLoader: ViewModifier {
 /// the plans and requirements no issue claims, so they can be given one.
 struct HarnessView: View {
     @Environment(HarnessStore.self) private var harness
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(OrgStore.self) private var orgs
@@ -58,6 +60,16 @@ struct HarnessView: View {
     @State private var creatingIn: HarnessChoice?
     @State private var editingSkill: HarnessEdit<HarnessDocument>?
     @State private var editingPrompt: HarnessEdit<HarnessPrompt>?
+
+    /// New on the page: a plan opens as a new plan's tab in the Claude
+    /// Code window, in that harness; anything else, its editor.
+    private func create(in setup: HarnessConfig) {
+        if kind == .plans {
+            sessions.showNewPlan(PlanningDraft(org: org, harnessRepo: setup.repo), with: openWindow)
+        } else {
+            creatingIn = HarnessChoice(setup: setup)
+        }
+    }
     /// Only one harness's documents, by repo; nil for every harness.
     @State private var harnessFilter: String?
     let org: String
@@ -98,7 +110,7 @@ struct HarnessView: View {
                         // Which harness it goes in.
                         Menu {
                             ForEach(harnesses, id: \.repo) { choice in
-                                Button(choice.repo) { creatingIn = HarnessChoice(setup: choice) }
+                                Button(choice.repo) { create(in: choice) }
                                     .disabled(harness.index(for: org, choice) == nil)
                             }
                         } label: {
@@ -107,7 +119,7 @@ struct HarnessView: View {
                         .help("Write a new \(kind.singular) in one of the harnesses")
                     } else {
                         Button {
-                            creatingIn = HarnessChoice(setup: setup)
+                            create(in: setup)
                         } label: {
                             Label(HarnessNewDocumentSheet.title(kind), systemImage: "plus")
                         }
@@ -517,6 +529,8 @@ enum IssueStateDot {
 /// Also the page Open as Page pushes, where `onClose` is nil.
 struct HarnessDocumentPage: View {
     @Environment(HarnessStore.self) private var harness
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(OrgStore.self) private var orgs
@@ -531,7 +545,6 @@ struct HarnessDocumentPage: View {
 
     @State private var width: CGFloat = 1000
     @State private var draftingIssues = false
-    @State private var planning = false
     @State private var editingDetails = false
     /// Folded sections, by index.
     @State private var folded: Set<Int> = []
@@ -549,9 +562,6 @@ struct HarnessDocumentPage: View {
                         header(document, index: index, sections: sections, proxy: proxy)
                             .sheet(isPresented: $draftingIssues) {
                                 DraftIssuesSheet(org: org, document: document, index: index)
-                            }
-                            .sheet(isPresented: $planning) {
-                                NewPlanningSheet(org: org, documentPath: document.path, topic: document.title)
                             }
                             .sheet(isPresented: $editingDetails) {
                                 if let (setup, own) = source(of: document) {
@@ -610,7 +620,9 @@ struct HarnessDocumentPage: View {
             if document.kind == .learnings, let learning = HarnessLearning(document: document) {
                 EditLearningButton(org: org, learning: learning, harnessRepo: nil)
             } else {
-                Button("Plan with Claude") { planning = true }
+                Button("Plan with Claude") {
+                    sessions.showNewPlan(PlanningDraft(org: org, documentPath: document.path, topic: document.title), with: openWindow)
+                }
                     .help("Start a planning session in the harness from this document")
             }
             if onClose != nil, let openAsPage {

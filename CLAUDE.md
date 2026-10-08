@@ -813,40 +813,48 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   drafts issues and triage, rewrites notes, and answers Ask (`AskOrgPage`, under Claude Code:
   `OrgContext` writes workload, issues, delivery, harness and time off as JSON; follow-ups
   resume the conversation).
-- Planning sessions (`CodeSession.planning`, `PlanningInfo`, `NewPlanningSheet`, from Rituals ›
+- Planning sessions (`CodeSession.planning`, `PlanningInfo`, set up in a New Plan tab of the Claude
+  Code window, `NewPlanningView` over a `PlanningDraft` in `SessionStore.planningDrafts`, opened by
+  `showNewPlan` and not kept across launches, its session taking the tab, `replaceDraft`; from Rituals ›
   Planning (`PlanningPage`, a `StatsTable` of them with Delete: `SessionStore.finish`, Delete
   Anyway when the folder won't go), Plan This on an issue (`PlanThisButton`, `PlanningInfo.issue`), Agents,
-  the + menu or a harness document) plan a topic in the harness, live with the team. The sheet
-  has an editable prompt: Start from fills it with one of the team's planning prompts (with its
-  skills), `NewPlanningSheet.suggestedPrompt` (offered when there are none) or blank, and what's in
+  the + menu or a harness document) plan a topic in the harness, live with the team. It has an
+  editable prompt: Start from fills it with one of the team's planning prompts (with its
+  skills), `NewPlanningView.suggestedPrompt` (offered when there are none) or blank, and what's in
   it is what the session is told (as the choice's note); saving commits it as a new planning prompt
   (the first ticked by default) or as an update to the one it came from, before the session starts
   (andrew-waters/gannin#51, `plans/2026-10-08-planning-ceremony.md`). Their tab is
-  `PlanningWorkspaceView`, a wizard rather than a terminal and panel: steps across the top
-  (`PlanningStep`: Context, what the room gave to read first (documents copied into
+  `PlanningWorkspaceView`, a spec built in stages (`PlanningStep`, in the spirit of Kiro and
+  spec-kit): Context, what the room gave to read first (documents copied into
   `.worktrees/<branch>/docs/` before claude starts, `SessionStore.copyDocuments`; links,
-  `PlanningLink`; and where else to look, `PlanningInfo.sources`, all from the sheet's Context
-  section and briefed by `SessionStore.contextBrief`, links added later from the step); then
-  Refine and Scout drawn as a loop with its round, `PlanningInfo.rounds`, counted
-  as claude starts scouting; then Requirements, Break Down, Agree), the one under way from the
-  `phase` claude writes (`PlanningState.step`, worked out from what's there when it doesn't say).
-  On top is what's happening now: the question to the room (AskUserQuestion,
-  `PlanningQuestionView`, in a style picked on it and kept on this Mac, `planningQuestionStyle`:
-  One at a Time with letter keys and options two to a row, Poll the Room counting hands and sending the most, Keyboard List,
-  or Conversation; several questions are put one after another and answered together), what's being read, or whose turn it is. Below is the step picked (any
-  can be looked back at), on the left of a `FixedSplit` whose right is the requirement as it
-  stands; both dim while a question is open until clicked, each with buttons that steer claude (Look at the Code Now, Requirements
-  Are Right and the like). Claude keeps `.worktrees/<branch>/planning.json` (`PlanningState`,
-  snake case, read leniently, shape and rules in `PlanningState.instructions`, added after the
-  team's guidance), read again on each `changed` signal and kept as `PlanningInfo.state`.
-  Scouting findings can be dismissed (`PlanningInfo.dismissed`). A comment box is always at the foot of the left
-  pane (Return sends, Shift-Return is a new line): `SessionStore.interject` sends "From the room" (closing an open question first)
-  and keeps it in `PlanningInfo.comments`, which the plan lists. The terminal and composer are a
-  drawer (`planningShowsTerminal`); the tab starts claude itself (`sessions.open`). It's laid
-  out large, for the room's screen, with no smaller layout. Agree
-  (`PlanningAgreeSheet`) ticks who was here, edits the breakdown, makes the parent (the planned
-  issue, or a new one) and sub-issues on the workflow board, then commits the plan and
-  requirement (`PlanningDocuments`, front matter with `agreed_by`) in one commit, records
+  `PlanningLink.parse` from one box; places to look, `PlanningInfo.sources`; briefed by
+  `SessionStore.contextBrief`); then Requirements (acceptance criteria with ids, `Criterion`),
+  Design (the approach, and the code looked at: areas, patterns, risks) and Tasks (each naming the
+  criteria it `satisfies`; `PlanningState.uncovered` is any no task covers), each a loop until the
+  room approves it; then Agree. The stage is the `phase` claude writes (`PlanningState.step`).
+  Moving forward approves the stages passed; moving back reopens one and marks those after it
+  Recheck (`PlanningInfo.moved`, `stageRounds`, `approved`, `recheck`). Each stage has Back to an
+  earlier one (with a reason, sent to claude) and its approval button. On top is what's happening
+  now: the question to the room (AskUserQuestion, `PlanningQuestionView`, in a style picked on it
+  and kept on this Mac, `planningQuestionStyle`: One at a Time with letter keys and options two to
+  a row, Poll the Room counting hands and sending the most, Keyboard List, or Conversation; several
+  questions are put one after another and answered together; Back and Revisit put one again),
+  what's being read, or whose turn it is. Below is the stage picked (any can be looked back at,
+  the question folding to a line meanwhile), on the left of a `FixedSplit` whose right is the
+  requirement as it stands; both dim while a question is open until clicked. Claude keeps
+  `.worktrees/<branch>/planning.json` (`PlanningState`, snake case, read leniently, shape and
+  rules in `PlanningState.instructions`, added after the team's guidance), read again on each
+  `changed` signal and kept as `PlanningInfo.state`. Findings can be dismissed
+  (`PlanningInfo.dismissed`). A comment box is always at the foot of the left pane (Return sends,
+  Shift-Return is a new line): `SessionStore.interject` sends "From the room" (closing an open
+  question first) and keeps it in `PlanningInfo.comments`, which the plan lists. The terminal and
+  composer are a drawer (`planningShowsTerminal`); the tab starts claude itself
+  (`sessions.open`). It's laid out large, for the room's screen. Agree
+  (`PlanningAgreeSheet`) says what isn't approved or covered, ticks who was here, edits the tasks
+  (each issue listing the criteria it satisfies), makes the parent (the planned
+  issue, or a new one) and sub-issues on the workflow board, then commits the plan
+  (Requirement, Design, Tasks with what they satisfy, `PlanningDocuments`, front matter with
+  `agreed_by`) and requirement in one commit, records
   `PlanningInfo.agreed` and tells claude. Documents dropped on the
   terminal or picked in the panel are each confirmed (`ShareDocumentsSheet`: share, and
   separately whether it may be committed), copied to `.worktrees/plan-<slug>/docs/` (Word and

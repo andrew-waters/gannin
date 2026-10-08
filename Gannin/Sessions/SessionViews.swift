@@ -37,6 +37,9 @@ struct SessionsWindow: View {
             Divider()
             if sessions.showingOverview {
                 SessionOverview()
+            } else if let draftID = sessions.selectedTab, let draft = sessions.planningDrafts[draftID] {
+                NewPlanningView(draftID: draftID, draft: draft)
+                    .id(draftID)
             } else if let selected {
                 if let beside = sessions.besideTab.flatMap({ sessions.sessions[$0] }), beside.id != selected.id {
                     HSplitView {
@@ -53,7 +56,7 @@ struct SessionsWindow: View {
         }
         .frame(minWidth: 900, minHeight: 480)
         .navigationTitle(sessions.showingOverview ? "Claude Code" : selected?.issue.reference ?? "Claude Code")
-        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? "")
+        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? (sessions.selectedTab.flatMap { sessions.planningDrafts[$0] } != nil ? "New plan" : ""))
         .background { shortcuts }
         .onChange(of: activeState, initial: true) { sessions.windowIsKey = activeState == .key }
         .onDisappear { sessions.windowIsKey = false }
@@ -96,7 +99,6 @@ struct SessionsWindow: View {
 
 private struct SessionTabBar: View {
     @Environment(SessionStore.self) private var sessions
-    @State private var planningOrg: String?
 
     var body: some View {
         HStack(spacing: 0) {
@@ -105,6 +107,9 @@ private struct SessionTabBar: View {
                     ForEach(sessions.tabs, id: \.self) { id in
                         if let session = sessions.sessions[id] {
                             SessionTabItem(session: session, isSelected: sessions.selectedTab == id && !sessions.showingOverview)
+                            Divider()
+                        } else if let draft = sessions.planningDrafts[id] {
+                            DraftTabItem(id: id, draft: draft, isSelected: sessions.selectedTab == id && !sessions.showingOverview)
                             Divider()
                         }
                     }
@@ -126,9 +131,6 @@ private struct SessionTabBar: View {
         }
         .frame(height: 56)
         .background(.bar)
-        .sheet(isPresented: Binding(get: { planningOrg != nil }, set: { if !$0 { planningOrg = nil } })) {
-            if let planningOrg { NewPlanningSheet(org: planningOrg) }
-        }
     }
 
     /// Jumps to the session waiting on you longest.
@@ -157,7 +159,11 @@ private struct SessionTabBar: View {
         let org = sessions.selectedTab.flatMap { sessions.sessions[$0]?.org } ?? sessions.sessions.values.first?.org
         return Menu {
             if let org {
-                Button("New Planning Session") { planningOrg = org }
+                // In the harness of the session showing, when there is one.
+                Button("New Plan") {
+                    let harness = sessions.selectedTab.flatMap { sessions.sessions[$0]?.harnessRepo }
+                    sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness))
+                }
                 Divider()
             }
             if closed.isEmpty {
@@ -210,6 +216,66 @@ private struct TabKind {
     }
 }
 
+/// A new plan's tab, until it's started: as a session's tab looks.
+private struct DraftTabItem: View {
+    @Environment(SessionStore.self) private var sessions
+    let id: UUID
+    let draft: PlanningDraft
+    let isSelected: Bool
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle().fill(Color.secondary.opacity(0.5)).frame(width: 7, height: 7)
+            Image(systemName: "list.bullet")
+                .font(.system(size: 20))
+                .foregroundStyle(isSelected ? .primary : .secondary)
+                .frame(width: 26)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text("New Plan")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    if let issue = draft.issue {
+                        Text(issue.reference)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
+                }
+                Text(draft.topic.isEmpty ? "Not started" : draft.topic)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            Spacer(minLength: 0)
+            Button {
+                sessions.closeTab(id)
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .semibold))
+                    .frame(width: 16, height: 16)
+            }
+            .buttonStyle(.borderless)
+            .opacity(hovering || isSelected ? 1 : 0)
+            .help("Close it; nothing's started")
+        }
+        .font(.callout)
+        .padding(.leading, 10)
+        .padding(.trailing, 6)
+        .frame(width: 250)
+        .frame(maxHeight: .infinity)
+        .background(isSelected ? Color.primary.opacity(0.1) : .clear)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            sessions.showingOverview = false
+            sessions.selectedTab = id
+        }
+        .onHover { hovering = $0 }
+    }
+}
+
 private struct SessionTabItem: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
@@ -229,7 +295,7 @@ private struct SessionTabItem: View {
             // What it is, as tall as both lines.
             Image(systemName: kind.symbol)
                 .font(.system(size: 20))
-                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: 26)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
@@ -268,13 +334,8 @@ private struct SessionTabItem: View {
         .padding(.trailing, 6)
         .frame(width: 250)
         .frame(maxHeight: .infinity)
-        // The tab shown, in the accent colour with a line across its top.
-        .background(isSelected ? Color.accentColor.opacity(0.18) : .clear)
-        .overlay(alignment: .top) {
-            if isSelected {
-                Rectangle().fill(Color.accentColor).frame(height: 2)
-            }
-        }
+        // The tab shown, lighter than the rest.
+        .background(isSelected ? Color.primary.opacity(0.1) : .clear)
         .contentShape(Rectangle())
         .onTapGesture {
             sessions.showingOverview = false

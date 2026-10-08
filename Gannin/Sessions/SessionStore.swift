@@ -382,6 +382,10 @@ final class SessionStore {
     let activity = ReviewActivity()
     /// Every session at once instead of a tab.
     var showingOverview = false
+    /// New plans being set up, by their tab's ID: a tab of their own until
+    /// Start Planning makes the session in its place. Not kept across
+    /// launches.
+    var planningDrafts: [UUID: PlanningDraft] = [:]
     /// A second tab shown beside the selected one.
     var besideTab: UUID?
     /// Each server's home folder, for paths an editor opens there.
@@ -425,7 +429,33 @@ final class SessionStore {
     }
 
     /// Closes the tab; claude keeps running, as when a window closed.
+    /// A new plan's tab, after the one showing, selected.
+    @discardableResult
+    func openDraft(_ draft: PlanningDraft) -> UUID {
+        let id = UUID()
+        planningDrafts[id] = draft
+        let index = selectedTab.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
+        tabs.insert(id, at: index)
+        showingOverview = false
+        selectedTab = id
+        return id
+    }
+
+    /// The session started from a draft, in the draft's tab.
+    func replaceDraft(_ draftID: UUID, with id: UUID) {
+        planningDrafts[draftID] = nil
+        tabs.removeAll { $0 == id }
+        if let index = tabs.firstIndex(of: draftID) {
+            tabs[index] = id
+        } else {
+            tabs.append(id)
+        }
+        selectedTab = id
+        saveTabs()
+    }
+
     func closeTab(_ id: UUID) {
+        planningDrafts[id] = nil
         guard let index = tabs.firstIndex(of: id) else { return }
         tabs.remove(at: index)
         if selectedTab == id {
@@ -448,7 +478,8 @@ final class SessionStore {
     }
 
     private func saveTabs() {
-        UserDefaults.standard.set(tabs.map(\.uuidString), forKey: Self.tabsKey)
+        // Drafts aren't kept: they're gone at the next launch.
+        UserDefaults.standard.set(tabs.filter { planningDrafts[$0] == nil }.map(\.uuidString), forKey: Self.tabsKey)
     }
 
     func sessions(for org: String) -> [CodeSession] {

@@ -27,9 +27,12 @@ struct PlanningInfo: Codable, Hashable {
     var dismissed: Set<String>? = nil
     /// Once the room agreed: when, who, and what was written.
     var agreed: PlanningAgreement? = nil
-    /// Times round the refine and scout loop, counted as Gannin sees claude
-    /// start scouting.
-    var rounds: Int? = nil
+    /// Times round each stage (requirements, design, tasks), counted as
+    /// Gannin sees claude move to it; when each was approved (claude moved
+    /// past it); and those reopened since, to approve again.
+    var stageRounds: [String: Int]? = nil
+    var approved: [String: Date]? = nil
+    var recheck: Set<String>? = nil
     /// What the room said along the way, sent to claude as it was said.
     var comments: [PlanningComment]? = nil
     /// Context given to read before the first question, besides the
@@ -243,21 +246,42 @@ extension SessionStore {
     }
 }
 
+/// A new plan being set up in its own tab: what it starts from.
+struct PlanningDraft: Hashable {
+    let org: String
+    var documentPath: String? = nil
+    var topic = ""
+    var issue: IssueReference? = nil
+    /// The harness to plan in, when it was picked first (a Harness page).
+    var harnessRepo: String? = nil
+}
+
+extension SessionStore {
+    /// Opens a new plan as a tab in the Claude Code window.
+    func showNewPlan(_ draft: PlanningDraft, with openWindow: OpenWindowAction) {
+        openDraft(draft)
+        openWindow(id: Self.windowID)
+    }
+}
+
 /// Starts a planning session: a topic, optionally the harness document or
 /// issue it starts from, and how it's run: a prompt to edit, started from
 /// one of the team's (a shortcut that fills the text), the suggested one,
 /// or blank, and saved to the harness as new or as an update when asked.
-struct NewPlanningSheet: View {
+struct NewPlanningView: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(OrgConfigStore.self) private var configs
     @Environment(HarnessStore.self) private var harness
-    @Environment(\.openWindow) private var openWindow
-    @Environment(\.dismiss) private var dismiss
-    let org: String
-    var documentPath: String? = nil
-    var topic = ""
-    /// The issue to plan (Plan This); its title is the topic to start with.
-    var issue: IssueReference? = nil
+    /// The draft's tab, which the session takes over.
+    let draftID: UUID
+    let draft: PlanningDraft
+    @Environment(OrgStore.self) private var orgs
+    /// The org picked in the Project menu; nil for the draft's.
+    @State private var pickedOrg: String?
+    private var org: String { pickedOrg ?? draft.org }
+    private var documentPath: String? { draft.documentPath }
+    private var topic: String { draft.topic }
+    private var issue: IssueReference? { draft.issue }
     @State private var text = ""
     /// The harness picked, by repo; nil for the document's, else the primary.
     @State private var picked: String?
@@ -295,7 +319,7 @@ struct NewPlanningSheet: View {
         - Push on scope: suggest the smallest version worth shipping, and name what's deliberately left out.
         - Before proposing an approach, look at how similar things are already done in the code, and follow those patterns.
         - Call out risks, dependencies, and anything that needs someone who isn't in the room.
-        - Keep each piece of the breakdown small enough to review in one sitting, and say how it'll be checked.
+        - Keep each task small enough to review in one sitting, and say how it'll be checked.
         """
 
     /// A document from a combined index names its harness.
@@ -303,11 +327,34 @@ struct NewPlanningSheet: View {
 
     var body: some View {
         let config = configs.config(for: org)
-        let harnesses = config.harnesses
-        let setup = (picked ?? source?.repo).flatMap(config.harness(repo:)) ?? harnesses.first
+        // Every project: this window belongs to none.
+        let projects = config.repoProjects
+        let harnesses = projects.isEmpty ? config.harnesses : config.allHarnesses
+        let setup = (picked ?? draft.harnessRepo ?? source?.repo).flatMap(config.harness(repo:)) ?? harnesses.first
         let library = setup.map { sessions.promptLibrary(org: org, setup: $0) } ?? HarnessPromptLibrary(index: nil)
+        VStack(spacing: 0) {
+        ScrollView {
         Form {
             Section {
+                // Always asked, every org's projects: opened from the window's
+                // +, it has neither.
+                Picker("Project", selection: Binding(get: { "\(org)\u{1F}\(setup?.repo ?? "")" }, set: { choice in
+                    let parts = choice.split(separator: "\u{1F}", maxSplits: 1).map(String.init)
+                    guard parts.count == 2 else { return }
+                    pickedOrg = parts[0]
+                    picked = parts[1]
+                    let config = configs.config(for: parts[0])
+                    let library = config.harness(repo: parts[1]).map { sessions.promptLibrary(org: parts[0], setup: $0) } ?? HarnessPromptLibrary(index: nil)
+                    startWith(library)
+                })) {
+                    ForEach(projectOrgs, id: \.self) { login in
+                        Section(orgName(login)) {
+                            ForEach(projectChoices(login), id: \.repo) { choice in
+                                Text(choice.name).tag("\(login)\u{1F}\(choice.repo)")
+                            }
+                        }
+                    }
+                }
                 TextField("What are we planning?", text: $text, axis: .vertical)
                     .lineLimit(1...3)
                 if let source {
@@ -316,52 +363,90 @@ struct NewPlanningSheet: View {
                 if let issue {
                     LabeledContent("Planning", value: issue.reference)
                 }
-                if harnesses.count > 1 {
-                    Picker("Harness", selection: Binding(get: { setup?.repo ?? "" }, set: { repo in
-                        picked = repo
-                        let library = config.harness(repo: repo).map { sessions.promptLibrary(org: org, setup: $0) } ?? HarnessPromptLibrary(index: nil)
-                        startWith(library)
-                    })) {
-                        ForEach(harnesses, id: \.repo) { Text($0.repo).tag($0.repo) }
-                    }
-                }
+            } header: {
+                // In the form, so it lines up with what's beneath.
+                Label("New Plan", systemImage: "list.bullet")
+                    .font(.largeTitle.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .padding(.top, 20)
+                    .padding(.bottom, 12)
             } footer: {
                 Text(setup == nil
-                     ? "Planning sessions run in the org's harness. Pick or create it in the org's Settings, under Harness."
-                     : "The room is interviewed one question at a time, the code is looked at when a question needs it, and the requirement, scouting and breakdown fill in as you go. When the room agrees, Gannin writes the plan in \(setup!.repo) and makes the issues.")
+                     ? "Planning runs in a project's harness. Add one in the org's Settings, under Projects."
+                     : "The room builds a spec in stages: requirements, then the design (with the code looked at), then tasks, each approved before the next and any reopened when a gap turns up. When the room agrees, Gannin writes the plan in \(setup!.repo) and makes the issues.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             contextSection
             promptSection(library: library, setup: setup)
             skillsSection(library)
-            if let error {
-                Text(error).foregroundStyle(.red).font(.callout)
-            }
         }
         .formStyle(.grouped)
+        .scrollDisabled(true)
+        .frame(maxWidth: 900)
+        .frame(maxWidth: .infinity)
+        }
+        Divider()
+        // Always in view, at the foot of the tab.
+        HStack(spacing: 12) {
+            if let error {
+                Text(error).foregroundStyle(.red).font(.callout).lineLimit(2)
+            }
+            Spacer()
+            Button("Cancel") { sessions.closeTab(draftID) }
+                .keyboardShortcut(.cancelAction)
+            Button(saving ? "Starting" : "Start Planning") {
+                guard let setup else { return }
+                Task { await start(setup: setup, harnesses: harnesses, library: library) }
+            }
+            .buttonStyle(.borderedProminent)
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(saving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || SessionStore.unavailable(org: org, harness: setup) != nil
+                      || (save(library) == .new && promptTitle.trimmingCharacters(in: .whitespaces).isEmpty))
+            .help(SessionStore.unavailable(org: org, harness: setup) ?? "Start (⌘↩)")
+        }
+        .controlSize(.large)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 14)
+        .background(.bar)
+        }
         .dropDestination(for: URL.self) { urls, _ in
             addFiles(urls)
             return urls.contains(where: \.isFileURL)
-        }
-        .frame(width: 640)
-        .frame(minHeight: 560, maxHeight: 820)
-        .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(saving ? "Starting" : "Start Planning") {
-                    guard let setup else { return }
-                    Task { await start(setup: setup, harnesses: harnesses, library: library) }
-                }
-                .disabled(saving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || SessionStore.unavailable(org: org, harness: setup) != nil
-                          || (save(library) == .new && promptTitle.trimmingCharacters(in: .whitespaces).isEmpty))
-                .help(SessionStore.unavailable(org: org, harness: setup) ?? "")
-            }
         }
         .onAppear {
             text = topic.isEmpty ? issue?.title ?? "" : topic
             startWith(library)
         }
+        // The harness's prompts, if they weren't loaded yet; once they are,
+        // its default is picked unless the prompt's been changed.
+        .task(id: setup?.repo) {
+            if let setup { await harness.load(org: org, setup: setup) }
+        }
+        .onChange(of: library.offered(for: .planning).map(\.path)) {
+            if startFrom == Self.suggested && trimmedPrompt == Self.suggestedPrompt.trimmingCharacters(in: .whitespacesAndNewlines) { startWith(library) }
+        }
+    }
+
+    // MARK: Projects
+
+    /// Orgs with a project to plan in, the draft's first.
+    private var projectOrgs: [String] {
+        let logins = orgs.orgs.map(\.login).filter { !projectChoices($0).isEmpty }
+        return [draft.org].filter(logins.contains) + logins.filter { $0 != draft.org }
+    }
+
+    /// An org's projects by name, or its harnesses by repo with none named.
+    private func projectChoices(_ login: String) -> [(name: String, repo: String)] {
+        let config = configs.config(for: login)
+        if !config.repoProjects.isEmpty {
+            return config.repoProjects.map { ($0.name, $0.harness.repo) }
+        }
+        return config.harnesses.map { ($0.repo, $0.repo) }
+    }
+
+    private func orgName(_ login: String) -> String {
+        orgs.orgs.first { $0.login == login }.flatMap { $0.name?.isEmpty == false ? $0.name : nil } ?? login
     }
 
     // MARK: Context
@@ -417,13 +502,13 @@ struct NewPlanningSheet: View {
                     .disabled(contextText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Add Documents") { chooseFiles() }
                     .help("Pick one or more")
-                Text("or drop them on this sheet")
+                Text("or drop them anywhere here")
                     .foregroundStyle(.secondary)
             }
         } header: {
             Text("Context")
         } footer: {
-            Text("Read before the first question, so the questions build on it rather than ask what it answers. Documents (add them or drop them here) are copied into the session's folder and can hold sensitive details, so share only what may be read; only those ticked are committed. Links and other places are read with the tools Claude Code has connected, such as Notion, or fetched.")
+            Text("Read before the first question, so the questions build on it rather than ask what it answers. Documents (add them or drop them anywhere here) are copied into the session's folder and can hold sensitive details, so share only what may be read; only those ticked are committed. Links and other places are read with the tools Claude Code has connected, such as Notion, or fetched.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -668,8 +753,7 @@ struct NewPlanningSheet: View {
         let session = sessions.startPlanning(org: org, topic: topic, documentPath: start, issue: issue, harness: setup, harnessPath: path,
                                               guidance: HarnessAuthoring.guidance(for: .plans, config: configs.config(for: org), org: org), choice: choice,
                                               documents: documents, links: links, sources: notes.joined(separator: "\n"))
-        sessions.show(session.id, with: openWindow)
-        dismiss()
+        sessions.replaceDraft(draftID, with: session.id)
     }
 }
 
@@ -794,9 +878,9 @@ struct PlanningSection: View {
 /// it has one.
 struct PlanThisButton: View {
     @Environment(SessionStore.self) private var sessions
+    @Environment(OrgConfigStore.self) private var configs
     @Environment(\.openWindow) private var openWindow
     let reference: IssueReference
-    @State private var starting = false
 
     var body: some View {
         if let existing = sessions.planningSession(forIssue: reference.id) {
@@ -808,14 +892,12 @@ struct PlanThisButton: View {
             .help("Show this issue's planning session")
         } else {
             Button {
-                starting = true
+                sessions.showNewPlan(PlanningDraft(org: reference.org, topic: reference.title, issue: reference,
+                                                   harnessRepo: configs.config(for: reference.org).harness(covering: [reference.repo])?.repo), with: openWindow)
             } label: {
-                Label("Plan This", systemImage: "list.bullet.clipboard")
+                Label("Plan This", systemImage: "list.bullet")
             }
-            .help("Plan this issue with the team: Claude interviews the room, looks at the code and breaks it down into sub-issues")
-            .sheet(isPresented: $starting) {
-                NewPlanningSheet(org: reference.org, issue: reference)
-            }
+            .help("Plan this issue with the team: requirements, design and tasks, then its sub-issues")
         }
     }
 }

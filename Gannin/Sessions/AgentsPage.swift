@@ -8,8 +8,8 @@ import SwiftUI
 struct AgentsPage: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
+    @Environment(OrgConfigStore.self) private var configs
     let org: String
-    @State private var planning = false
 
     var body: some View {
         let all = sessions.sessions(for: org)
@@ -51,14 +51,13 @@ struct AgentsPage: View {
         .toolbar {
             ToolbarItem {
                 Button {
-                    planning = true
+                    sessions.showNewPlan(PlanningDraft(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo), with: openWindow)
                 } label: {
-                    Label("New Planning Session", systemImage: "list.bullet.clipboard")
+                    Label("New Plan", systemImage: "list.bullet")
                 }
                 .help("Plan something with Claude in the harness, sharing documents as you go")
             }
         }
-        .sheet(isPresented: $planning) { NewPlanningSheet(org: org) }
     }
 
     private func isWaiting(_ session: CodeSession) -> Bool {

@@ -1,7 +1,7 @@
 import SwiftUI
 
-/// New on a Harness page: the editor for its kind. Plans start a planning
-/// session instead (on the Mac), since a plan is worked out with Claude.
+/// New on a Harness page: the editor for its kind. Plans open as a new
+/// plan's tab in the Claude Code window instead (`HarnessView.create`).
 struct HarnessNewDocumentSheet: View {
     @Environment(HarnessStore.self) private var harness
     let kind: HarnessKind
@@ -17,7 +17,8 @@ struct HarnessNewDocumentSheet: View {
         case .requirements, .findings:
             HarnessDocumentEditor(kind: kind, org: org, setup: setup)
         case .plans:
-            NewPlanningSheet(org: org)
+            // Plans open as a tab in the Claude Code window instead.
+            EmptyView()
         case .learnings:
             HarnessLearningEditor(org: org, setup: setup, draft: HarnessLearningDraft())
         }
