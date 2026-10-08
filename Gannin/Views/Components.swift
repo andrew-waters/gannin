@@ -74,9 +74,10 @@ extension PullRequest {
     /// Someone other than the author has left a review, of any kind: a
     /// comment-only review doesn't move `reviewDecision` or `review`, so
     /// without this a PR someone has already looked at reads the same as
-    /// one nobody has touched.
+    /// one nobody has touched. Automation accounts (coderabbitai and the
+    /// like) don't count, so their reviews don't read as a teammate's.
     var hasBeenReviewed: Bool {
-        (reviewStates ?? [:]).keys.contains { $0 != author?.login }
+        humanReviewStates.keys.contains { $0 != author?.login }
     }
 
     var statusText: String {
