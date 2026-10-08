@@ -42,6 +42,11 @@ struct RepositoryHistoryView: View {
         }
         .task(id: reloadKey) {
             await history.load(path: repository.path, ref: shownRef, upstream: upstream)
+            // The newest commit is shown to start with, and again when the
+            // one picked is no longer listed (another branch, say).
+            if !history.commits.contains(where: { $0.id == history.selected }) {
+                history.selected = history.commits.first?.id
+            }
         }
         .task(id: repository.root) { await repository.loadRemoteTags() }
         .onChange(of: repository.status?.branch) { history.reset() }
