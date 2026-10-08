@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "42-gannin-covers-day-to-day-local-git-work",
+  "issue" : "andrew-waters/gannin#42",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-08T14:39:10Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Gannin covers day-to-day local git work without a separate git client",
+  "url" : "https://github.com/andrew-waters/gannin/issues/42"
+}
