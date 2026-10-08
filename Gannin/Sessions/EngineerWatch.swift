@@ -74,7 +74,7 @@ final class EngineerWatch {
     @ObservationIgnored var startReview: (PullRequestReference) -> Void = { NSWorkspace.shared.open($0.url) }
     /// Starts a review in the background when auto review is on for the
     /// PR's org; true if it started (`AutoReview`, wired in `GanninApp`).
-    @ObservationIgnored var autoReview: (PullRequestReference) -> Bool = { _ in false }
+    @ObservationIgnored var autoReview: (PullRequestReference) async -> Bool = { _ in false }
     /// Watched reviews looked at again, on their own interval (`AutoReview`).
     @ObservationIgnored var checkWatched: () async -> Void = {}
     /// The budget is low or GitHub has refused: automatic checks wait.
@@ -140,7 +140,7 @@ final class EngineerWatch {
             let found = try await chargingTo(.reviewRequests) { try await api.engineerWork() }
             error = nil
             checkedAt = .now
-            notice(found.reviews, mine: found.mine)
+            await notice(found.reviews, mine: found.mine)
             reviewRequests = found.reviews
             myPullRequests = found.mine
             myIssues = found.issues
@@ -162,7 +162,7 @@ final class EngineerWatch {
     private static let reviewCategory = "reviewRequest"
     private static let pullRequestCategory = "myPullRequest"
 
-    private func notice(_ reviews: [PullRequestItem], mine: [PullRequestItem]) {
+    private func notice(_ reviews: [PullRequestItem], mine: [PullRequestItem]) async {
         let notifies = UserDefaults.standard.object(forKey: SessionStore.notifiesKey) as? Bool ?? true
         defer {
             known = Set(reviews.map(\.id))
@@ -171,8 +171,8 @@ final class EngineerWatch {
         // Automatic reviews: every request not yet started, the first
         // check's too, as there's room (`AutoReview.maxRunning`).
         var started: Set<String> = []
-        for pr in reviews where !pr.isDraft && !dismissed.contains(pr.id) && !autoReviewed.contains(pr.id) && autoReview(pr.reference) {
-            started.insert(pr.id)
+        for pr in reviews where !pr.isDraft && !dismissed.contains(pr.id) && !autoReviewed.contains(pr.id) {
+            if await autoReview(pr.reference) { started.insert(pr.id) }
         }
         let requested = Set(reviews.map(\.id))
         let remembered = autoReviewed.union(started).intersection(requested)

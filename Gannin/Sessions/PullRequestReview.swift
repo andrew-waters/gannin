@@ -71,7 +71,7 @@ extension SessionStore {
     /// `choice` is what was picked from the team's prompts and skills; nil
     /// takes the defaults for the PR's repo.
     /// `reveals` false starts it without showing its tab (an automatic review).
-    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true) -> CodeSession {
+    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true) async -> CodeSession {
         if let existing = review(of: pr.id) {
             if reveals { reveal(existing.id) }
             return existing
@@ -79,11 +79,15 @@ extension SessionStore {
         let branch = Self.reviewBranch(pr)
         let values = HarnessPromptLibrary.values(reference: "\(pr.repo)#\(pr.number)", title: pr.title, url: pr.url, repo: pr.repo, number: pr.number, branch: branch)
         let instructions = launchInstructions(org: pr.org, setup: setup, use: .review, repos: [pr.repo], choice: choice, values: values)
+        var learnings = harnessStore.anyIndex(org: pr.org, repo: setup.repo)?.learnings(for: pr.repo) ?? []
+        if let files = try? await api()?.pullRequestFilePaths(repo: pr.repo, number: pr.number) {
+            learnings = learnings.filter { learning in files.contains { learning.covers($0) } }
+        }
         let session = CodeSession(
             id: UUID(), issue: IssueReference(org: pr.org, id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url),
             repo: setup.repo, branch: branch, createdAt: .now, pullRequests: [pr.url],
             connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
-            role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch, learnings: harnessStore.anyIndex(org: pr.org, repo: setup.repo)?.learnings(for: pr.repo) ?? []),
+            role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch, learnings: learnings),
             instructions: instructions.map(Self.reviewInstructions), isReviewer: true, reviewOf: pr
         )
         let directory = Self.directory(for: session.id)
@@ -219,6 +223,19 @@ struct ReviewedPullRequest: Equatable {
 }
 
 extension GitHubAPI {
+    /// The paths a PR changes, for scoping what a reviewer's told (such as
+    /// which learnings apply) without fetching every file's patch.
+    func pullRequestFilePaths(repo: String, number: Int) async throws -> [String] {
+        struct File: Decodable { let filename: String }
+        var paths: [String] = []
+        for page in 1...30 {
+            let batch: [File] = try await rest("repos/\(repo)/pulls/\(number)/files", query: ["per_page": "100", "page": "\(page)"])
+            paths += batch.map(\.filename)
+            if batch.count < 100 { break }
+        }
+        return paths
+    }
+
     func reviewedPullRequest(repo: String, number: Int) async throws -> ReviewedPullRequest {
         struct Pull: Decodable {
             struct User: Decodable { let login: String }
@@ -412,8 +429,10 @@ struct ReviewWithClaudeButton: View {
 
     private func start(choice: PromptChoice?, setup: HarnessConfig?) {
         guard let setup, let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return }
-        let session = sessions.startReview(of: reference, harness: setup, harnessPath: path, choice: choice)
-        sessions.show(session.id, with: openWindow)
+        Task {
+            let session = await sessions.startReview(of: reference, harness: setup, harnessPath: path, choice: choice)
+            sessions.show(session.id, with: openWindow)
+        }
     }
 
     private var unavailable: String? {

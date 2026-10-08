@@ -148,10 +148,10 @@ extension SessionStore {
     /// A review started by Gannin for a request it found, in the background:
     /// no tab is shown. False when the PR already has a review or enough
     /// automatic ones are running; a later check tries again.
-    func startAutomaticReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String) -> Bool {
+    func startAutomaticReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String) async -> Bool {
         guard review(of: pr.id) == nil else { return false }
         guard automaticRuns.filter(isRunning).count < AutoReview.maxRunning else { return false }
-        let session = startReview(of: pr, harness: setup, harnessPath: harnessPath, reveals: false)
+        let session = await startReview(of: pr, harness: setup, harnessPath: harnessPath, reveals: false)
         automaticRuns.insert(session.id)
         _ = open(session)
         note(session.id, .started, text: "Started reviewing it when your review was requested")
