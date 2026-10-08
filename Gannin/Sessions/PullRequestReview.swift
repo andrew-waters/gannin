@@ -120,7 +120,7 @@ extension SessionStore {
             Look for bugs, missed cases, security problems, and code that doesn't fit the repo or the issue it's for. Comment only on lines the diff changes or shows. Say what's good in the summary, not as findings.\(learned)
 
             End your reply with one fenced ```json block, findings most important first:
-            {"summary": "<a few sentences for the PR's author. When writing lists, use bullet points>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"], \(HarnessLearning.reviewJSONField)}
+            {"summary": "<a few sentences for the PR's author. When writing lists, use bullet points. Do not duplicate text from your comments.>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"], \(HarnessLearning.reviewJSONField)}
 
             \(HarnessLearning.reviewJSONInstructions)
 
