@@ -423,8 +423,10 @@ struct SessionTab: View {
     /// Documents dropped on a planning session, being confirmed.
     @State private var sharing: [URL]?
     @AppStorage("sessionsPane") private var pane: SessionPane = .issue
-    /// The side panel is never wider than this, however wide the window.
-    static let panelMaxWidth: CGFloat = 440
+    /// The side panel opens at its widest and is dragged no wider than
+    /// this, however wide the window, nor narrower than the least.
+    static let panelMaxWidth: Double = 440
+    static let panelMinWidth: Double = 300
 
     /// An Ask's Session pane has its artifacts and files, so it has no
     /// Changes, and PRs only once it has some; one remembered pane suits
@@ -445,55 +447,17 @@ struct SessionTab: View {
 
     var body: some View {
         let shown = panelShown ?? !compact
-        HSplitView {
-            VStack(spacing: 0) {
-                if compact {
-                    SessionTabHeader(session: session, panelShown: Binding(get: { shown }, set: { panelShown = $0 }))
-                    Divider()
-                }
-                TerminalHost(session: session)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .overlay(alignment: .bottom) { askOverlay }
-                    // A planning session takes documents dropped on it,
-                    // each confirmed before claude sees it.
-                    .dropDestination(for: URL.self) { urls, _ in
-                        guard session.isPlanning, !urls.isEmpty else { return false }
-                        sharing = urls.filter(\.isFileURL)
-                        return true
-                    }
-                    .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } })) {
-                        ShareDocumentsSheet(session: session, files: sharing ?? [])
-                    }
-                Divider()
-                SessionComposer(session: session, panelShown: compact ? nil : Binding(get: { shown }, set: { panelShown = $0 }))
-            }
-            .frame(minWidth: compact ? 360 : 480, maxWidth: .infinity, maxHeight: .infinity)
-            // The terminal takes the room; the panel stays narrow.
-            .layoutPriority(1)
+        Group {
             if shown {
-                VStack(spacing: 0) {
-                    Picker("Show", selection: shownPane) {
-                        Text(session.isAsk ? "Session" : "Issue").tag(SessionPane.issue)
-                        if !session.isAsk {
-                            Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
-                        }
-                        if !session.isAsk || hasPullRequests {
-                            Text(pullRequestsLabel).tag(SessionPane.pullRequests)
-                        }
-                        Text("Activity").tag(SessionPane.activity)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .padding(8)
-                    Divider()
-                    switch shownPane.wrappedValue {
-                    case .issue: SessionPanel(session: session)
-                    case .changes: SessionChangesPane(session: session, changes: changes)
-                    case .pullRequests: SessionPullRequestsPane(session: session)
-                    case .activity: SessionActivityPane(session: session)
-                    }
+                // The terminal takes the room; the panel opens at its widest
+                // and can be dragged narrower.
+                FixedSplit(key: "sessionPanelWidth", width: Self.panelMaxWidth, range: Self.panelMinWidth...Self.panelMaxWidth, fixing: .trailing) {
+                    terminal(shown: shown)
+                } trailing: {
+                    panel
                 }
-                .frame(minWidth: 300, idealWidth: 360, maxWidth: SessionTab.panelMaxWidth, maxHeight: .infinity)
+            } else {
+                terminal(shown: shown)
             }
         }
         // Each change signal starts this again: a short wait lets a burst of
@@ -516,6 +480,56 @@ struct SessionTab: View {
         // watches them in the background otherwise.
         .task(id: session.pullRequests) {
             await sessions.refreshPullRequests(session.parentID ?? session.id)
+        }
+    }
+
+    private func terminal(shown: Bool) -> some View {
+        VStack(spacing: 0) {
+            if compact {
+                SessionTabHeader(session: session, panelShown: Binding(get: { shown }, set: { panelShown = $0 }))
+                Divider()
+            }
+            TerminalHost(session: session)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .overlay(alignment: .bottom) { askOverlay }
+                // A planning session takes documents dropped on it,
+                // each confirmed before claude sees it.
+                .dropDestination(for: URL.self) { urls, _ in
+                    guard session.isPlanning, !urls.isEmpty else { return false }
+                    sharing = urls.filter(\.isFileURL)
+                    return true
+                }
+                .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } })) {
+                    ShareDocumentsSheet(session: session, files: sharing ?? [])
+                }
+            Divider()
+            SessionComposer(session: session, panelShown: compact ? nil : Binding(get: { shown }, set: { panelShown = $0 }))
+        }
+        .frame(minWidth: compact ? 360 : 480, maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var panel: some View {
+        VStack(spacing: 0) {
+            Picker("Show", selection: shownPane) {
+                Text(session.isAsk ? "Session" : "Issue").tag(SessionPane.issue)
+                if !session.isAsk {
+                    Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
+                }
+                if !session.isAsk || hasPullRequests {
+                    Text(pullRequestsLabel).tag(SessionPane.pullRequests)
+                }
+                Text("Activity").tag(SessionPane.activity)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .padding(8)
+            Divider()
+            switch shownPane.wrappedValue {
+            case .issue: SessionPanel(session: session)
+            case .changes: SessionChangesPane(session: session, changes: changes)
+            case .pullRequests: SessionPullRequestsPane(session: session)
+            case .activity: SessionActivityPane(session: session)
+            }
         }
     }
 

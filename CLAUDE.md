@@ -150,7 +150,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   popovers (`BranchPopoverButton`, `WorktreePopoverButton`, `Git/RepositoryBranches.swift`), then
   the parts: History (first) and Changes, `repositoryPart` per window (a repo's PRs and issues
   are on the Pull Requests and Issues pages). The worktree button calls the clone itself Main. History and Changes put their list beside the
-  diff in a `FixedSplit`, a leading pane as wide as it's dragged (kept per part), which never
+  diff in a `FixedSplit`, a leading pane (or, with `fixing: .trailing`, a trailing one) as wide as it's dragged (kept per part), which never
   shifts as content loads, as `HSplitView` did. Diffs scroll in a `DiffScroll`, every row as wide
   as the longest line (worked out in the monospaced font, as a lazy stack can't measure rows it
   hasn't drawn), so the colours run evenly; a hunk's buttons sit right after its header. A repo's page pushed onto the trail (`DetailSelection.repository`)
@@ -706,8 +706,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   helper's role) and issue or PR above its title, `TabKind`; + opens a session already started, ⌘W closes a tab, claude keeps running;
   tabs are dragged into order, and Rename Tab or a double-click names one, `CodeSession.name`, in
   place of its title everywhere, empty going back). Each tab
-  is a SwiftTerm terminal (taking the room) beside a side panel 300 to 440 points wide
-  (`SessionTab.panelMaxWidth`): the issue (its session state, and its plans and requirements
+  is a SwiftTerm terminal (taking the room) beside a side panel in a `FixedSplit` fixing its
+  trailing pane, opening at its widest, 440 points (`SessionTab.panelMaxWidth`), and dragged as
+  narrow as 300 (kept in `sessionPanelWidth`): the issue (its session state, and its plans and requirements
   from the harness, `HarnessIssueSection`, opening in a sheet) or its Changes: every worktree
   under the issue's folder diffed against its merge base with `origin/HEAD`, committed or not,
   new files included (`SessionChanges`). One bash script reads them all, git taking no optional
