@@ -188,6 +188,11 @@ private struct CommitRow<TagMenu: View>: View {
 private struct CommitDetailView: View {
     let repository: LocalRepository
     let history: GitHistory
+    /// The file list keeps the keyboard once a file's picked, so the arrows
+    /// step through files as their diffs load; picking another commit hands
+    /// it back to the commit list.
+    @FocusState private var filesFocused: Bool
+    @State private var filesActive = false
 
     var body: some View {
         if let commit = history.selectedCommit {
@@ -195,17 +200,26 @@ private struct CommitDetailView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     header(commit)
                     Divider()
-                    List(selection: Binding(get: { history.selectedFile }, set: { history.selectedFile = $0 })) {
+                    List(selection: Binding(get: { history.selectedFile }, set: { file in
+                        history.selectedFile = file
+                        filesActive = true
+                        filesFocused = true
+                    })) {
                         ForEach(history.files) { file in
                             fileRow(file).tag(file.id)
                         }
                     }
+                    .focused($filesFocused)
+                    .onChange(of: history.diff) { if filesActive { filesFocused = true } }
                 }
                 .frame(minHeight: 160, idealHeight: 260)
                 diffView
                     .frame(minHeight: 120, maxHeight: .infinity)
             }
-            .task(id: commit.sha) { await history.loadSelected(path: repository.path) }
+            .task(id: commit.sha) {
+                filesActive = false
+                await history.loadSelected(path: repository.path)
+            }
             .task(id: "\(commit.sha)|\(history.selectedFile ?? "")") { await history.loadDiff(path: repository.path) }
         } else {
             ContentUnavailableView("No commit selected", systemImage: "clock", description: Text("Pick a commit to see what it changed, or right-click one to tag it."))
