@@ -6,6 +6,7 @@ struct OrgWorkloadView: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(MetricsStore.self) private var metricsStore
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
+    @SceneStorage(RepositoriesLanding.partKey) private var repositoriesPart: RepositoriesLanding.Part = .local
 
     let org: String
     let workload: Workload?
@@ -47,6 +48,9 @@ struct OrgWorkloadView: View {
                 EpicsView(org: org)
             } else if tab == .releases {
                 ReleasesView(org: org)
+            } else if tab == .repositories {
+                // Clones on this Mac need no workload; their GitHub side does.
+                repositoryView(workload)
             } else if tab == .hygiene {
                 BoardHygieneView(org: org)
             } else if tab == .recap {
@@ -69,7 +73,7 @@ struct OrgWorkloadView: View {
                 } else {
                     ProjectsLandingView(org: org) { project = $0 }
                 }
-            } else if tab == .inbox || tab == .delivery || tab == .issueFlow || tab == .investments || tab == .pullRequests || (tab == .people && person == nil) || (tab == .repositories && repository == nil) || tab == .issues, let workload {
+            } else if tab == .inbox || tab == .delivery || tab == .issueFlow || tab == .investments || tab == .pullRequests || (tab == .people && person == nil) || tab == .issues, let workload {
                 // Investments, the people and repo stats pages, Pull
                 // Requests and every issue page: no counts bar.
                 list(workload)
@@ -177,7 +181,7 @@ struct OrgWorkloadView: View {
         // Not the Overview, which uses whatever was picked elsewhere.
         case .delivery, .issueFlow, .actions: true
         case .people: person == nil && peopleView == nil
-        case .repositories: repository == nil
+        case .repositories: repository == nil && repositoriesPart == .delivery
         default: false
         }
     }
@@ -208,30 +212,24 @@ struct OrgWorkloadView: View {
                 // The Issues row itself is every issue, as All is.
                 OpenIssuesView(org: org, workload: workload, selection: $selection)
             }
-        case .repositories: repositoryView(workload)
+        case .repositories: EmptyView()
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
         case .projects, .actions, .harness, .views, .prioritisation, .recap, .scorecard, .agents, .ask, .epics, .hygiene, .releases, .settings: EmptyView()
         }
     }
 
-    /// The repo picked in the sidebar, or every repo's stats until then.
+    /// The repo picked in the sidebar, or the clones here and every repo's
+    /// stats until then.
     @ViewBuilder
-    private func repositoryView(_ workload: Workload) -> some View {
-        if let repository, let load = workload.repository(named: repository) {
-            RepositoryColumn(repository: load, workload: workload, selection: $selection)
-        } else if repository != nil {
-            ContentUnavailableView(
-                "Not in this view",
-                systemImage: "eye.slash",
-                description: Text("It's excluded, or has no open or recent work.")
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+    private func repositoryView(_ workload: Workload?) -> some View {
+        if let repository {
+            RepositoryPage(org: org, repo: repository, workload: workload, selection: $selection)
+                .id(repository)
         } else {
-            RepositoryStatsView(org: org, metrics: metrics, selection: $selection)
+            RepositoriesLanding(org: org, workload: workload, metrics: metrics, selection: $selection)
         }
     }
-
 
     /// The person picked in the sidebar, or everyone's stats until then.
     @ViewBuilder

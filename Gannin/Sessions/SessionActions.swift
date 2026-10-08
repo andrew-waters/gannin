@@ -503,16 +503,16 @@ extension SessionStore {
             common=$(git -C \(folder) rev-parse --path-format=absolute --git-common-dir) || exit 1
             git --git-dir="$common" worktree remove --force \(folder)
             """
-        let runner: SessionChanges.Runner
+        let runner: Shell.Runner
         if let connect = session.connect {
-            guard let arguments = SessionChanges.sshArguments(connect) else {
+            guard let arguments = Shell.sshArguments(connect) else {
                 throw SessionError.message("Its worktrees are on a server reached with \(connect), not ssh, so remove them there.")
             }
             runner = .ssh(arguments)
         } else {
             runner = .local
         }
-        let result = await Task.detached { SessionChanges.run(script, runner) }.value
+        let result = await Task.detached { Shell.run(script, runner) }.value
         guard result.ok else { throw SessionError.message(result.error.isEmpty ? "Couldn't remove the worktrees." : result.error) }
     }
 
@@ -533,9 +533,9 @@ extension SessionStore {
 
     /// The server's home folder, asked once, for an editor's remote paths.
     func remoteHome(_ session: CodeSession) async -> String? {
-        guard let connect = session.connect, let arguments = SessionChanges.sshArguments(connect) else { return nil }
+        guard let connect = session.connect, let arguments = Shell.sshArguments(connect) else { return nil }
         if let home = remoteHomes[connect] { return home }
-        let result = await Task.detached { SessionChanges.run(#"printf %s "$HOME""#, .ssh(arguments)) }.value
+        let result = await Task.detached { Shell.run(#"printf %s "$HOME""#, .ssh(arguments)) }.value
         guard result.ok, !result.output.isEmpty else { return nil }
         remoteHomes[connect] = result.output
         return result.output

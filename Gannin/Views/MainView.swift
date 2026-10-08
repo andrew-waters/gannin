@@ -1095,11 +1095,8 @@ private struct PageStack: View {
         case .issueReference(let reference):
             IssueWindow(reference: reference, isEmbedded: true)
         case .repository(let name):
-            if let workload, let repository = workload.repository(named: name) {
-                RepositoryColumn(repository: repository, workload: workload, selection: selection)
-            } else {
-                unavailable
-            }
+            RepositoryPage(org: org, repo: name, workload: workload, selection: selection)
+                .id(name)
         case .metric(let drill):
             MetricColumn(drill: drill, workload: workload, metrics: metrics, selection: selection)
         case .actionsRepository(let name):
@@ -1232,6 +1229,13 @@ struct OrgSidebar: View {
                         row(.issues)
                     }
                     row(.epics)
+                    DisclosureGroup(isExpanded: $repositoriesExpanded) {
+                        ForEach(repositories) { repository in
+                            repositoryRow(repository)
+                        }
+                    } label: {
+                        row(.repositories)
+                    }
                     DisclosureGroup(isExpanded: $projectsExpanded) {
                         ForEach(projectStore.boards(org: selectedOrg, repo: configs.config(for: selectedOrg).boardsRepo)) { board in
                             Label(board.title, systemImage: "rectangle.split.3x1")
@@ -1274,13 +1278,6 @@ struct OrgSidebar: View {
                     row(.releases)
                     row(.investments)
                     row(.actions)
-                    DisclosureGroup(isExpanded: $repositoriesExpanded) {
-                        ForEach(repositories) { repository in
-                            repositoryRow(repository)
-                        }
-                    } label: {
-                        row(.repositories)
-                    }
                 }
 
                 // Who's doing what.
@@ -1364,10 +1361,14 @@ struct OrgSidebar: View {
         }
     }
 
-    /// Repos with open PRs or issues, by name.
+    /// The project's repos and any others with open PRs or issues, by name.
     private var repositories: [RepositoryLoad] {
-        (workload?.repositories ?? [])
-            .filter { !$0.openPullRequests.isEmpty || !$0.issues.isEmpty }
+        let loads = workload?.repositories ?? []
+        let active = loads.filter { !$0.openPullRequests.isEmpty || !$0.issues.isEmpty }
+        let project = (selectedOrg.flatMap { configs.config(for: $0).focusRepos } ?? [])
+            .filter { name in !active.contains { $0.name == name } }
+            .map { name in loads.first { $0.name == name } ?? RepositoryLoad(name: name) }
+        return (active + project)
             .sorted { $0.shortName.localizedCaseInsensitiveCompare($1.shortName) == .orderedAscending }
     }
 

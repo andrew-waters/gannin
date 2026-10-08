@@ -719,7 +719,7 @@ private struct DiffPaneRow: View {
             .onTapGesture { if anchor != nil { commenting = line.id } }
             .help(anchor != nil ? "Comment on this line for claude" : "")
             Text(line.text.isEmpty ? " " : line.text)
-                .foregroundStyle(Self.foreground(line.kind))
+                .foregroundStyle(DiffStyle.foreground(line.kind))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
             if line.kind == .hunk, changes.mode == .uncommitted, file.status != .untracked {
@@ -733,7 +733,7 @@ private struct DiffPaneRow: View {
         }
         .font(.system(size: 11, design: .monospaced))
         .padding(.trailing, 6)
-        .background(Self.background(line.kind))
+        .background(DiffStyle.background(line.kind))
         .onHover { inside in
             if inside { hovered = line.id } else if hovered == line.id { hovered = nil }
         }
@@ -759,22 +759,6 @@ private struct DiffPaneRow: View {
                     commenting = nil
                 }
             }
-        }
-    }
-
-    private static func foreground(_ kind: DiffLine.Kind) -> Color {
-        switch kind {
-        case .hunk, .note: .secondary
-        default: .primary
-        }
-    }
-
-    private static func background(_ kind: DiffLine.Kind) -> Color {
-        switch kind {
-        case .added: ChartPalette.good.opacity(0.14)
-        case .removed: ChartPalette.critical.opacity(0.14)
-        case .hunk: Color.secondary.opacity(0.1)
-        case .context, .note: .clear
         }
     }
 }

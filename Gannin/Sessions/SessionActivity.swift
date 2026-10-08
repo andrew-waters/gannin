@@ -293,7 +293,7 @@ private struct PlanSheet: View {
             return
         }
         let script = "cat \(SessionScript.quoted(path))"
-        let result = await Task.detached { SessionChanges.run(script, runner) }.value
+        let result = await Task.detached { Shell.run(script, runner) }.value
         if result.ok { text = result.output } else { error = result.error.isEmpty ? "Couldn't read the plan." : result.error }
     }
 }

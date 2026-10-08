@@ -105,8 +105,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
   (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Dashboard (the
   page a window opens on), Inbox and Ask (the Mac's) at the top; Work (Pull Requests, Issues with All and Not on a board,
-  Epics, Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue flow, Releases, Investments, CI,
-  Repositories); Team
+  Epics, Repositories (local git, see Local git), Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue
+  flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
   Prioritisation, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, once set);
   and Agents (Waiting on You, then sessions grouped as working on issues, reviews and
@@ -130,6 +130,63 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `WindowRequest.pending` and claimed by the new window's `MainView`. PRs and issues from
   the work log, boards and issue history push `pullRequestReference` or `issueReference`,
   which show those windows' views embedded (`isEmbedded`).
+
+## Local git
+
+- `Gannin/Git/`: Work › Repositories covers everyday local git, so a separate git client is
+  optional (andrew-waters/gannin#42, `plans/2026-10-08-local-git.md`). It's the git CLI, never a
+  library: `Shell.run` (bash, Homebrew's folders on `PATH`, `GIT_TERMINAL_PROMPT=0`, no stdin, so
+  nothing prompts) with your own config, hooks, signing and credential helper. Gannin never
+  handles a git credential. `GitDiff` parses diffs and makes one hunk into a patch for `git apply`,
+  for sessions' Changes too.
+- The sidebar lists the window's project's repos (`focusRepos`) and any with open PRs or
+  issues. The landing page (`RepositoriesLanding`) is On This Mac (each clone's branch, changes,
+  ahead and behind, worktrees, `LocalClones.summaries`, plus Clone a Repository) or Delivery (the
+  stats by repo, with the metrics window picker). A repo's page (`RepositoryPage`, also
+  `DetailSelection.repository`) has Changes, Branches and Tags parts beside GitHub (its open PRs,
+  issues and merged, `RepositoryColumn`), picked in the toolbar (`repositoryPart` per window).
+- `LocalClones` finds a repo's clone: the folder saved for it (`localRepository.<owner/name>`,
+  from Add Existing, Clone To or Use Another Folder), the harness checkout when the repo is the
+  harness, a harness's `projects/<name>` (or `projects/<group>/<name>`), then the usual places
+  (`SessionStore.existingCheckout`), each checked by its remotes. Clone (gh when installed, else
+  git over https) goes to the project's harness's `projects/<name>`, or
+  `<workspace>/<owner>/<name>` with no harness checked out here.
+- `LocalRepository` is one clone, worked on one worktree at a time (`path`, the toolbar's
+  worktree menu, remembered per repo in `localRepositoryWorktree.<repo>`). One script reads a
+  `GitSnapshot` (`GitParse`: `status --porcelain=v2`, numstat staged and not, untracked line
+  counts, stashes, the operation in progress, branches with upstream tracking and worktree, worktrees,
+  `origin/HEAD`, tags) every ten seconds and on coming back to the app. While the page is open it
+  fetches every five minutes in the background (git's own, not the API budget), saying so only in
+  the sync button's help. Actions refresh after running, and what git or a hook says on failing
+  shows in full (`GitOutputSheet`).
+- Toolbar: the worktree menu (with more than one), the branch menu (recent branches, New Branch,
+  All Branches), sync (`syncAction`: Publish Branch, Pull with ↓ and ↑, Push ↑, else Fetch; its
+  menu has Fetch, Pull, Push and Force Push with `--force-with-lease`, confirmed) and Open (editor,
+  Terminal, Finder, GitHub). Pull follows `pull.rebase`; when git asks how to reconcile divergent
+  branches, Gannin asks Merge or Rebase.
+- Changes (`RepositoryChangesView`): Conflicted, Staged and Changes (unstaged and new) with Stage
+  All and Unstage All, each file's button and menu (stage, unstage, discard with confirmation,
+  take ours or theirs, mark resolved, open, reveal). The diff numbers both sides, with Stage,
+  Unstage and Discard on each hunk (`git apply --cached`, `--cached -R`, `-R`; not while Hide
+  whitespace is on or the diff is cut short), and binary files as sizes before and after, with
+  pictures for images. Banners: a merge or rebase under way (Continue once nothing's in
+  conflict, Abort), changes left on this branch (Restore, Drop), detached HEAD. The commit
+  composer: a summary with a length hint (orange past 50, red past 72), a description, Amend
+  (filled with the last message) and Undo for a commit not pushed (`reset --soft`, its message
+  back in the fields).
+- Branches (`RepositoryBranchesView`): worktrees (Work Here, open, Remove, forced only after
+  saying what's lost, Prune), local branches (ahead and behind, Not published, Gone from origin,
+  the worktree holding one) and those only on origin. Switch, New Branch from, New Worktree for,
+  Publish, Rename and Delete (here, on origin or both; Delete Anyway when unmerged). A branch
+  checked out in another worktree can't be switched to; its worktree can be worked in. Switching
+  with changes asks: leave them (stashed as `Gannin: left on <branch>`, restored and dropped by
+  SHA, never a bare pop) or bring them. New branches are made `--no-track`, so a first push
+  publishes them under their own name. New worktrees go in `<harness>/.worktrees/<branch>/<name>`
+  for a clone in `projects/`, as sessions lay them out, else `<clone>.worktrees/<branch>`.
+- Tags (`RepositoryTagsView`): newest first, annotated or not, on origin or only here
+  (`ls-remote --tags` when opened), Push, Push N Tags, New Tag (on HEAD or any ref, annotated
+  with a message, pushed straight away by default, the next patch version suggested), Delete here
+  or here and on origin.
 
 ## Command palette
 
@@ -624,8 +681,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   from the harness, `HarnessIssueSection`, opening in a sheet) or its Changes: every worktree
   under the issue's folder diffed against its merge base with `origin/HEAD`, committed or not,
   new files included (`SessionChanges`). One bash script reads them all, git taking no optional
-  locks, run here or, for a session on a server, through its Connect with command when that's
-  ssh (`-T`, `BatchMode`, one shared connection, `ControlPath=/tmp/gannin-ssh-%C`). A
+  locks, run by `Shell.run` (`Git/Shell.swift`, shared with the Repositories pages) here or, for a
+  session on a server, through its Connect with command when that's ssh (`-T`, `BatchMode`, one shared connection, `ControlPath=/tmp/gannin-ssh-%C`). A
   PostToolUse hook on edits and Bash writes `changed`, which reads them again; else
   every 10 seconds, 30 over ssh.
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its

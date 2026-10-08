@@ -244,7 +244,7 @@ extension GitHubAPI {
         for page in 1...30 {
             let batch: [File] = try await rest("repos/\(repo)/pulls/\(number)/files", query: ["per_page": "100", "page": "\(page)"])
             files += batch.map { file in
-                .init(path: file.filename, status: file.status, additions: file.additions, deletions: file.deletions, lines: SessionChanges.lines(of: file.patch ?? "").0)
+                .init(path: file.filename, status: file.status, additions: file.additions, deletions: file.deletions, lines: GitDiff.lines(of: file.patch ?? "").0)
             }
             if batch.count < 100 { break }
         }

@@ -74,7 +74,7 @@ enum ClaudeRunner {
         let found = await Task.detached { run("command -v claude", place: .local) }.value
         if found.status == 0, !found.output.isEmpty {
             place = .local
-        } else if let connect = SessionStore.connectCommand, let arguments = SessionChanges.sshArguments(connect) {
+        } else if let connect = SessionStore.connectCommand, let arguments = Shell.sshArguments(connect) {
             place = .remote(arguments)
         } else {
             throw Failure(message: "Claude Code isn't installed on this Mac, and Settings doesn't connect to a server that has it.")
@@ -89,7 +89,7 @@ enum ClaudeRunner {
     static func runScript(_ script: String, for session: CodeSession) async -> (status: Int32, output: String, error: String) {
         let place: Place
         if let connect = session.connect {
-            guard let arguments = SessionChanges.sshArguments(connect) else { return (-1, "", "The session's server isn't reached with ssh.") }
+            guard let arguments = Shell.sshArguments(connect) else { return (-1, "", "The session's server isn't reached with ssh.") }
             place = .remote(arguments)
         } else {
             place = .local
