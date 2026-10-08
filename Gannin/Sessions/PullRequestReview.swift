@@ -492,6 +492,10 @@ struct PullRequestReviewView: View {
     @State private var conversation: Bool?
     @State private var confirmingFinish = false
     @State private var posting = false
+    /// While Review Again's files fetch is in flight: the button stays
+    /// enabled until claude's state turns to working, so a second click in
+    /// that gap would paste the prompt twice.
+    @State private var reviewingAgain = false
 
     private var reference: PullRequestReference { session.reviewOf! }
 
@@ -595,7 +599,9 @@ struct PullRequestReviewView: View {
                 }
                 .buttonStyle(.bordered)
                 Button("Review Again") {
+                    reviewingAgain = true
                     Task {
+                        defer { reviewingAgain = false }
                         // The diff may cover more of the repo than it did
                         // when the review started, so the learnings fixed
                         // into its first prompt may now fall short.
@@ -605,7 +611,7 @@ struct PullRequestReviewView: View {
                         await load()
                     }
                 }
-                .disabled(!sessions.isRunning(session.id) || state == .working)
+                .disabled(!sessions.isRunning(session.id) || state == .working || reviewingAgain)
                 .help("Ask claude to review the PR again, as it is now")
                 if let posted = draft.posted {
                     Link(destination: posted) {
