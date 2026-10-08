@@ -7,7 +7,7 @@ enum RepositoryPart: String, CaseIterable {
 }
 
 /// A repo, picked under Repositories: its clone on this Mac (changes,
-/// history and tags, branches and worktrees) and what's in flight on GitHub.
+/// history and tags, branches and worktrees).
 struct RepositoryPage: View {
     @Environment(OrgConfigStore.self) private var configs
     @SceneStorage("repositoryPart") private var part: RepositoryPart = .history
