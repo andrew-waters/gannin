@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "58-ask-tab-files-pane-listing-what-the",
+  "finishedAt" : "2026-10-08T21:11:48Z",
   "issue" : "andrew-waters/gannin#58",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/63",
