@@ -84,8 +84,10 @@ struct GanninApp: App {
                 NSWorkspace.shared.open(reference.url)
                 return
             }
-            let session = sessions.startReview(of: reference, harness: setup, harnessPath: path)
-            if let openWindow = GanninAppDelegate.openWindow { sessions.show(session.id, with: openWindow) }
+            Task {
+                let session = await sessions.startReview(of: reference, harness: setup, harnessPath: path)
+                if let openWindow = GanninAppDelegate.openWindow { sessions.show(session.id, with: openWindow) }
+            }
         }
         // Auto review: a request found starts a review in the background, in
         // the harness of the project with the PR's repo, when it's on for
@@ -94,7 +96,7 @@ struct GanninApp: App {
             guard AutoReview.isOn(for: reference.org), let sessions,
                   let setup = orgConfigs?.baseConfig(for: reference.org).harness(covering: [reference.repo]),
                   let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return false }
-            return sessions.startAutomaticReview(of: reference, harness: setup, harnessPath: path)
+            return await sessions.startAutomaticReview(of: reference, harness: setup, harnessPath: path)
         }
         watch.checkWatched = { [weak sessions] in await sessions?.checkWatchedReviews() }
         watch.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }

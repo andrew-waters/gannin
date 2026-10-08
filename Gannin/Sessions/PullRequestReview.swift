@@ -71,28 +71,58 @@ extension SessionStore {
     /// `choice` is what was picked from the team's prompts and skills; nil
     /// takes the defaults for the PR's repo.
     /// `reveals` false starts it without showing its tab (an automatic review).
-    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true) -> CodeSession {
+    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true) async -> CodeSession {
         if let existing = review(of: pr.id) {
             if reveals { reveal(existing.id) }
             return existing
         }
-        let branch = Self.reviewBranch(pr)
-        let values = HarnessPromptLibrary.values(reference: "\(pr.repo)#\(pr.number)", title: pr.title, url: pr.url, repo: pr.repo, number: pr.number, branch: branch)
-        let instructions = launchInstructions(org: pr.org, setup: setup, use: .review, repos: [pr.repo], choice: choice, values: values)
-        let session = CodeSession(
-            id: UUID(), issue: IssueReference(org: pr.org, id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url),
-            repo: setup.repo, branch: branch, createdAt: .now, pullRequests: [pr.url],
-            connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
-            role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch, learnings: harnessStore.anyIndex(org: pr.org, repo: setup.repo)?.learnings(for: pr.repo) ?? []),
-            instructions: instructions.map(Self.reviewInstructions), isReviewer: true, reviewOf: pr
-        )
-        let directory = Self.directory(for: session.id)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let brief = "# Review of \(pr.repo)#\(pr.number): \(pr.title)\n\n\(pr.url.absoluteString)\n"
-        try? Data(brief.utf8).write(to: directory.appending(path: "brief.md"))
-        add(session)
+        // The files fetch below takes a moment, during which another call
+        // for the same PR (a second click, or the notification racing
+        // `startAutomaticReview`) would also find no existing review and
+        // make a second one. Callers for the same PR share one in-flight
+        // task instead.
+        if let inFlight = startingReviews[pr.id] {
+            let session = await inFlight.value
+            if reveals { reveal(session.id) }
+            return session
+        }
+        let task = Task<CodeSession, Never> {
+            let branch = Self.reviewBranch(pr)
+            let values = HarnessPromptLibrary.values(reference: "\(pr.repo)#\(pr.number)", title: pr.title, url: pr.url, repo: pr.repo, number: pr.number, branch: branch)
+            let instructions = launchInstructions(org: pr.org, setup: setup, use: .review, repos: [pr.repo], choice: choice, values: values)
+            let learnings = await reviewLearnings(org: pr.org, harnessRepo: setup.repo, repo: pr.repo, number: pr.number)
+            let session = CodeSession(
+                id: UUID(), issue: IssueReference(org: pr.org, id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url),
+                repo: setup.repo, branch: branch, createdAt: .now, pullRequests: [pr.url],
+                connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
+                role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch, learnings: learnings),
+                instructions: instructions.map(Self.reviewInstructions), isReviewer: true, reviewOf: pr
+            )
+            let directory = Self.directory(for: session.id)
+            try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let brief = "# Review of \(pr.repo)#\(pr.number): \(pr.title)\n\n\(pr.url.absoluteString)\n"
+            try? Data(brief.utf8).write(to: directory.appending(path: "brief.md"))
+            add(session)
+            return session
+        }
+        startingReviews[pr.id] = task
+        let session = await task.value
+        startingReviews[pr.id] = nil
         if reveals { reveal(session.id) }
         return session
+    }
+
+    /// The harness's learnings covering the PR's current files: fetched
+    /// afresh each time, since what covers the PR when the review starts
+    /// may fall short once its diff grows, and `Review Again` and the
+    /// watched look-again prompt (`AutoReview.reviewAgain`) need the same
+    /// list as the first prompt.
+    func reviewLearnings(org: String, harnessRepo: String?, repo: String, number: Int) async -> [HarnessLearning] {
+        var learnings = harnessStore.anyIndex(org: org, repo: harnessRepo ?? repo)?.learnings(for: repo) ?? []
+        if let files = try? await chargingTo(.details, { try await api()?.pullRequestFilePaths(repo: repo, number: number) }) {
+            learnings = learnings.filter { learning in files.contains { learning.covers($0) } }
+        }
+        return learnings
     }
 
     static func reviewBranch(_ pr: PullRequestReference) -> String {
@@ -219,6 +249,21 @@ struct ReviewedPullRequest: Equatable {
 }
 
 extension GitHubAPI {
+    /// The paths a PR changes, for scoping what a reviewer's told (such as
+    /// which learnings apply) without fetching every file's patch. A
+    /// renamed file's old path is included too, so a learning scoped to it
+    /// still applies to the PR that moves it.
+    func pullRequestFilePaths(repo: String, number: Int) async throws -> [String] {
+        struct File: Decodable { let filename: String; let previousFilename: String? }
+        var paths: [String] = []
+        for page in 1...30 {
+            let batch: [File] = try await rest("repos/\(repo)/pulls/\(number)/files", query: ["per_page": "100", "page": "\(page)"])
+            paths += batch.flatMap { [$0.filename, $0.previousFilename].compactMap { $0 } }
+            if batch.count < 100 { break }
+        }
+        return paths
+    }
+
     func reviewedPullRequest(repo: String, number: Int) async throws -> ReviewedPullRequest {
         struct Pull: Decodable {
             struct User: Decodable { let login: String }
@@ -412,8 +457,10 @@ struct ReviewWithClaudeButton: View {
 
     private func start(choice: PromptChoice?, setup: HarnessConfig?) {
         guard let setup, let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return }
-        let session = sessions.startReview(of: reference, harness: setup, harnessPath: path, choice: choice)
-        sessions.show(session.id, with: openWindow)
+        Task {
+            let session = await sessions.startReview(of: reference, harness: setup, harnessPath: path, choice: choice)
+            sessions.show(session.id, with: openWindow)
+        }
     }
 
     private var unavailable: String? {
@@ -445,6 +492,10 @@ struct PullRequestReviewView: View {
     @State private var conversation: Bool?
     @State private var confirmingFinish = false
     @State private var posting = false
+    /// While Review Again's files fetch is in flight: the button stays
+    /// enabled until claude's state turns to working, so a second click in
+    /// that gap would paste the prompt twice.
+    @State private var reviewingAgain = false
 
     private var reference: PullRequestReference { session.reviewOf! }
 
@@ -548,10 +599,19 @@ struct PullRequestReviewView: View {
                 }
                 .buttonStyle(.bordered)
                 Button("Review Again") {
-                    sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block, listing in `resolved` the threads now dealt with.", to: session.id)
-                    Task { await load() }
+                    reviewingAgain = true
+                    Task {
+                        defer { reviewingAgain = false }
+                        // The diff may cover more of the repo than it did
+                        // when the review started, so the learnings fixed
+                        // into its first prompt may now fall short.
+                        let learnings = await sessions.reviewLearnings(org: reference.org, harnessRepo: session.harnessRepo, repo: reference.repo, number: reference.number)
+                        let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
+                        sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block, listing in `resolved` the threads now dealt with.\(learned)", to: session.id)
+                        await load()
+                    }
                 }
-                .disabled(!sessions.isRunning(session.id) || state == .working)
+                .disabled(!sessions.isRunning(session.id) || state == .working || reviewingAgain)
                 .help("Ask claude to review the PR again, as it is now")
                 if let posted = draft.posted {
                     Link(destination: posted) {
