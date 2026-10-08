@@ -204,7 +204,7 @@ struct WorktreePopoverButton: View {
         Button {
             shown.toggle()
         } label: {
-            Label(current.map { $0.isMain ? "Clone" : $0.name } ?? "Worktree", systemImage: "folder")
+            Label(current.map { $0.isMain ? "Main" : $0.name } ?? "Worktree", systemImage: "folder")
                 .labelStyle(.titleAndIcon)
         }
         .help(repository.worktrees.count > 1 ? "\(repository.worktrees.count) worktrees: which one this page works in" : "Worktrees: work on another branch beside this one")
@@ -287,7 +287,7 @@ private struct WorktreePopover: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(spacing: 6) {
                         Text(worktree.branch ?? "Detached at \(worktree.head ?? "?")").lineLimit(1)
-                        if worktree.isMain { Pill(text: "Clone", color: .gray) }
+                        if worktree.isMain { Pill(text: "Main", color: .gray) }
                         if worktree.isPrunable { Pill(text: "Folder gone", color: .orange) }
                         if worktree.isLocked { Pill(text: "Locked", color: .gray) }
                     }

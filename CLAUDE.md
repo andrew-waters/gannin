@@ -148,8 +148,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   commit). A project naming no repos covers them all, so it lists those with work in flight and
   clones saved here, with no Add. Beside the switcher, the branch and worktree buttons open
   popovers (`BranchPopoverButton`, `WorktreePopoverButton`, `Git/RepositoryBranches.swift`), then
-  the parts: History (first), Changes and GitHub (its open PRs, issues and merged,
-  `RepositoryColumn`), `repositoryPart` per window. History and Changes put their list beside the
+  the parts: History (first) and Changes, `repositoryPart` per window (a repo's PRs and issues
+  are on the Pull Requests and Issues pages). The worktree button calls the clone itself Main. History and Changes put their list beside the
   diff in a `FixedSplit`, a leading pane as wide as it's dragged (kept per part), which never
   shifts as content loads, as `HSplitView` did. Diffs scroll in a `DiffScroll`, every row as wide
   as the longest line (worked out in the monospaced font, as a lazy stack can't measure rows it

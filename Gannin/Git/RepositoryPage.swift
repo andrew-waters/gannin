@@ -4,10 +4,6 @@ import SwiftUI
 enum RepositoryPart: String, CaseIterable {
     case history = "History"
     case changes = "Changes"
-    /// Its open PRs, issues and what merged, from the workload.
-    case github = "GitHub"
-
-    var isLocal: Bool { self != .github }
 }
 
 /// A repo, picked under Repositories: its clone on this Mac (changes,
@@ -29,7 +25,7 @@ struct RepositoryPage: View {
 
     var body: some View {
         Group {
-            if part.isLocal, let local {
+            if let local {
                 LocalRepositoryView(repository: local, part: $part, switcher: switcher) { locate() }
             } else {
                 VStack(spacing: 0) {
@@ -38,9 +34,7 @@ struct RepositoryPage: View {
                         RepositoryPartPicker(part: $part)
                     }
                     Divider()
-                    if part == .github {
-                        gitHub
-                    } else if looked {
+                    if looked {
                         NotClonedView(org: org, repo: repo) { locate() }
                     } else {
                         ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -65,24 +59,6 @@ struct RepositoryPage: View {
         let worktree = UserDefaults.standard.string(forKey: LocalRepository.worktreeKey(repo)).flatMap { LocalClones.isGitFolder($0) ? $0 : nil }
         if local?.root != root {
             local = LocalRepository(repo: repo, root: root, worktree: worktree)
-        }
-    }
-
-    @ViewBuilder
-    private var gitHub: some View {
-        if let workload, let load = workload.repository(named: repo) {
-            RepositoryColumn(repository: load, workload: workload, selection: $selection)
-        } else {
-            ContentUnavailableView {
-                Label("Nothing in flight", systemImage: "arrow.triangle.pull")
-            } description: {
-                Text("No open pull requests or issues in \(repo), and nothing merged lately.")
-            } actions: {
-                if let url = URL(string: "https://github.com/\(repo)") {
-                    Link("Open on GitHub", destination: url)
-                }
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 }
@@ -198,7 +174,7 @@ private struct LocalRepositoryView: View {
         } else {
             switch part {
             case .history: RepositoryHistoryView(repository: repository)
-            case .changes, .github: RepositoryChangesView(repository: repository)
+            case .changes: RepositoryChangesView(repository: repository)
             }
         }
     }
