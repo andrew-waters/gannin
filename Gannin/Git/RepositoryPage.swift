@@ -4,7 +4,6 @@ import SwiftUI
 enum RepositoryPart: String, CaseIterable {
     case changes = "Changes"
     case history = "History"
-    case branches = "Branches"
     /// Its open PRs, issues and what merged, from the workload.
     case github = "GitHub"
 
@@ -101,11 +100,14 @@ private struct LocalRepositoryView: View {
         VStack(spacing: 0) {
             RepositoryBar {
                 if let switcher { switcher }
+                Group {
+                    BranchPopoverButton(repository: repository)
+                    WorktreePopoverButton(repository: repository)
+                }
+                .fixedSize()
                 RepositoryPartPicker(part: $part)
                 Spacer()
                 Group {
-                    if repository.worktrees.count > 1 { worktreeMenu }
-                    branchMenu
                     syncMenu
                     openMenu
                 }
@@ -164,6 +166,7 @@ private struct LocalRepositoryView: View {
         } message: {
             Text("Your branch replaces the one on origin, unless someone has pushed to it since you last fetched (--force-with-lease).")
         }
+        .modifier(BranchDialogs(repository: repository))
         .sheet(item: $repository.creatingBranch) { request in
             NewBranchSheet(repository: repository, base: request.base)
         }
@@ -194,7 +197,6 @@ private struct LocalRepositoryView: View {
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             switch part {
-            case .branches: RepositoryBranchesView(repository: repository)
             case .history: RepositoryHistoryView(repository: repository)
             case .changes, .github: RepositoryChangesView(repository: repository)
             }
@@ -202,60 +204,6 @@ private struct LocalRepositoryView: View {
     }
 
     // MARK: Bar
-
-    private var worktreeMenu: some View {
-        Menu {
-            ForEach(repository.worktrees) { worktree in
-                Button {
-                    repository.use(worktree: worktree.path)
-                } label: {
-                    let title = "\(worktree.branch ?? "Detached") · \(SessionStore.tildePath(URL(filePath: worktree.path)))"
-                    if LocalRepository.samePath(worktree.path, repository.path) {
-                        Label(title, systemImage: "checkmark")
-                    } else {
-                        Text(title)
-                    }
-                }
-                .disabled(worktree.isPrunable)
-            }
-            Divider()
-            Button("New Worktree") { repository.creatingWorktree = CreateWorktreeRequest() }
-            Button("All Worktrees") { part = .branches }
-        } label: {
-            Label(repository.currentWorktree.map { $0.isMain ? "Main checkout" : $0.name } ?? "Worktree", systemImage: "folder")
-                .labelStyle(.titleAndIcon)
-        }
-        .help("The worktree this page works in")
-    }
-
-    private var branchMenu: some View {
-        let current = repository.status?.branch
-        let recent = repository.branches.filter { !$0.isRemote }.prefix(12)
-        return Menu {
-            ForEach(Array(recent)) { branch in
-                let elsewhere = repository.worktree(holding: branch)
-                Button {
-                    repository.requestSwitch(to: branch)
-                } label: {
-                    if branch.name == current {
-                        Label(branch.name, systemImage: "checkmark")
-                    } else if let elsewhere {
-                        Text("\(branch.name) (in \((elsewhere as NSString).lastPathComponent))")
-                    } else {
-                        Text(branch.name)
-                    }
-                }
-                .disabled(branch.name == current || elsewhere != nil)
-            }
-            Divider()
-            Button("New Branch") { repository.creatingBranch = CreateBranchRequest(base: current ?? "HEAD") }
-            Button("All Branches") { part = .branches }
-        } label: {
-            Label(current ?? "Detached at \(repository.status?.head ?? "?")", systemImage: "arrow.triangle.branch")
-                .labelStyle(.titleAndIcon)
-        }
-        .help("Switch branch")
-    }
 
     private var syncMenu: some View {
         let status = repository.status

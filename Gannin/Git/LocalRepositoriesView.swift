@@ -43,11 +43,15 @@ struct RepositoriesPage: View {
     }
 }
 
-/// The repos the switcher offers: the window's project's, those with work
-/// in flight, and any with a clone saved here, in the org.
+/// The repos the switcher offers: the window's project's. A project that
+/// names none covers every repo, so it's those with work in flight and any
+/// with a clone saved here.
 enum RepositoryChoices {
     static func repos(org: String, config: OrgConfig, workload: Workload?) -> [String] {
-        var names = Set(config.focusRepos ?? [])
+        if let project = config.scope, !project.repos.isEmpty {
+            return project.repos.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        }
+        var names: Set<String> = []
         for load in workload?.repositories ?? [] where !config.repoExclusion.contains(load.name) {
             names.insert(load.name)
         }
@@ -55,6 +59,13 @@ enum RepositoryChoices {
             names.insert(repo)
         }
         return names.sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    /// The project repos can be added to: one that names its repos. One
+    /// naming none covers them all, and adding a repo would narrow it.
+    static func addableProject(_ config: OrgConfig) -> RepoProject? {
+        guard let project = config.scope, !project.repos.isEmpty else { return nil }
+        return project
     }
 }
 
@@ -68,14 +79,15 @@ struct RepositorySwitcher: View {
     let pick: (String) -> Void
     @State private var clones: [String: String] = [:]
     @State private var summaries: [String: CloneSummary] = [:]
-    @State private var cloning = false
+    @State private var adding = false
 
     var body: some View {
         let repos = choices
+        let project = RepositoryChoices.addableProject(configs.config(for: org))
         let here = repos.filter { clones[$0] != nil }
         let elsewhere = repos.filter { clones[$0] == nil }
         Menu {
-            Section("On this Mac") {
+            Section(project.map { "\($0.name) on this Mac" } ?? "On this Mac") {
                 ForEach(here, id: \.self) { repo in item(repo) }
             }
             if !elsewhere.isEmpty {
@@ -83,10 +95,12 @@ struct RepositorySwitcher: View {
                     ForEach(elsewhere, id: \.self) { repo in item(repo) }
                 }
             }
-            Divider()
-            Button("Clone a Repository") { cloning = true }
+            if let project {
+                Divider()
+                Button("Add a Repo to \(project.name)") { adding = true }
+            }
         } label: {
-            Label(Self.shortName(current), systemImage: "folder")
+            Label(Self.shortName(current), systemImage: "shippingbox")
                 .labelStyle(.titleAndIcon)
                 .fontWeight(.semibold)
         }
@@ -101,8 +115,8 @@ struct RepositorySwitcher: View {
             clones = found
             summaries = await LocalClones.summaries(found)
         }
-        .sheet(isPresented: $cloning) {
-            CloneRepositorySheet(org: org) { pick($0) }
+        .sheet(isPresented: $adding) {
+            if let project { AddProjectRepoSheet(org: org, project: project) { pick($0) } }
         }
     }
 
@@ -139,116 +153,78 @@ struct RepositorySwitcher: View {
     }
 }
 
-/// An org with no repos to offer yet.
+/// A project with no repos to offer yet.
 private struct NoRepositoriesView: View {
+    @Environment(OrgConfigStore.self) private var configs
     let org: String
-    let cloned: (String) -> Void
-    @State private var cloning = false
+    let added: (String) -> Void
+    @State private var adding = false
 
     var body: some View {
+        let project = configs.config(for: org).scope
         ContentUnavailableView {
-            Label("No repositories", systemImage: "folder")
+            Label("No repositories", systemImage: "shippingbox")
         } description: {
-            Text("The project names no repos and nothing is in flight. Clone one to work on it here.")
+            Text(project.map { "\($0.name) names no repos, and nothing is in flight." } ?? "Nothing is in flight in \(org) yet.")
         } actions: {
-            Button("Clone a Repository") { cloning = true }
+            if project != nil { Button("Add a Repo to the Project") { adding = true } }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .sheet(isPresented: $cloning) {
-            CloneRepositorySheet(org: org, cloned: cloned)
+        .sheet(isPresented: $adding) {
+            if let project { AddProjectRepoSheet(org: org, project: project, cloned: added) }
         }
     }
 }
 
-/// Clone one of the org's repos, or any GitHub repo by URL, into the
-/// project's `projects/` folder or a folder chosen.
-struct CloneRepositorySheet: View {
+/// Adds one of the org's repos to the window's project, in its harness's
+/// `project.json`, waiting with the other changes to commit.
+struct AddProjectRepoSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     let org: String
+    let project: RepoProject
     let cloned: (String) -> Void
     @State private var query = ""
     @State private var picked: String?
-    @State private var path = ""
-    @State private var pathEdited = false
-    @State private var working = false
-    @State private var error: String?
 
     var body: some View {
         let words = query.lowercased().split(separator: " ")
-        let matches = (harness.repositories[org] ?? []).filter { name in words.allSatisfy { name.lowercased().contains($0) } }
+        let choices = (harness.repositories[org] ?? []).filter { repo in
+            !project.repos.contains(repo) && words.allSatisfy { repo.lowercased().contains($0) }
+        }
         Form {
             Section {
-                TextField("Repository", text: $query, prompt: Text("Search \(org)'s repos, or paste a GitHub URL"))
-                if !query.contains("github.com") {
-                    List(matches.prefix(200), id: \.self, selection: $picked) { repo in
-                        Text(repo).tag(repo)
-                    }
-                    .frame(height: 220)
-                    .overlay {
-                        if harness.repositories[org] == nil { ProgressView() }
-                    }
+                TextField("Repository", text: $query, prompt: Text("Search \(org)'s repos"))
+                List(choices.prefix(300), id: \.self, selection: $picked) { repo in
+                    Text(repo).tag(repo)
                 }
-                HStack {
-                    TextField("Folder", text: Binding(get: { path }, set: { path = $0; pathEdited = true }))
-                    Button("Choose") {
-                        guard let repo = repo, let folder = GitFolders.choose(message: "Choose where the clone goes. It's put in a folder of its own there.", prompt: "Clone Here") else { return }
-                        path = SessionStore.tildePath(folder.appending(path: repo.split(separator: "/").last.map(String.init) ?? repo))
-                        pathEdited = true
-                    }
-                    .disabled(repo == nil)
+                .frame(height: 260)
+                .overlay {
+                    if harness.repositories[org] == nil { ProgressView() }
                 }
             } header: {
-                Text("Clone a repository")
+                Text("Add a repo to \(project.name)")
             } footer: {
-                if let error {
-                    Text(error).foregroundStyle(.red).textSelection(.enabled)
-                } else {
-                    Text("Clones use gh when it's installed, else git with your credential helper. The project's harness keeps them in its projects folder.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text("It's added to \(project.harness.repo)'s project.json with the other changes to commit in the sidebar, so the project's pages count it too. Clone it from its page.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 520)
+        .frame(width: 480)
         .task { await harness.loadRepositories(org: org) }
-        .onChange(of: repo) { suggestPath() }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button(working ? "Cloning" : "Clone") {
-                    Task { await clone() }
+                Button("Add to Project") {
+                    guard let picked else { return }
+                    configs.updateProject(project.id, in: org) { $0.repos.append(picked) }
+                    dismiss()
+                    cloned(picked)
                 }
-                .disabled(repo == nil || path.isEmpty || working)
+                .disabled(picked == nil)
             }
         }
-    }
-
-    /// The repo picked in the list, else the one a pasted URL names.
-    private var repo: String? {
-        if query.contains("github.com"), let typed = LocalClones.gitHubRepo(query) { return typed }
-        return picked
-    }
-
-    private func suggestPath() {
-        guard !pathEdited, let repo else { return }
-        path = LocalClones.destination(repo, org: org, config: configs.config(for: org))
-    }
-
-    private func clone() async {
-        guard let repo else { return }
-        working = true
-        let url = query.contains("://") || query.hasPrefix("git@") ? query.trimmingCharacters(in: .whitespaces) : nil
-        error = await LocalClones.clone(repo, from: url, to: path)
-        working = false
-        guard error == nil else { return }
-        // Where it would be looked for anyway needn't be saved.
-        if LocalClones.find(repo, org: org, config: configs.config(for: org)).map({ LocalRepository.samePath($0, path) }) != true {
-            LocalClones.save(path, for: repo)
-        }
-        dismiss()
-        cloned(repo)
     }
 }

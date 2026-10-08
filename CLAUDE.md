@@ -140,15 +140,17 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   handles a git credential. `GitDiff` parses diffs and makes one hunk into a patch for `git apply`,
   for sessions' Changes too.
 - Repositories is one sidebar row and one repo at a time (`RepositoriesPage`): the repo picked in
-  the switcher at the top left of the page's bar (`RepositorySwitcher`: the window's project's repos
-  (`focusRepos`), any with open PRs or issues and any with a clone saved here, those on this Mac
-  first with their branch, changes, ahead and behind, then those not cloned, and Clone a
-  Repository), kept per window (`repositoriesRepo`) and as the last picked per org
-  (`lastRepository.<org>`); the palette's repo results ask for one. A repo's page
-  (`RepositoryPage`, also `DetailSelection.repository`, there with no switcher) has Changes,
-  History and Branches parts beside GitHub (its open PRs, issues and merged, `RepositoryColumn`),
-  picked in the bar (`repositoryPart` per window). Every control is in the page's bar
-  (`RepositoryBar`), not the toolbar.
+  the switcher at the top left of the page's bar (`RepositorySwitcher`), kept per window
+  (`repositoriesRepo`) and as the last picked per org (`lastRepository.<org>`); the palette's repo
+  results ask for one. It lists the window's project's repos (`RepositoryChoices`), those cloned
+  here first with their branch, changes, ahead and behind, and Add a Repo to the project
+  (`AddProjectRepoSheet`, staged in its harness's `project.json` with the other changes to
+  commit). A project naming no repos covers them all, so it lists those with work in flight and
+  clones saved here, with no Add. Beside the switcher, the branch and worktree buttons open
+  popovers (`BranchPopoverButton`, `WorktreePopoverButton`, `Git/RepositoryBranches.swift`), then
+  the parts: Changes, History and GitHub (its open PRs, issues and merged, `RepositoryColumn`),
+  `repositoryPart` per window. A repo's page pushed onto the trail (`DetailSelection.repository`)
+  has no switcher. Every control is in the page's bar (`RepositoryBar`), not the toolbar.
 - `LocalClones` finds a repo's clone: the folder saved for it (`localRepository.<owner/name>`,
   from Add Existing, Clone To or Use Another Folder), the harness checkout when the repo is the
   harness, a harness's `projects/<name>` (or `projects/<group>/<name>`), then the usual places
@@ -163,8 +165,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   fetches every five minutes in the background (git's own, not the API budget), saying so only in
   the sync button's help. Actions refresh after running, and what git or a hook says on failing
   shows in full (`GitOutputSheet`).
-- The bar, after the part picker: the worktree menu (with more than one), the branch menu (recent branches, New Branch,
-  All Branches), sync (`syncAction`: Publish Branch, Pull with ↓ and ↑, Push ↑, else Fetch; its
+- The bar's right end: sync (`syncAction`: Publish Branch, Pull with ↓ and ↑, Push ↑, else Fetch; its
   menu has Fetch, Pull, Push and Force Push with `--force-with-lease`, confirmed) and Open (editor,
   Terminal, Finder, GitHub). Pull follows `pull.rebase`; when git asks how to reconcile divergent
   branches, Gannin asks Merge or Rebase.
@@ -178,22 +179,28 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   composer: a summary with a length hint (orange past 50, red past 72), a description, Amend
   (filled with the last message) and Undo for a commit not pushed (`reset --soft`, its message
   back in the fields).
-- Branches (`RepositoryBranchesView`): worktrees (Work Here, open, Remove, forced only after
-  saying what's lost, Prune), local branches (ahead and behind, Not published, Gone from origin,
-  the worktree holding one) and those only on origin. Switch, New Branch from, New Worktree for,
-  Publish, Rename and Delete (here, on origin or both; Delete Anyway when unmerged). A branch
-  checked out in another worktree can't be switched to; its worktree can be worked in. Switching
-  with changes asks: leave them (stashed as `Gannin: left on <branch>`, restored and dropped by
-  SHA, never a bare pop) or bring them. New branches are made `--no-track`, so a first push
-  publishes them under their own name. New worktrees go in `<harness>/.worktrees/<branch>/<name>`
-  for a clone in `projects/`, as sessions lay them out, else `<clone>.worktrees/<branch>`.
+- Branches (the popover): a search field that keeps the keyboard (arrows move, Return switches),
+  local branches (ahead and behind, Not published, Gone from origin, the worktree holding one) and
+  those only on origin, New Branch at the foot, and Switch, New Worktree for, New Branch from,
+  Publish, Rename and Delete in a branch's context menu (here, on origin or both; Delete Anyway
+  when unmerged). Return on a branch held by another worktree works in that worktree. Worktrees
+  (the popover, arrows and Return too): Work Here by picking one, open, Remove (forced only after
+  saying what's lost), New Worktree and Prune. What they ask (rename, delete, remove) shows over
+  the page once the popover's closed (`BranchDialogs`, `LocalRepository.renamingBranch`,
+  `deletingBranch`, `removingWorktree`). Switching with changes asks: leave them (stashed as
+  `Gannin: left on <branch>`, restored and dropped by SHA, never a bare pop) or bring them. New
+  branches are made `--no-track`, so a first push publishes them under their own name. New
+  worktrees go in `<harness>/.worktrees/<branch>/<name>` for a clone in `projects/`, as sessions
+  lay them out, else `<clone>.worktrees/<branch>`.
 - History (`RepositoryHistoryView`, `GitHistory`): a branch's commits (the one checked out, or
-  any picked), newest first, 200 at a time, searchable, each with its SHA, author, when, Not
+  any picked), newest first, 200 at a time, searchable, the list keeping the keyboard as a commit's
+  files load, each with its SHA, author, when, Not
   pushed (against its upstream), the other branches at it and its tags, orange while only here
   (`ls-remote --tags` when opened). Picking one shows its whole message, its files and a file's
   diff (a merge against its first parent). Tagging is done here: Tag This Commit (the commit's
   context menu or its header) opens `NewTagSheet` (annotated with a message, pushed straight away
-  by default, the next patch version suggested); a tag's context menu pushes, branches from or
+  by default, the next patch version suggested, the last tag shown, and a warning when the commit
+  is tagged already); a tag's context menu pushes, branches from or
   deletes it (here, or here and on origin), and Push N Tags pushes those only here.
 
 ## Command palette

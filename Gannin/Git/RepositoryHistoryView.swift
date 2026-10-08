@@ -10,6 +10,9 @@ struct RepositoryHistoryView: View {
     @State private var ref: String?
     @State private var search = ""
     @State private var deletingTag: String?
+    /// The commit list keeps the keyboard: picking a commit loads its files
+    /// and selects the first, which would otherwise take the arrows.
+    @FocusState private var listFocused: Bool
 
     var body: some View {
         let words = search.lowercased().split(separator: " ")
@@ -120,6 +123,9 @@ struct RepositoryHistoryView: View {
                     .buttonStyle(.link)
                 }
             }
+            .focused($listFocused)
+            .onAppear { listFocused = true }
+            .onChange(of: history.files) { listFocused = true }
         }
     }
 
@@ -351,6 +357,29 @@ struct NewTagSheet: View {
                 Toggle("Push to origin", isOn: $push)
             } header: {
                 Text("New tag in \(repository.repo)")
+            }
+            Section {
+                if let last = repository.tags.first {
+                    LabeledContent("Last tag") {
+                        VStack(alignment: .trailing, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text(last.name).fontWeight(.semibold)
+                                Text(last.sha).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            }
+                            Text([last.subject, last.date.map { $0.formatted(.relative(presentation: .named)) }].compactMap { $0?.isEmpty == false ? $0 : nil }.joined(separator: " · "))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                    }
+                } else {
+                    LabeledContent("Last tag", value: "None yet")
+                }
+                if target.count >= 7, let commit = repository.tags.first(where: { $0.sha.hasPrefix(String(target.prefix(7))) || target.hasPrefix($0.sha) }) {
+                    Text("This commit is already tagged \(commit.name).")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
             } footer: {
                 if let error {
                     Text(error).foregroundStyle(.red).textSelection(.enabled)

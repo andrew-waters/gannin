@@ -59,6 +59,9 @@ final class LocalRepository {
     var creatingBranch: CreateBranchRequest?
     var creatingWorktree: CreateWorktreeRequest?
     var creatingTag: CreateTagRequest?
+    var renamingBranch: GitBranch?
+    var deletingBranch: GitBranch?
+    var removingWorktree: GitWorktree?
     var actionError: String?
     /// A pull git wouldn't do without being told to merge or rebase.
     var reconciling = false
