@@ -368,15 +368,15 @@ private struct SessionTabItem: View {
 
 /// What the side of a session's tab shows.
 private enum SessionPane: String {
-    case issue, changes, pullRequests, activity
+    case issue, changes, files, pullRequests, activity
 }
 
 /// One session's tab: the terminal claude runs in with a bar beneath for
 /// talking to it, and beside it the issue with its plans and requirements,
-/// the changes in its worktrees, its PRs, or what claude has been doing.
-/// Changes are read again a moment after claude edits a file or runs a
-/// command (its hooks say so), and otherwise every so often while the tab
-/// shows. Shown beside another, the side panel starts hidden.
+/// the changes in its worktrees (an Ask session's files in their place),
+/// its PRs, or what claude has been doing. Changes are read again a moment
+/// after claude edits a file or runs a command (its hooks say so), and
+/// otherwise every so often while the tab shows. Shown beside another, the side panel starts hidden.
 struct SessionTab: View {
     @Environment(SessionStore.self) private var sessions
     let session: CodeSession
@@ -391,6 +391,18 @@ struct SessionTab: View {
     /// Documents dropped on a planning session, being confirmed.
     @State private var sharing: [URL]?
     @AppStorage("sessionsPane") private var pane: SessionPane = .issue
+
+    /// Files stands in for Changes in an Ask session, and the other way
+    /// about, so one remembered pane suits both.
+    private var shownPane: Binding<SessionPane> {
+        Binding {
+            switch pane {
+            case .changes where session.isAsk: .files
+            case .files where !session.isAsk: .changes
+            default: pane
+            }
+        } set: { pane = $0 }
+    }
 
     var body: some View {
         let shown = panelShown ?? !compact
@@ -419,9 +431,14 @@ struct SessionTab: View {
             .frame(minWidth: compact ? 360 : 480, maxWidth: .infinity, maxHeight: .infinity)
             if shown {
                 VStack(spacing: 0) {
-                    Picker("Show", selection: $pane) {
+                    Picker("Show", selection: shownPane) {
                         Text("Issue").tag(SessionPane.issue)
-                        Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
+                        if session.isAsk {
+                            let count = sessions.files(for: session).files.count
+                            Text(count > 0 ? "Files \(count)" : "Files").tag(SessionPane.files)
+                        } else {
+                            Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
+                        }
                         Text(pullRequestsLabel).tag(SessionPane.pullRequests)
                         Text("Activity").tag(SessionPane.activity)
                     }
@@ -429,9 +446,10 @@ struct SessionTab: View {
                     .labelsHidden()
                     .padding(8)
                     Divider()
-                    switch pane {
+                    switch shownPane.wrappedValue {
                     case .issue: SessionPanel(session: session)
                     case .changes: SessionChangesPane(session: session, changes: changes)
+                    case .files: SessionFilesPane(session: session, files: sessions.files(for: session))
                     case .pullRequests: SessionPullRequestsPane(session: session)
                     case .activity: SessionActivityPane(session: session)
                     }
@@ -442,6 +460,9 @@ struct SessionTab: View {
         // Each change signal starts this again: a short wait lets a burst of
         // edits settle into one read.
         .task(id: sessions.changeCount(session.id)) {
+            // An Ask session's folder isn't a worktree: its Files pane
+            // reads it instead.
+            guard !session.isAsk else { return }
             do {
                 try await Task.sleep(for: .milliseconds(400))
                 while true {

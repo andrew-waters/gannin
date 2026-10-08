@@ -77,6 +77,10 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var isRemote: Bool { connect != nil }
     var isHelper: Bool { parentID != nil }
     var isPullRequestReview: Bool { reviewOf != nil }
+    /// An ad hoc Ask session, its folder `.worktrees/ask-<slug>/`. By its
+    /// branch until Ask sessions carry their own info
+    /// (andrew-waters/gannin#56).
+    var isAsk: Bool { branch.hasPrefix("ask-") && reviewOf == nil && planning == nil }
     /// As a tab or row names it.
     var title: String { role.map { "\($0): \(issue.title)" } ?? issue.title }
     var isInHarness: Bool { harnessPath != nil && harnessRepo != nil }
@@ -338,6 +342,8 @@ final class SessionStore {
     /// Each session's Changes pane: which file is open and what's been read,
     /// kept here so switching tabs away and back doesn't lose either.
     @ObservationIgnored var changesPanes: [UUID: SessionChanges] = [:]
+    /// Each Ask session's Files pane, kept for the same reason.
+    @ObservationIgnored var filesPanes: [UUID: SessionFiles] = [:]
     @ObservationIgnored private var polling: Task<Void, Never>?
     /// The last `changed` value each session's hook wrote.
     @ObservationIgnored private var lastChanged: [UUID: String] = [:]
@@ -617,6 +623,14 @@ final class SessionStore {
         return changes
     }
 
+    /// An Ask session's Files pane, created the first time it's shown.
+    func files(for session: CodeSession) -> SessionFiles {
+        if let existing = filesPanes[session.id] { return existing }
+        let files = SessionFiles()
+        filesPanes[session.id] = files
+        return files
+    }
+
     func isRunning(_ id: UUID) -> Bool { terminals[id]?.isRunning == true }
 
     /// Sessions with a terminal running, which quitting would end.
@@ -636,6 +650,7 @@ final class SessionStore {
         terminals[id]?.terminate()
         terminals[id] = nil
         changesPanes[id] = nil
+        filesPanes[id] = nil
         unflag(id)
         sessions[id] = nil
         states[id] = nil
