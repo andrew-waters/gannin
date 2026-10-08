@@ -108,7 +108,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Epics, Repositories (local git, see Local git), Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
-  Prioritisation, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, once set);
+  Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, once set);
   and Agents (Waiting on You, then sessions grouped as working on issues, reviews and
   planning). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You);
   raw values stay as windows saved them. `OverviewView` is two pages (`OverviewView.Part`):
@@ -702,7 +702,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - `Gannin/Sessions/`: Work on This on an issue (`StartSessionButton`, the issue
   page's toolbar) starts the issue's session in the window's project's harness, no repo to pick, and opens it
   as a tab in the one Claude Code window (`SessionsWindow`, `SessionStore.tabs`, kept across
-  launches; + opens a session already started, ⌘W closes a tab, claude keeps running). Each tab
+  launches; each tab two lines beside a large icon for its kind, the kind (Plan, Review, Code or a
+  helper's role) and issue or PR above its title, `TabKind`; + opens a session already started, ⌘W closes a tab, claude keeps running). Each tab
   is a SwiftTerm terminal beside the issue (its session state, and its plans and requirements
   from the harness, `HarnessIssueSection`, opening in a sheet) or its Changes: every worktree
   under the issue's folder diffed against its merge base with `origin/HEAD`, committed or not,
@@ -812,8 +813,41 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   drafts issues and triage, rewrites notes, and answers Ask (`AskOrgPage`, under Claude Code:
   `OrgContext` writes workload, issues, delivery, harness and time off as JSON; follow-ups
   resume the conversation).
-- Planning sessions (`CodeSession.planning`, `PlanningInfo`, `NewPlanningSheet`, from Agents,
-  the + menu or a harness document) plan a topic in the harness. Documents dropped on the
+- Planning sessions (`CodeSession.planning`, `PlanningInfo`, `NewPlanningSheet`, from Rituals ›
+  Planning (`PlanningPage`, a `StatsTable` of them with Delete: `SessionStore.finish`, Delete
+  Anyway when the folder won't go), Plan This on an issue (`PlanThisButton`, `PlanningInfo.issue`), Agents,
+  the + menu or a harness document) plan a topic in the harness, live with the team. The sheet
+  has an editable prompt: Start from fills it with one of the team's planning prompts (with its
+  skills), `NewPlanningSheet.suggestedPrompt` (offered when there are none) or blank, and what's in
+  it is what the session is told (as the choice's note); saving commits it as a new planning prompt
+  (the first ticked by default) or as an update to the one it came from, before the session starts
+  (andrew-waters/gannin#51, `plans/2026-10-08-planning-ceremony.md`). Their tab is
+  `PlanningWorkspaceView`, a wizard rather than a terminal and panel: steps across the top
+  (`PlanningStep`: Context, what the room gave to read first (documents copied into
+  `.worktrees/<branch>/docs/` before claude starts, `SessionStore.copyDocuments`; links,
+  `PlanningLink`; and where else to look, `PlanningInfo.sources`, all from the sheet's Context
+  section and briefed by `SessionStore.contextBrief`, links added later from the step); then
+  Refine and Scout drawn as a loop with its round, `PlanningInfo.rounds`, counted
+  as claude starts scouting; then Requirements, Break Down, Agree), the one under way from the
+  `phase` claude writes (`PlanningState.step`, worked out from what's there when it doesn't say).
+  On top is what's happening now: the question to the room (AskUserQuestion,
+  `PlanningQuestionView`, in a style picked on it and kept on this Mac, `planningQuestionStyle`:
+  One at a Time with letter keys and options two to a row, Poll the Room counting hands and sending the most, Keyboard List,
+  or Conversation; several questions are put one after another and answered together), what's being read, or whose turn it is. Below is the step picked (any
+  can be looked back at), on the left of a `FixedSplit` whose right is the requirement as it
+  stands; both dim while a question is open until clicked, each with buttons that steer claude (Look at the Code Now, Requirements
+  Are Right and the like). Claude keeps `.worktrees/<branch>/planning.json` (`PlanningState`,
+  snake case, read leniently, shape and rules in `PlanningState.instructions`, added after the
+  team's guidance), read again on each `changed` signal and kept as `PlanningInfo.state`.
+  Scouting findings can be dismissed (`PlanningInfo.dismissed`). A comment box is always at the foot of the left
+  pane (Return sends, Shift-Return is a new line): `SessionStore.interject` sends "From the room" (closing an open question first)
+  and keeps it in `PlanningInfo.comments`, which the plan lists. The terminal and composer are a
+  drawer (`planningShowsTerminal`); the tab starts claude itself (`sessions.open`). It's laid
+  out large, for the room's screen, with no smaller layout. Agree
+  (`PlanningAgreeSheet`) ticks who was here, edits the breakdown, makes the parent (the planned
+  issue, or a new one) and sub-issues on the workflow board, then commits the plan and
+  requirement (`PlanningDocuments`, front matter with `agreed_by`) in one commit, records
+  `PlanningInfo.agreed` and tells claude. Documents dropped on the
   terminal or picked in the panel are each confirmed (`ShareDocumentsSheet`: share, and
   separately whether it may be committed), copied to `.worktrees/plan-<slug>/docs/` (Word and
   RTF with a textutil `.txt`), and claude is told which may go in `plans/assets/<slug>/`.
@@ -898,9 +932,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   front matter `use` (work, review, planning, session; all when left out), `default`, `repos` (a
   repo's own defaults replace the general ones for its issues, PRs and reviews) and `skills` (by
   name, from `skills/`, `HarnessSkill`), and the body, with `{{issue}}`, `{{title}}`, `{{url}}`,
-  `{{repo}}`, `{{number}}` and `{{branch}}` filled in. Work on This, Review with Claude and
-  planning show `SessionLaunchSheet` / `PromptPickerSections` (`SessionLaunch.swift`) when there's
-  anything to pick: prompts with the defaults ticked, skills, and a note. What's picked goes in
+  `{{repo}}`, `{{number}}` and `{{branch}}` filled in. Work on This and Review with Claude show
+  `SessionLaunchSheet` / `PromptPickerSections` (`SessionLaunch.swift`) when there's anything to
+  pick: prompts with the defaults ticked, skills, and a note. What's picked goes in
   `CodeSession.instructions`, added to the first prompt (`SessionScript.firstPrompt`); a review's
   keeps its JSON ending. Starts with no sheet (notifications, the menu bar, Review the Changes) take
   the defaults. `session` prompts are in the composer's and Agents' prompt menus. Settings >

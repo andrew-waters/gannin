@@ -32,6 +32,7 @@ struct SessionsWindow: View {
     var body: some View {
         let selected = sessions.selectedTab.flatMap { sessions.sessions[$0] }
         VStack(spacing: 0) {
+            Divider()
             SessionTabBar()
             Divider()
             if sessions.showingOverview {
@@ -58,11 +59,15 @@ struct SessionsWindow: View {
         .onDisappear { sessions.windowIsKey = false }
     }
 
-    /// A review's own layout, else the session's terminal and panel.
+    /// A review's or a planning session's own layout, else the session's
+    /// terminal and panel.
     @ViewBuilder
     private func content(_ session: CodeSession, compact: Bool) -> some View {
         if session.isPullRequestReview {
             PullRequestReviewView(session: session)
+                .id(session.id)
+        } else if session.isPlanning {
+            PlanningWorkspaceView(session: session)
                 .id(session.id)
         } else {
             SessionTab(session: session, compact: compact)
@@ -119,7 +124,7 @@ private struct SessionTabBar: View {
             addMenu
                 .padding(.horizontal, 8)
         }
-        .frame(height: 30)
+        .frame(height: 56)
         .background(.bar)
         .sheet(isPresented: Binding(get: { planningOrg != nil }, set: { if !$0 { planningOrg = nil } })) {
             if let planningOrg { NewPlanningSheet(org: planningOrg) }
@@ -172,6 +177,39 @@ private struct SessionTabBar: View {
     }
 }
 
+/// What a tab says it is: a plan, a review or code, with the issue or PR
+/// it's about and its title without the kind in front.
+private struct TabKind {
+    let name: String
+    let symbol: String
+    let reference: String?
+    let title: String
+
+    init(_ session: CodeSession) {
+        if let planning = session.planning {
+            name = "Plan"
+            symbol = "list.bullet"
+            reference = planning.issue?.reference
+            title = planning.state?.title ?? planning.topic
+        } else if session.isPullRequestReview {
+            name = "Review"
+            symbol = "arrow.triangle.pull"
+            reference = session.issue.reference
+            title = session.issue.title
+        } else if session.isHelper {
+            name = session.role ?? "Helper"
+            symbol = session.isReviewer ? "arrow.triangle.pull" : "person.2"
+            reference = session.issue.reference
+            title = session.issue.title
+        } else {
+            name = "Code"
+            symbol = "arrow.triangle.branch"
+            reference = session.issue.reference
+            title = session.issue.title
+        }
+    }
+}
+
 private struct SessionTabItem: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
@@ -182,26 +220,37 @@ private struct SessionTabItem: View {
     var body: some View {
         let state = sessions.state(session.id)
         let waiting = sessions.attention[session.id] != nil
-        HStack(spacing: 6) {
+        let kind = TabKind(session)
+        HStack(spacing: 8) {
             Circle().fill(state.color).frame(width: 7, height: 7)
                 .overlay {
                     if waiting { Circle().stroke(state.color, lineWidth: 1.5).frame(width: 13, height: 13) }
                 }
-            if session.issue.number > 0 {
-                Text("#\(String(session.issue.number))")
-                    .foregroundStyle(.secondary)
+            // What it is, as tall as both lines.
+            Image(systemName: kind.symbol)
+                .font(.system(size: 20))
+                .foregroundStyle(isSelected ? Color.accentColor : .secondary)
+                .frame(width: 26)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                // What it is and what it's about, then its title.
+                HStack(spacing: 6) {
+                    Text(kind.name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    if let reference = kind.reference {
+                        Text(reference)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                    }
+                }
+                Text(kind.title)
+                    .fontWeight(waiting ? .semibold : .regular)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             }
-            if session.isPlanning {
-                Image(systemName: "list.bullet.clipboard")
-                    .foregroundStyle(.secondary)
-            } else if session.isHelper || session.isPullRequestReview {
-                Image(systemName: session.isReviewer ? "eye" : "person.2")
-                    .foregroundStyle(.secondary)
-            }
-            Text(session.title)
-                .fontWeight(waiting ? .semibold : .regular)
-                .lineLimit(1)
-                .truncationMode(.tail)
             Spacer(minLength: 0)
             Button {
                 sessions.closeTab(session.id)
@@ -217,9 +266,15 @@ private struct SessionTabItem: View {
         .font(.callout)
         .padding(.leading, 10)
         .padding(.trailing, 6)
-        .frame(width: 210)
+        .frame(width: 250)
         .frame(maxHeight: .infinity)
-        .background(isSelected ? Color(nsColor: .controlBackgroundColor) : .clear)
+        // The tab shown, in the accent colour with a line across its top.
+        .background(isSelected ? Color.accentColor.opacity(0.18) : .clear)
+        .overlay(alignment: .top) {
+            if isSelected {
+                Rectangle().fill(Color.accentColor).frame(height: 2)
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
             sessions.showingOverview = false
