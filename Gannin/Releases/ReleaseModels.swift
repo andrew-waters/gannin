@@ -74,8 +74,9 @@ struct ReleaseRepository: Codable, Hashable, Identifiable {
 /// Each org's milestones (open ones and those closed lately), every
 /// release of each repo, and the stars of those with releases.
 struct ReleaseHistory: Codable {
-    /// 2 added pull request counts; 3 every release, assets, repos and stars.
-    static let currentVersion = 3
+    /// 2 added pull request counts; 3 every release, assets, repos and stars;
+    /// 4 who the stargazers are.
+    static let currentVersion = 4
 
     let version: Int
     let orgLogin: String
@@ -89,8 +90,8 @@ struct ReleaseHistory: Codable {
 }
 
 /// When a repo's current stargazers starred it, as stars per day, from
-/// GitHub's `starredAt`. Those who unstarred are gone from it, as they are
-/// from any star history built this way.
+/// GitHub's `starredAt`, and who they are. Those who unstarred are gone from
+/// it, as they are from any star history built this way.
 struct StarHistory: Codable, Hashable {
     /// Stars a day, by the day's start, oldest first.
     var days: [StarDay]
@@ -99,24 +100,43 @@ struct StarHistory: Codable, Hashable {
     /// Stars older than the backfill reached (it stops at
     /// `ReleaseStore.starReach`), counted before the first day.
     var before: Int
+    /// Who starred it, newest first, as far as the backfill reached.
+    var stargazers: [Stargazer]
 
     struct StarDay: Codable, Hashable {
         let day: Date
         var count: Int
     }
 
-    /// Adds stars (any order) to their days.
-    mutating func add(_ dates: [Date], calendar: Calendar = .current) {
-        guard !dates.isEmpty else { return }
+    /// Adds stars (any order) to their days, and their stargazers.
+    mutating func add(_ stars: [Stargazer], calendar: Calendar = .current) {
+        guard !stars.isEmpty else { return }
         var counts = Dictionary(days.map { ($0.day, $0.count) }, uniquingKeysWith: +)
-        for date in dates { counts[calendar.startOfDay(for: date), default: 0] += 1 }
+        for star in stars { counts[calendar.startOfDay(for: star.starredAt), default: 0] += 1 }
         days = counts.map { StarDay(day: $0.key, count: $0.value) }.sorted { $0.day < $1.day }
-        newest = max(newest ?? .distantPast, dates.max() ?? .distantPast)
+        newest = max(newest ?? .distantPast, stars.map(\.starredAt).max() ?? .distantPast)
+        let known = Set(stars.map(\.login))
+        stargazers = Array((stars + stargazers.filter { !known.contains($0.login) })
+            .sorted { $0.starredAt > $1.starredAt }
+            .prefix(ReleaseStore.starReach))
     }
 
     func gained(since start: Date) -> Int {
         days.filter { $0.day >= start }.reduce(0) { $0 + $1.count }
     }
+}
+
+/// Someone starring a repo: who they are, as GitHub's profile has it, and when.
+struct Stargazer: Codable, Hashable {
+    let login: String
+    let name: String?
+    let avatarURL: URL?
+    let company: String?
+    let location: String?
+    let followers: Int
+    let starredAt: Date
+
+    var profileURL: URL? { URL(string: "https://github.com/\(login)") }
 }
 
 /// Download totals recorded once a day: GitHub only keeps each asset's
@@ -172,6 +192,26 @@ struct ReleaseUsage {
     let starsGained: [String: Int]
     /// Stars that came before the backfill's reach, counted at the start.
     let starsBefore: Int
+    /// New stars by week, or by month over a longer history, by the bucket's start.
+    let newStars: [Point]
+    let newStarsBucket: StarBucket
+    /// Every repo's stargazers, newest first.
+    let stargazers: [RepoStargazer]
+
+    /// How new stars are counted: by week (from Monday) until the history
+    /// runs longer than `weeklyReach`, then by month.
+    enum StarBucket {
+        case week, month
+
+        static let weeklyReach: TimeInterval = 182 * 24 * 60 * 60
+
+        func start(of date: Date) -> Date {
+            switch self {
+            case .week: Calendar.metrics.startOfWeek(for: date)
+            case .month: Calendar.metrics.dateInterval(of: .month, for: date)?.start ?? date
+            }
+        }
+    }
 
     static let lately: TimeInterval = 30 * 24 * 60 * 60
 
@@ -208,7 +248,40 @@ struct ReleaseUsage {
             points.append(Point(date: calendar.startOfDay(for: now), value: last.value))
         }
         starsOverTime = points
+
+        let firstStar = perDay.keys.min() ?? now
+        let bucket: StarBucket = now.timeIntervalSince(firstStar) > StarBucket.weeklyReach ? .month : .week
+        newStarsBucket = bucket
+        newStars = Self.newStars(perDay, bucket: bucket)
+        stargazers = repositories
+            .flatMap { repo in (history.stars[repo.name]?.stargazers ?? []).map { RepoStargazer(repo: repo.name, stargazer: $0) } }
+            .sorted { $0.stargazer.starredAt > $1.stargazer.starredAt }
     }
+
+    /// Stars per day added up by bucket, with empty buckets between the
+    /// first and last as zero, so quiet spells show.
+    static func newStars(_ perDay: [Date: Int], bucket: StarBucket) -> [Point] {
+        var counts: [Date: Int] = [:]
+        for (day, count) in perDay { counts[bucket.start(of: day), default: 0] += count }
+        guard let first = counts.keys.min(), let last = counts.keys.max() else { return [] }
+        var points: [Point] = []
+        var start = first
+        while start <= last {
+            points.append(Point(date: start, value: counts[start] ?? 0))
+            let component: Calendar.Component = bucket == .week ? .weekOfYear : .month
+            guard let next = Calendar.metrics.date(byAdding: component, value: 1, to: start) else { break }
+            start = bucket.start(of: next)
+        }
+        return points
+    }
+}
+
+/// A stargazer of one of the repos shown.
+struct RepoStargazer: Identifiable, Hashable {
+    let repo: String
+    let stargazer: Stargazer
+
+    var id: String { "\(repo)\u{0}\(stargazer.login)" }
 }
 
 /// Milestones with the same title across repos, as one: teams often run a
