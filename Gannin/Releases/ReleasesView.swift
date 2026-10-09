@@ -1,15 +1,15 @@
 import SwiftUI
 
-/// Delivery › Releases: the org's milestones, grouped by title across repos,
-/// with GitHub's progress (closed of all issues) and what the issue history
-/// says is in progress and merged; and its GitHub Releases, with downloads
-/// and stars over time, the repos with releases and every release, each
-/// linked to the milestone it shipped. Milestones and Releases are picked in
-/// the toolbar.
+/// Delivery › Releases: the org's GitHub Releases, with downloads and stars
+/// over time, the repos with releases, every release (each linked to the
+/// milestone it shipped) and their stargazers, for every repo or one; and its
+/// milestones, grouped by title across repos, with GitHub's progress (closed
+/// of all issues) and what the issue history says is in progress and merged.
+/// Releases (first) and Milestones are picked in the toolbar.
 struct ReleasesView: View {
     enum Part: String, CaseIterable {
-        case milestones = "Milestones"
         case releases = "Releases"
+        case milestones = "Milestones"
     }
 
     @Environment(ReleaseStore.self) private var store
@@ -18,7 +18,9 @@ struct ReleasesView: View {
     @Environment(\.navigate) private var navigate
     @Environment(\.openURL) private var openURL
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
-    @SceneStorage("releasesPart") private var part: Part = .milestones
+    @SceneStorage("releasesPart") private var part: Part = .releases
+    /// The repo the Releases part shows, empty for all of them.
+    @SceneStorage("releasesRepo") private var repo = ""
     let org: String
     @State private var search = ""
     @State private var showsClosed = false
@@ -28,9 +30,14 @@ struct ReleasesView: View {
         let config = configs.config(for: org)
         let history = store.history(for: org)
         let groups = MilestoneGroup.groups(history?.milestones ?? [], excluding: config.repoExclusion)
+        let repos = (history?.repositories ?? []).map(\.name).filter { !config.repoExclusion.contains($0) }
+        // A repo picked that's gone from view (excluded, or no releases now) is all of them.
+        let picked = repos.contains(repo) ? repo : ""
+        let included: (String) -> Bool = { !config.repoExclusion.contains($0) && (picked.isEmpty || $0 == picked) }
         let releases = (history?.releases ?? []).filter { !config.repoExclusion.contains($0.repo) }
+        let releasesInView = releases.filter { included($0.repo) }
         VStack(spacing: 0) {
-            bar(count: part == .milestones ? shownMilestones(groups).count : shownReleases(releases).count)
+            bar(count: part == .milestones ? shownMilestones(groups).count : shownReleases(releasesInView).count, repos: repos, picked: picked)
             Divider()
             if let history {
                 switch part {
@@ -40,13 +47,15 @@ struct ReleasesView: View {
                         usage: ReleaseUsage(
                             history: history,
                             downloadHistory: store.downloadHistory(for: org),
-                            releases: releases,
-                            included: { !config.repoExclusion.contains($0) }
+                            releases: releasesInView,
+                            included: included
                         ),
-                        releases: releases,
-                        shown: shownReleases(releases),
+                        releases: releasesInView,
+                        shown: shownReleases(releasesInView),
                         groups: groups,
-                        search: $search
+                        stars: history.stars.filter { included($0.key) },
+                        syncedAt: history.syncedAt,
+                        repo: $repo
                     )
                 }
             } else {
@@ -76,13 +85,15 @@ struct ReleasesView: View {
         }
     }
 
-    private func bar(count: Int) -> some View {
+    private func bar(count: Int, repos: [String], picked: String) -> some View {
         HStack(spacing: 10) {
             FilterSearchField(text: $search, prompt: part == .milestones ? "Search milestones" : "Search releases")
                 .frame(maxWidth: 280)
             switch part {
             case .milestones: Toggle("Closed too", isOn: $showsClosed).checkboxToggle()
-            case .releases: Toggle("Pre-releases", isOn: $showsPrereleases).checkboxToggle()
+            case .releases:
+                if repos.count > 1 { repositoryMenu(repos, picked: picked) }
+                Toggle("Pre-releases", isOn: $showsPrereleases).checkboxToggle()
             }
             Spacer()
             let noun = part == .milestones ? "milestone" : "release"
@@ -91,6 +102,26 @@ struct ReleasesView: View {
         .controlSize(.small)
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
+    }
+
+    /// Every repo with releases, or one: the tiles, charts and tables follow it.
+    private func repositoryMenu(_ repos: [String], picked: String) -> some View {
+        Menu {
+            Picker("Repository", selection: $repo) {
+                Text("All Repositories").tag("")
+                Divider()
+                ForEach(repos.sorted { $0.localizedStandardCompare($1) == .orderedAscending }, id: \.self) {
+                    Text(Self.repoName($0)).tag($0)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(picked.isEmpty ? "All Repositories" : Self.repoName(picked)).lineLimit(1)
+        }
+        .fixedSize()
+        .tint(picked.isEmpty ? nil : .accentColor)
+        .help(picked.isEmpty ? "Show one repository's releases, downloads and stars" : "Showing \(picked) only")
     }
 
     private var words: [Substring] { search.lowercased().split(separator: " ") }

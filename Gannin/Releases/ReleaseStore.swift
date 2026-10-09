@@ -2,7 +2,8 @@ import Foundation
 import Observation
 
 /// Each org's milestones and GitHub Releases (every release of each repo,
-/// with its assets' downloads, and the stars of repos with releases),
+/// with its assets' downloads, and the stars and stargazers of repos with
+/// releases),
 /// persisted as JSON in Application Support and fetched again after its
 /// interval (Settings › Sync). Only fetched once the Releases page has been opened for an org;
 /// Refresh includes it from then on. Each sync records the day's download
@@ -51,7 +52,7 @@ final class ReleaseStore {
         let run = activity.begin(.releases, org: org)
         run.add("repos", title: "Milestones and releases", detail: "Repositories pushed to in the last year")
         run.add("more", title: "Older releases", detail: "Repositories with more than 25")
-        run.add("stars", title: "Stars", detail: "When each stargazer starred a repository with releases")
+        run.add("stars", title: "Stars", detail: "Who starred each repository with releases, and when")
 
         do {
             var fetched = try await run.track("repos", count: { $0.milestones.count + $0.releases.count }) { progress in
@@ -149,12 +150,13 @@ final class ReleaseStore {
     /// counted at the start.
     private static func stars(_ repo: ReleaseRepository, after previous: StarHistory?, api: GitHubAPI) async throws -> StarHistory {
         if var history = previous, history.newest != nil {
-            history.add(try await api.starDates(repo: repo.name, since: history.newest, limit: starReach).dates)
+            let fetched = try await api.stargazers(repo: repo.name, since: history.newest, limit: starReach)
+            history.add(fetched.dates, stargazers: fetched.stargazers)
             return history
         }
-        let fetched = try await api.starDates(repo: repo.name, since: nil, limit: starReach)
-        var history = StarHistory(days: [], newest: nil, before: 0)
-        history.add(fetched.dates)
+        let fetched = try await api.stargazers(repo: repo.name, since: nil, limit: starReach)
+        var history = StarHistory(days: [], newest: nil, before: 0, stargazers: [])
+        history.add(fetched.dates, stargazers: fetched.stargazers)
         if !fetched.reachedEnd { history.before = max(repo.stars - fetched.dates.count, 0) }
         return history
     }

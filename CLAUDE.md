@@ -505,8 +505,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 
 ## Milestones and GitHub Releases
 
-- `Gannin/Releases/`: Delivery › Releases (`ReleasesView`, `WorkloadTab.releases`), with Milestones
-  and Releases picked in the toolbar (`releasesPart` per window). Read-only: nothing is written.
+- `Gannin/Releases/`: Delivery › Releases (`ReleasesView`, `WorkloadTab.releases`), with Releases
+  (first, and where a window opens) and Milestones picked in the toolbar (`releasesPart` per
+  window; andrew-waters/gannin#69, `plans/2026-10-09-releases-first-and-stargazers.md`).
+  Read-only: nothing is written.
 - `ReleaseStore` fetches, in one paged query (`GitHubAPI.milestonesAndReleases`, 25 repos a page),
   every non-archived repo pushed to in the last year, most recent first: its open milestones (25),
   the ten closed most lately, its stars and its 25 newest releases with their assets'
@@ -514,8 +516,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   ones closed) per milestone. Repos with more releases are paged to the end
   (`GitHubAPI.releases(repo:after:)`, 50 a page), and repos with releases
   (`ReleaseRepository`) get their star history (`StarHistory`, stars per day from the
-  stargazers' `starredAt`, newest first and only those since the last sync; the first backfill
-  stops at `ReleaseStore.starReach`, counting older stars at its start), both four repos at once
+  stargazers' `starredAt`, and who they are, `Stargazer`: login, name, avatar, company, location
+  and followers, from the same query, `GitHubAPI.stargazers`; newest first and only those since
+  the last sync; the first backfill stops at `ReleaseStore.starReach`, counting older stars at its
+  start), both four repos at once
   (`eachRepo`). A repo whose stars can't be read keeps what it had. Cached as JSON in Application
   Support/Releases, fetched again after its interval (Settings › Sync), only once the page has been opened for an
   org; Refresh includes it from then on. It's its own sync run (Releases: milestones and
@@ -527,11 +531,18 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Everything removes it (`ReleaseStore.erase`). gannin.ai's Download button and Sparkle download
   the release's own assets, so they count (andrew-waters/gannin#25).
 - The Releases part (`ReleasesOverview`, `ReleaseUsageView.swift`, figures from
-  `ReleaseUsage`) is tiles (downloads with the last 30 days once a snapshot is that old, stars
-  with the last 30 days, releases, latest), Downloads over time from the snapshots, Downloads
-  by release month (each release's downloads so far, by the month it came out) and Stars (a
-  cumulative step line), then Repositories and Releases as `StatsTable`s: clicking a repo
-  searches the releases for it, and a release's downloads cell lists its assets.
+  `ReleaseUsage`) covers every repo with releases or the one picked in the bar's Repository menu
+  (`releasesRepo` per window; clicking a repo in its table picks it, and again shows them all). It
+  is tiles (downloads with the last 30 days once a snapshot is that old, stars with the last 30
+  days, releases, latest), Downloads over time from the snapshots, Downloads by release month
+  (each release's downloads so far, by the month it came out), Stars (a cumulative step line,
+  published releases marked as dashed rules named on hover, for one repo or up to 30), New stars
+  by week from Monday (by month once the history runs past six months, `ReleaseUsage.StarBucket`,
+  quiet ones as zero), then Repositories, Releases and Stargazers as `StatsTable`s: a release's
+  downloads cell lists its assets, and stargazers (`StargazersSection`: avatar, login and name,
+  repo, company, location, followers, starred) have a search of their own, are merged, searched
+  and sorted only when those change, show the first 500 in the table's order, and open their
+  GitHub profile. Accounts GitHub won't describe count as stars but aren't listed.
 - Milestones with the same title (case aside) in different repos are one `MilestoneGroup`: counts
   added up, due the soonest open one's. Progress is GitHub's, closed of all issues and pull requests
   in the milestone; `MilestoneActivity` (looking groups up in `MilestoneGroup.index`, the history's

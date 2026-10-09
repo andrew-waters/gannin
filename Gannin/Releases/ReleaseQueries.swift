@@ -102,12 +102,26 @@ extension GitHubAPI {
         return releases
     }
 
-    /// When a repo's stargazers starred it, newest first, stopping at the
-    /// first at or before `since` (nil for all of them) or after `limit`.
-    /// `reachedEnd` is false when the limit cut it short.
-    func starDates(repo: String, since: Date?, limit: Int) async throws -> (dates: [Date], reachedEnd: Bool) {
+    /// When a repo's stargazers starred it, newest first, and who they are,
+    /// stopping at the first at or before `since` (nil for all of them) or
+    /// after `limit` stars. `stargazers` leaves out accounts GitHub won't
+    /// describe, whose stars are still in `dates`. `reachedEnd` is false when
+    /// the limit cut it short.
+    func stargazers(repo: String, since: Date?, limit: Int) async throws -> (dates: [Date], stargazers: [Stargazer], reachedEnd: Bool) {
         struct Response: Decodable {
-            struct Edge: Decodable { let starredAt: Date }
+            struct Edge: Decodable {
+                struct User: Decodable {
+                    struct Count: Decodable { let totalCount: Int }
+                    let login: String
+                    let name: String?
+                    let avatarUrl: URL?
+                    let company: String?
+                    let location: String?
+                    let followers: Count?
+                }
+                let starredAt: Date
+                let node: Lossy<User>?
+            }
             struct Stargazers: Decodable {
                 let pageInfo: PageInfo
                 let edges: [Edge]
@@ -117,6 +131,7 @@ extension GitHubAPI {
         }
         let (owner, name) = Self.split(repo)
         var dates: [Date] = []
+        var stargazers: [Stargazer] = []
         var cursor: String?
         while dates.count < limit {
             var variables = ["owner": owner, "name": name]
@@ -126,20 +141,30 @@ extension GitHubAPI {
                   repository(owner: $owner, name: $name) {
                     stargazers(first: 100, after: $cursor, orderBy: { field: STARRED_AT, direction: DESC }) {
                       pageInfo { hasNextPage endCursor }
-                      edges { starredAt }
+                      edges {
+                        starredAt
+                        node { login name avatarUrl(size: 64) company location followers { totalCount } }
+                      }
                     }
                   }
                 }
                 """, variables: variables)
-            guard let page = response.repository?.stargazers else { return (dates, true) }
+            guard let page = response.repository?.stargazers else { return (dates, stargazers, true) }
             for edge in page.edges {
-                if let since, edge.starredAt <= since { return (dates, true) }
+                if let since, edge.starredAt <= since { return (dates, stargazers, true) }
                 dates.append(edge.starredAt)
+                // An account GitHub won't describe still counts as a star.
+                guard let user = edge.node?.value else { continue }
+                stargazers.append(Stargazer(
+                    login: user.login, name: user.name, avatarURL: user.avatarUrl,
+                    company: user.company, location: user.location,
+                    followers: user.followers?.totalCount ?? 0, starredAt: edge.starredAt
+                ))
             }
-            guard page.pageInfo.hasNextPage, let next = page.pageInfo.endCursor else { return (dates, true) }
+            guard page.pageInfo.hasNextPage, let next = page.pageInfo.endCursor else { return (dates, stargazers, true) }
             cursor = next
         }
-        return (dates, false)
+        return (dates, stargazers, false)
     }
 
     private static func split(_ repo: String) -> (owner: String, name: String) {
