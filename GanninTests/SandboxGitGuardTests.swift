@@ -34,14 +34,25 @@ struct SandboxGitGuardTests {
         #expect(check(root).ok)
     }
 
-    @Test func configThatRunsThingsIsNamed() throws {
-        let (root, clone, worktree) = try layout()
+    @Test func aRepoTheSandboxMadeIsCheckedForConfigThatRunsThings() throws {
+        let (root, _, _) = try layout()
         defer { try? FileManager.default.removeItem(atPath: root) }
-        _ = Shell.run("git -C \(SessionScript.quoted(clone)) config filter.x.clean evil; git -C \(SessionScript.quoted(clone)) config include.path /tmp/x", .local)
-        let result = check(worktree)
+        // A sandbox can't write the clones' config, but a repo it makes in its folder is all its own.
+        let made = root + "/.worktrees/1-x/made"
+        _ = Shell.run("export GIT_CONFIG_GLOBAL=/dev/null; git init -q \(SessionScript.quoted(made)) && git -C \(SessionScript.quoted(made)) config filter.x.clean evil && git -C \(SessionScript.quoted(made)) config include.path /tmp/x", .local)
+        let result = check(made)
         #expect(!result.ok)
         #expect(result.output.contains("filter.x.clean"))
         #expect(result.output.contains("include.path"))
+    }
+
+    @Test func aClonesOwnSettingsAreItsUsers() throws {
+        let (root, clone, worktree) = try layout()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        // The clones are read-only to sandboxes, so what's in their config is the user's.
+        _ = Shell.run("for kv in commit.gpgsign=true core.sshCommand=ssh-x submodule.a.url=x remote.origin.pushurl=y; do git -C \(SessionScript.quoted(clone)) config \"${kv%%=*}\" \"${kv#*=}\"; done", .local)
+        #expect(check(clone).ok)
+        #expect(check(worktree).ok)
     }
 
     @Test func hooksAndFsmonitorAreOverriddenNotRefused() throws {
@@ -102,9 +113,10 @@ struct SandboxGitGuardTests {
     }
 
     @Test func aFolderStopsAtTheFirstUntrustedWorktree() throws {
-        let (root, clone, _) = try layout()
+        let (root, _, _) = try layout()
         defer { try? FileManager.default.removeItem(atPath: root) }
-        _ = Shell.run("git -C \(SessionScript.quoted(clone)) config core.sshCommand evil", .local)
+        let made = root + "/.worktrees/1-x/made"
+        _ = Shell.run("export GIT_CONFIG_GLOBAL=/dev/null; git init -q \(SessionScript.quoted(made)) && git -C \(SessionScript.quoted(made)) config core.sshCommand evil", .local)
         let result = Shell.run(SandboxGitGuard.folder(SessionScript.quoted(root + "/.worktrees/1-x")) + "\necho ran-git", .local)
         #expect(!result.ok)
         #expect(!result.output.contains("ran-git"))

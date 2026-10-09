@@ -147,6 +147,8 @@ struct SandboxLaunchTests {
         #expect(steps.contains(#"args+=(--mount "type=bind,source=$1,target=$1,readonly")"#))
         #expect(steps.contains("for part in objects refs logs worktrees; do"))
         #expect(steps.contains("ln -s logs/FETCH_HEAD"))
+        // Others' worktrees can't be repointed from inside.
+        #expect(steps.contains(#"case "$(cat "$w/gitdir" 2>/dev/null)" in ("$f"/*) ;; (*) args+=(--mount "type=bind,source=$w,target=$w,readonly") ;; esac"#))
         #expect(steps.contains(#"g=$(find_clone "$repo") && git_dir "$g""#))
         // A failed start takes its credentials with it.
         #expect(steps.contains(#"rm -f "$session/secrets.env""#))

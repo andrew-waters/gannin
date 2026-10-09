@@ -42,6 +42,10 @@ nonisolated enum SandboxGitGuard {
           else
             return 0
           fi
+          # The clones and the harness are mounted read-only, so their config is
+          # the user's own. A git dir in an issue's folder, though, a sandbox
+          # made itself, and its config can name filters or an sshCommand.
+          case "$common" in (*/.worktrees/*) ;; (*) return 0 ;; esac
           bad=$(gannin_untrusted "$common" | tr '\\n' ' ')
           [ -z "$bad" ] || { echo "Gannin won't run git in ${w##*/}: $common/config has ${bad}which a sandbox could have set. Look at it, remove them if they aren't yours, then try again."; return 1; }
         }

@@ -119,6 +119,10 @@ reason, and say so.
   stops it from making git on your Mac run something. A few things don't work in there: branches
   can't be deleted, no upstream is recorded (push with `git push origin HEAD`), and a rebase or
   pull prints a harmless error about `packed-refs.lock`.
+- **It can move branches.** A sandbox can update any branch in the issue's repos, the default
+  branch's local copy included, though nothing it can push without your token's say. Other
+  sessions' worktrees are read-only to it, except ones made on your Mac after its sandbox started,
+  until it next starts.
 - **Its worktrees are its own.** A sandbox can still change what's in the issue's folder, including
   a worktree's `.git` file, or put a repo inside a worktree. Before Gannin runs git in those
   folders (the Changes pane, Finish, opening a file in your editor, Work › Repositories), it checks

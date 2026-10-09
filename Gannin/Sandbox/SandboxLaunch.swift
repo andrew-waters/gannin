@@ -116,6 +116,14 @@ enum SandboxLaunch {
                 fi
                 args+=(--mount "type=bind,source=$1,target=$1,readonly")
                 for part in objects refs logs worktrees; do args+=(--mount "type=bind,source=$1/$part,target=$1/$part"); done
+                # Other sessions' and checkouts' worktrees read-only, so their
+                # commondir and gitdir can't be pointed elsewhere; this issue's
+                # are in its folder, and new ones it makes will be too.
+                for w in "$1"/worktrees/*/; do
+                  w=${w%/}
+                  [ -d "$w" ] || continue
+                  case "$(cat "$w/gitdir" 2>/dev/null)" in ("$f"/*) ;; (*) args+=(--mount "type=bind,source=$w,target=$w,readonly") ;; esac
+                done
               }
               # The harness's own git only when it's the code repo too.
               [ -d "$h/.git" ] && [ ! -d "$h/projects" ] && git_dir "$h/.git"
