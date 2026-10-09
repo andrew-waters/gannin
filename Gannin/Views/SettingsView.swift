@@ -65,6 +65,7 @@ struct GeneralSettings: View {
                 Text("Pull requests and issues")
             }
             SessionSettingsSection()
+            SandboxSettingsSection()
             SessionPromptSettingsSection()
         }
         .formStyle(.grouped)

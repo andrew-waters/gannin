@@ -1264,6 +1264,7 @@ struct HarnessSettingsSection: View {
                 }
             }
             .loadsHarness(org: org)
+            SandboxGitHubTokenSection(org: org)
         } else {
             let repos = (harness.repositories[org] ?? [])
                 .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
