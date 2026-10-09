@@ -43,6 +43,8 @@ struct OrgWorkloadView: View {
                 // Ask is the sidebar's New Ask button now; a window saved
                 // on its old row shows Agents, which lists Ask sessions.
                 AgentsPage(org: org)
+            } else if tab == .agentMetrics {
+                AgentMetricsPage(org: org)
             } else if tab == .epics {
                 EpicsView(org: org)
             } else if tab == .releases {
@@ -217,7 +219,7 @@ struct OrgWorkloadView: View {
         case .repositories: EmptyView()
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
-        case .projects, .actions, .harness, .views, .prioritisation, .planning, .recap, .scorecard, .agents, .ask, .epics, .hygiene, .releases, .settings: EmptyView()
+        case .projects, .actions, .harness, .views, .prioritisation, .planning, .recap, .scorecard, .agents, .agentMetrics, .ask, .epics, .hygiene, .releases, .settings: EmptyView()
         }
     }
 

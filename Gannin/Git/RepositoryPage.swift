@@ -26,12 +26,14 @@ struct RepositoryPage: View {
     var body: some View {
         Group {
             if let local {
-                LocalRepositoryView(repository: local, part: $part, switcher: switcher) { locate() }
+                LocalRepositoryView(org: org, repository: local, part: $part, switcher: switcher) { locate() }
             } else {
                 VStack(spacing: 0) {
                     RepositoryBar {
                         if let switcher { switcher }
                         RepositoryPartPicker(part: $part)
+                        Spacer()
+                        ReviewConfigButton(org: org, repo: repo).fixedSize()
                     }
                     Divider()
                     if looked {
@@ -66,6 +68,7 @@ struct RepositoryPage: View {
 /// A clone's parts, under a bar of its branch, sync and open controls, and
 /// everything they ask about.
 private struct LocalRepositoryView: View {
+    let org: String
     @Bindable var repository: LocalRepository
     @Binding var part: RepositoryPart
     let switcher: RepositorySwitcher?
@@ -84,6 +87,7 @@ private struct LocalRepositoryView: View {
                 RepositoryPartPicker(part: $part)
                 Spacer()
                 Group {
+                    ReviewConfigButton(org: org, repo: repository.repo, repository: repository)
                     syncMenu
                     openMenu
                 }

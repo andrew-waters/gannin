@@ -109,8 +109,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
   Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, once set);
-  and Agents (Waiting on You, then sessions grouped as working on issues, reviews,
-  planning and Ask). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You);
+  and Agents (Metrics, Waiting on You, then sessions grouped as working on issues, reviews,
+  planning and Ask). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You, Metrics);
   raw values stay as windows saved them. `OverviewView` is two pages (`OverviewView.Part`):
   the Dashboard and PR flow (delivery in full). The Issues row is the issue lists; Issue flow is the metrics. Picking a person shows their
   `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
@@ -812,9 +812,20 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Review with Claude (`ReviewWithClaudeButton`, on a PR's drawer and window) starts a review
   session (`CodeSession.reviewOf`, `SessionStore.startReview`): in the harness, edits
   disallowed, told to read the PR with `gh`, check it out in `.worktrees/review-<repo>-<n>/` if
-  it needs to, and end with a JSON object (summary, verdict, findings with path, line,
-  severity, comment and an optional suggestion; `SessionTranscript.review`). Its tab is
-  `PullRequestReviewView`, not a terminal and panel: the PR's files and diff from REST
+  it needs to, and end with a JSON object (headline, summary, verdict, effort 1 to 5, a
+  walkthrough of areas with their files in reading order, an optional flow of steps, findings
+  with path, line, severity, category (`ReviewCategory`, CodeRabbit's six), comment and an
+  optional suggestion; `SessionTranscript.review`, the new fields read leniently). Its tab is
+  `PullRequestReviewView`, not a terminal and panel. It opens on its Overview
+  (`ReviewOverview.swift`, in the spirit of CodeRabbit's): the headline, whether it can merge
+  (`ReviewReadiness`: one sentence, also in the header, from conflicts, draft, review decision,
+  checks and open threads, read with `sessionPullRequests`, and the findings not dismissed),
+  Needs attention in tiers (blocking, fix before merging, waiting on, not blocking; empty ones
+  hidden, each item opening its file, checks or thread), the walkthrough and flow, the
+  description, and a rail of the PR's own comments and reviews with Ask the reviewer (pasted to
+  it, opening the conversation). The file list keeps Comments on this PR, is grouped by the
+  walkthrough's areas in order, and has a findings filter by severity or category; findings show
+  their category. Then the PR's files and diff from REST
   (`reviewedPullRequest`), findings on their lines (Keep, Edit, Dismiss; `ReviewDraft`),
   comments of your own on any line, the summary and verdict, Review Again, and the
   conversation beneath. Post Review (`PostReviewSheet`) sends one review through REST:
@@ -921,6 +932,43 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Review. What happened (`ReviewActivity`, `ReviewEvent`,
   newest 500 in Sessions/ReviewActivity.json) is the Inbox's While you were away section, one
   row per review, until its tab is looked at (`looked`, `markSeen`).
+- Review records (`Sessions/ReviewRecords.swift`, `ReviewRecord`): each review is committed to
+  its harness as `.gannin/reviews/<owner>/<name>/<number>-<reviewer>.json` (snake case): who ran
+  it, verdict, effort, what was posted and when (by hand or automatically), the PR's state, and
+  each finding by key across rounds with severity, category, kept, edited or dismissed, when
+  posted, and when its thread was found resolved (matched by path, author and the start of its
+  text, `reviewOutcome`). `SessionStore.recordReview` writes it when a review is posted (the Post
+  Review sheet's Record it in the harness), posted automatically, finished, or its watched PR
+  merges or closes, only when something changed. Settings > General > Agent, Record reviews in
+  the harness (`recordReviewsInHarness`, on). Agents › Metrics (`AgentMetricsPage`,
+  `WorkloadTab.agentMetrics`) reads them from the window's project's harnesses (the index keeps
+  `.gannin/*.json`), plus reviews on this Mac not recorded yet: tiles (reviews, reviewers,
+  findings posted, acted on, dismissed before posting, effort, posted to merge), posted and
+  acted on by severity and category, reviews a week by reviewer, and Reviewers and Reviews
+  tables, over a range and a reviewer.
+- Review config (`Sessions/ReviewConfig.swift`, `ReviewConfig`, in the spirit of CodeRabbit's
+  `.coderabbit.yaml`): a profile (quiet, chill, assertive), instructions, tone, files to skip
+  (globs, `Glob`), path instructions, checks (each off, warning or error, judged by the reviewer
+  and returned in the JSON's `checks`) and title keywords automatic reviews skip. It's kept in the
+  project's harness as `.gannin/review.json` (`HarnessReviewConfig`: `defaults` and a list of
+  `repos` sections) and optionally in a repo as `.gannin/review.json` on its default branch
+  (`GitHubAPI.repoFile`); `SessionStore.reviewConfig` lays them in that order
+  (`ReviewConfig.Layers`, later wins, lists add up). A review starts with it in its prompt and
+  keeps it (`CodeSession.reviewConfig`): failed checks join the Overview's tiers (error
+  blocking, warning to fix) with a Checks section, and skipped files sit apart in the file list.
+  Edited in `ReviewConfigSheet` from Review Config on a repository's page bar: the repo's section
+  in the harness, the project's defaults (each one commit) or the repo's own file, written into
+  the clone to commit. Posting results to GitHub as statuses isn't done yet.
+- Ready for your approval (`Sessions/ApprovalQueue.swift`): automatic reviews never approve, and
+  one Claude would approve with nothing to say isn't posted at all (`holdsForApproval`), so the
+  approval is always yours. `SessionStore.readyForApproval` is a PR whose review says approve,
+  covers its latest commits (`ReviewWatch.hasNewCommits`), isn't running, hasn't been approved
+  from Gannin, and has no draft, failing checks, conflicts or failed error check. Those you're
+  asked to review come first: the Inbox's Ready for your approval section (first, taken out of
+  Needs your review), the Dashboard's Act now (above the rest), and the session flagged as waiting
+  on you with a "Ready for your approval" notification (`noticeApproval`), which counts on the
+  Dock and in Waiting on You. Each opens the review tab, where Post Review starts on Approve,
+  except on commits the review hasn't seen (the Overview's "New commits since this review").
 - Reviews keep a history: the result (`CodeSession.reviewResult`, from the transcript), your
   decisions and comments and when it was posted (`reviewDraft`) are saved with the session.
   Finish (`SessionStore.archiveReview`) ends the reviewer and removes its checkout but keeps it

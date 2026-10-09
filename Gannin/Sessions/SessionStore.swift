@@ -65,6 +65,9 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// without starting claude; and what you made of it.
     var reviewResult: SessionTranscript.ReviewResult? = nil
     var reviewDraft: ReviewDraft? = nil
+    /// The review config it was started with (the harness's and the repo's,
+    /// `ReviewConfig.Layers.resolved`), for its checks and skipped files.
+    var reviewConfig: ReviewConfig? = nil
     /// Finished: in the history, its claude ended and worktrees gone.
     var archivedAt: Date? = nil
     /// A review's PR, watched for new commits and comments to review
@@ -125,6 +128,7 @@ extension CodeSession {
         name = try container.decodeIfPresent(String.self, forKey: .name)
         reviewResult = try container.decodeIfPresent(SessionTranscript.ReviewResult.self, forKey: .reviewResult)
         reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
+        reviewConfig = try? container.decodeIfPresent(ReviewConfig.self, forKey: .reviewConfig)
         archivedAt = try container.decodeIfPresent(Date.self, forKey: .archivedAt)
         watch = try container.decodeIfPresent(ReviewWatch.self, forKey: .watch)
         pullRequestsSeen = try container.decodeIfPresent(Set<String>.self, forKey: .pullRequestsSeen)
@@ -775,7 +779,11 @@ final class SessionStore {
             sendPendingPrompt(id)
             sendPendingFeedback(id)
         case .idle where old == .working:
-            flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false)
+            if let pr = sessions[id]?.reviewOf, readyForApproval(pr.id, whileBusy: true) != nil {
+                noticeApproval(id)
+            } else {
+                flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false)
+            }
         case .working, .starting, .stopped:
             unflag(id)
         default:

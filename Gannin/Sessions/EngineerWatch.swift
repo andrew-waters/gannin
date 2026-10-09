@@ -74,7 +74,9 @@ final class EngineerWatch {
     @ObservationIgnored var startReview: (PullRequestReference) -> Void = { NSWorkspace.shared.open($0.url) }
     /// Starts a review in the background when auto review is on for the
     /// PR's org; true if it started (`AutoReview`, wired in `GanninApp`).
-    @ObservationIgnored var autoReview: (PullRequestReference) async -> Bool = { _ in false }
+    /// Starts an automatic review: true when it started, false to try
+    /// again later, nil when the review config says to leave it alone.
+    @ObservationIgnored var autoReview: (PullRequestReference) async -> Bool? = { _ in false }
     /// Watched reviews looked at again, on their own interval (`AutoReview`).
     @ObservationIgnored var checkWatched: () async -> Void = {}
     /// The budget is low or GitHub has refused: automatic checks wait.
@@ -175,11 +177,16 @@ final class EngineerWatch {
         // Automatic reviews: every request not yet started, the first
         // check's too, as there's room (`AutoReview.maxRunning`).
         var started: Set<String> = []
+        var skipped: Set<String> = []
         for pr in reviews where !pr.isDraft && !dismissed.contains(pr.id) && !autoReviewed.contains(pr.id) {
-            if await autoReview(pr.reference) { started.insert(pr.id) }
+            switch await autoReview(pr.reference) {
+            case true?: started.insert(pr.id)
+            case nil: skipped.insert(pr.id)
+            case false?: break
+            }
         }
         let requested = Set(reviews.map(\.id))
-        let remembered = autoReviewed.union(started).intersection(requested)
+        let remembered = autoReviewed.union(started).union(skipped).intersection(requested)
         if remembered != autoReviewed {
             autoReviewed = remembered
             UserDefaults.standard.set(Array(remembered), forKey: "autoReviewedRequests")

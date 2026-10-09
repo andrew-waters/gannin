@@ -67,6 +67,15 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         var severity: String? = nil
         /// What the line should be instead, for a GitHub suggestion.
         var suggestion: String? = nil
+        /// What it's about (`ReviewCategory`), from a PR review.
+        var category: String? = nil
+    }
+
+    /// One area of a reviewed PR's change, in the order to read them.
+    nonisolated struct WalkthroughArea: Sendable, Hashable, Codable {
+        let title: String
+        let summary: String?
+        let files: [String]
     }
 
     /// A PR review's result: its summary, verdict and findings.
@@ -82,6 +91,24 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         var learnings: [ProposedLearning]? = nil
         /// The harness's learnings that shaped the review, and how.
         var applied: [AppliedLearning]? = nil
+        /// One line on what the PR does.
+        var headline: String? = nil
+        /// How much work reviewing it by hand is, 1 (a glance) to 5.
+        var effort: Int? = nil
+        /// The change in areas, in the order to read them.
+        var walkthrough: [WalkthroughArea]? = nil
+        /// What happens, step by step, when the changed code runs.
+        var flow: [String]? = nil
+        /// How the PR did against the review config's checks.
+        var checks: [CheckResult]? = nil
+    }
+
+    /// One of the review config's checks, as the reviewer judged it.
+    nonisolated struct CheckResult: Sendable, Hashable, Codable {
+        let name: String
+        /// `pass`, `fail` or `inconclusive`.
+        let result: String
+        let reason: String?
     }
 
     /// A learning the reviewer followed: which, where and what it changed,
@@ -409,5 +436,10 @@ nonisolated extension SessionTranscript.ReviewResult {
         resolved = try container.decodeIfPresent([String].self, forKey: .resolved)
         learnings = (try? container.decodeIfPresent([SessionTranscript.ProposedLearning].self, forKey: .learnings)) ?? nil
         applied = (try? container.decodeIfPresent([SessionTranscript.AppliedLearning].self, forKey: .applied)) ?? nil
+        headline = (try? container.decodeIfPresent(String.self, forKey: .headline)) ?? nil
+        effort = ((try? container.decodeIfPresent(Int.self, forKey: .effort)) ?? nil).map { min(5, max(1, $0)) }
+        walkthrough = (try? container.decodeIfPresent([SessionTranscript.WalkthroughArea].self, forKey: .walkthrough)) ?? nil
+        flow = (try? container.decodeIfPresent([String].self, forKey: .flow)) ?? nil
+        checks = (try? container.decodeIfPresent([SessionTranscript.CheckResult].self, forKey: .checks)) ?? nil
     }
 }

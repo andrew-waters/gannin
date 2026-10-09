@@ -91,13 +91,15 @@ extension SessionStore {
             let values = HarnessPromptLibrary.values(reference: "\(pr.repo)#\(pr.number)", title: pr.title, url: pr.url, repo: pr.repo, number: pr.number, branch: branch)
             let instructions = launchInstructions(org: pr.org, setup: setup, use: .review, repos: [pr.repo], choice: choice, values: values)
             let learnings = await reviewLearnings(org: pr.org, harnessRepo: setup.repo, repo: pr.repo, number: pr.number)
-            let session = CodeSession(
+            let config = await reviewConfig(org: pr.org, harness: setup, repo: pr.repo).resolved
+            var session = CodeSession(
                 id: UUID(), issue: IssueReference(org: pr.org, id: pr.id, number: pr.number, title: pr.title, repo: pr.repo, url: pr.url),
                 repo: setup.repo, branch: branch, createdAt: .now, pullRequests: [pr.url],
                 connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
-                role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch, learnings: learnings),
+                role: "Review", prompt: Self.pullRequestReviewPrompt(pr, branch: branch, learnings: learnings, config: config),
                 instructions: instructions.map(Self.reviewInstructions), isReviewer: true, reviewOf: pr
             )
+            session.reviewConfig = config.isEmpty ? nil : config
             let directory = Self.directory(for: session.id)
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let brief = "# Review of \(pr.repo)#\(pr.number): \(pr.title)\n\n\(pr.url.absoluteString)\n"
@@ -137,20 +139,24 @@ extension SessionStore {
 
     /// `learnings` are the harness's for the PR's repo, which the reviewer
     /// follows where they cover the diff.
-    static func pullRequestReviewPrompt(_ pr: PullRequestReference, branch: String, learnings: [HarnessLearning] = []) -> String {
+    static func pullRequestReviewPrompt(_ pr: PullRequestReference, branch: String, learnings: [HarnessLearning] = [], config: ReviewConfig = ReviewConfig()) -> String {
         let name = pr.repo.split(separator: "/").last.map(String.init) ?? pr.repo
         let owner = pr.repo.split(separator: "/").first.map(String.init) ?? pr.repo
         let threads = "gh api graphql -f query='{ viewer { login } repository(owner: \"\(owner)\", name: \"\(name)\") { pullRequest(number: \(pr.number)) { reviewThreads(first: 100) { nodes { id isResolved path line comments(first: 20) { nodes { author { login } body } } } } } } }'"
         let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
+        let configured = config.reviewInstructions.map { "\n\n\($0)" } ?? ""
+        let checksField = config.activeChecks.isEmpty ? "" : #""checks": [{"name": "<a check you were given>", "result": "pass" | "fail" | "inconclusive", "reason": "<why>"}], "#
         return """
             Review pull request \(pr.repo)#\(pr.number), "\(pr.title)" (\(pr.url.absoluteString)). This is a review: don't edit any files.
 
             Read it with `gh pr view \(pr.number) --repo \(pr.repo) --comments` and `gh pr diff \(pr.number) --repo \(pr.repo)`. For more than the diff, the repo's shared clone is `projects/\(name)` (if it isn't there, `gh repo clone \(pr.repo) projects/\(name)`); check the PR out to read around it or run its tests with `git -C projects/\(name) fetch origin pull/\(pr.number)/head && git -C projects/\(name) worktree add --detach "$PWD/.worktrees/\(branch)/\(name)" FETCH_HEAD`. If the harness has no `projects/` folder and is \(pr.repo) itself, use `git -C .` in place of `git -C projects/\(name)` and don't clone it. Read the repo's CLAUDE.md, and the harness's STANDARDS.md, for how the team works.
 
-            Look for bugs, missed cases, security problems, and code that doesn't fit the repo or the issue it's for. Comment only on lines the diff changes or shows. Say what's good in the summary, not as findings.\(learned)
+            Look for bugs, missed cases, security problems, and code that doesn't fit the repo or the issue it's for. Comment only on lines the diff changes or shows. Say what's good in the summary, not as findings.\(learned)\(configured)
 
             End your reply with one fenced ```json block, findings most important first:
-            {"summary": "<a few sentences for the PR's author. When writing lists, use bullet points. Do not duplicate text from your comments.>", "verdict": "approve" | "comment" | "request_changes", "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"], \(HarnessLearning.reviewJSONField)}
+            {"headline": "<one line: what this PR does>", "summary": "<a few sentences for the PR's author. When writing lists, use bullet points. Do not duplicate text from your comments.>", "verdict": "approve" | "comment" | "request_changes", "effort": <1 to 5: how much work reviewing it by hand is, 1 a glance, 5 hours>, "walkthrough": [{"title": "<an area of the change>", "summary": "<what changes there and why, a sentence or two>", "files": ["<path in the repo>"]}], "flow": ["<one step of what happens when the changed code runs>"], "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "category": \(ReviewCategory.promptList), "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"], \(checksField)\(HarnessLearning.reviewJSONField)}
+
+            `walkthrough` splits the change into a few areas in the order a reviewer should read them, every changed file in one. `flow` is only for a change with a path through the code worth tracing (a request, a sync, a job): its steps in order, else leave it empty. Each finding's `category`: correctness (it does the wrong thing or misses a case), data (data integrity, migrations, APIs and integrations), stability (errors, crashes, availability), security (security and privacy), performance (speed and scale), maintainability (readability, structure, tests, fit with the repo).
 
             \(HarnessLearning.reviewJSONInstructions)
 
@@ -496,8 +502,51 @@ struct PullRequestReviewView: View {
     /// enabled until claude's state turns to working, so a second click in
     /// that gap would paste the prompt twice.
     @State private var reviewingAgain = false
+    /// The PR's state on GitHub (conflicts, checks, review decision, open
+    /// threads), for whether it can merge.
+    @State private var status: SessionPullRequest?
+    /// Findings shown: those of one category or severity, or all.
+    @State private var filter: FindingFilter?
 
     private var reference: PullRequestReference { session.reviewOf! }
+
+    /// Findings narrowed to one category or severity.
+    enum FindingFilter: Hashable {
+        case category(ReviewCategory)
+        case severity(ReviewSeverity)
+
+        var title: String {
+            switch self {
+            case .category(let category): category.shortTitle
+            case .severity(let severity): severity.title
+            }
+        }
+
+        func admits(_ finding: SessionTranscript.Finding) -> Bool {
+            switch self {
+            case .category(let category): ReviewCategory(finding.category) == category
+            case .severity(let severity): (ReviewSeverity(finding.severity) ?? .minor) == severity
+            }
+        }
+    }
+
+    private func visible(_ findings: [SessionTranscript.Finding]) -> [SessionTranscript.Finding] {
+        guard let filter else { return findings }
+        return findings.filter(filter.admits)
+    }
+
+    private static let overviewTag = "\u{0}overview"
+
+    private func readiness(_ review: SessionTranscript.ReviewResult?) -> ReviewReadiness {
+        let state = sessions.state(session.id)
+        return ReviewReadiness(
+            status: status, pullRequest: pullRequest, review: review,
+            draft: sessions.reviewDrafts[session.id] ?? ReviewDraft(),
+            isReviewing: sessions.isRunning(session.id) && (state == .working || state == .starting),
+            config: session.reviewConfig,
+            isStale: sessions.sessions[session.id]?.watch?.hasNewCommits == true
+        )
+    }
 
     var body: some View {
         let transcript = sessions.transcripts[session.id]
@@ -526,6 +575,7 @@ struct PullRequestReviewView: View {
             }
         }
         .task(id: session.id) { await load() }
+        .task(id: review?.summary) { await loadStatus() }
         .task(id: reference.id) { await details.load(reference.id) }
         .confirmationDialog("Finish this review?", isPresented: $confirmingFinish) {
             Button("Finish Review") { Task { await sessions.archiveReview(session.id) } }
@@ -545,9 +595,26 @@ struct PullRequestReviewView: View {
             let fetched = try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
             pullRequest = fetched
             error = nil
-            if selectedFile == nil { selectedFile = fetched.files.first?.path }
+            if selectedFile == nil { selectedFile = Self.overviewTag }
         } catch {
             self.error = error.localizedDescription
+        }
+    }
+
+    private func loadStatus() async {
+        guard let api = auth.api else { return }
+        let found = try? await chargingTo(.sessionPullRequests) {
+            try await api.sessionPullRequests(org: reference.org, branch: SessionStore.reviewBranch(reference), urls: [reference.url])
+        }
+        if let found { status = found.pullRequests.first { $0.id == reference.id } }
+    }
+
+    /// Opens what an Overview item points at.
+    private func open(_ action: ReviewReadiness.Action) {
+        switch action {
+        case .file(let path): selectedFile = path
+        case .general: selectedFile = "\u{0}general"
+        case .url(let url): NSWorkspace.shared.open(url)
         }
     }
 
@@ -608,6 +675,12 @@ struct PullRequestReviewView: View {
                         let learnings = await sessions.reviewLearnings(org: reference.org, harnessRepo: session.harnessRepo, repo: reference.repo, number: reference.number)
                         let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
                         sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block, listing in `resolved` the threads now dealt with.\(learned)", to: session.id)
+                        // It's looking at what changed, so the watch needn't.
+                        sessions.update(session.id) { session in
+                            session.watch?.hasNewCommits = false
+                            session.watch?.newComments = 0
+                            session.watch?.changedAt = nil
+                        }
                         await load()
                     }
                 }
@@ -643,12 +716,19 @@ struct PullRequestReviewView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(pullRequest == nil || (review == nil && draft.comments.isEmpty))
             }
-            if let review {
-                HStack(alignment: .top, spacing: 10) {
-                    verdictPill(review.verdict)
-                    MarkdownText(source: review.summary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 10) {
+                if let review { verdictPill(review.verdict) }
+                let ready = readiness(review)
+                Button {
+                    selectedFile = Self.overviewTag
+                } label: {
+                    Label(ready.sentence, systemImage: ready.symbol)
+                        .foregroundStyle(ready.color)
+                        .fontWeight(.medium)
                 }
+                .buttonStyle(.plain)
+                .help("Whether GitHub will take the merge, and what's in the way: see the Overview")
+                if let effort = review?.effort { EffortMeter(effort: effort) }
             }
             if let error {
                 Text(error).font(.caption).foregroundStyle(.red)
@@ -709,77 +789,181 @@ struct PullRequestReviewView: View {
     // MARK: Files
 
     private func fileList(review: SessionTranscript.ReviewResult?) -> some View {
-        let findings = review?.findings ?? []
+        let findings = visible(review?.findings ?? [])
         let drafts = sessions.reviewDrafts[session.id] ?? ReviewDraft()
-        return List(selection: $selectedFile) {
-            if let pullRequest {
-                Label("Comments on this PR", systemImage: "bubble.left.and.bubble.right")
-                    .foregroundStyle(.secondary)
-                    .tag("\u{0}conversation")
-                let general = findings.filter { finding in !pullRequest.files.contains { $0.path == finding.path } }
-                if !general.isEmpty {
-                    Label("\(general.count) not on a changed file", systemImage: "text.bubble")
+        return VStack(spacing: 0) {
+            if !(review?.findings ?? []).isEmpty {
+                filterBar(review?.findings ?? [])
+                Divider()
+            }
+            List(selection: $selectedFile) {
+                if let pullRequest {
+                    let ready = readiness(review)
+                    Label {
+                        Text("Overview")
+                    } icon: {
+                        Image(systemName: ready.symbol).foregroundStyle(ready.color)
+                    }
+                    .tag(Self.overviewTag)
+                    .help("What the PR does, whether it can merge, what needs attention, and its conversation")
+                    Label("Comments on this PR", systemImage: "bubble.left.and.bubble.right")
                         .foregroundStyle(.secondary)
-                        .tag("\u{0}general")
-                }
-                let learningCount = Set(applied(to: pullRequest).map(\.id)).union((review?.applied ?? []).map { appliedLearning($0.learning)?.id ?? $0.learning }).count + (review?.learnings?.count ?? 0)
-                if learningCount > 0 {
-                    Label(learningCount == 1 ? "1 learning" : "\(learningCount) learnings", systemImage: HarnessKind.learnings.systemImage)
-                        .foregroundStyle(.secondary)
-                        .tag("\u{0}learnings")
-                        .help("Learnings from the harness that cover this PR's files, and any the reviewer suggests keeping")
-                }
-                ForEach(pullRequest.files) { file in
-                    let here = findings.filter { $0.path == file.path && drafts.decisions[$0.key] != .dismissed }
-                    let mine = drafts.comments.filter { $0.path == file.path }.count
-                    let existing = pullRequest.existingComments.filter { $0.path == file.path }.count
-                    HStack(spacing: 6) {
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text((file.path as NSString).lastPathComponent).lineLimit(1)
-                            Text((file.path as NSString).deletingLastPathComponent)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.head)
-                        }
-                        Spacer(minLength: 4)
-                        if let worst = here.min(by: { $0.severityRank < $1.severityRank }) {
-                            Text("\(here.count)")
-                                .font(.caption.weight(.semibold).monospacedDigit())
-                                .padding(.horizontal, 6)
-                                .background(worst.severityColor.opacity(0.25), in: Capsule())
-                        }
-                        if existing > 0 {
-                            Image(systemName: "text.bubble").foregroundStyle(.secondary).font(.caption)
-                                .help("\(existing) existing comment\(existing == 1 ? "" : "s")")
-                        }
-                        if mine > 0 {
-                            Image(systemName: "text.bubble.fill").foregroundStyle(Color.accentColor).font(.caption)
-                        }
-                        let learned = learnings(on: file).count
-                        if learned > 0 {
-                            Image(systemName: HarnessKind.learnings.systemImage)
-                                .foregroundStyle(.yellow)
-                                .font(.caption)
-                                .help(learned == 1 ? "A learning covers this file" : "\(learned) learnings cover this file")
+                        .tag("\u{0}conversation")
+                    let general = findings.filter { finding in !pullRequest.files.contains { $0.path == finding.path } }
+                    if !general.isEmpty {
+                        Label("\(general.count) not on a changed file", systemImage: "text.bubble")
+                            .foregroundStyle(.secondary)
+                            .tag("\u{0}general")
+                    }
+                    let learningCount = Set(applied(to: pullRequest).map(\.id)).union((review?.applied ?? []).map { appliedLearning($0.learning)?.id ?? $0.learning }).count + (review?.learnings?.count ?? 0)
+                    if learningCount > 0 {
+                        Label(learningCount == 1 ? "1 learning" : "\(learningCount) learnings", systemImage: HarnessKind.learnings.systemImage)
+                            .foregroundStyle(.secondary)
+                            .tag("\u{0}learnings")
+                            .help("Learnings from the harness that cover this PR's files, and any the reviewer suggests keeping")
+                    }
+                    let config = session.reviewConfig
+                    let skipped = pullRequest.files.filter { config?.ignores($0.path) == true }
+                    let areas = Self.areas(review?.walkthrough ?? [], files: pullRequest.files.filter { config?.ignores($0.path) != true })
+                    ForEach(Array(areas.enumerated()), id: \.offset) { index, area in
+                        Section {
+                            ForEach(area.files) { file in
+                                fileRow(file, findings: findings, drafts: drafts)
+                            }
+                        } header: {
+                            if let title = area.title {
+                                HStack(spacing: 6) {
+                                    AreaNumber(number: index + 1)
+                                    Text(title).lineLimit(1)
+                                }
+                                .help(area.summary ?? title)
+                            } else if areas.count > 1 {
+                                Text("Other files")
+                            }
                         }
                     }
-                    .tag(file.path)
-                    .help(file.path)
+                    if !skipped.isEmpty {
+                        Section {
+                            ForEach(skipped) { file in
+                                fileRow(file, findings: findings, drafts: drafts).foregroundStyle(.secondary)
+                            }
+                        } header: {
+                            Text("Skipped by the review config")
+                                .help("The review config says not to review these, so the reviewer left them alone")
+                        }
+                    }
+                } else {
+                    ProgressView()
                 }
-            } else {
-                ProgressView()
             }
         }
+    }
+
+    /// The PR's files in the walkthrough's areas, in its order, then any it
+    /// didn't name; one untitled group when there's no walkthrough.
+    static func areas(_ walkthrough: [SessionTranscript.WalkthroughArea], files: [ReviewedPullRequest.File]) -> [(title: String?, summary: String?, files: [ReviewedPullRequest.File])] {
+        var placed: Set<String> = []
+        var areas: [(title: String?, summary: String?, files: [ReviewedPullRequest.File])] = []
+        for area in walkthrough {
+            let mine = area.files.compactMap { path in files.first { $0.path == path } }.filter { placed.insert($0.path).inserted }
+            if !mine.isEmpty { areas.append((area.title, area.summary, mine)) }
+        }
+        let rest = files.filter { !placed.contains($0.path) }
+        if !rest.isEmpty { areas.append((nil, nil, rest)) }
+        return areas
+    }
+
+    private func filterBar(_ all: [SessionTranscript.Finding]) -> some View {
+        let categories = ReviewCategory.allCases.map { category in (category, all.filter { ReviewCategory($0.category) == category }.count) }.filter { $0.1 > 0 }
+        let severities = ReviewSeverity.allCases.map { severity in (severity, all.filter { (ReviewSeverity($0.severity) ?? .minor) == severity }.count) }.filter { $0.1 > 0 }
+        return HStack(spacing: 6) {
+            Menu {
+                Button("All Findings (\(all.count))") { filter = nil }
+                Section("Severity") {
+                    ForEach(severities, id: \.0) { severity, count in
+                        Toggle("\(severity.title) (\(count))", isOn: Binding(get: { filter == .severity(severity) }, set: { filter = $0 ? .severity(severity) : nil }))
+                    }
+                }
+                if !categories.isEmpty {
+                    Section("Category") {
+                        ForEach(categories, id: \.0) { category, count in
+                            Toggle(isOn: Binding(get: { filter == .category(category) }, set: { filter = $0 ? .category(category) : nil })) {
+                                Label("\(category.title) (\(count))", systemImage: category.systemImage)
+                            }
+                        }
+                    }
+                }
+            } label: {
+                Label(filter.map { "Findings: \($0.title)" } ?? "All findings", systemImage: "line.3.horizontal.decrease.circle\(filter == nil ? "" : ".fill")")
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            Spacer()
+            if filter != nil {
+                Button("Clear") { filter = nil }.buttonStyle(.borderless).font(.caption)
+            }
+        }
+        .font(.callout)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private func fileRow(_ file: ReviewedPullRequest.File, findings: [SessionTranscript.Finding], drafts: ReviewDraft) -> some View {
+        let here = findings.filter { $0.path == file.path && drafts.decisions[$0.key] != .dismissed }
+        let mine = drafts.comments.filter { $0.path == file.path }.count
+        let existing = (pullRequest?.existingComments ?? []).filter { $0.path == file.path }.count
+        let learned = learnings(on: file).count
+        return HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 1) {
+                Text((file.path as NSString).lastPathComponent).lineLimit(1)
+                Text((file.path as NSString).deletingLastPathComponent)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+            }
+            Spacer(minLength: 4)
+            if let worst = here.min(by: { $0.severityRank < $1.severityRank }) {
+                Text("\(here.count)")
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .padding(.horizontal, 6)
+                    .background(worst.severityColor.opacity(0.25), in: Capsule())
+            }
+            if existing > 0 {
+                Image(systemName: "text.bubble").foregroundStyle(.secondary).font(.caption)
+                    .help("\(existing) existing comment\(existing == 1 ? "" : "s")")
+            }
+            if mine > 0 {
+                Image(systemName: "text.bubble.fill").foregroundStyle(Color.accentColor).font(.caption)
+            }
+            if learned > 0 {
+                Image(systemName: HarnessKind.learnings.systemImage)
+                    .foregroundStyle(.yellow)
+                    .font(.caption)
+                    .help(learned == 1 ? "A learning covers this file" : "\(learned) learnings cover this file")
+            }
+        }
+        .tag(file.path)
+        .help(file.path)
     }
 
     // MARK: Diff
 
     @ViewBuilder
     private func diffColumn(review: SessionTranscript.ReviewResult?) -> some View {
-        let findings = review?.findings ?? []
+        let findings = visible(review?.findings ?? [])
         if let pullRequest {
-            if selectedFile == "\u{0}conversation" {
+            if selectedFile == Self.overviewTag {
+                ReviewOverview(
+                    session: session, reference: reference, pullRequest: pullRequest, review: review,
+                    readiness: readiness(review), status: status, canAsk: sessions.isRunning(session.id),
+                    open: open, ask: { text in
+                        guard sessions.submit(text, to: session.id) else { return false }
+                        conversation = true
+                        return true
+                    }
+                )
+            } else if selectedFile == "\u{0}conversation" {
                 List { DescriptionSections(id: reference.id, url: reference.url) }
             } else if selectedFile == "\u{0}general" {
                 let general = findings.filter { finding in !pullRequest.files.contains { $0.path == finding.path } }
@@ -1280,6 +1464,9 @@ private struct FindingCard: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 1)
                     .background(finding.severityColor.opacity(0.25), in: Capsule())
+                if let category = ReviewCategory(finding.category) {
+                    CategoryChip(category: category)
+                }
                 Image(systemName: "sparkle").font(.caption).foregroundStyle(.orange)
                 Text("Claude").font(.caption).foregroundStyle(.secondary)
                 if showsLocation {
@@ -1458,6 +1645,7 @@ private struct PostReviewSheet: View {
     /// Posted, with threads left that GitHub didn't resolve: Post only
     /// tries those again.
     @State private var isPosted = false
+    @AppStorage(SessionStore.recordReviewsKey) private var recordsReview = true
 
     private var reference: PullRequestReference { session.reviewOf! }
 
@@ -1540,12 +1728,20 @@ private struct PostReviewSheet: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Section {
+                Toggle("Record it in the harness", isOn: $recordsReview)
+                    .checkboxToggle()
+            } footer: {
+                Text("One commit to \(session.harnessRepo ?? "the harness") with the findings, what you made of them, and later whether their threads were resolved, for Agents › Metrics. It names you as the reviewer.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             if let error {
                 Text(error).foregroundStyle(.red).font(.callout)
             }
         }
         .formStyle(.grouped)
-        .frame(width: 620, height: 600)
+        .frame(width: 620, height: 640)
         .task { await loadThreads() }
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
@@ -1555,7 +1751,9 @@ private struct PostReviewSheet: View {
             }
         }
         .onAppear {
-            event = switch isOwn ? nil : review?.verdict {
+            // Not an approval of commits the review hasn't seen.
+            let isStale = sessions.sessions[session.id]?.watch?.hasNewCommits == true
+            event = switch isOwn || isStale ? nil : review?.verdict {
             case "approve": "APPROVE"
             case "request_changes": "REQUEST_CHANGES"
             default: "COMMENT"
@@ -1607,6 +1805,10 @@ private struct PostReviewSheet: View {
                 }
             }
             sending = false
+            if recordsReview {
+                let id = session.id
+                Task { await sessions.recordReview(id, posting: true) }
+            }
             if failed.isEmpty {
                 dismiss()
             } else {
