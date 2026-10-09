@@ -33,11 +33,16 @@ nonisolated enum SandboxCredentials {
 
     // MARK: Claude
 
-    /// How Claude Code signs in inside a sandbox: the user's choice.
+    /// How Claude Code signs in inside a sandbox: the user's choice. Gannin
+    /// never holds a Claude subscription's credentials (Anthropic's terms:
+    /// sign-in completes through its own flow, and developers may not
+    /// collect, store or intermediate them), so for a subscription claude
+    /// signs in inside the sandbox and keeps its own login in the folder
+    /// every sandbox shares (`claudeFolder`); only an API key is passed in.
     enum ClaudeKind: String, CaseIterable, Identifiable, Sendable {
-        /// A long-lived token from `claude setup-token`, on the user's
-        /// subscription.
-        case subscription
+        /// Claude's own sign-in, inside the sandbox. The raw value is the
+        /// older setting's, so a choice made before still reads.
+        case signIn = "subscription"
         /// An Anthropic API key, billed to the API.
         case apiKey
 
@@ -45,63 +50,50 @@ nonisolated enum SandboxCredentials {
 
         var name: String {
             switch self {
-            case .subscription: "Subscription token"
+            case .signIn: "Sign in with Claude"
             case .apiKey: "API key"
-            }
-        }
-
-        /// The variable Claude Code reads it from.
-        var environmentName: String {
-            switch self {
-            case .subscription: "CLAUDE_CODE_OAUTH_TOKEN"
-            case .apiKey: "ANTHROPIC_API_KEY"
-            }
-        }
-
-        /// What one looks like, to say when a pasted value doesn't.
-        var prefix: String {
-            switch self {
-            case .subscription: "sk-ant-oat"
-            case .apiKey: "sk-ant-api"
             }
         }
     }
 
     static var claudeKind: ClaudeKind {
-        UserDefaults.standard.string(forKey: claudeKindKey).flatMap(ClaudeKind.init(rawValue:)) ?? .subscription
+        UserDefaults.standard.string(forKey: claudeKindKey).flatMap(ClaudeKind.init(rawValue:)) ?? .signIn
     }
 
-    /// Each kind is kept apart, so switching back finds the other.
-    static func claudeCredential(_ kind: ClaudeKind) -> String? {
-        Keychain.value(service: service, account: "claude-\(kind.rawValue)")
+    /// The API key sandboxes are given when the user picks one.
+    static var apiKey: String? {
+        Keychain.value(service: service, account: "claude-apiKey")
     }
 
-    static func setClaudeCredential(_ value: String?, _ kind: ClaudeKind) {
-        let account = "claude-\(kind.rawValue)"
+    static func setAPIKey(_ value: String?) {
         if let value = value?.trimmingCharacters(in: .whitespacesAndNewlines), !value.isEmpty {
-            Keychain.setValue(value, service: service, account: account)
+            Keychain.setValue(value, service: service, account: "claude-apiKey")
         } else {
-            Keychain.clear(service: service, account: account)
+            Keychain.clear(service: service, account: "claude-apiKey")
         }
     }
 
-    /// The token `claude setup-token` printed, found in its terminal's text:
-    /// the line it starts on, and the lines after while they're more of it
-    /// (the terminal wraps a long token), up to a blank line or words.
-    static func setupToken(in text: String) -> String? {
-        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map { $0.trimmingCharacters(in: .whitespaces) }
-        guard let start = lines.firstIndex(where: { $0.contains("sk-ant-oat") }),
-              let first = lines[start].firstMatch(of: #/sk-ant-oat[0-9A-Za-z_\-]+/#) else { return nil }
-        var token = String(first.output)
-        // Only a token that reached the line's end can carry on below.
-        if lines[start].hasSuffix(token) {
-            for line in lines[(start + 1)...] {
-                guard !line.isEmpty, line.wholeMatch(of: #/[0-9A-Za-z_\-]+/#) != nil else { break }
-                token += line
-            }
-        }
-        return token.count >= 30 ? token : nil
+    /// What an API key starts with, to say when a pasted value doesn't.
+    static let apiKeyPrefix = "sk-ant-api"
+
+    /// A subscription token an earlier build of this branch kept is
+    /// removed: Gannin doesn't hold one.
+    static func removeStoredSubscriptionToken() {
+        Keychain.clear(service: service, account: "claude-subscription")
     }
+
+    /// Claude Code's config folder that every sandbox on this Mac shares, so
+    /// its own login (and settings) carry from one to the next; each issue's
+    /// transcripts are mounted over its `projects/`. Claude writes it, and
+    /// Gannin never reads the login in it.
+    static var claudeFolder: URL {
+        URL.applicationSupportDirectory
+            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
+            .appending(path: "Sandbox/claude", directoryHint: .isDirectory)
+    }
+
+    /// The same on a server, as a shell expression there.
+    static let remoteClaudeFolder = #""$HOME"/.gannin/sandbox/claude"#
 
     // MARK: GitHub
 
@@ -210,12 +202,12 @@ nonisolated enum SandboxCredentials {
 
     // MARK: Readiness
 
-    /// What's still needed before sandboxing can be turned on, in order:
-    /// the Claude credential and the signing key (R18). The org's GitHub
-    /// token is checked when a session starts, as it's per org.
+    /// What's still needed before sandboxing can be turned on, in order: an
+    /// API key when that's the choice, and the signing key (R18). The org's
+    /// GitHub token is checked when a session starts, as it's per org.
     static var missing: [String] {
         var missing: [String] = []
-        if claudeCredential(claudeKind) == nil { missing.append("a Claude \(claudeKind.name.lowercased())") }
+        if claudeKind == .apiKey, apiKey == nil { missing.append("an API key") }
         if signingKey == nil { missing.append("a signing key") }
         return missing
     }

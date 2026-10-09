@@ -23,7 +23,7 @@ Anyone who runs Work on This sessions from Gannin on an Apple Silicon Mac, start
 ## Requirements
 
 1. Settings to turn sandboxing on, which runs setup: detect Apple container, install it with one admin prompt, start its service, set the kernel and build the base image, with progress and plain errors.
-2. Claude Code sign-in for sandboxes: a setup-token subscription token or an Anthropic API key, the user's choice, kept in the keychain.
+2. Claude Code sign-in for sandboxes, the user's choice: Claude's own sign-in inside the sandbox, kept by Claude Code in a folder the user's sandboxes share and never seen or stored by Gannin, or an Anthropic API key kept in the keychain.
 3. A fine-grained GitHub token per org, with guidance to create it, kept in the keychain and passed in as GH_TOKEN.
 4. A sandbox commit signing key, made by Gannin (or pasted in), kept in the keychain, with guidance to add its public key to GitHub, so commits made in a sandbox are signed and carry the user's name and email.
 5. Work on This sessions and their helpers run claude inside a container with only the session's folder and what git needs mounted, by default once sandboxing is on; Host can be picked when a session starts.
@@ -50,8 +50,8 @@ Anyone who runs Work on This sessions from Gannin on an Apple Silicon Mac, start
 - **R3** When sandboxing is on and a Work on This session starts for a repo not marked as needing the Mac, the system shall run its claude inside a container by default, and shall let the user pick Host for that session when it starts.
 - **R4** When a session runs sandboxed, the agent shall be able to read and write the session's worktrees, commit, run the repo's Linux build and tests, push and open a pull request with gh.
 - **R5** When a session runs sandboxed, the agent shall not be able to read the user's home directory, ~/.ssh, keychain, other repos' working trees or other sessions' folders.
-- **R6** When a session runs sandboxed, the only credentials inside shall be the chosen Claude credential (subscription token or API key), the org's fine-grained GitHub token and the sandbox signing key.
-- **R7** When the user sets up sandbox credentials, the system shall let them choose a setup-token subscription token or an API key for Claude, and guide them to create a fine-grained GitHub token per org, storing each in the keychain.
+- **R6** When a session runs sandboxed, the only credentials inside shall be Claude's own login for that user (from its sign-in inside a sandbox) or the chosen API key, the org's fine-grained GitHub token and the sandbox signing key.
+- **R7** When the user sets up sandbox credentials, the system shall let them choose Claude's own sign-in inside the sandbox, completed through Anthropic's flow and never collected, stored or passed on by Gannin, or an API key kept in the keychain, and shall guide them to create a fine-grained GitHub token per org, kept in the keychain.
 - **R8** When a repo is marked as needing the Mac, the system shall start its sessions on the Host and say so on the session.
 - **R9** When a repo has a Containerfile for sandboxes in the harness, the system shall build an image from it on top of the base image, cache it, and rebuild it only when it or the base changes.
 - **R10** When a session runs sandboxed, its state, changed signals, PR detection, Changes, transcript, Activity, questions, modes and pair review shall behave as they do on the Host.

@@ -6,7 +6,7 @@ import SwiftUI
 /// credential, the signing key, and the caps each sandbox gets.
 struct SandboxSettingsSection: View {
     @AppStorage(SandboxCredentials.enabledKey) private var enabled = false
-    @AppStorage(SandboxCredentials.claudeKindKey) private var claudeKind: SandboxCredentials.ClaudeKind = .subscription
+    @AppStorage(SandboxCredentials.claudeKindKey) private var claudeKind: SandboxCredentials.ClaudeKind = .signIn
     @AppStorage(SandboxCredentials.cpusKey) private var cpus = SandboxCredentials.defaultCPUs
     @AppStorage(SandboxCredentials.memoryKey) private var memory = SandboxCredentials.defaultMemoryGB
     @State private var setup = SandboxSetup(box: .local)
@@ -14,7 +14,7 @@ struct SandboxSettingsSection: View {
     @State private var revision = 0
     @State private var credential = ""
     @State private var credentialError: String?
-    @State private var gettingToken = false
+    @State private var signingOut = false
     @State private var pastingKey = false
     @State private var keyText = ""
     @State private var keyError: String?
@@ -65,47 +65,53 @@ struct SandboxSettingsSection: View {
                 ForEach(SandboxCredentials.ClaudeKind.allCases) { Text($0.name).tag($0) }
             }
             .onChange(of: claudeKind) { credential = ""; credentialError = nil }
-            if SandboxCredentials.claudeCredential(claudeKind) != nil {
-                LabeledContent("\(claudeKind.name)") {
-                    HStack {
-                        Text("Saved in the keychain").foregroundStyle(.secondary)
-                        Button("Remove") {
-                            SandboxCredentials.setClaudeCredential(nil, claudeKind)
-                            if enabled { enabled = false }
-                            revision += 1
+            switch claudeKind {
+            case .signIn:
+                Text("The first sandbox asks you to sign in to Claude, in its terminal, through Anthropic's own sign-in: open the link it shows, sign in, and paste the code back. Claude keeps that login in a folder your sandboxes share, so the rest are signed in too. Gannin never sees or stores it.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Sign Out of Claude in Sandboxes") { signingOut = true }
+                    .help("Removes the login your sandboxes share, so the next one asks again")
+            case .apiKey:
+                if SandboxCredentials.apiKey != nil {
+                    LabeledContent("API key") {
+                        HStack {
+                            Text("Saved in the keychain").foregroundStyle(.secondary)
+                            Button("Remove") {
+                                SandboxCredentials.setAPIKey(nil)
+                                if enabled { enabled = false }
+                                revision += 1
+                            }
                         }
                     }
-                }
-            } else {
-                HStack {
-                    SecureField(claudeKind.name, text: $credential, prompt: Text(claudeKind.prefix))
-                    Button("Save", action: saveCredential)
-                        .disabled(credential.trimmingCharacters(in: .whitespaces).isEmpty)
-                    if claudeKind == .subscription {
-                        Button("Get a Token") { gettingToken = true }
+                } else {
+                    HStack {
+                        SecureField("API key", text: $credential, prompt: Text(SandboxCredentials.apiKeyPrefix))
+                        Button("Save", action: saveCredential)
+                            .disabled(credential.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    if let credentialError {
+                        Text(credentialError).font(.caption).foregroundStyle(.red)
                     }
                 }
-                if let credentialError {
-                    Text(credentialError).font(.caption).foregroundStyle(.red)
-                }
+                Text("An Anthropic API key from the Claude Console, billed to the API. Kept in the keychain and passed to each sandbox as ANTHROPIC_API_KEY.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Text(claudeKind == .subscription
-                 ? "A long-lived token on your Claude subscription, from claude setup-token. Get a Token runs it here: sign in in the browser it opens, and the token it prints is filled in."
-                 : "An Anthropic API key from the Claude Console, billed to the API rather than your subscription.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         } header: {
             Text("Claude in a sandbox")
         } footer: {
-            Text("Kept in the keychain and passed to each sandbox as \(claudeKind.environmentName). Your own Claude login on this Mac never goes in.")
+            Text("Each person signs in with their own Claude account or key; never share one. A subscription's sessions all draw on its usage limits, and Pro and Max are for personal use: for a team's work, use Team or Enterprise seats or an API key. Your own Claude login on this Mac never goes in.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .sheet(isPresented: $gettingToken) {
-            SetupTokenSheet { token in
-                SandboxCredentials.setClaudeCredential(token, .subscription)
-                revision += 1
+        .confirmationDialog("Sign out of Claude in your sandboxes?", isPresented: $signingOut) {
+            Button("Sign Out", role: .destructive) {
+                try? FileManager.default.removeItem(at: SandboxCredentials.claudeFolder.appending(path: ".credentials.json"))
             }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The next sandbox asks you to sign in again. Sandboxes running now stay signed in until they stop.")
         }
 
         Section {
@@ -204,11 +210,11 @@ struct SandboxSettingsSection: View {
 
     private func saveCredential() {
         let value = credential.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard value.hasPrefix(claudeKind.prefix) else {
-            credentialError = "That doesn't look like a \(claudeKind.name.lowercased()), which starts \(claudeKind.prefix)."
+        guard value.hasPrefix(SandboxCredentials.apiKeyPrefix) else {
+            credentialError = "That doesn't look like an API key, which starts \(SandboxCredentials.apiKeyPrefix)."
             return
         }
-        SandboxCredentials.setClaudeCredential(value, claudeKind)
+        SandboxCredentials.setAPIKey(value)
         credential = ""
         credentialError = nil
         revision += 1
@@ -297,82 +303,7 @@ struct SandboxSettingsSection: View {
     }
 }
 
-/// Runs `claude setup-token` in a terminal, where its sign-in happens, and
-/// picks the token out of what it prints.
-private struct SetupTokenSheet: View {
-    @Environment(\.dismiss) private var dismiss
-    let onToken: (String) -> Void
-    @State private var terminal: SessionTerminal?
-    @State private var token: String?
-    @State private var finished = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Get a Claude Token").font(.headline)
-            Text("claude setup-token opens your browser to sign in with your Claude subscription, then prints a token that lasts a year. Gannin keeps it in the keychain.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            if let terminal {
-                TokenTerminal(view: terminal.container)
-                    .frame(minWidth: 640, minHeight: 280)
-            }
-            HStack {
-                if token != nil {
-                    Label("Token found", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
-                } else if finished {
-                    Text("No token was printed. Try again, or paste one in Settings.").foregroundStyle(.secondary)
-                }
-                Spacer()
-                Button("Cancel") { close() }
-                Button("Save Token") {
-                    if let token { onToken(token) }
-                    close()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(token == nil)
-            }
-        }
-        .padding(16)
-        .onAppear(perform: start)
-        .task {
-            // The token is printed before claude exits; read it as it comes.
-            while !Task.isCancelled, token == nil {
-                read()
-                try? await Task.sleep(for: .milliseconds(500))
-            }
-        }
-    }
-
-    private func start() {
-        guard terminal == nil else { return }
-        let terminal = SessionTerminal {
-            finished = true
-            read()
-        } onSignal: { _ in }
-        self.terminal = terminal
-        var environment = ProcessInfo.processInfo.environment
-        environment["TERM"] = "xterm-256color"
-        for key in environment.keys where key == "CLAUDECODE" || key.hasPrefix("CLAUDE_CODE_") { environment[key] = nil }
-        let shell = environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
-        terminal.launch(
-            executable: shell,
-            args: ["-l", "-i", "-c", "claude setup-token"],
-            environment: environment.map { "\($0.key)=\($0.value)" },
-            directory: FileManager.default.homeDirectoryForCurrentUser.path
-        )
-    }
-
-    private func read() {
-        guard token == nil, let terminal else { return }
-        token = SandboxCredentials.setupToken(in: terminal.screenLines(last: 200).joined(separator: "\n"))
-    }
-
-    private func close() {
-        terminal?.terminate()
-        dismiss()
-    }
-}
-
+/// A terminal's view, hosted in SwiftUI.
 private struct TokenTerminal: NSViewRepresentable {
     let view: NSView
     func makeNSView(context: Context) -> NSView { view }

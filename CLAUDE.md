@@ -1142,15 +1142,17 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   as `gannin-<repo>:<hash of it and the base>`, built on the box from the checkout. `removeAll` deletes
   labelled containers and images, read from the CLI's JSON.
 - Credentials (`SandboxCredentials`, keychain service `dev.andon.gannin.sandbox`, `Keychain` takes a
-  service and account): the Claude credential (`ClaudeKind`: a `claude setup-token` subscription token
-  as `CLAUDE_CODE_OAUTH_TOKEN`, or an API key as `ANTHROPIC_API_KEY`), a fine-grained GitHub token per
+  service and account): Claude's sign-in (`ClaudeKind`: `.signIn`, claude's own sign-in inside the
+  sandbox, through Anthropic's flow, its login kept by Claude Code in `claudeFolder`, the config folder
+  every sandbox shares, which Gannin never reads; or `.apiKey`, passed as `ANTHROPIC_API_KEY`, the only
+  Claude credential Gannin holds), a fine-grained GitHub token per
   org (`GH_TOKEN`; Create One opens GitHub's new token page filled in, `newGitHubTokenURL`) and a
   signing key (made with `ssh-keygen` or pasted; no passphrase), with the user's git name and email.
   Nothing else goes in: not the user's Claude or gh login, Gannin's token, or SSH keys.
 - Settings › General › Sandbox (`SandboxSettingsSection`): on only once this Mac is ready (service,
   kernel, base image) and the credential and signing key are there (R18); Install or Update asked
-  first; Get a Token runs `claude setup-token` in a terminal sheet and reads the token off it
-  (`setupToken`); the signing key's public half with Add to GitHub; CPUs and memory per sandbox
+  first; Sign Out of Claude in Sandboxes removes the shared login; the signing key's public half
+  with Add to GitHub; CPUs and memory per sandbox
   (`sandbox.cpus`, `sandbox.memoryGB`). Turning it off asks to remove what Gannin made or keep it.
   Remote machines (`RemoteMachinesSection`, with Connect with set) shows the server's container with
   Set Up and Install or Update in `CommandTerminalSheet`. Settings › Harness has the org's GitHub token
@@ -1175,11 +1177,13 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Mac first; `refs/` stays writable, so it can move any branch. Inside,
   `branch.autoSetupMerge`, gc and maintenance are off, branches can't be deleted, and rebase and pull
   print a harmless `packed-refs.lock` error (the sandboxed brief says so, and to push with
-  `git push origin HEAD`). Then the issue's session folder, and its `claude-home` as `/root/.claude`; Gannin's and Orchard's labels
+  `git push origin HEAD`). Then the issue's session folder, the shared `claudeFolder` as
+  `/root/.claude` (claude's own login and settings) with the issue's `claude-home/projects` over its
+  `projects/` (transcripts); Gannin's and Orchard's labels
   (`com.orchard.sandbox`, andrew-waters/orchard#122) and the caps. Then `container exec -it` runs
   `inner.sh` (`SandboxLaunch.innerScript`), which reads `secrets.env` and removes it, writes the signing
-  key under `/run`, sets git's identity and signing, seeds `.claude.json` with jq (onboarding done, the
-  harness trusted, an API key approved) and runs `claudeSteps` with `CLAUDE_CONFIG_DIR` there. Settings
+  key under `/run`, sets git's identity and signing, merges into the shared `.claude.json` with jq
+  (`seedClaudeConfig`: onboarding done, this harness trusted, an API key approved) and runs `claudeSteps` with `CLAUDE_CONFIG_DIR` there. Settings
   use the server-style status line; hooks write to the session folder at its real path, mounted, so
   the poll reads them as for any local session, plus `sandbox` (starting, running, failed: why).
   `secrets.env` (0600) is written by `SessionStore.prepareSandbox` here, or over ssh on standard input
@@ -1210,6 +1214,11 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   sandboxing was on stays where its conversation is, with `SandboxPlacement.startedBefore`; turning
   sandboxing off leaves sandboxed sessions sandboxed, for the same reason. A Connect with command
   that isn't ssh can't be handed credentials, so its sessions aren't sandboxed, and say why.
+- Gannin never collects, stores or passes on a Claude subscription's credentials: Claude Code's legal
+  page says sign-in must complete through Anthropic's own flow. A subscription signs in inside the
+  sandbox (`inner.sh` says how when there's no login yet), and a token an earlier build stored is
+  removed at launch (`removeStoredSubscriptionToken`). One login per person, never shared; Team or
+  Enterprise seats or API keys for a team's work.
 - What it doesn't do yet: no egress allow list (the network is open NAT, and services on the Mac
   listening on all interfaces are reachable at the gateway); commits are signed with the sandbox's
   key, not the user's; Linux only, so a repo that builds only on a Mac is marked Needs the Mac.

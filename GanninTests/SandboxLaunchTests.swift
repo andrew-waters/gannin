@@ -64,12 +64,16 @@ struct SandboxLaunchTests {
     }
 
     @Test func secretsAreQuotedForTheShell() {
-        let credentials = SandboxLaunch.Credentials(
-            claude: (.subscription, "sk-ant-oat01-abc"), gitHubToken: "github_pat_1", signingKey: "-----BEGIN-----\nkey\n",
+        var credentials = SandboxLaunch.Credentials(
+            apiKey: nil, gitHubToken: "github_pat_1", signingKey: "-----BEGIN-----\nkey\n",
             gitName: "Andy O'Brien", gitEmail: "andy@example.com"
         )
+        // Signing in inside: no Claude credential is passed at all.
+        #expect(!SandboxLaunch.secretsFile(credentials).contains("ANTHROPIC"))
+        #expect(!SandboxLaunch.secretsFile(credentials).contains("CLAUDE_CODE_OAUTH_TOKEN"))
+        credentials.apiKey = "sk-ant-api03-abc"
         let text = SandboxLaunch.secretsFile(credentials)
-        #expect(text.contains("CLAUDE_CODE_OAUTH_TOKEN='sk-ant-oat01-abc'"))
+        #expect(text.contains("ANTHROPIC_API_KEY='sk-ant-api03-abc'"))
         #expect(text.contains("GH_TOKEN='github_pat_1'"))
         #expect(text.contains(#"GANNIN_GIT_NAME='Andy O'\''Brien'"#))
         #expect(!text.contains("BEGIN"))
@@ -87,22 +91,37 @@ struct SandboxLaunchTests {
         #expect(permissions == 0o600)
     }
 
-    @Test func claudeHomeIsSeededInsideFromItsOwnHarness() throws {
-        let inner = SandboxLaunch.innerScript(session())
-        #expect(inner.contains(#"[ ! -f "$CLAUDE_CONFIG_DIR/.claude.json" ]"#))
-        // The jq the seed runs, with the harness and an API key's tail.
-        let start = try #require(inner.range(of: "jq -n"))
-        let end = try #require(inner.range(of: #"> "$CLAUDE_CONFIG_DIR/.claude.json""#, range: start.upperBound..<inner.endIndex))
-        let command = String(inner[start.lowerBound..<end.lowerBound])
+    @Test func theSharedConfigTrustsEachHarnessAndKeepsWhatClaudeWrote() throws {
         guard Shell.run("command -v jq", .local).ok else { return }
-        let result = Shell.run("harness=/Users/me/Code/acme/harness; ANTHROPIC_API_KEY=sk-ant-api03-0123456789abcdefghijKLMNOP; \(command)", .local)
-        let object = try #require(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
-        #expect(object["hasCompletedOnboarding"] as? Bool == true)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "gannin-claude-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        _ = Shell.run("mkdir -p \(SessionScript.quoted(folder)) && printf '%s' '{\"oauthAccount\":{\"emailAddress\":\"a@b\"},\"theme\":\"light\"}' > \(SessionScript.quoted(folder))/.claude.json", .local)
+        func seed(_ harness: String, key: String? = nil) {
+            let result = Shell.run("CLAUDE_CONFIG_DIR=\(SessionScript.quoted(folder)); harness=\(SessionScript.quoted(harness)); \(key.map { "ANTHROPIC_API_KEY=\($0);" } ?? "unset ANTHROPIC_API_KEY;")\n\(SandboxLaunch.seedClaudeConfig)", .local)
+            #expect(result.ok, "\(result.failure)")
+        }
+        seed("/Users/me/Code/acme/harness")
+        seed("/Users/me/Code/other/harness", key: "sk-ant-api03-0123456789abcdefghijKLMNOP")
+        let data = try Data(contentsOf: URL(filePath: folder + "/.claude.json"))
+        let object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         let projects = object["projects"] as? [String: [String: Bool]]
         #expect(projects?["/Users/me/Code/acme/harness"]?["hasTrustDialogAccepted"] == true)
+        #expect(projects?["/Users/me/Code/other/harness"]?["hasTrustDialogAccepted"] == true)
+        #expect(object["hasCompletedOnboarding"] as? Bool == true)
+        // What claude wrote itself stays.
+        #expect(object["theme"] as? String == "light")
+        #expect((object["oauthAccount"] as? [String: String])?["emailAddress"] == "a@b")
         #expect((object["customApiKeyResponses"] as? [String: [String]])?["approved"] == ["6789abcdefghijKLMNOP"])
-        let noKey = Shell.run("harness=/h; unset ANTHROPIC_API_KEY; \(command)", .local)
-        #expect(!noKey.output.contains("customApiKeyResponses"))
+    }
+
+    @Test func sandboxesShareClaudesConfigButNotTranscripts() {
+        let steps = SandboxLaunch.hostSteps(session(), folder: ".worktrees/x")
+        #expect(steps.contains(#"--mount "type=bind,source=$cf,target=/root/.claude""#))
+        #expect(steps.contains(#"--mount "type=bind,source=$si/claude-home/projects,target=/root/.claude/projects""#))
+        #expect(steps.contains(SessionScript.quoted(SandboxCredentials.claudeFolder.path)))
+        let inner = SandboxLaunch.innerScript(session())
+        #expect(inner.contains("unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN"))
+        #expect(inner.contains("paste the code back"))
     }
 
     @Test func theIssuesReposAreClonedFirst() {

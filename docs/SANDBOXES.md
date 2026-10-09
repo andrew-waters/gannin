@@ -14,8 +14,8 @@ With sandboxing on, Gannin runs each issue's Claude Code in its own small Linux 
 - the session's own folder, where Gannin reads its state.
 
 It doesn't see your home folder, your SSH keys, your keychain, other repos' checkouts or other
-sessions. It gets three credentials, all chosen by you: a Claude token or API key, a GitHub token
-for the org, and a signing key for its commits.
+sessions. It gets three credentials, all chosen by you: Claude's own login (or an API key), a
+GitHub token for the org, and a signing key for its commits.
 
 ## What you need
 
@@ -29,11 +29,17 @@ for the org, and a signing key for its commits.
 All of this is in Gannin's Settings, under General.
 
 1. **Claude in a sandbox.** Choose how Claude signs in there:
-   - *Subscription token*: click Get a Token. It runs `claude setup-token`, which opens your
-     browser to sign in. The token it prints is filled in for you and lasts a year.
-   - *API key*: paste a key from the Claude Console. It's billed to the API, not your subscription.
+   - *Sign in with Claude*: nothing to set up here. The first sandboxed session asks you to sign
+     in, in its terminal, through Anthropic's own sign-in: open the link it shows, sign in with your
+     Claude account, and paste the code back. Claude keeps that login in a folder your sandboxes
+     share, so the next ones are signed in already. Gannin never sees or stores it. Sign Out of
+     Claude in Sandboxes removes it.
+   - *API key*: paste a key from the Claude Console. It's billed to the API and kept in your
+     keychain.
 
-   Either one is kept in your keychain. Your own Claude login on this Mac never goes in.
+   Your own Claude login on this Mac never goes in. Sign in with your own account or key, and
+   never share one between people. A subscription's sessions all draw on its usage limits, and
+   Pro and Max are for personal use: for a team's work, use Team or Enterprise seats or an API key.
 2. **Commit signing.** Click Make a Signing Key (or paste a key of your own without a passphrase).
    Then click Add to GitHub. It copies the public key and opens GitHub's New SSH key page: paste
    it, set *Key type* to **Signing Key**, and save. Commits made in a sandbox then show as Verified.

@@ -457,6 +457,7 @@ final class SessionStore {
             })
         }
         for session in sessions.values { Self.noteFolder(of: session) }
+        SandboxCredentials.removeStoredSubscriptionToken()
         noteSandboxedHarnesses()
         reviewDrafts = sessions.compactMapValues(\.reviewDraft)
         tabs = (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? [])

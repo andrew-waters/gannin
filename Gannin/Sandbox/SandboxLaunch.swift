@@ -38,6 +38,7 @@ enum SandboxLaunch {
             ? "Install or update it from Gannin's Settings, under Remote machines, or on the server from github.com/apple/container/releases."
             : "Set it up in Gannin's Settings, under Sandbox."
         let minimum = SandboxSupport.minimum
+        let claudeFolder = session.isRemote ? SandboxCredentials.remoteClaudeFolder : SessionScript.quoted(SandboxCredentials.claudeFolder.path)
         let harnessRepo = session.harnessRepo ?? session.repo
         let repos = cloneRepos(session).filter { $0.lowercased() != harnessRepo.lowercased() }
         let labelArguments = labels.map { "--label \(SandboxRuntime.quoted($0))" }.joined(separator: " ")
@@ -135,7 +136,11 @@ enum SandboxLaunch {
                   g=$(find_clone "$repo") && git_dir "$g"
                 done
               fi
-              args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$si/claude-home,target=\(claudeHome)")
+              # Claude's config every sandbox shares (its own login among it),
+              # with this issue's transcripts over its projects/.
+              mkdir -p \(claudeFolder)/projects "$si/claude-home/projects"
+              cf=$(cd \(claudeFolder) && pwd -P)
+              args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$cf,target=\(claudeHome)" --mount "type=bind,source=$si/claude-home/projects,target=\(claudeHome)/projects")
               note "Starting the sandbox $name ($image)"
               "$c" "${args[@]}" "$image" sh -c "trap 'exit 0' TERM; sleep infinity & wait" >/dev/null || sandbox_failed "The sandbox didn't start. Run container logs $name to see why."
             fi
@@ -152,6 +157,20 @@ enum SandboxLaunch {
     static func deleteScript(_ name: String) -> String {
         #"c=$(command -v container 2>/dev/null || echo /usr/local/bin/container); "$c" delete --force "# + SandboxRuntime.quoted(name) + " >/dev/null 2>&1; true"
     }
+
+    /// Claude Code's shared config, kept past first-run prompts: onboarding
+    /// done, this harness trusted (added beside others'), and an API key
+    /// approved when one is passed in. Nothing comes from anyone's own
+    /// `~/.claude`. Needs `$harness` and `$CLAUDE_CONFIG_DIR`.
+    static let seedClaudeConfig = """
+        cfg="$CLAUDE_CONFIG_DIR/.claude.json"
+        [ -s "$cfg" ] || echo '{}' > "$cfg"
+        jq --arg h "$harness" --arg k "${ANTHROPIC_API_KEY: -20}" \\
+          '.hasCompletedOnboarding = true | .theme = (.theme // "dark")
+           | .projects[$h] = ((.projects[$h] // {}) + {hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true})
+           | if $k == "" then . else .customApiKeyResponses.approved = (((.customApiKeyResponses.approved // []) + [$k]) | unique) end' \\
+          "$cfg" > "$cfg.$$" && mv "$cfg.$$" "$cfg"
+        """
 
     /// `find_clone owner/name`: the real path of the repo's clone's git dir in
     /// `$harness/projects/` or a group under it, matched by its origin rather
@@ -202,13 +221,11 @@ enum SandboxLaunch {
             git config --global maintenance.auto false
             unset GANNIN_GIT_NAME GANNIN_GIT_EMAIL
             cd "$harness" || fail "The harness isn't mounted."
-            # Claude Code's config, first time only: onboarding done and the
-            # harness trusted, so it doesn't stop at first-run prompts, and an
-            # API key approved. Nothing comes from anyone's own ~/.claude.
-            if [ ! -f "$CLAUDE_CONFIG_DIR/.claude.json" ]; then
-              jq -n --arg h "$harness" --arg k "${ANTHROPIC_API_KEY: -20}" \\
-                '{hasCompletedOnboarding: true, theme: "dark", projects: {($h): {hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true}}}
-                 + (if $k == "" then {} else {customApiKeyResponses: {approved: [$k], rejected: []}} end)' > "$CLAUDE_CONFIG_DIR/.claude.json"
+            \(seedClaudeConfig)
+            # One Claude credential at most: an API key, or claude's own login.
+            unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
+            if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
+              note "Claude isn't signed in in your sandboxes yet. When it asks, choose your Claude account, open the link it shows, sign in, and paste the code back. Your other sandboxes stay signed in."
             fi
 
             \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "This shell is in the sandbox, in the harness"))
@@ -229,7 +246,8 @@ enum SandboxLaunch {
     // MARK: Credentials
 
     struct Credentials: Sendable {
-        var claude: (kind: SandboxCredentials.ClaudeKind, value: String)
+        /// Nil when claude signs in inside the sandbox.
+        var apiKey: String?
         var gitHubToken: String
         var signingKey: String
         var gitName: String
@@ -238,26 +256,26 @@ enum SandboxLaunch {
 
     /// What's missing for the session's org, or the credentials.
     static func credentials(org: String) -> Result<Credentials, SandboxRuntime.Failure> {
-        let kind = SandboxCredentials.claudeKind
         var missing: [String] = []
-        let claude = SandboxCredentials.claudeCredential(kind)
-        if claude == nil { missing.append("a Claude \(kind.name.lowercased())") }
+        let apiKey = SandboxCredentials.claudeKind == .apiKey ? SandboxCredentials.apiKey : nil
+        if SandboxCredentials.claudeKind == .apiKey, apiKey == nil { missing.append("an API key for Claude") }
         let token = SandboxCredentials.gitHubToken(org: org)
         if token == nil { missing.append("a GitHub token for \(org)") }
         let key = SandboxCredentials.signingKey
         if key == nil { missing.append("a signing key") }
         let identity = gitIdentity()
         if identity.name.isEmpty || identity.email.isEmpty { missing.append("your git name and email (git config --global user.name and user.email)") }
-        guard let claude, let token, let key, missing.isEmpty else {
+        guard let token, let key, missing.isEmpty else {
             return .failure(SandboxRuntime.Failure(message: "The sandbox needs \(missing.joined(separator: ", ")).", output: ""))
         }
-        return .success(Credentials(claude: (kind, claude), gitHubToken: token, signingKey: key, gitName: identity.name, gitEmail: identity.email))
+        return .success(Credentials(apiKey: apiKey, gitHubToken: token, signingKey: key, gitName: identity.name, gitEmail: identity.email))
     }
 
     /// `secrets.env`: shell assignments the inner script reads and removes.
     static func secretsFile(_ credentials: Credentials) -> String {
-        let values = [
-            (credentials.claude.kind.environmentName, credentials.claude.value),
+        // Only an API key is ever passed in for Claude, and only when it's
+        // the choice: a subscription signs in inside.
+        let values = (credentials.apiKey.map { [("ANTHROPIC_API_KEY", $0)] } ?? []) + [
             ("GH_TOKEN", credentials.gitHubToken),
             ("GANNIN_SIGNING_KEY", Data(credentials.signingKey.utf8).base64EncodedString()),
             ("GANNIN_GIT_NAME", credentials.gitName),

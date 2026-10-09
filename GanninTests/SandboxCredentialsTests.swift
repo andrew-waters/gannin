@@ -5,25 +5,10 @@ import Testing
 /// What sandboxes are given (andrew-waters/gannin#8, R6, R7, R18), short of
 /// the keychain itself.
 struct SandboxCredentialsTests {
-    @Test func setupTokenIsFoundInTheTerminal() {
-        let screen = """
-            ✓ Long-lived authentication token created successfully!
-
-            Your OAuth token (valid for 1 year):
-
-            sk-ant-oat01-AbCdEf_GhIjKlMnOpQrStUvWx-
-            yz0123456789
-
-            Store this token securely. You won't be able to see it again.
-            """
-        #expect(SandboxCredentials.setupToken(in: screen) == "sk-ant-oat01-AbCdEf_GhIjKlMnOpQrStUvWx-yz0123456789")
-        #expect(SandboxCredentials.setupToken(in: "Opening browser to sign in") == nil)
-        #expect(SandboxCredentials.setupToken(in: "sk-ant-api03-not-a-subscription-token-at-all") == nil)
-    }
-
-    @Test func claudeKindsNameTheirVariable() {
-        #expect(SandboxCredentials.ClaudeKind.subscription.environmentName == "CLAUDE_CODE_OAUTH_TOKEN")
-        #expect(SandboxCredentials.ClaudeKind.apiKey.environmentName == "ANTHROPIC_API_KEY")
+    @Test func aSubscriptionSignsInInsideAndAnEarlierChoiceStillReads() {
+        // The setting saved as "subscription" before now means Claude's own sign-in.
+        #expect(SandboxCredentials.ClaudeKind(rawValue: "subscription") == .signIn)
+        #expect(SandboxCredentials.ClaudeKind.allCases == [.signIn, .apiKey])
     }
 
     @Test func newTokenPageIsFilledInForTheOrg() throws {
