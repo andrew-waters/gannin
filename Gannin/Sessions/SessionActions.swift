@@ -161,25 +161,42 @@ extension SessionStore {
         }
         guard state(id) == .needsYou else { return [] }
         let choices = permissionChoices(for: id)
-        guard let first = choices.first else {
-            return [
+        var replies: [QuickReply]
+        if let first = choices.first {
+            replies = [QuickReply(title: first.label, keys: "choice:\(first.number)")]
+                + choices.dropFirst().dropLast().map { QuickReply(title: $0.label, keys: "choice:\($0.number)") }
+                + [QuickReply(title: "Deny", keys: "\u{1B}", isDestructive: true)]
+        } else {
+            replies = [
                 QuickReply(title: "Allow", keys: "\r"),
                 QuickReply(title: "Deny", keys: "\u{1B}", isDestructive: true),
             ]
         }
-        return [QuickReply(title: first.label, keys: "choice:\(first.number)")]
-            + choices.dropFirst().dropLast().map { QuickReply(title: $0.label, keys: "choice:\($0.number)") }
-            + [QuickReply(title: "Deny", keys: "\u{1B}", isDestructive: true)]
+        // Allow this and stop asking, in the last of a notification's four
+        // places when they're full.
+        if offersLeaveUnattended(id) {
+            if replies.count >= Self.maxQuickReplies { replies = Array(replies.prefix(Self.maxQuickReplies - 1)) }
+            replies.append(QuickReply(title: "Leave Unattended", keys: Self.leaveUnattendedReply))
+        }
+        return replies
     }
 
-    /// A notification's reply: keys, a lone question's option by index, or
-    /// one of a permission prompt's own choices by number.
+    /// The most actions a notification shows.
+    static let maxQuickReplies = 4
+    /// The quick reply that's Leave Unattended, handled by the store rather
+    /// than sent as keys, since it reads the mode back.
+    static let leaveUnattendedReply = "unattended"
+
+    /// A notification's reply: keys, a lone question's option by index, one
+    /// of a permission prompt's own choices by number, or Leave Unattended.
     func handleQuickReply(_ keys: String, for id: UUID) {
         if keys.hasPrefix("answer:"), let index = Int(keys.dropFirst(7)),
            let item = transcripts[id]?.question?.items.first, item.options.indices.contains(index) {
             answer([(item.question, item.options[index].label.replacingOccurrences(of: " (Recommended)", with: ""))], to: id)
         } else if keys.hasPrefix("choice:"), let number = Int(keys.dropFirst(7)) {
             approvePermission(number, for: id)
+        } else if keys == Self.leaveUnattendedReply {
+            leaveUnattended(id)
         } else {
             sendKeys(keys, to: id)
         }
