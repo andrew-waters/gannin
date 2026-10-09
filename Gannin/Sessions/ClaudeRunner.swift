@@ -25,6 +25,11 @@ enum ClaudeRunner {
     ///     conversation can be resumed there; nil for a fresh one.
     ///   - tools: tools it may use without asking (`Read`, `Grep`).
     ///   - session: a conversation to start (`resume` false) or go on with.
+    ///   - onChunk: called with each piece of the reply's text as claude
+    ///     writes it (`--include-partial-messages`); the return value is
+    ///     still the final text, read back from the result event rather
+    ///     than assembled from the chunks, so a preamble before a tool call
+    ///     doesn't linger. Omitted, claude is asked for plain text instead.
     @MainActor
     static func ask(
         _ prompt: String,
@@ -32,10 +37,14 @@ enum ClaudeRunner {
         files: [String: Data] = [:],
         folder: String? = nil,
         tools: [String] = [],
-        session: (id: String, resume: Bool)? = nil
+        session: (id: String, resume: Bool)? = nil,
+        onChunk: (@MainActor (String) -> Void)? = nil
     ) async throws -> String {
         let place = try await resolvePlace()
-        var options: [String] = ["-p", "--output-format", "text"]
+        var options: [String] = ["-p"]
+        options += onChunk == nil
+            ? ["--output-format", "text"]
+            : ["--output-format", "stream-json", "--include-partial-messages", "--verbose"]
         if let model = SessionStore.model { options += ["--model", model] }
         if !tools.isEmpty { options += ["--allowedTools", tools.joined(separator: ",")] }
         if let session { options += [session.resume ? "--resume" : "--session-id", session.id] }
@@ -60,11 +69,29 @@ enum ClaudeRunner {
         script.append("claude \(options.map(SessionScript.quoted).joined(separator: " ")) < .gannin-prompt")
         let body = script.joined(separator: "\n") + "\n"
 
-        let result = await Task.detached { run(body, place: place) }.value
+        guard let onChunk else {
+            let result = await Task.detached { run(body, place: place) }.value
+            guard result.status == 0 else {
+                throw Failure(message: result.error.isEmpty ? "Claude didn't answer (exit \(result.status))." : result.error)
+            }
+            return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let (stream, continuation) = AsyncStream<String>.makeStream()
+        let resultTask = Task.detached {
+            let result = run(body, place: place) { line in
+                if let text = textDelta(in: line) { continuation.yield(text) }
+            }
+            continuation.finish()
+            return result
+        }
+        for await chunk in stream { onChunk(chunk) }
+        let result = await resultTask.value
         guard result.status == 0 else {
             throw Failure(message: result.error.isEmpty ? "Claude didn't answer (exit \(result.status))." : result.error)
         }
-        return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+        let final = result.output.split(separator: "\n").compactMap { finalResult(in: String($0)) }.last
+        return (final ?? result.output).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Here if `claude` is on this Mac's PATH, else the server.
@@ -97,7 +124,10 @@ enum ClaudeRunner {
         return await Task.detached { run(script, place: place) }.value
     }
 
-    nonisolated static func run(_ script: String, place: Place) -> (status: Int32, output: String, error: String) {
+    /// Runs the script, reading its reply line by line when `onLine` is
+    /// given (so `ask`'s stream-json output can be parsed as it arrives)
+    /// rather than waiting for it to finish.
+    nonisolated static func run(_ script: String, place: Place, onLine: ((String) -> Void)? = nil) -> (status: Int32, output: String, error: String) {
         let process = Process()
         var environment = ProcessInfo.processInfo.environment
         for key in environment.keys where key == "CLAUDECODE" || key.hasPrefix("CLAUDE_CODE_") {
@@ -131,7 +161,23 @@ enum ClaudeRunner {
             try? input.fileHandleForWriting.close()
         }
         writer.start()
-        let data = output.fileHandleForReading.readDataToEndOfFile()
+        var data = Data()
+        if let onLine {
+            var buffer = Data()
+            while true {
+                let chunk = output.fileHandleForReading.availableData
+                if chunk.isEmpty { break }
+                data.append(chunk)
+                buffer.append(chunk)
+                while let newline = buffer.firstIndex(of: 0x0A) {
+                    if let line = String(data: buffer[..<newline], encoding: .utf8) { onLine(line) }
+                    buffer.removeSubrange(buffer.startIndex...newline)
+                }
+            }
+            if !buffer.isEmpty, let line = String(data: buffer, encoding: .utf8) { onLine(line) }
+        } else {
+            data = output.fileHandleForReading.readDataToEndOfFile()
+        }
         let errorData = errors.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         let message = String(decoding: errorData, as: UTF8.self)
@@ -158,5 +204,36 @@ enum ClaudeRunner {
             if let value = try? JSONDecoder().decode(T.self, from: Data(candidate.utf8)) { return value }
         }
         return nil
+    }
+
+    /// A `--output-format stream-json` line, read leniently: only the
+    /// fields `textDelta` and `finalResult` use are declared.
+    private nonisolated struct StreamLine: Decodable {
+        nonisolated struct Event: Decodable {
+            nonisolated struct Delta: Decodable {
+                let type: String?
+                let text: String?
+            }
+            let type: String
+            let delta: Delta?
+        }
+        let type: String
+        let event: Event?
+        let result: String?
+    }
+
+    /// The text claude just wrote, from a `content_block_delta` stream
+    /// event; nil for any other line (tool calls, turn boundaries, usage).
+    private nonisolated static func textDelta(in line: String) -> String? {
+        guard let parsed = try? JSONDecoder().decode(StreamLine.self, from: Data(line.utf8)),
+              parsed.type == "stream_event", parsed.event?.type == "content_block_delta",
+              parsed.event?.delta?.type == "text_delta" else { return nil }
+        return parsed.event?.delta?.text
+    }
+
+    /// The whole reply, from the `result` line stream-json ends with.
+    private nonisolated static func finalResult(in line: String) -> String? {
+        guard let parsed = try? JSONDecoder().decode(StreamLine.self, from: Data(line.utf8)), parsed.type == "result" else { return nil }
+        return parsed.result
     }
 }

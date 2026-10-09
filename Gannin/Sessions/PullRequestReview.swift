@@ -476,6 +476,220 @@ struct ReviewWithClaudeButton: View {
     }
 }
 
+// MARK: - Explain with Claude
+
+/// What opens an Explain window: the PR, and a review's walkthrough when
+/// one's already open (the review tab's header), so Claude can build on the
+/// areas a review already worked out rather than read the diff cold.
+struct ExplainPullRequestRequest: Codable, Hashable {
+    let reference: PullRequestReference
+    var walkthrough: [SessionTranscript.WalkthroughArea] = []
+}
+
+/// Explain in a PR's right-click menu, toolbar or drawer: a one-off
+/// question, not a session, so it's available wherever a PR is shown. Opens
+/// its own window (`ExplainPullRequestWindow`), so it can sit alongside the
+/// PR while Claude reads it.
+struct ExplainPullRequestButton: View {
+    static let windowID = "explain-pull-request"
+    let reference: PullRequestReference
+    var walkthrough: [SessionTranscript.WalkthroughArea] = []
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button {
+            openWindow(id: Self.windowID, value: ExplainPullRequestRequest(reference: reference, walkthrough: walkthrough))
+        } label: {
+            Label("Explain", systemImage: "text.bubble")
+        }
+        .help("Have Claude explain what this PR changes and why, in plain terms")
+    }
+}
+
+/// Claude's explanation of a PR, asked fresh each time the window opens
+/// (`ClaudeRunner.ask`, not a session): what it reads with `gh`, and what
+/// it's told to reply with. The window holds one conversation (`--resume`
+/// in the same folder), so a follow-up question is answered from the diff
+/// and discussion already read, not a fresh `gh` lookup.
+struct ExplainPullRequestWindow: View {
+    let reference: PullRequestReference
+    /// A review's areas, when one's already open for this PR: Claude is
+    /// told it can build on them instead of reading the diff cold.
+    var walkthrough: [SessionTranscript.WalkthroughArea] = []
+
+    private struct Turn: Identifiable {
+        let id: UUID
+        let fromClaude: Bool
+        var text: String
+
+        init(id: UUID = UUID(), fromClaude: Bool, text: String) {
+            self.id = id
+            self.fromClaude = fromClaude
+            self.text = text
+        }
+    }
+
+    @State private var text = ""
+    @State private var turns: [Turn] = []
+    @State private var message = ""
+    @State private var working = false
+    @State private var status: String?
+    @State private var conversation = UUID()
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Group {
+                            if text.isEmpty {
+                                HStack(spacing: 8) {
+                                    if working { ProgressView().controlSize(.small) }
+                                    Text(working ? "Claude is reading it." : "Nothing yet.").foregroundStyle(.secondary)
+                                }
+                            } else {
+                                MarkdownText(source: text, reading: 14)
+                            }
+                        }
+                        ForEach(turns) { turn in
+                            bubble(turn).id(turn.id)
+                        }
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .onChange(of: turns.count) {
+                    if let last = turns.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                }
+            }
+            if !text.isEmpty {
+                Divider()
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField("Ask a follow-up question", text: $message, axis: .vertical)
+                        .lineLimit(1...4)
+                        .onSubmit(askFollowUp)
+                    Button("Ask") { askFollowUp() }
+                        .keyboardShortcut(.return, modifiers: [.command])
+                        .disabled(working || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(12)
+            }
+            Divider()
+            HStack {
+                if let status { Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
+                if working { ProgressView().controlSize(.small) }
+                Spacer()
+                Button(text.isEmpty ? "Explain" : "Explain Again") { explain() }
+                    .disabled(working)
+                Button("Copy") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(transcript, forType: .string)
+                    status = "Copied"
+                }
+                .disabled(text.isEmpty)
+            }
+            .padding(12)
+        }
+        .ownWindowTitle("Explain \(reference.repo)#\(reference.number)", subtitle: reference.title)
+        .onAppear { if text.isEmpty { explain() } }
+    }
+
+    private func bubble(_ turn: Turn) -> some View {
+        HStack(alignment: .top) {
+            if !turn.fromClaude { Spacer(minLength: 40) }
+            Group {
+                if turn.fromClaude && turn.text.isEmpty {
+                    ProgressView().controlSize(.small)
+                } else if turn.fromClaude {
+                    MarkdownText(source: turn.text, reading: 13)
+                } else {
+                    Text(turn.text).textSelection(.enabled)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(turn.fromClaude ? Color.secondary.opacity(0.12) : Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+            if turn.fromClaude { Spacer(minLength: 40) }
+        }
+    }
+
+    private var transcript: String {
+        ([text] + turns.map { $0.fromClaude ? $0.text : "**Q:** \($0.text)" }).joined(separator: "\n\n")
+    }
+
+    /// A review's walkthrough as a prompt fragment, or empty when there
+    /// isn't one open for this PR.
+    private var walkthroughNote: String {
+        guard !walkthrough.isEmpty else { return "" }
+        let areas = walkthrough.map { area in
+            "- \(area.title)" + (area.summary.map { ": \($0)" } ?? "") + " (\(area.files.joined(separator: ", ")))"
+        }.joined(separator: "\n")
+        return """
+
+            A review has already split this PR into these areas, in reading order:
+            \(areas)
+
+            Build on that structure rather than working it out again, but explain the code in your own words, not the review's.
+
+            """
+    }
+
+    private func explain() {
+        text = ""
+        turns = []
+        conversation = UUID()
+        working = true
+        status = nil
+        let id = conversation.uuidString.lowercased()
+        let prompt = """
+            Explain pull request \(reference.repo)#\(reference.number), "\(reference.title)" (\(reference.url.absoluteString)), for someone who hasn't read it: explain the code, not just the PR description.
+
+            Read the actual changes with `gh pr diff \(reference.number) --repo \(reference.repo)` first, then `gh pr view \(reference.number) --repo \(reference.repo) --comments` for the stated intent and discussion. Base the explanation on what the diff does, not a reworded version of the title or description.
+
+            Reply with the explanation only, no preamble, in Markdown: a short paragraph on what the code does and why, then a few bullet points on the notable changes if there are several, naming the functions, types or files involved. Where a short snippet would make a change clearer than naming it, include one as a fenced code block (with a language and, where it helps, the file path above it), taken from the actual diff rather than paraphrased. Don't review it or suggest changes.
+            \(walkthroughNote)
+            I may ask follow-up questions about this PR afterwards; answer those from the diff and discussion you've already read, in the same plain Markdown style, with no preamble.
+            """
+        Task {
+            do {
+                text = try await ClaudeRunner.ask(
+                    prompt, org: reference.org, folder: "gannin-explain-\(id)", tools: ["Bash"], session: (id, false)
+                ) { chunk in
+                    text += chunk
+                }
+            } catch {
+                status = error.localizedDescription
+            }
+            working = false
+        }
+    }
+
+    private func askFollowUp() {
+        let question = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, !working else { return }
+        message = ""
+        status = nil
+        turns.append(Turn(fromClaude: false, text: question))
+        let replyID = UUID()
+        turns.append(Turn(id: replyID, fromClaude: true, text: ""))
+        working = true
+        let id = conversation.uuidString.lowercased()
+        Task {
+            do {
+                let reply = try await ClaudeRunner.ask(
+                    question, org: reference.org, folder: "gannin-explain-\(id)", tools: ["Bash"], session: (id, true)
+                ) { chunk in
+                    if let index = turns.firstIndex(where: { $0.id == replyID }) { turns[index].text += chunk }
+                }
+                if let index = turns.firstIndex(where: { $0.id == replyID }) { turns[index].text = reply }
+            } catch {
+                if let index = turns.firstIndex(where: { $0.id == replyID }) { turns[index].text = error.localizedDescription }
+            }
+            working = false
+        }
+    }
+}
+
 // MARK: - The review tab
 
 /// A review's tab: the PR's files and diff with claude's findings and any
@@ -665,6 +879,8 @@ struct PullRequestReviewView: View {
                     Label("Open on GitHub", systemImage: "arrow.up.right.square")
                 }
                 .buttonStyle(.bordered)
+                ExplainPullRequestButton(reference: reference, walkthrough: review?.walkthrough ?? [])
+                    .buttonStyle(.bordered)
                 Button("Review Again") {
                     reviewingAgain = true
                     Task {
