@@ -401,7 +401,7 @@ extension SessionStore {
     /// first has done (a reviewer can't edit).
     /// A reviewer is given the team's default review prompts and skills
     /// for the issue's repo and its PRs'.
-    func startHelper(for parentID: UUID, role: String, prompt: String, reviewer: Bool) -> CodeSession? {
+    func startHelper(for parentID: UUID, role: String, prompt: String, reviewer: Bool, reveals: Bool = true) -> CodeSession? {
         guard let parent = sessions[parentID] else { return nil }
         var instructions: String?
         if reviewer, let repo = parent.harnessRepo {
@@ -421,7 +421,7 @@ extension SessionStore {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? FileManager.default.copyItem(at: Self.directory(for: parentID).appending(path: "brief.md"), to: directory.appending(path: "brief.md"))
         add(helper)
-        reveal(helper.id)
+        if reveals { reveal(helper.id) } else { addTab(helper.id, after: parentID) }
         return helper
     }
 

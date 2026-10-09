@@ -830,6 +830,25 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   branch, each with its own settings file in `.gannin/`; Review the Changes starts one with
   edits disallowed (`isReviewer`, `--disallowedTools`) and `SessionStore.reviewPrompt`.
   Removing a session removes its helpers.
+- Pair review (`Sessions/PairReview.swift`, andrew-waters/gannin#68,
+  `plans/2026-10-09-pair-review.md`): an issue's own session (`canPairReview`: not a helper,
+  PR review, plan or Ask) gets `ready-for-review` in its folder's `.gannin/`
+  (`SessionScript.readyForReview`, written by the start script and allowed in its settings), and
+  its brief says to run it with a note once the change is committed and built, before a PR is
+  marked ready. It writes a token and the note to `review-request` in the session's folder, read
+  by the poll (and `readRemote`) beside the hooks' files; a new token (`CodeSession.reviewRequest`)
+  starts a reviewer helper in the background (tab added, not selected; `reviewPrompt` with the
+  note) or asks the one there to look again. A round is the reviewer's reply ending with its JSON
+  list (`SessionTranscript.listedFindings`, nil without one, so `[]` means nothing found; taken
+  once by `lastReplyID`, `pairRoundRead` from `store`): the findings are pasted into the working
+  session when it's waiting, else when its turn ends (`pendingPrompts`), and it fixes them and runs
+  the script again. The loop (`CodeSession.pairing`, `PairReview`) ends Settled when a round finds
+  nothing, at `maxRounds` (3, the last round's findings still sent), or by Stop, flagging the
+  session and ending the reviewer; meanwhile turns ending don't flag (`isQuietForPairReview`).
+  After a limit or Stop, or with it off, a request is answered "carry on"; after Settled it starts
+  a fresh loop. Settings > General > Agent, Review a session's work with a second agent
+  (`pairReview`, on), and each session's own choice, status, Show Reviewer, Stop and Review Now
+  in its Activity pane (`PairReviewSection`). Nothing is posted to GitHub.
 - Changes has Branch and Uncommitted modes; Uncommitted stages, unstages, discards (a file or a
   hunk, `git apply -R`), commits and pushes. Each worktree says what isn't pushed. Files and
   lines open in the chosen editor (`CodeEditor`: VS Code, Cursor and Zed also over SSH remote).

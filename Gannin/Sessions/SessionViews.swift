@@ -1547,6 +1547,7 @@ struct SessionSettingsSection: View {
     @AppStorage(SessionStore.modelKey) private var model = ""
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
     @AppStorage(SessionStore.sendsFeedbackKey) private var sendsFeedback = false
+    @AppStorage(SessionStore.pairReviewKey) private var pairReview = true
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
     @AppStorage(AutoReview.enabledKey) private var autoReview = false
     @AppStorage(AutoReview.watchKey) private var watchesReviews = true
@@ -1603,6 +1604,10 @@ struct SessionSettingsSection: View {
                 .foregroundStyle(.secondary)
             Toggle("Send new PR feedback to Claude", isOn: $sendsFeedback)
             Text("When checks fail or a reviewer says something new on a session's PR, it's pasted into the session for Claude to address: now if it's waiting for you, else when it finishes its turn. Each session can say otherwise in its PRs pane.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Review a session's work with a second agent", isOn: $pairReview)
+            Text("When a session's claude says its change is ready, another agent that can't edit reviews it and its findings go back to claude, round after round, until there's nothing more, \(PairReview.maxRounds) rounds have gone, or you stop it. Each session can say otherwise in its Activity pane.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Show in the menu bar", isOn: $showsMenuBar)
