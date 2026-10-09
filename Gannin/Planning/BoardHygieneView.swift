@@ -147,6 +147,9 @@ struct BoardHygieneView: View {
             guard let api = auth.api, let issue = fix.issues.first(where: { $0.id == row.id }) else { return }
             if closing {
                 try await api.closeIssue(id: issue.id)
+                if let number = workflow.projectNumber {
+                    projects.recordClosed(org: org, number: number, contentID: issue.id, closed: true)
+                }
             } else {
                 guard let board, let done = doneOption else { throw InvestmentWriteError.message("The board hasn't loaded") }
                 try await FieldWriter.set(

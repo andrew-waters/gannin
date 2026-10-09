@@ -60,6 +60,13 @@ struct ProjectBoardView: View {
             guard viewID != nil else { return }
             await store.sync(org: org, number: number, filter: appliedFilter)
         }
+        // Refresh only reaches the board list and tracked definitions, not
+        // whichever board and filter happens to be open, so this board
+        // forces its own items fetch when it's asked for.
+        .onChange(of: store.refreshRequested[org]) { _, _ in
+            guard viewID != nil else { return }
+            Task { await store.sync(org: org, number: number, filter: appliedFilter, force: true) }
+        }
     }
 
     /// The board's fields and views, then its first view, so the first items

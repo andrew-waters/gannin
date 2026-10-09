@@ -97,7 +97,7 @@ enum InvestmentWriter {
                 case .gannin:
                     break
                 case .labels:
-                    try await writeLabels(change, org: org, api: api, issues: issues, cache: &labelIDs)
+                    try await writeLabels(change, org: org, api: api, issues: issues, projects: projectStore, cache: &labelIDs)
                 case .projectField(let number, let title, let field):
                     if projects == nil, change.addsToBoard { projects = try await api.orgProjects(org: org) }
                     try await writeField(change, org: org, number: number, title: title, field: field, projects: projects ?? [], api: api, issues: issues, projectStore: projectStore)
@@ -110,7 +110,7 @@ enum InvestmentWriter {
         return failures
     }
 
-    private static func writeLabels(_ change: InvestmentChange, org: String, api: GitHubAPI, issues: IssueStore, cache: inout [String: String]) async throws {
+    private static func writeLabels(_ change: InvestmentChange, org: String, api: GitHubAPI, issues: IssueStore, projects: ProjectStore, cache: inout [String: String]) async throws {
         let parts = change.issue.repo.split(separator: "/").map(String.init)
         guard parts.count == 2 else { return }
         var labels = change.issue.labels
@@ -126,6 +126,7 @@ enum InvestmentWriter {
             labels.append(name)
         }
         issues.recordLabels(org: org, issueID: change.issue.id, labels: labels)
+        projects.recordLabels(org: org, contentID: change.issue.id, labels: labels)
     }
 
     /// A label's ID in the repo, created (grey) when asked and missing.

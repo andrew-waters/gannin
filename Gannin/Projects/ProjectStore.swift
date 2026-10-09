@@ -18,6 +18,11 @@ final class ProjectStore {
     private(set) var caches: [String: BoardCache] = [:]
     private(set) var loading: Set<String> = []
     private(set) var errors: [String: String] = [:]
+    /// When Refresh was last asked for, by org: an open `ProjectBoardView`
+    /// watches its own org's entry to force its own items fetch, since
+    /// `refresh` itself only reaches the board list and tracked definitions,
+    /// not whichever board and filter happens to be open.
+    private(set) var refreshRequested: [String: Date] = [:]
 
     private let auth: AuthStore
     private let activity: SyncActivity
@@ -44,6 +49,54 @@ final class ProjectStore {
         guard caches[key]?.itemsByID[itemID] != nil else { return }
         caches[key]?.itemsByID[itemID]?.values[field] = value
         if let cache = caches[key] { save(cache, key: key) }
+    }
+
+    /// Records an issue closing or reopening from the app, by its content
+    /// ID (what closes it doesn't know its item ID on this board). A no-op
+    /// if the board or item isn't cached yet.
+    func recordClosed(org: String, number: Int, contentID: String, closed: Bool) {
+        let key = Self.key(org, number)
+        guard var cache = caches[key] else { return }
+        let matching = cache.itemsByID.values.filter { $0.contentID == contentID }.map(\.id)
+        guard !matching.isEmpty else { return }
+        for id in matching { cache.itemsByID[id]?.state = closed ? "CLOSED" : "OPEN" }
+        caches[key] = cache
+        save(cache, key: key)
+    }
+
+    /// Takes an item off the board's cache, by its own ID, once it's been
+    /// removed from the board on GitHub.
+    func recordRemoved(org: String, number: Int, itemID: String) {
+        let key = Self.key(org, number)
+        guard caches[key]?.itemsByID[itemID] != nil else { return }
+        caches[key]?.itemsByID[itemID] = nil
+        if let cache = caches[key] { save(cache, key: key) }
+    }
+
+    /// Records labels changed on an issue from the app, on every board
+    /// that has it cached: labels show as a built-in column on any board,
+    /// not just the one an investment category might be tracked on. A new
+    /// label borrows a colour already seen on this org's cached boards,
+    /// grey when none is, until the next fetch corrects it.
+    func recordLabels(org: String, contentID: String, labels: [String]) {
+        let prefix = "\(org)#"
+        var knownColors: [String: String] = [:]
+        for (key, cache) in caches where key.hasPrefix(prefix) {
+            for item in cache.itemsByID.values {
+                for label in item.labels where knownColors[label.name] == nil {
+                    knownColors[label.name] = label.color
+                }
+            }
+        }
+        let resolved = labels.map { IssueLabel(name: $0, color: knownColors[$0] ?? "ededed") }
+        for key in caches.keys where key.hasPrefix(prefix) {
+            guard var cache = caches[key] else { continue }
+            let matching = cache.itemsByID.values.filter { $0.contentID == contentID }.map(\.id)
+            guard !matching.isEmpty else { continue }
+            for id in matching { cache.itemsByID[id]?.labels = resolved }
+            caches[key] = cache
+            save(cache, key: key)
+        }
     }
 
     func isLoading(org: String, number: Int) -> Bool {
@@ -115,6 +168,7 @@ final class ProjectStore {
     /// org's settings depend on (the tracked investments board).
     func refresh(org: String, definitions: [Int]) async {
         guard let api = auth.api, SyncSettings.isOn(.boards) else { return }
+        refreshRequested[org] = .now
         loadCachedBoards(org)
         listFetchedAt[org] = .now
         let tracked = definitions.filter { $0 != 0 }
@@ -191,26 +245,31 @@ final class ProjectStore {
         if force || boardStale { run.add("board", title: "Board and views") }
         run.add("items", title: "Items", detail: filter.isEmpty ? "Everything" : filter)
         do {
-            if force || boardStale || cached == nil {
-                if let board = try await run.track("board", count: { $0.map { $0.views.count } }, { _ in try await api.board(org: org, number: number) }) {
-                    // Written as soon as it's fetched, ahead of the (often
-                    // slower) items fetch below, so the board's tabs can
-                    // show while its items are still loading.
-                    var cache = caches[key] ?? BoardCache(board: board, fetchedAt: now)
-                    cache.board = board
-                    cache.fetchedAt = now
-                    caches[key] = cache
-                    save(cache, key: key)
-                }
+            let needsBoard = force || boardStale || cached == nil
+            // Started together: the items fetch doesn't depend on the
+            // board's fields or views, so there's no need to wait for one
+            // before starting the other.
+            async let boardTask: Board? = needsBoard
+                ? try await run.track("board", count: { $0.map { $0.views.count } }, { _ in try await api.board(org: org, number: number) })
+                : nil
+            async let itemsTask = run.track("items", count: \.count) {
+                try await api.boardItems(org: org, number: number, filter: filter, onPage: $0)
+            }
+            if let board = try await boardTask {
+                // Written as soon as it's fetched, so the board's tabs can
+                // show while its items are still loading.
+                var cache = caches[key] ?? BoardCache(board: board, fetchedAt: now)
+                cache.board = board
+                cache.fetchedAt = now
+                caches[key] = cache
+                save(cache, key: key)
             }
             guard caches[key] != nil else {
                 run.finish()
                 errors[key] = "Couldn't find project \(number)."
                 return
             }
-            let items = try await run.track("items", count: \.count) {
-                try await api.boardItems(org: org, number: number, filter: filter, onPage: $0)
-            }
+            let items = try await itemsTask
             // A sync for another filter (switching view tabs) can finish
             // while this one awaited, so merge onto the cache as it is now
             // rather than the snapshot taken before those awaits, or its
