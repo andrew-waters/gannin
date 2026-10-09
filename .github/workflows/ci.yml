@@ -1,7 +1,8 @@
 name: CI
 
-# Builds the Mac app on every pull request and push to main, unsigned, so a
-# broken build is caught before a release tag is. Releases are release.yml.
+# Builds the Mac app and runs its tests on every pull request and push to
+# main, unsigned, so a broken build or a failing test is caught before a
+# release tag is. Releases are release.yml.
 on:
   pull_request:
   push:
@@ -59,6 +60,19 @@ jobs:
             -project Gannin.xcodeproj \
             -scheme Gannin \
             -destination 'generic/platform=macOS' \
+            -clonedSourcePackagesDirPath .spm-cache \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
+      # The unit tests (GanninTests), run in the app as their host.
+      - name: Run the tests
+        run: |
+          xcodebuild test \
+            -project Gannin.xcodeproj \
+            -scheme Gannin \
+            -destination 'platform=macOS' \
             -clonedSourcePackagesDirPath .spm-cache \
             -skipPackagePluginValidation \
             -skipMacroValidation \

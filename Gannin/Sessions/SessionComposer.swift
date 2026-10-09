@@ -35,6 +35,7 @@ struct SessionComposer: View {
                 .buttonStyle(.borderless)
                 .disabled(!running || sessions.state(session.id) != .working)
                 .help("Stop claude mid-turn (Esc), to say something else")
+                modeControl(running: running, asking: transcript?.question != nil)
                 if let transcript {
                     if let check = transcript.lastCheck { checkBadge(check) }
                     contextGauge(transcript, running: running)
@@ -92,6 +93,70 @@ struct SessionComposer: View {
         .fixedSize()
         .disabled(!enabled)
         .help("Send a saved prompt (⌃1 to ⌃9). Edit them in Settings.")
+    }
+
+    /// Attended or Unattended, as claude's footer shows it, switching the
+    /// running session by Shift+Tab (`SessionStore.switchMode`). Not while
+    /// claude is asking something: Leave Unattended on its card does that.
+    @ViewBuilder
+    private func modeControl(running: Bool, asking: Bool) -> some View {
+        let mode = sessions.modes[session.id]
+        let switching = sessions.switchingMode.contains(session.id)
+        let unavailable = sessions.autoUnavailable(session.id)
+        let note = sessions.modeNotes[session.id]
+        Menu {
+            modeItem(.default, current: mode)
+            modeItem(.auto, current: mode)
+                .disabled(unavailable)
+            if unavailable {
+                Text("Auto mode isn't available in this Claude Code")
+            }
+            if let note, !unavailable {
+                Divider()
+                Text(note)
+            }
+        } label: {
+            HStack(spacing: 4) {
+                if switching {
+                    ProgressView().controlSize(.mini)
+                } else if note != nil {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                } else {
+                    Image(systemName: mode?.isUnattended == true ? "eye.slash" : "eye")
+                }
+                Text(mode?.label ?? "Attended")
+                    .font(.caption)
+            }
+            .foregroundStyle(mode?.isUnattended == true ? Color.accentColor : .secondary)
+        }
+        .menuStyle(.button)
+        .buttonStyle(.borderless)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!running || switching || asking || sessions.state(session.id) == .needsYou)
+        .help(modeHelp(mode, note: note))
+    }
+
+    private func modeItem(_ target: ClaudeMode, current: ClaudeMode?) -> some View {
+        Button {
+            Task { await sessions.switchMode(session.id, to: target) }
+        } label: {
+            if current == target {
+                Label(target.label, systemImage: "checkmark")
+            } else {
+                Text(target.label)
+            }
+        }
+    }
+
+    private func modeHelp(_ mode: ClaudeMode?, note: String?) -> String {
+        let now: String = switch mode {
+        case .default?: "Attended: claude asks before edits and commands (Claude Code's default mode)."
+        case .auto?: "Unattended: claude carries on without asking, with Claude Code's safety check still blocking risky actions (auto mode)."
+        case let other?: "Claude Code's \(other.claudeName) is on. Pick Attended or Unattended to leave it."
+        case nil: "Attended or Unattended: whether claude asks before edits and commands."
+        }
+        return [now, note].compactMap { $0 }.joined(separator: "\n")
     }
 
     private func checkBadge(_ check: SessionTranscript.Check) -> some View {
@@ -328,6 +393,17 @@ struct SessionQuestionCard: View {
                 .foregroundStyle(.secondary)
         }
         HStack {
+            if sessions.offersLeaveUnattended(session.id) {
+                Button {
+                    sessions.leaveUnattended(session.id)
+                } label: {
+                    Label("Leave Unattended", systemImage: "eye.slash")
+                }
+                .help("Yes, then the session goes on in Claude Code's auto mode")
+                Text("Allow this and stop asking")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
             Button("Deny") { sessions.sendKeys("\u{1B}", to: session.id) }
                 .help("Esc: say no, then tell claude what to do instead")

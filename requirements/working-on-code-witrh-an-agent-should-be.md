@@ -1,6 +1,6 @@
 ---
 type: requirement
-status: in-progress
+status: done
 summary: "Switch a running session between Attended (claude's default mode, asking before edits and commands) and Unattended (Claude Code's auto mode) from Gannin, and see which it's in."
 issues: [andrew-waters/gannin#52]
 plans: [plans/2026-10-08-working-on-code-witrh-an-agent-should-be.md]

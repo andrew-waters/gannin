@@ -339,6 +339,17 @@ final class SessionStore {
     /// waiting on the hook, and comes back if the state never leaves
     /// `needsYou` (`confirmApproval`).
     var optimisticApprovals: [UUID: String] = [:]
+    /// claude's permission mode in each session, as its terminal's footer
+    /// (else its transcript) last showed it (`SessionMode.swift`).
+    var modes: [UUID: ClaudeMode] = [:]
+    /// Why a session's last switch between Attended and Unattended didn't
+    /// land, shown by its control until the next one does.
+    var modeNotes: [UUID: String] = [:]
+    /// Sessions being switched between modes now.
+    var switchingMode: Set<UUID> = []
+    /// Boxes (`modeBox`) whose claude had no auto mode in its cycle, until
+    /// claude next starts there.
+    var autoUnavailableBoxes: Set<String> = []
     /// Bumped each time a session's hooks say claude edited a file or ran
     /// a command, so its Changes pane reads them again.
     private(set) var changeCounts: [UUID: Int] = [:]
@@ -695,6 +706,8 @@ final class SessionStore {
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(SessionState.starting.rawValue.utf8).write(to: directory.appending(path: "state"))
         setState(.starting, for: session.id)
+        // A new claude there may have auto mode after all.
+        autoUnavailableBoxes.remove(session.connect ?? "")
         askToNotify()
         // Fresh org data on every start and resume, which the script copies
         // into its folder.
@@ -828,7 +841,7 @@ final class SessionStore {
                 tries += 1
                 try? await Task.sleep(for: .milliseconds(150))
             }
-            let actions: [UNNotificationAction] = quickReplies(for: id).prefix(4).map { reply in
+            let actions: [UNNotificationAction] = quickReplies(for: id).prefix(Self.maxQuickReplies).map { reply in
                 UNNotificationAction(identifier: "keys:" + reply.keys, title: reply.title, options: reply.isDestructive ? [.destructive] : [])
             }
             notificationCategories[identifier] = UNNotificationCategory(identifier: identifier, actions: actions, intentIdentifiers: [])
@@ -1057,6 +1070,7 @@ final class SessionStore {
         for (id, terminal) in terminals where terminal.isRunning {
             anyRunning = true
             guard let session = sessions[id] else { continue }
+            refreshMode(id)
             if session.isRemote {
                 if pollTick % 2 == 0 { readRemote(session) }
                 continue
@@ -1221,22 +1235,12 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
         focus()
     }
 
-    /// Keys as a key press would send them. Claude Code turns on the kitty
-    /// keyboard protocol, under which Esc is `CSI 27 u` (a bare Esc reads
-    /// as the start of a sequence and is dropped), and, when every key is
-    /// reported, Return and the rest are too.
+    /// Keys as a key press would send them, encoded for the kitty keyboard
+    /// protocol when Claude Code has turned it on (`TerminalKeys.encode`).
     func press(_ keys: String) {
         guard let view else { return }
         let flags = view.terminal.keyboardEnhancementFlags
-        var encoded = keys
-        if !flags.isEmpty {
-            if keys == "\u{1B}" {
-                encoded = "\u{1B}[27u"
-            } else if flags.contains(.reportAllKeys), keys.unicodeScalars.count == 1, let scalar = keys.unicodeScalars.first, scalar.value != 0x1B {
-                encoded = "\u{1B}[\(scalar.value)u"
-            }
-        }
-        view.send(txt: encoded)
+        view.send(txt: TerminalKeys.encode(keys, kitty: !flags.isEmpty, reportAllKeys: flags.contains(.reportAllKeys)))
     }
 
     /// Puts the keyboard in the terminal.

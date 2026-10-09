@@ -18,6 +18,13 @@ To try a change in the app, `scripts/relaunch.sh` builds it signed (so it reads 
 token) and, only if the build succeeds, quits every running Gannin and opens the new build, detached,
 so a Claude Code session running inside Gannin resumes in it; `--no-build` relaunches the last build.
 
+Unit tests (`GanninTests`, Swift Testing, hosted in the app) run with the scheme, as `ci.yml` runs
+them on every pull request:
+
+```bash
+xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS' -skipPackagePluginValidation
+```
+
 Swift 6 with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so everything is main-actor unless
 marked otherwise. The Mac app isn't sandboxed while Claude Code sessions are prototyped: they
 run git, gh and claude as the user, which a sandboxed child process can't (its login, keys and
@@ -782,7 +789,24 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `SessionTerminal.press`, which encodes them for the kitty keyboard protocol Claude Code turns
   on (Esc as `CSI 27 u`), as notification actions are (`keys:` in `GanninAppDelegate`).
 - Under the terminal, `SessionComposer`: a prompt box, saved prompts (`PromptSnippet`, Settings, ⌃1 to ⌃9), Esc
-  to interrupt, the context gauge with /compact, and the last test result. The `Notification`
+  to interrupt, Attended or Unattended, the context gauge with /compact, and the last test result.
+- Attended and Unattended (`Sessions/SessionMode.swift`, andrew-waters/gannin#52,
+  `plans/2026-10-08-working-on-code-witrh-an-agent-should-be.md`) are claude's default mode and
+  auto mode (`ClaudeMode`; accept edits, plan and bypass are only shown, by claude's names). The
+  mode (`SessionStore.modes`) is read each poll off the terminal's footer under claude's input box
+  (`ClaudeMode.fromFooter`: "auto mode on" and the like, nothing for the default; the terminal is
+  local, so a server session's too), else the transcript's latest `permissionMode`
+  (`SessionTranscript.permissionMode`, only written with the next record). The composer's menu
+  switches it by Shift+Tab (`TerminalKeys.shiftTab`, `CSI 9;2 u` under the kitty protocol,
+  `SessionStore.switchMode`): press, read the footer back, stop on the mode wanted (`ModeCycle`).
+  Back where it started after a whole cycle, it stops and says so (`modeNotes`); one that never
+  reached auto mode marks its box (`modeBox`: this Mac or the Connect with command) in
+  `autoUnavailableBoxes` until claude next starts there, and Unattended is disabled with a line
+  saying why. Nothing falls back to accept edits or bypass. Not while claude is asking: Leave
+  Unattended on the permission card and as the last of a Needs you notification's quick replies
+  (`leaveUnattendedReply`, handled by the store, not sent as keys) is Allow this and stop asking,
+  `leaveUnattended`: Yes, then once the prompt has closed, the switch to auto mode. Neither is
+  offered when auto mode is known to be missing or the session's already Unattended. The `Notification`
   hook only marks permission prompts and dialogs; a `PreToolUse` hook marks AskUserQuestion.
 - `SessionStore.watchPullRequests` fetches every running session's PRs (and any with one open)
   every 2 minutes, 1 while checks run (Settings › Sync), and flags new failures and new review feedback in one

@@ -158,6 +158,11 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
     var artifacts: [Artifact] = []
     var lastReply: String?
     var lastActivity: Date?
+    /// claude's permission mode on its latest prompt (`default`, `auto`,
+    /// `acceptEdits`, `plan`, `bypassPermissions`), as its user records
+    /// carry it: only written with the next record, so a change made since
+    /// shows in the terminal's footer first (`ClaudeMode.fromFooter`).
+    var permissionMode: String?
 
     /// The tool claude ran last that has no result yet: what a permission
     /// prompt is asking to run.
@@ -263,6 +268,9 @@ nonisolated struct TranscriptReader: Sendable {
                 summary.contextLimit = 1_000_000
             }
         case "user":
+            if (object["isSidechain"] as? Bool) != true, let mode = object["permissionMode"] as? String {
+                summary.permissionMode = mode
+            }
             guard (object["isMeta"] as? Bool) != true, (object["isSidechain"] as? Bool) != true,
                   let message = object["message"] as? [String: Any] else { return }
             if let text = message["content"] as? String {

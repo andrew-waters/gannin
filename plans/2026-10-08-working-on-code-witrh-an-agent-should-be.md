@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: done
 summary: "A Claude Code session in Gannin can be switched between Attended (claude asks before edits and commands) and Unattended (Claude Code's auto mode, no prompts), mid-session, so sessions don't stall while nobody's watching."
 issues: [andrew-waters/gannin#52, andrew-waters/gannin#53, andrew-waters/gannin#54]
 touches: [andrew-waters/gannin]
