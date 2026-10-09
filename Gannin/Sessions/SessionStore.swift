@@ -80,6 +80,14 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// Whether new failures and feedback on its PRs go to claude by
     /// themselves; nil for the user's default (`sendsFeedbackKey`).
     var sendsFeedback: Bool? = nil
+    /// Whether a second agent reviews its change when it says it's ready
+    /// (`PairReview.swift`); nil for the user's default (`pairReviewKey`).
+    var pairsReview: Bool? = nil
+    /// That review's loop, once it has been asked for.
+    var pairing: PairReview? = nil
+    /// The last `review-request` token taken from its hook folder, so one
+    /// read again after a relaunch isn't asked twice.
+    var reviewRequest: String? = nil
 
     var isRemote: Bool { connect != nil }
     var isHelper: Bool { parentID != nil }
@@ -133,6 +141,9 @@ extension CodeSession {
         watch = try container.decodeIfPresent(ReviewWatch.self, forKey: .watch)
         pullRequestsSeen = try container.decodeIfPresent(Set<String>.self, forKey: .pullRequestsSeen)
         sendsFeedback = try container.decodeIfPresent(Bool.self, forKey: .sendsFeedback)
+        pairsReview = try container.decodeIfPresent(Bool.self, forKey: .pairsReview)
+        pairing = try? container.decodeIfPresent(PairReview.self, forKey: .pairing)
+        reviewRequest = try container.decodeIfPresent(String.self, forKey: .reviewRequest)
     }
 }
 
@@ -457,6 +468,15 @@ final class SessionStore {
         selectedTab = id
     }
 
+    /// Adds the session's tab after `neighbour`'s (else at the end) without
+    /// showing it: a helper started in the background.
+    func addTab(_ id: UUID, after neighbour: UUID?) {
+        guard sessions[id] != nil, !tabs.contains(id) else { return }
+        let index = neighbour.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
+        tabs.insert(id, at: index)
+        saveTabs()
+    }
+
     /// Closes the tab; claude keeps running, as when a window closed.
     /// A new plan's tab, after the one showing, selected.
     @discardableResult
@@ -725,7 +745,7 @@ final class SessionStore {
                 directory: remoteDirectory,
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
-                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true)
+                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session))
             )
             command = SessionScript.connecting(connect, to: remote)
         } else {
@@ -733,7 +753,7 @@ final class SessionStore {
             // The harness is cloned into it, when it isn't there yet.
             try? fm.createDirectory(at: session.harnessPath == nil ? root : root.deletingLastPathComponent(), withIntermediateDirectories: true)
             let local = SessionScript.quoted(directory.path)
-            try? Data(SessionScript.settings(directory: local, isRemote: false).utf8).write(to: directory.appending(path: "settings.json"))
+            try? Data(SessionScript.settings(directory: local, isRemote: false, allowing: Self.allowedCommands(session)).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"
@@ -759,6 +779,11 @@ final class SessionStore {
             directory: session.isRemote || session.harnessPath != nil ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
         )
         startPolling()
+    }
+
+    /// What a session's claude runs without asking: the pair review's script.
+    private static func allowedCommands(_ session: CodeSession) -> [String] {
+        session.canPairReview ? [session.readyForReviewScript, "./" + session.readyForReviewScript] : []
     }
 
     func changeCount(_ id: UUID) -> Int { changeCounts[id] ?? 0 }
@@ -794,7 +819,7 @@ final class SessionStore {
         case .idle where old == .working:
             if let pr = sessions[id]?.reviewOf, readyForApproval(pr.id, whileBusy: true) != nil {
                 noticeApproval(id)
-            } else {
+            } else if !isQuietForPairReview(id) {
                 flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false)
             }
         case .working, .starting, .stopped:
@@ -938,7 +963,7 @@ final class SessionStore {
     // MARK: Hook state
 
     /// What a session's hooks last wrote, as read from its folder.
-    private func apply(state: String?, pullRequest: String?, changed: String?, contextWindow: String?, for id: UUID) {
+    private func apply(state: String?, pullRequest: String?, changed: String?, contextWindow: String?, reviewRequest: String? = nil, for id: UUID) {
         if let state = state.flatMap(SessionState.init(rawValue:)) {
             setState(state, for: id)
         }
@@ -952,6 +977,9 @@ final class SessionStore {
             if lastChanged[id] != nil { changeCounts[id, default: 0] += 1 }
             lastChanged[id] = changed
         }
+        if let reviewRequest, !reviewRequest.isEmpty {
+            reviewRequestRead(reviewRequest, for: id)
+        }
         if let contextWindow, let limit = SessionTranscript.contextLimit(from: contextWindow) {
             contextWindows[id] = limit
             if var summary = transcripts[id], summary.contextLimit != limit {
@@ -961,8 +989,8 @@ final class SessionStore {
         }
     }
 
-    /// The server session's state, PR and last change, one line each.
-    /// The server session's state, PR and last change, one line each, then
+    /// The server session's state, PR, last change, statusline and review
+    /// request, one line each, then
     /// its transcript's size and whatever's been added to it since the last
     /// read: one call over the shared connection.
     private func readRemote(_ session: CodeSession) {
@@ -971,7 +999,7 @@ final class SessionStore {
         readingRemote.insert(session.id)
         let reader = readers[session.id] ?? TranscriptReader()
         let script = #"d="$HOME"/.gannin/sessions/"# + session.id.uuidString + "\n"
-            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)""# + "\n"
+            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)" "$(head -n 1 "$d/review-request" 2>/dev/null)""# + "\n"
             + #"f=$(ls "$HOME"/.claude/projects/*/"# + session.claudeID + #".jsonl 2>/dev/null | head -n 1)"# + "\n"
             + #"if [ -n "$f" ]; then s=$(wc -c < "$f" | tr -d ' '); echo "$s"; [ "$s" -gt "# + "\(reader.offset)"
             + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c 4000000; else echo -1; fi; exit 0"#
@@ -979,14 +1007,14 @@ final class SessionStore {
         Task {
             let result = await Task.detached { () -> (Shell.Result, TranscriptReader?) in
                 let result = Shell.run(script, .ssh(arguments))
-                // After five lines (state, PR, change, statusline, size), the new bytes.
+                // After six lines (state, PR, change, statusline, review request, size), the new bytes.
                 var newlines = 0
                 var index = result.data.startIndex
-                while newlines < 5, let next = result.data[index...].firstIndex(of: 10) {
+                while newlines < 6, let next = result.data[index...].firstIndex(of: 10) {
                     newlines += 1
                     index = result.data.index(after: next)
                 }
-                guard newlines == 5, result.data.count > index else { return (result, nil) }
+                guard newlines == 6, result.data.count > index else { return (result, nil) }
                 var reader = reader
                 reader.consume(result.data[index...])
                 return (result, reader)
@@ -995,10 +1023,10 @@ final class SessionStore {
             // Ended while it was read: the terminal's end is the truth.
             guard result.0.ok, terminals[id]?.isRunning == true, sessions[id] != nil else { return }
             if let reader = result.1 { store(reader, for: id) }
-            let lines = result.0.data.prefix(8192).split(separator: 10, maxSplits: 5, omittingEmptySubsequences: false)
-                .prefix(4).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
+            let lines = result.0.data.prefix(8192).split(separator: 10, maxSplits: 6, omittingEmptySubsequences: false)
+                .prefix(5).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
             func line(_ index: Int) -> String? { index < lines.count && !lines[index].isEmpty ? lines[index] : nil }
-            apply(state: line(0), pullRequest: line(1), changed: line(2), contextWindow: line(3), for: id)
+            apply(state: line(0), pullRequest: line(1), changed: line(2), contextWindow: line(3), reviewRequest: line(4), for: id)
         }
     }
 
@@ -1040,6 +1068,7 @@ final class SessionStore {
             save()
             reviewFinished(id)
         }
+        pairRoundRead(id)
     }
 
     /// `~/.claude/projects/<folder>/<id>.jsonl`, whichever folder claude
@@ -1080,16 +1109,17 @@ final class SessionStore {
                 (try? String(contentsOf: directory.appending(path: name), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             let state = read("state"), pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
+            let reviewRequest = read("review-request")
             if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
                 // What it's asking is in the transcript: read it first, so
                 // the notification can offer the answers.
                 readLocalTranscript(id) { [weak self] in
-                    self?.apply(state: state, pullRequest: pullRequest, changed: changed, contextWindow: statusLine, for: id)
+                    self?.apply(state: state, pullRequest: pullRequest, changed: changed, contextWindow: statusLine, reviewRequest: reviewRequest, for: id)
                 }
                 continue
             }
             if pollTick % 2 == 0 { readLocalTranscript(id) }
-            apply(state: state, pullRequest: pullRequest, changed: changed, contextWindow: statusLine, for: id)
+            apply(state: state, pullRequest: pullRequest, changed: changed, contextWindow: statusLine, reviewRequest: reviewRequest, for: id)
         }
         return anyRunning
     }

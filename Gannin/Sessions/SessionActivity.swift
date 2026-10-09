@@ -22,6 +22,7 @@ struct SessionActivityPane: View {
                     if !transcript.plans.isEmpty { plans(transcript.plans, running: running) }
                     if session.isReviewer { findings(transcript) }
                 }
+                if let working = pairSession { PairReviewSection(session: working) }
                 helpers
                 if let transcript, !transcript.events.isEmpty {
                     Section("Activity") {
@@ -136,14 +137,17 @@ struct SessionActivityPane: View {
         }
     }
 
+    /// The working session whose review loop shows here: this one, or the
+    /// one this reviews.
+    private var pairSession: CodeSession? {
+        session.canPairReview ? session : sessions.pairReviewed(by: session.id)
+    }
+
     /// The other agents on this issue, and starting another.
     private var helpers: some View {
         let parent = session.parentID.flatMap { sessions.sessions[$0] } ?? session
         let others = ([parent] + sessions.helpers(of: parent.id)).filter { $0.id != session.id }
-        let repos = [parent.issue.repo] + (sessions.pullRequestInfo[parent.id] ?? []).map(\.repo)
-        var seen: Set<String> = []
-        let learnings = (sessions.harnessStore.anyIndex(org: parent.org, repo: parent.harnessRepo ?? parent.repo).map { index in repos.flatMap { index.learnings(for: $0) } } ?? [])
-            .filter { seen.insert($0.id).inserted }
+        let learnings = sessions.reviewLearnings(for: parent)
         return Section("Agents on #\(String(session.issue.number))") {
             ForEach(others) { other in
                 Button {

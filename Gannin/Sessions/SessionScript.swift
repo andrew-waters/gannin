@@ -99,7 +99,7 @@ enum SessionScript {
 
             mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
             \(briefSource)cp "$session/brief.md" "$folder/.gannin/"
-            \(session.isAsk ? askFolder : "")cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
+            \(session.isAsk ? askFolder : "")\(readyForReviewStep(session, directory: directory, into: #""$folder/.gannin""#))cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
             cd "$harness" || fail "The harness isn't there."
 
             command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
@@ -124,6 +124,32 @@ enum SessionScript {
         if [ -d "$session/context" ]; then rm -rf "$folder/context" && cp -R "$session/context" "$folder/context"; fi
 
         """
+
+    /// The script the working agent runs when its change is ready for a
+    /// second agent to review (`PairReview`): it writes a new token and its
+    /// note, on one line, to `review-request` in the session's folder
+    /// (`directory`, a shell expression on the same box), which Gannin reads
+    /// with the hooks' other files.
+    static func readyForReview(_ session: CodeSession, directory: String) -> String {
+        """
+        #!/bin/bash
+        # Written by Gannin for \(session.issue.reference). Run it when the change is ready for a second agent
+        # to review, with a note on what changed and where to look.
+        note=$(printf '%s' "$*" | tr '\\n' ' ')
+        printf '%s %s\\n' "$(date +%s)-$$" "$note" > \(directory)/review-request || { echo "Couldn't tell Gannin." >&2; exit 1; }
+        echo "Gannin has it. With pair review on, a second agent reviews the change and its findings come to you as a message; otherwise you'll be told to carry on. End your turn and wait for that message."
+
+        """
+    }
+
+    /// The start script's line writing `ready-for-review` into the folder's
+    /// `.gannin` (`folder`, a shell expression), for an issue's own session
+    /// only. Ends with a newline, as it's laid in before the next line.
+    private static func readyForReviewStep(_ session: CodeSession, directory: String, into folder: String) -> String {
+        guard session.canPairReview else { return "" }
+        let script = Data(readyForReview(session, directory: directory).utf8).base64EncodedString()
+        return "printf %s \(script) | base64 -d > \(folder)/ready-for-review && chmod +x \(folder)/ready-for-review\n"
+    }
 
     /// Sessions from before the harness: clone the repo into the workspace
     /// if it isn't yet, add the worktree beside it on the session's branch
@@ -179,7 +205,7 @@ enum SessionScript {
             cd "$worktree" || fail "The worktree isn't there."
             mkdir -p .gannin
             cp "$session/brief.md" .gannin/
-            cp "$session/settings.json" .gannin/\(settingsName(session))
+            \(readyForReviewStep(session, directory: directory, into: ".gannin"))cp "$session/settings.json" .gannin/\(settingsName(session))
             exclude="$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
             mkdir -p "$(dirname "$exclude")"
             grep -qx '.gannin/' "$exclude" 2>/dev/null || echo '.gannin/' >> "$exclude"
@@ -203,7 +229,9 @@ enum SessionScript {
     /// context-window stats for `SessionTranscript.contextLimit(from:)`.
     /// `isRemote` is whether this runs on a server: the user's own
     /// statusLine command, read from this Mac, wouldn't exist there.
-    static func settings(directory dir: String, isRemote: Bool) -> String {
+    /// `allowing` is commands it runs without asking (the pair review's
+    /// script).
+    static func settings(directory dir: String, isRemote: Bool, allowing: [String] = []) -> String {
         func signal(_ payload: String) -> String {
             #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
         }
@@ -258,8 +286,10 @@ enum SessionScript {
         let render = (isRemote ? nil : usersStatusLineCommand()).map { #"printf '%s' "$input" | { "# + $0 + "\n}" }
             ?? #"printf '%s' "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p' | head -n1"#
         let statusLine = #"input=$(cat); printf '%s' "$input" | tr -d '\n' > \#(dir)/statusline 2>/dev/null; \#(render)"#
+        var object: [String: Any] = ["hooks": hooks, "statusLine": ["type": "command", "command": statusLine]]
+        if !allowing.isEmpty { object["permissions"] = ["allow": allowing.map { "Bash(\($0):*)" }] }
         let data = (try? JSONSerialization.data(
-            withJSONObject: ["hooks": hooks, "statusLine": ["type": "command", "command": statusLine]],
+            withJSONObject: object,
             options: [.prettyPrinted, .sortedKeys]
         )) ?? Data()
         return String(decoding: data, as: UTF8.self)
@@ -430,6 +460,9 @@ enum SessionBrief {
                 "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
                 "- If the harness has no `projects/` folder, it's the code repo too: the code is \(harnessRepo) itself. Don't work in its checkout; give it one worktree in the issue's folder the same way, with `git -C . fetch origin` and `git -C . worktree add \"$PWD/\(folder)/\(harnessRepo.split(separator: "/").last ?? "")\" -b \(session.branch) origin/HEAD`, and do everything there, the plan included.",
             ]
+            if session.canPairReview {
+                working.append(readyForReviewNote(session))
+            }
             if !linkedRepos.isEmpty {
                 working.append("- The issue's linked pull requests are in \(linkedRepos.map { "`\($0)`" }.joined(separator: ", ")), so start there.")
             }
@@ -447,6 +480,9 @@ enum SessionBrief {
             if session.repo != reference.repo {
                 working.append("- The issue lives in \(reference.repo), which holds issues rather than code.")
             }
+            if session.canPairReview {
+                working.append(readyForReviewNote(session))
+            }
             working.append("- When the change is ready, open a pull request with `gh pr create` and put \"Closes \(session.closingReference)\" in its body so it links to the issue.")
             if let harness {
                 working.append("- A plan's checkboxes are ticked off as its tasks land. The plan is in \(harness.repo), not this worktree.")
@@ -458,5 +494,10 @@ enum SessionBrief {
         }
         lines += working
         return lines.joined(separator: "\n")
+    }
+
+    /// When and how to ask for a second agent's review (`PairReview`).
+    private static func readyForReviewNote(_ session: CodeSession) -> String {
+        "- When the change is ready for review (committed, built and checked; before a pull request is opened as ready for review, though a draft is fine), run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and end your turn. Gannin may have a second agent review it; it can't edit, and its findings come back to you as a message. Fix those you agree with, say why not for the rest, commit, and run the script again. Gannin says when the review has settled, or to carry on without one."
     }
 }

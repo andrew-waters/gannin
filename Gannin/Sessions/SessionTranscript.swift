@@ -196,6 +196,18 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         return (try? JSONDecoder().decode([Finding].self, from: Data(json.utf8))) ?? []
     }
 
+    /// The fenced JSON list the last reply ends with, as findings; nil when
+    /// it ends with none, so "nothing found" (`[]`) isn't taken for "no
+    /// answer yet".
+    var listedFindings: [Finding]? {
+        lastJSON.flatMap { try? JSONDecoder().decode([Finding].self, from: Data($0.utf8)) }
+    }
+
+    /// The last reply's ID in the transcript, the same each time it's read.
+    var lastReplyID: String? {
+        events.last { if case .reply = $0.kind { return true } else { return false } }?.id
+    }
+
     /// A PR review's result, from the JSON object its last reply ends with.
     var review: ReviewResult? {
         lastJSON.flatMap { try? JSONDecoder().decode(ReviewResult.self, from: Data($0.utf8)) }
