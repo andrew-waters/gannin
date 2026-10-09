@@ -96,9 +96,9 @@ struct BoardItem: Codable, Hashable, Identifiable {
     let url: URL?
     let repo: String?
     /// OPEN, CLOSED or MERGED.
-    let state: String?
+    var state: String?
     let assignees: [Person]
-    let labels: [IssueLabel]
+    var labels: [IssueLabel]
     let milestone: String?
     let parent: String?
     let subIssuesProgress: Double?

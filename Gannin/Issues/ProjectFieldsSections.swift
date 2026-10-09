@@ -194,6 +194,10 @@ struct ProjectFieldsSections: View {
             defer { membershipBusy = false }
             do {
                 try await api.addToProject(projectID: project.id, contentID: issueID)
+                // A new item needs its own fields and built-ins fetched,
+                // so this re-fetches the board's "everything" filter rather
+                // than guessing at a `BoardItem` to patch in.
+                await projectStore.sync(org: org, number: project.number, filter: "", force: true)
                 await load()
             } catch {
                 membershipError = "Couldn't add to \(project.title): \(Self.message(for: error))"
@@ -209,6 +213,7 @@ struct ProjectFieldsSections: View {
             defer { membershipBusy = false }
             do {
                 try await api.removeFromProject(projectID: item.projectID, itemID: item.id)
+                projectStore.recordRemoved(org: org, number: item.projectNumber, itemID: item.id)
                 await load()
             } catch {
                 membershipError = "Couldn't remove from \(item.projectTitle): \(Self.message(for: error))"
