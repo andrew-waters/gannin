@@ -499,40 +499,79 @@ struct ExplainPullRequestButton: View {
 
 /// Claude's explanation of a PR, asked fresh each time the window opens
 /// (`ClaudeRunner.ask`, not a session): what it reads with `gh`, and what
-/// it's told to reply with.
+/// it's told to reply with. The window holds one conversation (`--resume`
+/// in the same folder), so a follow-up question is answered from the diff
+/// and discussion already read, not a fresh `gh` lookup.
 struct ExplainPullRequestWindow: View {
     let reference: PullRequestReference
 
+    private struct Turn: Identifiable {
+        let id: UUID
+        let fromClaude: Bool
+        var text: String
+
+        init(id: UUID = UUID(), fromClaude: Bool, text: String) {
+            self.id = id
+            self.fromClaude = fromClaude
+            self.text = text
+        }
+    }
+
     @State private var text = ""
+    @State private var turns: [Turn] = []
+    @State private var message = ""
     @State private var working = false
     @State private var status: String?
+    @State private var conversation = UUID()
 
     var body: some View {
         VStack(spacing: 0) {
-            ScrollView {
-                Group {
-                    if text.isEmpty {
-                        HStack(spacing: 8) {
-                            if working { ProgressView().controlSize(.small) }
-                            Text(working ? "Claude is reading it." : "Nothing yet.").foregroundStyle(.secondary)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Group {
+                            if text.isEmpty {
+                                HStack(spacing: 8) {
+                                    if working { ProgressView().controlSize(.small) }
+                                    Text(working ? "Claude is reading it." : "Nothing yet.").foregroundStyle(.secondary)
+                                }
+                            } else {
+                                MarkdownText(source: text, reading: 14)
+                            }
                         }
-                    } else {
-                        MarkdownText(source: text, reading: 14)
+                        ForEach(turns) { turn in
+                            bubble(turn).id(turn.id)
+                        }
                     }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(24)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .onChange(of: turns.count) {
+                    if let last = turns.last { withAnimation { proxy.scrollTo(last.id, anchor: .bottom) } }
+                }
+            }
+            if !text.isEmpty {
+                Divider()
+                HStack(alignment: .bottom, spacing: 8) {
+                    TextField("Ask a follow-up question", text: $message, axis: .vertical)
+                        .lineLimit(1...4)
+                        .onSubmit(askFollowUp)
+                    Button("Ask") { askFollowUp() }
+                        .keyboardShortcut(.return, modifiers: [.command])
+                        .disabled(working || message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                .padding(12)
             }
             Divider()
             HStack {
                 if let status { Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
-                if working && !text.isEmpty { ProgressView().controlSize(.small) }
+                if working { ProgressView().controlSize(.small) }
                 Spacer()
                 Button(text.isEmpty ? "Explain" : "Explain Again") { explain() }
                     .disabled(working)
                 Button("Copy") {
                     NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(text, forType: .string)
+                    NSPasteboard.general.setString(transcript, forType: .string)
                     status = "Copied"
                 }
                 .disabled(text.isEmpty)
@@ -543,24 +582,79 @@ struct ExplainPullRequestWindow: View {
         .onAppear { if text.isEmpty { explain() } }
     }
 
+    private func bubble(_ turn: Turn) -> some View {
+        HStack(alignment: .top) {
+            if !turn.fromClaude { Spacer(minLength: 40) }
+            Group {
+                if turn.fromClaude && turn.text.isEmpty {
+                    ProgressView().controlSize(.small)
+                } else if turn.fromClaude {
+                    MarkdownText(source: turn.text, reading: 13)
+                } else {
+                    Text(turn.text).textSelection(.enabled)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(turn.fromClaude ? Color.secondary.opacity(0.12) : Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+            if turn.fromClaude { Spacer(minLength: 40) }
+        }
+    }
+
+    private var transcript: String {
+        ([text] + turns.map { $0.fromClaude ? $0.text : "**Q:** \($0.text)" }).joined(separator: "\n\n")
+    }
+
     private func explain() {
         text = ""
+        turns = []
+        conversation = UUID()
         working = true
         status = nil
+        let id = conversation.uuidString.lowercased()
         let prompt = """
             Explain pull request \(reference.repo)#\(reference.number), "\(reference.title)" (\(reference.url.absoluteString)), for someone who hasn't read it: explain the code, not just the PR description.
 
             Read the actual changes with `gh pr diff \(reference.number) --repo \(reference.repo)` first, then `gh pr view \(reference.number) --repo \(reference.repo) --comments` for the stated intent and discussion. Base the explanation on what the diff does, not a reworded version of the title or description.
 
             Reply with the explanation only, no preamble, in Markdown: a short paragraph on what the code does and why, then a few bullet points on the notable changes if there are several, naming the functions, types or files involved. Where a short snippet would make a change clearer than naming it, include one as a fenced code block (with a language and, where it helps, the file path above it), taken from the actual diff rather than paraphrased. Don't review it or suggest changes.
+
+            I may ask follow-up questions about this PR afterwards; answer those from the diff and discussion you've already read, in the same plain Markdown style, with no preamble.
             """
         Task {
             do {
-                text = try await ClaudeRunner.ask(prompt, org: reference.org, tools: ["Bash"]) { chunk in
+                text = try await ClaudeRunner.ask(
+                    prompt, org: reference.org, folder: "gannin-explain-\(id)", tools: ["Bash"], session: (id, false)
+                ) { chunk in
                     text += chunk
                 }
             } catch {
                 status = error.localizedDescription
+            }
+            working = false
+        }
+    }
+
+    private func askFollowUp() {
+        let question = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !question.isEmpty, !working else { return }
+        message = ""
+        status = nil
+        turns.append(Turn(fromClaude: false, text: question))
+        let replyID = UUID()
+        turns.append(Turn(id: replyID, fromClaude: true, text: ""))
+        working = true
+        let id = conversation.uuidString.lowercased()
+        Task {
+            do {
+                let reply = try await ClaudeRunner.ask(
+                    question, org: reference.org, folder: "gannin-explain-\(id)", tools: ["Bash"], session: (id, true)
+                ) { chunk in
+                    if let index = turns.firstIndex(where: { $0.id == replyID }) { turns[index].text += chunk }
+                }
+                if let index = turns.firstIndex(where: { $0.id == replyID }) { turns[index].text = reply }
+            } catch {
+                if let index = turns.firstIndex(where: { $0.id == replyID }) { turns[index].text = error.localizedDescription }
             }
             working = false
         }
