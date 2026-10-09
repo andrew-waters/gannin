@@ -311,7 +311,7 @@ private struct CommitDetailView: View {
                         .fixedSize(horizontal: true, vertical: false)
                         .textSelection(.enabled)
                 }
-                .font(.system(size: 11, design: .monospaced))
+                .font(Font(EditorFontStore.shared.font))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(DiffStyle.background(line.kind))
             }

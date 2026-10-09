@@ -365,7 +365,7 @@ private struct GitDiffRow: View {
                 .padding(.leading, 16)
             }
         }
-        .font(.system(size: 11, design: .monospaced))
+        .font(Font(EditorFontStore.shared.font))
         // As wide as the widest line, so the colours run across.
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(DiffStyle.background(line.kind))

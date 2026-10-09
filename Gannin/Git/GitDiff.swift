@@ -204,9 +204,9 @@ struct DiffScroll<Row: View>: View {
     let lines: [DiffLine]
     @ViewBuilder let row: (DiffLine) -> Row
 
-    /// One character of the diff's 11pt monospaced font.
+    /// One character of the diff's font (Settings > General).
     private static var characterWidth: CGFloat {
-        ("0" as NSString).size(withAttributes: [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)]).width
+        ("0" as NSString).size(withAttributes: [.font: EditorFontStore.shared.font]).width
     }
 
     /// Both line numbers' gutters and their gap, the longest line (a tab

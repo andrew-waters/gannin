@@ -668,6 +668,12 @@ final class SessionStore {
     /// The session's terminal, if it has been opened since launch.
     func terminal(_ id: UUID) -> SessionTerminal? { terminals[id] }
 
+    /// A font picked after some terminals were already running (Settings >
+    /// General): pushed onto each so it takes hold without relaunching.
+    func applyEditorFont(_ font: NSFont) {
+        for terminal in terminals.values { terminal.applyFont(font) }
+    }
+
     /// The session's Changes pane, created the first time it's shown. Call
     /// from an event or `onAppear`, not from a view's body.
     func changes(for session: CodeSession) -> SessionChanges {
@@ -1214,7 +1220,7 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
         if container.bounds.isEmpty { container.frame = NSRect(x: 0, y: 0, width: 960, height: 640) }
         let view = LocalProcessTerminalView(frame: container.bounds)
         view.autoresizingMask = [.width, .height]
-        view.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        view.font = EditorFontStore.shared.font
         view.nativeBackgroundColor = .textBackgroundColor
         view.nativeForegroundColor = .textColor
         view.processDelegate = self
@@ -1235,6 +1241,11 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     func terminate() {
         guard isRunning else { return }
         view?.terminate()
+    }
+
+    /// A font picked after this terminal was launched (Settings > General).
+    func applyFont(_ font: NSFont) {
+        view?.font = font
     }
 
     /// The screen's own last rows as plain text, bottom row last: for

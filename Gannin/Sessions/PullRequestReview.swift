@@ -1624,7 +1624,7 @@ private struct DiffRow: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .textSelection(.enabled)
         }
-        .font(.system(size: 11, design: .monospaced))
+        .font(Font(EditorFontStore.shared.font))
         .padding(.trailing, 6)
         .background(Self.background(line.kind))
         .overlay(alignment: .leading) {
@@ -1723,7 +1723,7 @@ private struct FindingCard: View {
                     .textSelection(.enabled)
                 if let suggestion = finding.suggestion, !dismissed {
                     Text(suggestion)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(Font(EditorFontStore.shared.font))
                         .padding(8)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(ChartPalette.good.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
