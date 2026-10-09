@@ -3,7 +3,8 @@
   "branch" : "8-run-agent-sessions-in-apple-container",
   "issue" : "andrew-waters/gannin#8",
   "pullRequests" : [
-    "https://github.com/andrew-waters/gannin/pull/86"
+    "https://github.com/andrew-waters/gannin/pull/86",
+    "https://github.com/acme/web/pull/3"
   ],
   "repos" : [
 
