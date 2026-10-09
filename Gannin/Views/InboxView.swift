@@ -4,6 +4,7 @@ import SwiftUI
 /// on this Mac). The first four are on until turned off; the rest are there
 /// for those who want them.
 enum InboxSection: String, CaseIterable, Identifiable {
+    case approvals = "Ready for your approval"
     case sessions = "Claude Code"
     case catchUp = "While you were away"
     case reviews = "Needs your review"
@@ -18,13 +19,14 @@ enum InboxSection: String, CaseIterable, Identifiable {
 
     var isOnByDefault: Bool {
         switch self {
-        case .sessions, .catchUp, .reviews, .changed, .pullRequests, .issues: true
+        case .approvals, .sessions, .catchUp, .reviews, .changed, .pullRequests, .issues: true
         case .opened, .plans, .uncategorised: false
         }
     }
 
     var help: String {
         switch self {
+        case .approvals: "Review requests Claude would approve, on the PR as it is with nothing in the way: look over the review and approve. Team blockers, so first"
         case .sessions: "Claude Code sessions waiting on you"
         case .catchUp: "Comments, commits and automatic reviews on PRs Claude reviewed, since you last opened each review"
         case .reviews: "PRs you've been asked to review, longest waiting first"
@@ -86,20 +88,26 @@ struct InboxView: View {
         _storedOrder = AppStorage(wrappedValue: "", "inboxSectionOrder.\(org)")
     }
 
-    /// The sections in your order, any added since at the end.
+    /// The sections in your order, any added since at the end, except
+    /// Ready for your approval, which goes first until you move it.
     private var order: [InboxSection] {
         let saved = storedOrder.split(separator: ",").compactMap { InboxSection(rawValue: String($0)) }.filter(InboxSection.available.contains)
-        return saved + InboxSection.available.filter { !saved.contains($0) }
+        let added = InboxSection.available.filter { !saved.contains($0) }
+        return added.filter { $0 == .approvals } + saved + added.filter { $0 != .approvals }
     }
 
     private var shown: Set<InboxSection> {
         guard !storedSections.isEmpty else { return Set(InboxSection.allCases.filter(\.isOnByDefault)) }
-        return Set(storedSections.split(separator: ",").compactMap { InboxSection(rawValue: String($0)) })
+        var sections = Set(storedSections.split(separator: ",").compactMap { InboxSection(rawValue: String($0)) })
+        // Sections chosen before it was added: shown until you say.
+        if !UserDefaults.standard.bool(forKey: "inboxSectionsKnowApprovals.\(org)") { sections.insert(.approvals) }
+        return sections
     }
 
     private func show(_ section: InboxSection, _ isOn: Bool) {
         var sections = shown
         if isOn { sections.insert(section) } else { sections.remove(section) }
+        UserDefaults.standard.set(true, forKey: "inboxSectionsKnowApprovals.\(org)")
         storedSections = InboxSection.allCases.filter(sections.contains).map(\.rawValue).joined(separator: ",")
     }
 
@@ -281,6 +289,22 @@ struct InboxView: View {
     private func sections(_ inbox: Inbox) -> [(title: String, rows: [InboxRow])] {
         var sections: [(title: String, rows: [InboxRow])] = []
         let shown = shown
+        // Claude would approve: first, and out of Needs your review.
+        let approvals = shown.contains(.approvals)
+            ? inbox.reviews.filter { !$0.pr.isDraft }.compactMap { item in sessions.readyForApproval(item.pr.id).map { (item, $0) } }
+            : []
+        let approving = Set(approvals.map(\.0.pr.id))
+        if !approvals.isEmpty {
+            sections.append((InboxSection.approvals.rawValue, approvals.map { item, session in
+                InboxRow(
+                    id: "approve-\(item.pr.id)", title: item.pr.title, reference: Self.number(item.pr.repo, item.pr.number),
+                    people: item.pr.author.map { [$0] } ?? [], checks: checks(item.pr),
+                    state: "Claude would approve", stateColor: ChartPalette.good,
+                    tint: ChartPalette.good, since: item.askedAt, sinceLabel: "Asked", size: (item.pr.additions, item.pr.deletions),
+                    page: .pullRequest(item.pr.id), session: session.id
+                )
+            }))
+        }
         let waiting = sessions.sessions(for: org).filter { [.needsYou, .idle].contains(sessions.state($0.id)) }
         if shown.contains(.sessions), !waiting.isEmpty {
             sections.append(("Claude Code", waiting.map { session in
@@ -305,7 +329,7 @@ struct InboxView: View {
                 )
             }))
         }
-        if shown.contains(.reviews) { sections.append((InboxSection.reviews.rawValue, inbox.reviews.map { item in
+        if shown.contains(.reviews) { sections.append((InboxSection.reviews.rawValue, inbox.reviews.filter { !approving.contains($0.pr.id) }.map { item in
             InboxRow(
                 id: "review-\(item.pr.id)", title: item.pr.title, reference: Self.number(item.pr.repo, item.pr.number),
                 people: item.pr.author.map { [$0] } ?? [], checks: checks(item.pr),

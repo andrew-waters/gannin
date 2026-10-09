@@ -106,6 +106,7 @@ struct GanninApp: App {
             guard AutoReview.isOn(for: reference.org), let sessions,
                   let setup = orgConfigs?.baseConfig(for: reference.org).harness(covering: [reference.repo]),
                   let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return false }
+            if await sessions.reviewConfig(org: reference.org, harness: setup, repo: reference.repo).resolved.skips(title: reference.title) { return nil }
             return await sessions.startAutomaticReview(of: reference, harness: setup, harnessPath: path)
         }
         watch.checkWatched = { [weak sessions] in await sessions?.checkWatchedReviews() }

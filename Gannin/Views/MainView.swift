@@ -49,6 +49,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case scorecard = "Scorecard"
     /// What the Claude Code agents want from you.
     case agents = "Agents"
+    /// How Claude's reviews land, under Agents.
+    case agentMetrics = "Agent Metrics"
     /// Questions about the org, answered by Claude from Gannin's data.
     case ask = "Ask"
     case epics = "Epics"
@@ -69,6 +71,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         switch self {
         case .actions: "CI"
         case .agents: "Waiting on You"
+        case .agentMetrics: "Metrics"
         case .scorecard: "Scorecards"
         default: rawValue
         }
@@ -92,6 +95,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .recap: "calendar.badge.checkmark"
         case .scorecard: "target"
         case .agents: "questionmark.bubble"
+        case .agentMetrics: "chart.bar.xaxis"
         case .ask: "sparkle.magnifyingglass"
         case .epics: "square.stack.3d.up"
         case .hygiene: "wand.and.sparkles"
@@ -1305,6 +1309,7 @@ struct OrgSidebar: View {
                 }
 
                 Section("Agents", isExpanded: $sessionsExpanded) {
+                    row(.agentMetrics)
                     row(.agents)
                     SessionSidebarRows(org: selectedOrg)
                 }
@@ -1483,7 +1488,7 @@ struct OrgSidebar: View {
         case .agents:
             guard let selectedOrg else { return 0 }
             return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .planning, .recap, .scorecard, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .planning, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
         }
     }
 }

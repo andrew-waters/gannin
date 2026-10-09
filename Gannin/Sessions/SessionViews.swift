@@ -1480,6 +1480,7 @@ struct SessionSettingsSection: View {
     @AppStorage(AutoReview.enabledKey) private var autoReview = false
     @AppStorage(AutoReview.watchKey) private var watchesReviews = true
     @AppStorage(AutoReview.postKey) private var postsReviews = false
+    @AppStorage(SessionStore.recordReviewsKey) private var recordsReviews = true
     /// Typing a model ID of your own, rather than picking one.
     @State private var customModel = false
 
@@ -1523,6 +1524,10 @@ struct SessionSettingsSection: View {
                 .foregroundStyle(.secondary)
             Toggle("Post automatic reviews to GitHub", isOn: $postsReviews)
             Text("Reviews Gannin starts by itself are posted as comments. They never approve or request changes. Off, they wait for you to Post Review.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Record reviews in the harness", isOn: $recordsReviews)
+            Text("A review's findings, what you made of them and whether their threads were resolved, committed to its harness when it's posted, finished, or its PR merges or closes. Agents › Metrics reads them, for everyone in the team.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Send new PR feedback to Claude", isOn: $sendsFeedback)

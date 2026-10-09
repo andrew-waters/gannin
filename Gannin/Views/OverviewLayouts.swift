@@ -49,6 +49,9 @@ struct AttentionOverview: View {
     @Environment(IssueStore.self) private var issueStore
     @Environment(OrgConfigStore.self) private var configs
     @Environment(\.showSidebarItem) private var showSidebarItem
+    @Environment(SessionStore.self) private var sessions
+    @Environment(AuthStore.self) private var auth
+    @Environment(\.openWindow) private var openWindow
     let org: String
     let workload: Workload
     let scorecard: [ScorecardHeadline]
@@ -183,6 +186,22 @@ struct AttentionOverview: View {
                 weight: 1,
                 open: { showSidebarItem?(.tab(.scorecard)) }
             ))
+        }
+
+        // Yours to approve: Claude would, and the team's waiting on it.
+        if let me = auth.viewer?.login {
+            for pr in workload.openPullRequests where !pr.isDraft && pr.requestedReviewers.contains(where: { $0.login == me }) {
+                guard let session = sessions.readyForApproval(pr.id) else { continue }
+                let asked = pr.reviewRequestedAt[me] ?? pr.createdAt
+                items.append(Item(
+                    id: "approve \(pr.id)", severity: .critical, symbol: "checkmark.seal",
+                    title: pr.title,
+                    detail: "Claude would approve: yours to look over, asked \(age(asked, now: now)) ago · \(shortRepo(pr.repo))#\(pr.number)",
+                    // Above everything else that's urgent.
+                    weight: .greatestFiniteMagnitude / 2 + now.timeIntervalSince(asked),
+                    open: { sessions.show(session.id, with: openWindow) }
+                ))
+            }
         }
 
         for pr in workload.openPullRequests where !pr.isDraft {

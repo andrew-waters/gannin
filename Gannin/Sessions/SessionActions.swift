@@ -474,6 +474,7 @@ extension SessionStore {
     /// and comments stay, to read again or resume.
     func archiveReview(_ id: UUID) async {
         guard let session = sessions[id] else { return }
+        await recordReview(id)
         end(id)
         try? await removeWorktrees(session)
         update(id) { $0.archivedAt = .now }

@@ -182,6 +182,8 @@ extension SessionStore {
         if session.watch == nil {
             update(id) { $0.watch = ReviewWatch(isOn: AutoReview.watchesByDefault) }
         }
+        // Ready for you whether it started by itself or by hand.
+        noticeApproval(id)
         guard automaticRuns.remove(id) != nil else { return }
         let verdict = switch session.reviewResult?.verdict {
         case "approve": "would approve"
@@ -198,8 +200,14 @@ extension SessionStore {
     private func postAutomatically(_ id: UUID) async {
         guard let session = sessions[id], let pr = session.reviewOf, let review = session.reviewResult, let api = api() else { return }
         do {
-            let pull = try await api.reviewedPullRequest(repo: pr.repo, number: pr.number)
             let draft = reviewDrafts[id] ?? ReviewDraft()
+            if Self.holdsForApproval(review, draft: draft) {
+                note(id, .reviewed, text: "Nothing posted: Claude would approve it, so it's waiting for you to look and approve")
+                await resolveThreads(review.resolved ?? [], of: pr, for: id, api: api)
+                await recordReview(id)
+                return
+            }
+            let pull = try await api.reviewedPullRequest(repo: pr.repo, number: pr.number)
             let (inline, general) = pull.comments(for: review, draft: draft)
             let body = ReviewedPullRequest.body(summary: review.summary, general: general)
             let url = try await api.postReview(repo: pr.repo, number: pr.number, commit: pull.headSHA, event: "COMMENT", body: body, comments: inline)
@@ -212,6 +220,7 @@ extension SessionStore {
             return
         }
         await resolveThreads(review.resolved ?? [], of: pr, for: id, api: api)
+        await recordReview(id, posting: true, automatically: true)
     }
 
     /// Resolves the threads of yours the review says are dealt with (only
@@ -263,6 +272,8 @@ extension SessionStore {
         guard now.state == "OPEN" else {
             watch.isOn = false
             note(id, .stopped, text: now.state == "MERGED" ? "Merged" : "Closed")
+            // How its findings landed, now it's done.
+            Task { await recordReview(id) }
             return
         }
         var changed = false

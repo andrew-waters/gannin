@@ -478,7 +478,7 @@ struct DescriptionSections: View {
     }
 }
 
-private struct CommentView: View {
+struct CommentView: View {
     let comment: Comment
 
     var body: some View {
