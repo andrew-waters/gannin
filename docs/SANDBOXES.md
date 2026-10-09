@@ -1,0 +1,115 @@
+# Sandboxed sessions
+
+When you click Work on This, Claude Code normally runs on your Mac as you. It can read and change
+anything you can: other repos, `~/.ssh`, your keychain, cloud credentials. Usually that's fine. But a
+bad prompt, instructions hidden in an issue or a dependency, or a mistaken command can reach well
+beyond the issue, and that matters most when a session runs Unattended.
+
+With sandboxing on, Gannin runs each issue's Claude Code in its own small Linux VM, made with Apple's
+`container`. The VM sees only this:
+
+- the issue's folder in the harness (`.worktrees/<branch>/`), where Claude makes its worktrees;
+- the git history of the shared clones in `projects/` (not their checked-out files);
+- the harness itself, read-only;
+- the session's own folder, where Gannin reads its state.
+
+It doesn't see your home folder, your SSH keys, your keychain, other repos' checkouts or other
+sessions. It gets three credentials, all chosen by you: a Claude token or API key, a GitHub token
+for the org, and a signing key for its commits.
+
+## What you need
+
+- A Mac with Apple Silicon on macOS 26 or later.
+- Apple's `container`. Gannin can install it for you.
+- Your git name and email set (`git config --global user.name` and `user.email`). Sandboxed commits
+  carry them.
+
+## Setting it up
+
+All of this is in Gannin's Settings, under General.
+
+1. **Claude in a sandbox.** Choose how Claude signs in there:
+   - *Subscription token*: click Get a Token. It runs `claude setup-token`, which opens your
+     browser to sign in. The token it prints is filled in for you and lasts a year.
+   - *API key*: paste a key from the Claude Console. It's billed to the API, not your subscription.
+
+   Either one is kept in your keychain. Your own Claude login on this Mac never goes in.
+2. **Commit signing.** Click Make a Signing Key (or paste a key of your own without a passphrase).
+   Then click Add to GitHub. It copies the public key and opens GitHub's New SSH key page: paste
+   it, set *Key type* to **Signing Key**, and save. Commits made in a sandbox then show as Verified.
+3. **GitHub for each org.** In the org's Settings, under Harness, click Create One on GitHub. GitHub
+   opens with a fine-grained token filled in for the org: contents, pull requests and issues (write)
+   and actions (read). Pick the repos it may reach, create it, and paste it back into Gannin.
+   Changing workflow files needs Workflows as well.
+4. **Turn on "Run Work on This sessions in a sandbox".** If anything is missing, Gannin says what.
+   Turning it on gets this Mac ready:
+   - installs or updates Apple `container` after asking (macOS asks for your password once);
+   - starts its service;
+   - sets a Linux kernel;
+   - builds Gannin's base image.
+
+   The image build takes a few minutes the first time and about 3.6 GB.
+
+Below that you can set how many CPUs and how much memory each sandbox gets.
+
+## Working with it
+
+- Work on This asks where to run the session: **A sandbox** (the default) or **This Mac**. The
+  session's panel says which, and whether its sandbox is starting, running, stopped or failed (with
+  why).
+- Everything else works as it does on your Mac: Changes, the composer, Attended and Unattended,
+  questions, pull requests, and the second agent's review. A session's helpers, such as the
+  reviewer, run in the same sandbox.
+- The sandbox stops when its sessions' Claude Code exits or you quit Gannin, and starts again when
+  you open the session. Finish Session removes it.
+- Claude can't clone a new repo the Mac would see. Gannin clones the issue's repos into `projects/`
+  before the sandbox starts. If Claude needs another, clone it into `projects/` yourself and restart
+  the session.
+
+### Repos that only build on a Mac
+
+A sandbox is Linux, so Xcode projects and other Mac-only builds can't run there. In the org's
+Settings, under Repositories, tick **Needs the Mac** for those repos. Their sessions start on your
+Mac and say why.
+
+### A repo's own image
+
+Gannin's base image has Claude Code, git, gh, Node 22, Python and the usual build tools. If a repo
+needs more, add `.gannin/sandbox/<repo>.Containerfile` to the harness, starting with
+`FROM gannin-base`:
+
+```dockerfile
+FROM gannin-base
+RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
+    && rm -rf /var/lib/apt/lists/*
+```
+
+It's built the first time a session for that repo starts, and built again only when the file or the
+base image changes.
+
+## Sessions on a server
+
+If Settings has a Connect with command, sessions run on that server. When the server is a Mac with
+Apple Silicon and Apple `container`, they're sandboxed there in the same way. Settings, under Remote
+machines, shows what Gannin finds there:
+
+- **Set Up** starts the service, sets a kernel and builds the base image.
+- **Install** or **Update** opens a terminal on the server, where `sudo` asks for that Mac's
+  password. Gannin never sees it.
+
+A server that isn't a Mac, or has no `container`, is named in the session with how to fix it.
+
+## Turning it off
+
+Turning sandboxing off asks whether to remove the sandboxes and images Gannin made (only those, by
+their `dev.andon.gannin` label), or to keep them for next time. New sessions then run on your Mac.
+
+## What it doesn't protect
+
+- **The network is open.** A sandbox can reach the internet, and services on your Mac that listen
+  on all interfaces. Keep that in mind for local databases and dev servers.
+- **Its credentials are inside.** Claude can use the GitHub token on the repos you gave it, and
+  commit with the sandbox's key, but not with anything else.
+- **The harness's own git is writable** when the harness is also the code repo, so commits work.
+- **Apple `container` versions:** Gannin is tested with one version and works with a range. A newer
+  version runs, with a note that it hasn't been tested.
