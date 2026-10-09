@@ -30,7 +30,14 @@ enum SandboxLaunch {
         let name = session.sandbox ?? SandboxPlacement.containerName(for: session.id)
         // The issue's folder, which holds its helpers': mounted whichever of
         // them starts the sandbox.
-        let issueFolder = SessionScript.quoted(SessionStore.directory(for: session.parentID ?? session.id).resolvingSymlinksInPath().path)
+        let issueFolder = session.isRemote
+            ? SessionStore.remoteIssueDirectory(for: session)
+            : SessionScript.quoted(SessionStore.directory(for: session.parentID ?? session.id).resolvingSymlinksInPath().path)
+        let box = session.isRemote ? "the server" : "this Mac"
+        let fixContainer = session.isRemote
+            ? "Install or update it from Gannin's Settings, under Remote machines, or on the server from github.com/apple/container/releases."
+            : "Set it up in Gannin's Settings, under Sandbox."
+        let minimum = SandboxSupport.minimum
         let harnessRepo = session.harnessRepo ?? session.repo
         let repos = cloneRepos(session).filter { $0.lowercased() != harnessRepo.lowercased() }
         let labelArguments = labels.map { "--label \(SandboxRuntime.quoted($0))" }.joined(separator: " ")
@@ -43,10 +50,19 @@ enum SandboxLaunch {
             printf starting > "$session/sandbox"
             c=$(command -v container 2>/dev/null || true)
             [ -n "$c" ] || c=/usr/local/bin/container
-            [ -x "$c" ] || sandbox_failed "Apple container isn't installed on this Mac. Set it up in Gannin's Settings, under Sandbox, or start this issue on the Mac."
+            [ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || sandbox_failed "Sandboxes need a Mac with Apple Silicon, and \(box) isn't one. Start this issue on the Mac instead."
+            [ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ] 2>/dev/null || sandbox_failed "Sandboxes need macOS 26 or later on \(box). Update macOS there, or start this issue on the Mac instead."
+            [ -x "$c" ] || sandbox_failed "Apple container isn't installed on \(box). \(fixContainer)"
+            v=$("$c" --version 2>/dev/null | grep -oE '[0-9]+\\.[0-9]+(\\.[0-9]+)?' | head -n1)
+            IFS=. read -r v1 v2 v3 <<< "$v"
+            [ $(( ${v1:-0} * 1000000 + ${v2:-0} * 1000 + ${v3:-0} )) -ge \(minimum.major * 1_000_000 + minimum.minor * 1000 + minimum.patch) ] || sandbox_failed "Apple container ${v:-of an unknown version} on \(box) is older than \(minimum.description), the oldest Gannin works with. \(fixContainer)"
             if ! "$c" system status --format json 2>/dev/null | grep -q '"status":"running"'; then
               note "Starting Apple container"
-              "$c" system start --disable-kernel-install --timeout 60 >/dev/null 2>&1 || sandbox_failed "Apple container's service won't start. Check Gannin's Settings, under Sandbox."
+              "$c" system start --disable-kernel-install --timeout 60 >/dev/null 2>&1 || sandbox_failed "Apple container's service won't start on \(box). Run container system start there to see why."
+            fi
+            if [ ! -e "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-$(uname -m)" ]; then
+              note "Setting Apple container's Linux kernel"
+              "$c" system kernel set --recommended || sandbox_failed "Apple container's Linux kernel couldn't be set on \(box)."
             fi
             [ -f "$session/secrets.env" ] || sandbox_failed "Gannin had no credentials to hand this sandbox. Check Settings, under Sandbox, and the org's GitHub token under Harness, then Restart."
 
@@ -132,6 +148,14 @@ enum SandboxLaunch {
             git config --global tag.gpgsign true
             unset GANNIN_GIT_NAME GANNIN_GIT_EMAIL
             cd "$harness" || fail "The harness isn't mounted."
+            # Claude Code's config, first time only: onboarding done and the
+            # harness trusted, so it doesn't stop at first-run prompts, and an
+            # API key approved. Nothing comes from anyone's own ~/.claude.
+            if [ ! -f "$CLAUDE_CONFIG_DIR/.claude.json" ]; then
+              jq -n --arg h "$harness" --arg k "${ANTHROPIC_API_KEY: -20}" \\
+                '{hasCompletedOnboarding: true, theme: "dark", projects: {($h): {hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true}}}
+                 + (if $k == "" then {} else {customApiKeyResponses: {approved: [$k], rejected: []}} end)' > "$CLAUDE_CONFIG_DIR/.claude.json"
+            fi
 
             \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "This shell is in the sandbox, in the harness"))
             """
@@ -203,27 +227,14 @@ enum SandboxLaunch {
         return (lines.first ?? "", lines.dropFirst().first ?? "")
     }
 
-    // MARK: claude-home
+    // MARK: On a server
 
-    /// Claude Code's config in a fresh `claude-home`: onboarding done and the
-    /// harness trusted, so a new sandbox doesn't stop at first-run prompts,
-    /// and an API key already approved. Nothing comes from the user's own
-    /// `~/.claude`. Left alone once there.
-    static func seedClaudeHome(_ home: URL, harness: String, apiKey: String?) {
-        try? FileManager.default.createDirectory(at: home, withIntermediateDirectories: true)
-        let config = home.appending(path: ".claude.json")
-        guard !FileManager.default.fileExists(atPath: config.path) else { return }
-        try? Data(claudeConfig(harness: harness, apiKey: apiKey).utf8).write(to: config)
-    }
-
-    static func claudeConfig(harness: String, apiKey: String?) -> String {
-        var object: [String: Any] = [
-            "hasCompletedOnboarding": true,
-            "theme": "dark",
-            "projects": [harness: ["hasTrustDialogAccepted": true, "hasCompletedProjectOnboarding": true]],
-        ]
-        if let apiKey { object["customApiKeyResponses"] = ["approved": [String(apiKey.suffix(20))], "rejected": [String]()] }
-        let data = (try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys])) ?? Data()
-        return String(decoding: data, as: UTF8.self)
+    /// Puts `secrets.env` in the session's folder on a server from
+    /// standard input, readable only by its user, or removes one left
+    /// from before when there's nothing to write.
+    static func remoteSecretsScript(directory: String, writing: Bool) -> String {
+        writing
+            ? "d=\(directory)\nmkdir -p \"$d\" && ( umask 077; cat > \"$d/secrets.env\" )"
+            : "d=\(directory)\nrm -f \"$d/secrets.env\""
     }
 }

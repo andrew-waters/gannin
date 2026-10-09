@@ -66,6 +66,7 @@ struct GeneralSettings: View {
             }
             SessionSettingsSection()
             SandboxSettingsSection()
+            RemoteMachinesSection()
             SessionPromptSettingsSection()
         }
         .formStyle(.grouped)

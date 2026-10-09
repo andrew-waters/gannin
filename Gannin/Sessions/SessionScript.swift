@@ -333,7 +333,8 @@ enum SessionScript {
     /// Everything travels as base64 inside the command, stdin left to claude.
     /// The brief is left out (nil) once it's in the harness, which the
     /// script pulls.
-    static func remoteCommand(directory: String, script: String, brief: String?, settings: String) -> String {
+    /// `files` are more to unpack beside them (a sandbox's `inner.sh`).
+    static func remoteCommand(directory: String, script: String, brief: String?, settings: String, files: [String: String] = [:]) -> String {
         func unpack(_ text: String, _ file: String) -> String {
             "printf %s \(Data(text.utf8).base64EncodedString()) | base64 -d > \"$d/\(file)\""
         }
@@ -343,6 +344,7 @@ enum SessionScript {
             \(unpack(script, "start.sh"))
             \(brief.map { unpack($0, "brief.md") } ?? "rm -f \"$d/brief.md\"")
             \(unpack(settings, "settings.json"))
+            \(files.sorted { $0.key < $1.key }.map { unpack($0.value, $0.key) }.joined(separator: "\n"))
             printf starting > "$d/state"
             exec "${SHELL:-bash}" -lic 'exec bash "$0"' "$d/start.sh"
             """

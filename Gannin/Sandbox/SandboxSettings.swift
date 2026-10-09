@@ -425,3 +425,169 @@ struct SandboxGitHubTokenSection: View {
         }
     }
 }
+
+/// Settings › General › Remote machines (R19): the Mac sessions reach with
+/// Connect with, as Apple container finds it there, with Set Up (start its
+/// service, set a kernel, build the base image) and Install or Update in a
+/// terminal over `ssh -t`, where its owner types its password.
+struct RemoteMachinesSection: View {
+    @Environment(SessionStore.self) private var sessions
+    @AppStorage(SessionStore.connectKey) private var connect = ""
+    @State private var setup: SandboxSetup?
+    @State private var confirmingInstall = false
+    @State private var installing = false
+    @State private var showingOutput = false
+
+    var body: some View {
+        let connect = connect.trimmingCharacters(in: .whitespaces)
+        if !connect.isEmpty {
+            Section {
+                if let setup, setup.box == .remote(connect: connect) {
+                    rows(setup, connect: connect)
+                } else {
+                    ProgressView().controlSize(.small)
+                }
+            } header: {
+                Text("Remote machines")
+            } footer: {
+                Text("Sandboxed sessions on a server run in Apple container there, which needs a Mac with Apple Silicon on macOS 26 or later. Gannin checks it over ssh; installing or updating it asks for that Mac's password in a terminal, which Gannin never sees.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .task(id: connect) {
+                let setup = SandboxSetup(box: .remote(connect: connect))
+                self.setup = setup
+                await setup.check()
+            }
+            .sheet(isPresented: $installing) {
+                CommandTerminalSheet(
+                    title: "Install Apple container \(SandboxSupport.tested.description)",
+                    explanation: "On \(SandboxRuntime.name(.remote(connect: connect))), Gannin downloads Apple's signed installer, checks it, and installs it with sudo. Type that Mac's password when it asks.",
+                    command: SessionScript.connecting(SandboxRuntime.withTerminal(connect), to: SandboxRuntime.remoteBash(SandboxRuntime.remoteInstallScript))
+                ) {
+                    Task { await setup?.check() }
+                }
+            }
+            .sheet(isPresented: $showingOutput) {
+                GitOutputSheet(title: setup?.problem ?? "Apple container said", output: setup?.output ?? "")
+            }
+            .confirmationDialog(installTitle, isPresented: $confirmingInstall) {
+                Button(setup?.host?.isInstalled == true ? "Update" : "Install") { installing = true }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text(installMessage(connect: connect))
+            }
+        }
+    }
+
+    @ViewBuilder private func rows(_ setup: SandboxSetup, connect: String) -> some View {
+        LabeledContent(SandboxRuntime.name(.remote(connect: connect))) {
+            if let host = setup.host {
+                Text([host.architecture, host.macOS.isEmpty ? "" : "macOS \(host.macOS)"].filter { !$0.isEmpty }.joined(separator: ", "))
+                    .foregroundStyle(.secondary)
+            } else if setup.isRunning {
+                ProgressView().controlSize(.small)
+            }
+        }
+        if let host = setup.host, host.isSupportedMac {
+            LabeledContent("Apple container") {
+                Text(host.version.map { "\($0.description)\(host.isRunning ? ", running" : ", stopped")" } ?? "Not installed")
+                    .foregroundStyle(.secondary)
+            }
+            if let note = host.versionNote {
+                Text(note).font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        if setup.isRunning, setup.steps.count > 1 {
+            ForEach(setup.steps) { step in
+                LabeledContent(step.kind.title) {
+                    switch step.state {
+                    case .running: ProgressView().controlSize(.small)
+                    case .done: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                    case .failed: Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
+                    case .waiting, .skipped: EmptyView()
+                    }
+                }
+            }
+        }
+        if let problem = setup.problem, !setup.isRunning {
+            Text(problem).font(.caption).foregroundStyle(.orange)
+        } else if setup.isReady {
+            Text("Ready for sandboxed sessions.").font(.caption).foregroundStyle(.secondary)
+        }
+        HStack {
+            if let host = setup.host, host.isSupportedMac, host.verdict.offersInstall {
+                Button(host.isInstalled ? "Update to \(SandboxSupport.tested.description)" : "Install Apple container") { confirmingInstall = true }
+            }
+            if let host = setup.host, host.isSupportedMac, host.verdict.canSandbox, !setup.isReady {
+                Button("Set Up") { Task { await setup.setUp(installing: false) } }
+                    .help("Starts Apple container's service there, sets a Linux kernel if none is set, and builds Gannin's base image")
+            }
+            Button("Check Again") { Task { await setup.check() } }
+            if !setup.output.isEmpty {
+                Button("Show Output") { showingOutput = true }
+            }
+        }
+        .disabled(setup.isRunning)
+    }
+
+    private var installTitle: String {
+        setup?.host?.isInstalled == true ? "Update Apple container to \(SandboxSupport.tested.description)?" : "Install Apple container \(SandboxSupport.tested.description)?"
+    }
+
+    /// Updating stops the service there, and every sandbox with it.
+    private func installMessage(connect: String) -> String {
+        let stopping = sessions.running.filter { $0.isSandboxed && $0.connect == connect }
+        var message = "A terminal opens on the server, where sudo asks for its password."
+        if setup?.host?.isInstalled == true {
+            message += " Updating stops Apple container's service there, which stops every container on it"
+            message += stopping.isEmpty ? "." : ", these sessions' sandboxes among them: " + stopping.map { "#\($0.issue.number) \($0.issue.title)" }.joined(separator: ", ") + "."
+        }
+        return message
+    }
+}
+
+/// A command in a terminal, for something its user has to type into (a
+/// password), with Done once it's finished.
+struct CommandTerminalSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let title: String
+    let explanation: String
+    let command: String
+    let onExit: () -> Void
+    @State private var terminal: SessionTerminal?
+    @State private var finished = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(title).font(.headline)
+            Text(explanation).font(.callout).foregroundStyle(.secondary)
+            if let terminal {
+                TokenTerminal(view: terminal.container)
+                    .frame(minWidth: 640, minHeight: 320)
+            }
+            HStack {
+                if finished { Text("Finished.").foregroundStyle(.secondary) }
+                Spacer()
+                Button(finished ? "Done" : "Stop") {
+                    terminal?.terminate()
+                    onExit()
+                    dismiss()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(16)
+        .onAppear(perform: start)
+    }
+
+    private func start() {
+        guard terminal == nil else { return }
+        let terminal = SessionTerminal { finished = true } onSignal: { _ in }
+        self.terminal = terminal
+        var environment = ProcessInfo.processInfo.environment
+        environment["TERM"] = "xterm-256color"
+        let shell = environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
+        terminal.launch(executable: shell, args: ["-l", "-i", "-c", command], environment: environment.map { "\($0.key)=\($0.value)" }, directory: FileManager.default.homeDirectoryForCurrentUser.path)
+    }
+}

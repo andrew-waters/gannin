@@ -222,6 +222,20 @@ nonisolated enum SandboxRuntime {
             """
     }
 
+    /// The command a terminal runs on a server, after the Connect with
+    /// command: the script carried as base64, so no quoting can break it.
+    static func remoteBash(_ script: String) -> String {
+        #"bash -c "$(printf %s "# + Data(script.utf8).base64EncodedString() + #" | base64 -d)""#
+    }
+
+    /// The Connect with command with a terminal asked for, which sudo needs
+    /// to prompt.
+    static func withTerminal(_ connect: String) -> String {
+        let words = connect.split(separator: " ", omittingEmptySubsequences: true)
+        guard let first = words.first, first == "ssh" || first.hasSuffix("/ssh"), !words.contains(where: { $0 == "-t" || $0 == "-tt" }) else { return connect }
+        return ([String(first), "-t"] + words.dropFirst().map(String.init)).joined(separator: " ")
+    }
+
     /// Fails unless the file at `path` (a shell word) is the tested
     /// installer.
     static func checksum(_ path: String) -> String {

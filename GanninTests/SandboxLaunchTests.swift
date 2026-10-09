@@ -45,7 +45,7 @@ struct SandboxLaunchTests {
         // Real paths, as git records them.
         #expect(steps.contains(#"h=$(cd "$harness" && pwd -P)"#))
         // Never the user's home, keys or keychain.
-        #expect(!steps.contains("$HOME"))
+        #expect(!steps.contains("source=$HOME"))
         #expect(!steps.contains(".ssh"))
     }
 
@@ -87,15 +87,22 @@ struct SandboxLaunchTests {
         #expect(permissions == 0o600)
     }
 
-    @Test func claudeHomeStartsPastItsPrompts() throws {
-        let text = SandboxLaunch.claudeConfig(harness: "/Users/me/Code/acme/harness", apiKey: "sk-ant-api03-0123456789abcdefghijKLMNOP")
-        let object = try #require(JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any])
+    @Test func claudeHomeIsSeededInsideFromItsOwnHarness() throws {
+        let inner = SandboxLaunch.innerScript(session())
+        #expect(inner.contains(#"[ ! -f "$CLAUDE_CONFIG_DIR/.claude.json" ]"#))
+        // The jq the seed runs, with the harness and an API key's tail.
+        let start = try #require(inner.range(of: "jq -n"))
+        let end = try #require(inner.range(of: #"> "$CLAUDE_CONFIG_DIR/.claude.json""#, range: start.upperBound..<inner.endIndex))
+        let command = String(inner[start.lowerBound..<end.lowerBound])
+        guard Shell.run("command -v jq", .local).ok else { return }
+        let result = Shell.run("harness=/Users/me/Code/acme/harness; ANTHROPIC_API_KEY=sk-ant-api03-0123456789abcdefghijKLMNOP; \(command)", .local)
+        let object = try #require(JSONSerialization.jsonObject(with: result.data) as? [String: Any])
         #expect(object["hasCompletedOnboarding"] as? Bool == true)
         let projects = object["projects"] as? [String: [String: Bool]]
         #expect(projects?["/Users/me/Code/acme/harness"]?["hasTrustDialogAccepted"] == true)
-        let approved = (object["customApiKeyResponses"] as? [String: [String]])?["approved"]
-        #expect(approved == ["0123456789abcdefghijKLMNOP".suffix(20).description])
-        #expect(!SandboxLaunch.claudeConfig(harness: "/h", apiKey: nil).contains("customApiKeyResponses"))
+        #expect((object["customApiKeyResponses"] as? [String: [String]])?["approved"] == ["6789abcdefghijKLMNOP"])
+        let noKey = Shell.run("harness=/h; unset ANTHROPIC_API_KEY; \(command)", .local)
+        #expect(!noKey.output.contains("customApiKeyResponses"))
     }
 
     @Test func theIssuesReposAreClonedFirst() {
@@ -144,9 +151,44 @@ struct SandboxLaunchTests {
         #expect(failed.error == "The sandbox didn't start.")
     }
 
-    @Test func onAServerSessionsWaitForRemoteSandboxes() {
-        let placement = SandboxPlacement.decide(enabled: true, repos: ["acme/api"], reposNeedingMac: [], org: "acme", hasGitHubToken: true, onServer: true)
-        #expect(!placement.isSandboxed)
-        #expect(placement.reason?.contains("server") == true)
+    @Test func onAServerTheIssuesFolderIsTheBoxs() {
+        let issue = CodeSession(
+            id: UUID(), issue: session().issue, repo: "acme/harness", branch: "12-x", createdAt: .now,
+            connect: "ssh -t devbox", harnessRepo: "acme/harness", harnessPath: "~/acme-harness", sandbox: "gannin-x"
+        )
+        let helper = CodeSession(
+            id: UUID(), issue: issue.issue, repo: issue.repo, branch: issue.branch, createdAt: .now, connect: issue.connect,
+            harnessRepo: issue.harnessRepo, harnessPath: issue.harnessPath, parentID: issue.id, role: "Review", sandbox: issue.sandbox
+        )
+        #expect(SessionStore.remoteDirectory(for: issue) == #""$HOME"/.gannin/sessions/"# + issue.id.uuidString)
+        #expect(SessionStore.remoteDirectory(for: helper) == #""$HOME"/.gannin/sessions/"# + issue.id.uuidString + "/helpers/" + helper.id.uuidString)
+        let steps = SandboxLaunch.hostSteps(helper, folder: ".worktrees/12-x")
+        #expect(steps.contains(#"si=$(cd "$HOME"/.gannin/sessions/"# + issue.id.uuidString + " && pwd -P)"))
+        #expect(steps.contains("on the server"))
+        #expect(parses(SessionScript.start(helper, root: #""$HOME"/'acme-harness'"#, directory: SessionStore.remoteDirectory(for: helper))).ok)
+        // Secrets arrive on standard input, never in the script.
+        let write = SandboxLaunch.remoteSecretsScript(directory: SessionStore.remoteDirectory(for: issue), writing: true)
+        #expect(write.contains(#"( umask 077; cat > "$d/secrets.env" )"#))
+        #expect(parses(write).ok)
+    }
+
+    @Test func theStartScriptChecksTheBoxFirst() {
+        let steps = SandboxLaunch.hostSteps(session(), folder: ".worktrees/x")
+        #expect(steps.contains(#"[ "$(uname -m)" = arm64 ]"#))
+        #expect(steps.contains("macOS 26 or later"))
+        let minimum = SandboxSupport.minimum
+        #expect(steps.contains("-ge \(minimum.major * 1_000_000 + minimum.minor * 1000 + minimum.patch) ]"))
+        #expect(steps.contains("system kernel set --recommended"))
+    }
+
+    @Test func secretsReachTheBoxOnStandardInput() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "gannin-remote-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: folder) }
+        let script = SandboxLaunch.remoteSecretsScript(directory: SessionScript.quoted(folder), writing: true)
+        let result = Shell.run(script, .local, input: Data("GH_TOKEN='x'\n".utf8))
+        #expect(result.ok)
+        #expect(try String(contentsOfFile: folder + "/secrets.env", encoding: .utf8) == "GH_TOKEN='x'\n")
+        let permissions = try FileManager.default.attributesOfItem(atPath: folder + "/secrets.env")[.posixPermissions] as? Int
+        #expect(permissions == 0o600)
     }
 }

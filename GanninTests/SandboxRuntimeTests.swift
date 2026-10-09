@@ -137,6 +137,17 @@ struct SandboxRuntimeTests {
         #expect(script.contains(#"/tmp/a\\b"#))
     }
 
+    @Test func installTerminalsAskForATerminal() {
+        #expect(SandboxRuntime.withTerminal("ssh studio") == "ssh -t studio")
+        #expect(SandboxRuntime.withTerminal("ssh -t studio") == "ssh -t studio")
+        #expect(SandboxRuntime.withTerminal("/usr/bin/ssh -p 2222 studio") == "/usr/bin/ssh -t -p 2222 studio")
+        #expect(SandboxRuntime.withTerminal("mosh studio") == "mosh studio")
+        let remote = SandboxRuntime.remoteBash(SandboxRuntime.remoteInstallScript)
+        let encoded = remote.components(separatedBy: "printf %s ")[1].components(separatedBy: " |")[0]
+        let decoded = Shell.run("printf %s \(encoded) | base64 -d", .local)
+        #expect(decoded.output.hasPrefix(String(SandboxRuntime.remoteInstallScript.prefix(20))))
+    }
+
     @Test func remoteBoxesNeedSSH() {
         #expect(SandboxBox.local.runner != nil)
         #expect(SandboxBox.remote(connect: "ssh -t studio").runner != nil)
