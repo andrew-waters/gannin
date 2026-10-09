@@ -8,7 +8,7 @@
   "repos" : [
 
   ],
-  "startedAt" : "2026-10-09T18:01:04Z",
+  "startedAt" : "2026-10-09T18:30:54Z",
   "startedBy" : "andrew-waters",
   "title" : "Run agent sessions in Apple container sandboxes, with optional local models",
   "url" : "https://github.com/andrew-waters/gannin/issues/8"
