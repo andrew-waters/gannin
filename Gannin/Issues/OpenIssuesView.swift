@@ -14,6 +14,8 @@ struct OpenIssuesView: View {
     let workload: Workload
     @Binding var selection: DetailSelection?
     private var stored = StoredIssueFilters("allIssues")
+    /// The issue Work on This was picked for in a row's context menu.
+    @State private var workingOn: IssueReference?
 
     init(org: String, workload: Workload, selection: Binding<DetailSelection?>) {
         self.org = org
@@ -38,7 +40,9 @@ struct OpenIssuesView: View {
                         let reference = IssueReference(org: org, record: issue)
                         row(issue)
                             .tag(DetailSelection.issueReference(reference))
-                            .hideable(issue.id, url: issue.url, opens: .issueReference(reference))
+                            .hideable(issue.id, url: issue.url, opens: .issueReference(reference)) {
+                                WorkOnThisMenuItem(reference: reference, request: $workingOn)
+                            }
                     }
                 } header: {
                     Text(issues.count == pool.count ? "\(pool.count) \(noun(filters))" : "\(issues.count) of \(pool.count) \(noun(filters))")
@@ -49,6 +53,7 @@ struct OpenIssuesView: View {
                     }
                 }
             }
+            .workOnThis($workingOn)
         }
         .syncOffNotice(.issues)
         .task(id: org) { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }

@@ -1259,23 +1259,10 @@ private struct SessionPanel: View {
 struct StartSessionButton: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(IssueStore.self) private var issues
-    @Environment(DetailStore.self) private var details
     @Environment(OrgConfigStore.self) private var configs
-    @Environment(HarnessStore.self) private var harness
-    @Environment(AuthStore.self) private var auth
     @Environment(\.openWindow) private var openWindow
     let reference: IssueReference
-    /// While the harness commit is confirmed.
-    @State private var confirming = false
-    /// While the team's prompts and skills are picked.
-    @State private var choosing = false
-    @State private var recording = true
-    @AppStorage private var recordWithoutAsking: Bool
-
-    init(reference: IssueReference) {
-        self.reference = reference
-        _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(reference.org))
-    }
+    @State private var request: IssueReference?
 
     var body: some View {
         if let existing = sessions.session(forIssue: reference.id) {
@@ -1286,63 +1273,146 @@ struct StartSessionButton: View {
             }
             .help("Show this issue's Claude Code session, in \(existing.repo)")
         } else {
-            let blocked = unavailable
-            let config = configs.config(for: reference.org)
-            let setup = config.harness(covering: repos)
+            let blocked = WorkOnThisLauncher.unavailable(reference, configs: configs, issues: issues)
             Button {
-                if let setup, SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .work, harnesses: config.harnesses) {
-                    recording = true
-                    choosing = true
-                } else if recordWithoutAsking {
-                    start(recording: true, choice: nil, setup: setup)
-                } else {
-                    confirming = true
-                }
+                request = reference
             } label: {
                 Label("Work on This", systemImage: "terminal")
             }
             .disabled(blocked != nil)
-            .help(blocked ?? "Work on this issue with Claude Code, in \(setup?.repo ?? "the org's harness")")
-            .confirmationDialog("Record this session in the harness?", isPresented: $confirming) {
-                Button("Commit to Harness") { start(recording: true, choice: nil, setup: setup) }
-                Button("Don't Record") {
-                    recordWithoutAsking = false
-                    start(recording: false, choice: nil, setup: setup)
-                }
-                Button("Cancel", role: .cancel) { recordWithoutAsking = false }
-            } message: {
-                Text(recordMessage)
+            .help(blocked ?? "Work on this issue with Claude Code, in \(configs.config(for: reference.org).harness(covering: WorkOnThisLauncher.repos(reference, issues: issues))?.repo ?? "the org's harness")")
+            .workOnThis($request)
+        }
+    }
+}
+
+/// Work on This in a context menu: Open Session once the issue has one.
+/// It sets `request`, which a `.workOnThis` on the list (not the row,
+/// whose menu closes) takes from there.
+struct WorkOnThisMenuItem: View {
+    @Environment(SessionStore.self) private var sessions
+    @Environment(IssueStore.self) private var issues
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(\.openWindow) private var openWindow
+    let reference: IssueReference
+    @Binding var request: IssueReference?
+
+    var body: some View {
+        if let existing = sessions.session(forIssue: reference.id) {
+            Button("Open Session") { sessions.show(existing.id, with: openWindow) }
+        } else {
+            Button("Work on This") { request = reference }
+                .disabled(WorkOnThisLauncher.unavailable(reference, configs: configs, issues: issues) != nil)
+        }
+    }
+}
+
+extension View {
+    /// Starts a session on the issue put in `request`, asking first as Work
+    /// on This does: the team's prompts and skills when there are any, else
+    /// whether to record it in the harness (unless told not to ask again).
+    func workOnThis(_ request: Binding<IssueReference?>) -> some View {
+        modifier(WorkOnThisLauncher(request: request))
+    }
+}
+
+/// What Work on This does once asked, wherever it was asked from.
+struct WorkOnThisLauncher: ViewModifier {
+    @Environment(SessionStore.self) private var sessions
+    @Environment(IssueStore.self) private var issues
+    @Environment(DetailStore.self) private var details
+    @Environment(OrgConfigStore.self) private var configs
+    @Environment(HarnessStore.self) private var harness
+    @Environment(AuthStore.self) private var auth
+    @Environment(\.openWindow) private var openWindow
+    @Binding var request: IssueReference?
+    /// While the harness commit is confirmed.
+    @State private var confirming: IssueReference?
+    /// While the team's prompts and skills are picked.
+    @State private var choosing: IssueReference?
+    @State private var recording = true
+
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: request) { _, asked in
+                guard let asked else { return }
+                request = nil
+                begin(asked)
             }
-            .dialogSuppressionToggle("Don't ask again for \(reference.org)", isSuppressed: $recordWithoutAsking)
-            .sheet(isPresented: $choosing) {
-                if let setup {
+            .confirmationDialog("Record this session in the harness?", isPresented: isConfirming, presenting: confirming) { reference in
+                let setup = setup(for: reference)
+                Button("Commit to Harness") { start(reference, recording: true, choice: nil, setup: setup) }
+                Button("Don't Record") {
+                    recordWithoutAsking(reference).wrappedValue = false
+                    start(reference, recording: false, choice: nil, setup: setup)
+                }
+                Button("Cancel", role: .cancel) { recordWithoutAsking(reference).wrappedValue = false }
+            } message: { reference in
+                Text(Self.recordMessage(reference))
+            }
+            .dialogSuppressionToggle("Don't ask again for \(confirming?.org ?? "this org")", isSuppressed: confirming.map(recordWithoutAsking) ?? .constant(false))
+            .sheet(item: $choosing) { reference in
+                let config = configs.config(for: reference.org)
+                let skipsAsking = recordWithoutAsking(reference).wrappedValue
+                if let initial = setup(for: reference) {
                     SessionLaunchSheet(
-                        title: "Work on \(reference.reference)", org: reference.org, harnesses: config.harnesses, initial: setup,
-                        use: .work, repos: repos, values: values, startTitle: "Work on This"
+                        title: "Work on \(reference.reference)", org: reference.org, harnesses: config.harnesses, initial: initial,
+                        use: .work, repos: Self.repos(reference, issues: issues), values: Self.values(reference), startTitle: "Work on This"
                     ) { choice, picked in
-                        start(recording: recordWithoutAsking || recording, choice: choice, setup: picked)
+                        start(reference, recording: skipsAsking || recording, choice: choice, setup: picked)
                     } extra: {
-                    if !recordWithoutAsking {
-                        Section {
-                            Toggle("Record the session in the harness", isOn: $recording)
-                            Text(recordMessage)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
+                        if !skipsAsking {
+                            Section {
+                                Toggle("Record the session in the harness", isOn: $recording)
+                                Text(Self.recordMessage(reference))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
                         }
                     }
-                    }
                 }
             }
+    }
+
+    private var isConfirming: Binding<Bool> {
+        Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })
+    }
+
+    /// Don't ask again before recording, per org.
+    private func recordWithoutAsking(_ reference: IssueReference) -> Binding<Bool> {
+        let key = SessionStore.asksBeforeRecordingKey(reference.org)
+        return Binding(get: { UserDefaults.standard.bool(forKey: key) }, set: { UserDefaults.standard.set($0, forKey: key) })
+    }
+
+    private func setup(for reference: IssueReference) -> HarnessConfig? {
+        configs.config(for: reference.org).harness(covering: Self.repos(reference, issues: issues))
+    }
+
+    private func begin(_ reference: IssueReference) {
+        if let existing = sessions.session(forIssue: reference.id) {
+            sessions.show(existing.id, with: openWindow)
+            return
+        }
+        guard Self.unavailable(reference, configs: configs, issues: issues) == nil else { return }
+        let config = configs.config(for: reference.org)
+        let setup = setup(for: reference)
+        if let setup, SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .work, harnesses: config.harnesses) {
+            recording = true
+            choosing = reference
+        } else if recordWithoutAsking(reference).wrappedValue {
+            start(reference, recording: true, choice: nil, setup: setup)
+        } else {
+            confirming = reference
         }
     }
 
-    private var recordMessage: String {
+    static func recordMessage(_ reference: IssueReference) -> String {
         "Gannin commits \(SessionStore.harnessFolder(for: reference))/brief.md and session.json to the harness it runs in, on its default branch, so the team can see the session and any box can start it. When Claude opens a pull request, it's added to session.json."
     }
 
     /// The issue's repo and those its linked PRs are in, for repos' own
     /// default prompts.
-    private var repos: [String] {
+    static func repos(_ reference: IssueReference, issues: IssueStore) -> [String] {
         let linked = (issues.history(for: reference.org)?.issues[reference.id]?.linkedPullRequests ?? []).compactMap { pr -> String? in
             let parts = pr.url.pathComponents.filter { $0 != "/" }
             return parts.count >= 2 ? "\(parts[0])/\(parts[1])" : nil
@@ -1351,27 +1421,28 @@ struct StartSessionButton: View {
         return ([reference.repo] + linked).filter { seen.insert($0).inserted }
     }
 
-    private var values: [String: String] {
+    static func values(_ reference: IssueReference) -> [String: String] {
         HarnessPromptLibrary.values(reference: reference.reference, title: reference.title, url: reference.url, repo: reference.repo, number: reference.number, branch: SessionStore.branchName(reference))
     }
 
     /// Why a session can't start, if it can't: sessions run in the org's
     /// harness, and on a server only once its checkout there is set.
-    private var unavailable: String? {
+    static func unavailable(_ reference: IssueReference, configs: OrgConfigStore, issues: IssueStore) -> String? {
         let config = configs.config(for: reference.org)
         // With several harnesses, the sheet says which can't start.
         guard config.harnesses.count < 2 else { return nil }
-        return SessionStore.unavailable(org: reference.org, harness: config.harness(covering: repos))
+        return SessionStore.unavailable(org: reference.org, harness: config.harness(covering: repos(reference, issues: issues)))
     }
 
-    private func start(recording: Bool, choice: PromptChoice?, setup: HarnessConfig?) {
+    private func start(_ reference: IssueReference, recording: Bool, choice: PromptChoice?, setup: HarnessConfig?) {
         let history = issues.history(for: reference.org)
         let record = history?.issues[reference.id]
         let parent = record?.parentID.flatMap { history?.issues[$0] }
         let detail = details.detail(for: reference.id)
         guard let setup, let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return }
         let index = harness.index(for: reference.org, setup)
-        let instructions = sessions.launchInstructions(org: reference.org, setup: setup, use: .work, repos: repos, choice: choice, values: values)
+        let repos = Self.repos(reference, issues: issues)
+        let instructions = sessions.launchInstructions(org: reference.org, setup: setup, use: .work, repos: repos, choice: choice, values: Self.values(reference))
         let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index)
         }

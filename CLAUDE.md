@@ -707,7 +707,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 ## Claude Code sessions
 
 - `Gannin/Sessions/`: Work on This on an issue (`StartSessionButton`, the issue
-  page's toolbar) starts the issue's session in the window's project's harness, no repo to pick, and opens it
+  page's toolbar, and the context menu of Issues › All's rows, `WorkOnThisMenuItem`; both
+  hand the issue to `.workOnThis`, `WorkOnThisLauncher`, which asks and starts it, on the list
+  for a menu, as the menu closes) starts the issue's session in the window's project's harness, no repo to pick, and opens it
   as a tab in the one Claude Code window (`SessionsWindow`, `SessionStore.tabs`, kept across
   launches; each tab two lines beside a large icon for its kind, the kind (Plan, Review, Code or a
   helper's role) and issue or PR above its title, `TabKind`; + opens a session already started, ⌘W closes a tab, claude keeps running;
