@@ -1105,8 +1105,12 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - A session's Plans and requirements (`HarnessIssueSection`, `harnessRepo`) are from the harness it
   runs in: the Claude Code window belongs to no project, so its config is the org's home.
 - `SessionBrief` is what Gannin knows: the issue's facts, board fields, parent, linked PRs,
-  description and comments, the harness documents about it (in full) or mentioning it, and the
-  learnings for its repos.
+  description and comments, the harness documents about it (in full) or mentioning it, the
+  learnings for its repos, and the project's goals (`SessionBrief.goalsSection`, andrew-waters/gannin#70,
+  `plans/2026-10-09-goals-in-work-on-this.md`): the org-wide measurables with a target whose metric
+  a change moves (`SessionBrief.advice`: PR size and files, cycle time, throughput, rework,
+  unreviewed, flaky runs), as guidance it may set aside when it says why in the PR's Why; none, no
+  section.
 
 ## Harness
 

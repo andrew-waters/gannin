@@ -1442,9 +1442,10 @@ struct WorkOnThisLauncher: ViewModifier {
         guard let setup, let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return }
         let index = harness.index(for: reference.org, setup)
         let repos = Self.repos(reference, issues: issues)
+        let goals = configs.config(for: reference.org).measurables
         let instructions = sessions.launchInstructions(org: reference.org, setup: setup, use: .work, repos: repos, choice: choice, values: Self.values(reference))
         let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions) { session in
-            SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index)
+            SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index, goals: goals)
         }
         guard recording else {
             sessions.show(session.id, with: openWindow)
