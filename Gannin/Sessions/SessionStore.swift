@@ -456,6 +456,7 @@ final class SessionStore {
                 return (session.id, session)
             })
         }
+        for session in sessions.values { Self.noteFolder(of: session) }
         reviewDrafts = sessions.compactMapValues(\.reviewDraft)
         tabs = (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? [])
             .compactMap(UUID.init(uuidString:))
@@ -575,6 +576,7 @@ final class SessionStore {
 
     /// Adds a session made elsewhere (a helper), and saves.
     func add(_ session: CodeSession) {
+        Self.noteFolder(of: session)
         sessions[session.id] = session
         save()
     }
@@ -713,6 +715,7 @@ final class SessionStore {
     func remove(_ id: UUID) {
         // Helpers work in its folder, so they go with it.
         for helper in helpers(of: id) { remove(helper.id) }
+        if let session = sessions[id] { deleteSandbox(of: session) }
         terminals[id]?.terminate()
         terminals[id] = nil
         changesPanes[id] = nil
@@ -721,6 +724,7 @@ final class SessionStore {
         sessions[id] = nil
         states[id] = nil
         drafts[id] = nil
+        sandboxStatus[id] = nil
         transcripts[id] = nil
         readers[id] = nil
         contextWindows[id] = nil
@@ -995,6 +999,43 @@ final class SessionStore {
 
     private func terminated(_ id: UUID) {
         setState(.stopped, for: id)
+        stopSandboxIfIdle(id)
+    }
+
+    // MARK: Sandboxes
+
+    /// What each sandboxed session's start script last said of its sandbox
+    /// (`starting`, `running`, `failed: <why>`), or `stopped` once Gannin
+    /// stopped it (R14).
+    private(set) var sandboxStatus: [UUID: String] = [:]
+
+    /// Stops the session's sandbox once no session using it is running: the
+    /// issue's own and its helpers share one (R12). Its folders stay, and
+    /// opening the session again starts it afresh.
+    private func stopSandboxIfIdle(_ id: UUID) {
+        guard let session = sessions[id], let name = session.sandbox, !session.isRemote else { return }
+        let sharing = sessions.values.filter { $0.sandbox == name }
+        guard !sharing.contains(where: { isRunning($0.id) }) else { return }
+        for other in sharing { sandboxStatus[other.id] = "stopped" }
+        let script = SandboxLaunch.stopScript([name])
+        Task.detached { _ = Shell.run(script, .local) }
+    }
+
+    /// Every sandbox on this Mac with a session's terminal running, stopped
+    /// as Gannin quits (R12). Waits, so they're down before it goes.
+    func stopSandboxesForQuit() {
+        let names = Set(sessions.values.filter { !$0.isRemote && isRunning($0.id) }.compactMap(\.sandbox))
+        guard !names.isEmpty else { return }
+        _ = Shell.run(SandboxLaunch.stopScript(names.sorted()), .local)
+    }
+
+    /// Deletes the issue's sandbox once the issue's session is forgotten
+    /// (finished or removed); its folders are the Mac's and stay or go
+    /// with the session.
+    private func deleteSandbox(of session: CodeSession) {
+        guard let name = session.sandbox, !session.isHelper, !session.isRemote else { return }
+        let script = SandboxLaunch.deleteScript(name)
+        Task.detached { _ = Shell.run(script, .local) }
     }
 
     // MARK: Hook state
@@ -1150,6 +1191,7 @@ final class SessionStore {
                 (try? String(contentsOf: directory.appending(path: name), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             let state = read("state"), pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
+            if session.isSandboxed, let sandbox = read("sandbox"), sandboxStatus[id] != sandbox { sandboxStatus[id] = sandbox }
             let reviewRequest = read("review-request")
             if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
                 // What it's asking is in the transcript: read it first, so
@@ -1220,7 +1262,19 @@ final class SessionStore {
     }
 
     static func directory(for id: UUID) -> URL {
-        baseDirectory.appending(path: id.uuidString, directoryHint: .isDirectory)
+        if let parent = sandboxHelperParents[id] {
+            return directory(for: parent).appending(path: "helpers/\(id.uuidString)", directoryHint: .isDirectory)
+        }
+        return baseDirectory.appending(path: id.uuidString, directoryHint: .isDirectory)
+    }
+
+    /// Helpers sharing an issue's sandbox, by their issue's session: their
+    /// folders are inside its folder, which the sandbox mounts.
+    private(set) static var sandboxHelperParents: [UUID: UUID] = [:]
+
+    /// Notes where a sandboxed helper's folder is, before it's first used.
+    static func noteFolder(of session: CodeSession) {
+        if session.isSandboxed, let parent = session.parentID { sandboxHelperParents[session.id] = parent }
     }
 
     private static var fileURL: URL { baseDirectory.appending(path: "Sessions.json") }

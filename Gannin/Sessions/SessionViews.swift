@@ -1177,7 +1177,20 @@ private struct SessionPanel: View {
                         .help(worktreePath)
                 }
                 if session.isSandboxed {
-                    LabeledContent("Runs in") { Text("A sandbox") }
+                    let status = SandboxStatus(sessions.isRunning(session.id) ? sessions.sandboxStatus[session.id] : "stopped")
+                    LabeledContent("Runs in") {
+                        HStack(spacing: 6) {
+                            Circle().fill(status.color).frame(width: 8, height: 8)
+                            Text("A sandbox, \(status.label.lowercased())")
+                        }
+                    }
+                    .help(session.sandbox ?? "")
+                    if let error = status.error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
                 } else if let reason = session.hostReason {
                     LabeledContent("Runs in") { Text(session.isRemote ? "The server" : "This Mac") }
                     Text(reason)

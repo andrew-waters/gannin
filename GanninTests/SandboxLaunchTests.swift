@@ -103,6 +103,47 @@ struct SandboxLaunchTests {
         #expect(SandboxLaunch.cloneRepos(with) == ["acme/api", "acme/web"])
     }
 
+    @Test func helpersShareTheIssuesSandboxAndFolder() {
+        let issue = session()
+        var helper = issue
+        helper = CodeSession(
+            id: UUID(), issue: issue.issue, repo: issue.repo, branch: issue.branch, createdAt: .now,
+            harnessRepo: issue.harnessRepo, harnessPath: issue.harnessPath, parentID: issue.id, role: "Review", sandbox: issue.sandbox
+        )
+        SessionStore.noteFolder(of: helper)
+        let folder = SessionStore.directory(for: helper.id)
+        #expect(folder.path.hasPrefix(SessionStore.directory(for: issue.id).path + "/helpers/"))
+        // Whoever starts the sandbox mounts the issue's folder.
+        let steps = SandboxLaunch.hostSteps(helper, folder: ".worktrees/\(helper.branch)")
+        let issueFolder = SessionStore.directory(for: issue.id).resolvingSymlinksInPath().path
+        #expect(steps.contains(SessionScript.quoted(issueFolder)))
+        #expect(steps.contains(#"--mount "type=bind,source=$si,target=$si""#))
+        #expect(steps.contains(#"bash "$s/inner.sh" "$s" "$h""#))
+        #expect(parses(SessionScript.start(helper, root: "'/h'", directory: SessionScript.quoted(folder.path))).ok)
+    }
+
+    @Test func theStartScriptReportsTheSandbox() {
+        let steps = SandboxLaunch.hostSteps(session(), folder: ".worktrees/x")
+        let starting = steps.range(of: #"printf starting > "$session/sandbox""#)
+        let running = steps.range(of: #"printf running > "$session/sandbox""#)
+        let exec = steps.range(of: #"exec "$c" exec -it"#)
+        #expect(starting != nil && running != nil && exec != nil)
+        if let running, let exec { #expect(running.upperBound < exec.lowerBound) }
+        #expect(!steps.contains(#"|| fail ""#))
+        #expect(parses(SandboxLaunch.stopScript(["gannin-a", "gannin-b"])).ok)
+        #expect(parses(SandboxLaunch.deleteScript("gannin-a")).ok)
+    }
+
+    @Test func sandboxStatusReads() {
+        #expect(SandboxStatus("starting").state == .starting)
+        #expect(SandboxStatus(nil).state == .starting)
+        #expect(SandboxStatus("running\n").state == .running)
+        #expect(SandboxStatus("stopped").state == .stopped)
+        let failed = SandboxStatus("failed: The sandbox didn't start.")
+        #expect(failed.state == .failed)
+        #expect(failed.error == "The sandbox didn't start.")
+    }
+
     @Test func onAServerSessionsWaitForRemoteSandboxes() {
         let placement = SandboxPlacement.decide(enabled: true, repos: ["acme/api"], reposNeedingMac: [], org: "acme", hasGitHubToken: true, onServer: true)
         #expect(!placement.isSandboxed)

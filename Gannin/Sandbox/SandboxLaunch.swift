@@ -28,19 +28,27 @@ enum SandboxLaunch {
     /// claude run inside it.
     static func hostSteps(_ session: CodeSession, folder: String, cpus: Int = SandboxCredentials.cpus, memoryGB: Int = SandboxCredentials.memoryGB) -> String {
         let name = session.sandbox ?? SandboxPlacement.containerName(for: session.id)
+        // The issue's folder, which holds its helpers': mounted whichever of
+        // them starts the sandbox.
+        let issueFolder = SessionScript.quoted(SessionStore.directory(for: session.parentID ?? session.id).resolvingSymlinksInPath().path)
         let harnessRepo = session.harnessRepo ?? session.repo
         let repos = cloneRepos(session).filter { $0.lowercased() != harnessRepo.lowercased() }
         let labelArguments = labels.map { "--label \(SandboxRuntime.quoted($0))" }.joined(separator: " ")
         let tag = #"$(sed -n 's/^image=//p' "$images" | tail -n1)"#
         return """
+            sandbox_failed() {
+              printf 'failed: %s' "$1" > "$session/sandbox" 2>/dev/null
+              fail "$1"
+            }
+            printf starting > "$session/sandbox"
             c=$(command -v container 2>/dev/null || true)
             [ -n "$c" ] || c=/usr/local/bin/container
-            [ -x "$c" ] || fail "Apple container isn't installed on this Mac. Set it up in Gannin's Settings, under Sandbox, or start this issue on the Mac."
+            [ -x "$c" ] || sandbox_failed "Apple container isn't installed on this Mac. Set it up in Gannin's Settings, under Sandbox, or start this issue on the Mac."
             if ! "$c" system status --format json 2>/dev/null | grep -q '"status":"running"'; then
               note "Starting Apple container"
-              "$c" system start --disable-kernel-install --timeout 60 >/dev/null 2>&1 || fail "Apple container's service won't start. Check Gannin's Settings, under Sandbox."
+              "$c" system start --disable-kernel-install --timeout 60 >/dev/null 2>&1 || sandbox_failed "Apple container's service won't start. Check Gannin's Settings, under Sandbox."
             fi
-            [ -f "$session/secrets.env" ] || fail "Gannin had no credentials to hand this sandbox. Check Settings, under Sandbox, and the org's GitHub token under Harness, then Restart."
+            [ -f "$session/secrets.env" ] || sandbox_failed "Gannin had no credentials to hand this sandbox. Check Settings, under Sandbox, and the org's GitHub token under Harness, then Restart."
 
             # Clones the sandbox can see: those already in projects/ and the issue's.
             for repo in \(repos.map(SandboxRuntime.quoted).joined(separator: " ")); do
@@ -55,19 +63,20 @@ enum SandboxLaunch {
             # Mounted at their real paths, as git recorded them.
             h=$(cd "$harness" && pwd -P)
             s=$(cd "$session" && pwd -P)
+            si=$(cd \(issueFolder) && pwd -P) || sandbox_failed "The issue's session folder isn't there."
             f="$h"/\(SandboxRuntime.quoted(folder))
-            mkdir -p "$s/claude-home"
+            mkdir -p "$s/claude-home" "$si/claude-home"
             name=\(SandboxRuntime.quoted(name))
             if "$c" list --format json 2>/dev/null | grep -q "\\"id\\":\\"$name\\""; then
               note "The sandbox is running; claude starts in it"
             else
               "$c" delete --force "$name" >/dev/null 2>&1 || true
               images=$(mktemp)
-              ( \(SandboxImages.baseScript(container: #""$c""#).replacingOccurrences(of: "\n", with: "\n  ")) ) || { rm -f "$images"; fail "Gannin's base image didn't build. What container said is above."; }
+              ( \(SandboxImages.baseScript(container: #""$c""#).replacingOccurrences(of: "\n", with: "\n  ")) ) || { rm -f "$images"; sandbox_failed "Gannin's base image didn't build. What container said is above."; }
               ( \(SandboxImages.repoScript(repo: session.issue.repo, harness: #""$h""#, container: #""$c""#).replacingOccurrences(of: "\n", with: "\n  ")) ) | tee "$images" || true
               image=\(tag)
               rm -f "$images"
-              [ -n "$image" ] || fail "The sandbox's image didn't build. What container said is above."
+              [ -n "$image" ] || sandbox_failed "The sandbox's image didn't build. What container said is above."
               args=(run --detach --name "$name" \(labelArguments) --cpus \(cpus) --memory \(memoryGB)G
                 --mount "type=bind,source=$h,target=$h,readonly")
               [ -d "$h/.git" ] && args+=(--mount "type=bind,source=$h/.git,target=$h/.git")
@@ -76,12 +85,22 @@ enum SandboxLaunch {
                 args+=(--tmpfs "$h/projects")
                 while IFS= read -r g; do args+=(--mount "type=bind,source=$g,target=$g"); done < <(find "$h/projects" -mindepth 2 -maxdepth 3 -name .git -type d)
               fi
-              args+=(--mount "type=bind,source=$s,target=$s" --mount "type=bind,source=$s/claude-home,target=\(claudeHome)")
+              args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$si/claude-home,target=\(claudeHome)")
               note "Starting the sandbox $name ($image)"
-              "$c" "${args[@]}" "$image" sh -c "trap 'exit 0' TERM; sleep infinity & wait" >/dev/null || fail "The sandbox didn't start. Run container logs $name to see why."
+              "$c" "${args[@]}" "$image" sh -c "trap 'exit 0' TERM; sleep infinity & wait" >/dev/null || sandbox_failed "The sandbox didn't start. Run container logs $name to see why."
             fi
+            printf running > "$session/sandbox"
             exec "$c" exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e CLAUDE_CONFIG_DIR=\(claudeHome) "$name" bash "$s/inner.sh" "$s" "$h"
             """
+    }
+
+    /// Stops sandboxes by name, quickly: their process takes SIGTERM.
+    static func stopScript(_ names: [String]) -> String {
+        #"c=$(command -v container 2>/dev/null || echo /usr/local/bin/container); "$c" stop "# + names.map(SandboxRuntime.quoted).joined(separator: " ") + " >/dev/null 2>&1; true"
+    }
+
+    static func deleteScript(_ name: String) -> String {
+        #"c=$(command -v container 2>/dev/null || echo /usr/local/bin/container); "$c" delete --force "# + SandboxRuntime.quoted(name) + " >/dev/null 2>&1; true"
     }
 
     /// What runs inside: the credentials Gannin left read and the file

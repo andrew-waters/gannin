@@ -81,13 +81,18 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         if running.contains(where: \.isRemote) {
             explanation.append("Sessions on a server end too, as their ssh connection closes.")
         }
+        if running.contains(where: { $0.isSandboxed && !$0.isRemote }) {
+            explanation.append("Their sandboxes stop, keeping their folders, and start again when a session is opened.")
+        }
         explanation.append("Conversations are kept: opening a session again resumes it where it was.")
         alert.informativeText = lines.joined(separator: "\n") + "\n\n" + explanation.joined(separator: " ")
 
         alert.addButton(withTitle: "Cancel")
         let quit = alert.addButton(withTitle: running.count == 1 ? "Quit and End Session" : "Quit and End Sessions")
         quit.hasDestructiveAction = true
-        return alert.runModal() == .alertSecondButtonReturn ? .terminateNow : .terminateCancel
+        guard alert.runModal() == .alertSecondButtonReturn else { return .terminateCancel }
+        sessions.stopSandboxesForQuit()
+        return .terminateNow
     }
 }
 

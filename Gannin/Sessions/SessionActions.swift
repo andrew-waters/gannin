@@ -415,8 +415,11 @@ extension SessionStore {
             id: UUID(), issue: parent.issue, repo: parent.repo, branch: parent.branch, createdAt: .now,
             connect: parent.connect, remoteWorkspace: parent.remoteWorkspace,
             harnessRepo: parent.harnessRepo, harnessPath: parent.harnessPath, harnessFolder: parent.harnessFolder,
-            parentID: parentID, role: role, prompt: prompt, instructions: instructions, isReviewer: reviewer
+            parentID: parentID, role: role, prompt: prompt, instructions: instructions, isReviewer: reviewer,
+            // In the issue's sandbox, with its folder inside the issue's.
+            sandbox: parent.isRemote ? nil : parent.sandbox
         )
+        Self.noteFolder(of: helper)
         let directory = Self.directory(for: helper.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? FileManager.default.copyItem(at: Self.directory(for: parentID).appending(path: "brief.md"), to: directory.appending(path: "brief.md"))
