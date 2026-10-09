@@ -21,9 +21,12 @@ targets seeded as weekly ones), which the Dashboard and Scorecards read.
 
 - `SessionBrief.make` takes the project's measurables and adds a Goals section before Working
   here (`SessionBrief.goalsSection`).
+- The goals are those of the project the session runs in (`configs.scoped(setup.repo)`), not
+  necessarily the window's.
 - Only org-wide goals (no team) with a target and a metric a change moves are listed, each with
   its target and what it asks of the change (`SessionBrief.advice`). Review metrics, open PRs,
-  issue cycle time and numbers entered by hand are left out.
+  issue cycle time and numbers entered by hand are left out. Team goals are left out on purpose:
+  a project with only team goals gets no section, as decided on the issue.
 - The section says they're guidance: set one aside when the issue is better served, and say
   which and why in the PR description's Why. `skills/create-pull-request.md` says the same.
 - No goals with targets, no section: the brief is as before.
