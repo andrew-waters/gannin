@@ -32,6 +32,8 @@ nonisolated struct SandboxHost: Sendable, Equatable {
     var status = ""
     /// Whether a default kernel is set for the box's architecture.
     var hasKernel = false
+    /// Whether Gannin's base image, as this build of Gannin makes it, is there.
+    var hasBaseImage = false
     /// Features whose flag the help didn't list.
     var missing: [SandboxSupport.Feature] = []
 
@@ -87,6 +89,7 @@ nonisolated struct SandboxHost: Sendable, Equatable {
             case "version": version = ContainerVersion(value)
             case "status": status = Self.status(fromJSON: value)
             case "kernel": hasKernel = value == "yes"
+            case "base": hasBaseImage = value == "yes"
             case "lacks":
                 if let feature = SandboxSupport.features.first(where: { "\($0.command) \($0.flag)" == value }) {
                     missing.append(feature)
@@ -145,6 +148,7 @@ nonisolated enum SandboxRuntime {
               echo "version=$("$c" --version 2>/dev/null | head -n1)"
               echo "status=$("$c" system status --format json 2>/dev/null | tr -d '\\n')"
               [ -e "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-$(uname -m)" ] && echo kernel=yes || echo kernel=no
+              "$c" image inspect \(SandboxImages.baseTag) >/dev/null 2>&1 && echo base=yes || echo base=no
               \(checks)
             fi
             """

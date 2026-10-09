@@ -9,7 +9,7 @@ import Observation
 @Observable
 final class SandboxSetup {
     enum StepKind: String, CaseIterable {
-        case check, install, start, kernel
+        case check, install, start, kernel, image
 
         var title: String {
             switch self {
@@ -17,6 +17,7 @@ final class SandboxSetup {
             case .install: "Install Apple container \(SandboxSupport.tested)"
             case .start: "Start Apple container"
             case .kernel: "Set the Linux kernel"
+            case .image: "Build Gannin's base image"
             }
         }
     }
@@ -47,7 +48,7 @@ final class SandboxSetup {
     /// the policy runs, the service running and a kernel set.
     var isReady: Bool {
         guard let host else { return false }
-        return host.problem == nil && host.verdict.canSandbox && host.isRunning && host.hasKernel
+        return host.problem == nil && host.verdict.canSandbox && host.isRunning && host.hasKernel && host.hasBaseImage
     }
 
     /// Why it can't, in plain words, once checked.
@@ -59,6 +60,7 @@ final class SandboxSetup {
         if let problem = host.problem { return problem }
         if !host.isRunning { return "Apple container's service isn't running." }
         if !host.hasKernel { return "Apple container has no Linux kernel set." }
+        if !host.hasBaseImage { return "Gannin's base image isn't built yet." }
         return nil
     }
 
@@ -83,7 +85,9 @@ final class SandboxSetup {
     /// Makes the box ready: checks it, installs (`installing`, this Mac
     /// only, once the user has agreed to the admin prompt and to stopping
     /// what runs there), starts the service when it isn't running and sets
-    /// the recommended kernel when none is set. Stops at the first failure.
+    /// the recommended kernel when none is set, then builds the base image
+    /// when it isn't there (minutes, the first time). Stops at the first
+    /// failure.
     func setUp(installing: Bool) async {
         guard !isRunning else { return }
         isRunning = true
@@ -117,8 +121,33 @@ final class SandboxSetup {
             set(.kernel, .skipped)
         } else {
             let found = host
-            guard await perform(.kernel, { try await SandboxRuntime.setKernel(found, on: self.box) }) else { return }
+            guard await perform(.kernel, { try await SandboxRuntime.setKernel(found, on: self.box) }), let checked = await reinspect() else { return }
+            host = checked
+        }
+        if host.hasBaseImage {
+            set(.image, .skipped)
+        } else {
+            let ready = host
+            guard await perform(.image, { try await SandboxImages.ensureBase(ready, on: self.box) }) else { return }
             _ = await reinspect()
+        }
+    }
+
+    /// Removes every container and image Gannin made on the box (R13),
+    /// once the user has said so.
+    func removeAll() async -> Bool {
+        guard !isRunning, let host, host.isInstalled else { return true }
+        isRunning = true
+        defer { isRunning = false }
+        output = ""
+        steps = []
+        do {
+            try await SandboxImages.removeAll(host, on: box)
+            _ = await reinspect()
+            return true
+        } catch {
+            fail(.check, error)
+            return false
         }
     }
 

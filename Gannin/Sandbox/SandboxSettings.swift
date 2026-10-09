@@ -20,6 +20,7 @@ struct SandboxSettingsSection: View {
     @State private var keyError: String?
     @State private var makingKey = false
     @State private var confirmingInstall = false
+    @State private var confirmingOff = false
     @State private var showingOutput = false
 
     var body: some View {
@@ -48,6 +49,15 @@ struct SandboxSettingsSection: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text(installMessage)
+        }
+        .confirmationDialog("Turn off sandboxed sessions?", isPresented: $confirmingOff) {
+            Button("Turn Off and Remove", role: .destructive) {
+                Task { if await setup.removeAll() { enabled = false } }
+            }
+            Button("Turn Off, Keep Them") { enabled = false }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Removing deletes every container and image Gannin made on this Mac, a running session's sandbox included, and nothing else. Kept, the base image is ready if you turn it on again. New sessions start on this Mac either way.")
         }
 
         Section {
@@ -174,12 +184,12 @@ struct SandboxSettingsSection: View {
     private func enabledNote(missing: [String]) -> String {
         if enabled { return "New Work on This sessions start in a sandbox, and each can be started on this Mac instead." }
         if !missing.isEmpty { return "Needs \(missing.joined(separator: " and ")) first, below." }
-        return "Turning it on gets this Mac ready first: Apple container installed, its service running and a Linux kernel set."
+        return "Turning it on gets this Mac ready first: Apple container installed, its service running, a Linux kernel set and Gannin's base image built, which takes a few minutes the first time."
     }
 
     private func turn(_ on: Bool) {
         guard on else {
-            enabled = false
+            confirmingOff = true
             return
         }
         Task { await runSetup(installing: false) }
