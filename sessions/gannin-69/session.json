@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "69-releases-view-show-releases-by-default",
+  "issue" : "andrew-waters/gannin#69",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-09T15:10:57Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Releases view: show Releases by default with Milestones second, fetch stargazer details, and add stargazers-over-time charts",
+  "url" : "https://github.com/andrew-waters/gannin/issues/69"
+}
