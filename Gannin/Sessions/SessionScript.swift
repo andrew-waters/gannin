@@ -355,7 +355,9 @@ enum SessionBrief {
     /// A plan or requirement about the issue is included whole, up to this.
     private static let maxDocumentLength = 30_000
 
-    static func make(session: CodeSession, record: IssueRecord?, detail: ItemDetail?, parent: IssueRecord?, harness: HarnessIndex?) -> String {
+    /// `goals` are the project's measurables (`OrgConfig.measurables`);
+    /// those a change bears on are listed, as guidance.
+    static func make(session: CodeSession, record: IssueRecord?, detail: ItemDetail?, parent: IssueRecord?, harness: HarnessIndex?, goals: [Measurable] = []) -> String {
         let reference = session.issue
         var lines = ["# \(reference.reference): \(reference.title)", "", reference.url.absoluteString, ""]
 
@@ -438,6 +440,8 @@ enum SessionBrief {
             }
         }
 
+        lines += goalsSection(goals)
+
         var working = ["## Working here", ""]
         if session.isInHarness, let harnessPath = session.harnessPath, let harnessRepo = session.harnessRepo {
             let folder = ".worktrees/\(session.branch)"
@@ -494,6 +498,38 @@ enum SessionBrief {
         }
         lines += working
         return lines.joined(separator: "\n")
+    }
+
+    /// The org-wide goals with a target whose metric a change moves, each
+    /// with what it means for the change; nothing when there are none.
+    static func goalsSection(_ measurables: [Measurable]) -> [String] {
+        let goals = measurables.compactMap { goal -> String? in
+            guard goal.team == nil, let target = goal.targetText, let metric = goal.metric, let advice = advice(metric) else { return nil }
+            let unit = metric.countUnit(per: goal.cadence)
+            return "- **\(goal.name)**: \(unit.isEmpty ? target : "\(target) \(unit)"). \(advice)"
+        }
+        guard !goals.isEmpty else { return [] }
+        return [
+            "## Goals",
+            "",
+            "The project's goals, from its scorecard in Gannin. The team watches these numbers, so keep them in mind as you work. They're guidance, not rules: when the issue is better served by setting one aside (a change that can't be made smaller, say), do, and say which goal and why in the pull request's description, under Why. Don't set one aside without saying so.",
+            "",
+        ] + goals + [""]
+    }
+
+    /// What a goal on the metric asks of a change, or nil for one a change
+    /// doesn't move (reviews others give, the issue's own time in progress).
+    static func advice(_ metric: ScorecardMetric) -> String? {
+        switch metric {
+        case .prSize: "Lines added and removed per PR: keep the change to what the issue needs, and leave unrelated tidying for another PR."
+        case .prFiles: "Files a PR touches: don't spread the change across files it doesn't need."
+        case .cycleTime: "First commit to merge: a small PR that's easy to review merges sooner."
+        case .throughput: "PRs merged: a large change may go better as a few PRs that each stand alone."
+        case .rework: "PRs changed after their first review: check the work before asking for one."
+        case .unreviewed: "PRs merged without a review: never merge your own PR unreviewed."
+        case .flakyRuns: "CI runs that pass only on a re-run: don't add tests that pass or fail by chance."
+        case .firstReview, .answered, .slowReviews, .openPullRequests, .issueCycleTime: nil
+        }
     }
 
     /// When and how to ask for a second agent's review (`PairReview`).

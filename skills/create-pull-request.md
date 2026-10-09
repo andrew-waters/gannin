@@ -80,6 +80,7 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
 
    ## Why
    The problem from the issue, and any decision made along the way (link the plan in the harness if there is one).
+   If the change sets aside one of the goals in the session's brief (a PR larger than its size goal, say), name the goal and say why.
 
    ## How
    The approach and where to start reading: the main types and files.
