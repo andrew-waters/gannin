@@ -478,6 +478,14 @@ struct ReviewWithClaudeButton: View {
 
 // MARK: - Explain with Claude
 
+/// What opens an Explain window: the PR, and a review's walkthrough when
+/// one's already open (the review tab's header), so Claude can build on the
+/// areas a review already worked out rather than read the diff cold.
+struct ExplainPullRequestRequest: Codable, Hashable {
+    let reference: PullRequestReference
+    var walkthrough: [SessionTranscript.WalkthroughArea] = []
+}
+
 /// Explain in a PR's right-click menu, toolbar or drawer: a one-off
 /// question, not a session, so it's available wherever a PR is shown. Opens
 /// its own window (`ExplainPullRequestWindow`), so it can sit alongside the
@@ -485,11 +493,12 @@ struct ReviewWithClaudeButton: View {
 struct ExplainPullRequestButton: View {
     static let windowID = "explain-pull-request"
     let reference: PullRequestReference
+    var walkthrough: [SessionTranscript.WalkthroughArea] = []
     @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Button {
-            openWindow(id: Self.windowID, value: reference)
+            openWindow(id: Self.windowID, value: ExplainPullRequestRequest(reference: reference, walkthrough: walkthrough))
         } label: {
             Label("Explain", systemImage: "text.bubble")
         }
@@ -504,6 +513,9 @@ struct ExplainPullRequestButton: View {
 /// and discussion already read, not a fresh `gh` lookup.
 struct ExplainPullRequestWindow: View {
     let reference: PullRequestReference
+    /// A review's areas, when one's already open for this PR: Claude is
+    /// told it can build on them instead of reading the diff cold.
+    var walkthrough: [SessionTranscript.WalkthroughArea] = []
 
     private struct Turn: Identifiable {
         let id: UUID
@@ -605,6 +617,23 @@ struct ExplainPullRequestWindow: View {
         ([text] + turns.map { $0.fromClaude ? $0.text : "**Q:** \($0.text)" }).joined(separator: "\n\n")
     }
 
+    /// A review's walkthrough as a prompt fragment, or empty when there
+    /// isn't one open for this PR.
+    private var walkthroughNote: String {
+        guard !walkthrough.isEmpty else { return "" }
+        let areas = walkthrough.map { area in
+            "- \(area.title)" + (area.summary.map { ": \($0)" } ?? "") + " (\(area.files.joined(separator: ", ")))"
+        }.joined(separator: "\n")
+        return """
+
+            A review has already split this PR into these areas, in reading order:
+            \(areas)
+
+            Build on that structure rather than working it out again, but explain the code in your own words, not the review's.
+
+            """
+    }
+
     private func explain() {
         text = ""
         turns = []
@@ -618,7 +647,7 @@ struct ExplainPullRequestWindow: View {
             Read the actual changes with `gh pr diff \(reference.number) --repo \(reference.repo)` first, then `gh pr view \(reference.number) --repo \(reference.repo) --comments` for the stated intent and discussion. Base the explanation on what the diff does, not a reworded version of the title or description.
 
             Reply with the explanation only, no preamble, in Markdown: a short paragraph on what the code does and why, then a few bullet points on the notable changes if there are several, naming the functions, types or files involved. Where a short snippet would make a change clearer than naming it, include one as a fenced code block (with a language and, where it helps, the file path above it), taken from the actual diff rather than paraphrased. Don't review it or suggest changes.
-
+            \(walkthroughNote)
             I may ask follow-up questions about this PR afterwards; answer those from the diff and discussion you've already read, in the same plain Markdown style, with no preamble.
             """
         Task {
@@ -850,7 +879,7 @@ struct PullRequestReviewView: View {
                     Label("Open on GitHub", systemImage: "arrow.up.right.square")
                 }
                 .buttonStyle(.bordered)
-                ExplainPullRequestButton(reference: reference)
+                ExplainPullRequestButton(reference: reference, walkthrough: review?.walkthrough ?? [])
                     .buttonStyle(.bordered)
                 Button("Review Again") {
                     reviewingAgain = true

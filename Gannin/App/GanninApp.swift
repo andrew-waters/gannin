@@ -187,9 +187,9 @@ struct GanninApp: App {
 
         // Claude's explanation of a PR, a window of its own so it can sit
         // beside the PR while reading it.
-        WindowGroup(id: ExplainPullRequestButton.windowID, for: PullRequestReference.self) { $reference in
-            if let reference {
-                ExplainPullRequestWindow(reference: reference)
+        WindowGroup(id: ExplainPullRequestButton.windowID, for: ExplainPullRequestRequest.self) { $request in
+            if let request {
+                ExplainPullRequestWindow(reference: request.reference, walkthrough: request.walkthrough)
                     .commandPaletteOpeningInMainWindow()
             }
         }
