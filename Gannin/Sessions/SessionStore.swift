@@ -88,8 +88,15 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// The last `review-request` token taken from its hook folder, so one
     /// read again after a relaunch isn't asked twice.
     var reviewRequest: String? = nil
+    /// The Apple container it runs in (`SandboxPlacement.containerName`,
+    /// its issue's, shared with helpers); nil on the Mac or server itself.
+    var sandbox: String? = nil
+    /// Why it runs on the Mac although sandboxing was on when it started:
+    /// a repo that needs the Mac, no GitHub token, or the user's choice.
+    var hostReason: String? = nil
 
     var isRemote: Bool { connect != nil }
+    var isSandboxed: Bool { sandbox != nil }
     var isHelper: Bool { parentID != nil }
     var isPullRequestReview: Bool { reviewOf != nil }
     /// As a tab or row names it.
@@ -144,6 +151,8 @@ extension CodeSession {
         pairsReview = try container.decodeIfPresent(Bool.self, forKey: .pairsReview)
         pairing = try? container.decodeIfPresent(PairReview.self, forKey: .pairing)
         reviewRequest = try container.decodeIfPresent(String.self, forKey: .reviewRequest)
+        sandbox = try container.decodeIfPresent(String.self, forKey: .sandbox)
+        hostReason = try container.decodeIfPresent(String.self, forKey: .hostReason)
     }
 }
 
@@ -578,12 +587,15 @@ final class SessionStore {
 
     /// The issue's session, made in the harness checkout at `harnessPath` if
     /// it has none, with its brief written afresh from what Gannin knows now.
-    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, brief: (CodeSession) -> String) -> CodeSession {
-        let session = session(forIssue: issue.id)
-            ?? CodeSession(
-                id: UUID(), issue: issue, repo: harness.repo, branch: Self.branchName(issue), createdAt: .now,
-                connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath, instructions: instructions
+    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, placement: SandboxPlacement = .host(nil), brief: (CodeSession) -> String) -> CodeSession {
+        let session = session(forIssue: issue.id) ?? {
+            let id = UUID()
+            return CodeSession(
+                id: id, issue: issue, repo: harness.repo, branch: Self.branchName(issue), createdAt: .now,
+                connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath, instructions: instructions,
+                sandbox: placement.isSandboxed ? SandboxPlacement.containerName(for: id) : nil, hostReason: placement.reason
             )
+        }()
         sessions[session.id] = session
         save()
         let directory = Self.directory(for: session.id)

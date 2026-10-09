@@ -12,6 +12,9 @@ struct OrgConfig: Codable, Hashable {
     /// `owner/name` of repos whose PRs don't need a review (docs, config, a
     /// harness), so merging one unreviewed isn't flagged.
     var reposWithoutReview: Set<String> = []
+    /// `owner/name` of repos that only build on a Mac (Xcode apps and the
+    /// like), so their sessions run on the Mac rather than in a sandbox.
+    var reposNeedingMac: Set<String> = []
     /// Investment categories; nil until edited, meaning the default preset.
     var investments: InvestmentConfig?
     /// How issues move through the org's board; nil means the defaults.
@@ -159,6 +162,7 @@ struct OrgConfig: Codable, Hashable {
         excludedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .excludedAuthors) ?? []
         includedAuthors = try container.decodeIfPresent(Set<String>.self, forKey: .includedAuthors) ?? []
         reposWithoutReview = try container.decodeIfPresent(Set<String>.self, forKey: .reposWithoutReview) ?? []
+        reposNeedingMac = try container.decodeIfPresent(Set<String>.self, forKey: .reposNeedingMac) ?? []
         investments = try container.decodeIfPresent(InvestmentConfig.self, forKey: .investments)
         issueWorkflow = try container.decodeIfPresent(IssueWorkflow.self, forKey: .issueWorkflow)
         workWeek = try container.decodeIfPresent(WorkWeek.self, forKey: .workWeek)
@@ -177,7 +181,7 @@ struct OrgConfig: Codable, Hashable {
         committedDateField = try container.decodeIfPresent(String.self, forKey: .committedDateField)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.
@@ -188,6 +192,9 @@ struct OrgConfig: Codable, Hashable {
 
     /// Whether the repo's PRs should have a review before they merge.
     func needsReview(_ repo: String) -> Bool { !reposWithoutReview.contains(repo) }
+
+    /// Whether the repo's sessions have to run on the Mac, not in a sandbox.
+    func needsMac(_ repo: String) -> Bool { reposNeedingMac.contains(repo) }
 
     func excludes(_ login: String) -> Bool {
         if excludedAuthors.contains(login) { return true }
@@ -443,6 +450,12 @@ final class OrgConfigStore {
     func toggleReview(_ repo: String, in org: String) {
         update(org) { config in
             if config.reposWithoutReview.remove(repo) == nil { config.reposWithoutReview.insert(repo) }
+        }
+    }
+
+    func toggleNeedsMac(_ repo: String, in org: String) {
+        update(org) { config in
+            if config.reposNeedingMac.remove(repo) == nil { config.reposNeedingMac.insert(repo) }
         }
     }
 
