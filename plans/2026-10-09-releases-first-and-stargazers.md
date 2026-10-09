@@ -25,8 +25,8 @@ weren't shown against the stars.
 - Stargazer details come from the stargazers query already run for star dates: login, name,
   avatar, company, location and follower count on each edge's node. It stays one page of 100 a
   query (a point or two each), so the cost is about what it was. They're kept per repo, newest
-  first, as far as the backfill reaches (`ReleaseStore.starReach`, 10,000). An account GitHub
-  won't describe still counts as a star.
+  first, one each, as far as the backfill reaches (`ReleaseStore.starReach`, 10,000). An account
+  GitHub won't describe still counts as a star but isn't listed.
 - The cache version goes to 4, so the next sync fetches milestones, releases and stars again
   once, with details. The download history is separate and unaffected.
 - Only repos with releases, as before: every repo's stargazers would cost far more of the budget.
@@ -34,9 +34,10 @@ weren't shown against the stars.
   and tables. Clicking a repo in the Repositories table picks it (and again shows them all), in
   place of filling the search.
 - Stargazers is a table after Releases: avatar, login and name, repo, company, location,
-  followers and when, newest first, sortable, searched by the bar's search, opening their
-  profile. It shows the first 500 in the table's order, sorting before cutting so the most
-  followed of all can be found.
+  followers and when, newest first, sortable, with a search of its own (the bar's is for
+  releases, so one never empties the other), opening their profile. It shows the first 500 in
+  the table's order, sorting before cutting so the most followed of all can be found, and the
+  rows are worked out only when the stars, search or sort change, not on every redraw.
 - New stars are bars by week from Monday, by month once the history runs past six months, with
   quiet periods as zero. The cumulative line stays.
 - Published releases (not drafts or pre-releases) are marked on the Stars line as dashed rules,

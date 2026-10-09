@@ -102,10 +102,12 @@ extension GitHubAPI {
         return releases
     }
 
-    /// A repo's stargazers with when they starred it, newest first, stopping
-    /// at the first at or before `since` (nil for all of them) or after
-    /// `limit`. `reachedEnd` is false when the limit cut it short.
-    func stargazers(repo: String, since: Date?, limit: Int) async throws -> (stargazers: [Stargazer], reachedEnd: Bool) {
+    /// When a repo's stargazers starred it, newest first, and who they are,
+    /// stopping at the first at or before `since` (nil for all of them) or
+    /// after `limit` stars. `stargazers` leaves out accounts GitHub won't
+    /// describe, whose stars are still in `dates`. `reachedEnd` is false when
+    /// the limit cut it short.
+    func stargazers(repo: String, since: Date?, limit: Int) async throws -> (dates: [Date], stargazers: [Stargazer], reachedEnd: Bool) {
         struct Response: Decodable {
             struct Edge: Decodable {
                 struct User: Decodable {
@@ -128,9 +130,10 @@ extension GitHubAPI {
             let repository: Repository?
         }
         let (owner, name) = Self.split(repo)
+        var dates: [Date] = []
         var stargazers: [Stargazer] = []
         var cursor: String?
-        while stargazers.count < limit {
+        while dates.count < limit {
             var variables = ["owner": owner, "name": name]
             if let cursor { variables["cursor"] = cursor }
             let response: Response = try await query("""
@@ -146,21 +149,22 @@ extension GitHubAPI {
                   }
                 }
                 """, variables: variables)
-            guard let page = response.repository?.stargazers else { return (stargazers, true) }
+            guard let page = response.repository?.stargazers else { return (dates, stargazers, true) }
             for edge in page.edges {
-                if let since, edge.starredAt <= since { return (stargazers, true) }
+                if let since, edge.starredAt <= since { return (dates, stargazers, true) }
+                dates.append(edge.starredAt)
                 // An account GitHub won't describe still counts as a star.
-                let user = edge.node?.value
+                guard let user = edge.node?.value else { continue }
                 stargazers.append(Stargazer(
-                    login: user?.login ?? "ghost", name: user?.name, avatarURL: user?.avatarUrl,
-                    company: user?.company, location: user?.location,
-                    followers: user?.followers?.totalCount ?? 0, starredAt: edge.starredAt
+                    login: user.login, name: user.name, avatarURL: user.avatarUrl,
+                    company: user.company, location: user.location,
+                    followers: user.followers?.totalCount ?? 0, starredAt: edge.starredAt
                 ))
             }
-            guard page.pageInfo.hasNextPage, let next = page.pageInfo.endCursor else { return (stargazers, true) }
+            guard page.pageInfo.hasNextPage, let next = page.pageInfo.endCursor else { return (dates, stargazers, true) }
             cursor = next
         }
-        return (stargazers, false)
+        return (dates, stargazers, false)
     }
 
     private static func split(_ repo: String) -> (owner: String, name: String) {

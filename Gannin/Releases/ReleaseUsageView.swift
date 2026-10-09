@@ -13,16 +13,15 @@ struct ReleasesOverview: View {
     /// Those the bar's search and toggles leave.
     let shown: [RepoRelease]
     let groups: [MilestoneGroup]
-    /// The bar's search, which narrows the stargazers too.
-    let search: String
+    /// Star histories of the repos in view, by repo, for their stargazers.
+    let stars: [String: StarHistory]
+    /// When they were fetched, so the stargazers are listed again only then.
+    let syncedAt: Date
     /// The repo picked in the bar, empty for all of them.
     @Binding var repo: String
     @State private var repoSort: StatsSort? = StatsSort(columnID: "downloads", ascending: false)
     @State private var releaseSort: StatsSort? = StatsSort(columnID: "published", ascending: false)
-    @State private var stargazerSort: StatsSort? = StatsSort(columnID: "starred", ascending: false)
 
-    /// The stargazers table lists at most this many, after the search and sort.
-    static let stargazerLimit = 500
     /// Release marks on the stars line past this many would hide it, so
     /// they show for one repo, or for all while there are no more than this.
     static let releaseMarkLimit = 30
@@ -65,12 +64,7 @@ struct ReleasesOverview: View {
                 } header: {
                     PinnedHeader { SectionHeader(title: "Releases", count: shown.count) }
                 }
-                let stargazers = shownStargazers
-                Section {
-                    stargazersTable(stargazers).sectionContent()
-                } header: {
-                    PinnedHeader { SectionHeader(title: "Stargazers", count: stargazers.count) }
-                }
+                StargazersSection(stars: stars, syncedAt: syncedAt)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -305,109 +299,149 @@ struct ReleasesOverview: View {
 
 // MARK: - Stargazers
 
-extension ReleasesOverview {
-    /// Those the search leaves, every word in their login, name, company,
-    /// location or repo.
-    var shownStargazers: [RepoStargazer] {
-        let words = search.lowercased().split(separator: " ")
-        guard !words.isEmpty else { return usage.stargazers }
-        return usage.stargazers.filter { row in
-            let person = row.stargazer
-            let text = [person.login, person.name ?? "", person.company ?? "", person.location ?? "", row.repo]
-                .joined(separator: " ").lowercased()
-            return words.allSatisfy { text.contains($0) }
+/// Who starred the repos in view, with a search of its own (the bar's is for
+/// releases). The rows are merged, searched and sorted only when the stars,
+/// search or sort change, never on a redraw.
+private struct StargazersSection: View {
+    @Environment(\.openURL) private var openURL
+    let stars: [String: StarHistory]
+    let syncedAt: Date
+    @State private var search = ""
+    @State private var sort: StatsSort? = StatsSort(columnID: "starred", ascending: false)
+    /// The first `limit` in the table's order.
+    @State private var rows: [RepoStargazer] = []
+    /// How many the search matches.
+    @State private var matching = 0
+
+    /// The table lists at most this many, after the search and sort.
+    static let limit = 500
+
+    private struct Inputs: Equatable {
+        let syncedAt: Date
+        let repos: [String]
+        let search: String
+        let sort: StatsSort?
+    }
+
+    private var inputs: Inputs {
+        Inputs(syncedAt: syncedAt, repos: stars.keys.sorted(), search: search, sort: sort)
+    }
+
+    var body: some View {
+        // On the content, not the section, which stays a plain section so its header pins.
+        Section {
+            content.sectionContent()
+                .onChange(of: inputs, initial: true) { list() }
+        } header: {
+            PinnedHeader { SectionHeader(title: "Stargazers", count: matching) }
         }
     }
 
-    private var stargazerColumns: [StatsColumn<RepoStargazer>] {
-        [
-            StatsColumn(
-                id: "who", title: "Stargazer", help: "Their login and name. Click one to open their profile on GitHub",
-                width: nil, minWidth: 220,
-                sortKey: { .text($0.stargazer.login.lowercased()) },
-                cell: { row in
-                    AnyView(
-                        HStack(spacing: 8) {
-                            Avatar(url: row.stargazer.avatarURL, size: 20)
-                            Text(row.stargazer.login).fontWeight(.medium).lineLimit(1)
-                            if let name = row.stargazer.name, !name.isEmpty {
-                                Text(name).foregroundStyle(.secondary).lineLimit(1)
-                            }
-                        }
-                    )
-                }
-            ),
-            StatsColumn(
-                id: "repo", title: "Repository", help: "The repository they starred",
-                width: 140,
-                sortKey: { .text($0.repo.lowercased()) },
-                cell: { AnyView(Text(ReleasesView.repoName($0.repo)).lineLimit(1).help($0.repo)) }
-            ),
-            StatsColumn(
-                id: "company", title: "Company", help: "As their GitHub profile has it",
-                width: 140,
-                sortKey: { .text($0.stargazer.company?.lowercased() ?? "") },
-                cell: { AnyView(OptionalText(text: $0.stargazer.company)) }
-            ),
-            StatsColumn(
-                id: "location", title: "Location", help: "As their GitHub profile has it",
-                width: 140,
-                sortKey: { .text($0.stargazer.location?.lowercased() ?? "") },
-                cell: { AnyView(OptionalText(text: $0.stargazer.location)) }
-            ),
-            StatsColumn(
-                id: "followers", title: "Followers", help: "Their followers on GitHub when they were fetched",
-                width: 80,
-                sortKey: { .number(Double($0.stargazer.followers)) },
-                cell: { AnyView(NumberCell(text: $0.stargazer.followers.formatted(), dimmed: $0.stargazer.followers == 0)) }
-            ),
-            StatsColumn(
-                id: "starred", title: "Starred", help: "When they starred it",
-                width: 110,
-                sortKey: { .number($0.stargazer.starredAt.timeIntervalSince1970) },
-                cell: { row in
-                    AnyView(
-                        Text(row.stargazer.starredAt.formatted(date: .abbreviated, time: .omitted))
-                            .help(row.stargazer.starredAt.formatted(date: .complete, time: .shortened))
-                    )
-                }
-            ),
-        ]
-    }
-
-    /// The first `stargazerLimit` in the table's order, so sorting by
-    /// followers finds the most followed of all of them, not of the newest.
     @ViewBuilder
-    func stargazersTable(_ stargazers: [RepoStargazer]) -> some View {
-        if stargazers.isEmpty {
-            Text(usage.stargazers.isEmpty ? "Who starred the repositories with releases shows here." : "No matching stargazers. Try another search.")
-                .foregroundStyle(.secondary)
-        } else {
-            let columns = stargazerColumns
-            let sorted = stargazerSort.flatMap { sort in
-                columns.first { $0.id == sort.columnID }.map { column in
-                    stargazers.sorted { sort.ascending ? column.sortKey($0) < column.sortKey($1) : column.sortKey($0) > column.sortKey($1) }
-                }
-            } ?? stargazers
-            VStack(alignment: .leading, spacing: 8) {
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            FilterSearchField(text: $search, prompt: "Search stargazers")
+                .frame(maxWidth: 280, alignment: .leading)
+                .controlSize(.small)
+            if rows.isEmpty {
+                Text(stars.values.allSatisfy(\.stargazers.isEmpty) ? "Who starred the repositories with releases shows here." : "No matching stargazers. Try another search.")
+                    .foregroundStyle(.secondary)
+            } else {
                 StatsTable(
-                    rows: Array(sorted.prefix(Self.stargazerLimit)),
-                    columns: columns,
-                    sort: $stargazerSort,
+                    rows: rows,
+                    columns: Self.columns,
+                    sort: $sort,
                     selectedID: nil,
                     onSelect: { row in row.stargazer.profileURL.map { openURL($0) } },
                     contextMenu: { row in
                         AnyView(Button("Open Profile on GitHub") { row.stargazer.profileURL.map { openURL($0) } })
                     }
                 )
-                if sorted.count > Self.stargazerLimit {
-                    Text("Showing the first \(Self.stargazerLimit.formatted()) of \(sorted.count.formatted()). Search or pick a repository to narrow them.")
+                if matching > Self.limit {
+                    Text("Showing the first \(Self.limit.formatted()) of \(matching.formatted()). Search or pick a repository to narrow them.")
                         .font(.callout)
                         .foregroundStyle(.tertiary)
                 }
             }
         }
     }
+
+    /// Every word of the search in their login, name, company, location or
+    /// repo, sorted as the table is before cutting, so sorting by followers
+    /// finds the most followed of all of them, not of the newest.
+    private func list() {
+        let words = search.lowercased().split(separator: " ")
+        var all: [RepoStargazer] = []
+        for (repo, history) in stars {
+            for person in history.stargazers {
+                if !words.isEmpty {
+                    let text = [person.login, person.name ?? "", person.company ?? "", person.location ?? "", repo]
+                        .joined(separator: " ").lowercased()
+                    guard words.allSatisfy({ text.contains($0) }) else { continue }
+                }
+                all.append(RepoStargazer(repo: repo, stargazer: person))
+            }
+        }
+        if let sort, let column = Self.columns.first(where: { $0.id == sort.columnID }) {
+            all.sort { sort.ascending ? column.sortKey($0) < column.sortKey($1) : column.sortKey($0) > column.sortKey($1) }
+        }
+        matching = all.count
+        rows = Array(all.prefix(Self.limit))
+    }
+
+    private static let columns: [StatsColumn<RepoStargazer>] = [
+        StatsColumn(
+            id: "who", title: "Stargazer", help: "Their login and name. Click one to open their profile on GitHub",
+            width: nil, minWidth: 220,
+            sortKey: { .text($0.stargazer.login.lowercased()) },
+            cell: { row in
+                AnyView(
+                    HStack(spacing: 8) {
+                        Avatar(url: row.stargazer.avatarURL, size: 20)
+                        Text(row.stargazer.login).fontWeight(.medium).lineLimit(1)
+                        if let name = row.stargazer.name, !name.isEmpty {
+                            Text(name).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                )
+            }
+        ),
+        StatsColumn(
+            id: "repo", title: "Repository", help: "The repository they starred",
+            width: 140,
+            sortKey: { .text($0.repo.lowercased()) },
+            cell: { AnyView(Text(ReleasesView.repoName($0.repo)).lineLimit(1).help($0.repo)) }
+        ),
+        StatsColumn(
+            id: "company", title: "Company", help: "As their GitHub profile has it",
+            width: 140,
+            sortKey: { .text($0.stargazer.company?.lowercased() ?? "") },
+            cell: { AnyView(OptionalText(text: $0.stargazer.company)) }
+        ),
+        StatsColumn(
+            id: "location", title: "Location", help: "As their GitHub profile has it",
+            width: 140,
+            sortKey: { .text($0.stargazer.location?.lowercased() ?? "") },
+            cell: { AnyView(OptionalText(text: $0.stargazer.location)) }
+        ),
+        StatsColumn(
+            id: "followers", title: "Followers", help: "Their followers on GitHub when they were fetched",
+            width: 80,
+            sortKey: { .number(Double($0.stargazer.followers)) },
+            cell: { AnyView(NumberCell(text: $0.stargazer.followers.formatted(), dimmed: $0.stargazer.followers == 0)) }
+        ),
+        StatsColumn(
+            id: "starred", title: "Starred", help: "When they starred it",
+            width: 110,
+            sortKey: { .number($0.stargazer.starredAt.timeIntervalSince1970) },
+            cell: { row in
+                AnyView(
+                    Text(row.stargazer.starredAt.formatted(date: .abbreviated, time: .omitted))
+                        .help(row.stargazer.starredAt.formatted(date: .complete, time: .shortened))
+                )
+            }
+        ),
+    ]
 }
 
 /// A profile field, or a dash when it's empty.

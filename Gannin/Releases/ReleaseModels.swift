@@ -100,7 +100,8 @@ struct StarHistory: Codable, Hashable {
     /// Stars older than the backfill reached (it stops at
     /// `ReleaseStore.starReach`), counted before the first day.
     var before: Int
-    /// Who starred it, newest first, as far as the backfill reached.
+    /// Who starred it, newest first, as far as the backfill reached; stars
+    /// from accounts GitHub won't describe count in `days` only.
     var stargazers: [Stargazer]
 
     struct StarDay: Codable, Hashable {
@@ -108,16 +109,18 @@ struct StarHistory: Codable, Hashable {
         var count: Int
     }
 
-    /// Adds stars (any order) to their days, and their stargazers.
-    mutating func add(_ stars: [Stargazer], calendar: Calendar = .current) {
-        guard !stars.isEmpty else { return }
+    /// Adds stars (any order) to their days, and the stargazers known
+    /// among them, one each, the latest star winning.
+    mutating func add(_ dates: [Date], stargazers new: [Stargazer], calendar: Calendar = .current) {
+        guard !dates.isEmpty else { return }
         var counts = Dictionary(days.map { ($0.day, $0.count) }, uniquingKeysWith: +)
-        for star in stars { counts[calendar.startOfDay(for: star.starredAt), default: 0] += 1 }
+        for date in dates { counts[calendar.startOfDay(for: date), default: 0] += 1 }
         days = counts.map { StarDay(day: $0.key, count: $0.value) }.sorted { $0.day < $1.day }
-        newest = max(newest ?? .distantPast, stars.map(\.starredAt).max() ?? .distantPast)
-        let known = Set(stars.map(\.login))
-        stargazers = Array((stars + stargazers.filter { !known.contains($0.login) })
+        newest = max(newest ?? .distantPast, dates.max() ?? .distantPast)
+        var seen = Set<String>()
+        stargazers = Array((new + stargazers)
             .sorted { $0.starredAt > $1.starredAt }
+            .filter { seen.insert($0.login).inserted }
             .prefix(ReleaseStore.starReach))
     }
 
@@ -195,8 +198,6 @@ struct ReleaseUsage {
     /// New stars by week, or by month over a longer history, by the bucket's start.
     let newStars: [Point]
     let newStarsBucket: StarBucket
-    /// Every repo's stargazers, newest first.
-    let stargazers: [RepoStargazer]
 
     /// How new stars are counted: by week (from Monday) until the history
     /// runs longer than `weeklyReach`, then by month.
@@ -253,9 +254,6 @@ struct ReleaseUsage {
         let bucket: StarBucket = now.timeIntervalSince(firstStar) > StarBucket.weeklyReach ? .month : .week
         newStarsBucket = bucket
         newStars = Self.newStars(perDay, bucket: bucket)
-        stargazers = repositories
-            .flatMap { repo in (history.stars[repo.name]?.stargazers ?? []).map { RepoStargazer(repo: repo.name, stargazer: $0) } }
-            .sorted { $0.stargazer.starredAt > $1.stargazer.starredAt }
     }
 
     /// Stars per day added up by bucket, with empty buckets between the

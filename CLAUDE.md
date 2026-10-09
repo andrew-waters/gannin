@@ -539,9 +539,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   published releases marked as dashed rules named on hover, for one repo or up to 30), New stars
   by week from Monday (by month once the history runs past six months, `ReleaseUsage.StarBucket`,
   quiet ones as zero), then Repositories, Releases and Stargazers as `StatsTable`s: a release's
-  downloads cell lists its assets, and stargazers (avatar, login and name, repo, company,
-  location, followers, starred) are searched by the bar's search, sorted before the first 500 are
-  shown, and open their GitHub profile.
+  downloads cell lists its assets, and stargazers (`StargazersSection`: avatar, login and name,
+  repo, company, location, followers, starred) have a search of their own, are merged, searched
+  and sorted only when those change, show the first 500 in the table's order, and open their
+  GitHub profile. Accounts GitHub won't describe count as stars but aren't listed.
 - Milestones with the same title (case aside) in different repos are one `MilestoneGroup`: counts
   added up, due the soonest open one's. Progress is GitHub's, closed of all issues and pull requests
   in the milestone; `MilestoneActivity` (looking groups up in `MilestoneGroup.index`, the history's

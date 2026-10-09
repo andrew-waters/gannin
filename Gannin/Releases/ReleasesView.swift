@@ -53,7 +53,8 @@ struct ReleasesView: View {
                         releases: releasesInView,
                         shown: shownReleases(releasesInView),
                         groups: groups,
-                        search: search,
+                        stars: history.stars.filter { included($0.key) },
+                        syncedAt: history.syncedAt,
                         repo: $repo
                     )
                 }
@@ -86,7 +87,7 @@ struct ReleasesView: View {
 
     private func bar(count: Int, repos: [String], picked: String) -> some View {
         HStack(spacing: 10) {
-            FilterSearchField(text: $search, prompt: part == .milestones ? "Search milestones" : "Search releases and stargazers")
+            FilterSearchField(text: $search, prompt: part == .milestones ? "Search milestones" : "Search releases")
                 .frame(maxWidth: 280)
             switch part {
             case .milestones: Toggle("Closed too", isOn: $showsClosed).checkboxToggle()

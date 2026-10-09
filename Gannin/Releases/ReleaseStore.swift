@@ -150,13 +150,14 @@ final class ReleaseStore {
     /// counted at the start.
     private static func stars(_ repo: ReleaseRepository, after previous: StarHistory?, api: GitHubAPI) async throws -> StarHistory {
         if var history = previous, history.newest != nil {
-            history.add(try await api.stargazers(repo: repo.name, since: history.newest, limit: starReach).stargazers)
+            let fetched = try await api.stargazers(repo: repo.name, since: history.newest, limit: starReach)
+            history.add(fetched.dates, stargazers: fetched.stargazers)
             return history
         }
         let fetched = try await api.stargazers(repo: repo.name, since: nil, limit: starReach)
         var history = StarHistory(days: [], newest: nil, before: 0, stargazers: [])
-        history.add(fetched.stargazers)
-        if !fetched.reachedEnd { history.before = max(repo.stars - fetched.stargazers.count, 0) }
+        history.add(fetched.dates, stargazers: fetched.stargazers)
+        if !fetched.reachedEnd { history.before = max(repo.stars - fetched.dates.count, 0) }
         return history
     }
 

@@ -14,13 +14,25 @@ struct StarHistoryTests {
         Stargazer(login: login, name: nil, avatarURL: nil, company: nil, location: nil, followers: 0, starredAt: day(date))
     }
 
+    private func add(_ stars: [Stargazer], unknown: [String] = [], to history: inout StarHistory) {
+        history.add(stars.map(\.starredAt) + unknown.map(day), stargazers: stars)
+    }
+
     @Test func addingKeepsStargazersNewestFirstAndCountsDays() {
         var history = StarHistory(days: [], newest: nil, before: 0, stargazers: [])
-        history.add([star("a", "2026-10-01"), star("b", "2026-10-03")])
-        history.add([star("c", "2026-10-05"), star("b", "2026-10-03")])
+        add([star("a", "2026-10-01"), star("b", "2026-10-03")], to: &history)
+        add([star("c", "2026-10-05"), star("b", "2026-10-04")], to: &history)
         #expect(history.stargazers.map(\.login) == ["c", "b", "a"])
+        #expect(history.stargazers[1].starredAt == day("2026-10-04"))
         #expect(history.newest == day("2026-10-05"))
-        #expect(history.days.count == 3)
+        #expect(history.days.count == 4)
+    }
+
+    @Test func undescribedAccountsCountButAreNotListed() {
+        var history = StarHistory(days: [], newest: nil, before: 0, stargazers: [])
+        add([star("a", "2026-10-01")], unknown: ["2026-10-02", "2026-10-02"], to: &history)
+        #expect(history.stargazers.map(\.login) == ["a"])
+        #expect(history.days.reduce(0) { $0 + $1.count } == 3)
     }
 
     @Test func newStarsByWeekStartOnMondayWithEmptyWeeks() {
