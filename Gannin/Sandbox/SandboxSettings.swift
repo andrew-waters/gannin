@@ -27,7 +27,7 @@ struct SandboxSettingsSection: View {
         let _ = revision
         let missing = SandboxCredentials.missing
         Section {
-            Toggle("Run Work on This sessions in a sandbox", isOn: Binding(get: { enabled }, set: turn))
+            Toggle("Run Work on This sessions in a sandbox", isOn: Binding(get: { enabled }, set: { turn($0) }))
                 .disabled(setup.isRunning || (!enabled && !missing.isEmpty))
             Text(enabledNote(missing: missing))
                 .font(.caption)
