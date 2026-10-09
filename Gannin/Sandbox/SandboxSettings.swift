@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Settings › General › Sandbox (andrew-waters/gannin#8): turning sandboxed
+/// Settings › Sandbox (andrew-waters/gannin#8): turning sandboxed
 /// sessions on, which first gets this Mac ready (`SandboxSetup`), the Claude
 /// credential, the signing key, and the caps each sandbox gets.
 struct SandboxSettingsSection: View {
@@ -357,7 +357,7 @@ struct SandboxGitHubTokenSection: View {
     }
 }
 
-/// Settings › General › Remote machines (R19): the Mac sessions reach with
+/// Settings › Sandbox › Remote machines (R19): the Mac sessions reach with
 /// Connect with, as Apple container finds it there, with Set Up (start its
 /// service, set a kernel, build the base image) and Install or Update in a
 /// terminal over `ssh -t`, where its owner types its password.

@@ -35,7 +35,7 @@ enum SandboxLaunch {
             : SessionScript.quoted(SandboxGitGuard.realPath(SessionStore.directory(for: session.parentID ?? session.id).path))
         let box = session.isRemote ? "the server" : "this Mac"
         let fixContainer = session.isRemote
-            ? "Install or update it from Gannin's Settings, under Remote machines, or on the server from github.com/apple/container/releases."
+            ? "Install or update it from Gannin's Settings, under Sandbox › Remote machines, or on the server from github.com/apple/container/releases."
             : "Set it up in Gannin's Settings, under Sandbox."
         let minimum = SandboxSupport.minimum
         let claudeFolder = session.isRemote ? SandboxCredentials.remoteClaudeFolder : SessionScript.quoted(SandboxCredentials.claudeFolder.path)
@@ -201,6 +201,13 @@ enum SandboxLaunch {
             folder="$harness"/\(SessionScript.quoted(folder))
 
             \(SessionScript.functions)
+            # Nothing stays open in here: ending the terminal is what lets Gannin
+            # stop the sandbox once no session uses it.
+            fail() {
+              printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
+              printf 'failed: %s' "$1" > "$session/sandbox" 2>/dev/null
+              exit 1
+            }
 
             [ -f "$session/secrets.env" ] || fail "There are no credentials for this sandbox. Restart the session from Gannin."
             set -a
@@ -228,7 +235,7 @@ enum SandboxLaunch {
               note "Claude isn't signed in in your sandboxes yet. When it asks, choose your Claude account, open the link it shows, sign in, and paste the code back. Your other sandboxes stay signed in."
             fi
 
-            \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "This shell is in the sandbox, in the harness"))
+            \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "", afterExit: "note \"Claude Code has exited, so its sandbox stops once nothing else uses it. Restart the session to go on.\"\nexit 0"))
             """
     }
 

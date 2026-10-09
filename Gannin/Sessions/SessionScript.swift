@@ -124,7 +124,9 @@ enum SessionScript {
     /// prompt, or `--resume` once it has had one, then a shell once it
     /// exits. `settings` is a shell word. Needs `$session`, `$id` and the
     /// shared functions.
-    static func claudeSteps(_ session: CodeSession, settings: String, shellNote: String) -> String {
+    /// `afterExit` is what follows claude's exit: by default a note and a
+    /// login shell where it ran.
+    static func claudeSteps(_ session: CodeSession, settings: String, shellNote: String, afterExit: String? = nil) -> String {
         let folder = ".worktrees/\(session.branch)"
         let issue = session.issue
         let prompt = firstPrompt(session, otherwise: """
@@ -143,8 +145,7 @@ enum SessionScript {
             fi
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
-            note "Claude Code has exited. \(shellNote); run claude --resume $id to go on."
-            exec "${SHELL:-bash}" -l
+            \(afterExit ?? "note \"Claude Code has exited. \(shellNote); run claude --resume $id to go on.\"\nexec \"${SHELL:-bash}\" -l")
             """
     }
 

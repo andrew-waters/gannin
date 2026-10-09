@@ -44,8 +44,8 @@ newest wins, time off merges by its UUID. It was copied from `UserDefaults` once
 (`userDataMigrated`). GitHub caches stay local JSON. The app has no entitlements beyond the
 hardened runtime.
 
-The app's settings (`SettingsView`) are General, Sync and Storage panes. General (which also holds
-Agent, Sandbox and Remote machines, see Sandboxed sessions) starts with
+The app's settings (`SettingsView`) are General, Sync, Sandbox (see Sandboxed sessions) and Storage
+panes. General (which also holds Agent) starts with
 Appearance: System, Light or Dark (`AppAppearance`, set on `NSApp` at launch and when changed). Sync (`SyncSettingsView`)
 holds everything that decides what's fetched from GitHub and how often (see Fetching and the rate
 limit). Storage (`StorageSettings`) shows each cache's size on disk with Clear
@@ -1149,7 +1149,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   org (`GH_TOKEN`; Create One opens GitHub's new token page filled in, `newGitHubTokenURL`) and a
   signing key (made with `ssh-keygen` or pasted; no passphrase), with the user's git name and email.
   Nothing else goes in: not the user's Claude or gh login, Gannin's token, or SSH keys.
-- Settings › General › Sandbox (`SandboxSettingsSection`): on only once this Mac is ready (service,
+- Settings › Sandbox, a pane of its own (`SandboxSettingsSection`, then `RemoteMachinesSection`): on only once this Mac is ready (service,
   kernel, base image) and the credential and signing key are there (R18); Install or Update asked
   first; Sign Out of Claude in Sandboxes removes the shared login; the signing key's public half
   with Add to GitHub; CPUs and memory per sandbox

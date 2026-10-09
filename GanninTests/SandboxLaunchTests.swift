@@ -49,7 +49,7 @@ struct SandboxLaunchTests {
         #expect(!steps.contains(".ssh"))
     }
 
-    @Test func insideTheCredentialsAreTakenAndTheFileRemoved() {
+    @Test func insideTheCredentialsAreTakenAndTheFileRemoved() throws {
         let inner = SandboxLaunch.innerScript(session())
         let read = inner.range(of: #". "$session/secrets.env""#)
         let removed = inner.range(of: #"rm -f "$session/secrets.env""#)
@@ -60,6 +60,10 @@ struct SandboxLaunchTests {
             #expect(removed.upperBound < claude.lowerBound)
         }
         #expect(inner.contains("git config --global commit.gpgsign true"))
+        // Nothing stays open inside once claude exits, so the terminal ends and the sandbox can stop.
+        let ownFail = try #require(inner.range(of: "# Nothing stays open in here"))
+        #expect(!inner[ownFail.lowerBound...].contains("exec \"${SHELL:-bash}\" -l"))
+        #expect(inner.hasSuffix("exit 0"))
         #expect(inner.contains("user.signingkey \(SandboxLaunch.signingKeyPath)"))
     }
 

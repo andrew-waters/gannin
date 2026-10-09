@@ -26,7 +26,7 @@ GitHub token for the org, and a signing key for its commits.
 
 ## Setting it up
 
-All of this is in Gannin's Settings, under General.
+All of this is in Gannin's Settings, under Sandbox, except the GitHub token, which is per org.
 
 1. **Claude in a sandbox.** Choose how Claude signs in there:
    - *Sign in with Claude*: nothing to set up here. The first sandboxed session asks you to sign
@@ -96,8 +96,8 @@ base image changes.
 ## Sessions on a server
 
 If Settings has a Connect with command, sessions run on that server. When the server is a Mac with
-Apple Silicon and Apple `container`, they're sandboxed there in the same way. Settings, under Remote
-machines, shows what Gannin finds there:
+Apple Silicon and Apple `container`, they're sandboxed there in the same way. Settings, under Sandbox, Remote
+machines shows what Gannin finds there:
 
 - **Set Up** starts the service, sets a kernel and builds the base image.
 - **Install** or **Update** opens a terminal on the server, where `sudo` asks for that Mac's

@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// The app's settings: General (account and activity), Sync (what's fetched
-/// from GitHub and how often) and Storage, as panes.
+/// from GitHub and how often), Sandbox (where Claude Code sessions can run
+/// contained) and Storage, as panes.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -13,6 +14,15 @@ struct SettingsView: View {
                 SyncSettingsView()
                     .frame(width: 620)
                     .frame(minHeight: 560)
+            }
+            Tab("Sandbox", systemImage: "shippingbox") {
+                Form {
+                    SandboxSettingsSection()
+                    RemoteMachinesSection()
+                }
+                .formStyle(.grouped)
+                .frame(width: 520)
+                .frame(minHeight: 560)
             }
             Tab("Storage", systemImage: "internaldrive") {
                 StorageSettings()
@@ -65,8 +75,6 @@ struct GeneralSettings: View {
                 Text("Pull requests and issues")
             }
             SessionSettingsSection()
-            SandboxSettingsSection()
-            RemoteMachinesSection()
             SessionPromptSettingsSection()
         }
         .formStyle(.grouped)
