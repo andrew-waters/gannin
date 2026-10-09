@@ -32,7 +32,7 @@ enum SandboxLaunch {
         // them starts the sandbox.
         let issueFolder = session.isRemote
             ? SessionStore.remoteIssueDirectory(for: session)
-            : SessionScript.quoted(SessionStore.directory(for: session.parentID ?? session.id).resolvingSymlinksInPath().path)
+            : SessionScript.quoted(SandboxGitGuard.realPath(SessionStore.directory(for: session.parentID ?? session.id).path))
         let box = session.isRemote ? "the server" : "this Mac"
         let fixContainer = session.isRemote
             ? "Install or update it from Gannin's Settings, under Remote machines, or on the server from github.com/apple/container/releases."
@@ -68,10 +68,13 @@ enum SandboxLaunch {
             fi
             [ -f "$session/secrets.env" ] || sandbox_failed "Gannin had no credentials to hand this sandbox. Check Settings, under Sandbox, and the org's GitHub token under Harness, then Restart."
 
-            # Clones the sandbox can see: those already in projects/ and the issue's.
+            # The issue's repos' clones in projects/ (or projects/<group>/), found by
+            # their origin rather than their folder's name; read, never run.
+            \(findClone)
             for repo in \(repos.map(SandboxRuntime.quoted).joined(separator: " ")); do
+              find_clone "$repo" >/dev/null && continue
               clone="$harness/projects/${repo##*/}"
-              [ -e "$clone/.git" ] && continue
+              [ -e "$clone" ] && { warn "projects/${repo##*/} is another repo, so $repo isn't in the sandbox."; continue; }
               note "Cloning $repo into projects/"
               mkdir -p "$harness/projects"
               if command -v gh >/dev/null 2>&1; then gh repo clone "$repo" "$clone" -- --quiet || warn "Couldn't clone $repo."
@@ -100,7 +103,20 @@ enum SandboxLaunch {
               # A repo's git dir, writable so commits and worktrees work, with
               # its hooks read-only; what it says is checked before git on the
               # Mac trusts it (SandboxGitGuard).
-              git_dir() { args+=(--mount "type=bind,source=$1,target=$1"); [ -d "$1/hooks" ] && args+=(--mount "type=bind,source=$1/hooks,target=$1/hooks,readonly"); }
+              # A repo's git dir read-only, so its config and hooks can't be
+              # changed for git on the Mac to run, with only what commits,
+              # fetches and worktrees write read-write inside it. FETCH_HEAD
+              # goes into logs/ through a link made here, as git writes it at
+              # the top. Deleting a branch still can't (packed-refs.lock).
+              git_dir() {
+                mkdir -p "$1/worktrees" "$1/logs"
+                if [ ! -L "$1/FETCH_HEAD" ]; then
+                  [ -f "$1/FETCH_HEAD" ] && mv "$1/FETCH_HEAD" "$1/logs/FETCH_HEAD"
+                  ln -s logs/FETCH_HEAD "$1/FETCH_HEAD"
+                fi
+                args+=(--mount "type=bind,source=$1,target=$1,readonly")
+                for part in objects refs logs worktrees; do args+=(--mount "type=bind,source=$1/$part,target=$1/$part"); done
+              }
               # The harness's own git only when it's the code repo too.
               [ -d "$h/.git" ] && [ ! -d "$h/projects" ] && git_dir "$h/.git"
               args+=(--tmpfs "$h/.worktrees" --mount "type=bind,source=$f,target=$f")
@@ -108,8 +124,7 @@ enum SandboxLaunch {
                 args+=(--tmpfs "$h/projects")
                 # Only the issue's repos, not every clone (and others' branches).
                 for repo in \(repos.map(SandboxRuntime.quoted).joined(separator: " ")); do
-                  g=$(find "$h/projects" -mindepth 2 -maxdepth 3 -type d -name .git -path "*/${repo##*/}/.git" | head -n1)
-                  [ -n "$g" ] && git_dir "$g"
+                  g=$(find_clone "$repo") && git_dir "$g"
                 done
               fi
               args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$si/claude-home,target=\(claudeHome)")
@@ -129,6 +144,21 @@ enum SandboxLaunch {
     static func deleteScript(_ name: String) -> String {
         #"c=$(command -v container 2>/dev/null || echo /usr/local/bin/container); "$c" delete --force "# + SandboxRuntime.quoted(name) + " >/dev/null 2>&1; true"
     }
+
+    /// `find_clone owner/name`: the real path of the repo's clone's git dir in
+    /// `$harness/projects/` or a group under it, matched by its origin rather
+    /// than its folder's name, read from its config without running anything.
+    static let findClone = """
+        find_clone() {
+          local g url
+          for g in "$harness"/projects/*/.git "$harness"/projects/*/*/.git; do
+            [ -d "$g" ] || continue
+            url=$(git config --file "$g/config" --get remote.origin.url 2>/dev/null)
+            printf '%s\n' "$url" | grep -qiE "[/:]$1(\\.git)?/?$" && { (cd "$g" && pwd -P); return 0; }
+          done
+          return 1
+        }
+        """
 
     /// What runs inside: the credentials Gannin left read and the file
     /// removed, the signing key written outside every mount, git's identity
@@ -157,6 +187,11 @@ enum SandboxLaunch {
             git config --global user.signingkey \(signingKeyPath)
             git config --global commit.gpgsign true
             git config --global tag.gpgsign true
+            # The repos' git dirs are read-only bar what commits and worktrees
+            # write: no tracking written on branching, no gc or maintenance.
+            git config --global branch.autoSetupMerge false
+            git config --global gc.auto 0
+            git config --global maintenance.auto false
             unset GANNIN_GIT_NAME GANNIN_GIT_EMAIL
             cd "$harness" || fail "The harness isn't mounted."
             # Claude Code's config, first time only: onboarding done and the

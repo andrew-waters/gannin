@@ -54,6 +54,36 @@ struct SandboxGitGuardTests {
         #expect(!FileManager.default.fileExists(atPath: root + "/ran"))
     }
 
+    @Test func aRepoNestedInAWorktreeIsntLookedInto() throws {
+        let (root, _, worktree) = try layout()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        // A sandbox nests a repo with a config of its own and records it as a submodule.
+        let nested = worktree + "/vendor"
+        let made = Shell.run("""
+            export GIT_CONFIG_GLOBAL=/dev/null
+            git init -q \(SessionScript.quoted(nested)) && cd \(SessionScript.quoted(nested)) || exit 1
+            echo a > a && git add a && git -c user.email=a@b -c user.name=a commit -qm a
+            git config core.fsmonitor 'touch \(root)/ran'
+            cd \(SessionScript.quoted(worktree)) && git add vendor && echo b >> vendor/a
+            """, .local)
+        #expect(made.ok, "\(made.failure)")
+        _ = Shell.run(SandboxGitGuard.functions + "\ncd \(SessionScript.quoted(worktree)) && git status --porcelain >/dev/null 2>&1; git diff >/dev/null 2>&1", .local)
+        #expect(!FileManager.default.fileExists(atPath: root + "/ran"))
+    }
+
+    @Test func onlySandboxedHarnessesAreGuarded() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "gannin-roots-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root.appending(path: "projects/api"), withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root); SandboxGitGuard.setRoots([]) }
+        SandboxGitGuard.setRoots([root.path])
+        #expect(SandboxGitGuard.applies(to: root.appending(path: "projects/api").path))
+        #expect(SandboxGitGuard.applies(to: root.path))
+        #expect(!SandboxGitGuard.applies(to: root.path + "-other/projects/api"))
+        #expect(!SandboxGitGuard.applies(to: "/Users/someone/projects/app"))
+        SandboxGitGuard.setRoots([])
+        #expect(!SandboxGitGuard.applies(to: root.appending(path: "projects/api").path))
+    }
+
     @Test func aWorktreePointingElsewhereIsRefused() throws {
         let (root, _, worktree) = try layout()
         defer { try? FileManager.default.removeItem(atPath: root) }

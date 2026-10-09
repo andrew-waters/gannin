@@ -457,6 +457,7 @@ final class SessionStore {
             })
         }
         for session in sessions.values { Self.noteFolder(of: session) }
+        noteSandboxedHarnesses()
         reviewDrafts = sessions.compactMapValues(\.reviewDraft)
         tabs = (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? [])
             .compactMap(UUID.init(uuidString:))
@@ -578,6 +579,7 @@ final class SessionStore {
     func add(_ session: CodeSession) {
         Self.noteFolder(of: session)
         sessions[session.id] = session
+        noteSandboxedHarnesses()
         save()
     }
 
@@ -599,6 +601,7 @@ final class SessionStore {
             )
         }()
         sessions[session.id] = session
+        noteSandboxedHarnesses()
         save()
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -723,6 +726,7 @@ final class SessionStore {
         filesPanes[id] = nil
         unflag(id)
         sessions[id] = nil
+        noteSandboxedHarnesses()
         states[id] = nil
         drafts[id] = nil
         sandboxStatus[id] = nil
@@ -784,7 +788,7 @@ final class SessionStore {
             try? fm.createDirectory(at: session.harnessPath == nil ? root : root.deletingLastPathComponent(), withIntermediateDirectories: true)
             // A sandbox mounts the folder at its real path, which the hooks
             // write to from inside.
-            let real = session.isSandboxed ? directory.resolvingSymlinksInPath() : directory
+            let real = session.isSandboxed ? URL(filePath: SandboxGitGuard.realPath(directory.path), directoryHint: .isDirectory) : directory
             let local = SessionScript.quoted(real.path)
             if session.isSandboxed { prepareSandbox(session, directory: real) }
             // A sandbox's statusLine can't run the user's own command, which is on the Mac.
@@ -1342,6 +1346,11 @@ final class SessionStore {
     /// Notes where a sandboxed helper's folder is, before it's first used.
     static func noteFolder(of session: CodeSession) {
         if session.isSandboxed, let parent = session.parentID { sandboxHelperParents[session.id] = parent }
+    }
+
+    /// Tells the git guard which harnesses here have sandboxed sessions.
+    private func noteSandboxedHarnesses() {
+        SandboxGitGuard.setRoots(sessions.values.filter { $0.isSandboxed && !$0.isRemote }.compactMap(\.harnessPath))
     }
 
     private static var fileURL: URL { baseDirectory.appending(path: "Sessions.json") }

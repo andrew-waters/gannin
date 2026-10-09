@@ -114,14 +114,15 @@ reason, and say so.
   on all interfaces. Keep that in mind for local databases and dev servers.
 - **Its credentials are inside.** Claude can use the GitHub token on the repos you gave it, and
   commit with the sandbox's key, but not with anything else.
-- **The git of the repos it works on is writable**, so it can commit and make worktrees: the
-  issue's repos under `projects/`, or the harness's own when the harness is also the code repo.
-  Their hooks are read-only. Because a sandbox could change a repo's git config to make git on
-  your Mac run something, Gannin checks before running git there. In those repos, Gannin switches
-  hooks off for its own git, and won't run git at all while the config has anything beyond the
-  usual (remotes, branch tracking and the like). It names the keys instead, so you can look. That
-  covers the Changes pane, Finish, the harness pull, and Work › Repositories while sandboxing is
-  on. Your own terminal and other git clients don't check, so be careful in a repo Gannin has
-  flagged.
+- **Its repos' git is read-only, bar what commits and worktrees need.** The sandbox can commit,
+  fetch and make worktrees in the issue's repos, but can't change their git config or hooks. That
+  stops it from making git on your Mac run something. A few things don't work in there: branches
+  can't be deleted, no upstream is recorded (push with `git push origin HEAD`), and a rebase or
+  pull prints a harmless error about `packed-refs.lock`.
+- **Its worktrees are its own.** A sandbox can still change what's in the issue's folder, including
+  a worktree's `.git` file, or put a repo inside a worktree. Before Gannin runs git in those
+  folders (the Changes pane, Finish, opening a file in your editor, Work › Repositories), it checks
+  them, switches hooks and submodules off, and names anything it doesn't trust instead of running
+  it. Your own terminal doesn't check, so look before running git in an issue's worktrees yourself.
 - **Apple `container` versions:** Gannin is tested with one version and works with a range. A newer
   version runs, with a note that it hasn't been tested.

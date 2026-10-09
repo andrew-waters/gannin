@@ -1166,10 +1166,14 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   minimum, R17), starts the service and kernel if needed, clones the issue's repos into `projects/` (a
   sandbox can't add clones the Mac sees), builds or finds the image in the terminal, and, unless the
   container is running, recreates it with every mount at its real path (`pwd -P`, as git records
-  them): the harness read-only, its `.git` read-write only when it's the code repo (no `projects/`),
-  tmpfs over `.worktrees/` and `projects/` with the issue's folder and the issue's repos' `.git`
-  (`cloneRepos`) inside, each `.git`'s `hooks/` read-only over it (a single file can't be mounted, so
-  `config` can't), the issue's session folder, and its `claude-home` as `/root/.claude`; Gannin's and Orchard's labels
+  them): the harness read-only, tmpfs over `.worktrees/` and `projects/` with the issue's folder and
+  the issue's repos' git dirs inside (`cloneRepos`, found by origin with `findClone`; the harness's
+  own only when it's the code repo, with no `projects/`). Each git dir is read-only, so its config
+  and hooks can't be changed for git on the Mac to run, with `objects`, `refs`, `logs` and
+  `worktrees` read-write inside it and `FETCH_HEAD` linked into `logs/` on the Mac first; inside,
+  `branch.autoSetupMerge`, gc and maintenance are off, branches can't be deleted, and rebase and pull
+  print a harmless `packed-refs.lock` error (the sandboxed brief says so, and to push with
+  `git push origin HEAD`). Then the issue's session folder, and its `claude-home` as `/root/.claude`; Gannin's and Orchard's labels
   (`com.orchard.sandbox`, andrew-waters/orchard#122) and the caps. Then `container exec -it` runs
   `inner.sh` (`SandboxLaunch.innerScript`), which reads `secrets.env` and removes it, writes the signing
   key under `/run`, sets git's identity and signing, seeds `.claude.json` with jq (onboarding done, the
@@ -1181,14 +1185,18 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   there. Transcripts are found in the issue's `claude-home`; `modeBox` is `sandbox` (on a server).
 - Git on the Mac in a repo a sandbox could have written (`SandboxGitGuard`): it could set
   `core.fsmonitor`, a filter or diff driver, `core.sshCommand` or an include in a `.git/config`, or
-  point a worktree's `.git` elsewhere. So before the Changes pane, Finish's worktree removal
-  (`SessionChanges.guarded`), the harness pull in `start.sh` (in a subshell, with hooks off) and,
-  while sandboxing is on, `LocalRepository.script` for harnesses, `projects/` clones and worktrees
-  (`applies(to:)`) run git, `GIT_CONFIG_COUNT` turns hooks and fsmonitor off, each worktree's `.git`
-  and `commondir` must lead back to a clone's `worktrees/`, and the clone's config may hold only
-  `allowedKeys` (core basics, remotes' URL and fetch, branch tracking and the like); anything else
-  is named and nothing runs. The sandboxed brief says only `projects/`' repos are there (a clone
-  made inside would vanish) and to leave git config alone beyond branch tracking.
+  point a worktree's `.git` elsewhere. Its git dirs are read-only now, but a worktree's `.git` and
+  `worktrees/` aren't, and a repo can be nested in a worktree. So before the Changes pane, Finish's
+  worktree removal (`SessionChanges.guarded`), the harness pull in `start.sh` (in a subshell),
+  opening a worktree in an editor (`openInEditor`) and `LocalRepository.script` in a harness a
+  sandboxed session here runs in (`applies(to:)`, from `setRoots`, which `SessionStore` keeps,
+  whether or not sandboxing is still on) run git, `GIT_CONFIG_PARAMETERS` (kept for submodules)
+  turns hooks, fsmonitor and submodules off, each worktree's `.git` and `commondir` must lead back
+  to a clone's `worktrees/`, and the clone's config may hold only `allowedKeys` (core basics,
+  remotes' URL and fetch, branch tracking and the like); anything else is named and nothing runs.
+  Paths are resolved with `realPath` (`realpath`, as `pwd -P`), not Foundation's. The sandboxed
+  brief says only `projects/`' repos are there (a clone made inside would vanish) and what git
+  can't do in there.
 - Helpers of a sandboxed issue share its container: their folders are `helpers/<id>` inside the
   issue's (`SessionStore.directory(for:)` through `sandboxHelperParents`, `remoteDirectory(for:)` on a
   server), which every start mounts. The container stops when no session using it is running

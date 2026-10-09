@@ -38,7 +38,7 @@ struct SandboxLaunchTests {
         #expect(steps.contains(#"--mount "type=bind,source=$h,target=$h,readonly""#))
         #expect(steps.contains(#"--tmpfs "$h/.worktrees" --mount "type=bind,source=$f,target=$f""#))
         #expect(steps.contains(#"--tmpfs "$h/projects""#))
-        #expect(steps.contains("-type d -name .git"))
+        #expect(steps.contains("find_clone"))
         #expect(steps.contains("target=/root/.claude"))
         #expect(steps.contains("--cpus 3 --memory 6G"))
         for label in SandboxLaunch.labels { #expect(steps.contains("--label '\(label)'")) }
@@ -122,7 +122,7 @@ struct SandboxLaunchTests {
         #expect(folder.path.hasPrefix(SessionStore.directory(for: issue.id).path + "/helpers/"))
         // Whoever starts the sandbox mounts the issue's folder.
         let steps = SandboxLaunch.hostSteps(helper, folder: ".worktrees/\(helper.branch)")
-        let issueFolder = SessionStore.directory(for: issue.id).resolvingSymlinksInPath().path
+        let issueFolder = SandboxGitGuard.realPath(SessionStore.directory(for: issue.id).path)
         #expect(steps.contains(SessionScript.quoted(issueFolder)))
         #expect(steps.contains(#"--mount "type=bind,source=$si,target=$si""#))
         #expect(steps.contains(#"bash "$s/inner.sh" "$s" "$h""#))
@@ -141,20 +141,43 @@ struct SandboxLaunchTests {
         #expect(parses(SandboxLaunch.deleteScript("gannin-a")).ok)
     }
 
-    @Test func onlyTheIssuesGitIsWritableAndItsHooksArent() {
+    @Test func gitDirsAreReadOnlyBarWhatCommitsWrite() {
         let steps = SandboxLaunch.hostSteps(session(pullRequests: [URL(string: "https://github.com/acme/web/pull/3")!]), folder: ".worktrees/x")
         #expect(steps.contains(#"[ -d "$h/.git" ] && [ ! -d "$h/projects" ] && git_dir "$h/.git""#))
-        #expect(steps.contains("for repo in 'acme/api' 'acme/web'; do"))
-        #expect(steps.contains(#"target=$1/hooks,readonly"#))
+        #expect(steps.contains(#"args+=(--mount "type=bind,source=$1,target=$1,readonly")"#))
+        #expect(steps.contains("for part in objects refs logs worktrees; do"))
+        #expect(steps.contains("ln -s logs/FETCH_HEAD"))
+        #expect(steps.contains(#"g=$(find_clone "$repo") && git_dir "$g""#))
         // A failed start takes its credentials with it.
-        let failure = steps.range(of: "sandbox_failed() {")
-        let removal = steps.range(of: #"rm -f "$session/secrets.env""#)
-        #expect(failure != nil && removal != nil)
+        #expect(steps.contains(#"rm -f "$session/secrets.env""#))
+        let inner = SandboxLaunch.innerScript(session())
+        #expect(inner.contains("git config --global branch.autoSetupMerge false"))
+    }
+
+    @Test func clonesAreFoundByTheirOrigin() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "gannin-clones-\(UUID().uuidString)").path
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        // projects/web is another org's; acme/web is in a group folder.
+        let made = Shell.run("""
+            export GIT_CONFIG_GLOBAL=/dev/null
+            for p in web:https://github.com/other/web.git team/web:git@github.com:acme/web.git api:https://github.com/acme/api; do
+              d=\(SessionScript.quoted(root))/projects/${p%%:*}; git init -q "$d" && git -C "$d" remote add origin "${p#*:}"
+            done
+            """, .local)
+        #expect(made.ok)
+        func find(_ repo: String) -> String {
+            Shell.run("harness=\(SessionScript.quoted(root))\n\(SandboxLaunch.findClone)\nfind_clone \(repo)", .local).output.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let real = SandboxGitGuard.realPath(root)
+        #expect(find("acme/web") == real + "/projects/team/web/.git")
+        #expect(find("acme/api") == real + "/projects/api/.git")
+        #expect(find("acme/missing").isEmpty)
     }
 
     @Test func theSandboxedBriefSaysNotToClone() {
         let brief = SessionBrief.make(session: session(), record: nil, detail: nil, parent: nil, harness: nil, goals: [])
         #expect(brief.contains("You're in a sandbox"))
+        #expect(brief.contains("git push origin HEAD"))
         #expect(!brief.contains("gh repo clone"))
         let host = SessionBrief.make(session: session(sandboxed: false), record: nil, detail: nil, parent: nil, harness: nil, goals: [])
         #expect(host.contains("gh repo clone"))

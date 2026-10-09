@@ -1,13 +1,14 @@
 import Foundation
+import Synchronization
 
 /// What keeps a sandbox from running code on the Mac through git
 /// (andrew-waters/gannin#8, R5). A sandbox can write the `.git` of the repos
 /// it works on, so it could set `core.fsmonitor`, a filter or diff driver,
 /// `core.sshCommand` or an include there, or point a worktree's `.git` at a
 /// git dir of its own, and git on the Mac would then run what it says.
-/// Before Gannin runs git on the Mac in a repo a sandbox can reach, hooks and
-/// fsmonitor are switched off for that run (`GIT_CONFIG_COUNT` outranks the
-/// repo's config), each worktree's `.git` must lead back to a real clone, and
+/// Before Gannin runs git on the Mac in a repo a sandbox can reach, hooks,
+/// fsmonitor and submodules are switched off for that run (`GIT_CONFIG_PARAMETERS`
+/// outranks the repo's config), each worktree's `.git` must lead back to a real clone, and
 /// the clone's config may only hold the keys below; anything else is named
 /// and nothing runs until the user has looked.
 nonisolated enum SandboxGitGuard {
@@ -20,7 +21,10 @@ nonisolated enum SandboxGitGuard {
     /// `gannin_check <folder>` printing why git shouldn't run in a worktree
     /// or clone, failing when it shouldn't.
     static let functions = """
-        export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null GIT_CONFIG_KEY_1=core.fsmonitor GIT_CONFIG_VALUE_1=false
+        # As if given with -c, which git passes on to the repos it runs git in
+        # for submodules too: no hooks, no fsmonitor, and no submodule (a repo
+        # a sandbox nested in a worktree, with a config of its own) looked into.
+        export GIT_CONFIG_PARAMETERS="'core.hooksPath'='/dev/null' 'core.fsmonitor'='false' 'diff.ignoreSubmodules'='all' 'submodule.recurse'='false' 'status.submoduleSummary'='false'"
         gannin_untrusted() {
           git config --file "$1/config" --name-only --list 2>/dev/null | grep -viE '\(allowedKeys)'
         }
@@ -57,14 +61,31 @@ nonisolated enum SandboxGitGuard {
     /// Checks the repo the script has `cd`ed into.
     static let here = functions + "\n" + #"why=$(gannin_check "$PWD") || { echo "$why" >&2; exit 1; }"#
 
-    /// Whether a folder on this Mac is one a sandbox could have written to,
-    /// while sandboxing is on: a harness (it has `.worktrees/`), a clone in a
-    /// harness's `projects/`, or a worktree in its `.worktrees/`.
+    /// Whether a folder on this Mac is one a sandbox could have written to:
+    /// inside the harness of a session that runs in a sandbox here (its
+    /// clones in `projects/` and worktrees in `.worktrees/`), whether or not
+    /// sandboxing is still on, as such sessions stay sandboxed.
     static func applies(to path: String) -> Bool {
-        guard SandboxCredentials.isEnabled else { return false }
+        let real = realPath(path)
+        return roots.withLock { roots in roots.contains { real == $0 || real.hasPrefix($0 + "/") } }
+    }
+
+    /// The harnesses sandboxed sessions on this Mac run in, at their real
+    /// paths, kept by `SessionStore` as sessions come and go.
+    static func setRoots(_ paths: [String]) {
+        let real = Set(paths.map(realPath))
+        roots.withLock { $0 = real }
+    }
+
+    private static let roots = Mutex<Set<String>>([])
+
+    /// The path as `pwd -P` gives it, which is how mounts and git record
+    /// paths (Foundation's resolving drops `/private` from `/private/var`).
+    /// A path that isn't there yet is left as it is, `~` expanded.
+    static func realPath(_ path: String) -> String {
         let expanded = (path as NSString).expandingTildeInPath
-        let parts = expanded.split(separator: "/")
-        if parts.contains("projects") || parts.contains(".worktrees") { return true }
-        return FileManager.default.fileExists(atPath: expanded + "/.worktrees")
+        guard let resolved = realpath(expanded, nil) else { return expanded }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 }
