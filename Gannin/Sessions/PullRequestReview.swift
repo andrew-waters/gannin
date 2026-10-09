@@ -479,29 +479,28 @@ struct ReviewWithClaudeButton: View {
 // MARK: - Explain with Claude
 
 /// Explain in a PR's right-click menu, toolbar or drawer: a one-off
-/// question, not a session, so it's available wherever a PR is shown.
+/// question, not a session, so it's available wherever a PR is shown. Opens
+/// its own window (`ExplainPullRequestWindow`), so it can sit alongside the
+/// PR while Claude reads it.
 struct ExplainPullRequestButton: View {
+    static let windowID = "explain-pull-request"
     let reference: PullRequestReference
-    @State private var explaining = false
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         Button {
-            explaining = true
+            openWindow(id: Self.windowID, value: reference)
         } label: {
             Label("Explain", systemImage: "text.bubble")
         }
         .help("Have Claude explain what this PR changes and why, in plain terms")
-        .sheet(isPresented: $explaining) {
-            ExplainPullRequestSheet(reference: reference)
-        }
     }
 }
 
-/// Claude's explanation of a PR, asked fresh each time the sheet opens
+/// Claude's explanation of a PR, asked fresh each time the window opens
 /// (`ClaudeRunner.ask`, not a session): what it reads with `gh`, and what
 /// it's told to reply with.
-private struct ExplainPullRequestSheet: View {
-    @Environment(\.dismiss) private var dismiss
+struct ExplainPullRequestWindow: View {
     let reference: PullRequestReference
 
     @State private var text = ""
@@ -510,10 +509,6 @@ private struct ExplainPullRequestSheet: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Text("Explain \(reference.repo)#\(reference.number)").font(.headline)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(12)
-            Divider()
             ScrollView {
                 Group {
                     if text.isEmpty {
@@ -522,10 +517,7 @@ private struct ExplainPullRequestSheet: View {
                             Text(working ? "Claude is reading it." : "Nothing yet.").foregroundStyle(.secondary)
                         }
                     } else {
-                        Text(text)
-                            .font(.body)
-                            .lineSpacing(4)
-                            .textSelection(.enabled)
+                        MarkdownText(source: text)
                     }
                 }
                 .padding(24)
@@ -536,8 +528,6 @@ private struct ExplainPullRequestSheet: View {
                 if let status { Text(status).font(.callout).foregroundStyle(.secondary).lineLimit(2) }
                 if working && !text.isEmpty { ProgressView().controlSize(.small) }
                 Spacer()
-                Button("Done") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
                 Button(text.isEmpty ? "Explain" : "Explain Again") { explain() }
                     .disabled(working)
                 Button("Copy") {
@@ -549,11 +539,12 @@ private struct ExplainPullRequestSheet: View {
             }
             .padding(12)
         }
-        .frame(minWidth: 560, idealWidth: 640, minHeight: 420, idealHeight: 480)
+        .ownWindowTitle("Explain \(reference.repo)#\(reference.number)", subtitle: reference.title)
         .onAppear { if text.isEmpty { explain() } }
     }
 
     private func explain() {
+        text = ""
         working = true
         status = nil
         let prompt = """
@@ -565,7 +556,9 @@ private struct ExplainPullRequestSheet: View {
             """
         Task {
             do {
-                text = try await ClaudeRunner.ask(prompt, org: reference.org, tools: ["Bash"])
+                text = try await ClaudeRunner.ask(prompt, org: reference.org, tools: ["Bash"]) { chunk in
+                    text += chunk
+                }
             } catch {
                 status = error.localizedDescription
             }

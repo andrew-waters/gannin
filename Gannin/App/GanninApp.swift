@@ -185,6 +185,16 @@ struct GanninApp: App {
         }
         .defaultSize(width: 560, height: 720)
 
+        // Claude's explanation of a PR, a window of its own so it can sit
+        // beside the PR while reading it.
+        WindowGroup(id: ExplainPullRequestButton.windowID, for: PullRequestReference.self) { $reference in
+            if let reference {
+                ExplainPullRequestWindow(reference: reference)
+                    .commandPaletteOpeningInMainWindow()
+            }
+        }
+        .defaultSize(width: 640, height: 480)
+
         // An issue opened from the issue metrics; one window per issue, the
         // issue on the left and its board fields on the right.
         WindowGroup("Issue", for: IssueReference.self) { $reference in
