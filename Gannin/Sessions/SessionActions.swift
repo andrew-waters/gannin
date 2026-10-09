@@ -416,8 +416,9 @@ extension SessionStore {
             connect: parent.connect, remoteWorkspace: parent.remoteWorkspace,
             harnessRepo: parent.harnessRepo, harnessPath: parent.harnessPath, harnessFolder: parent.harnessFolder,
             parentID: parentID, role: role, prompt: prompt, instructions: instructions, isReviewer: reviewer,
-            // In the issue's sandbox, with its folder inside the issue's.
-            sandbox: parent.isRemote ? nil : parent.sandbox
+            // In the issue's sandbox, here or on its server, with its folder
+            // inside the issue's.
+            sandbox: parent.sandbox
         )
         Self.noteFolder(of: helper)
         let directory = Self.directory(for: helper.id)
@@ -533,7 +534,9 @@ extension SessionStore {
         } else {
             runner = .local
         }
-        let result = await Task.detached { Shell.run(script, runner) }.value
+        // Nothing a sandbox wrote in its repos' .git runs here.
+        let guardedScript = SessionChanges.guarded(session) + script
+        let result = await Task.detached { Shell.run(guardedScript, runner) }.value
         guard result.ok else { throw SessionError.message(result.error.isEmpty ? "Couldn't remove the worktrees." : result.error) }
     }
 

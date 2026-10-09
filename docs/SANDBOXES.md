@@ -103,6 +103,10 @@ A server that isn't a Mac, or has no `container`, is named in the session with h
 
 Turning sandboxing off asks whether to remove the sandboxes and images Gannin made (only those, by
 their `dev.andon.gannin` label), or to keep them for next time. New sessions then run on your Mac.
+Sessions already in a sandbox stay in one, because their conversation is there. Opening one starts
+its sandbox again, and builds the base image again if you removed it. Finish them to be done with
+sandboxes entirely. Sessions started before you turned sandboxing on stay on your Mac for the same
+reason, and say so.
 
 ## What it doesn't protect
 
@@ -110,6 +114,14 @@ their `dev.andon.gannin` label), or to keep them for next time. New sessions the
   on all interfaces. Keep that in mind for local databases and dev servers.
 - **Its credentials are inside.** Claude can use the GitHub token on the repos you gave it, and
   commit with the sandbox's key, but not with anything else.
-- **The harness's own git is writable** when the harness is also the code repo, so commits work.
+- **The git of the repos it works on is writable**, so it can commit and make worktrees: the
+  issue's repos under `projects/`, or the harness's own when the harness is also the code repo.
+  Their hooks are read-only. Because a sandbox could change a repo's git config to make git on
+  your Mac run something, Gannin checks before running git there. In those repos, Gannin switches
+  hooks off for its own git, and won't run git at all while the config has anything beyond the
+  usual (remotes, branch tracking and the like). It names the keys instead, so you can look. That
+  covers the Changes pane, Finish, the harness pull, and Work › Repositories while sandboxing is
+  on. Your own terminal and other git clients don't check, so be careful in a repo Gannin has
+  flagged.
 - **Apple `container` versions:** Gannin is tested with one version and works with a range. A newer
   version runs, with a note that it hasn't been tested.

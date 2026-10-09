@@ -38,7 +38,7 @@ struct SandboxLaunchTests {
         #expect(steps.contains(#"--mount "type=bind,source=$h,target=$h,readonly""#))
         #expect(steps.contains(#"--tmpfs "$h/.worktrees" --mount "type=bind,source=$f,target=$f""#))
         #expect(steps.contains(#"--tmpfs "$h/projects""#))
-        #expect(steps.contains("-name .git -type d"))
+        #expect(steps.contains("-type d -name .git"))
         #expect(steps.contains("target=/root/.claude"))
         #expect(steps.contains("--cpus 3 --memory 6G"))
         for label in SandboxLaunch.labels { #expect(steps.contains("--label '\(label)'")) }
@@ -139,6 +139,25 @@ struct SandboxLaunchTests {
         #expect(!steps.contains(#"|| fail ""#))
         #expect(parses(SandboxLaunch.stopScript(["gannin-a", "gannin-b"])).ok)
         #expect(parses(SandboxLaunch.deleteScript("gannin-a")).ok)
+    }
+
+    @Test func onlyTheIssuesGitIsWritableAndItsHooksArent() {
+        let steps = SandboxLaunch.hostSteps(session(pullRequests: [URL(string: "https://github.com/acme/web/pull/3")!]), folder: ".worktrees/x")
+        #expect(steps.contains(#"[ -d "$h/.git" ] && [ ! -d "$h/projects" ] && git_dir "$h/.git""#))
+        #expect(steps.contains("for repo in 'acme/api' 'acme/web'; do"))
+        #expect(steps.contains(#"target=$1/hooks,readonly"#))
+        // A failed start takes its credentials with it.
+        let failure = steps.range(of: "sandbox_failed() {")
+        let removal = steps.range(of: #"rm -f "$session/secrets.env""#)
+        #expect(failure != nil && removal != nil)
+    }
+
+    @Test func theSandboxedBriefSaysNotToClone() {
+        let brief = SessionBrief.make(session: session(), record: nil, detail: nil, parent: nil, harness: nil, goals: [])
+        #expect(brief.contains("You're in a sandbox"))
+        #expect(!brief.contains("gh repo clone"))
+        let host = SessionBrief.make(session: session(sandboxed: false), record: nil, detail: nil, parent: nil, harness: nil, goals: [])
+        #expect(host.contains("gh repo clone"))
     }
 
     @Test func sandboxStatusReads() {

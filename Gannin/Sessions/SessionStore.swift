@@ -675,7 +675,8 @@ final class SessionStore {
             self?.received(signal, for: session.id)
         }
         terminals[session.id] = terminal
-        if !terminal.isRunning { launch(session, in: terminal) }
+        // Not while one is on its way (a sandbox's stop or secrets first).
+        if !terminal.isRunning, !launching.contains(session.id) { launch(session, in: terminal) }
         return terminal.container
     }
 
@@ -742,6 +743,11 @@ final class SessionStore {
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(SessionState.starting.rawValue.utf8).write(to: directory.appending(path: "state"))
         setState(.starting, for: session.id)
+        // An issue's session from before sandboxing was on says why it isn't in one.
+        if SandboxCredentials.isEnabled, !session.isSandboxed, session.hostReason == nil, !session.isHelper,
+           !session.isPullRequestReview, session.planning == nil, session.ask == nil, session.isInHarness {
+            update(session.id) { $0.hostReason = SandboxPlacement.startedBefore }
+        }
         // A new claude there may have auto mode after all.
         autoUnavailableBoxes.remove(modeBox(session.id))
         askToNotify()
@@ -801,7 +807,9 @@ final class SessionStore {
         // Your login, interactive shell, so the PATH, ssh config and tools
         // are yours.
         let shell = environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
+        let id = session.id
         let start = { [weak self] in
+            self?.launching.remove(id)
             terminal.launch(
                 executable: shell,
                 args: ["-l", "-i", "-c", command],
@@ -810,17 +818,31 @@ final class SessionStore {
             )
             self?.startPolling()
         }
-        guard let remoteSecrets else { return start() }
-        // Over the shared connection, on standard input, so no secret is on
-        // a command line on either box. The start script says if they
-        // didn't arrive.
-        let script = SandboxLaunch.remoteSecretsScript(directory: remoteSecrets.directory, writing: remoteSecrets.text != nil)
-        let input = remoteSecrets.text.map { Data($0.utf8) }
+        // A stop of its sandbox still on its way would land after the start
+        // script found it running: wait for it, so the script starts afresh.
+        let stopping = session.sandbox.flatMap { stoppingSandboxes[$0] }
+        guard remoteSecrets != nil || stopping != nil else { return start() }
+        launching.insert(id)
         Task {
-            _ = await Task.detached { Shell.run(script, remoteSecrets.runner, input: input) }.value
+            await stopping?.value
+            if let remoteSecrets {
+                // Over the shared connection, on standard input, so no secret
+                // is on a command line on either box. The start script says
+                // if they didn't arrive.
+                let script = SandboxLaunch.remoteSecretsScript(directory: remoteSecrets.directory, writing: remoteSecrets.text != nil)
+                let input = remoteSecrets.text.map { Data($0.utf8) }
+                _ = await Task.detached { Shell.run(script, remoteSecrets.runner, input: input) }.value
+            }
             start()
         }
     }
+
+    /// Sessions whose terminal is about to start, once a stop or their
+    /// secrets are done: not launched again meanwhile.
+    private var launching: Set<UUID> = []
+
+    /// Sandboxes being stopped, by name, for a start to wait on.
+    private var stoppingSandboxes: [String: Task<Void, Never>] = [:]
 
     /// What a sandboxed session on this Mac needs beside its start script:
     /// the script run inside, and its credentials for that start (removed
@@ -1032,7 +1054,10 @@ final class SessionStore {
         guard !sharing.contains(where: { isRunning($0.id) }) else { return }
         for other in sharing { sandboxStatus[other.id] = "stopped" }
         let script = SandboxLaunch.stopScript([name])
-        Task.detached { _ = Shell.run(script, runner) }
+        stoppingSandboxes[name] = Task { [weak self] in
+            _ = await Task.detached { Shell.run(script, runner) }.value
+            self?.stoppingSandboxes[name] = nil
+        }
     }
 
     /// Where a session's sandbox is: this Mac, or its server over ssh.

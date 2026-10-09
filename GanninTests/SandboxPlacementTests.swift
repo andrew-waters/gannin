@@ -26,6 +26,12 @@ struct SandboxPlacementTests {
         #expect(placement.reason?.contains("Settings, under Harness") == true)
     }
 
+    @Test func aConnectWithThatIsntSSHSaysSo() {
+        let placement = SandboxPlacement.decide(enabled: true, repos: ["acme/api"], reposNeedingMac: [], org: "acme", hasGitHubToken: true, connectsBySSH: false)
+        #expect(!placement.isSandboxed)
+        #expect(placement.reason?.contains("isn't ssh") == true)
+    }
+
     @Test func containersAreNamedByTheSession() {
         let id = UUID(uuidString: "3F9A2C1D-0000-0000-0000-000000000000")!
         #expect(SandboxPlacement.containerName(for: id) == "gannin-3f9a2c1d-0000-0000-0000-000000000000")

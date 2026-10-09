@@ -129,6 +129,12 @@ struct SandboxRuntimeTests {
         #expect(remote.contains("set -e"))
     }
 
+    @Test func theRemoteInstallFindsContainerWithoutALoginShell() {
+        let script = SandboxRuntime.remoteInstallScript
+        #expect(script.contains("[ -n \"$c\" ] || c=/usr/local/bin/container"))
+        #expect(script.contains("/usr/local/bin/container system start"))
+    }
+
     @Test func adminScriptEscapesForAppleScript() {
         let script = SandboxRuntime.adminScript(#"[ "$(shasum 'a b')" = x ] && installer -pkg '/tmp/a\b'"#)
         #expect(script.hasPrefix("do shell script \""))

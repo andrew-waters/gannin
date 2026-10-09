@@ -1166,9 +1166,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   minimum, R17), starts the service and kernel if needed, clones the issue's repos into `projects/` (a
   sandbox can't add clones the Mac sees), builds or finds the image in the terminal, and, unless the
   container is running, recreates it with every mount at its real path (`pwd -P`, as git records
-  them): the harness read-only, its `.git` read-write when it's the code repo, tmpfs over
-  `.worktrees/` and `projects/` with the issue's folder and each clone's `.git` inside, the issue's
-  session folder, and its `claude-home` as `/root/.claude`; Gannin's and Orchard's labels
+  them): the harness read-only, its `.git` read-write only when it's the code repo (no `projects/`),
+  tmpfs over `.worktrees/` and `projects/` with the issue's folder and the issue's repos' `.git`
+  (`cloneRepos`) inside, each `.git`'s `hooks/` read-only over it (a single file can't be mounted, so
+  `config` can't), the issue's session folder, and its `claude-home` as `/root/.claude`; Gannin's and Orchard's labels
   (`com.orchard.sandbox`, andrew-waters/orchard#122) and the caps. Then `container exec -it` runs
   `inner.sh` (`SandboxLaunch.innerScript`), which reads `secrets.env` and removes it, writes the signing
   key under `/run`, sets git's identity and signing, seeds `.claude.json` with jq (onboarding done, the
@@ -1178,11 +1179,26 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `secrets.env` (0600) is written by `SessionStore.prepareSandbox` here, or over ssh on standard input
   (`Shell.run(_:_:input:)`, `remoteSecretsScript`) for a server, and only when every credential is
   there. Transcripts are found in the issue's `claude-home`; `modeBox` is `sandbox` (on a server).
+- Git on the Mac in a repo a sandbox could have written (`SandboxGitGuard`): it could set
+  `core.fsmonitor`, a filter or diff driver, `core.sshCommand` or an include in a `.git/config`, or
+  point a worktree's `.git` elsewhere. So before the Changes pane, Finish's worktree removal
+  (`SessionChanges.guarded`), the harness pull in `start.sh` (in a subshell, with hooks off) and,
+  while sandboxing is on, `LocalRepository.script` for harnesses, `projects/` clones and worktrees
+  (`applies(to:)`) run git, `GIT_CONFIG_COUNT` turns hooks and fsmonitor off, each worktree's `.git`
+  and `commondir` must lead back to a clone's `worktrees/`, and the clone's config may hold only
+  `allowedKeys` (core basics, remotes' URL and fetch, branch tracking and the like); anything else
+  is named and nothing runs. The sandboxed brief says only `projects/`' repos are there (a clone
+  made inside would vanish) and to leave git config alone beyond branch tracking.
 - Helpers of a sandboxed issue share its container: their folders are `helpers/<id>` inside the
   issue's (`SessionStore.directory(for:)` through `sandboxHelperParents`, `remoteDirectory(for:)` on a
   server), which every start mounts. The container stops when no session using it is running
-  (`stopSandboxIfIdle`) and as Gannin quits (`stopSandboxesForQuit`, after the quit question), starts
-  afresh on the next open with the same folders, and is deleted with the issue's session.
+  (`stopSandboxIfIdle`, tracked in `stoppingSandboxes` so a quick restart waits for it) and as Gannin
+  quits (`stopSandboxesForQuit`, after the quit question), starts afresh on the next open with the
+  same folders, and is deleted with the issue's session. `launching` keeps `open` from starting a
+  second terminal while one waits on a stop or a server's secrets. An issue's session from before
+  sandboxing was on stays where its conversation is, with `SandboxPlacement.startedBefore`; turning
+  sandboxing off leaves sandboxed sessions sandboxed, for the same reason. A Connect with command
+  that isn't ssh can't be handed credentials, so its sessions aren't sandboxed, and say why.
 - What it doesn't do yet: no egress allow list (the network is open NAT, and services on the Mac
   listening on all interfaces are reachable at the gateway); commits are signed with the sandbox's
   key, not the user's; Linux only, so a repo that builds only on a Mac is marked Needs the Mac.

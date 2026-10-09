@@ -44,6 +44,8 @@ enum SandboxLaunch {
         let tag = #"$(sed -n 's/^image=//p' "$images" | tail -n1)"#
         return """
             sandbox_failed() {
+              # Its credentials go with it, not left for the next start.
+              rm -f "$session/secrets.env"
               printf 'failed: %s' "$1" > "$session/sandbox" 2>/dev/null
               fail "$1"
             }
@@ -95,11 +97,20 @@ enum SandboxLaunch {
               [ -n "$image" ] || sandbox_failed "The sandbox's image didn't build. What container said is above."
               args=(run --detach --name "$name" \(labelArguments) --cpus \(cpus) --memory \(memoryGB)G
                 --mount "type=bind,source=$h,target=$h,readonly")
-              [ -d "$h/.git" ] && args+=(--mount "type=bind,source=$h/.git,target=$h/.git")
+              # A repo's git dir, writable so commits and worktrees work, with
+              # its hooks read-only; what it says is checked before git on the
+              # Mac trusts it (SandboxGitGuard).
+              git_dir() { args+=(--mount "type=bind,source=$1,target=$1"); [ -d "$1/hooks" ] && args+=(--mount "type=bind,source=$1/hooks,target=$1/hooks,readonly"); }
+              # The harness's own git only when it's the code repo too.
+              [ -d "$h/.git" ] && [ ! -d "$h/projects" ] && git_dir "$h/.git"
               args+=(--tmpfs "$h/.worktrees" --mount "type=bind,source=$f,target=$f")
               if [ -d "$h/projects" ]; then
                 args+=(--tmpfs "$h/projects")
-                while IFS= read -r g; do args+=(--mount "type=bind,source=$g,target=$g"); done < <(find "$h/projects" -mindepth 2 -maxdepth 3 -name .git -type d)
+                # Only the issue's repos, not every clone (and others' branches).
+                for repo in \(repos.map(SandboxRuntime.quoted).joined(separator: " ")); do
+                  g=$(find "$h/projects" -mindepth 2 -maxdepth 3 -type d -name .git -path "*/${repo##*/}/.git" | head -n1)
+                  [ -n "$g" ] && git_dir "$g"
+                done
               fi
               args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$si/claude-home,target=\(claudeHome)")
               note "Starting the sandbox $name ($image)"

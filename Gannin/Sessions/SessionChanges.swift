@@ -115,6 +115,14 @@ final class SessionChanges {
         } while again
     }
 
+    /// The guard before git runs in a session's folder that a sandbox could
+    /// have written to (`SandboxGitGuard`), else nothing. Ends with a newline.
+    static func guarded(_ session: CodeSession) -> String {
+        let folder = SessionStore.worktreePath(for: session)
+        guard session.isSandboxed || SandboxGitGuard.applies(to: folder) else { return "" }
+        return SandboxGitGuard.folder(SessionScript.shellPath(folder)) + "\n"
+    }
+
     /// How to run git where the session is: here, or over ssh.
     static func runner(for session: CodeSession) -> Shell.Runner? {
         guard let connect = session.connect else { return .local }
@@ -131,7 +139,8 @@ final class SessionChanges {
         let folder = SessionStore.worktreePath(for: session)
         let inHarness = session.isInHarness
         let mode = mode
-        let list = Self.listScript(folder: SessionScript.shellPath(folder), inHarness: inHarness, uncommitted: mode == .uncommitted)
+        let guarded = Self.guarded(session)
+        let list = guarded + Self.listScript(folder: SessionScript.shellPath(folder), inHarness: inHarness, uncommitted: mode == .uncommitted)
         let result = await Task.detached { Shell.run(list, runner) }.value
         loaded = true
         guard result.ok else {
@@ -149,7 +158,7 @@ final class SessionChanges {
             if selected != nil { selected = nil }
             return
         }
-        let script = Self.diffScript(file, worktree: SessionScript.shellPath(worktree.path), base: worktree.base)
+        let script = guarded + Self.diffScript(file, worktree: SessionScript.shellPath(worktree.path), base: worktree.base)
         let output = await Task.detached { Shell.run(script, runner) }.value.output
         let (lines, header) = await Task.detached { GitDiff.lines(of: output) }.value
         // The selection may have moved on while git ran.
@@ -164,7 +173,7 @@ final class SessionChanges {
     /// Runs git in the file's worktree, then reads everything again.
     private func git(_ command: String, in worktree: String, session: CodeSession) async -> String? {
         guard let runner = runner ?? Self.runner(for: session) else { return "Not reachable from here." }
-        let script = """
+        let script = Self.guarded(session) + """
             cd \(SessionScript.shellPath(worktree)) || exit 1
             \(command)
             """

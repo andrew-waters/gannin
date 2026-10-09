@@ -20,8 +20,13 @@ nonisolated enum SandboxPlacement: Equatable, Sendable {
     /// - Parameters:
     ///   - repos: the issue's repo and its linked PRs' repos.
     ///   - reposNeedingMac: those marked Needs the Mac in the org's settings.
-    static func decide(enabled: Bool, repos: [String], reposNeedingMac: Set<String>, org: String, hasGitHubToken: Bool) -> SandboxPlacement {
+    ///   - connectsBySSH: false when sessions run through a Connect with
+    ///     command that isn't ssh, which can't be handed credentials.
+    static func decide(enabled: Bool, repos: [String], reposNeedingMac: Set<String>, org: String, hasGitHubToken: Bool, connectsBySSH: Bool = true) -> SandboxPlacement {
         guard enabled else { return .host(nil) }
+        guard connectsBySSH else {
+            return .host("Settings' Connect with command isn't ssh, so Gannin can't hand a sandbox its credentials there. This session runs on the server unsandboxed.")
+        }
         if let repo = repos.first(where: reposNeedingMac.contains) {
             return .host("\(repo) is marked Needs the Mac, so this session runs on the Mac rather than in a sandbox.")
         }
@@ -30,6 +35,9 @@ nonisolated enum SandboxPlacement: Equatable, Sendable {
         }
         return .sandboxed
     }
+
+    /// Why a session started before sandboxing was turned on stays where it is.
+    static let startedBefore = "Started before sandboxing was turned on, so it stays where its conversation is. Finish it and work on the issue again to run it in a sandbox."
 
     /// Why a session the user started on the Mac by choice runs there.
     static let pickedHost = "Started on the Mac by choice rather than in a sandbox."

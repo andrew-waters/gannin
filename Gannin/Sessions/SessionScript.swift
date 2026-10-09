@@ -75,7 +75,7 @@ enum SessionScript {
               fi
             else
               note "Updating the harness"
-              git -C "$harness" pull --ff-only --quiet || warn "Couldn't fast-forward the harness, so it's as it was. Pull it when you can."
+              \(harnessGuard(session))git -C "$harness"\(guardsGit(session) ? " -c core.hooksPath=/dev/null -c core.fsmonitor=false" : "") pull --ff-only --quiet || warn "Couldn't fast-forward the harness, so it's as it was. Pull it when you can."
             fi
             exclude="$(git -C "$harness" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
             mkdir -p "$(dirname "$exclude")"
@@ -93,6 +93,19 @@ enum SessionScript {
             return prepare + SandboxLaunch.hostSteps(session, folder: folder)
         }
         return prepare + claudeSteps(session, settings: #""$folder/.gannin/"# + settingsName(session) + #"""#, shellNote: "This shell is in the harness")
+    }
+
+    /// Whether git on the box is guarded for this session: a sandbox could
+    /// have written the harness's `.git` (`SandboxGitGuard`).
+    private static func guardsGit(_ session: CodeSession) -> Bool {
+        session.isSandboxed || SandboxCredentials.isEnabled
+    }
+
+    /// The harness checked before it's pulled, in a subshell so the guard's
+    /// settings don't reach claude. Ends with a newline.
+    private static func harnessGuard(_ session: CodeSession) -> String {
+        guard guardsGit(session) else { return "" }
+        return "why=$(\n" + SandboxGitGuard.functions + "\ngannin_check \"$harness\"\n) || fail \"$why\"\n  "
     }
 
     /// The shell functions the scripts share: a grey note, an orange
@@ -483,7 +496,9 @@ enum SessionBrief {
                 "  git -C projects/<name> worktree add \"$PWD/\(folder)/<name>\" -b \(session.branch) origin/HEAD",
                 "  ```",
                 "",
-                "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
+                session.isSandboxed
+                    ? "  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (\(SandboxLaunch.cloneRepos(session).joined(separator: ", "))), and a clone made in it would vanish when it stops. If the issue needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. Don't change the repos' git config beyond branch tracking: Gannin won't run git on the Mac in a repo whose config has anything else."
+                    : "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
                 "- If the harness has no `projects/` folder, it's the code repo too: the code is \(harnessRepo) itself. Don't work in its checkout; give it one worktree in the issue's folder the same way, with `git -C . fetch origin` and `git -C . worktree add \"$PWD/\(folder)/\(harnessRepo.split(separator: "/").last ?? "")\" -b \(session.branch) origin/HEAD`, and do everything there, the plan included.",
             ]
             if session.canPairReview {

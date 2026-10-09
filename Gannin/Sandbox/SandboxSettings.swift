@@ -57,7 +57,7 @@ struct SandboxSettingsSection: View {
             Button("Turn Off, Keep Them") { enabled = false }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Removing deletes every container and image Gannin made on this Mac, a running session's sandbox included, and nothing else. Kept, the base image is ready if you turn it on again. New sessions start on this Mac either way.")
+            Text("New sessions start on this Mac. Sessions already in a sandbox stay in one, since their conversation is there: opening one starts its sandbox again, building the base image again if it was removed. Removing deletes every container and image Gannin made on this Mac, a running session's sandbox included, and nothing else.")
         }
 
         Section {

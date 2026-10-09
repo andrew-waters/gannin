@@ -212,12 +212,14 @@ nonisolated enum SandboxRuntime {
             echo "Downloading Apple container \(SandboxSupport.tested)"
             curl -fSL --retry 2 -o \(package) \(quoted(SandboxSupport.installer.absoluteString))
             \(checksum(package))
-            c=$(command -v container || true)
-            [ -n "$c" ] && "$c" system stop || true
+            # ssh's shell here isn't a login one, so PATH may lack the installer's folder.
+            c=$(command -v container 2>/dev/null || true)
+            [ -n "$c" ] || c=/usr/local/bin/container
+            if [ -x "$c" ]; then "$c" system stop || true; fi
             echo "Installing. sudo asks for this Mac's password."
             sudo /usr/sbin/installer -pkg \(package) -target /
             rm -f \(package)
-            container system start --disable-kernel-install --timeout 60
+            /usr/local/bin/container system start --disable-kernel-install --timeout 60
             echo "Apple container \(SandboxSupport.tested) is installed and running."
             """
     }
