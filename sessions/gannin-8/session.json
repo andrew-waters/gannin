@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "8-run-agent-sessions-in-apple-container",
+  "issue" : "andrew-waters/gannin#8",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-09T18:01:04Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Run agent sessions in Apple container sandboxes, with optional local models",
+  "url" : "https://github.com/andrew-waters/gannin/issues/8"
+}
