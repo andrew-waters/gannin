@@ -639,7 +639,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   In progress now list. Under Issues in the sidebar, All (`OpenIssuesView`) is the issue history's
   issues (every open one, and those closed since the window's start), and Not on a board those on
   no board. Both have `IssueFilterBar` at the top of the page, as Views has: search, Assignee (Me,
-  Anyone assigned, Unassigned, people), Repository, Label and Milestone (No Milestone first; only
+  Anyone assigned, Unassigned, people), Repository, Label, Field (a submenu per board field picked from options, single or multi
+  select or iteration, with its values in the board's order and No value; any value within a field,
+  every field picked; only once an issue is on a board) and Milestone (No Milestone first; only
   once an issue has one) as menus with counts (several values each), and Open, Closed or All; Not on a board puts its board picker first. The filters
   (`IssueFilters`) are kept per window (`StoredIssueFilters`). Pull Requests (`PullRequestsView`)
   has the same bar: search, Author and Reviewer (Me first, No Reviewer), Status (draft, needs
