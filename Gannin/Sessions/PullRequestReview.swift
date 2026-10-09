@@ -517,7 +517,7 @@ struct ExplainPullRequestWindow: View {
                             Text(working ? "Claude is reading it." : "Nothing yet.").foregroundStyle(.secondary)
                         }
                     } else {
-                        MarkdownText(source: text)
+                        MarkdownText(source: text, reading: 14)
                     }
                 }
                 .padding(24)
@@ -552,7 +552,7 @@ struct ExplainPullRequestWindow: View {
 
             Read the actual changes with `gh pr diff \(reference.number) --repo \(reference.repo)` first, then `gh pr view \(reference.number) --repo \(reference.repo) --comments` for the stated intent and discussion. Base the explanation on what the diff does, not a reworded version of the title or description.
 
-            Reply with the explanation only, no preamble: a short paragraph on what the code does and why, then a few bullet points on the notable changes if there are several, naming the functions, types or files involved. Don't review it or suggest changes.
+            Reply with the explanation only, no preamble, in Markdown: a short paragraph on what the code does and why, then a few bullet points on the notable changes if there are several, naming the functions, types or files involved. Where a short snippet would make a change clearer than naming it, include one as a fenced code block (with a language and, where it helps, the file path above it), taken from the actual diff rather than paraphrased. Don't review it or suggest changes.
             """
         Task {
             do {
