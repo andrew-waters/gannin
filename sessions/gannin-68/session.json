@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "68-start-a-second-agent-to-review-a-session",
+  "issue" : "andrew-waters/gannin#68",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-09T09:49:13Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Start a second agent to review a session's work when it says it's ready for review",
+  "url" : "https://github.com/andrew-waters/gannin/issues/68"
+}
