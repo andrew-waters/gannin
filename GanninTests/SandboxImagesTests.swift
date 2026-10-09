@@ -22,7 +22,7 @@ struct SandboxImagesTests {
     }
 
     @Test func theRepoScriptFallsBackToTheBase() {
-        let script = SandboxImages.repoScript(repo: "acme/api", harness: #""$HOME"/'Code/acme-harness'"#, binary: "/usr/local/bin/container")
+        let script = SandboxImages.repoScript(repo: "acme/api", harness: #""$HOME"/'Code/acme-harness'"#, container: "/usr/local/bin/container")
         #expect(script.contains(#"f="$HOME"/'Code/acme-harness'/'.gannin/sandbox/api.Containerfile'"#))
         #expect(script.contains("echo \"image=\(SandboxImages.baseTag)\""))
         // The repo's hash covers the base, so a new base rebuilds it.
@@ -37,7 +37,7 @@ struct SandboxImagesTests {
     }
 
     @Test func theBaseScriptCarriesItsContainerfile() {
-        let script = SandboxImages.baseScript(binary: "/usr/local/bin/container")
+        let script = SandboxImages.baseScript(container: "/usr/local/bin/container")
         #expect(script.contains(Data(SandboxImages.baseContainerfile.utf8).base64EncodedString()))
         #expect(script.contains("image tag \(SandboxImages.baseTag) gannin-base:latest"))
     }

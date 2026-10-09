@@ -134,7 +134,14 @@ extension SessionStore {
 
     /// Which box a session's claude runs on, for what's remembered about
     /// its Claude Code: empty for this Mac, else the Connect with command.
-    func modeBox(_ id: UUID) -> String { sessions[id]?.connect ?? "" }
+    /// Where its claude runs, for what's known about auto mode there: the
+    /// server, a sandbox (whose claude signs in with its own credential) or
+    /// this Mac.
+    func modeBox(_ id: UUID) -> String {
+        guard let session = sessions[id] else { return "" }
+        if session.isSandboxed { return "sandbox" + (session.connect.map { " on \($0)" } ?? "") }
+        return session.connect ?? ""
+    }
 
     /// Whether auto mode is known to be missing from the session's claude.
     func autoUnavailable(_ id: UUID) -> Bool { autoUnavailableBoxes.contains(modeBox(id)) }

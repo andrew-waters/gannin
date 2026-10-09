@@ -20,8 +20,11 @@ nonisolated enum SandboxPlacement: Equatable, Sendable {
     /// - Parameters:
     ///   - repos: the issue's repo and its linked PRs' repos.
     ///   - reposNeedingMac: those marked Needs the Mac in the org's settings.
-    static func decide(enabled: Bool, repos: [String], reposNeedingMac: Set<String>, org: String, hasGitHubToken: Bool) -> SandboxPlacement {
+    static func decide(enabled: Bool, repos: [String], reposNeedingMac: Set<String>, org: String, hasGitHubToken: Bool, onServer: Bool = false) -> SandboxPlacement {
         guard enabled else { return .host(nil) }
+        if onServer {
+            return .host("Gannin can't sandbox sessions on a server yet, so this one runs on the server as before.")
+        }
         if let repo = repos.first(where: reposNeedingMac.contains) {
             return .host("\(repo) is marked Needs the Mac, so this session runs on the Mac rather than in a sandbox.")
         }

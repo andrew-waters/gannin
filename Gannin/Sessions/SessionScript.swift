@@ -15,7 +15,7 @@ enum SessionScript {
 
     /// A helper's settings (its hooks) beside the issue's own, in the
     /// folder they share.
-    private static func settingsName(_ session: CodeSession) -> String {
+    static func settingsName(_ session: CodeSession) -> String {
         session.isHelper ? "settings-\(session.id.uuidString.prefix(8)).json" : "settings.json"
     }
 
@@ -49,35 +49,21 @@ enum SessionScript {
     /// `.worktrees/<branch>/`, with the brief and settings in its `.gannin/`,
     /// and claude runs in the harness itself, adding a worktree there for
     /// each repo the issue touches.
-    private static func harnessStart(_ session: CodeSession, harness: String, directory: String) -> String {
-        let issue = session.issue
+    static func harnessStart(_ session: CodeSession, harness: String, directory: String) -> String {
         let folder = ".worktrees/\(session.branch)"
-        let prompt = firstPrompt(session, otherwise: """
-            You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
-            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
-            (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
-            code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
-            the brief says, never in projects/ or the harness checkout itself.
-            """)
         // A server session's brief comes from the harness once it's there.
         let briefSource = session.harnessFolder.map { recorded in
             #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(recorded) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Restart."\#n"#
         } ?? ""
-        return """
-            # Written by Gannin for \(issue.reference). Run in the session's terminal.
+        let prepare = """
+            # Written by Gannin for \(session.issue.reference). Run in the session's terminal.
             session=\(directory)
             harness=\(harness)
             harness_repo=\(quoted(session.harnessRepo ?? session.repo))
             id=\(quoted(session.claudeID))
             folder="$harness"/\(quoted(folder))
 
-            note() { printf '\\033[90m%s\\033[0m\\n' "$1"; }
-            warn() { printf '\\033[33mGannin: %s\\033[0m\\n' "$1"; }
-            fail() {
-              printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
-              if [ -d "$harness" ]; then cd "$harness"; else cd; fi
-              exec "${SHELL:-bash}" -l
-            }
+            \(functions)
 
             if [ ! -e "$harness/.git" ]; then
               note "Cloning the harness, $harness_repo, into $harness"
@@ -102,15 +88,49 @@ enum SessionScript {
             \(session.isAsk ? askFolder : "")\(readyForReviewStep(session, directory: directory, into: #""$folder/.gannin""#))cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
             cd "$harness" || fail "The harness isn't there."
 
+            """
+        if session.isSandboxed {
+            return prepare + SandboxLaunch.hostSteps(session, folder: folder)
+        }
+        return prepare + claudeSteps(session, settings: #""$folder/.gannin/"# + settingsName(session) + #"""#, shellNote: "This shell is in the harness")
+    }
+
+    /// The shell functions the scripts share: a grey note, an orange
+    /// warning, and a red failure that leaves a shell open where it can.
+    static let functions = """
+        note() { printf '\\033[90m%s\\033[0m\\n' "$1"; }
+        warn() { printf '\\033[33mGannin: %s\\033[0m\\n' "$1"; }
+        fail() {
+          printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
+          if [ -d "$harness" ]; then cd "$harness"; else cd; fi
+          exec "${SHELL:-bash}" -l
+        }
+        """
+
+    /// Running claude in the harness root: a new conversation with the first
+    /// prompt, or `--resume` once it has had one, then a shell once it
+    /// exits. `settings` is a shell word. Needs `$session`, `$id` and the
+    /// shared functions.
+    static func claudeSteps(_ session: CodeSession, settings: String, shellNote: String) -> String {
+        let folder = ".worktrees/\(session.branch)"
+        let issue = session.issue
+        let prompt = firstPrompt(session, otherwise: """
+            You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
+            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
+            (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
+            code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
+            the brief says, never in projects/ or the harness checkout itself.
+            """)
+        return """
             command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
             if [ -e "$session/started" ]; then
-              claude --resume "$id"\(options(session)) --settings "$folder/.gannin/\(settingsName(session))"
+              claude --resume "$id"\(options(session)) --settings \(settings)
             else
-              claude --session-id "$id"\(options(session)) --settings "$folder/.gannin/\(settingsName(session))" \(quoted(prompt))
+              claude --session-id "$id"\(options(session)) --settings \(settings) \(quoted(prompt))
             fi
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
-            note "Claude Code has exited. This shell is in the harness; run claude --resume $id to go on."
+            note "Claude Code has exited. \(shellNote); run claude --resume $id to go on."
             exec "${SHELL:-bash}" -l
             """
     }

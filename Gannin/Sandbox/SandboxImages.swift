@@ -71,11 +71,11 @@ nonisolated enum SandboxImages {
     /// Builds the base image on the box when it isn't there, and points
     /// `gannin-base:latest` at it for repos' Containerfiles.
     static func ensureBase(_ host: SandboxHost, on box: SandboxBox) async throws {
-        try await run(baseScript(binary: host.binary), on: box, failing: "Gannin's base image didn't build.")
+        try await run(baseScript(container: SandboxRuntime.quoted(host.binary)), on: box, failing: "Gannin's base image didn't build.")
     }
 
-    static func baseScript(binary: String) -> String {
-        let c = SandboxRuntime.quoted(binary)
+    /// `container`: the binary as a shell word.
+    static func baseScript(container c: String) -> String {
         let tag = baseTag
         return """
             set -e
@@ -94,12 +94,11 @@ nonisolated enum SandboxImages {
     /// box) and tagged by a hash of that and the base, else the base.
     static func image(for repo: String, harness: String, host: SandboxHost, on box: SandboxBox) async throws -> String {
         try await ensureBase(host, on: box)
-        let result = try await run(repoScript(repo: repo, harness: harness, binary: host.binary), on: box, failing: "\(repoName(repo))'s sandbox image didn't build.")
+        let result = try await run(repoScript(repo: repo, harness: harness, container: SandboxRuntime.quoted(host.binary)), on: box, failing: "\(repoName(repo))'s sandbox image didn't build.")
         return image(fromOutput: result.output) ?? baseTag
     }
 
-    static func repoScript(repo: String, harness: String, binary: String) -> String {
-        let c = SandboxRuntime.quoted(binary)
+    static func repoScript(repo: String, harness: String, container c: String) -> String {
         return """
             set -e
             f=\(harness)/\(SandboxRuntime.quoted(repoContainerfile(repo)))

@@ -1440,7 +1440,8 @@ struct WorkOnThisLauncher: ViewModifier {
         SandboxPlacement.decide(
             enabled: SandboxCredentials.isEnabled, repos: Self.repos(reference, issues: issues),
             reposNeedingMac: configs.config(for: reference.org).reposNeedingMac, org: reference.org,
-            hasGitHubToken: SandboxCredentials.gitHubToken(org: reference.org) != nil
+            hasGitHubToken: SandboxCredentials.gitHubToken(org: reference.org) != nil,
+            onServer: SessionStore.connectCommand != nil
         )
     }
 

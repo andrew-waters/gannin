@@ -739,7 +739,7 @@ final class SessionStore {
         try? Data(SessionState.starting.rawValue.utf8).write(to: directory.appending(path: "state"))
         setState(.starting, for: session.id)
         // A new claude there may have auto mode after all.
-        autoUnavailableBoxes.remove(session.connect ?? "")
+        autoUnavailableBoxes.remove(modeBox(session.id))
         askToNotify()
         // Fresh org data on every start and resume, which the script copies
         // into its folder.
@@ -764,8 +764,13 @@ final class SessionStore {
             let root = session.harnessPath.map(Self.expanded) ?? Self.workspaceRoot
             // The harness is cloned into it, when it isn't there yet.
             try? fm.createDirectory(at: session.harnessPath == nil ? root : root.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let local = SessionScript.quoted(directory.path)
-            try? Data(SessionScript.settings(directory: local, isRemote: false, allowing: Self.allowedCommands(session)).utf8).write(to: directory.appending(path: "settings.json"))
+            // A sandbox mounts the folder at its real path, which the hooks
+            // write to from inside.
+            let real = session.isSandboxed ? directory.resolvingSymlinksInPath() : directory
+            let local = SessionScript.quoted(real.path)
+            if session.isSandboxed { prepareSandbox(session, directory: real, harness: root) }
+            // A sandbox's statusLine can't run the user's own command, which is on the Mac.
+            try? Data(SessionScript.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session)).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"
@@ -791,6 +796,26 @@ final class SessionStore {
             directory: session.isRemote || session.harnessPath != nil ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
         )
         startPolling()
+    }
+
+    /// What a sandboxed session needs beside its start script: the script
+    /// run inside, its credentials for that start (removed inside once
+    /// read; without them the start script says what's missing), and
+    /// claude's config seeded in its `claude-home`.
+    private func prepareSandbox(_ session: CodeSession, directory: URL, harness: URL) {
+        try? Data(SandboxLaunch.innerScript(session).utf8).write(to: directory.appending(path: "inner.sh"))
+        let secrets = directory.appending(path: "secrets.env")
+        switch SandboxLaunch.credentials(org: session.org) {
+        case .success(let credentials):
+            try? SandboxLaunch.writeSecrets(SandboxLaunch.secretsFile(credentials), to: secrets)
+            SandboxLaunch.seedClaudeHome(
+                directory.appending(path: "claude-home", directoryHint: .isDirectory),
+                harness: harness.resolvingSymlinksInPath().path,
+                apiKey: credentials.claude.kind == .apiKey ? credentials.claude.value : nil
+            )
+        case .failure:
+            try? FileManager.default.removeItem(at: secrets)
+        }
     }
 
     /// What a session's claude runs without asking: the pair review's script.
@@ -1046,7 +1071,11 @@ final class SessionStore {
     /// main thread.
     private func readLocalTranscript(_ id: UUID, then done: (() -> Void)? = nil) {
         guard !readingTranscript.contains(id), let session = sessions[id] else { return }
-        if transcriptFiles[id] == nil { transcriptFiles[id] = Self.findTranscript(session.claudeID) }
+        if transcriptFiles[id] == nil {
+            // A sandbox's claude keeps its transcripts in the session's claude-home.
+            let home = session.isSandboxed ? Self.directory(for: id).appending(path: "claude-home/projects", directoryHint: .isDirectory) : nil
+            transcriptFiles[id] = Self.findTranscript(session.claudeID, in: home)
+        }
         guard let file = transcriptFiles[id] else {
             done?()
             return
@@ -1085,8 +1114,8 @@ final class SessionStore {
 
     /// `~/.claude/projects/<folder>/<id>.jsonl`, whichever folder claude
     /// filed it under.
-    private static func findTranscript(_ claudeID: String) -> URL? {
-        let projects = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)
+    private static func findTranscript(_ claudeID: String, in home: URL? = nil) -> URL? {
+        let projects = home ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)
         let folders = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
         return folders.lazy.map { $0.appending(path: "\(claudeID).jsonl") }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
