@@ -1197,20 +1197,29 @@ private struct HelperParentSection: View {
         let parent = session.parentID.flatMap { sessions.sessions[$0] }
         Section(session.isReviewer ? "Reviewing" : "Helping with") {
             if let parent {
-                HStack(spacing: 6) {
-                    Circle().fill(sessions.state(parent.id).color).frame(width: 8, height: 8)
-                    Text(parent.title)
-                        .fontWeight(.semibold)
-                        .fixedSize(horizontal: false, vertical: true)
+                let state = sessions.state(parent.id)
+                Text(parent.title)
+                    .fontWeight(.semibold)
+                    .fixedSize(horizontal: false, vertical: true)
+                LabeledContent("State") {
+                    HStack(spacing: 6) {
+                        Circle().fill(state.color).frame(width: 8, height: 8)
+                        Text(state.label)
+                    }
                 }
             } else {
                 Text("The session it helped is gone.")
                     .foregroundStyle(.secondary)
             }
             HStack {
-                Link(session.issue.reference, destination: session.issue.url)
+                // A quick change has no issue (number 0).
+                if session.issue.number > 0 {
+                    Link(session.issue.reference, destination: session.issue.url)
+                }
                 Spacer()
-                Button("Open Issue") { openWindow(value: session.issue) }
+                if session.issue.number > 0 {
+                    Button("Open Issue") { openWindow(value: session.issue) }
+                }
                 if let parent {
                     Button("Show Session") { sessions.reveal(parent.id) }
                         .help("The working session, with the issue, its plans and its PRs")
