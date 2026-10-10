@@ -686,8 +686,26 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   description, and Draft with Claude (`ClaudeRunner`, a conversation that revises the draft, with
   harness skills to follow, those about issues ticked to start); then the board (the workflow
   board by default) and its settable fields (`BoardField.isSettable`), assignees, labels and
-  parent. Create writes it step by step: `createIssue` (labels, assignees), `addSubIssue`,
+  parent, and Images (`IssueImagesSection`, each adding a placeholder to the description). Create
+  writes it step by step: the images, `createIssue` (labels, assignees), `addSubIssue`,
   `addToBoard`, then each field with `setProjectField`; Create Another keeps the sheet open.
+- Images on new issues (`Issues/IssueImages.swift`, andrew-waters/gannin#122,
+  `plans/2026-10-10-attach-images-to-issues.md`), in New Issue, Write Issue and Quick Change's
+  issue: GitHub's API has no upload for issue attachments, so they're committed to the harness
+  covering the issue's repo (`harness(covering:)`), one commit per issue through
+  `HarnessStore.commit`, as `attachments/issues/<owner>/<name>/<date>-<id>/<file>`, and linked as
+  `https://github.com/<harness>/blob/<commit>/<path>?raw=true`, which shows inline only to people
+  who can read the harness (the sheet says so, with a sensitive-data warning). PNG, JPEG, GIF and
+  WebP as they are, other pictures as PNG, one over 5 MB as a JPEG when that fits
+  (`IssueImages.prepared`). Dropped (`ScreenshotDropTarget`), pasted (⌘V while the clipboard holds
+  only pictures, or Paste) or added. In New Issue each adds `![name](attachment:name)` to the end
+  of the description, to move or keep, and Draft with Claude is told to keep them; on Create
+  (`IssueImages.body`) placeholders point at the commit, images with none left go at the end and
+  placeholders for images removed are dropped. The Create button names them ("Create Issue and
+  Commit 2 Images"), which is the confirmation; they're committed before the issue, and
+  `IssueImageSet` keeps what was committed so a retry after GitHub refuses the issue doesn't
+  commit them again. With no harness, images can't be attached. `skills/create-issue.md` does
+  the same from a session with `gh api` on the contents API.
 - Issues › Not on a board (`OffBoardIssuesView`) lists stored issues on no board, or not on a
   chosen one (starting from the investments board), open, closed or all. Select them and add
   them to a board in bulk through `BulkWriteSheet` (confirm, then each ticked off, open until
@@ -806,10 +824,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `attachmentNames`), which `start.sh` copies into `.worktrees/<branch>/.gannin/attachments/` (a
   sandbox mounts it) and which go to a server before its terminal starts, those not there yet
   (`remoteAttachmentListScript`), one file a call over ssh on standard input through a part file
-  (`remoteAttachmentScript`), the start script warning about any the brief lists that didn't arrive; they're never uploaded to GitHub or committed. The
+  (`remoteAttachmentScript`), the start script warning about any the brief lists that didn't arrive. They're never uploaded to GitHub or committed, unless Add the screenshots to the issue (off each time, offered with an issue) commits them to the harness for the issue to show, as New Issue's images are (the button becomes Commit N Images, Create Issue and Start). The
   brief (`SessionBrief.quickChangeSections`) has the note in place of the description, the
   screenshots' paths, and that it's meant to be small, needs no plan document, and to stop and say
-  so if it isn't; the first prompt (`quickChangePrompt`) leaves out "propose a plan first" and, with an issue, asks for it to be filled out with `gh issue edit` once the code has been looked through, before anything changes. Its tab
+  so if it isn't; the first prompt (`quickChangePrompt`) leaves out "propose a plan first" and, with an issue, asks for it to be filled out with `gh issue edit` once the code has been looked through, before anything changes, keeping any images already in its description. Its tab
   is Quick Change (a bolt), its panel shows the note and screenshots (`QuickChangeSection`), and
   rows, notifications and helpers' prompts name it by `shortReference` / `longReference` (the repo picked, `issue.repo`, not the harness) rather than `#0`, and the team's prompts get `issueValues` (`{{issue}}` saying it's a quick change, `{{number}}` and `{{url}}` empty).
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its
@@ -1459,7 +1477,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Capture (`FieldCapturePanel`, beside the lists) takes what CS raises as they say
   it: text, who (remembered), customer, kind and urgency (`FieldNote`), ⌘↩ to add. Notes are
   linked to an issue, or raised as one (`WriteIssueSheet`: Claude drafts the repo, title,
-  description and labels, then `createIssue` and onto the board for triage).
+  description and labels, with images to attach, then `createIssue` and onto the board for triage).
 - Triage with Claude (`TriageWithClaudeSheet`) suggests board fields, investment category and
   whether an issue suits an agent, for ticking and writing through `FieldWriteSheet`.
 

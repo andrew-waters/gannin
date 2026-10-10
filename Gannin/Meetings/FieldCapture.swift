@@ -355,10 +355,12 @@ private struct LinkIssuePopover: View {
 
 /// An issue written from a note: Claude drafts the repo, title, body and
 /// labels from what was heard and the org's repos and labels, then it's
-/// yours to edit. Create makes it on GitHub (a write) and puts it on the
-/// workflow board with no Status, so it lands in Triage.
+/// yours to edit, with any images (committed to the project's harness and
+/// shown in it, `IssueImages`). Create makes it on GitHub (a write) and puts
+/// it on the workflow board with no Status, so it lands in Triage.
 struct WriteIssueSheet: View {
     @Environment(IssueStore.self) private var issueStore
+    @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     @Environment(ProjectStore.self) private var projects
     @Environment(AuthStore.self) private var auth
@@ -375,6 +377,7 @@ struct WriteIssueSheet: View {
     @State private var drafting = false
     @State private var creating = false
     @State private var status: String?
+    @State private var images = IssueImageSet()
 
     private struct Draft: Decodable {
         let repo: String?
@@ -409,17 +412,18 @@ struct WriteIssueSheet: View {
                     Text(status).foregroundStyle(.secondary)
                 }
             }
+            IssueImagesSection(images: images, harness: imageHarness, repo: repo)
         }
         .formStyle(.grouped)
-        .frame(width: 600, height: 620)
+        .frame(width: 600, height: 720)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem {
                 Button("Draft Again") { draft() }.disabled(drafting)
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(creating ? "Creating" : "Create Issue") { create() }
-                    .disabled(creating || repo.isEmpty || title.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button(creating ? "Creating" : IssueImages.createTitle("Create Issue", count: images.count)) { create() }
+                    .disabled(creating || repo.isEmpty || title.trimmingCharacters(in: .whitespaces).isEmpty || (!images.isEmpty && imageHarness == nil))
             }
         }
         .onAppear {
@@ -428,6 +432,11 @@ struct WriteIssueSheet: View {
             bodyText = note.text
             draft()
         }
+    }
+
+    /// The harness images are committed to: the one work in the repo runs in.
+    private var imageHarness: HarnessConfig? {
+        configs.config(for: org).harness(covering: repo.isEmpty ? [] : [repo])
     }
 
     /// Repos with the most issues first.
@@ -480,7 +489,11 @@ struct WriteIssueSheet: View {
         let labelList = labels.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         Task {
             do {
-                let issue = try await api.createIssue(repo: repo, title: title, body: bodyText, labels: labelList)
+                var links: [(name: String, url: URL)] = []
+                if !images.isEmpty, let setup = imageHarness {
+                    links = try await images.commit(org: org, repo: repo, setup: setup, harness: harness)
+                }
+                let issue = try await api.createIssue(repo: repo, title: title, body: IssueImages.body(bodyText, links: links), labels: labelList)
                 if addToBoard, let number = configs.config(for: org).workflow.projectNumber,
                    let boardID = projects.boardLists[org]?.first(where: { $0.number == number })?.id {
                     try? await api.addToProject(projectID: boardID, contentID: issue.id)

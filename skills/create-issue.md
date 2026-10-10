@@ -14,7 +14,7 @@ owner: andrew-waters
 
 Use this when work needs an issue of its own: a follow-up found while working on another issue, a step broken out of a plan or requirement in this harness, a bug spotted in review, or something the user asks you to raise. This skill files the issue and gets it to where the team triages it. It does not start work on it. Starting work is Gannin's Work on This, and opening a PR for finished work is `skills/create-pull-request.md`.
 
-Gannin can also create issues itself (Write Issue from a Prioritisation note, Draft Issues on a plan or requirement). Use this skill when you're in a Claude Code session and the issue comes up there.
+Gannin can also create issues itself (New Issue, Write Issue from a Prioritisation note, Draft Issues on a plan or requirement, Quick Change), and New Issue, Write Issue and Quick Change can attach images. Use this skill when you're in a Claude Code session and the issue comes up there.
 
 Arguments (ask for anything missing that you can't work out):
 
@@ -22,6 +22,7 @@ Arguments (ask for anything missing that you can't work out):
 - **Repo** (optional): `owner/name`. If not given, suggest one: the repo the work touches, the repo of the issue this session is working on, or one a plan's `touches` names.
 - **Parent** (optional): an issue it belongs under, as `owner/name#123`. If you're in a session, the session's own issue is a likely parent. Check with the user before using it.
 - **Source** (optional): the harness document it comes from (`plans/...`, `requirements/...`, `findings/...`).
+- **Images** (optional): screenshots, mockups or diagrams to show in the issue, as files on disk (a quick change's are in `.worktrees/<branch>/.gannin/attachments/`). PNG, JPEG, GIF or WebP, under 5 MB each.
 
 ## Steps
 
@@ -53,9 +54,17 @@ Arguments (ask for anything missing that you can't work out):
 
 5. **Choose the investment category.** TODO(andrew-waters): say how this org tracks investments (Gannin Settings > How we track investments): in Gannin (nothing to write here), GitHub labels (add the category's label in step 4), or a single-select field on a board (set it in step 8). List the categories and their labels or options here.
 
-6. **Show the user the draft and get confirmation.** Show the repo, title, body, labels, parent and board in full. Create nothing until they say yes. Apply their edits and show it again if they changed anything significant.
+6. **Show the user the draft and get confirmation.** Show the repo, title, body, labels, parent and board in full, and any images with where they'll be committed (step 7) and who will be able to see them. Create nothing until they say yes. Apply their edits and show it again if they changed anything significant.
 
-7. **Create it.** Write the body to a temporary file so quoting can't mangle it:
+7. **Create it.** If there are images, commit them first. GitHub's API can't attach images to an issue the way the web editor does, so, as Gannin does, they go in the harness (`attachments/issues/<owner>/<name>/<YYYY-MM-DD>-<slug>/<file>`) and the body links to them at that commit, which GitHub shows inline to anyone who can read the harness. One commit per image through the contents API, so nothing in the harness checkout changes:
+   ```bash
+   base64 < IMAGE.png | tr -d '\n' > /tmp/image.b64
+   jq -n --arg m "Gannin: an image for a new issue in OWNER/NAME" --rawfile c /tmp/image.b64 '{message: $m, content: $c}' > /tmp/image.json
+   SHA=$(gh api -X PUT repos/HARNESS_OWNER/HARNESS_NAME/contents/attachments/issues/OWNER/NAME/DATE-SLUG/IMAGE.png --input /tmp/image.json -q .commit.sha)
+   ```
+   Then put `![what it shows](https://github.com/HARNESS_OWNER/HARNESS_NAME/blob/$SHA/attachments/issues/OWNER/NAME/DATE-SLUG/IMAGE.png?raw=true)` in the body where it belongs. Use file names of letters, numbers, `-` and `_` only. If the commit is refused (a sandbox's token may not write to the harness), say so and leave the image out rather than hosting it anywhere else.
+
+   Write the body to a temporary file so quoting can't mangle it:
    ```bash
    gh issue create --repo OWNER/NAME --title "TITLE" --body-file /tmp/issue-body.md --label "LABEL"
    ```
@@ -76,14 +85,14 @@ Arguments (ask for anything missing that you can't work out):
 
 10. **Point the harness at it** (only if it came from a harness document). Offer to add `owner/name#N` to that document's front matter `issues:` list. Do this only if the user agrees, as a separate harness commit, and don't touch anything else in the file.
 
-11. **Report back.** Give the issue URL, its labels, whether it's on the board and under which parent, and anything you skipped.
+11. **Report back.** Give the issue URL, any images it shows, whether it's on the board and under which parent, and anything you skipped.
 
 ## Rules
 
-- Every GitHub write (create, board, parent link, labels) is confirmed by the user first, as Gannin does. One confirmation for the whole drafted set in step 6 is enough. Ask again if you change something afterwards.
+- Every GitHub write (images, create, board, parent link, labels) is confirmed by the user first, as Gannin does. One confirmation for the whole drafted set in step 6 is enough. Ask again if you change something afterwards.
 - One issue per piece of work. If the draft has several independent outcomes, propose splitting it, and use a parent issue only if the user wants one.
 - Never create labels, board fields or options. If something you need is missing, say so and leave it off.
 - Don't set a Status on the board, assign anyone or set a milestone unless the user asks. Triage decides those.
-- Don't paste secrets, customer personal data, tokens or log output with credentials into the body. Summarise, and link to where it lives.
+- Don't paste secrets, customer personal data, tokens or log output with credentials into the body. Summarise, and link to where it lives. The same goes for images: git keeps them in the harness's history even if they're deleted later.
 - Don't start work on the new issue from this skill.
 - Writing: plain language, no em or en dashes, and issues referenced as `owner/name#123`.
