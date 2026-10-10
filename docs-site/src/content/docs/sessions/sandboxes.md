@@ -83,6 +83,22 @@ how many CPUs and how much memory each sandbox gets.
   before the sandbox starts. If Claude needs another, clone it into `projects/` yourself and restart
   the session.
 
+### Seeing what a sandbox is doing
+
+The session's terminal in Gannin is Claude Code itself. From outside, a sandbox keeps an activity log:
+a line for each thing that happens, such as Claude starting, a prompt arriving, each tool it uses
+(by name), a tool failing, a turn ending, waiting for you, and anything that stops the session from
+starting. Each line has the time and which session it's from (the issue's own, or a helper such as the
+reviewer). To read it:
+
+- `container logs gannin-<session id>` on the Mac (or the server) shows it, and `container logs -f`
+  follows it. Orchard's view of the container shows the same.
+- It's also kept as `sandbox.log` in the issue's session folder, so it lasts past the container.
+
+The log is deliberately thin. It never has a command, a prompt, a file's contents, a tool's output or
+an error's text, as any of those can hold a secret. Tokens are redacted as well, in case one turns up
+in what's left. For the full story, open the session in Gannin: its terminal and Activity pane.
+
 ### Repos that only build on a Mac
 
 A sandbox is Linux, so Xcode projects and other Mac-only builds can't run there. In the org's

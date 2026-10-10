@@ -1373,7 +1373,12 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Mac first; `refs/` stays writable, so it can move any branch. Inside,
   `branch.autoSetupMerge`, gc and maintenance are off, branches can't be deleted, and rebase and pull
   print a harmless `packed-refs.lock` error (the sandboxed brief says so, and to push with
-  `git push origin HEAD`). Then the issue's session folder, the shared `claudeFolder` as
+  `git push origin HEAD`). The container's own process follows the issue's `sandbox.log`
+  (`SandboxLaunch.activityLogName`, its last 200 lines then more), so `container logs` and
+  Orchard show what it's doing (andrew-waters/gannin#152); `inner.sh` writes
+  `activityScript` to `/run` and its steps there, and a sandboxed session's settings
+  (`settings(sandboxed:)`) add hooks calling it. Events and tool names only, never a
+  command, prompt, file, output or error text, and tokens redacted by shape and value. Then the issue's session folder, the shared `claudeFolder` as
   `/root/.claude` (claude's own login and settings) with the issue's `claude-home/projects` over its
   `projects/` (transcripts); Gannin's and Orchard's labels
   (`com.orchard.sandbox`, andrew-waters/orchard#122) and the caps. Then `container exec -it` runs
