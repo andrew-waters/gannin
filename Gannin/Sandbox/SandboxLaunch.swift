@@ -227,6 +227,25 @@ enum SandboxLaunch {
             git config --global gc.auto 0
             git config --global maintenance.auto false
             unset GANNIN_GIT_NAME GANNIN_GIT_EMAIL
+            # The house rules from Settings › Sandbox, in a file of their own
+            # that claude's memory in the shared config imports, so what
+            # claude saved in CLAUDE.md is never touched. Written whole and
+            # moved into place, as other sandboxes may be reading it.
+            rules="$CLAUDE_CONFIG_DIR/\(houseRulesFile)"
+            if [ -n "${GANNIN_CLAUDE_MD:-}" ] || [ -f "$rules" ]; then
+              if printf %s "${GANNIN_CLAUDE_MD:-}" | base64 -d > "$rules.$$"; then
+                mv "$rules.$$" "$rules"
+              else
+                rm -f "$rules.$$"
+                note "Gannin couldn't write your house rules for Claude, so this sandbox has the ones it had before."
+              fi
+            fi
+            if [ -n "${GANNIN_CLAUDE_MD:-}" ]; then
+              memory="$CLAUDE_CONFIG_DIR/CLAUDE.md"
+              grep -qxF '@\(houseRulesFile)' "$memory" 2>/dev/null \\
+                || { { cat "$memory" 2>/dev/null; printf '\\n@\(houseRulesFile)\\n'; } > "$memory.$$" && mv "$memory.$$" "$memory"; }
+            fi
+            unset GANNIN_CLAUDE_MD
             cd "$harness" || fail "The harness isn't mounted."
             \(seedClaudeConfig)
             # One Claude credential at most: an API key, or claude's own login.
@@ -238,6 +257,9 @@ enum SandboxLaunch {
             \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "", afterExit: "note \"Claude Code has exited, so its sandbox stops once nothing else uses it. Restart the session to go on.\"\nexit 0"))
             """
     }
+
+    /// The house rules' file in the shared config, imported by its CLAUDE.md.
+    static let houseRulesFile = "gannin-house-rules.md"
 
     /// The repos to have cloned before the sandbox starts: the issue's and
     /// those of the PRs it has opened.
@@ -259,6 +281,8 @@ enum SandboxLaunch {
         var signingKey: String
         var gitName: String
         var gitEmail: String
+        /// The house rules, for `houseRulesFile`; empty for none.
+        var claudeMemory = ""
     }
 
     /// What's missing for the session's org, or the credentials.
@@ -275,7 +299,7 @@ enum SandboxLaunch {
         guard let token, let key, missing.isEmpty else {
             return .failure(SandboxRuntime.Failure(message: "The sandbox needs \(missing.joined(separator: ", ")).", output: ""))
         }
-        return .success(Credentials(apiKey: apiKey, gitHubToken: token, signingKey: key, gitName: identity.name, gitEmail: identity.email))
+        return .success(Credentials(apiKey: apiKey, gitHubToken: token, signingKey: key, gitName: identity.name, gitEmail: identity.email, claudeMemory: SandboxCredentials.claudeMemory))
     }
 
     /// `secrets.env`: shell assignments the inner script reads and removes.
@@ -287,6 +311,7 @@ enum SandboxLaunch {
             ("GANNIN_SIGNING_KEY", Data(credentials.signingKey.utf8).base64EncodedString()),
             ("GANNIN_GIT_NAME", credentials.gitName),
             ("GANNIN_GIT_EMAIL", credentials.gitEmail),
+            ("GANNIN_CLAUDE_MD", Data(credentials.claudeMemory.utf8).base64EncodedString()),
         ]
         return values.map { "\($0.0)=\(SandboxRuntime.quoted($0.1))" }.joined(separator: "\n") + "\n"
     }

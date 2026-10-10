@@ -9,6 +9,7 @@ struct SandboxSettingsSection: View {
     @AppStorage(SandboxCredentials.claudeKindKey) private var claudeKind: SandboxCredentials.ClaudeKind = .signIn
     @AppStorage(SandboxCredentials.cpusKey) private var cpus = SandboxCredentials.defaultCPUs
     @AppStorage(SandboxCredentials.memoryKey) private var memory = SandboxCredentials.defaultMemoryGB
+    @AppStorage(SandboxCredentials.claudeMemoryKey) private var claudeMemory = ""
     @State private var setup = SandboxSetup(box: .local)
     /// Bumped after a keychain change, which nothing observes, to redraw.
     @State private var revision = 0
@@ -22,6 +23,7 @@ struct SandboxSettingsSection: View {
     @State private var confirmingInstall = false
     @State private var confirmingOff = false
     @State private var showingOutput = false
+    @State private var confirmingCopy = false
 
     var body: some View {
         let _ = revision
@@ -125,6 +127,32 @@ struct SandboxSettingsSection: View {
         }
 
         Section {
+            TextEditor(text: $claudeMemory)
+                .font(.body.monospaced())
+                .frame(minHeight: 120)
+            HStack {
+                Button("Copy from This Mac") {
+                    if claudeMemory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { copyMacMemory() } else { confirmingCopy = true }
+                }
+                .disabled(!FileManager.default.fileExists(atPath: SandboxCredentials.macClaudeMemory.path))
+                .help("Fills this with your ~/.claude/CLAUDE.md, to edit before it goes in. Its @ imports name files on this Mac, which a sandbox can't read.")
+                Spacer()
+            }
+        } header: {
+            Text("House rules for Claude")
+        } footer: {
+            Text("Your own rules for Claude in every sandbox: how to write commits and pull requests, attribution, anything you'd keep in ~/.claude/CLAUDE.md on this Mac. They're written to a file of their own each time a sandbox's Claude starts, here or on a server, and imported by the CLAUDE.md your sandboxes share, so what Claude remembers there stays. Your own ~/.claude never goes in; copy from it here, leaving out @ imports, which name files a sandbox can't read.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .confirmationDialog("Replace your house rules with this Mac's CLAUDE.md?", isPresented: $confirmingCopy) {
+            Button("Replace", role: .destructive, action: copyMacMemory)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("What's in the box now is lost.")
+        }
+
+        Section {
             Stepper("CPUs: \(cpus)", value: $cpus, in: 1...max(1, ProcessInfo.processInfo.activeProcessorCount))
             Stepper("Memory: \(memory) GB", value: $memory, in: 2...max(2, Int(ProcessInfo.processInfo.physicalMemory / 1_073_741_824)))
             Text("Each sandbox's share of this Mac, applied when it starts.")
@@ -133,6 +161,10 @@ struct SandboxSettingsSection: View {
         } header: {
             Text("Each sandbox gets")
         }
+    }
+
+    private func copyMacMemory() {
+        if let text = try? String(contentsOf: SandboxCredentials.macClaudeMemory, encoding: .utf8) { claudeMemory = text }
     }
 
     // MARK: Setup
