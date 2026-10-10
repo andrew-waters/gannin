@@ -1,6 +1,6 @@
 ---
 type: requirement
-status: in-progress
+status: done
 summary: "Gannin can run its Claude Code sessions inside an Apple container sandbox it sets up itself, so an agent can only reach its own worktree and what it is given."
 issues: [andrew-waters/gannin#8]
 plans: [plans/2026-10-09-run-agent-sessions-in-apple-container.md]

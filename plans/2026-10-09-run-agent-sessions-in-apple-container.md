@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: done
 summary: "Run Gannin Claude Code sessions inside Apple container sandboxes that Gannin sets up itself. Local models come later."
 issues: [andrew-waters/gannin#8, andrew-waters/gannin#77, andrew-waters/gannin#78, andrew-waters/gannin#79, andrew-waters/gannin#80, andrew-waters/gannin#81, andrew-waters/gannin#82, andrew-waters/gannin#83, andrew-waters/gannin#84, andrew-waters/gannin#85]
 touches: [andrew-waters/gannin, andrew-waters/orchard]
