@@ -516,7 +516,7 @@ final class SessionStore {
     func openDraft(_ draft: PlanningDraft) -> UUID {
         let id = UUID()
         planningDrafts[id] = draft
-        let index = selectedTab.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
+        let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) }.map { $0 + 1 } ?? tabs.endIndex
         tabs.insert(id, at: index)
         showingOverview = false
         selectedTab = id
@@ -760,7 +760,10 @@ final class SessionStore {
         // Helpers work in its folder, so they go with it.
         for helper in helpers(of: id) { remove(helper.id) }
         // A helper showing in its session's tab goes back to the work.
-        if selectedTab == id, let parent = sessions[id]?.parentID { selectedTab = parent }
+        if let parent = sessions[id]?.parentID {
+            if selectedTab == id { selectedTab = parent }
+            if besideTab == id { besideTab = parent }
+        }
         if let session = sessions[id] { deleteSandbox(of: session) }
         terminals[id]?.terminate()
         terminals[id] = nil

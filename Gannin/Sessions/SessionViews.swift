@@ -49,10 +49,10 @@ struct SessionsWindow: View {
                         .id(draftID)
                 }
             } else if let selected {
-                if let beside = sessions.besideTab.flatMap({ sessions.sessions[$0] }), beside.id != sessions.tabOwner(selected.id) {
+                if let beside = sessions.besideTab.flatMap({ sessions.sessions[$0] }), sessions.tabOwner(beside.id) != sessions.tabOwner(selected.id) {
                     HSplitView {
                         withAgents(selected, compact: true)
-                        withAgents(beside, compact: true)
+                        withAgents(beside, compact: true, isBeside: true)
                     }
                 } else {
                     withAgents(selected, compact: false)
@@ -71,16 +71,19 @@ struct SessionsWindow: View {
     }
 
     /// The session, under a switcher between it and its helpers when it has
-    /// any: an issue's work and its review are one tab.
+    /// any: an issue's work and its review are one tab. The one beside
+    /// switches on its own, so it never takes the selected tab's place.
     @ViewBuilder
-    private func withAgents(_ session: CodeSession, compact: Bool) -> some View {
+    private func withAgents(_ session: CodeSession, compact: Bool, isBeside: Bool = false) -> some View {
         let owner = sessions.sessions[sessions.tabOwner(session.id)] ?? session
         let helpers = sessions.helpers(of: owner.id)
         if helpers.isEmpty {
             content(session, compact: compact)
         } else {
             VStack(spacing: 0) {
-                SessionAgentSwitcher(owner: owner, helpers: helpers, shown: session.id)
+                SessionAgentSwitcher(owner: owner, helpers: helpers, shown: session.id) { id in
+                    if isBeside { sessions.besideTab = id } else { sessions.selectedTab = id }
+                }
                 Divider()
                 content(session, compact: compact)
             }
@@ -474,6 +477,7 @@ private struct SessionAgentSwitcher: View {
     let owner: CodeSession
     let helpers: [CodeSession]
     let shown: UUID
+    let show: (UUID) -> Void
 
     var body: some View {
         HStack(spacing: 4) {
@@ -493,7 +497,7 @@ private struct SessionAgentSwitcher: View {
         let isShown = session.id == shown
         let waiting = sessions.attention[session.id] != nil
         return Button {
-            sessions.selectedTab = session.id
+            show(session.id)
         } label: {
             HStack(spacing: 6) {
                 Circle().fill(state.color).frame(width: 7, height: 7)

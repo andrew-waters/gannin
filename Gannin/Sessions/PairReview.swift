@@ -55,7 +55,7 @@ struct PairReview: Codable, Hashable {
         case .reviewing: "Reviewing"
         case .fixing: "\(findings) to fix"
         case .settled: "Reviewed"
-        case .limit: "Review stopped"
+        case .limit: "Last round"
         case .stopped: "Review stopped"
         }
     }
