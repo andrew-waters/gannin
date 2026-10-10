@@ -130,8 +130,8 @@ struct SessionFinishSection: View {
         if !session.isHelper, !session.isAsk, finished || stale {
             Section {
                 Text(finished
-                     ? "Every pull request from this session is merged."
-                     : "Nothing's happened in this session for over three days.")
+                     ? "Every pull request from this session is merged, so its worktrees can go."
+                     : "Nothing's happened in this session for over three days. Finish it to remove its worktrees, or leave it be.")
                     .font(.callout)
                 HStack {
                     if let error {
@@ -139,8 +139,9 @@ struct SessionFinishSection: View {
                     }
                     Spacer()
                     if working { ProgressView().controlSize(.small) }
-                    Button("Finish Session") { confirming = true }
+                    Button("Finish and Clean Up…") { confirming = true }
                         .disabled(working)
+                        .help("End claude, remove its worktrees and mark it finished in the harness")
                 }
             } header: {
                 Text(finished ? "Done" : "Stale")

@@ -1487,7 +1487,7 @@ struct TerminalHost: View {
             view = sessions.open(session)
             sessions.terminal(session.id)?.focus()
         }
-        // Restart swaps the terminal inside the same container, so only the
+        // Resume swaps the terminal inside the same container, so only the
         // keyboard needs putting back.
         .onChange(of: sessions.state(session.id)) { _, state in
             if state == .starting { sessions.terminal(session.id)?.focus() }
@@ -1662,17 +1662,25 @@ private struct SessionPanel: View {
                     }
                     Spacer()
                     if sessions.isRunning(session.id) {
-                        Button("End") { sessions.end(session.id) }
-                            .help("End claude and the shell it runs in. The worktree stays, and Restart resumes the conversation.")
+                        Button("Stop Claude") { sessions.end(session.id) }
+                            .help("End claude and the shell it runs in. The worktree stays, and Resume picks the conversation up.")
                     } else {
-                        Button("Restart") { _ = sessions.open(session) }
-                            .help("Start the terminal again, resuming claude's conversation")
+                        Button("Resume") { _ = sessions.open(session) }
+                            .help("Start the terminal again, carrying on claude's conversation")
                     }
                     // An Ask goes with its folder, from its list's Delete.
                     if !session.isAsk {
-                        Button("Remove", role: .destructive) { confirmingRemove = true }
+                        Button("Forget…", role: .destructive) { confirmingRemove = true }
+                            .help("End claude and its helpers and take the session out of Gannin; its files stay")
                     }
                 }
+                Text((sessions.isRunning(session.id)
+                      ? "Stop Claude ends it and keeps the worktree, to resume later."
+                      : "Resume starts claude again where the conversation left off.")
+                     + (session.isAsk ? "" : " Forget ends claude and its helpers and takes the session out of Gannin; its files stay."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             SessionFinishSection(session: session)
             // A helper's issue, plans and PRs are on the session it helps.
@@ -1703,8 +1711,8 @@ private struct SessionPanel: View {
                 await harness.load(org: session.org, setup: setup)
             }
         }
-        .confirmationDialog("Remove this session?", isPresented: $confirmingRemove) {
-            Button("Remove Session", role: .destructive) { sessions.remove(session.id) }
+        .confirmationDialog("Forget this session?", isPresented: $confirmingRemove) {
+            Button("Forget Session", role: .destructive) { sessions.remove(session.id) }
         } message: {
             Text("Claude is ended and Gannin forgets the session. \(session.isInHarness ? "Its folder and worktrees stay" : "The worktree stays") at \(worktreePath)\(session.isRemote ? " on the server" : "") for you to remove with git worktree remove.")
         }
@@ -2075,7 +2083,7 @@ struct SessionSettingsSection: View {
             if customModel || (!model.isEmpty && !known) {
                 TextField("Model ID", text: $model, prompt: Text("claude-opus-5-5"))
             }
-            Text("Sessions run Claude Code with this model (--model), from their next start or Restart. Its default is what Claude Code's own settings say; /model in a session changes it there.")
+            Text("Sessions run Claude Code with this model (--model), from their next start or Resume. Its default is what Claude Code's own settings say; /model in a session changes it there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text("Gannin looks for PRs your review is asked on, your own PRs' checks and reviews, and reviewed PRs you're watching, as often as Settings › Sync says. A new request notifies, with Review with Claude to start a review when you choose.")

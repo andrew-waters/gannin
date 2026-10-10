@@ -802,7 +802,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   deleted: listed (`AskSessionsList`: title, first message, files, last active) under Agents and
   in the sidebar's Agents › Ask, opening to resume, with Rename and Delete
   (confirmed; `finish` removes the folder and its files, Delete Anyway when it won't go). They
-  never offer Finish Session.
+  never offer Finish and Clean Up.
 - Quick changes (`Sessions/QuickChange.swift`, `CodeSession.quickChange`, `QuickChangeInfo`: the note,
   screenshots by file name, whether it has an issue; andrew-waters/gannin#123,
   `plans/2026-10-10-quick-change.md`) start work on a small change (a snag, a tweak, a one-line fix)
@@ -924,7 +924,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   lines open in the chosen editor (`CodeEditor`: VS Code, Cursor and Zed also over SSH remote).
 - The tab bar's grid shows every session (`SessionOverview`); Show Beside puts two tabs side by
   side (`besideTab`). Sessions idle three days are stale; once every PR is merged, or stale,
-  Finish Session removes the worktrees on its box, marks `finishedAt` in the harness's
+  Finish and Clean Up (the panel's `SessionFinishSection`) removes the worktrees on its box, marks `finishedAt` in the harness's
   `session.json` and forgets it (`SessionStore.finish`).
 - Review with Claude (`ReviewWithClaudeButton`, on a PR's drawer and window) starts a review
   session (`CodeSession.reviewOf`, `SessionStore.startReview`): in the harness, edits
@@ -1117,9 +1117,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   with their `- [ ]` items (`HarnessChecklist`, matched by their words and which of the same words
   they are, outside front matter and code) to tick, committed in one commit against each file at
   the head (the button naming the harness is the confirmation), or Ask Claude to Tick Them Off
-  (`tickOffPrompt`). Then Leave Running (as closing always was), End Session (`endAndClose`:
+  (`tickOffPrompt`). Then Keep Running (the default, as closing always was), Stop Claude (`endAndClose`:
   claude and its helpers ended, worktrees kept, resumed when opened) or, once every PR is merged,
-  Finish Session (confirmed); Cancel keeps the tab. Settings > General > Agent, Ask to wrap up when
+  Finish and Clean Up (confirmed), each explained in a line above the buttons; Cancel keeps the tab. Settings > General > Agent, Ask to wrap up when
   closing a session's tab (`sessionsWrapUpOnClose`, on), also the sheet's Don't ask again.
 - Quitting with sessions running asks first (`GanninAppDelegate.applicationShouldTerminate`,
   `Sessions/QuitGuard.swift`): which are running and in what state (scheduled runs named as such),
