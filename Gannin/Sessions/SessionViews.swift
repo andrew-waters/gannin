@@ -49,13 +49,13 @@ struct SessionsWindow: View {
                         .id(draftID)
                 }
             } else if let selected {
-                if let beside = sessions.besideTab.flatMap({ sessions.sessions[$0] }), beside.id != selected.id {
+                if let beside = sessions.besideTab.flatMap({ sessions.sessions[$0] }), beside.id != sessions.tabOwner(selected.id) {
                     HSplitView {
-                        content(selected, compact: true)
-                        content(beside, compact: true)
+                        withAgents(selected, compact: true)
+                        withAgents(beside, compact: true)
                     }
                 } else {
-                    content(selected, compact: false)
+                    withAgents(selected, compact: false)
                 }
             } else {
                 ContentUnavailableView("No sessions open", systemImage: "terminal", description: Text("Work on This on an issue opens its session here, or + opens one already started."))
@@ -68,6 +68,23 @@ struct SessionsWindow: View {
         .background { shortcuts }
         .onChange(of: activeState, initial: true) { sessions.windowIsKey = activeState == .key }
         .onDisappear { sessions.windowIsKey = false }
+    }
+
+    /// The session, under a switcher between it and its helpers when it has
+    /// any: an issue's work and its review are one tab.
+    @ViewBuilder
+    private func withAgents(_ session: CodeSession, compact: Bool) -> some View {
+        let owner = sessions.sessions[sessions.tabOwner(session.id)] ?? session
+        let helpers = sessions.helpers(of: owner.id)
+        if helpers.isEmpty {
+            content(session, compact: compact)
+        } else {
+            VStack(spacing: 0) {
+                SessionAgentSwitcher(owner: owner, helpers: helpers, shown: session.id)
+                Divider()
+                content(session, compact: compact)
+            }
+        }
     }
 
     /// A review's or a planning session's own layout, else the session's
@@ -90,7 +107,7 @@ struct SessionsWindow: View {
     private var shortcuts: some View {
         Group {
             Button("Close Tab") {
-                if let id = sessions.selectedTab { sessions.closeTab(id) }
+                if let id = sessions.selectedTab { sessions.closeTab(sessions.tabOwner(id)) }
                 if sessions.tabs.isEmpty { dismissWindow(id: SessionStore.windowID) }
             }
             .keyboardShortcut("w", modifiers: .command)
@@ -122,7 +139,7 @@ private struct SessionTabBar: View {
                 HStack(spacing: 0) {
                     ForEach(sessions.tabs, id: \.self) { id in
                         if let session = sessions.sessions[id] {
-                            SessionTabItem(session: session, isSelected: sessions.selectedTab == id && !sessions.showingOverview)
+                            SessionTabItem(session: session, isSelected: sessions.selectedTab.map(sessions.tabOwner) == id && !sessions.showingOverview)
                             Divider()
                         } else if let draft = sessions.planningDrafts[id] {
                             DraftTabItem(id: id, draft: draft, isSelected: sessions.selectedTab == id && !sessions.showingOverview)
@@ -172,7 +189,8 @@ private struct SessionTabBar: View {
     /// Sessions already started that have no tab open.
     private var addMenu: some View {
         let closed = sessions.sessions.values
-            .filter { !sessions.tabs.contains($0.id) && $0.archivedAt == nil }
+            // Helpers show in their session's tab.
+            .filter { !sessions.tabs.contains($0.id) && $0.archivedAt == nil && !$0.isHelper }
             .sorted { $0.createdAt > $1.createdAt }
         let org = sessions.selectedTab.flatMap { sessions.sessions[$0]?.org } ?? sessions.sessions.values.first?.org
         return Menu {
@@ -321,7 +339,9 @@ private struct SessionTabItem: View {
 
     var body: some View {
         let state = sessions.state(session.id)
-        let waiting = sessions.attention[session.id] != nil
+        let helpers = sessions.helpers(of: session.id)
+        // A helper waiting on you marks its session's tab, where it shows.
+        let waiting = ([session] + helpers).contains { sessions.attention[$0.id] != nil }
         let kind = TabKind(session)
         HStack(spacing: 8) {
             Circle().fill(state.color).frame(width: 7, height: 7)
@@ -354,6 +374,7 @@ private struct SessionTabItem: View {
                             .help(session.location.name)
                             .accessibilityLabel(session.location.name)
                     }
+                    helperStatus(helpers)
                 }
                 Text(kind.title)
                     .fontWeight(waiting ? .semibold : .regular)
@@ -383,7 +404,8 @@ private struct SessionTabItem: View {
         .onTapGesture(count: 2) { startRenaming() }
         .onTapGesture {
             sessions.showingOverview = false
-            sessions.selectedTab = session.id
+            // A helper showing in it stays showing.
+            if !isSelected { sessions.selectedTab = session.id }
         }
         .onHover { hovering = $0 }
         .alert("Rename Tab", isPresented: $renaming) {
@@ -423,6 +445,76 @@ private struct SessionTabItem: View {
     private func startRenaming() {
         newName = session.title
         renaming = true
+    }
+
+    /// How its review is going, else how many helpers it has: they show in
+    /// this tab, not their own.
+    @ViewBuilder
+    private func helperStatus(_ helpers: [CodeSession]) -> some View {
+        if let pairing = session.pairing, pairing.reviewerID.map({ sessions.sessions[$0] != nil }) ?? false {
+            Text(pairing.shortStatus)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(pairing.tint)
+                .lineLimit(1)
+                .help(pairing.status)
+        } else if !helpers.isEmpty {
+            Label("\(helpers.count)", systemImage: "person.2")
+                .labelStyle(.titleAndIcon)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help(helpers.count == 1 ? "1 helper, shown in this tab" : "\(helpers.count) helpers, shown in this tab")
+        }
+    }
+}
+
+/// Above a session that has helpers: its own work, then each helper by its
+/// role, with how each is doing, to switch between in the one tab.
+private struct SessionAgentSwitcher: View {
+    @Environment(SessionStore.self) private var sessions
+    let owner: CodeSession
+    let helpers: [CodeSession]
+    let shown: UUID
+
+    var body: some View {
+        HStack(spacing: 4) {
+            agent(owner, name: "Work", symbol: TabKind(owner).symbol, status: nil)
+            ForEach(helpers) { helper in
+                let pairing = owner.pairing?.reviewerID == helper.id ? owner.pairing : nil
+                agent(helper, name: helper.role ?? "Helper", symbol: helper.isReviewer ? "arrow.triangle.pull" : "person.2", status: pairing)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
+    }
+
+    private func agent(_ session: CodeSession, name: String, symbol: String, status: PairReview?) -> some View {
+        let state = sessions.state(session.id)
+        let isShown = session.id == shown
+        let waiting = sessions.attention[session.id] != nil
+        return Button {
+            sessions.selectedTab = session.id
+        } label: {
+            HStack(spacing: 6) {
+                Circle().fill(state.color).frame(width: 7, height: 7)
+                    .overlay {
+                        if waiting { Circle().stroke(state.color, lineWidth: 1.5).frame(width: 13, height: 13) }
+                    }
+                Image(systemName: symbol)
+                Text(name).fontWeight(isShown || waiting ? .semibold : .regular)
+                if let status {
+                    Text(status.shortStatus).foregroundStyle(status.tint)
+                }
+            }
+            .font(.callout)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(isShown ? AnyShapeStyle(Color.primary.opacity(0.1)) : AnyShapeStyle(Color.clear), in: .rect(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("\(name): \(status?.status ?? state.label)")
+        .accessibilityAddTraits(isShown ? .isSelected : [])
     }
 }
 
