@@ -154,7 +154,13 @@ extension GitHubAPI {
 
     /// Adds an issue (by node ID) to a project board. A write.
     func addToProject(projectID: String, contentID: String) async throws {
-        struct Response: Decodable {}
+        // addProjectV2ItemById is nullable: an empty Response would decode
+        // past a refusal (no write access to the board) rather than
+        // surfacing it.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Item: Decodable { let id: String }; let item: Item }
+            let addProjectV2ItemById: Payload
+        }
         let _: Response = try await query("""
             mutation($project: ID!, $content: ID!) {
               addProjectV2ItemById(input: { projectId: $project, contentId: $content }) { item { id } }
@@ -164,7 +170,11 @@ extension GitHubAPI {
 
     /// Takes an item off a project board; the issue itself is untouched. A write.
     func removeFromProject(projectID: String, itemID: String) async throws {
-        struct Response: Decodable {}
+        // Nullable, as addProjectV2ItemById is.
+        struct Response: Decodable {
+            struct Payload: Decodable { let deletedItemId: String? }
+            let deleteProjectV2Item: Payload
+        }
         let _: Response = try await query("""
             mutation($project: ID!, $item: ID!) {
               deleteProjectV2Item(input: { projectId: $project, itemId: $item }) { deletedItemId }
@@ -174,9 +184,13 @@ extension GitHubAPI {
 
     /// Sets one field on a project item, or clears it with a nil value. A write.
     func setProjectField(projectID: String, itemID: String, field: ProjectField, value: ProjectField.Value?) async throws {
-        struct Response: Decodable {}
         var variables = ["project": projectID, "item": itemID, "field": field.id]
         guard let value else {
+            // Nullable, as the other project item mutations are.
+            struct Response: Decodable {
+                struct Payload: Decodable { let clientMutationId: String? }
+                let clearProjectV2ItemFieldValue: Payload
+            }
             let _: Response = try await query("""
                 mutation($project: ID!, $item: ID!, $field: ID!) {
                   clearProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field }) { clientMutationId }
@@ -203,6 +217,10 @@ extension GitHubAPI {
             literal = "{ singleSelectOptionId: $value }"
         }
         let declaration = literal.contains("$value") ? ", $value: \(literal.contains("date") ? "Date" : "String")!" : ""
+        struct Response: Decodable {
+            struct Payload: Decodable { let clientMutationId: String? }
+            let updateProjectV2ItemFieldValue: Payload
+        }
         let _: Response = try await query("""
             mutation($project: ID!, $item: ID!, $field: ID!\(declaration)) {
               updateProjectV2ItemFieldValue(input: { projectId: $project, itemId: $item, fieldId: $field, value: \(literal) }) { clientMutationId }
