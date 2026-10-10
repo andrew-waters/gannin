@@ -1,0 +1,14 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "quick-subissues-should-be-under-the-e816",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+    "andrew-waters/gannin"
+  ],
+  "startedAt" : "2026-10-10T10:04:58Z",
+  "startedBy" : "andrew-waters",
+  "title" : "subissues should be under the parents so this become a tree",
+  "url" : "https://github.com/andrew-waters/gannin"
+}
