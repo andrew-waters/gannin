@@ -96,6 +96,8 @@ struct SessionRulesTests {
         #expect(try decide(rules, bash("git branch new-thing")) == nil)
         #expect(try decide(rules, bash("git tag v1")) == nil)
         #expect(try decide(rules, bash("git branch -m a b")) == nil)
+        #expect(try decide(rules, bash("git branch -r --sort -committerdate")) == nil)
+        #expect(try decide(rules, bash("git tag -l --sort -creatordate")) == nil)
     }
 
     @Test func configThatChangesPushIsBlocked() throws {
@@ -130,6 +132,7 @@ struct SessionRulesTests {
         // Reads and other servers' comments don't count.
         #expect(try decide(rules, #"{"tool_name":"mcp__notion__notion-get-comments","tool_input":{}}"#, folder: folder) == nil)
         #expect(try decide(rules, #"{"tool_name":"mcp__github__request_copilot_review","tool_input":{}}"#, folder: folder) == nil)
+        #expect(try decide(rules, #"{"tool_name":"mcp__github__create_pending_pull_request_review","tool_input":{}}"#, folder: folder) == nil)
     }
 
     @Test func aCallACustomRuleBlocksIsntCounted() throws {
@@ -174,6 +177,58 @@ struct SessionRulesTests {
         #expect(try decide(rules, bash("cat .claude/settings.json")) == nil)
         #expect(try decide(rules, bash("git commit -m \"update .claude/settings.json docs\"")) == nil)
         #expect(try decide(rules, bash("sed -i s/a/b/ .claude/settings.json")) == "deny: \(SessionRules.Name.guardRule)")
+    }
+
+    @Test func theBriefsPushesPassTheRules() throws {
+        let issue = IssueReference(org: "acme", id: "I_1", number: 12, title: "Fix it", repo: "acme/api", url: URL(string: "https://github.com/acme/api/issues/12")!)
+        let id = UUID()
+        let session = CodeSession(
+            id: id, issue: issue, repo: "acme/harness", branch: branch, createdAt: .now, pullRequests: [],
+            harnessRepo: "acme/harness", harnessPath: "~/Code/acme/harness", sandbox: SandboxPlacement.containerName(for: id)
+        )
+        let rules = everything()
+        let brief = SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: nil, goals: [], rules: rules)
+        #expect(brief.contains("git push origin HEAD:\(branch)"))
+        #expect(brief.contains("don't push it"))
+        #expect(!SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: nil, goals: [], rules: SessionRules()).contains("don't push it"))
+        // The brief's and skills/create-pull-request.md's pushes, for this branch.
+        #expect(try decide(rules, bash("git push origin HEAD:\(branch)")) == nil)
+        #expect(try decide(rules, bash("git push -u origin HEAD:\(branch)")) == nil)
+    }
+
+    @Test func aliasesAndGitsOwnConfigCantGetRoundTheRules() throws {
+        let rules = everything()
+        for command in [
+            "GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=alias.p GIT_CONFIG_VALUE_0=\"push -f\" git p origin HEAD:\(branch)",
+            "P=\"push origin HEAD:main\"; git --config-env=alias.p=P p",
+            "printf '[alias] p = push -f' >> ~/.gitconfig",
+        ] {
+            #expect(try decide(rules, bash(command)) == "deny: \(SessionRules.Name.guardRule)", "\(command)")
+        }
+        #expect(try decide(rules, bash("\"$(git --exec-path)\"/git-push -f")) == "deny: No force push")
+        #expect(try decide(rules, bash("cat ~/.gitconfig")) == nil)
+    }
+
+    @Test func graphQLMutationsAreChecked() throws {
+        let rules = everything(limit: 1)
+        let folder = FileManager.default.temporaryDirectory.appending(path: "rules-\(UUID().uuidString)")
+        #expect(try decide(rules, bash("gh api graphql -f query='mutation{deleteRef(input:{refId:\"x\"}){clientMutationId}}'")) == "deny: \(SessionRules.Name.deletes)")
+        #expect(try decide(rules, bash("gh api graphql -f query='mutation{updateRef(input:{refId:\"x\",oid:\"y\",force:true}){clientMutationId}}'")) == "deny: No force push")
+        #expect(try decide(rules, bash("gh api graphql -f query='query{viewer{login}}'")) == nil)
+        let comment = bash("gh api graphql -f query='mutation{addComment(input:{subjectId:\"x\",body:\"y\"}){clientMutationId}}'")
+        #expect(try decide(rules, comment, folder: folder) == nil)
+        #expect(try decide(rules, comment, folder: folder) == "deny: \(SessionRules.Name.comments(1))")
+    }
+
+    @Test func overTheLimitIsDeniedBeforeAskMeAndAskMeIsntCounted() throws {
+        var rules = SessionRules()
+        rules.commentLimit = 1
+        rules.custom = [.init(name: "Ask first", pattern: "gh pr comment", asks: true)]
+        let folder = FileManager.default.temporaryDirectory.appending(path: "rules-\(UUID().uuidString)")
+        #expect(try decide(rules, bash("gh pr comment 1 -b x"), folder: folder) == "ask: Ask first")
+        #expect(try decide(rules, bash("gh pr comment 1 -b x"), folder: folder) == "ask: Ask first")
+        #expect(try decide(rules, bash("gh issue comment 1 -b x"), folder: folder) == nil)
+        #expect(try decide(rules, bash("gh pr comment 1 -b x"), folder: folder) == "deny: \(SessionRules.Name.comments(1))")
     }
 
     @Test func activityNamesTheRule() {

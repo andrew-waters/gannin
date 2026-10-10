@@ -428,7 +428,7 @@ enum SessionBrief {
 
     /// `goals` are the project's measurables (`OrgConfig.measurables`);
     /// those a change bears on are listed, as guidance.
-    static func make(session: CodeSession, record: IssueRecord?, detail: ItemDetail?, parent: IssueRecord?, harness: HarnessIndex?, goals: [Measurable] = []) -> String {
+    static func make(session: CodeSession, record: IssueRecord?, detail: ItemDetail?, parent: IssueRecord?, harness: HarnessIndex?, goals: [Measurable] = [], rules: SessionRules = .current) -> String {
         let reference = session.issue
         var lines = session.isMaintenance
             ? ["# Maintenance in \(reference.repo): \(reference.title)", ""]
@@ -579,7 +579,7 @@ enum SessionBrief {
                     ? "- Maintenance needs no plan document. Say what you changed and why in the commit messages."
                     : limit == .localOnly
                     ? "- A plan for this issue goes in its folder as `\(folder)/plan.md`, with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out. This run is Local only and can't push it to the harness; whoever picks the branch up moves it in."
-                    : "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land. When the harness is the code repo, the plan goes in its worktree and ships in the same pull request, and only if the repo keeps a `plans/` folder.",
+                    : "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. \(rules.pushOnlyToBranch ? "Commit it in the harness but don't push it: the session rule Push only to the session's branch blocks a push to the harness's default branch, so say in your last message that the plan's commit is waiting to be pushed. Tick" : "Commit and push it in the harness, and tick") its checkboxes off as tasks land. When the harness is the code repo, the plan goes in its worktree and ships in the same pull request, and only if the repo keeps a `plans/` folder.",
                 "- `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` and `projects/` are kept out of the harness's git.",
                 "",
             ]

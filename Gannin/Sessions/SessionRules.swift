@@ -27,8 +27,6 @@ nonisolated struct SessionRules: Codable, Equatable, Sendable {
         var pattern = ""
         var asks = false
 
-        /// Its name as the hook says it: no quotes or backslashes to break the
-        /// JSON it prints, and something whatever's typed.
         /// Whether the pattern reads as a regular expression; one that
         /// doesn't blocks every command (the hook fails closed), so Settings
         /// says so. ICU is close enough to `grep -E` for a warning.
@@ -36,6 +34,8 @@ nonisolated struct SessionRules: Codable, Equatable, Sendable {
             (try? NSRegularExpression(pattern: pattern)) != nil
         }
 
+        /// Its name as the hook says it: no quotes or backslashes to break the
+        /// JSON it prints, and something whatever's typed.
         var shownName: String {
             let cleaned = name.filter { !"\"\\“”".contains($0) && !$0.isNewline }.trimmingCharacters(in: .whitespaces)
             return cleaned.isEmpty ? pattern.filter { !"\"\\“”".contains($0) && !$0.isNewline } : cleaned
@@ -147,6 +147,7 @@ field() { printf '%s' "$input" | sed -nE 's/.*"'"$1"'"[[:space:]]*:[[:space:]]*"
 tool=$(field tool_name)
 cmd=$(field command)
 path=$(field file_path)$(field notebook_path)
+here=$(field cwd)
 decide() {
   printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"%s","permissionDecisionReason":"%s"}}\n' "$1" "$2"
   exit 0
@@ -164,12 +165,20 @@ words() {
   set -f; w=($1); set +f
   w=("${w[@]//[$q]/}")
   i=0; n=${#w[@]}; sub=""; args=(); configs=()
-  while [ $i -lt $n ] && [ "${w[$i]##*/}" != "$2" ]; do i=$((i+1)); done
+  while [ $i -lt $n ]; do
+    case "${w[$i]##*/}" in
+      "$2") break ;;
+      # git's own `git-push` and the like, from `git --exec-path`.
+      "$2"-?*) [ "$2" = git ] && { sub=${w[$i]##*/}; sub=${sub#git-}; args=("${w[@]:$((i+1))}"); return 0; } ;;
+    esac
+    i=$((i+1))
+  done
   [ $i -lt $n ] || return 1
   i=$((i+1))
   while [ $i -lt $n ]; do
     case "${w[$i]}" in
       -c|--config-env) configs+=("${w[$((i+1))]}"); i=$((i+2)) ;;
+      --config-env=*) configs+=("${w[$i]#--config-env=}"); i=$((i+1)) ;;
       -C|--git-dir|--work-tree|--namespace|-R|--repo|--hostname) i=$((i+2)) ;;
       -*) i=$((i+1)) ;;
       *) break ;;
@@ -185,10 +194,19 @@ has() {
   for p; do for a in "${args[@]}"; do case "$a" in $p) return 0 ;; esac; done; done
   return 1
 }
-# Whether a short flag, alone or among others (`-fu`), has one of the letters.
+# Whether a short flag, alone or among others (`-fu`), has one of the
+# letters; the value after a flag that takes one (`--sort -committerdate`)
+# isn't a flag.
 flag() {
-  local a
-  for a in "${args[@]}"; do case "$a" in -[!-]*[$1]*|-[$1]*) [ "${a#-}" != "$a" ] && [ "${a#--}" = "$a" ] && return 0 ;; esac; done
+  local a skip=0
+  for a in "${args[@]}"; do
+    if [ $skip = 1 ]; then skip=0; continue; fi
+    case "$a" in
+      --sort|--format|-m|-F|--message|--file|--contains|--no-contains|--merged|--no-merged|--points-at|-o|--push-option|--repo|--receive-pack|--exec|--set-upstream-to|-t|--track) skip=1 ;;
+      --*) ;;
+      -[!-]*[$1]*|-[$1]*) return 0 ;;
+    esac
+  done
   return 1
 }
 # The first argument that isn't a flag (or a flag's value): gh's verb.
@@ -201,14 +219,16 @@ verb() {
 }
 # Git config that changes what push does, or makes an alias of anything.
 pushconfig() { printf '%s\n' "$@" | tr 'A-Z' 'a-z' | grep -Eq '^(alias\.|remote\..*\.(push|mirror)|push\.)'; }
+# What an alias runs, when `sub` is one, in the folder the call runs in.
+alias_of() { git -C "${here:-.}" config --get "alias.$1" 2>/dev/null; }
 if [ "$guard" = 1 ]; then
   case "$path" in
-    *dev.andon.gannin/*|*dev.andon.gannin.plist|*.gannin/settings*|*.claude/settings*|*managed-settings*) deny "$guarded" ;;
+    *dev.andon.gannin/*|*dev.andon.gannin.plist|*.gannin/settings*|*.claude/settings*|*managed-settings*|*.gitconfig|*.git/config|*/git/config) deny "$guarded" ;;
   esac
   # A command naming what holds the rules may read it, not write it.
   while IFS= read -r seg; do
     case "$seg" in
-      *dev.andon.gannin*|*rule-comments*|*.gannin/settings*|*.claude/settings*|*disableAllHooks*|*managed-settings*) ;;
+      *dev.andon.gannin*|*rule-comments*|*.gannin/settings*|*.claude/settings*|*disableAllHooks*|*managed-settings*|*.gitconfig*|*.git/config*|*/git/config*) ;;
       *) continue ;;
     esac
     case "$seg" in *\>*) deny "$guarded" ;; esac
@@ -226,15 +246,25 @@ fi
 comment=0
 if [ "$tool" != Bash ]; then
   case "$tool" in
-    mcp__*[Gg]it[Hh]ub*__add_*comment*|mcp__*[Gg]it[Hh]ub*__pull_request_review_write|mcp__*[Gg]it[Hh]ub*__add_reply_to_pull_request_comment) comment=1 ;;
+    mcp__*[Gg]it[Hh]ub*__add_*comment*|mcp__*[Gg]it[Hh]ub*__pull_request_review_write|mcp__*[Gg]it[Hh]ub*__add_reply_to_pull_request_comment|mcp__*[Gg]it[Hh]ub*__create_and_submit_pull_request_review|mcp__*[Gg]it[Hh]ub*__submit_pending_pull_request_review) comment=1 ;;
     *) exit 0 ;;
   esac
   segments=""
 fi
 while IFS= read -r seg; do
   [ -n "$seg" ] || continue
+  # Config given to git through its environment, which can hold an alias.
+  if [ $gitrules -gt 0 ]; then
+    case "$seg" in *GIT_CONFIG_COUNT*|*GIT_CONFIG_KEY_*|*GIT_CONFIG_PARAMETERS*) deny "$guarded" ;; esac
+  fi
   if words "$seg" git; then
     if [ $gitrules -gt 0 ]; then
+      # An alias for push, branch, tag or update-ref, or a shell alias, is
+      # what it runs, which the rules can't follow.
+      case "$(alias_of "$sub")" in
+        "") ;;
+        *push*|*branch*|*tag*|*update-ref*|!*) deny "$guarded" " It runs git alias $sub, which the rules can't see into: run the git command itself." ;;
+      esac
       if pushconfig "${configs[@]}"; then deny "$guarded"; fi
       if [ "$sub" = config ] && ! has '--get|--get-all|--get-regexp|-l|--list|get|list' && pushconfig "${args[@]}"; then deny "$guarded"; fi
     fi
@@ -292,13 +322,31 @@ while IFS= read -r seg; do
       if [ "$releases" = 1 ] && [ $writes = 1 ] && has '*releases*'; then deny "No gh release writes"; fi
       if [ "$deletes" = 1 ] && [ "$method" = DELETE ] && has '*git/refs*'; then deny "No branch or tag deletes"; fi
       if [ $writes = 1 ] && has '*/comments|*/comments/*|*/reviews|*/reviews/*|*/replies'; then comment=1; fi
+      # GraphQL mutations, read from the whole command, as a query's
+      # parentheses split it into parts.
+      if has graphql; then
+        if [ "$deletes" = 1 ] && printf '%s' "$cmd" | grep -q 'deleteRef'; then deny "No branch or tag deletes"; fi
+        if [ "$force" = 1 ] && printf '%s' "$cmd" | grep -q 'updateRefs*' && printf '%s' "$cmd" | grep -q 'force'; then deny "No force push"; fi
+        if printf '%s' "$cmd" | grep -Eq 'add(Comment|PullRequestReview|PullRequestReviewComment|PullRequestReviewThread|PullRequestReviewThreadReply|DiscussionComment)|submitPullRequestReview'; then comment=1; fi
+      fi
     fi
   fi
 done <<SEGMENTS
 $segments
 SEGMENTS
-# Custom rules before the count, so a call they stop isn't counted. An
-# Ask me answered No still counts: the hook can't hear the answer.
+# Calls running at once can each read the log before the other writes it,
+# so a burst can slip one or two past the limit.
+counting=0
+if [ "$limit" -gt 0 ] 2>/dev/null && [ "$comment" = 1 ]; then
+  counting=1; now=$(date +%s); log="$dir/rule-comments"
+  recent=$(awk -v since=$((now - 3600)) '$1 > since' "$log" 2>/dev/null)
+  if [ "$(printf '%s' "$recent" | grep -c .)" -ge "$limit" ]; then
+    deny "At most $limit PR comments or reviews an hour"
+  fi
+fi
+# Custom rules, after the limit's check (so a call over it is denied, not
+# asked about) and before it's recorded (so a call they stop, or ask about,
+# isn't counted: the hook can't hear the answer to Ask me).
 if [ "$tool" = Bash ]; then
   k=0
   while [ $k -lt ${#cname[@]} ]; do
@@ -316,14 +364,7 @@ if [ "$tool" = Bash ]; then
     k=$((k+1))
   done
 fi
-# Calls running at once can each read the log before the other writes it,
-# so a burst can slip one or two past the limit.
-if [ "$limit" -gt 0 ] 2>/dev/null && [ "$comment" = 1 ]; then
-  now=$(date +%s); log="$dir/rule-comments"
-  recent=$(awk -v since=$((now - 3600)) '$1 > since' "$log" 2>/dev/null)
-  if [ "$(printf '%s' "$recent" | grep -c .)" -ge "$limit" ]; then
-    deny "At most $limit PR comments or reviews an hour"
-  fi
+if [ $counting = 1 ]; then
   { [ -n "$recent" ] && printf '%s\n' "$recent"; printf '%s\n' "$now"; } > "$log.$$" && mv "$log.$$" "$log"
 fi
 exit 0
@@ -379,7 +420,7 @@ struct SessionRulesSection: View {
             Text("Each rule is checked by Gannin before claude runs a command, in every session you start or resume from now on, on this Mac, a server or a sandbox, in either mode. A blocked command shows in the session's Activity with the rule's name, and claude is told why so it can carry on another way. Ask me puts the session in Needs you for you to allow or deny. A pattern is matched against the whole command as an extended regular expression; plain words work as they are.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("While any rule is on, a session can't change Gannin's settings, its own settings file or Claude Code's (reading them with cat, grep and the like is fine, other commands naming them are blocked), or set git config that changes what push does. Push only to the session's branch needs the branch named, as git push origin HEAD:<branch>. Rules match commands as they're written, which stops mistakes and casual prompt injection, not someone set on getting round them (an encoded or scripted command); protect shared branches on GitHub too.")
+            Text("While any rule is on, a session can't change Gannin's settings, its own settings file or Claude Code's (reading them with cat, grep and the like is fine, other commands naming them are blocked), or set git config, or a git alias, that changes what push does. Push only to the session's branch needs the branch named, as git push origin HEAD:<branch>. Rules match commands as they're written, which stops mistakes and casual prompt injection, not someone set on getting round them (an encoded or scripted command); protect shared branches on GitHub too.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         } header: {
