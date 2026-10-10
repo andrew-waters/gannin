@@ -258,6 +258,8 @@ struct PlanningDraft: Hashable {
     var isAsk = false
     /// A New Quick Change rather than a plan (`NewQuickChangeView`).
     var isQuickChange = false
+    /// A New Design and Refine rather than a plan (`NewRefineView`).
+    var isRefine = false
 }
 
 extension SessionStore {

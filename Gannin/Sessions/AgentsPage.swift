@@ -80,6 +80,14 @@ struct AgentsPage: View {
                 }
                 .help("Plan something with Claude in the harness, sharing documents as you go")
             }
+            ToolbarItem {
+                Button {
+                    sessions.showNewRefine(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo, with: openWindow)
+                } label: {
+                    Label("New Design and Refine", systemImage: "rectangle.and.pencil.and.ellipsis")
+                }
+                .help("Step through a web page with the room, noting what to improve, ending in issues")
+            }
         }
     }
 

@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Design and Refine under Rituals: start a session on a web page with its project, repos and who's in the meeting, kept across launches, with Claude as co-reviewer (stepping through the page and capturing findings to come)
 - Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
