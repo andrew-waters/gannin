@@ -191,7 +191,7 @@ struct OrgSettingsView: View {
             Button("No Review") { configs.update(org) { $0.reposWithoutReview.formUnion(shown) } }
             Divider().frame(height: 16)
             Button("Needs the Mac") { configs.update(org) { $0.reposNeedingMac.formUnion(shown) } }
-            Button("Sandbox") { configs.update(org) { $0.reposNeedingMac.subtract(shown) } }
+            Button("Doesn't Need the Mac") { configs.update(org) { $0.reposNeedingMac.subtract(shown) } }
         }
         .disabled(names.isEmpty)
         .controlSize(.small)
