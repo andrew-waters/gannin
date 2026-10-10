@@ -223,7 +223,7 @@ struct AskArtifactsSection: View {
                 Button(artifacts.isEmpty ? "Ask for an Artifact" : "Ask for Another", action: ask)
                     .disabled(!running)
             }
-            .help(running ? "Ask Claude to publish its answer as a Claude artifact, a page with a link to share" : "Not running: Restart the session first")
+            .help(running ? "Ask Claude to publish its answer as a Claude artifact, a page with a link to share" : "Not running: Resume the session first")
         } header: {
             Text(artifacts.isEmpty ? "Artifacts" : "Artifacts \(artifacts.count)")
         } footer: {

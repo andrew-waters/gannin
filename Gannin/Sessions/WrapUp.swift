@@ -181,7 +181,7 @@ struct WrapUpSessionSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Wrap up \(session.longReference)?")
                     .font(.headline)
-                Text("\(session.title). Closing the tab leaves claude running; this is the moment to end it, finish it, and bring its plans up to date.")
+                Text("\(session.title). Closing the tab can leave claude running or stop it. Tick off its plans first if they're done.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

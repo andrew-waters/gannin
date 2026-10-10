@@ -67,7 +67,7 @@ enum SandboxLaunch {
               note "Setting Apple container's Linux kernel"
               "$c" system kernel set --recommended || sandbox_failed "Apple container's Linux kernel couldn't be set on \(box)."
             fi
-            [ -f "$session/secrets.env" ] || sandbox_failed "Gannin had no credentials to hand this sandbox. Check Settings, under Sandbox, and the org's GitHub token under Harness, then Restart."
+            [ -f "$session/secrets.env" ] || sandbox_failed "Gannin had no credentials to hand this sandbox. Check Settings, under Sandbox, and the org's GitHub token under Harness, then Resume."
 
             # The issue's repos' clones in projects/ (or projects/<group>/), found by
             # their origin rather than their folder's name; read, never run.
@@ -209,7 +209,7 @@ enum SandboxLaunch {
               exit 1
             }
 
-            [ -f "$session/secrets.env" ] || fail "There are no credentials for this sandbox. Restart the session from Gannin."
+            [ -f "$session/secrets.env" ] || fail "There are no credentials for this sandbox. Resume the session in Gannin."
             set -a
             . "$session/secrets.env"
             set +a
@@ -254,7 +254,7 @@ enum SandboxLaunch {
               note "Claude isn't signed in in your sandboxes yet. When it asks, choose your Claude account, open the link it shows, sign in, and paste the code back. Your other sandboxes stay signed in."
             fi
 
-            \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "", afterExit: "note \"Claude Code has exited, so its sandbox stops once nothing else uses it. Restart the session to go on.\"\nexit 0"))
+            \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "", afterExit: "note \"Claude Code has exited, so its sandbox stops once nothing else uses it. Resume the session to go on.\"\nexit 0"))
             """
     }
 

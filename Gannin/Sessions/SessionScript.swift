@@ -71,7 +71,7 @@ enum SessionScript {
         let folder = ".worktrees/\(session.branch)"
         // A server session's brief comes from the harness once it's there.
         let briefSource = session.harnessFolder.map { recorded in
-            #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(recorded) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Restart."\#n"#
+            #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(recorded) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Resume."\#n"#
         } ?? ""
         let prepare = """
             # Written by Gannin for \(session.longReference). Run in the session's terminal.
@@ -126,7 +126,7 @@ enum SessionScript {
               mkdir -p "$folder/.gannin/\(attachments)" && cp -R "$session/\(attachments)/." "$folder/.gannin/\(attachments)/" || warn "Couldn't copy the screenshots into the session's folder."
             fi
             for name in \(names.map(quoted).joined(separator: " ")); do
-              [ -e "$folder/.gannin/\(attachments)/$name" ] || warn "The screenshot $name didn't reach this box, so Claude can't see it. Restart the session to send it again."
+              [ -e "$folder/.gannin/\(attachments)/$name" ] || warn "The screenshot $name didn't reach this box, so Claude can't see it. Resume the session to send it again."
             done
 
             """
@@ -168,7 +168,7 @@ enum SessionScript {
         // mode first, then pastes it (`SessionStore.startUnattended`).
         let prompt = session.routineRun == nil ? " " + quoted(openingPrompt(session)) : ""
         return """
-            command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
+            command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Resume the session."
             if [ -e "$session/started" ]; then
               claude --resume "$id"\(options(session)) --settings \(settings)
             else
@@ -275,7 +275,7 @@ enum SessionScript {
             mkdir -p "$(dirname "$exclude")"
             grep -qx '.gannin/' "$exclude" 2>/dev/null || echo '.gannin/' >> "$exclude"
 
-            command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
+            command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Resume the session."
             if [ -e "$session/started" ]; then
               claude --resume "$id"\(options(session)) --settings .gannin/\(settingsName(session))
             else

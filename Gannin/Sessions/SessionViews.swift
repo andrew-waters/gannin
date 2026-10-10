@@ -1487,7 +1487,7 @@ struct TerminalHost: View {
             view = sessions.open(session)
             sessions.terminal(session.id)?.focus()
         }
-        // Restart swaps the terminal inside the same container, so only the
+        // Resume swaps the terminal inside the same container, so only the
         // keyboard needs putting back.
         .onChange(of: sessions.state(session.id)) { _, state in
             if state == .starting { sessions.terminal(session.id)?.focus() }
@@ -1671,12 +1671,13 @@ private struct SessionPanel: View {
                     // An Ask goes with its folder, from its list's Delete.
                     if !session.isAsk {
                         Button("Forget…", role: .destructive) { confirmingRemove = true }
-                            .help("Take the session out of Gannin, leaving its files where they are")
+                            .help("End claude and its helpers and take the session out of Gannin; its files stay")
                     }
                 }
-                Text(sessions.isRunning(session.id)
-                     ? "Stop Claude ends it and keeps the worktree, to resume later. Forget takes the session out of Gannin and leaves its files."
-                     : "Resume starts claude again where the conversation left off. Forget takes the session out of Gannin and leaves its files.")
+                Text((sessions.isRunning(session.id)
+                      ? "Stop Claude ends it and keeps the worktree, to resume later."
+                      : "Resume starts claude again where the conversation left off.")
+                     + (session.isAsk ? "" : " Forget ends claude and its helpers and takes the session out of Gannin; its files stay."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2082,7 +2083,7 @@ struct SessionSettingsSection: View {
             if customModel || (!model.isEmpty && !known) {
                 TextField("Model ID", text: $model, prompt: Text("claude-opus-5-5"))
             }
-            Text("Sessions run Claude Code with this model (--model), from their next start or Restart. Its default is what Claude Code's own settings say; /model in a session changes it there.")
+            Text("Sessions run Claude Code with this model (--model), from their next start or Resume. Its default is what Claude Code's own settings say; /model in a session changes it there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text("Gannin looks for PRs your review is asked on, your own PRs' checks and reviews, and reviewed PRs you're watching, as often as Settings › Sync says. A new request notifies, with Review with Claude to start a review when you choose.")
