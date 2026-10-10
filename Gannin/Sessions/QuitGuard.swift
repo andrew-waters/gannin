@@ -66,7 +66,8 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
 
         var lines: [String] = []
         for session in running.prefix(8) {
-            lines.append("• \(session.shortReference) \(session.issue.title): \(sessions.state(session.id).label)")
+            let scheduled = session.routineRun.map { " (scheduled: \($0.name))" } ?? ""
+            lines.append("• \(session.shortReference) \(session.issue.title)\(scheduled): \(sessions.state(session.id).label)")
         }
         if running.count > 8 { lines.append("• and \(running.count - 8) more") }
         var explanation: [String] = []
@@ -77,6 +78,12 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         }
         if !waiting.isEmpty {
             explanation.append(waiting.count == 1 ? "One is waiting on you." : "\(waiting.count) are waiting on you.")
+        }
+        let scheduled = running.filter { session in session.routineRun.map { sessions.routines?.run($0.run)?.outcome.isActive == true } ?? false }
+        if !scheduled.isEmpty {
+            explanation.append(scheduled.count == 1
+                ? "One is a scheduled run, which is recorded as stopped when Gannin quits."
+                : "\(scheduled.count) are scheduled runs, which are recorded as stopped when Gannin quits.")
         }
         if running.contains(where: \.isRemote) {
             explanation.append("Sessions on a server end too, as their ssh connection closes.")

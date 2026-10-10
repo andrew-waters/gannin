@@ -41,6 +41,16 @@ final class RoutineScheduler {
 
     func begin() {
         guard loop == nil else { return }
+        // Terminals don't outlive Gannin: a run still going from before
+        // ended when it quit.
+        let quitAt = store.checkedAt ?? .now
+        for run in store.activeRuns {
+            store.updateRun(run.id) { run in
+                run.outcome = .failed
+                run.endedAt = run.endedAt ?? quitAt
+                run.note = "Gannin quit while it ran. Open its session to resume it."
+            }
+        }
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self else { return }

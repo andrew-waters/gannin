@@ -117,8 +117,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
   Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, once set);
-  and Agents (Metrics, Waiting on You, then sessions grouped as working on issues, reviews,
-  planning and Ask). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You, Metrics);
+  and Agents (Metrics, Waiting on You, Routines, Queue, then sessions grouped as working on issues, reviews,
+  planning and Ask). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You, Metrics, Queue);
   raw values stay as windows saved them. `OverviewView` is two pages (`OverviewView.Part`):
   the Dashboard and PR flow (delivery in full). The Issues row is the issue lists; Issue flow is the metrics. Picking a person shows their
   `PersonColumn` as the main view. The org's Settings (`OrgSettingsView`), opened
@@ -1122,8 +1122,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Finish Session (confirmed); Cancel keeps the tab. Settings > General > Agent, Ask to wrap up when
   closing a session's tab (`sessionsWrapUpOnClose`, on), also the sheet's Don't ask again.
 - Quitting with sessions running asks first (`GanninAppDelegate.applicationShouldTerminate`,
-  `Sessions/QuitGuard.swift`): which are running and in what state, that working ones stop
-  mid-task, that server sessions end with their ssh connection, and that conversations resume.
+  `Sessions/QuitGuard.swift`): which are running and in what state (scheduled runs named as such),
+  that working ones stop mid-task, that server sessions end with their ssh connection, and that
+  conversations resume.
 - `SessionStore` keeps sessions (`CodeSession`: issue, branch `123-short-title`, the harness
   repo and its checkout path on the box it runs on) in Application Support/<bundle
   ID>/Sessions, and their terminals, so closing a window leaves claude running. Work on This
@@ -1199,6 +1200,75 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   a change moves (`SessionBrief.advice`: PR size and files, cycle time, throughput, rework,
   unreviewed, flaky runs), as guidance it may set aside when it says why in the PR's Why; none, no
   section.
+
+## Routines
+
+- `Gannin/Routines/` (andrew-waters/gannin#87, `plans/2026-10-09-a-way-to-run-agents-on-crons-routines.md`,
+  `requirements/a-way-to-run-agents-on-crons-routines.md`): Claude Code sessions started by
+  themselves while Gannin runs, never while it's closed or the Mac sleeps. All the user's own, on this
+  Mac (`RoutineStore`, Application Support/<bundle ID>/Routines: `routines.json`, `queue.json`,
+  `runs.json` (newest 500, never dropping one going) and `state.json`, Pause All and the last look).
+  The only harness writes are an issue run's session record and what the user commits.
+- A `Routine` is a report, maintenance (`RoutineKind.code`), a queue window or a pinned issue: name,
+  project harness, prompt, the team's prompts by path (none takes the defaults), a maintenance
+  routine's repos, a `RoutineSchedule`, a `RoutineLimit` (Local only, the default for anything new;
+  Draft PR; Ready PR), a time and cost limit, a queue window's concurrency, a pin's issue, and on or
+  off. `RoutineSchedule` is every N minutes from an anchor (midnight the day it was set, so hourly is
+  on the hour), daily, working days (the org's `WorkWeek` less its bank holidays), weekly, a cron
+  expression (`CronExpression`, our own five-field parser: lists, ranges, steps, names, Sunday as 0 or
+  7, cron's either-day rule, `@daily` and the like, refusing a bad one with the reason), once (a
+  pin) or a window (hours, past midnight too, on working days or days picked). One
+  `nextTimes(after:count:)` serves the scheduler, the editor's next five and the list.
+- `RoutineScheduler` (started from `GanninApp` beside `EngineerWatch`, every 15 seconds and at once
+  on `didWakeNotification`, never two looks at once): each look watches the runs going, then takes
+  each routine's times since the last look (`RoutineStore.checkedAt`, so a relaunch knows what passed
+  while closed) through `plan`: the latest within two minutes runs; older ones are one Missed row for
+  the gap (`recordGap`, first, last and count); while paused, one Skipped row. Times from before a
+  routine was made (or its schedule last changed) don't count. A pin is turned off once its time has
+  passed. Queue windows have no times: while open (`isOpen`), the next queued issue starts until
+  `concurrency` runs are going (`freeSlots`), each taken off the queue as it starts. Run Now starts one
+  outside the schedule. At launch, runs still marked going are failed (terminals don't outlive Gannin).
+- Starting (`SessionStore.startRoutine`, `Routines/RoutineRuns.swift`): the run's session carries
+  `CodeSession.routineRun` (`RoutineRunInfo`: routine, run, name, kind, limit, limits, repos, task).
+  Its tab is added, not shown, and claude starts with no prompt (`SessionScript.claudeSteps` leaves it
+  out): `startUnattended` waits for `SessionStart` to report idle (up to 15 minutes, for a sandbox's
+  first image), switches to auto mode (`switchMode`, tried twice), then pastes
+  `SessionScript.openingPrompt`. One that can't reach auto mode is ended before doing anything; the
+  run fails saying why, with a notification, and the editor warns while that box is in
+  `autoUnavailableBoxes`. `--disallowedTools` takes away what the limit doesn't allow
+  (`RoutineRunInfo.disallowedTools`: Local only `git push`, `gh pr create` and `gh pr ready`; Draft
+  PR `gh pr ready`; never `gh pr merge`; a report `git commit` too), and the brief's Scheduled run
+  section (`briefSection`) says nobody is watching, how far it may go and its limits, as do the
+  brief's PR and plan lines (Local only: commit and stop, an issue run's plan in its folder).
+  - A report is an Ask session on this Mac (`startReportRun`) with the routine's question, its files in
+    its folder for the Files pane and Commit to Harness; the tab says Report.
+  - Maintenance (`startMaintenanceRun`) has no issue, as a quick change without one hasn't
+    (`hasNoIssue`, `isMaintenance`: Maintenance as its short reference), on a new branch each run
+    (`routineBranchName`, `routine-<name>-<date>-<4 hex>`), its brief's task and repos in place of a
+    description (`maintenanceSections`), placed as Work on This would be.
+  - An issue from a queue window or pin (`startIssueRun`) is the issue's Work on This session, briefed
+    from the history and any cached detail, its record committed to the harness without asking
+    (scheduling it is the consent), its first prompt `scheduledIssuePrompt` (write a short plan and
+    carry on) with the routine's note. An issue that already has a session fails the run.
+- Watching (`watchRoutineRuns`, each tick, `RoutineVerdict.judge`): a run's cost is its session's and
+  helpers' transcripts' `costUSD`; past its minutes or cost it's interrupted (Esc), its helpers and
+  claude ended, worktree and files kept, Stopped at limit with a notification (`stopAtLimit`). A
+  question or permission prompt is Needs you, flagged as any session, the clock running on. A turn
+  ending once it's been seen working, and not during pair review, is Finished (Report ready for a
+  report). Notifications (`notifyRoutine`) follow Settings › General › Agent and open the session.
+- Agents › Routines (`RoutinesPage`, `WorkloadTab.routines`, its badge the runs going): reports and
+  maintenance, queue windows and pinned issues, each with its schedule, limit, next run or Open now,
+  last outcome (`RunOutcomeLabel`) and an on switch; Pause All (a banner while paused) and New Routine
+  in the toolbar; Run Now, Edit, Turn Off and Delete in a row's menu. `RoutineEditor` (a sheet) sets
+  name, kind (when new), project, prompt, the team's prompts, repos, the schedule through
+  `ScheduleDraft` with the next five times or the problem, how far it may go, limits, and the auto
+  mode warning. A routine's page (`DetailSelection.routine`, `RoutinePage`) has its settings, next
+  times and its runs: scheduled, started, outcome with its note, how long, cost, PRs and Open Session.
+- Agents › Queue (`AgentQueuePage`, `WorkloadTab.agentQueue`, badge the count): the org's queue in
+  order, dragged to reorder, Move to Top or Bottom, Remove; which windows drain it and when they next
+  open; and the issues pinned to a time. Schedule for Agent (`ScheduleForAgentButton`, beside Work on
+  This in the issue drawer and window; `ScheduleForAgentItems` in Issues › All's menu) adds the issue
+  to the queue or takes it off, and Pin to a Time opens the editor for a pinned routine.
 
 ## Sandboxed sessions
 
