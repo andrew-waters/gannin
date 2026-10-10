@@ -54,7 +54,10 @@ struct QuickChangeTests {
         #expect(brief.contains("- The change is in acme/app."))
         #expect(!brief.contains("The issue lives in"))
         #expect(brief.contains("This change's folder"))
-        #expect(!brief.contains("Closes"))
+        // No reference to close: the PR line only says where `Closes` would go.
+        #expect(!brief.contains("Closes acme/"))
+        #expect(!brief.contains("Closes #"))
+        #expect(!brief.contains("#0"))
         #expect(brief.contains("needs no plan document"))
         #expect(!brief.contains("plans/YYYY-MM-DD"))
     }
