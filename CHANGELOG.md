@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Added
+- Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
+
 ## [0.0.2] - 2026-10-05
 
 ### Added

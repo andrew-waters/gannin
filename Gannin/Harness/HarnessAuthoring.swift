@@ -67,6 +67,9 @@ enum HarnessAuthoring {
         case .research:
             // Committed from an Ask's Files, never drafted.
             ""
+        case .refines:
+            // Committed when a Design and Refine session is agreed, never drafted.
+            ""
         case .plans:
             """
             Let's plan "{{topic}}" together, here in the team's harness. Read STANDARDS.md and plans/_template.md first. {{starting_point}}
@@ -172,6 +175,7 @@ struct HarnessDocumentDraft {
         case .skills, .prompts: ["active", "draft", "archived"]
         case .learnings: ["active", "retired"]
         case .research: []
+        case .refines: ["agreed"]
         case .plans, .requirements: ["draft", "in-progress", "done"]
         }
     }

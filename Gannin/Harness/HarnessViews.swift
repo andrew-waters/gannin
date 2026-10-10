@@ -104,8 +104,9 @@ struct HarnessView: View {
         }
         .loadsHarness(org: org)
         .toolbar {
-            // Research is committed from an Ask's Files, one file at a time.
-            if let setup, kind != .research {
+            // Research is committed from an Ask's Files, one file at a time,
+            // and refines when their session is agreed.
+            if let setup, !kind.isRecord {
                 ToolbarItem {
                     if harnesses.count > 1 {
                         // Which harness it goes in.

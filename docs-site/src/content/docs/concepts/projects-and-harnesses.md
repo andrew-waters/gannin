@@ -16,7 +16,7 @@ Every project has a **harness**: a GitHub repo beside the code that holds what t
 - **Team settings**, as files under `.gannin/`: the issue workflow, investments, goals, the scorecard and more ([where things are kept](/docs/concepts/where-things-are-kept/) lists them).
 - **Documents**: plans, requirements, findings, research, and the `STANDARDS.md` they follow. They're listed under Harness in the sidebar.
 - **Instructions for agents**: `skills/`, `prompts/` and `learnings/` (rules and reasons people gave in review).
-- **Records**: what each agent session and review did, under `sessions/` and `.gannin/reviews/`.
+- **Records**: what each agent session and review did, under `sessions/` and `.gannin/reviews/`, and each Design and Refine session under `refines/`, with its screenshots. They're listed under Harness › Refines.
 - **Where sessions run**: Claude Code works in a checkout of the harness, with each repo it touches cloned under `projects/` and each issue's worktrees under `.worktrees/`. Both are kept out of the harness's own git.
 
 Because it's a repo, it has history, review and permissions like any other: whoever can read the harness can read the team's settings and documents, and changes to them are commits.

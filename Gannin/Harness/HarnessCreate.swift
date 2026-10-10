@@ -84,6 +84,8 @@ enum HarnessSkeleton {
                   review or planning starts (`prompts/README.md`).
                 - `learnings/<repo>/`: rules and reasons people gave in review, scoped to the code they're
                   about, which reviews follow (`learnings/README.md`).
+                - `refines/`: a record of each Design and Refine session, its screenshots beside it
+                  (`refines/README.md`).
                 - `sessions/`: Gannin's record of each Claude Code session, with the brief it started from.
                 - `.gannin/`: the team's settings and people's dates, kept by Gannin. Don't edit by hand.
 
@@ -115,7 +117,7 @@ enum HarnessSkeleton {
 
                 | Field | For | What it holds |
                 | ----- | --- | ------------- |
-                | `type` | all | `requirement`, `plan`, `finding`, `skill` or `learning` |
+                | `type` | all | `requirement`, `plan`, `finding`, `skill`, `learning` or `refine` |
                 | `status` | all but skills | One value from the list below, never a sentence |
                 | `summary` | all | A sentence or two for deciding whether to open it, as a `>` block |
                 | `domains` | all | The product areas it belongs to, from the list below, the main one first |
@@ -131,6 +133,7 @@ enum HarnessSkeleton {
                 - Findings: `open`, `investigating`, `fixing`, `fixed`, `wont-fix`, with a `severity` of
                   `low`, `medium`, `high` or `critical`
                 - Learnings: `active`, `retired`
+                - Refines: `agreed`
 
                 ## Where documents go
 
@@ -141,6 +144,7 @@ enum HarnessSkeleton {
                 skills/<name>.md
                 prompts/<name>.md
                 learnings/<repo>/YYYY-MM-DD-<slug>.md
+                refines/YYYY-MM-DD-<slug>/README.md
                 ```
 
                 ## Domains
@@ -364,6 +368,47 @@ enum HarnessSkeleton {
                 ## Source
 
                 > {What they said.}
+
+                """,
+            "refines/README.md": """
+                # Refines
+
+                A record of each Design and Refine session, where the team stepped through a page together
+                and agreed what to improve. One folder per session, `refines/YYYY-MM-DD-<slug>/`, with its
+                `README.md` (from `_template.md`) and the annotated screenshots beside it. Gannin commits
+                both when the room agrees the session, and each issue it made links to its screenshots here.
+
+                | Field | What it holds |
+                | ----- | ------------- |
+                | `type` | `refine` |
+                | `status` | `agreed` |
+                | `summary` | What was reviewed and what came of it, in a sentence |
+                | `url` | The page the session opened on |
+                | `attendees` | Who was in the room |
+                | `issues` | The issues it made, as `owner/repo#123` |
+                | `touches` | The repos whose code the page comes from |
+
+                Screenshots are whatever was on screen: check them for sensitive data before they're
+                committed, as Gannin asks you to.
+
+                """,
+            "refines/_template.md": """
+                ---
+                type: refine
+                status: agreed
+                summary: >
+                  {What was reviewed and what came of it, in a sentence.}
+                url: {the page the session opened on}
+                attendees: [{login}, {name}]
+                issues: [\(org)/{repo}#{number}]
+                touches: [\(org)/{repo}]
+                ---
+
+                # {What was reviewed}
+
+                ## Findings
+
+                - {The finding}: \(org)/{repo}#{number} ([screenshot](./{screenshot}.png))
 
                 """,
             "sessions/README.md": """
