@@ -139,7 +139,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Epics, Repositories (local git, see Local git), Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
-  Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, once set);
+  Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, Refines, once set);
   and Agents (Metrics, Waiting on You, Routines, Queue, then sessions grouped as working on issues, reviews,
   planning and Ask). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You, Metrics, Queue);
   raw values stay as windows saved them. `OverviewView` is two pages (`OverviewView.Part`):
@@ -1503,7 +1503,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (the busiest, ticked). Someone with no project starts at the beginning, anyone else at the name
   with the tour a link away. Then REST `POST /orgs/{org}/repos` (private, `auto_init` so there's a
   branch) and one commit of `HarnessSkeleton` (README, a starter CLAUDE.md listing its repos, a
-  generic `STANDARDS.md`, requirements, plans, findings and learnings with front matter templates,
+  generic `STANDARDS.md`, requirements, plans, findings, learnings and refines with front matter templates,
   skills, sessions, `.gannin/README.md` from `HarnessTour.readme`, and a `.gitignore` keeping out
   `projects/` and `.worktrees/`) with its `project.json`; it's a project from then on, home if
   it's the first.
@@ -1511,7 +1511,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `requirements/<module>/plans/`), requirements the rest of `requirements/`, `findings/`,
   `skills/`, `prompts/`, `learnings/` (grouped by their repo folder), `research/` (each
   `research/<folder>/README.md` the document, `HarnessKind.research`, with no New: files come from
-  an Ask's Commit to Harness); other READMEs and `_templates` left out. A front matter `type` overrides the folder, and
+  an Ask's Commit to Harness), `refines/` (each `refines/<date>-<slug>/README.md` the document, front
+  matter type `refine`, its screenshots beside it, `HarnessKind.refines`, with no New: a Design and
+  Refine session's Agree commits it, andrew-waters/gannin#135; research and refines are
+  `HarnessKind.isRecord`); other READMEs and `_templates` left out. A front matter `type` overrides the folder, and
   plans and requirements are grouped by their first domain, else their module folder
   (`HarnessDocument.area`). A document is
   about an issue named in its file name (`prd-123`) or its header table's GitHub row
@@ -1524,7 +1527,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Harness page and a document's page, and a session's brief gives the summary of documents that
   only mention its issue. `HarnessDocument.parserVersion` makes a cached index read its
   documents again when the reading changes.
-- Plans, Requirements, Findings, Skills, Prompts, Learnings and Research are rows under Harness in the sidebar
+- Plans, Requirements, Findings, Skills, Prompts, Learnings, Research and Refines are rows under Harness in the sidebar
   (`SidebarItem.harnessKind`, with counts of standard documents), sharing the `harnessKind` scene
   storage the Harness page reads; the Harness row itself shows the kind last picked.
 - The Harness page has a bar at the top: search over title, summary, path, domains and issues;

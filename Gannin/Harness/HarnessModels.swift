@@ -61,6 +61,10 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
     /// Files committed from Ask sessions, a folder per conversation
     /// (`research/<date>-<id>/`), its README the document.
     case research = "Research"
+    /// Design and Refine sessions' records, a folder per session
+    /// (`refines/<date>-<slug>/`) with its screenshots beside the README,
+    /// which is the document.
+    case refines = "Refines"
 
     var id: Self { self }
 
@@ -73,11 +77,12 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .prompts: "text.bubble"
         case .learnings: "lightbulb"
         case .research: "archivebox"
+        case .refines: "pencil.and.outline"
         }
     }
 
     /// A front matter `type`: `plan`, `requirement`, `finding`, `skill`,
-    /// `prompt`, `learning`.
+    /// `prompt`, `learning`, `research`, `refine`.
     init?(type: String) {
         guard let kind = Self.allCases.first(where: { $0.singular == type.lowercased() }) else { return nil }
         self = kind
@@ -92,20 +97,25 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .prompts: "prompt"
         case .learnings: "learning"
         case .research: "research"
+        case .refines: "refine"
         }
     }
+
+    /// Committed by a session rather than written on the Harness page:
+    /// research from an Ask's Files, refines when their session is agreed.
+    var isRecord: Bool { self == .research || self == .refines }
 
     /// The harness's layout: `plans/` for plans (and, until they're moved,
     /// `requirements/<module>/plans/`), the rest of `requirements/` for
     /// requirements, `findings/`, `skills/`, `prompts/` and `learnings/`. READMEs and templates
     /// describe the layout rather than being part of it, except in
-    /// `research/`, where each folder's README is its document.
+    /// `research/` and `refines/`, where each folder's README is its document.
     init?(path: String) {
         let parts = path.split(separator: "/")
         guard path.hasSuffix(".md"), let top = parts.first, let file = parts.last else { return nil }
-        if top == "research" {
+        if top == "research" || top == "refines" {
             guard parts.count == 3, file == "README.md" else { return nil }
-            self = .research
+            self = top == "research" ? .research : .refines
             return
         }
         guard file != "README.md", !file.hasPrefix("_") else { return nil }
@@ -175,7 +185,7 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 8
+    static let parserVersion = 9
 
     /// The status in a word or two, for a table: an older document's
     /// sentence cut at its first clause.
