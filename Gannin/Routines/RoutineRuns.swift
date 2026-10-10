@@ -14,8 +14,12 @@ struct RoutineRunInfo: Codable, Hashable {
     /// A maintenance routine's repos and task, as they were when it ran.
     let repos: [String]
     let task: String
+    /// Carried on in the issue's own session rather than one started for
+    /// it, so what it did before the run doesn't count, and the session
+    /// is handed back when the run ends.
+    var resumed: Bool?
 
-    init(routine: Routine, run: UUID) {
+    init(routine: Routine, run: UUID, resumed: Bool = false) {
         self.routine = routine.id
         self.run = run
         name = routine.name
@@ -25,6 +29,7 @@ struct RoutineRunInfo: Codable, Hashable {
         maxCost = routine.maxCost
         repos = routine.repos
         task = routine.prompt
+        self.resumed = resumed ? true : nil
     }
 
     /// A maintenance run's task and repos, in its brief where an issue's
@@ -99,7 +104,7 @@ extension SessionStore {
     /// not shown, claude started with no prompt, switched to auto mode,
     /// then given its first prompt. A claude that can't reach auto mode is
     /// ended before it does anything, and the run fails saying so.
-    func startUnattended(_ id: UUID) async -> RoutineStart {
+    func startUnattended(_ id: UUID, prompt: String? = nil) async -> RoutineStart {
         guard let session = sessions[id] else { return .failed("The session wasn't made.") }
         addTab(id, after: selectedTab.map { tabOwner($0) })
         _ = open(session)
@@ -124,7 +129,7 @@ extension SessionStore {
             notifyRoutine(id, title: "Scheduled run didn't start", body: "Auto mode unavailable. \(why)")
             return .failed("Auto mode unavailable. \(why)")
         }
-        guard submit(SessionScript.openingPrompt(session), to: id) else {
+        guard submit(prompt ?? SessionScript.openingPrompt(session), to: id) else {
             end(id)
             return .failed("Claude's terminal closed before it was given its prompt.")
         }
@@ -270,7 +275,7 @@ extension SessionStore {
     func startIssueRun(_ routine: Routine, issue: IssueReference, run: UUID, setup: HarnessConfig, goals: [Measurable], configs: OrgConfigStore,
                        issues: IssueStore, details: DetailStore, login: String?) async -> RoutineStart {
         if let existing = session(forIssue: issue.id) {
-            return .failed("\(issue.reference) already has a session (\(existing.branch)), so it wasn't started again.", retry: false)
+            return await resumeIssueRun(existing.id, routine: routine, run: run)
         }
         guard let path = Self.harnessPath(org: issue.org, repo: setup.repo) else {
             return .failed(Self.unavailable(org: issue.org, harness: setup) ?? "The harness isn't checked out here.")
@@ -296,6 +301,47 @@ extension SessionStore {
         // Committed before the terminal starts, so its pull brings the brief.
         await record(made.id, startedBy: login)
         return await startUnattended(made.id)
+    }
+
+    /// An issue with a session already carries on in it rather than in a
+    /// second beside it. A session mid-turn or asking something is left
+    /// alone, and the run tried again later. One that's running is started
+    /// again first (claude resumes its conversation), so the run's limits
+    /// reach claude (`--disallowedTools`); then it's switched to auto mode
+    /// and told to carry on. A run that doesn't start hands it back.
+    func resumeIssueRun(_ id: UUID, routine: Routine, run: UUID) async -> RoutineStart {
+        guard let session = sessions[id] else { return .failed("The issue's session wasn't found.") }
+        if isRunning(id), state(id) == .working || state(id) == .needsYou {
+            return .failed("\(session.issue.reference)'s session is busy, so the run will try again.")
+        }
+        let previous = session.routineRun
+        let info = RoutineRunInfo(routine: routine, run: run, resumed: true)
+        update(id) { $0.routineRun = info }
+        if isRunning(id) {
+            end(id)
+            let deadline = Date.now.addingTimeInterval(20)
+            while isRunning(id), Date.now < deadline {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+        let result: RoutineStart = isRunning(id)
+            ? .failed("\(session.issue.reference)'s session didn't stop to take the run's limits, so the run will try again.")
+            : await startUnattended(id, prompt: Self.resumedIssuePrompt(session, info: info, note: routine.prompt))
+        if case .failed = result { update(id) { $0.routineRun = previous } }
+        return result
+    }
+
+    /// What a session carrying on for a scheduled run is told: that nobody
+    /// is watching, how far it may go, then the routine's own note.
+    static func resumedIssuePrompt(_ session: CodeSession, info: RoutineRunInfo, note: String) -> String {
+        let extra = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        return """
+            Carry on with \(session.issue.reference), "\(session.issue.title)", from where this conversation left off. Gannin has \
+            resumed this session by itself for a scheduled run, so nobody is watching now. If you were waiting for a plan to be \
+            approved or a question answered, decide for yourself, note why where the work is recorded, and go on.
+
+            \(info.briefSection)
+            """ + (extra.isEmpty ? "" : "\n\n" + extra)
     }
 
     /// An issue run's first prompt: Work on This's, but with nobody to
