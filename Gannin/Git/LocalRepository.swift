@@ -605,6 +605,7 @@ final class LocalRepository {
         """
         \(reading ? "export GIT_OPTIONAL_LOCKS=0" : "")
         cd \(shellPath(folder)) || exit 1
+        \(SandboxGitGuard.applies(to: folder) ? SandboxGitGuard.here : "")
         g() { git -c core.quotepath=off --no-pager "$@" 2>/dev/null; }
         \(body)
         """

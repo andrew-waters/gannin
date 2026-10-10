@@ -1176,6 +1176,28 @@ private struct SessionPanel: View {
                         .truncationMode(.head)
                         .help(worktreePath)
                 }
+                if session.isSandboxed {
+                    let status = SandboxStatus(sessions.isRunning(session.id) ? sessions.sandboxStatus[session.id] : "stopped")
+                    LabeledContent("Runs in") {
+                        HStack(spacing: 6) {
+                            Circle().fill(status.color).frame(width: 8, height: 8)
+                            Text("A sandbox, \(status.label.lowercased())")
+                        }
+                    }
+                    .help(session.sandbox ?? "")
+                    if let error = status.error {
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else if let reason = session.hostReason {
+                    LabeledContent("Runs in") { Text(session.isRemote ? "The server" : "This Mac") }
+                    Text(reason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
                 if let folder = session.harnessFolder, let repo = session.harnessRepo,
                    let url = URL(string: "https://github.com/\(repo)/tree/HEAD/\(folder)") {
                     LabeledContent("In the harness") {
@@ -1331,6 +1353,8 @@ struct WorkOnThisLauncher: ViewModifier {
     /// While the team's prompts and skills are picked.
     @State private var choosing: IssueReference?
     @State private var recording = true
+    /// Whether the session runs in a sandbox, as picked in the sheet.
+    @State private var sandboxed = true
 
     func body(content: Content) -> some View {
         content
@@ -1361,6 +1385,22 @@ struct WorkOnThisLauncher: ViewModifier {
                     ) { choice, picked in
                         start(reference, recording: skipsAsking || recording, choice: choice, setup: picked)
                     } extra: {
+                        if SandboxCredentials.isEnabled {
+                            let offered = placement(for: reference)
+                            Section {
+                                Picker("Run in", selection: $sandboxed) {
+                                    Text("A sandbox").tag(true)
+                                    Text("This Mac").tag(false)
+                                }
+                                .pickerStyle(.segmented)
+                                .disabled(!offered.isSandboxed)
+                                Text(offered.reason ?? (sandboxed
+                                    ? "Claude works in a Linux sandbox that sees only this issue's folder, the shared clones' git and the harness, read-only."
+                                    : "Claude works on this Mac as you, able to reach everything you can."))
+                                    .font(.caption)
+                                    .foregroundStyle(offered.isSandboxed ? Color.secondary : Color.orange)
+                            }
+                        }
                         if !skipsAsking {
                             Section {
                                 Toggle("Record the session in the harness", isOn: $recording)
@@ -1396,14 +1436,26 @@ struct WorkOnThisLauncher: ViewModifier {
         guard Self.unavailable(reference, configs: configs, issues: issues) == nil else { return }
         let config = configs.config(for: reference.org)
         let setup = setup(for: reference)
-        if let setup, SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .work, harnesses: config.harnesses) {
+        // With sandboxing on, always asked, so this one can run on the Mac.
+        if let setup, SandboxCredentials.isEnabled || SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .work, harnesses: config.harnesses) {
             recording = true
+            sandboxed = placement(for: reference).isSandboxed
             choosing = reference
         } else if recordWithoutAsking(reference).wrappedValue {
             start(reference, recording: true, choice: nil, setup: setup)
         } else {
             confirming = reference
         }
+    }
+
+    /// Where the session would run by default (R3, R8).
+    private func placement(for reference: IssueReference) -> SandboxPlacement {
+        SandboxPlacement.decide(
+            enabled: SandboxCredentials.isEnabled, repos: Self.repos(reference, issues: issues),
+            reposNeedingMac: configs.config(for: reference.org).reposNeedingMac, org: reference.org,
+            hasGitHubToken: SandboxCredentials.gitHubToken(org: reference.org) != nil,
+            connectsBySSH: SessionStore.connectCommand.map { Shell.sshArguments($0) != nil } ?? true
+        )
     }
 
     static func recordMessage(_ reference: IssueReference) -> String {
@@ -1446,7 +1498,10 @@ struct WorkOnThisLauncher: ViewModifier {
         // needn't be the one `configs` reads.
         let goals = configs.scoped(setup.repo).config(for: reference.org).measurables
         let instructions = sessions.launchInstructions(org: reference.org, setup: setup, use: .work, repos: repos, choice: choice, values: Self.values(reference))
-        let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions) { session in
+        let decided = placement(for: reference)
+        // Picked in the sheet: the Mac over a sandbox, never the other way.
+        let chosen: SandboxPlacement = decided.isSandboxed && !sandboxed ? .host(SandboxPlacement.pickedHost) : decided
+        let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions, placement: chosen) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index, goals: goals)
         }
         guard recording else {

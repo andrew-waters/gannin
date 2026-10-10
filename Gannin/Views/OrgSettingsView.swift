@@ -64,7 +64,7 @@ struct OrgSettingsView: View {
             let excluded = configs.config(for: org).excludedRepos
             let repos = all.filter { !excluded.contains($0.name) } + all.filter { excluded.contains($0.name) }
             Section {
-                Text("Unticked repositories are left out everywhere in \(orgName): the workload lists, People and the stats. Untick Needs Review for a repository whose PRs can merge without one (docs, config, the harness), so they aren't flagged as merged without review.")
+                Text("Unticked repositories are left out everywhere in \(orgName): the workload lists, People and the stats. Untick Needs Review for a repository whose PRs can merge without one (docs, config, the harness), so they aren't flagged as merged without review. Tick Needs the Mac for one that only builds on a Mac (an Xcode app), so its Claude Code sessions run on the Mac rather than in a sandbox.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 filterField("Type to filter repositories")
@@ -189,6 +189,9 @@ struct OrgSettingsView: View {
             Divider().frame(height: 16)
             Button("Needs Review") { configs.update(org) { $0.reposWithoutReview.subtract(shown) } }
             Button("No Review") { configs.update(org) { $0.reposWithoutReview.formUnion(shown) } }
+            Divider().frame(height: 16)
+            Button("Needs the Mac") { configs.update(org) { $0.reposNeedingMac.formUnion(shown) } }
+            Button("Sandbox") { configs.update(org) { $0.reposNeedingMac.subtract(shown) } }
         }
         .disabled(names.isEmpty)
         .controlSize(.small)
@@ -211,6 +214,14 @@ struct OrgSettingsView: View {
                 .checkboxToggle()
                 .disabled(!isIncluded)
                 .help("Whether its PRs should have a review before they merge")
+                Toggle("Needs the Mac", isOn: Binding {
+                    configs.config(for: org).needsMac(repo.name)
+                } set: { _ in
+                    configs.toggleNeedsMac(repo.name, in: org)
+                })
+                .checkboxToggle()
+                .disabled(!isIncluded)
+                .help("Whether it only builds on a Mac, so its Claude Code sessions run here rather than in a sandbox")
                 Toggle("Included", isOn: included(repo: repo.name))
                     .toggleStyle(.switch)
                     .labelsHidden()

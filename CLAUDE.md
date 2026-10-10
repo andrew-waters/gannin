@@ -44,7 +44,8 @@ newest wins, time off merges by its UUID. It was copied from `UserDefaults` once
 (`userDataMigrated`). GitHub caches stay local JSON. The app has no entitlements beyond the
 hardened runtime.
 
-The app's settings (`SettingsView`) are General, Sync and Storage panes. General starts with
+The app's settings (`SettingsView`) are General, Sync, Sandbox (see Sandboxed sessions) and Storage
+panes. General (which also holds Agent) starts with
 Appearance: System, Light or Dark (`AppAppearance`, set on `NSApp` at launch and when changed). Sync (`SyncSettingsView`)
 holds everything that decides what's fetched from GitHub and how often (see Fetching and the rate
 limit). Storage (`StorageSettings`) shows each cache's size on disk with Clear
@@ -74,8 +75,8 @@ Support folder and token across once.
 
 ## Layout
 
-- `Gannin/Auth/`: GitHub OAuth device flow (`DeviceFlow`), token in the keychain (`Keychain`),
-  signed-in state (`AuthStore`). The OAuth App client ID lives in `GitHubOAuthConfig`.
+- `Gannin/Auth/`: GitHub OAuth device flow (`DeviceFlow`), token in the keychain (`Keychain`, by
+  service and account, which sandboxes' credentials use too), signed-in state (`AuthStore`). The OAuth App client ID lives in `GitHubOAuthConfig`.
 - `Gannin/GitHub/`: GraphQL client (`GitHubAPI`) and the queries (`Queries.swift`). All calls are
   reads except the project board writes in `ProjectFields.swift` (adding an issue to or
   removing it from a board, and saving its fields, from the issue window's
@@ -353,7 +354,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   repos and people from both `Workload` and `OrgMetrics`. A repo can also be marked as not
   needing review (`reposWithoutReview`, the Needs Review checkbox under Repositories): its PRs
   aren't counted as merged without review, the PR timeline doesn't warn, and the Inbox says No
-  review needed rather than No reviewer. Excluded authors lose their PRs and
+  review needed rather than No reviewer. Needs the Mac beside it (`reposNeedingMac`) keeps a repo's
+  Claude Code sessions out of sandboxes (see Sandboxed sessions). Excluded authors lose their PRs and
   their reviews, which is why
   `MetricPullRequest` stores raw `reviews` and derives first review and approval from them.
   "PRs opened" is a search count and ignores the config.
@@ -1111,6 +1113,115 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   a change moves (`SessionBrief.advice`: PR size and files, cycle time, throughput, rework,
   unreviewed, flaky runs), as guidance it may set aside when it says why in the PR's Why; none, no
   section.
+
+## Sandboxed sessions
+
+- `Gannin/Sandbox/` (andrew-waters/gannin#8, `plans/2026-10-09-run-agent-sessions-in-apple-container.md`,
+  `requirements/run-agent-sessions-in-apple-container.md`, user guide `docs/SANDBOXES.md`): Work on This
+  sessions and their helpers can run claude in an Apple container Linux VM, one per issue, so an agent
+  reaches only its issue's folder and what it's given. Review with Claude, planning, Ask and `claude -p`
+  stay on the Mac. It's Apple's `container` CLI through `Shell.run`, here or over ssh, never its Swift
+  API or Orchard (which was the reference). Everything Gannin makes is labelled `dev.andon.gannin=1`,
+  and cleanup touches nothing else.
+- `SandboxSupport` is the version policy (R20): `minimum` (1.4.1; below it, no sandbox), `tested`
+  (1.5.0, with its signed installer's URL and SHA-256; Install and Update go to it) and anything newer
+  running with a note. `features` are flags checked by name in each subcommand's help, so a renamed one
+  is named whatever the version. Moving to a new release: the plan's spike checks, then bump `tested`,
+  `installer` and `installerSHA256` together (a test keeps them in step).
+- `SandboxRuntime` reads a box (`SandboxBox`: `.local` or `.remote(connect:)`) in one probe script into
+  `SandboxHost` (arch, macOS, binary, version, service status from JSON, kernel, base image, missing
+  flags), whose `problem` and `versionNote` say what's wrong in plain words. It starts the service
+  (`--disable-kernel-install`, polled), sets the recommended kernel only when none is set, installs here
+  (downloaded and hash-checked as the user, checked again and installed in one admin prompt), and
+  `remoteInstallScript` is the same for a terminal over `ssh -t` (`withTerminal`, `remoteBash`).
+  `SandboxSetup` runs those as steps for Settings, keeping the CLI's output.
+- Images (`SandboxImages`): `baseContainerfile` (Debian with Node 22, Claude Code, git, gh, Python and
+  build tools; git trusts the mounted folders, signs in through gh with `GH_TOKEN` and signs with SSH;
+  Claude Code's updater off, so a new base brings a new Claude Code) built as `gannin-base:<hash>` and
+  retagged `latest`; a repo's `.gannin/sandbox/<repo>.Containerfile` in the harness (`FROM gannin-base`)
+  as `gannin-<repo>:<hash of it and the base>`, built on the box from the checkout. `removeAll` deletes
+  labelled containers and images, read from the CLI's JSON.
+- Credentials (`SandboxCredentials`, keychain service `dev.andon.gannin.sandbox`, `Keychain` takes a
+  service and account): Claude's sign-in (`ClaudeKind`: `.signIn`, claude's own sign-in inside the
+  sandbox, through Anthropic's flow, its login kept by Claude Code in `claudeFolder`, the config folder
+  every sandbox shares, which Gannin never reads; or `.apiKey`, passed as `ANTHROPIC_API_KEY`, the only
+  Claude credential Gannin holds), a fine-grained GitHub token per
+  org (`GH_TOKEN`; Create One opens GitHub's new token page filled in, `newGitHubTokenURL`) and a
+  signing key (made with `ssh-keygen` or pasted; no passphrase), with the user's git name and email.
+  Nothing else goes in: not the user's Claude or gh login, Gannin's token, or SSH keys.
+- Settings › Sandbox, a pane of its own (`SandboxSettingsSection`, then `RemoteMachinesSection`): on only once this Mac is ready (service,
+  kernel, base image) and the credential and signing key are there (R18); Install or Update asked
+  first; Sign Out of Claude in Sandboxes removes the shared login; the signing key's public half
+  with Add to GitHub; CPUs and memory per sandbox
+  (`sandbox.cpus`, `sandbox.memoryGB`). Turning it off asks to remove what Gannin made or keep it.
+  Remote machines (`RemoteMachinesSection`, with Connect with set) shows the server's container with
+  Set Up and Install or Update in `CommandTerminalSheet`. Settings › Harness has the org's GitHub token
+  (`SandboxGitHubTokenSection`).
+- Where a session runs (`SandboxPlacement.decide`): in a sandbox once sandboxing is on, else on the
+  Mac with the reason when one of its repos is marked Needs the Mac (`OrgConfig.reposNeedingMac`, a
+  checkbox beside Needs Review in Settings › Repositories, in the harness's `exclusions.json`) or the
+  org has no GitHub token. With sandboxing on, Work on This always shows its sheet, with Run in.
+  `CodeSession.sandbox` is the issue's container (`gannin-<session id>`), `hostReason` why not; the
+  session panel shows either, with `SandboxStatus`.
+- Launch: `SessionScript.harnessStart` prepares the harness on the box as for any session, then
+  `SandboxLaunch.hostSteps` checks the box (Apple Silicon, macOS 26 or later, container at least the
+  minimum, R17), starts the service and kernel if needed, clones the issue's repos into `projects/` (a
+  sandbox can't add clones the Mac sees), builds or finds the image in the terminal, and, unless the
+  container is running, recreates it with every mount at its real path (`pwd -P`, as git records
+  them): the harness read-only, tmpfs over `.worktrees/` and `projects/` with the issue's folder and
+  the issue's repos' git dirs inside (`cloneRepos`, found by origin with `findClone`; the harness's
+  own only when it's the code repo, with no `projects/`). Each git dir is read-only, so its config
+  and hooks can't be changed for git on the Mac to run, with `objects`, `refs`, `logs` and
+  `worktrees` read-write inside it (bar each existing `worktrees/<name>` not in the issue's folder,
+  read-only, so others' `commondir` can't be repointed) and `FETCH_HEAD` linked into `logs/` on the
+  Mac first; `refs/` stays writable, so it can move any branch. Inside,
+  `branch.autoSetupMerge`, gc and maintenance are off, branches can't be deleted, and rebase and pull
+  print a harmless `packed-refs.lock` error (the sandboxed brief says so, and to push with
+  `git push origin HEAD`). Then the issue's session folder, the shared `claudeFolder` as
+  `/root/.claude` (claude's own login and settings) with the issue's `claude-home/projects` over its
+  `projects/` (transcripts); Gannin's and Orchard's labels
+  (`com.orchard.sandbox`, andrew-waters/orchard#122) and the caps. Then `container exec -it` runs
+  `inner.sh` (`SandboxLaunch.innerScript`), which reads `secrets.env` and removes it, writes the signing
+  key under `/run`, sets git's identity and signing, merges into the shared `.claude.json` with jq
+  (`seedClaudeConfig`: onboarding done, this harness trusted, an API key approved) and runs `claudeSteps` with `CLAUDE_CONFIG_DIR` there. Settings
+  use the server-style status line; hooks write to the session folder at its real path, mounted, so
+  the poll reads them as for any local session, plus `sandbox` (starting, running, failed: why).
+  `secrets.env` (0600) is written by `SessionStore.prepareSandbox` here, or over ssh on standard input
+  (`Shell.run(_:_:input:)`, `remoteSecretsScript`) for a server, and only when every credential is
+  there. Transcripts are found in the issue's `claude-home`; `modeBox` is `sandbox` (on a server).
+- Git on the Mac in a repo a sandbox could have written (`SandboxGitGuard`): it could set
+  `core.fsmonitor`, a filter or diff driver, `core.sshCommand` or an include in a `.git/config`, or
+  point a worktree's `.git` elsewhere. Its git dirs are read-only now, but a worktree's `.git` and
+  `worktrees/` aren't, and a repo can be nested in a worktree. So before the Changes pane, Finish's
+  worktree removal (`SessionChanges.guarded`), the harness pull in `start.sh` (in a subshell),
+  opening a worktree in an editor (`openInEditor`) and `LocalRepository.script` in a harness a
+  sandboxed session here runs in (`applies(to:)`, from `setRoots`, which `SessionStore` keeps,
+  whether or not sandboxing is still on) run git, `GIT_CONFIG_PARAMETERS` (kept for submodules)
+  turns hooks, fsmonitor and submodules off, each worktree's `.git` and `commondir` must lead back
+  to a clone's `worktrees/`, and a git dir under an issue's `.worktrees/` (one a sandbox made, the
+  only kind whose config it can write) may hold only `allowedKeys` (core basics, remotes' URL and
+  fetch, branch tracking and the like); anything else is named and nothing runs.
+  Paths are resolved with `realPath` (`realpath`, as `pwd -P`), not Foundation's. The sandboxed
+  brief says only `projects/`' repos are there (a clone made inside would vanish) and what git
+  can't do in there.
+- Helpers of a sandboxed issue share its container: their folders are `helpers/<id>` inside the
+  issue's (`SessionStore.directory(for:)` through `sandboxHelperParents`, `remoteDirectory(for:)` on a
+  server), which every start mounts. The container stops when no session using it is running
+  (`stopSandboxIfIdle`, tracked in `stoppingSandboxes` so a quick restart waits for it) and as Gannin
+  quits (`stopSandboxesForQuit`, after the quit question), starts afresh on the next open with the
+  same folders, and is deleted with the issue's session. `launching` keeps `open` from starting a
+  second terminal while one waits on a stop or a server's secrets. An issue's session from before
+  sandboxing was on stays where its conversation is, with `SandboxPlacement.startedBefore`; turning
+  sandboxing off leaves sandboxed sessions sandboxed, for the same reason. A Connect with command
+  that isn't ssh can't be handed credentials, so its sessions aren't sandboxed, and say why.
+- Gannin never collects, stores or passes on a Claude subscription's credentials: Claude Code's legal
+  page says sign-in must complete through Anthropic's own flow. A subscription signs in inside the
+  sandbox (`inner.sh` says how when there's no login yet), and a token an earlier build stored is
+  removed at launch (`removeStoredSubscriptionToken`). One login per person, never shared; Team or
+  Enterprise seats or API keys for a team's work.
+- What it doesn't do yet: no egress allow list (the network is open NAT, and services on the Mac
+  listening on all interfaces are reachable at the gateway); commits are signed with the sandbox's
+  key, not the user's; Linux only, so a repo that builds only on a Mac is marked Needs the Mac.
 
 ## Harness
 

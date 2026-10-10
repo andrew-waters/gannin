@@ -88,8 +88,15 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// The last `review-request` token taken from its hook folder, so one
     /// read again after a relaunch isn't asked twice.
     var reviewRequest: String? = nil
+    /// The Apple container it runs in (`SandboxPlacement.containerName`,
+    /// its issue's, shared with helpers); nil on the Mac or server itself.
+    var sandbox: String? = nil
+    /// Why it runs on the Mac although sandboxing was on when it started:
+    /// a repo that needs the Mac, no GitHub token, or the user's choice.
+    var hostReason: String? = nil
 
     var isRemote: Bool { connect != nil }
+    var isSandboxed: Bool { sandbox != nil }
     var isHelper: Bool { parentID != nil }
     var isPullRequestReview: Bool { reviewOf != nil }
     /// As a tab or row names it.
@@ -144,6 +151,8 @@ extension CodeSession {
         pairsReview = try container.decodeIfPresent(Bool.self, forKey: .pairsReview)
         pairing = try? container.decodeIfPresent(PairReview.self, forKey: .pairing)
         reviewRequest = try container.decodeIfPresent(String.self, forKey: .reviewRequest)
+        sandbox = try container.decodeIfPresent(String.self, forKey: .sandbox)
+        hostReason = try container.decodeIfPresent(String.self, forKey: .hostReason)
     }
 }
 
@@ -447,6 +456,9 @@ final class SessionStore {
                 return (session.id, session)
             })
         }
+        for session in sessions.values { Self.noteFolder(of: session) }
+        SandboxCredentials.removeStoredSubscriptionToken()
+        noteSandboxedHarnesses()
         reviewDrafts = sessions.compactMapValues(\.reviewDraft)
         tabs = (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? [])
             .compactMap(UUID.init(uuidString:))
@@ -566,7 +578,9 @@ final class SessionStore {
 
     /// Adds a session made elsewhere (a helper), and saves.
     func add(_ session: CodeSession) {
+        Self.noteFolder(of: session)
         sessions[session.id] = session
+        noteSandboxedHarnesses()
         save()
     }
 
@@ -578,13 +592,17 @@ final class SessionStore {
 
     /// The issue's session, made in the harness checkout at `harnessPath` if
     /// it has none, with its brief written afresh from what Gannin knows now.
-    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, brief: (CodeSession) -> String) -> CodeSession {
-        let session = session(forIssue: issue.id)
-            ?? CodeSession(
-                id: UUID(), issue: issue, repo: harness.repo, branch: Self.branchName(issue), createdAt: .now,
-                connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath, instructions: instructions
+    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, placement: SandboxPlacement = .host(nil), brief: (CodeSession) -> String) -> CodeSession {
+        let session = session(forIssue: issue.id) ?? {
+            let id = UUID()
+            return CodeSession(
+                id: id, issue: issue, repo: harness.repo, branch: Self.branchName(issue), createdAt: .now,
+                connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath, instructions: instructions,
+                sandbox: placement.isSandboxed ? SandboxPlacement.containerName(for: id) : nil, hostReason: placement.reason
             )
+        }()
         sessions[session.id] = session
+        noteSandboxedHarnesses()
         save()
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -661,7 +679,8 @@ final class SessionStore {
             self?.received(signal, for: session.id)
         }
         terminals[session.id] = terminal
-        if !terminal.isRunning { launch(session, in: terminal) }
+        // Not while one is on its way (a sandbox's stop or secrets first).
+        if !terminal.isRunning, !launching.contains(session.id) { launch(session, in: terminal) }
         return terminal.container
     }
 
@@ -701,14 +720,17 @@ final class SessionStore {
     func remove(_ id: UUID) {
         // Helpers work in its folder, so they go with it.
         for helper in helpers(of: id) { remove(helper.id) }
+        if let session = sessions[id] { deleteSandbox(of: session) }
         terminals[id]?.terminate()
         terminals[id] = nil
         changesPanes[id] = nil
         filesPanes[id] = nil
         unflag(id)
         sessions[id] = nil
+        noteSandboxedHarnesses()
         states[id] = nil
         drafts[id] = nil
+        sandboxStatus[id] = nil
         transcripts[id] = nil
         readers[id] = nil
         contextWindows[id] = nil
@@ -726,8 +748,13 @@ final class SessionStore {
         try? fm.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(SessionState.starting.rawValue.utf8).write(to: directory.appending(path: "state"))
         setState(.starting, for: session.id)
+        // An issue's session from before sandboxing was on says why it isn't in one.
+        if SandboxCredentials.isEnabled, !session.isSandboxed, session.hostReason == nil, !session.isHelper,
+           !session.isPullRequestReview, session.planning == nil, session.ask == nil, session.isInHarness {
+            update(session.id) { $0.hostReason = SandboxPlacement.startedBefore }
+        }
         // A new claude there may have auto mode after all.
-        autoUnavailableBoxes.remove(session.connect ?? "")
+        autoUnavailableBoxes.remove(modeBox(session.id))
         askToNotify()
         // Fresh org data on every start and resume, which the script copies
         // into its folder.
@@ -736,8 +763,11 @@ final class SessionStore {
         // What the login shell runs: the script here, or the Connect with
         // command carrying it to the server.
         let command: String
+        /// A sandbox on a server gets its credentials over ssh before the
+        /// terminal starts: nil there removes any left from before.
+        var remoteSecrets: (runner: Shell.Runner, directory: String, text: String?)?
         if let connect = session.connect {
-            let remoteDirectory = #""$HOME"/.gannin/sessions/"# + session.id.uuidString
+            let remoteDirectory = Self.remoteDirectory(for: session)
             // A brief in the harness comes with its pull; only one that
             // isn't travels in the command.
             let brief = session.harnessFolder == nil ? (try? String(contentsOf: directory.appending(path: "brief.md"), encoding: .utf8)) ?? "" : nil
@@ -745,15 +775,25 @@ final class SessionStore {
                 directory: remoteDirectory,
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
-                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session))
+                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session)),
+                files: session.isSandboxed ? ["inner.sh": SandboxLaunch.innerScript(session)] : [:]
             )
             command = SessionScript.connecting(connect, to: remote)
+            if session.isSandboxed, let arguments = Shell.sshArguments(connect) {
+                let text = try? SandboxLaunch.credentials(org: session.org).get()
+                remoteSecrets = (.ssh(arguments), remoteDirectory, text.map(SandboxLaunch.secretsFile))
+            }
         } else {
             let root = session.harnessPath.map(Self.expanded) ?? Self.workspaceRoot
             // The harness is cloned into it, when it isn't there yet.
             try? fm.createDirectory(at: session.harnessPath == nil ? root : root.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let local = SessionScript.quoted(directory.path)
-            try? Data(SessionScript.settings(directory: local, isRemote: false, allowing: Self.allowedCommands(session)).utf8).write(to: directory.appending(path: "settings.json"))
+            // A sandbox mounts the folder at its real path, which the hooks
+            // write to from inside.
+            let real = session.isSandboxed ? URL(filePath: SandboxGitGuard.realPath(directory.path), directoryHint: .isDirectory) : directory
+            let local = SessionScript.quoted(real.path)
+            if session.isSandboxed { prepareSandbox(session, directory: real) }
+            // A sandbox's statusLine can't run the user's own command, which is on the Mac.
+            try? Data(SessionScript.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session)).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"
@@ -772,13 +812,55 @@ final class SessionStore {
         // Your login, interactive shell, so the PATH, ssh config and tools
         // are yours.
         let shell = environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
-        terminal.launch(
-            executable: shell,
-            args: ["-l", "-i", "-c", command],
-            environment: environment.map { "\($0.key)=\($0.value)" },
-            directory: session.isRemote || session.harnessPath != nil ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
-        )
-        startPolling()
+        let id = session.id
+        let start = { [weak self] in
+            self?.launching.remove(id)
+            terminal.launch(
+                executable: shell,
+                args: ["-l", "-i", "-c", command],
+                environment: environment.map { "\($0.key)=\($0.value)" },
+                directory: session.isRemote || session.harnessPath != nil ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
+            )
+            self?.startPolling()
+        }
+        // A stop of its sandbox still on its way would land after the start
+        // script found it running: wait for it, so the script starts afresh.
+        let stopping = session.sandbox.flatMap { stoppingSandboxes[$0] }
+        guard remoteSecrets != nil || stopping != nil else { return start() }
+        launching.insert(id)
+        Task {
+            await stopping?.value
+            if let remoteSecrets {
+                // Over the shared connection, on standard input, so no secret
+                // is on a command line on either box. The start script says
+                // if they didn't arrive.
+                let script = SandboxLaunch.remoteSecretsScript(directory: remoteSecrets.directory, writing: remoteSecrets.text != nil)
+                let input = remoteSecrets.text.map { Data($0.utf8) }
+                _ = await Task.detached { Shell.run(script, remoteSecrets.runner, input: input) }.value
+            }
+            start()
+        }
+    }
+
+    /// Sessions whose terminal is about to start, once a stop or their
+    /// secrets are done: not launched again meanwhile.
+    private var launching: Set<UUID> = []
+
+    /// Sandboxes being stopped, by name, for a start to wait on.
+    private var stoppingSandboxes: [String: Task<Void, Never>] = [:]
+
+    /// What a sandboxed session on this Mac needs beside its start script:
+    /// the script run inside, and its credentials for that start (removed
+    /// inside once read; without them the start script says what's
+    /// missing).
+    private func prepareSandbox(_ session: CodeSession, directory: URL) {
+        try? Data(SandboxLaunch.innerScript(session).utf8).write(to: directory.appending(path: "inner.sh"))
+        let secrets = directory.appending(path: "secrets.env")
+        if let credentials = try? SandboxLaunch.credentials(org: session.org).get() {
+            try? SandboxLaunch.writeSecrets(SandboxLaunch.secretsFile(credentials), to: secrets)
+        } else {
+            try? FileManager.default.removeItem(at: secrets)
+        }
     }
 
     /// What a session's claude runs without asking: the pair review's script.
@@ -958,6 +1040,55 @@ final class SessionStore {
 
     private func terminated(_ id: UUID) {
         setState(.stopped, for: id)
+        stopSandboxIfIdle(id)
+    }
+
+    // MARK: Sandboxes
+
+    /// What each sandboxed session's start script last said of its sandbox
+    /// (`starting`, `running`, `failed: <why>`), or `stopped` once Gannin
+    /// stopped it (R14).
+    private(set) var sandboxStatus: [UUID: String] = [:]
+
+    /// Stops the session's sandbox once no session using it is running: the
+    /// issue's own and its helpers share one (R12). Its folders stay, and
+    /// opening the session again starts it afresh.
+    private func stopSandboxIfIdle(_ id: UUID) {
+        guard let session = sessions[id], let name = session.sandbox, let runner = Self.sandboxRunner(session) else { return }
+        let sharing = sessions.values.filter { $0.sandbox == name }
+        guard !sharing.contains(where: { isRunning($0.id) }) else { return }
+        for other in sharing { sandboxStatus[other.id] = "stopped" }
+        let script = SandboxLaunch.stopScript([name])
+        stoppingSandboxes[name] = Task { [weak self] in
+            _ = await Task.detached { Shell.run(script, runner) }.value
+            self?.stoppingSandboxes[name] = nil
+        }
+    }
+
+    /// Where a session's sandbox is: this Mac, or its server over ssh.
+    private static func sandboxRunner(_ session: CodeSession) -> Shell.Runner? {
+        guard let connect = session.connect else { return .local }
+        return Shell.sshArguments(connect).map(Shell.Runner.ssh)
+    }
+
+    /// Every sandbox on this Mac with a session's terminal running, stopped
+    /// as Gannin quits (R12). Waits, so they're down before it goes.
+    func stopSandboxesForQuit() {
+        // By box: this Mac, and each server over its shared connection.
+        let running = sessions.values.filter { $0.isSandboxed && isRunning($0.id) }
+        for group in Dictionary(grouping: running, by: { $0.connect ?? "" }).values {
+            guard let first = group.first, let runner = Self.sandboxRunner(first) else { continue }
+            _ = Shell.run(SandboxLaunch.stopScript(Set(group.compactMap(\.sandbox)).sorted()), runner)
+        }
+    }
+
+    /// Deletes the issue's sandbox once the issue's session is forgotten
+    /// (finished or removed); its folders are the Mac's and stay or go
+    /// with the session.
+    private func deleteSandbox(of session: CodeSession) {
+        guard let name = session.sandbox, !session.isHelper, let runner = Self.sandboxRunner(session) else { return }
+        let script = SandboxLaunch.deleteScript(name)
+        Task.detached { _ = Shell.run(script, runner) }
     }
 
     // MARK: Hook state
@@ -998,23 +1129,27 @@ final class SessionStore {
               let arguments = Shell.sshArguments(connect) else { return }
         readingRemote.insert(session.id)
         let reader = readers[session.id] ?? TranscriptReader()
-        let script = #"d="$HOME"/.gannin/sessions/"# + session.id.uuidString + "\n"
-            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)" "$(head -n 1 "$d/review-request" 2>/dev/null)""# + "\n"
-            + #"f=$(ls "$HOME"/.claude/projects/*/"# + session.claudeID + #".jsonl 2>/dev/null | head -n 1)"# + "\n"
+        // A sandbox's claude keeps its transcripts in its issue's claude-home there.
+        let homes = (session.isSandboxed ? Self.remoteIssueDirectory(for: session) + "/claude-home/projects/*/" + session.claudeID + ".jsonl " : "")
+            + #""$HOME"/.claude/projects/*/"# + session.claudeID + ".jsonl"
+        let script = "d=" + Self.remoteDirectory(for: session) + "\n"
+            + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)" "$(head -n 1 "$d/review-request" 2>/dev/null)" "$(cat "$d/sandbox" 2>/dev/null)""# + "\n"
+            + "f=$(ls " + homes + #" 2>/dev/null | head -n 1)"# + "\n"
             + #"if [ -n "$f" ]; then s=$(wc -c < "$f" | tr -d ' '); echo "$s"; [ "$s" -gt "# + "\(reader.offset)"
             + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c 4000000; else echo -1; fi; exit 0"#
         let id = session.id
         Task {
             let result = await Task.detached { () -> (Shell.Result, TranscriptReader?) in
                 let result = Shell.run(script, .ssh(arguments))
-                // After six lines (state, PR, change, statusline, review request, size), the new bytes.
+                // After seven lines (state, PR, change, statusline, review
+                // request, sandbox, size), the new bytes.
                 var newlines = 0
                 var index = result.data.startIndex
-                while newlines < 6, let next = result.data[index...].firstIndex(of: 10) {
+                while newlines < 7, let next = result.data[index...].firstIndex(of: 10) {
                     newlines += 1
                     index = result.data.index(after: next)
                 }
-                guard newlines == 6, result.data.count > index else { return (result, nil) }
+                guard newlines == 7, result.data.count > index else { return (result, nil) }
                 var reader = reader
                 reader.consume(result.data[index...])
                 return (result, reader)
@@ -1023,9 +1158,10 @@ final class SessionStore {
             // Ended while it was read: the terminal's end is the truth.
             guard result.0.ok, terminals[id]?.isRunning == true, sessions[id] != nil else { return }
             if let reader = result.1 { store(reader, for: id) }
-            let lines = result.0.data.prefix(8192).split(separator: 10, maxSplits: 6, omittingEmptySubsequences: false)
-                .prefix(5).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
+            let lines = result.0.data.prefix(8192).split(separator: 10, maxSplits: 7, omittingEmptySubsequences: false)
+                .prefix(6).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
             func line(_ index: Int) -> String? { index < lines.count && !lines[index].isEmpty ? lines[index] : nil }
+            if let sandbox = line(5), sessions[id]?.isSandboxed == true, sandboxStatus[id] != sandbox { sandboxStatus[id] = sandbox }
             apply(state: line(0), pullRequest: line(1), changed: line(2), contextWindow: line(3), reviewRequest: line(4), for: id)
         }
     }
@@ -1034,7 +1170,12 @@ final class SessionStore {
     /// main thread.
     private func readLocalTranscript(_ id: UUID, then done: (() -> Void)? = nil) {
         guard !readingTranscript.contains(id), let session = sessions[id] else { return }
-        if transcriptFiles[id] == nil { transcriptFiles[id] = Self.findTranscript(session.claudeID) }
+        if transcriptFiles[id] == nil {
+            // A sandbox's claude keeps its transcripts in the session's claude-home.
+            // Helpers share their issue's.
+            let home = session.isSandboxed ? Self.directory(for: session.parentID ?? id).appending(path: "claude-home/projects", directoryHint: .isDirectory) : nil
+            transcriptFiles[id] = Self.findTranscript(session.claudeID, in: home)
+        }
         guard let file = transcriptFiles[id] else {
             done?()
             return
@@ -1073,8 +1214,8 @@ final class SessionStore {
 
     /// `~/.claude/projects/<folder>/<id>.jsonl`, whichever folder claude
     /// filed it under.
-    private static func findTranscript(_ claudeID: String) -> URL? {
-        let projects = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)
+    private static func findTranscript(_ claudeID: String, in home: URL? = nil) -> URL? {
+        let projects = home ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)
         let folders = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
         return folders.lazy.map { $0.appending(path: "\(claudeID).jsonl") }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
@@ -1109,6 +1250,7 @@ final class SessionStore {
                 (try? String(contentsOf: directory.appending(path: name), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             let state = read("state"), pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
+            if session.isSandboxed, let sandbox = read("sandbox"), sandboxStatus[id] != sandbox { sandboxStatus[id] = sandbox }
             let reviewRequest = read("review-request")
             if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
                 // What it's asking is in the transcript: read it first, so
@@ -1179,7 +1321,37 @@ final class SessionStore {
     }
 
     static func directory(for id: UUID) -> URL {
-        baseDirectory.appending(path: id.uuidString, directoryHint: .isDirectory)
+        if let parent = sandboxHelperParents[id] {
+            return directory(for: parent).appending(path: "helpers/\(id.uuidString)", directoryHint: .isDirectory)
+        }
+        return baseDirectory.appending(path: id.uuidString, directoryHint: .isDirectory)
+    }
+
+    /// Helpers sharing an issue's sandbox, by their issue's session: their
+    /// folders are inside its folder, which the sandbox mounts.
+    private(set) static var sandboxHelperParents: [UUID: UUID] = [:]
+
+    /// The session's folder on its server, as a shell expression: a
+    /// sandboxed helper's inside its issue's, as on this Mac.
+    static func remoteDirectory(for session: CodeSession) -> String {
+        let base = #""$HOME"/.gannin/sessions/"#
+        if session.isSandboxed, let parent = session.parentID { return base + parent.uuidString + "/helpers/" + session.id.uuidString }
+        return base + session.id.uuidString
+    }
+
+    /// The issue's own session folder on its server, which its sandbox mounts.
+    static func remoteIssueDirectory(for session: CodeSession) -> String {
+        #""$HOME"/.gannin/sessions/"# + (session.parentID ?? session.id).uuidString
+    }
+
+    /// Notes where a sandboxed helper's folder is, before it's first used.
+    static func noteFolder(of session: CodeSession) {
+        if session.isSandboxed, let parent = session.parentID { sandboxHelperParents[session.id] = parent }
+    }
+
+    /// Tells the git guard which harnesses here have sandboxed sessions.
+    private func noteSandboxedHarnesses() {
+        SandboxGitGuard.setRoots(sessions.values.filter { $0.isSandboxed && !$0.isRemote }.compactMap(\.harnessPath))
     }
 
     private static var fileURL: URL { baseDirectory.appending(path: "Sessions.json") }

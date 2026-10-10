@@ -76,6 +76,24 @@ enum CodeEditor: String, CaseIterable, Identifiable {
 extension SessionStore {
     /// Opens the file in the chosen editor, at the line.
     func openInEditor(_ session: CodeSession, worktree: String, path: String, line: Int?) {
+        // Editors run git in the folder: a sandbox's worktree is checked first.
+        guard session.isSandboxed || SandboxGitGuard.applies(to: worktree) else { return openUnchecked(session, worktree: worktree, path: path, line: line) }
+        guard let runner = SessionChanges.runner(for: session) else { return NSSound.beep() }
+        let script = SandboxGitGuard.functions + "\nwhy=$(gannin_check \(SessionScript.shellPath(worktree))) || { echo \"$why\"; exit 1; }"
+        Task {
+            let result = await Task.detached { Shell.run(script, runner) }.value
+            guard result.ok else {
+                let alert = NSAlert()
+                alert.messageText = "Gannin didn't open it"
+                alert.informativeText = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+                alert.runModal()
+                return
+            }
+            openUnchecked(session, worktree: worktree, path: path, line: line)
+        }
+    }
+
+    private func openUnchecked(_ session: CodeSession, worktree: String, path: String, line: Int?) {
         let editor = CodeEditor.chosen
         let relative = worktree + "/" + path
         guard let connect = session.connect else {

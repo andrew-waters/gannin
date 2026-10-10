@@ -272,6 +272,7 @@ struct GanninApp: App {
                 .environment(team)
                 .environment(hidden)
                 .environment(database)
+                .environment(sessions)
         }
     }
 }

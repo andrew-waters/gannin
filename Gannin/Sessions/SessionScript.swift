@@ -15,7 +15,7 @@ enum SessionScript {
 
     /// A helper's settings (its hooks) beside the issue's own, in the
     /// folder they share.
-    private static func settingsName(_ session: CodeSession) -> String {
+    static func settingsName(_ session: CodeSession) -> String {
         session.isHelper ? "settings-\(session.id.uuidString.prefix(8)).json" : "settings.json"
     }
 
@@ -49,35 +49,21 @@ enum SessionScript {
     /// `.worktrees/<branch>/`, with the brief and settings in its `.gannin/`,
     /// and claude runs in the harness itself, adding a worktree there for
     /// each repo the issue touches.
-    private static func harnessStart(_ session: CodeSession, harness: String, directory: String) -> String {
-        let issue = session.issue
+    static func harnessStart(_ session: CodeSession, harness: String, directory: String) -> String {
         let folder = ".worktrees/\(session.branch)"
-        let prompt = firstPrompt(session, otherwise: """
-            You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
-            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
-            (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
-            code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
-            the brief says, never in projects/ or the harness checkout itself.
-            """)
         // A server session's brief comes from the harness once it's there.
         let briefSource = session.harnessFolder.map { recorded in
             #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(recorded) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Restart."\#n"#
         } ?? ""
-        return """
-            # Written by Gannin for \(issue.reference). Run in the session's terminal.
+        let prepare = """
+            # Written by Gannin for \(session.issue.reference). Run in the session's terminal.
             session=\(directory)
             harness=\(harness)
             harness_repo=\(quoted(session.harnessRepo ?? session.repo))
             id=\(quoted(session.claudeID))
             folder="$harness"/\(quoted(folder))
 
-            note() { printf '\\033[90m%s\\033[0m\\n' "$1"; }
-            warn() { printf '\\033[33mGannin: %s\\033[0m\\n' "$1"; }
-            fail() {
-              printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
-              if [ -d "$harness" ]; then cd "$harness"; else cd; fi
-              exec "${SHELL:-bash}" -l
-            }
+            \(functions)
 
             if [ ! -e "$harness/.git" ]; then
               note "Cloning the harness, $harness_repo, into $harness"
@@ -89,7 +75,7 @@ enum SessionScript {
               fi
             else
               note "Updating the harness"
-              git -C "$harness" pull --ff-only --quiet || warn "Couldn't fast-forward the harness, so it's as it was. Pull it when you can."
+              \(harnessGuard(session))git -C "$harness"\(guardsGit(session) ? " -c core.hooksPath=/dev/null -c core.fsmonitor=false" : "") pull --ff-only --quiet || warn "Couldn't fast-forward the harness, so it's as it was. Pull it when you can."
             fi
             exclude="$(git -C "$harness" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
             mkdir -p "$(dirname "$exclude")"
@@ -102,16 +88,64 @@ enum SessionScript {
             \(session.isAsk ? askFolder : "")\(readyForReviewStep(session, directory: directory, into: #""$folder/.gannin""#))cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
             cd "$harness" || fail "The harness isn't there."
 
+            """
+        if session.isSandboxed {
+            return prepare + SandboxLaunch.hostSteps(session, folder: folder)
+        }
+        return prepare + claudeSteps(session, settings: #""$folder/.gannin/"# + settingsName(session) + #"""#, shellNote: "This shell is in the harness")
+    }
+
+    /// Whether git on the box is guarded for this session: a sandbox could
+    /// have written the harness's `.git` (`SandboxGitGuard`).
+    private static func guardsGit(_ session: CodeSession) -> Bool {
+        session.isSandboxed || SandboxCredentials.isEnabled
+    }
+
+    /// The harness checked before it's pulled, in a subshell so the guard's
+    /// settings don't reach claude. Ends with a newline.
+    private static func harnessGuard(_ session: CodeSession) -> String {
+        guard guardsGit(session) else { return "" }
+        return "why=$(\n" + SandboxGitGuard.functions + "\ngannin_check \"$harness\"\n) || fail \"$why\"\n  "
+    }
+
+    /// The shell functions the scripts share: a grey note, an orange
+    /// warning, and a red failure that leaves a shell open where it can.
+    static let functions = """
+        note() { printf '\\033[90m%s\\033[0m\\n' "$1"; }
+        warn() { printf '\\033[33mGannin: %s\\033[0m\\n' "$1"; }
+        fail() {
+          printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
+          if [ -d "$harness" ]; then cd "$harness"; else cd; fi
+          exec "${SHELL:-bash}" -l
+        }
+        """
+
+    /// Running claude in the harness root: a new conversation with the first
+    /// prompt, or `--resume` once it has had one, then a shell once it
+    /// exits. `settings` is a shell word. Needs `$session`, `$id` and the
+    /// shared functions.
+    /// `afterExit` is what follows claude's exit: by default a note and a
+    /// login shell where it ran.
+    static func claudeSteps(_ session: CodeSession, settings: String, shellNote: String, afterExit: String? = nil) -> String {
+        let folder = ".worktrees/\(session.branch)"
+        let issue = session.issue
+        let prompt = firstPrompt(session, otherwise: """
+            You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
+            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
+            (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
+            code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
+            the brief says, never in projects/ or the harness checkout itself.
+            """)
+        return """
             command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
             if [ -e "$session/started" ]; then
-              claude --resume "$id"\(options(session)) --settings "$folder/.gannin/\(settingsName(session))"
+              claude --resume "$id"\(options(session)) --settings \(settings)
             else
-              claude --session-id "$id"\(options(session)) --settings "$folder/.gannin/\(settingsName(session))" \(quoted(prompt))
+              claude --session-id "$id"\(options(session)) --settings \(settings) \(quoted(prompt))
             fi
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
-            note "Claude Code has exited. This shell is in the harness; run claude --resume $id to go on."
-            exec "${SHELL:-bash}" -l
+            \(afterExit ?? "note \"Claude Code has exited. \(shellNote); run claude --resume $id to go on.\"\nexec \"${SHELL:-bash}\" -l")
             """
     }
 
@@ -313,7 +347,8 @@ enum SessionScript {
     /// Everything travels as base64 inside the command, stdin left to claude.
     /// The brief is left out (nil) once it's in the harness, which the
     /// script pulls.
-    static func remoteCommand(directory: String, script: String, brief: String?, settings: String) -> String {
+    /// `files` are more to unpack beside them (a sandbox's `inner.sh`).
+    static func remoteCommand(directory: String, script: String, brief: String?, settings: String, files: [String: String] = [:]) -> String {
         func unpack(_ text: String, _ file: String) -> String {
             "printf %s \(Data(text.utf8).base64EncodedString()) | base64 -d > \"$d/\(file)\""
         }
@@ -323,6 +358,7 @@ enum SessionScript {
             \(unpack(script, "start.sh"))
             \(brief.map { unpack($0, "brief.md") } ?? "rm -f \"$d/brief.md\"")
             \(unpack(settings, "settings.json"))
+            \(files.sorted { $0.key < $1.key }.map { unpack($0.value, $0.key) }.joined(separator: "\n"))
             printf starting > "$d/state"
             exec "${SHELL:-bash}" -lic 'exec bash "$0"' "$d/start.sh"
             """
@@ -461,7 +497,9 @@ enum SessionBrief {
                 "  git -C projects/<name> worktree add \"$PWD/\(folder)/<name>\" -b \(session.branch) origin/HEAD",
                 "  ```",
                 "",
-                "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
+                session.isSandboxed
+                    ? "  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (\(SandboxLaunch.cloneRepos(session).joined(separator: ", "))), and a clone made in it would vanish when it stops. If the issue needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. The repos' git dirs are read-only apart from what commits, fetches and worktrees write, so git config and hooks can't be changed, no upstream is recorded (push with `git push origin HEAD` and open the PR with `gh pr create --head <branch>`), branches can't be deleted, and an error about packed-refs.lock after a rebase or pull is expected and harmless."
+                    : "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
                 "- If the harness has no `projects/` folder, it's the code repo too: the code is \(harnessRepo) itself. Don't work in its checkout; give it one worktree in the issue's folder the same way, with `git -C . fetch origin` and `git -C . worktree add \"$PWD/\(folder)/\(harnessRepo.split(separator: "/").last ?? "")\" -b \(session.branch) origin/HEAD`, and do everything there, the plan included.",
             ]
             if session.canPairReview {

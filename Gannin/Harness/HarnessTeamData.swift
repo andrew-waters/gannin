@@ -66,6 +66,8 @@ struct TeamExclusions: Codable, Hashable {
     var includedPeople: [String]
     /// Repos whose PRs don't need a review.
     var reposWithoutReview: [String]?
+    /// Repos whose sessions run on the Mac, not in a sandbox.
+    var reposNeedingMac: [String]?
 }
 
 /// Prioritisation's settings, as the team keeps them.
@@ -126,6 +128,7 @@ struct HarnessTeamData {
         config.excludedAuthors = Set(exclusions?.people ?? [])
         config.includedAuthors = Set(exclusions?.includedPeople ?? [])
         config.reposWithoutReview = Set(exclusions?.reposWithoutReview ?? [])
+        config.reposNeedingMac = Set(exclusions?.reposNeedingMac ?? [])
         config.authoring = authoring
         return config
     }
@@ -161,7 +164,7 @@ struct HarnessTeamData {
             files[TeamFile.prioritisation] = after.committedDateField.flatMap { TeamCoding.encode(TeamPrioritisation(committedDateField: $0)) }
         }
         if before.excludedRepos != after.excludedRepos || before.excludedAuthors != after.excludedAuthors || before.includedAuthors != after.includedAuthors
-            || before.reposWithoutReview != after.reposWithoutReview {
+            || before.reposWithoutReview != after.reposWithoutReview || before.reposNeedingMac != after.reposNeedingMac {
             files[TeamFile.exclusions] = exclusionsFile(after)
         }
         return files
@@ -178,9 +181,11 @@ struct HarnessTeamData {
     private static func exclusionsFile(_ config: OrgConfig) -> String? {
         let exclusions = TeamExclusions(
             repos: config.excludedRepos.sorted(), people: config.excludedAuthors.sorted(), includedPeople: config.includedAuthors.sorted(),
-            reposWithoutReview: config.reposWithoutReview.isEmpty ? nil : config.reposWithoutReview.sorted()
+            reposWithoutReview: config.reposWithoutReview.isEmpty ? nil : config.reposWithoutReview.sorted(),
+            reposNeedingMac: config.reposNeedingMac.isEmpty ? nil : config.reposNeedingMac.sorted()
         )
         return exclusions.repos.isEmpty && exclusions.people.isEmpty && exclusions.includedPeople.isEmpty && exclusions.reposWithoutReview == nil
+            && exclusions.reposNeedingMac == nil
             ? nil : TeamCoding.encode(exclusions)
     }
 }

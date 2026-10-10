@@ -53,8 +53,10 @@ nonisolated enum Shell {
 
     /// Runs the script with bash, here or over ssh, where it travels as
     /// base64 so no quoting can break it. Nothing can prompt: there's no
-    /// standard input, and git is told not to ask for credentials.
-    static func run(_ script: String, _ runner: Runner) -> Result {
+    /// standard input unless `input` is given (a secret the script reads,
+    /// kept off every command line), and git is told not to ask for
+    /// credentials.
+    static func run(_ script: String, _ runner: Runner, input: Data? = nil) -> Result {
         let process = Process()
         switch runner {
         case .local:
@@ -81,8 +83,13 @@ nonisolated enum Shell {
         let errors = Pipe()
         process.standardOutput = output
         process.standardError = errors
-        process.standardInput = FileHandle.nullDevice
+        let stdin = input.map { _ in Pipe() }
+        process.standardInput = stdin ?? FileHandle.nullDevice
         do { try process.run() } catch { return Result(ok: false, data: Data(), error: error.localizedDescription, errors: error.localizedDescription) }
+        if let stdin, let input {
+            try? stdin.fileHandleForWriting.write(contentsOf: input)
+            try? stdin.fileHandleForWriting.close()
+        }
         // Standard error on its own thread, so neither pipe can fill while
         // the other is read and stall git.
         nonisolated final class Box: @unchecked Sendable { var data = Data() }
