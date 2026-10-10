@@ -296,7 +296,7 @@ private struct PunchcardCard: View {
                 case .commit: return count == 1 ? "1 commit" : "\(count) commits"
                 case .review: return count == 1 ? "1 review" : "\(count) reviews"
                 case .opened: return count == 1 ? "1 PR opened" : "\(count) PRs opened"
-                case .merged: return nil
+                case .merged, .issueOpened, .comment: return nil
                 }
             }
             return "\(hours) · \(parts.joined(separator: ", "))"

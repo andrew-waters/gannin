@@ -55,7 +55,7 @@ These are fetched when a page that shows them opens and they are older than the 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | PR metrics | After 10 minutes. Can be turned Off. | Merged PRs for the Dashboard, PR flow and Scorecard. | This Mac |
-| Work log | After 10 minutes. Can be turned Off. | Commits and reviews for Activity and Standup, once one has been opened. | This Mac |
+| Work log | After 10 minutes. Can be turned Off. | Commits, reviews, issues opened and issue comments for Activity and Standup, once one has been opened. | This Mac |
 | Project boards | After 10 minutes. Can be turned Off. | Board lists, fields and items. | This Mac |
 | Milestones and releases | After 10 minutes. Can be turned Off. | Milestones, releases, downloads and stars, once the Releases page has been opened. | This Mac |
 | GitHub Actions | After 10 minutes. Can be turned Off. | Workflow runs for the CI page, once it has been opened. Uses the REST budget. | This Mac |

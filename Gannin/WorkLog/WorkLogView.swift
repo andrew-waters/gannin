@@ -52,8 +52,8 @@ enum ActivityView: String, CaseIterable, Hashable {
 /// over one page of days or weeks, the tabs, scale and paging in the pinned
 /// header (the page stays put when switching tabs). The work log is people down the side, days or weeks
 /// across the top, and a cluster of dots per cell, one per commit, review,
-/// PR opened and PR merged; Threads and Punchcards draw the same activity
-/// another way.
+/// PR opened, PR merged, issue opened and issue comment, narrowed by the
+/// Filter menu; Threads and Punchcards draw the PR activity another way.
 struct WorkLogPage: View {
     @Environment(WorkLogStore.self) private var store
     @Environment(OrgConfigStore.self) private var configs
@@ -69,6 +69,22 @@ struct WorkLogPage: View {
     @AppStorage("workLogScale") private var chosenScale: WorkLogScale = .days
     /// Pages back from the current one.
     @State private var pagesBack = 0
+    /// Kinds left off the work log, as comma-separated raw values.
+    @AppStorage("workLogHiddenKinds") private var hiddenKindsValue = ""
+    /// The one repo the work log shows, or nil for all.
+    @State private var repoFilter: String? = nil
+
+    /// The filter as it applies here: a repo no longer listed (the project
+    /// changed, or it's been excluded) counts as all of them.
+    private var filter: WorkLogFilter {
+        let repo = repoFilter.flatMap { repos.contains($0) ? $0 : nil }
+        return WorkLogFilter(hiddenKinds: WorkLogFilter.kinds(from: hiddenKindsValue), repo: repo)
+    }
+
+    /// Every repo with activity in the log, for the filter.
+    private var repos: [String] {
+        store.history(for: org).map { $0.repos(config: configs.config(for: org), hidden: hidden.keys) } ?? []
+    }
 
     /// The chosen scale, or Days on a tab that doesn't offer Day.
     private var scale: WorkLogScale {
@@ -102,6 +118,7 @@ struct WorkLogPage: View {
             await holidayStore.load(regions, years: years(columns))
         }
         .onChange(of: scale) { pagesBack = 0 }
+        .onChange(of: org) { repoFilter = nil }
     }
 
     /// Everyone's bank holiday regions, the org's included.
@@ -135,7 +152,7 @@ struct WorkLogPage: View {
                 let calendars = workingCalendars(columns)
                 switch view {
                 case .workLog:
-                    let grid = WorkLogGrid(history: history, columns: columns, scale: scale, people: people, config: config, hidden: hidden.keys)
+                    let grid = WorkLogGrid(history: history, columns: columns, scale: scale, people: people, config: config, hidden: hidden.keys, filter: filter)
                     header(columns)
                     Divider()
                     ForEach(grid.rows, id: \.person.login) { row in
@@ -209,6 +226,11 @@ struct WorkLogPage: View {
             }
             .fixedSize()
         }
+        if view == .workLog {
+            ToolbarItem {
+                filterMenu
+            }
+        }
         ToolbarItem {
             ControlGroup {
                 Button { pagesBack += 1 } label: { Label("Earlier", systemImage: "chevron.left") }
@@ -222,6 +244,43 @@ struct WorkLogPage: View {
             }
             .fixedSize()
         }
+    }
+
+    /// Which kinds of activity show, and from which repo.
+    private var filterMenu: some View {
+        let filter = filter
+        let repos = repos
+        return Menu {
+            Section("Show") {
+                ForEach(WorkLogEvent.Kind.allCases, id: \.self) { kind in
+                    Toggle(kind.rawValue, isOn: Binding(
+                        get: { !filter.hiddenKinds.contains(kind) },
+                        set: { shown in
+                            var kinds = filter.hiddenKinds
+                            if shown { kinds.remove(kind) } else { kinds.insert(kind) }
+                            hiddenKindsValue = WorkLogFilter.value(of: kinds)
+                        }
+                    ))
+                }
+            }
+            Section("Repository") {
+                Picker("Repository", selection: Binding(get: { filter.repo }, set: { repoFilter = $0 })) {
+                    Text("All Repositories").tag(String?.none)
+                    ForEach(repos, id: \.self) { Text($0).tag(String?.some($0)) }
+                }
+                .pickerStyle(.inline)
+                .labelsHidden()
+            }
+            Divider()
+            Button("Show Everything") {
+                hiddenKindsValue = ""
+                repoFilter = nil
+            }
+            .disabled(!filter.isActive)
+        } label: {
+            Label("Filter", systemImage: filter.isActive ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle")
+        }
+        .help(filter.isActive ? "Filtered: \(filter.description)" : "Filter the work log by kind of activity or repository")
     }
 
     // MARK: Range
@@ -315,7 +374,7 @@ struct WorkLogPage: View {
                     isDayOff: scale != .weeks && !working.isWorkingDay(column.start),
                     mark: dates.mark(from: column.start, to: column.end, isDay: scale != .weeks, working: working)
                 ) { event in
-                    open(event.pullRequest)
+                    open(event.subject)
                 }
                 .overlay(alignment: .leading) { Divider() }
             }
@@ -325,13 +384,13 @@ struct WorkLogPage: View {
 
     private var legend: some View {
         HStack(spacing: 16) {
-            ForEach(WorkLogEvent.Kind.allCases, id: \.self) { kind in
+            ForEach(WorkLogEvent.Kind.allCases.filter { !filter.hiddenKinds.contains($0) }, id: \.self) { kind in
                 HStack(spacing: 6) {
                     Circle().fill(ChartPalette.slot(kind.slot)).frame(width: 9, height: 9)
                     Text(kind.rawValue)
                 }
             }
-            Text("Commit dots grow with lines changed. Hover a dot for detail, click to open its PR. Right-click for a new tab or window.")
+            Text("Commit dots grow with lines changed. Hover a dot for detail, click to open its PR or issue. Right-click for a new tab or window.")
                 .foregroundStyle(.tertiary)
             Spacer()
         }
@@ -341,9 +400,15 @@ struct WorkLogPage: View {
     }
 
     /// Over this page, or in a window of its own outside a main window.
-    private func open(_ pr: WorkLogPullRequest) {
-        let reference = PullRequestReference(org: org, pullRequest: pr)
-        if let navigate { navigate(.pullRequestReference(reference)) } else { openWindow(value: reference) }
+    private func open(_ subject: WorkLogEvent.Subject) {
+        switch subject {
+        case .pullRequest(let pr):
+            let reference = PullRequestReference(org: org, pullRequest: pr)
+            if let navigate { navigate(.pullRequestReference(reference)) } else { openWindow(value: reference) }
+        case .issue(let issue):
+            let reference = IssueReference(org: org, id: issue.id, number: issue.number, title: issue.title, repo: issue.repo, url: issue.url)
+            if let navigate { navigate(.issueReference(reference)) } else { openWindow(value: reference) }
+        }
     }
 }
 
@@ -366,16 +431,16 @@ struct WorkLogGrid {
 
     let rows: [Row]
 
-    init(history: WorkLogHistory, columns: [Column], scale: WorkLogScale, people: [Person], config: OrgConfig, hidden: Set<String>) {
+    init(history: WorkLogHistory, columns: [Column], scale: WorkLogScale, people: [Person], config: OrgConfig, hidden: Set<String>, filter: WorkLogFilter = WorkLogFilter()) {
         let first = columns.first?.start ?? .distantPast
         let end = columns.last?.end ?? .distantFuture
         func bucket(_ date: Date) -> Date {
             scale != .weeks ? Calendar.current.startOfDay(for: date) : Calendar.metrics.startOfWeek(for: date)
         }
 
-        let events = history.pullRequests(config: config, hidden: hidden)
-            .flatMap(\.events)
-            .filter { $0.at >= first && $0.at < end }
+        let events = (history.pullRequests(config: config, hidden: hidden).flatMap(\.events)
+            + history.issues(config: config, hidden: hidden).flatMap(\.events))
+            .filter { $0.at >= first && $0.at < end && filter.includes($0) }
         var byPersonDay: [String: [Date: [WorkLogEvent]]] = [:]
         for event in events {
             byPersonDay[event.login, default: [:]][bucket(event.at), default: []].append(event)
@@ -390,6 +455,49 @@ extension WorkLogHistory {
     /// PRs left after hiding and the org's repo exclusions.
     func pullRequests(config: OrgConfig, hidden: Set<String>) -> [WorkLogPullRequest] {
         pullRequests.values.filter { !hidden.contains($0.id) && !config.repoExclusion.contains($0.repo) }
+    }
+
+    /// Issues left after hiding and the org's repo exclusions.
+    func issues(config: OrgConfig, hidden: Set<String>) -> [WorkLogIssue] {
+        issues.values.filter { !hidden.contains($0.id) && !config.repoExclusion.contains($0.repo) }
+    }
+
+    /// Every repo with activity in the log, by name, for the filter.
+    func repos(config: OrgConfig, hidden: Set<String>) -> [String] {
+        Set(pullRequests(config: config, hidden: hidden).map(\.repo) + issues(config: config, hidden: hidden).map(\.repo))
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+}
+
+/// What the work log shows: every kind of activity but those hidden, from
+/// every repo or just one.
+struct WorkLogFilter: Equatable {
+    var hiddenKinds: Set<WorkLogEvent.Kind> = []
+    var repo: String?
+
+    var isActive: Bool { !hiddenKinds.isEmpty || repo != nil }
+
+    func includes(_ event: WorkLogEvent) -> Bool {
+        !hiddenKinds.contains(event.kind) && (repo == nil || event.subject.repo == repo)
+    }
+
+    /// "Hiding Commit, Review · ios", for the menu's help.
+    var description: String {
+        var parts: [String] = []
+        let hidden = WorkLogEvent.Kind.allCases.filter(hiddenKinds.contains).map(\.rawValue)
+        if !hidden.isEmpty { parts.append("hiding \(hidden.joined(separator: ", "))") }
+        if let repo { parts.append("only \(repo)") }
+        return parts.joined(separator: " · ")
+    }
+
+    /// Kinds from their stored, comma-separated raw values; unknown ones are
+    /// skipped.
+    static func kinds(from value: String) -> Set<WorkLogEvent.Kind> {
+        Set(value.split(separator: ",").compactMap { WorkLogEvent.Kind(rawValue: String($0)) })
+    }
+
+    static func value(of kinds: Set<WorkLogEvent.Kind>) -> String {
+        WorkLogEvent.Kind.allCases.filter(kinds.contains).map(\.rawValue).joined(separator: ",")
     }
 }
 

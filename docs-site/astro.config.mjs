@@ -28,6 +28,7 @@ export default defineConfig({
       sidebar: [
         { label: 'Get started', items: [{ autogenerate: { directory: 'get-started' } }] },
         { label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
+        { label: 'Team', items: [{ autogenerate: { directory: 'team' } }] },
         { label: 'Ways to run sessions', items: [{ autogenerate: { directory: 'sessions' } }] },
         {
           label: 'Settings reference',

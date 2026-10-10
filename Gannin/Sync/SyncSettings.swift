@@ -79,7 +79,7 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
         case .issues: "Issues closed in the window and open ones, with board moves, for the issue pages, Inbox, Views and meetings."
         case .openIssues: "Every open issue again, as board moves don't count as updates."
         case .issueText: "For searching in descriptions, after each issue sync."
-        case .workLog: "Commits and reviews for Activity and Standup, once one has been opened."
+        case .workLog: "Commits, reviews, issues opened and issue comments for Activity and Standup, once one has been opened."
         case .boards: "Board lists, fields and items."
         case .harness: "Plans, requirements, skills and the team's shared settings. It stays on, as your team's settings are kept there."
         case .actions: "Workflow runs for the CI page, once it has been opened. REST, with its own budget."

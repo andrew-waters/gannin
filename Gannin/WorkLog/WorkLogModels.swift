@@ -41,11 +41,31 @@ struct WorkLogReview: Codable, Hashable {
     let state: String
 }
 
+/// An issue with the dated activity the work log draws: its opening and the
+/// comments left on it.
+struct WorkLogIssue: Codable, Hashable, Identifiable {
+    let id: String
+    let number: Int
+    let title: String
+    let url: URL
+    let repo: String
+    let author: String?
+    let createdAt: Date
+    /// The last comments on it (up to 30), oldest first.
+    let comments: [WorkLogIssueComment]
+}
+
+struct WorkLogIssueComment: Codable, Hashable {
+    let createdAt: Date
+    let author: String
+    let url: URL?
+}
+
 /// Recent PR activity per org, kept on disk and topped up with what changed.
 struct WorkLogHistory: Codable {
     /// Bumped when the stored shape gains fields old caches can't fill in,
     /// so they're fetched again.
-    static let currentVersion = 3
+    static let currentVersion = 4
 
     var version: Int? = Self.currentVersion
     let orgLogin: String
@@ -53,6 +73,8 @@ struct WorkLogHistory: Codable {
     var coveredFrom: Date
     var fetchedAt: Date
     var pullRequests: [String: WorkLogPullRequest]
+    /// Issues updated in the same range, for issues opened and comments.
+    var issues: [String: WorkLogIssue] = [:]
 }
 
 /// One dot in the log.
@@ -62,14 +84,45 @@ struct WorkLogEvent: Identifiable, Hashable {
         case review = "Review"
         case opened = "PR opened"
         case merged = "PR merged"
+        case issueOpened = "Issue opened"
+        case comment = "Issue comment"
 
-        /// Categorical palette slots 1-4, in order.
+        /// Categorical palette slots 1-6, in order.
         var slot: Int {
             switch self {
             case .commit: 0
             case .review: 1
             case .opened: 2
             case .merged: 3
+            case .issueOpened: 4
+            case .comment: 5
+            }
+        }
+    }
+
+    /// What the event happened on.
+    enum Subject: Hashable {
+        case pullRequest(WorkLogPullRequest)
+        case issue(WorkLogIssue)
+
+        var repo: String {
+            switch self {
+            case .pullRequest(let pr): pr.repo
+            case .issue(let issue): issue.repo
+            }
+        }
+
+        var number: Int {
+            switch self {
+            case .pullRequest(let pr): pr.number
+            case .issue(let issue): issue.number
+            }
+        }
+
+        var title: String {
+            switch self {
+            case .pullRequest(let pr): pr.title
+            case .issue(let issue): issue.title
             }
         }
     }
@@ -78,7 +131,7 @@ struct WorkLogEvent: Identifiable, Hashable {
     let kind: Kind
     let at: Date
     let login: String
-    let pullRequest: WorkLogPullRequest
+    let subject: Subject
     /// Lines changed, for commits.
     let lines: Int
     /// The author's UTC offset at the time, for commits.
@@ -89,12 +142,13 @@ struct WorkLogEvent: Identifiable, Hashable {
         switch kind {
         case .commit: min(9, 3 + 1.6 * log10(1 + Double(lines)))
         case .review: 5
-        case .opened, .merged: 6.5
+        case .opened, .merged, .issueOpened: 6.5
+        case .comment: 4
         }
     }
 
     var summary: String {
-        var text = "\(kind.rawValue) · \(pullRequest.repo)#\(pullRequest.number) \(pullRequest.title)"
+        var text = "\(kind.rawValue) · \(subject.repo)#\(subject.number) \(subject.title)"
         if kind == .commit { text += " · \(lines) lines" }
         text += " · \(at.formatted(date: .omitted, time: .shortened))"
         return text
@@ -107,16 +161,31 @@ extension WorkLogPullRequest {
         var events: [WorkLogEvent] = []
         for (index, commit) in commits.enumerated() {
             guard let login = commit.author ?? author else { continue }
-            events.append(WorkLogEvent(id: "\(id)-c\(index)", kind: .commit, at: commit.authoredAt, login: login, pullRequest: self, lines: commit.additions + commit.deletions, utcOffset: commit.utcOffset))
+            events.append(WorkLogEvent(id: "\(id)-c\(index)", kind: .commit, at: commit.authoredAt, login: login, subject: .pullRequest(self), lines: commit.additions + commit.deletions, utcOffset: commit.utcOffset))
         }
         for (index, review) in reviews.enumerated() where review.author != author {
-            events.append(WorkLogEvent(id: "\(id)-r\(index)", kind: .review, at: review.submittedAt, login: review.author, pullRequest: self, lines: 0))
+            events.append(WorkLogEvent(id: "\(id)-r\(index)", kind: .review, at: review.submittedAt, login: review.author, subject: .pullRequest(self), lines: 0))
         }
         if let author {
-            events.append(WorkLogEvent(id: "\(id)-o", kind: .opened, at: createdAt, login: author, pullRequest: self, lines: 0))
+            events.append(WorkLogEvent(id: "\(id)-o", kind: .opened, at: createdAt, login: author, subject: .pullRequest(self), lines: 0))
         }
         if let mergedAt, let merger = mergedBy ?? author {
-            events.append(WorkLogEvent(id: "\(id)-m", kind: .merged, at: mergedAt, login: merger, pullRequest: self, lines: 0))
+            events.append(WorkLogEvent(id: "\(id)-m", kind: .merged, at: mergedAt, login: merger, subject: .pullRequest(self), lines: 0))
+        }
+        return events
+    }
+}
+
+extension WorkLogIssue {
+    /// Its opening, credited to its author, and each comment, credited to
+    /// whoever left it.
+    var events: [WorkLogEvent] {
+        var events: [WorkLogEvent] = []
+        if let author {
+            events.append(WorkLogEvent(id: "\(id)-o", kind: .issueOpened, at: createdAt, login: author, subject: .issue(self), lines: 0))
+        }
+        for (index, comment) in comments.enumerated() {
+            events.append(WorkLogEvent(id: "\(id)-n\(index)", kind: .comment, at: comment.createdAt, login: comment.author, subject: .issue(self), lines: 0))
         }
         return events
     }
