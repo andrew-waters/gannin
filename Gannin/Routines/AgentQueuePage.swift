@@ -190,14 +190,22 @@ struct ScheduleForAgentButton: View {
     }
 }
 
-/// Marks an issue in the agent queue or pinned to a time, where the issue is
-/// listed or shown; nothing when it's neither.
+/// Marks an issue in the agent queue, pinned to a time, or with a scheduled
+/// session going, where the issue is listed or shown; nothing otherwise. The store is passed in rather
+/// than read from the environment: a table's cells, rebuilt when it sorts or
+/// a row expands, don't always get the page's environment objects.
 struct ScheduledForAgentPill: View {
-    @Environment(RoutineStore.self) private var routines
+    let routines: RoutineStore
     let issueID: String
 
     var body: some View {
-        if let pin = routines.pin(for: issueID) {
+        if let run = routines.activeRuns.first(where: { $0.issue?.id == issueID }) {
+            if run.outcome == .needsYou {
+                pill("Agent Needs You", help: "Its scheduled session is waiting on you")
+            } else {
+                pill("Agent Working", help: "Its scheduled session is running")
+            }
+        } else if let pin = routines.pin(for: issueID) {
             pill("Pinned for Agent", help: "Pinned to \(pin.schedule.summary)")
         } else if let queued = routines.queue.first(where: { $0.issue.id == issueID }) {
             let position = (routines.queue(for: queued.issue.org).firstIndex { $0.id == issueID } ?? 0) + 1

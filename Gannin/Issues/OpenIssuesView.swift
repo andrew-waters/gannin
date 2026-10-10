@@ -6,6 +6,7 @@ import SwiftUI
 /// elsewhere, and a team picked narrows it to issues assigned to its members.
 struct OpenIssuesView: View {
     @Environment(IssueStore.self) private var store
+    @Environment(RoutineStore.self) private var routines
     @Environment(HiddenStore.self) private var hidden
     @Environment(OrgConfigStore.self) private var configs
     @Environment(\.openURL) private var openURL
@@ -83,7 +84,7 @@ struct OpenIssuesView: View {
                         Pill(text: row.issue.isNotPlanned ? "Not planned" : "Closed", color: row.issue.isNotPlanned ? .secondary : .purple)
                     }
                     Text(row.title).lineLimit(1)
-                    ScheduledForAgentPill(issueID: row.id)
+                    ScheduledForAgentPill(routines: routines, issueID: row.id)
                 }
                 .opacity(hidden.isHidden(row.id) ? 0.45 : 1)
                 .help(row.title)

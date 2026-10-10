@@ -14,6 +14,10 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
 
+### Fixed
+- Issues › All no longer crashes when you expand an issue with sub-issues after scheduling one for an agent
+- An issue's Queued for Agent mark no longer vanishes when its queue window starts it: it shows Agent Working (or Agent Needs You) while the session runs
+
 ## [0.0.2] - 2026-10-05
 
 ### Added
