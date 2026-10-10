@@ -70,7 +70,7 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
    ```bash
    ls .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE 2>/dev/null
    ```
-   The Gannin app's is `.github/pull_request_template.md`: the sections below, then a checklist. Copy it into the description file, fill each section, replace its HTML comments, and tick only what's true: the changelog box or the "no user-facing change" box (one of the two), the build and tests only if they ran in this session, `CLAUDE.md` and `MARKETING_VERSION` as checked in step 4. Leave a box unticked rather than ticking it hopefully, and say why in Verified. A repo with no template gets the description below.
+   The Gannin app's is `.github/pull_request_template.md`: the sections below, then a checklist. Copy it into the description file, fill each section, replace its HTML comments, and tick only what's true: the changelog box or the "no user-facing change" box (one of the two), the build and tests only if they ran in this session, `CLAUDE.md` and `MARKETING_VERSION` as checked in step 4, and the screenshots box when there's no UI change or Verified has them (a session that can't capture the app leaves it unticked and says so in Verified). Leave a box unticked rather than ticking it hopefully, and say why in Verified. A repo with no template gets the description below.
 
 8. **Write the description** in a file, so it isn't mangled by the shell (from the template, when there is one):
    ```markdown

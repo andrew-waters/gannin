@@ -28,5 +28,5 @@ Closes <!-- owner/repo#123, or "Part of owner/repo#123" when this doesn't finish
 - [ ] Built once with the change complete, and the tests run (`xcodebuild test`), or Verified says why not
 - [ ] `CLAUDE.md` is updated where this changes behaviour it describes
 - [ ] `project.yml` keeps `MARKETING_VERSION` at `0.0.0` (releases take the version from the tag)
-- [ ] A UI change has before and after screenshots or a recording in Verified
+- [ ] No UI change, or Verified has before and after screenshots or a recording
 - [ ] Verified says honestly what was and wasn't checked
