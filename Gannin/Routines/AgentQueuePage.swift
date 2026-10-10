@@ -190,6 +190,28 @@ struct ScheduleForAgentButton: View {
     }
 }
 
+/// Marks an issue in the agent queue or pinned to a time, where the issue is
+/// listed or shown; nothing when it's neither.
+struct ScheduledForAgentPill: View {
+    @Environment(RoutineStore.self) private var routines
+    let issueID: String
+
+    var body: some View {
+        if let pin = routines.pin(for: issueID) {
+            pill("Pinned for Agent", help: "Pinned to \(pin.schedule.summary)")
+        } else if let queued = routines.queue.first(where: { $0.issue.id == issueID }) {
+            let position = (routines.queue(for: queued.issue.org).firstIndex { $0.id == issueID } ?? 0) + 1
+            pill("Queued for Agent", help: "Number \(position) in the agent queue; a queue window starts it")
+        }
+    }
+
+    private func pill(_ text: String, help: String) -> some View {
+        Pill(text: text, color: .teal, systemImage: "clock.badge.checkmark")
+            .fixedSize()
+            .help(help)
+    }
+}
+
 /// The items of Schedule for Agent, for its menu and context menus. Pin to
 /// a Time sets `editing`, whose sheet is on the list, not the row.
 struct ScheduleForAgentItems: View {

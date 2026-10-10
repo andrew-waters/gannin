@@ -134,6 +134,7 @@ struct IssueSheet: View {
                 Link(destination: reference.url) {
                     Text(verbatim: "\(reference.repo)#\(reference.number)")
                 }
+                ScheduledForAgentPill(issueID: reference.id)
                 Spacer()
                 // A real page: navigate would open the drawer again.
                 if let open = openAsPage ?? navigate {

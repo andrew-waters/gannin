@@ -530,6 +530,8 @@ struct ItemHeader: View {
     let url: URL
     /// Left out where the page shows its status elsewhere.
     let pill: Pill?
+    /// Shown after the pill, such as whether an agent has the issue scheduled.
+    var accessory: AnyView? = nil
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -539,10 +541,16 @@ struct ItemHeader: View {
                 .fixedSize(horizontal: false, vertical: true)
             // A drawer's bar has the reference and Open on GitHub.
             if isInDrawer {
-                if let pill { pill }
+                if pill != nil || accessory != nil {
+                    HStack(spacing: 8) {
+                        if let pill { pill }
+                        accessory
+                    }
+                }
             } else {
                 HStack(spacing: 8) {
                     if let pill { pill }
+                    accessory
                     Text(reference).foregroundStyle(.secondary)
                     Spacer()
                     Link(destination: url) {
