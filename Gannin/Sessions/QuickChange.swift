@@ -231,10 +231,6 @@ struct NewQuickChangeView: View {
             .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
         }
-        .dropDestination(for: URL.self) { urls, _ in
-            for url in urls { addFile(url) }
-            return !urls.isEmpty
-        } isTargeted: { dropTargeted = $0 }
         .onPasteCommand(of: [.fileURL, .image]) { _ in paste() }
         .onAppear {
             focused = true
@@ -308,9 +304,25 @@ struct NewQuickChangeView: View {
                     .padding(.vertical, 4)
                 }
             }
+            Text(dropTargeted ? "Drop to attach" : "Drop screenshots here")
+                .foregroundStyle(dropTargeted ? Color.accentColor : .secondary)
+                .frame(maxWidth: .infinity, minHeight: 64)
+                .background {
+                    // AppKit's, as the form's own views take a drag before
+                    // SwiftUI's drop destinations see it.
+                    ScreenshotDropTarget(targeted: $dropTargeted, files: { urls in
+                        for url in urls { addFile(url) }
+                    }, image: addImageData)
+                }
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(dropTargeted ? Color.accentColor : Color.secondary.opacity(0.4), style: StrokeStyle(lineWidth: 1.5, dash: [5, 4]))
+                        .allowsHitTesting(false)
+                }
+                .accessibilityLabel("Drop screenshots here")
             HStack {
-                Text(dropTargeted ? "Drop to attach" : attachments.isEmpty ? "Drop screenshots here, paste them (⌘V) or add them." : "\(attachments.count) attached")
-                    .foregroundStyle(dropTargeted ? Color.accentColor : .secondary)
+                Text(attachments.isEmpty ? "Or paste them (⌘V) or add them." : "\(attachments.count) attached")
+                    .foregroundStyle(.secondary)
                 Spacer()
                 Button("Paste") { paste() }
                     .help("Attach the picture or image files on the clipboard")
@@ -662,6 +674,80 @@ struct QuickChangeSection: View {
                     }
                 }
             }
+        }
+    }
+}
+
+// MARK: - Dropping
+
+/// Where screenshots are dropped: image files from Finder, files promised
+/// by the screenshot thumbnail and other apps, or a picture with no file
+/// (from a browser or Preview), read off the drag's pasteboard.
+struct ScreenshotDropTarget: NSViewRepresentable {
+    @Binding var targeted: Bool
+    let files: ([URL]) -> Void
+    let image: (Data) -> Void
+
+    func makeNSView(context: Context) -> DropView {
+        let view = DropView()
+        update(view)
+        return view
+    }
+
+    func updateNSView(_ view: DropView, context: Context) { update(view) }
+
+    private func update(_ view: DropView) {
+        view.onTargeted = { targeted = $0 }
+        view.onFiles = files
+        view.onImage = image
+    }
+
+    final class DropView: NSView {
+        var onTargeted: ((Bool) -> Void)?
+        var onFiles: (([URL]) -> Void)?
+        var onImage: ((Data) -> Void)?
+        private let promiseQueue = OperationQueue()
+
+        override init(frame: NSRect) {
+            super.init(frame: frame)
+            registerForDraggedTypes([.fileURL, .png, .tiff] + NSFilePromiseReceiver.readableDraggedTypes.map { NSPasteboard.PasteboardType($0) })
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+            onTargeted?(true)
+            return .copy
+        }
+
+        override func draggingExited(_ sender: NSDraggingInfo?) { onTargeted?(false) }
+
+        override func draggingEnded(_ sender: NSDraggingInfo) { onTargeted?(false) }
+
+        override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+            onTargeted?(false)
+            let board = sender.draggingPasteboard
+            if let urls = board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
+                onFiles?(urls)
+                return true
+            }
+            if let promises = board.readObjects(forClasses: [NSFilePromiseReceiver.self]) as? [NSFilePromiseReceiver], !promises.isEmpty {
+                let folder = FileManager.default.temporaryDirectory.appending(path: "gannin-drop-\(UUID().uuidString)", directoryHint: .isDirectory)
+                try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+                for promise in promises {
+                    // Written on the queue, so handed back to the main actor.
+                    promise.receivePromisedFiles(atDestination: folder, options: [:], operationQueue: promiseQueue) { @Sendable [weak self] url, error in
+                        guard error == nil, let view = self else { return }
+                        Task { @MainActor in view.onFiles?([url]) }
+                    }
+                }
+                return true
+            }
+            if let data = board.data(forType: .png) ?? board.data(forType: .tiff) {
+                onImage?(data)
+                return true
+            }
+            return false
         }
     }
 }

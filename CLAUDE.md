@@ -781,7 +781,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   beside New Ask, the Claude Code window's +, Agents' toolbar and the palette) opens a tab
   (`NewQuickChangeView` over a `PlanningDraft` with `isQuickChange`): the project, the repo (the
   project's first, then the org's), the note and an optional title (else its first line),
-  screenshots (dropped, pasted or added, images only, 20 MB each, `QuickChangeAttachment`), Create an
+  screenshots (dropped on its drop zone, `ScreenshotDropTarget`, an AppKit view reading the drag's pasteboard for files, file promises or a picture, since the form's own views take a drag before SwiftUI's drop destinations; pasted or added; images only, 20 MB each, `QuickChangeAttachment`), Create an
   issue for it (`quickChangeCreatesIssue`, on by default, asked each time), the team's prompts and
   skills for work, Run in (with sandboxing on) and Record the session in the harness. With an issue,
   Start files it from the note (`createIssue`, the button saying so is the confirmation), adds it to
