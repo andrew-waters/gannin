@@ -63,19 +63,20 @@ report inside a person's view, which are one column of several.
 Tags (`v1.2.0`, annotated: the first line is the title, any more an introduction) run
 `.github/workflows/release.yml`. Its notes are the version's section of `CHANGELOG.md` (Keep a
 Changelog: pull requests add to `## [Unreleased]`, `scripts/promote-changelog.sh 1.2.0` turns it
-into the release's before tagging, and a tag with no section fails before building), rendered
-by `.github/scripts/changelog_to_html.py` (Orchard's) as Markdown for GitHub and HTML for
-Sparkle. `.github/pull_request_template.md`'s checklist asks for the entry. It goes on to archive with the version from the tag and the run number as
-build, Developer ID export, notarise (both with the App Store Connect key), DMG, Sparkle signature and appcast, published as a GitHub release here
+into the release's before tagging, and a tag with no section fails before building), rendered by
+`.github/scripts/changelog_to_html.py` (Orchard's) as Markdown for GitHub and HTML for Sparkle.
+`.github/pull_request_template.md`'s checklist asks for the entry. It goes on to archive with the
+version from the tag and the run number as build, Developer ID export, notarise (both with the App
+Store Connect key), DMG, Sparkle signature and appcast, published as a GitHub release here
 (`Gannin-<version>.dmg`, `.sha256`, `Gannin.dmg` for the site's Download button through
-`releases/latest/download`, and `appcast.xml`, whose enclosure is the release's DMG, so every download counts on the release).
-gannin.ai is this repo's Pages: `pages.yml` deploys `site/` with the latest release's
-`appcast.xml`, on pushes to `site/` and after each release; `ci.yml` builds pull requests and keeps project.yml's
-`MARKETING_VERSION` at the `0.0.0` placeholder. Sparkle (`App/Updater.swift`, Gannin › Check
-for Updates) reads `https://gannin.ai/appcast.xml` with the key in `Info.plist`, and
-doesn't check by itself in a 0.0.0 build. `docs/RELEASING.md` has the secrets and DNS. The
-app was `dev.andon.getgannin`; `App/BundleMove.swift` brings its preferences, Application
-Support folder and token across once.
+`releases/latest/download`, and `appcast.xml`, whose enclosure is the release's DMG, so every
+download counts on the release). gannin.ai is this repo's Pages: `pages.yml` deploys `site/` with
+the latest release's `appcast.xml`, on pushes to `site/` and after each release; `ci.yml` builds
+pull requests and keeps project.yml's `MARKETING_VERSION` at the `0.0.0` placeholder. Sparkle
+(`App/Updater.swift`, Gannin › Check for Updates) reads `https://gannin.ai/appcast.xml` with the
+key in `Info.plist`, and doesn't check by itself in a 0.0.0 build. `docs/RELEASING.md` has the
+secrets and DNS. The app was `dev.andon.getgannin`; `App/BundleMove.swift` brings its preferences,
+Application Support folder and token across once.
 
 ## Layout
 

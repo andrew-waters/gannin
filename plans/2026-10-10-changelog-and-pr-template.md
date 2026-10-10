@@ -46,10 +46,12 @@ with the reasons, for review in the PR.
 - **No user-facing change, no entry.** CI, docs and harness files (plans, sessions, skills) can skip it; the
   checklist has a box to say so.
 - **The PR template's checklist**: linked issue (`Closes` or `Part of`); a changelog entry or the skip box;
-  built once and tests run; `CLAUDE.md` updated when behaviour it describes changes; `MARKETING_VERSION` left
-  at `0.0.0`; the Verified section is honest. Its sections are the skill's (What, Why, How, Verified, Not in
-  this PR), so the skill just fills the template. "No Claude attribution" stays in the skill's Rules: it's a
-  rule for agents rather than every contributor.
+  built once and tests run; screenshots or a recording for a UI change; `CLAUDE.md` updated when behaviour it
+  describes changes; `MARKETING_VERSION` left at `0.0.0`; the Verified section is honest. Its sections are the
+  skill's (What, Why, How, Verified, Not in this PR), so the skill just fills the template. Orchard's
+  Screenshots / recording section becomes a line in Verified and a checklist item, so the evidence sits with
+  the rest of what was checked. "No Claude attribution" stays in the skill's Rules: it's a rule for agents
+  rather than every contributor.
 - **Backfill** 0.0.1 and 0.0.2 from their tag messages so the file starts complete.
 
 ## Tasks
@@ -67,4 +69,3 @@ with the reasons, for review in the PR.
 
 - A CI check that a PR touching `Gannin/` also touches `CHANGELOG.md`. The checklist asks; a check can follow
   if entries get missed.
-- The harness copy of this plan: the harness checkout was read-only in the session, so the plan lives here.
