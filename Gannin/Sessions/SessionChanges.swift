@@ -36,6 +36,14 @@ nonisolated struct WorktreeChanges: Identifiable, Hashable, Sendable {
     /// Commits not on its upstream yet; nil before it's been pushed.
     var unpushed: Int? = nil
     var hasUpstream = false
+    /// With no upstream (a sandbox pushes with `git push origin HEAD`, so
+    /// none is recorded): commits not on `origin/<branch>`; nil when there's
+    /// no such branch, so it was never pushed.
+    var unpushedToOrigin: Int? = nil
+
+    /// Commits not pushed, against its upstream or else its branch on origin;
+    /// nil when it's on neither.
+    var notPushed: Int? { unpushed ?? unpushedToOrigin }
 
     var id: String { path }
 }
@@ -235,7 +243,11 @@ final class SessionChanges {
               printf '\\036worktree\\t%s\\n' "$1"
               \(base)
               printf '\\036base\\t%s\\t%s\\n' "$base" "$label"
-              if up=$(g rev-list --count @{u}..HEAD); then printf '\\036push\\t%s\\n' "$up"; else printf '\\036push\\t-\\n'; fi
+              if up=$(g rev-list --count @{u}..HEAD); then printf '\\036push\\t%s\\n' "$up"
+              else
+                printf '\\036push\\t-\\n'
+                if b=$(g symbolic-ref --short -q HEAD) && o=$(g rev-list --count "refs/remotes/origin/$b..HEAD"); then printf '\\036origin\\t%s\\n' "$o"; fi
+              fi
               printf '\\036staged\\n'; g diff --cached --no-renames --name-only
               printf '\\036status\\n'; g diff --no-renames --name-status "$base"
               printf '\\036numstat\\n'; g diff --no-renames --numstat "$base"
@@ -270,6 +282,7 @@ final class SessionChanges {
         var name = "", base = "HEAD", label = ""
         var unpushed: Int?
         var hasUpstream = false
+        var unpushedToOrigin: Int?
         var staged: Set<String> = []
         var section = ""
         var statuses: [String: ChangedFile.Status] = [:]
@@ -282,12 +295,13 @@ final class SessionChanges {
             let baseLabel = base == "HEAD" ? "the last commit" : label.isEmpty ? "the default branch" : label
             let shown = inHarness ? name : ((folder as NSString).lastPathComponent)
             for index in files.indices { files[index].isStaged = staged.contains(files[index].path) }
-            worktrees.append(WorktreeChanges(path: path, name: shown, base: base, baseLabel: baseLabel, files: files, unpushed: unpushed, hasUpstream: hasUpstream))
+            worktrees.append(WorktreeChanges(path: path, name: shown, base: base, baseLabel: baseLabel, files: files, unpushed: unpushed, hasUpstream: hasUpstream, unpushedToOrigin: unpushedToOrigin))
             statuses = [:]
             files = []
             staged = []
             unpushed = nil
             hasUpstream = false
+            unpushedToOrigin = nil
         }
 
         for line in output.split(separator: "\n") {
@@ -306,6 +320,8 @@ final class SessionChanges {
                     let value = parts.count > 1 ? parts[1] : "-"
                     hasUpstream = value != "-"
                     unpushed = Int(value)
+                case "origin":
+                    unpushedToOrigin = parts.count > 1 ? Int(parts[1]) : nil
                 default:
                     section = parts.first ?? ""
                 }
