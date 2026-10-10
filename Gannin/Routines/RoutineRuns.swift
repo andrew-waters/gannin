@@ -171,7 +171,11 @@ extension SessionStore {
             return await startMaintenanceRun(routine, run: run, setup: setup, harnessPath: path, placement: placement, goals: goals)
         case .issueQueue, .pinned:
             guard let issue else { return .failed("There was no issue to work on.") }
-            return await startIssueRun(routine, issue: issue, run: run, setup: setup, goals: goals, configs: configs, issues: issues, details: details, login: login)
+            // The queue is the org's: each issue runs in the harness covering
+            // its repos, as Work on This picks it, not the window's own.
+            let covering = configs.config(for: issue.org).harness(covering: WorkOnThisLauncher.repos(issue, issues: issues)) ?? setup
+            let issueGoals = covering.repo == setup.repo ? goals : configs.scoped(covering.repo).config(for: issue.org).measurables
+            return await startIssueRun(routine, issue: issue, run: run, setup: covering, goals: issueGoals, configs: configs, issues: issues, details: details, login: login)
         }
     }
 
@@ -257,7 +261,7 @@ extension SessionStore {
     func startIssueRun(_ routine: Routine, issue: IssueReference, run: UUID, setup: HarnessConfig, goals: [Measurable], configs: OrgConfigStore,
                        issues: IssueStore, details: DetailStore, login: String?) async -> RoutineStart {
         if let existing = session(forIssue: issue.id) {
-            return .failed("\(issue.reference) already has a session (\(existing.branch)), so it wasn't started again.")
+            return .failed("\(issue.reference) already has a session (\(existing.branch)), so it wasn't started again.", retry: false)
         }
         guard let path = Self.harnessPath(org: issue.org, repo: setup.repo) else {
             return .failed(Self.unavailable(org: issue.org, harness: setup) ?? "The harness isn't checked out here.")

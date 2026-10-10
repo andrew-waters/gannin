@@ -82,8 +82,8 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         let scheduled = running.filter { session in session.routineRun.map { sessions.routines?.run($0.run)?.outcome.isActive == true } ?? false }
         if !scheduled.isEmpty {
             explanation.append(scheduled.count == 1
-                ? "One is a scheduled run, which is recorded as stopped when Gannin quits."
-                : "\(scheduled.count) are scheduled runs, which are recorded as stopped when Gannin quits.")
+                ? "One is a scheduled run: its routine records it as failed, as Gannin quit while it ran, and it can be resumed from its session."
+                : "\(scheduled.count) are scheduled runs: their routines record them as failed, as Gannin quit while they ran, and they can be resumed from their sessions.")
         }
         if running.contains(where: \.isRemote) {
             explanation.append("Sessions on a server end too, as their ssh connection closes.")

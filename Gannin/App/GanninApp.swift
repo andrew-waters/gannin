@@ -126,11 +126,14 @@ struct GanninApp: App {
         sessions.routines = routines
         let scheduler = RoutineScheduler(store: routines)
         _scheduler = State(initialValue: scheduler)
+        // Each region's holidays asked for once a year a launch, so a failed
+        // fetch isn't tried again every tick.
+        var holidaysAsked: Set<String> = []
         scheduler.workingDays = { [weak orgConfigs, weak bankHolidays] org in
             guard let orgConfigs, let bankHolidays else { return RoutineSchedule.everyWeekday }
             let week = orgConfigs.baseConfig(for: org).week
             let year = Calendar.current.component(.year, from: .now)
-            if let region = week.holidays {
+            if let region = week.holidays, holidaysAsked.insert("\(region.country) \(region.subdivision ?? "") \(year)").inserted {
                 Task { await bankHolidays.load([region], years: year...(year + 1)) }
             }
             let calendar = bankHolidays.calendar(week: week, region: week.holidays, years: year...(year + 1))

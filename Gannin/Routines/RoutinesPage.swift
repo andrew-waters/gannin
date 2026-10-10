@@ -228,7 +228,7 @@ struct RoutineMenu: View {
     @Binding var deleting: Routine?
 
     var body: some View {
-        Button("Run Now") { Task { await scheduler.runNow(routine) } }
+        Button("Run Now") { scheduler.runNow(routine) }
             .disabled(routine.kind == .issueQueue && routines.queue(for: routine.org).isEmpty)
         Button("Edit…") { editing = EditedRoutine(routine: routine, isNew: false) }
         Button(routine.isEnabled ? "Turn Off" : "Turn On") { routines.update(routine.id) { $0.isEnabled.toggle() } }
@@ -275,7 +275,7 @@ struct RoutinePage: View {
             }
             .toolbar {
                 ToolbarItem {
-                    Button { Task { await scheduler.runNow(routine) } } label: { Label("Run Now", systemImage: "play") }
+                    Button { scheduler.runNow(routine) } label: { Label("Run Now", systemImage: "play") }
                         .help("Start a run now, outside its schedule")
                         .disabled(routine.kind == .issueQueue && routines.queue(for: routine.org).isEmpty)
                 }

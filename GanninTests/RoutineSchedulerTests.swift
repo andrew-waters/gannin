@@ -79,12 +79,15 @@ struct RoutineSchedulerTests {
         store.save(hourly)
         store.checked(at: date(2026, 10, 9, 6, 30))
         let scheduler = RoutineScheduler(store: store)
+        scheduler.calendar = calendar
+        scheduler.workingDays = { _ in { _ in true } }
         var started: [UUID] = []
         scheduler.start = { routine, _, _ in
             started.append(routine.id)
             return .started(session: UUID())
         }
         await scheduler.check(now: date(2026, 10, 9, 10, 0, 30))
+        await scheduler.startsFinished()
         #expect(started == [hourly.id])
         let runs = store.runs(for: hourly.id)
         #expect(runs.count == 2)
@@ -102,7 +105,39 @@ struct RoutineSchedulerTests {
                                          url: URL(string: "https://github.com/acme/app/issues/\(number)")!))
         }
         await scheduler.check(now: date(2026, 10, 9, 10, 0, 45))
+        await scheduler.startsFinished()
         #expect(store.runs(for: window.id).compactMap(\.issue?.number).sorted() == [1, 2])
         #expect(store.queue(for: "acme").map(\.issue.number) == [3])
+    }
+
+    @Test func aFailedQueuedStartGoesBackAndHoldsTheWindow() async {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "RoutineSchedulerTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let store = RoutineStore(directory: folder)
+        let scheduler = RoutineScheduler(store: store)
+        scheduler.calendar = calendar
+        scheduler.workingDays = { _ in { _ in true } }
+        var tries = 0
+        scheduler.start = { _, _, _ in
+            tries += 1
+            return .failed("The harness isn't checked out here.")
+        }
+        var window = routine(.window(RoutineWindow(start: TimeOfDay(hour: 0), end: TimeOfDay(hour: 23, minute: 59), days: Set(1...7))), kind: .issueQueue)
+        window.concurrency = 1
+        store.save(window)
+        for number in 1...3 {
+            store.enqueue(IssueReference(org: "acme", id: "I_\(number)", number: number, title: "Issue \(number)", repo: "acme/app",
+                                         url: URL(string: "https://github.com/acme/app/issues/\(number)")!))
+        }
+        store.checked(at: date(2026, 10, 9, 10))
+        await scheduler.check(now: date(2026, 10, 9, 10, 0, 15))
+        await scheduler.startsFinished()
+        // One try, the issue back at the front, the rest still queued.
+        #expect(tries == 1)
+        #expect(store.queue(for: "acme").map(\.issue.number) == [1, 2, 3])
+        #expect(store.runs(for: window.id).map(\.outcome) == [.failed])
+        // Held off on the next look.
+        await scheduler.check(now: date(2026, 10, 9, 10, 0, 30))
+        await scheduler.startsFinished()
+        #expect(tries == 1)
     }
 }

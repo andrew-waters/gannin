@@ -248,17 +248,18 @@ final class RoutineStore {
         write(routines, "routines.json")
     }
 
-    /// Removes it and its history. Sessions it started stay.
+    /// Removes it and its history, but for runs still going, whose limits
+    /// are still watched until they end. Sessions it started stay.
     func remove(_ id: UUID) {
         routines.removeAll { $0.id == id }
-        runs.removeAll { $0.routine == id }
+        runs.removeAll { $0.routine == id && !$0.outcome.isActive }
         write(routines, "routines.json")
         write(runs, "runs.json")
     }
 
     /// The issue's pin, if it has one still to come.
     func pin(for issueID: String) -> Routine? {
-        routines.first { $0.kind == .pinned && $0.issue?.id == issueID }
+        routines.first { $0.kind == .pinned && $0.isEnabled && $0.issue?.id == issueID }
     }
 
     // MARK: The queue
@@ -267,10 +268,12 @@ final class RoutineStore {
 
     func isQueued(_ issueID: String) -> Bool { queue.contains { $0.issue.id == issueID } }
 
-    /// Adds the issue at the end of its org's queue, once.
-    func enqueue(_ issue: IssueReference, now: Date = .now) {
+    /// Adds the issue at the end of its org's queue, once; or at its front,
+    /// as a queued issue whose start failed goes back.
+    func enqueue(_ issue: IssueReference, atFront: Bool = false, now: Date = .now) {
         guard !isQueued(issue.id) else { return }
-        queue.append(QueuedIssue(issue: issue, addedAt: now))
+        let item = QueuedIssue(issue: issue, addedAt: now)
+        if atFront { queue.insert(item, at: 0) } else { queue.append(item) }
         write(queue, "queue.json")
     }
 

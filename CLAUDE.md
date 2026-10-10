@@ -1226,8 +1226,13 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   the gap (`recordGap`, first, last and count); while paused, one Skipped row. Times from before a
   routine was made (or its schedule last changed) don't count. A pin is turned off once its time has
   passed. Queue windows have no times: while open (`isOpen`), the next queued issue starts until
-  `concurrency` runs are going (`freeSlots`), each taken off the queue as it starts. Run Now starts one
-  outside the schedule. At launch, runs still marked going are failed (terminals don't outlive Gannin).
+  `concurrency` runs are going (`freeSlots`), each taken off the queue as it starts. No look awaits a
+  start (one can take minutes): each run is recorded as going and started in a task of its own
+  (`starting`), so limits are still watched meanwhile. A queued issue whose start fails goes back to
+  the front and its window holds off five minutes (`heldUntil`), unless the issue itself was the
+  trouble (`RoutineStart.failed(_:retry:)`). Run Now starts one outside the schedule. At launch, runs
+  still marked going are failed (terminals don't outlive Gannin). Deleting a routine keeps its runs
+  still going, so their limits are watched until they end.
 - Starting (`SessionStore.startRoutine`, `Routines/RoutineRuns.swift`): the run's session carries
   `CodeSession.routineRun` (`RoutineRunInfo`: routine, run, name, kind, limit, limits, repos, task).
   Its tab is added, not shown, and claude starts with no prompt (`SessionScript.claudeSteps` leaves it
@@ -1245,8 +1250,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   - Maintenance (`startMaintenanceRun`) has no issue, as a quick change without one hasn't
     (`hasNoIssue`, `isMaintenance`: Maintenance as its short reference), on a new branch each run
     (`routineBranchName`, `routine-<name>-<date>-<4 hex>`), its brief's task and repos in place of a
-    description (`maintenanceSections`), placed as Work on This would be.
-  - An issue from a queue window or pin (`startIssueRun`) is the issue's Work on This session, briefed
+    description (`maintenanceSections`), placed as Work on This would be (a sandbox clones every repo
+    it names, `SandboxLaunch.cloneRepos`).
+  - An issue from a queue window or pin (`startIssueRun`) is the issue's Work on This session, in the
+    harness covering its repos (the queue is the org's, not a project's), briefed
     from the history and any cached detail, its record committed to the harness without asking
     (scheduling it is the consent), its first prompt `scheduledIssuePrompt` (write a short plan and
     carry on) with the routine's note. An issue that already has a session fails the run.

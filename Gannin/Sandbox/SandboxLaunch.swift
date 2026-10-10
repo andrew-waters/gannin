@@ -261,15 +261,16 @@ enum SandboxLaunch {
     /// The house rules' file in the shared config, imported by its CLAUDE.md.
     static let houseRulesFile = "gannin-house-rules.md"
 
-    /// The repos to have cloned before the sandbox starts: the issue's and
-    /// those of the PRs it has opened.
+    /// The repos to have cloned before the sandbox starts: the issue's (or
+    /// a maintenance run's), and those of the PRs it has opened.
     static func cloneRepos(_ session: CodeSession) -> [String] {
+        let maintained = session.isMaintenance ? session.routineRun?.repos ?? [] : []
         let fromPullRequests = session.pullRequests.compactMap { url -> String? in
             let parts = url.pathComponents.filter { $0 != "/" }
             return parts.count >= 2 ? "\(parts[0])/\(parts[1])" : nil
         }
         var seen: Set<String> = []
-        return ([session.issue.repo] + fromPullRequests).filter { seen.insert($0.lowercased()).inserted }
+        return ([session.issue.repo] + maintained + fromPullRequests).filter { seen.insert($0.lowercased()).inserted }
     }
 
     // MARK: Credentials

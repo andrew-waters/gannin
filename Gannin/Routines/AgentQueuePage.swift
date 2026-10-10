@@ -25,7 +25,7 @@ struct AgentQueuePage: View {
                 ContentUnavailableView(
                     "Nothing queued",
                     systemImage: "tray",
-                    description: Text("Add issues with Schedule for Agent on an issue, beside Work on This. A queue window starts them in this order, as Work on This would.")
+                    description: Text("Add issues with Schedule for Agent on an issue, beside Work on This. A queue window starts them in this order, as Work on This would, each in the project covering its repos.")
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
@@ -185,7 +185,7 @@ struct ScheduleForAgentButton: View {
 
     private var help: String {
         if routines.isQueued(reference.id) { return "In the agent queue; a queue window starts it" }
-        if let pin = routines.pin(for: reference.id), pin.isEnabled { return "Pinned to \(pin.schedule.summary)" }
+        if let pin = routines.pin(for: reference.id) { return "Pinned to \(pin.schedule.summary)" }
         return "Have an agent work on this later: in the agent queue, or at a time"
     }
 }
@@ -205,7 +205,7 @@ struct ScheduleForAgentItems: View {
         } else {
             Button("Add to Agent Queue") { routines.enqueue(reference) }
         }
-        if let pin = routines.pin(for: reference.id), pin.isEnabled {
+        if let pin = routines.pin(for: reference.id) {
             Button("Change Pinned Time…") { editing = EditedRoutine(routine: pin, isNew: false) }
             Button("Unpin") { routines.remove(pin.id) }
         } else {

@@ -207,7 +207,7 @@ struct RoutineEditor: View {
         switch routine.kind {
         case .report: "An Ask session on this Mac with no code worktree. What it writes stays with the run, to open or Commit to Harness; nothing is committed by itself."
         case .code: "A session with no issue, a new branch each run, worktrees of the repos named, laid out as Work on This lays them out."
-        case .issueQueue: "While the window is open, the next issue in the agent queue starts as Work on This would, up to the number at once below. Its session record is committed to the harness."
+        case .issueQueue: "While the window is open, the next issue in the org's agent queue starts as Work on This would, in the project covering its repos, up to the number at once below. Its session record is committed to the harness."
         case .pinned: "The issue starts as Work on This would at the time below. Its session record is committed to the harness."
         }
     }
@@ -406,7 +406,9 @@ struct RoutineEditor: View {
             saved = Routine(
                 id: saved.id, name: saved.name, org: saved.org, harnessRepo: saved.harnessRepo, kind: saved.kind, prompt: saved.prompt,
                 teamPrompts: saved.teamPrompts, repos: saved.repos, schedule: saved.schedule, limit: saved.limit, maxMinutes: saved.maxMinutes,
-                maxCost: saved.maxCost, concurrency: saved.concurrency, issue: saved.issue, isEnabled: true, createdAt: .now
+                maxCost: saved.maxCost, concurrency: saved.concurrency, issue: saved.issue,
+                // Off stays off; a pin moved to a time to come is on again.
+                isEnabled: saved.isEnabled || saved.kind == .pinned, createdAt: .now
             )
         }
         routines.save(saved)

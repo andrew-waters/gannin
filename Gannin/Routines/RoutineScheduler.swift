@@ -5,7 +5,9 @@ import Observation
 /// What starting a scheduled run came to.
 enum RoutineStart {
     case started(session: UUID)
-    case failed(String)
+    /// `retry` is false when the issue itself is the trouble (it already
+    /// has a session), so a queued one isn't put back.
+    case failed(String, retry: Bool = true)
 }
 
 /// Starts agent sessions by themselves while Gannin runs: each routine's
@@ -23,15 +25,23 @@ final class RoutineScheduler {
     @ObservationIgnored var workingDays: (String) -> RoutineSchedule.WorkingDays = { _ in RoutineSchedule.everyWeekday }
     /// Called each tick to watch the runs going (limits, outcomes).
     @ObservationIgnored var watch: () -> Void = {}
+    /// The calendar times are worked out in; a test's own.
+    @ObservationIgnored var calendar: Calendar = .current
 
     static let tick: Duration = .seconds(15)
     /// How late a time may be noticed and still run.
     static let grace: TimeInterval = 120
+    /// How long a queue window waits after a start fails before trying the
+    /// issue (put back at the front) again.
+    static let holdAfterFailure: TimeInterval = 5 * 60
 
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var wakeObserver: NSObjectProtocol?
-    /// Routines with a run being started, so a slow start isn't doubled.
-    @ObservationIgnored private var starting: Set<UUID> = []
+    /// Starts under way, by run: a start can take minutes (a sandbox's
+    /// image, the harness commit), so none is awaited by a look.
+    @ObservationIgnored private var starting: [UUID: Task<Void, Never>] = [:]
+    /// Queue windows held off after a failed start, until when.
+    @ObservationIgnored private var heldUntil: [UUID: Date] = [:]
     /// While a look is under way: the wake's and the loop's never overlap.
     @ObservationIgnored private var checking = false
 
@@ -114,7 +124,7 @@ final class RoutineScheduler {
         store.checked(at: now)
         for routine in store.routines {
             let days = workingDays(routine.org)
-            let plan = Self.plan(routine, since: since, now: now, paused: store.isPaused, isWorkingDay: days)
+            let plan = Self.plan(routine, since: since, now: now, paused: store.isPaused, calendar: calendar, isWorkingDay: days)
             store.recordGap(plan.missed, routine: routine.id, outcome: .missed, issue: routine.issue)
             store.recordGap(plan.skipped, routine: routine.id, outcome: .skippedPaused, issue: routine.issue)
             // A pin's time has come and gone, run or not.
@@ -122,54 +132,79 @@ final class RoutineScheduler {
                 store.update(routine.id) { $0.isEnabled = false }
             }
             if let due = plan.due {
-                await run(routine, scheduledAt: due, issue: routine.issue)
+                run(routine, scheduledAt: due, issue: routine.issue)
             }
         }
         for routine in store.routines where routine.kind == .issueQueue {
-            await drain(routine, now: now)
+            drain(routine, now: now)
         }
     }
 
     /// Starts the next queued issues while the window has room (R7), each
-    /// taken off the queue as it starts.
-    private func drain(_ routine: Routine, now: Date) async {
+    /// taken off the queue as it starts. Runs being started count, as
+    /// they're recorded as going at once.
+    private func drain(_ routine: Routine, now: Date) {
+        if let held = heldUntil[routine.id], now < held { return }
         let days = workingDays(routine.org)
         while true {
-            let active = store.activeRuns.filter { $0.routine == routine.id }.count + (starting.contains(routine.id) ? 1 : 0)
-            guard Self.freeSlots(routine, active: active, now: now, paused: store.isPaused, isWorkingDay: days) > 0,
+            let active = store.activeRuns.filter { $0.routine == routine.id }.count
+            guard Self.freeSlots(routine, active: active, now: now, paused: store.isPaused, calendar: calendar, isWorkingDay: days) > 0,
                   let next = store.queue(for: routine.org).first else { return }
             store.dequeue(next.issue.id)
-            await run(routine, scheduledAt: now, issue: next.issue)
+            run(routine, scheduledAt: now, issue: next.issue, fromQueue: true)
         }
     }
 
-    /// Records the run as going, then starts its session.
-    private func run(_ routine: Routine, scheduledAt: Date, issue: IssueReference?) async {
+    /// Records the run as going, then starts its session in a task of its
+    /// own, so a slow start holds up no look (and no other run's limits).
+    /// A queued issue whose start fails goes back to the front, and its
+    /// window waits a while before trying again.
+    private func run(_ routine: Routine, scheduledAt: Date, issue: IssueReference?, fromQueue: Bool = false) {
         let id = UUID()
-        starting.insert(routine.id)
-        defer { starting.remove(routine.id) }
         store.record(RoutineRun(id: id, routine: routine.id, scheduledAt: scheduledAt, issue: issue, startedAt: .now, outcome: .running))
-        switch await start(routine, issue, id) {
-        case .started(let session):
-            store.updateRun(id) { $0.session = session }
-        case .failed(let why):
-            store.updateRun(id) { run in
-                run.outcome = .failed
-                run.endedAt = .now
-                run.note = why
+        starting[id] = Task { [weak self] in
+            guard let self else { return }
+            let result = await self.start(routine, issue, id)
+            self.starting[id] = nil
+            switch result {
+            case .started(let session):
+                self.store.updateRun(id) { $0.session = session }
+            case .failed(let why, let retry):
+                self.store.updateRun(id) { run in
+                    run.outcome = .failed
+                    run.endedAt = .now
+                    run.note = why
+                }
+                if fromQueue, retry, let issue {
+                    self.store.enqueue(issue, atFront: true)
+                    self.heldUntil[routine.id] = max(scheduledAt, .now).addingTimeInterval(Self.holdAfterFailure)
+                }
             }
         }
     }
 
+    /// Whether one of the routine's runs is being started.
+    func isStarting(_ routine: UUID) -> Bool {
+        starting.keys.contains { store.run($0)?.routine == routine }
+    }
+
+    /// Waits for every start under way; for tests.
+    func startsFinished() async {
+        while let task = starting.values.first {
+            await task.value
+        }
+    }
+
     /// Runs the routine now, outside its schedule (Run Now).
-    func runNow(_ routine: Routine) async {
-        guard !starting.contains(routine.id) else { return }
+    func runNow(_ routine: Routine) {
+        guard !isStarting(routine.id) else { return }
         if routine.kind == .issueQueue {
             guard let next = store.queue(for: routine.org).first else { return }
             store.dequeue(next.issue.id)
-            await run(routine, scheduledAt: .now, issue: next.issue)
+            heldUntil[routine.id] = nil
+            run(routine, scheduledAt: .now, issue: next.issue, fromQueue: true)
         } else {
-            await run(routine, scheduledAt: .now, issue: routine.issue)
+            run(routine, scheduledAt: .now, issue: routine.issue)
         }
     }
 }
