@@ -130,3 +130,33 @@ struct MaintenanceRunTests {
         #expect(prompt.hasSuffix("Bump patch versions and run the tests."))
     }
 }
+
+/// Watching a scheduled run: limits, Needs you and how it ends.
+struct RoutineVerdictTests {
+    private func judge(_ state: SessionState, running: Bool = true, worked: Bool = true, pair: Bool = false, minutes: Double = 5, cost: Double = 1) -> RoutineVerdict {
+        RoutineVerdict.judge(state: state, isRunning: running, hasWorked: worked, inPairReview: pair, elapsed: minutes * 60, cost: cost, maxMinutes: 60, maxCost: 5)
+    }
+
+    @Test func limitsComeFirst() {
+        #expect(judge(.working, minutes: 61) == .overTime)
+        #expect(judge(.needsYou, minutes: 61) == .overTime)
+        #expect(judge(.working, cost: 5.01) == .overCost)
+        #expect(judge(.needsYou, cost: 9) == .overCost)
+        #expect(judge(.working, minutes: 59, cost: 4.99) == .running)
+        // Nothing to stop once claude isn't running.
+        #expect(judge(.exited, running: false, minutes: 90) == .finished)
+    }
+
+    @Test func outcomes() {
+        #expect(judge(.needsYou) == .needsYou)
+        #expect(judge(.idle) == .finished)
+        #expect(judge(.exited) == .finished)
+        // Waiting for its first prompt isn't finished.
+        #expect(judge(.idle, worked: false) == .running)
+        #expect(judge(.starting, worked: false) == .running)
+        // Nor is waiting on its pair reviewer.
+        #expect(judge(.idle, pair: true) == .running)
+        #expect(judge(.stopped, running: false, worked: false) == .lost)
+        #expect(judge(.exited, worked: false) == .lost)
+    }
+}

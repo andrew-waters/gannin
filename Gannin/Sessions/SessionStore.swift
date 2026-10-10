@@ -439,6 +439,11 @@ final class SessionStore {
     /// Routines and their runs, for naming and watching scheduled runs
     /// (`Routines/`); set by the app.
     @ObservationIgnored var routines: RoutineStore?
+    /// Scheduled runs' sessions seen working since launch, so one waiting
+    /// for its first prompt isn't taken for finished.
+    @ObservationIgnored var routineSessionsWorked: Set<UUID> = []
+    /// Scheduled runs being stopped at their limit.
+    @ObservationIgnored var stoppingRoutineSessions: Set<UUID> = []
     /// Every session at once instead of a tab.
     var showingOverview = false
     /// New plans being set up, by their tab's ID: a tab of their own until

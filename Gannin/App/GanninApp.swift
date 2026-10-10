@@ -140,6 +140,7 @@ struct GanninApp: App {
             guard let sessions, let orgConfigs, let issues, let details else { return .failed("Gannin is closing.") }
             return await sessions.startRoutine(routine, issue: issue, run: run, configs: orgConfigs, issues: issues, details: details, login: auth?.viewer?.login)
         }
+        scheduler.watch = { [weak sessions] in sessions?.watchRoutineRuns() }
         scheduler.begin()
         TabMenuRename.shared.install()
     }
