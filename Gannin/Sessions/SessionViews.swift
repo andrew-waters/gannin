@@ -41,6 +41,9 @@ struct SessionsWindow: View {
                 if draft.isAsk {
                     NewAskView(draftID: draftID, draft: draft)
                         .id(draftID)
+                } else if draft.isQuickChange {
+                    NewQuickChangeView(draftID: draftID, draft: draft)
+                        .id(draftID)
                 } else {
                     NewPlanningView(draftID: draftID, draft: draft)
                         .id(draftID)
@@ -60,8 +63,8 @@ struct SessionsWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 480)
-        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.isAsk ? "Ask" : $0.issue.reference } ?? "Claude Code")
-        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : "New plan" } ?? "")
+        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.isAsk ? "Ask" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
+        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : "New plan" } ?? "")
         .background { shortcuts }
         .onChange(of: activeState, initial: true) { sessions.windowIsKey = activeState == .key }
         .onDisappear { sessions.windowIsKey = false }
@@ -179,6 +182,9 @@ private struct SessionTabBar: View {
                 Button("New Ask") {
                     sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness, isAsk: true))
                 }
+                Button("New Quick Change") {
+                    sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness, isQuickChange: true))
+                }
                 Button("New Plan") {
                     sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness))
                 }
@@ -228,7 +234,12 @@ private struct TabKind {
         } else if session.isHelper {
             name = session.role ?? "Helper"
             symbol = session.isReviewer ? "arrow.triangle.pull" : "person.2"
-            reference = session.issue.reference
+            reference = session.hasNoIssue ? nil : session.issue.reference
+            title = session.name ?? session.issue.title
+        } else if session.isQuickChange {
+            name = "Quick Change"
+            symbol = "bolt"
+            reference = session.hasNoIssue ? nil : session.issue.reference
             title = session.name ?? session.issue.title
         } else {
             name = "Code"
@@ -250,14 +261,14 @@ private struct DraftTabItem: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle().fill(Color.secondary.opacity(0.5)).frame(width: 7, height: 7)
-            Image(systemName: draft.isAsk ? "sparkle.magnifyingglass" : "list.bullet")
+            Image(systemName: draft.isAsk ? "sparkle.magnifyingglass" : draft.isQuickChange ? "bolt" : "list.bullet")
                 .font(.system(size: 20))
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: 26)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(draft.isAsk ? "New Ask" : "New Plan")
+                    Text(draft.isAsk ? "New Ask" : draft.isQuickChange ? "New Quick Change" : "New Plan")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     if let issue = draft.issue {
@@ -382,7 +393,7 @@ private struct SessionTabItem: View {
         } message: {
             Text(session.isAsk ? "The Ask's name, wherever it's listed." : "Leave it empty to go back to \(session.issue.title).")
         }
-        .help("\(session.issue.reference): \(session.issue.title). \(state.label).")
+        .help("\(session.hasNoIssue ? "Quick change in \(session.issue.repo)" : session.issue.reference): \(session.issue.title). \(state.label).")
         .draggable(session.id.uuidString)
         .dropDestination(for: String.self) { items, _ in
             guard let dragged = items.first.flatMap(UUID.init(uuidString:)) else { return false }
@@ -651,7 +662,7 @@ private struct SessionTabHeader: View {
     var body: some View {
         HStack(spacing: 6) {
             Circle().fill(sessions.state(session.id).color).frame(width: 7, height: 7)
-            Text("#\(String(session.issue.number))").foregroundStyle(.secondary)
+            Text(session.shortReference).foregroundStyle(.secondary)
             Text(session.title).lineLimit(1)
             Spacer()
             SessionLocationBadge(session: session, prominent: false)
@@ -1253,9 +1264,12 @@ private struct SessionPanel: View {
                 AskArtifactsSection(session: session)
                 AskFilesSections(session: session, files: sessions.files(for: session), committing: $committing, error: $fileError)
             }
+            if session.isQuickChange {
+                QuickChangeSection(session: session)
+            }
             if session.isHelper {
                 HelperParentSection(session: session)
-            } else if !session.isPlanning && !session.isAsk {
+            } else if !session.isPlanning && !session.isAsk && !session.hasNoIssue {
             Section("Issue") {
                 Text(session.issue.title)
                     .fontWeight(.semibold)
@@ -1346,7 +1360,7 @@ private struct SessionPanel: View {
             }
             SessionFinishSection(session: session)
             // A helper's issue, plans and PRs are on the session it helps.
-            if !session.isPlanning && !session.isAsk && !session.isHelper {
+            if !session.isPlanning && !session.isAsk && !session.isHelper && !session.hasNoIssue {
                 HarnessIssueSection(reference: session.issue, showsEmpty: true, harnessRepo: session.harnessRepo)
             }
         }

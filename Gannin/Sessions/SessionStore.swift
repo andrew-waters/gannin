@@ -59,6 +59,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var planning: PlanningInfo? = nil
     /// An Ask session's title and first message.
     var ask: AskInfo? = nil
+    /// A quick change's note and screenshots, with or without an issue.
+    var quickChange: QuickChangeInfo? = nil
     /// The name its tab was given, in place of the issue's or PR's title.
     var name: String? = nil
     /// A review's result, kept from its transcript so it can be read again
@@ -140,6 +142,7 @@ extension CodeSession {
         reviewOf = try container.decodeIfPresent(PullRequestReference.self, forKey: .reviewOf)
         planning = try container.decodeIfPresent(PlanningInfo.self, forKey: .planning)
         ask = try container.decodeIfPresent(AskInfo.self, forKey: .ask)
+        quickChange = try? container.decodeIfPresent(QuickChangeInfo.self, forKey: .quickChange)
         name = try container.decodeIfPresent(String.self, forKey: .name)
         reviewResult = try container.decodeIfPresent(SessionTranscript.ReviewResult.self, forKey: .reviewResult)
         reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
@@ -164,7 +167,8 @@ extension IssueReference {
 /// A session as the harness keeps it, in `sessions/<repo>-<number>/session.json`
 /// beside its brief, so the team can see who's working on what, where.
 struct SessionRecord: Codable {
-    var issue: String
+    /// `owner/name#123`; nil for a quick change with no issue.
+    var issue: String?
     var title: String
     var url: URL
     /// The code repos it has worktrees for.
@@ -450,7 +454,7 @@ final class SessionStore {
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
                 var session = session
-                if !session.isRemote, let worktree = Self.worktree(for: session), !FileManager.default.fileExists(atPath: worktree.path) {
+                if !session.isRemote, !session.hasNoIssue, let worktree = Self.worktree(for: session), !FileManager.default.fileExists(atPath: worktree.path) {
                     session.branch = Self.branchName(session.issue)
                 }
                 return (session.id, session)
@@ -618,23 +622,31 @@ final class SessionStore {
         return "sessions/\(name)-\(issue.number)"
     }
 
+    /// The session's folder there: its issue's, or for a quick change with
+    /// none, `sessions/quick-<slug>`.
+    static func harnessFolder(for session: CodeSession) -> String {
+        session.hasNoIssue ? "sessions/\(session.branch)" : harnessFolder(for: session.issue)
+    }
+
     /// Commits the session's brief and `session.json` to the harness's
     /// default branch, so its checkout on any box has them. Confirmed by the
     /// caller. The session keeps where they went, so its PR is added later
     /// and a server session reads its brief from the harness.
     func record(_ id: UUID, startedBy: String?) async {
         guard let session = sessions[id], let repo = session.harnessRepo else { return }
-        let folder = Self.harnessFolder(for: session.issue)
+        let folder = Self.harnessFolder(for: session)
         let brief = (try? String(contentsOf: Self.directory(for: id).appending(path: "brief.md"), encoding: .utf8)) ?? ""
         let record = SessionRecord(
-            issue: session.issue.reference, title: session.issue.title, url: session.issue.url,
-            repos: session.isInHarness ? [] : [session.repo], branch: session.branch, startedBy: startedBy, startedAt: session.createdAt,
+            issue: session.hasNoIssue ? nil : session.issue.reference, title: session.issue.title, url: session.issue.url,
+            repos: session.hasNoIssue ? [session.issue.repo] : session.isInHarness ? [] : [session.repo], branch: session.branch, startedBy: startedBy, startedAt: session.createdAt,
             box: session.connect ?? (Host.current().localizedName ?? "Mac"), pullRequests: session.pullRequests
         )
         do {
             try await harness.commit(org: session.org, setup: HarnessConfig(repo: repo), refreshing: false) { _ in
                 HarnessChange(
-                    message: "Gannin: session on \(session.issue.reference)\n\n\(session.issue.title), on \(session.branch).",
+                    message: session.hasNoIssue
+                        ? "Gannin: quick change in \(session.issue.repo)\n\n\(session.issue.title), on \(session.branch)."
+                        : "Gannin: session on \(session.issue.reference)\n\n\(session.issue.title), on \(session.branch).",
                     files: ["\(folder)/brief.md": brief, "\(folder)/session.json": record.json]
                 )
             }
@@ -659,7 +671,7 @@ final class SessionStore {
                     guard let text, var record = try? SessionRecord.decoder.decode(SessionRecord.self, from: Data(text.utf8)) else { return nil }
                     guard !record.pullRequests.contains(url) else { return nil }
                     record.pullRequests.append(url)
-                    return HarnessChange(message: "Gannin: \(session.issue.reference) has a pull request\n\n\(url.absoluteString)", files: [path: record.json])
+                    return HarnessChange(message: "Gannin: \(session.longReference) has a pull request\n\n\(url.absoluteString)", files: [path: record.json])
                 }
                 recordErrors[id] = nil
             } catch {
@@ -772,6 +784,8 @@ final class SessionStore {
         /// A sandbox on a server gets its credentials over ssh before the
         /// terminal starts: nil there removes any left from before.
         var remoteSecrets: (runner: Shell.Runner, directory: String, text: String?)?
+        /// A quick change's screenshots, sent to a server the same way.
+        var remoteAttachments: (runner: Shell.Runner, directory: String, files: [URL])?
         if let connect = session.connect {
             let remoteDirectory = Self.remoteDirectory(for: session)
             // A brief in the harness comes with its pull; only one that
@@ -785,6 +799,10 @@ final class SessionStore {
                 files: session.isSandboxed ? ["inner.sh": SandboxLaunch.innerScript(session)] : [:]
             )
             command = SessionScript.connecting(connect, to: remote)
+            if let names = session.quickChange?.attachments, !names.isEmpty, let arguments = Shell.sshArguments(connect) {
+                let folder = directory.appending(path: Self.attachmentsFolder, directoryHint: .isDirectory)
+                remoteAttachments = (.ssh(arguments), remoteDirectory, names.map { folder.appending(path: $0) })
+            }
             if session.isSandboxed, let arguments = Shell.sshArguments(connect) {
                 let text = try? SandboxLaunch.credentials(org: session.org).get()
                 remoteSecrets = (.ssh(arguments), remoteDirectory, text.map(SandboxLaunch.secretsFile))
@@ -832,7 +850,7 @@ final class SessionStore {
         // A stop of its sandbox still on its way would land after the start
         // script found it running: wait for it, so the script starts afresh.
         let stopping = session.sandbox.flatMap { stoppingSandboxes[$0] }
-        guard remoteSecrets != nil || stopping != nil else { return start() }
+        guard remoteSecrets != nil || remoteAttachments != nil || stopping != nil else { return start() }
         launching.insert(id)
         Task {
             await stopping?.value
@@ -844,8 +862,35 @@ final class SessionStore {
                 let input = remoteSecrets.text.map { Data($0.utf8) }
                 _ = await Task.detached { Shell.run(script, remoteSecrets.runner, input: input) }.value
             }
+            if let remoteAttachments {
+                // Those not there yet, one file a call, on standard input.
+                // The start script warns about any that didn't arrive.
+                let listing = Self.remoteAttachmentListScript(directory: remoteAttachments.directory)
+                let present = await Task.detached { Shell.run(listing, remoteAttachments.runner) }.value
+                let there = Set(present.output.split(separator: "\n").map(String.init))
+                for file in remoteAttachments.files where !there.contains(file.lastPathComponent) {
+                    guard let data = try? Data(contentsOf: file) else { continue }
+                    let script = Self.remoteAttachmentScript(directory: remoteAttachments.directory, name: file.lastPathComponent)
+                    _ = await Task.detached { Shell.run(script, remoteAttachments.runner, input: data) }.value
+                }
+            }
             start()
         }
+    }
+
+    /// Lists a quick change's screenshots already in its session's folder on
+    /// a server, one name a line.
+    static func remoteAttachmentListScript(directory: String) -> String {
+        "d=\(directory)\nls -1 \"$d/\(attachmentsFolder)\" 2>/dev/null || true"
+    }
+
+    /// Writes one of a quick change's screenshots, from standard input, into
+    /// its session's folder on a server: to a part file first, so one cut
+    /// short isn't taken as there next time.
+    static func remoteAttachmentScript(directory: String, name: String) -> String {
+        let file = "\"$d/\(attachmentsFolder)\"/" + SessionScript.quoted(name)
+        let part = "\"$d/\(attachmentsFolder)\"/" + SessionScript.quoted(".\(name).part")
+        return "d=\(directory)\nmkdir -p \"$d/\(attachmentsFolder)\" && cat > \(part) && mv \(part) \(file)"
     }
 
     /// Sessions whose terminal is about to start, once a stop or their
@@ -927,7 +972,7 @@ final class SessionStore {
         guard UserDefaults.standard.object(forKey: Self.notifiesKey) as? Bool ?? true, let session = sessions[id] else { return }
         let content = UNMutableNotificationContent()
         content.title = title
-        content.subtitle = "#\(session.issue.number) \(session.title)"
+        content.subtitle = "\(session.shortReference) \(session.title)"
         content.body = body
         content.sound = .default
         content.threadIdentifier = id.uuidString

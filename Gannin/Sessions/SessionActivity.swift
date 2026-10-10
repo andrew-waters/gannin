@@ -112,7 +112,7 @@ struct SessionActivityPane: View {
         let parent = session.parentID.flatMap { sessions.sessions[$0] }
         return Section("Review") {
             if findings.isEmpty {
-                Text("When the review's done, its findings show here, to add to the comments on \(parent.map { "#\($0.issue.number)" } ?? "the session")'s changes.")
+                Text("When the review's done, its findings show here, to add to the comments on \(parent.map(\.shortReference) ?? "the session")'s changes.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
@@ -148,7 +148,7 @@ struct SessionActivityPane: View {
         let parent = session.parentID.flatMap { sessions.sessions[$0] } ?? session
         let others = ([parent] + sessions.helpers(of: parent.id)).filter { $0.id != session.id }
         let learnings = sessions.reviewLearnings(for: parent)
-        return Section("Agents on #\(String(session.issue.number))") {
+        return Section("Agents on \(session.shortReference)") {
             ForEach(others) { other in
                 Button {
                     sessions.reveal(other.id)
@@ -317,7 +317,7 @@ private struct HelperSheet: View {
                 TextField("First prompt", text: $prompt, axis: .vertical)
                     .lineLimit(4...10)
             } footer: {
-                Text("It works in #\(parent.issue.number)'s folder on \(parent.branch), beside the main session, with the same brief. Tell it which repo and files are its, so they don't both edit the same ones.")
+                Text("It works in \(parent.shortReference)'s folder on \(parent.branch), beside the main session, with the same brief. Tell it which repo and files are its, so they don't both edit the same ones.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -336,7 +336,7 @@ private struct HelperSheet: View {
         }
         .onAppear {
             if prompt.isEmpty {
-                prompt = "You're helping on \(parent.issue.reference), \"\(parent.issue.title)\". Another agent is implementing it in \(parent.isInHarness ? ".worktrees/\(parent.branch)/" : "this worktree"). Read the brief, then write tests for what it's changing. Don't edit its files except to add tests."
+                prompt = "You're helping on \(parent.longReference), \"\(parent.issue.title)\". Another agent is implementing it in \(parent.isInHarness ? ".worktrees/\(parent.branch)/" : "this worktree"). Read the brief, then write tests for what it's changing. Don't edit its files except to add tests."
             }
         }
     }

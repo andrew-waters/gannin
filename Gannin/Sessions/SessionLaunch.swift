@@ -12,8 +12,7 @@ extension SessionStore {
         if let planning = session.planning {
             return Self.planningValues(topic: planning.topic, harness: session.repo, branch: session.branch)
         }
-        let issue = session.issue
-        return HarnessPromptLibrary.values(reference: issue.reference, title: issue.title, url: issue.url, repo: issue.repo, number: issue.number, branch: session.branch)
+        return session.issueValues
     }
 
     /// What a session adds to its first prompt: what was picked, else the

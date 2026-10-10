@@ -406,8 +406,7 @@ extension SessionStore {
         var instructions: String?
         if reviewer, let repo = parent.harnessRepo {
             let repos = [parent.issue.repo] + (pullRequestInfo[parentID] ?? []).map(\.repo)
-            let issue = parent.issue
-            let values = HarnessPromptLibrary.values(reference: issue.reference, title: issue.title, url: issue.url, repo: issue.repo, number: issue.number, branch: parent.branch)
+            let values = parent.issueValues
             instructions = launchInstructions(org: parent.org, setup: HarnessConfig(repo: repo), use: .review, repos: repos, choice: nil, values: values)
                 .map(Self.reviewInstructions)
         }
@@ -435,7 +434,7 @@ extension SessionStore {
     static func reviewPrompt(for session: CodeSession, learnings: [HarnessLearning] = []) -> String {
         let folder = session.isInHarness ? ".worktrees/\(session.branch)/" : "this worktree"
         return """
-            You're reviewing another agent's work on \(session.issue.reference), "\(session.issue.title)". The brief is in \(session.isInHarness ? "\(folder).gannin/brief.md" : ".gannin/brief.md"). \
+            You're reviewing another agent's work on \(session.longReference), "\(session.issue.title)". The brief is in \(session.isInHarness ? "\(folder).gannin/brief.md" : ".gannin/brief.md"). \
             Look at every change in \(folder) (each repo's worktree, against where its branch left origin's default branch, committed or not) \
             for bugs, missed cases, and code that doesn't fit the repo. Don't edit anything.\(HarnessLearning.reviewInstructions(learnings, listsApplied: false).map { "\n\n\($0)\n\n" } ?? " ")\
             End your reply with your findings as a fenced ```json block: a list of {"path": "<repo folder>/<path in the repo>", "line": <line in the new file>, "comment": "<what's wrong and what to do>"}, most important first.
@@ -549,7 +548,7 @@ extension SessionStore {
             let text = try await self.harnessStore.files(setup: setup, at: head, paths: [path])[path] ?? nil
             guard let text, var record = try? SessionRecord.decoder.decode(SessionRecord.self, from: Data(text.utf8)), record.finishedAt == nil else { return nil }
             record.finishedAt = .now
-            return HarnessChange(message: "Gannin: \(session.issue.reference) is finished", files: [path: record.json])
+            return HarnessChange(message: "Gannin: \(session.longReference) is finished", files: [path: record.json])
         }
     }
 

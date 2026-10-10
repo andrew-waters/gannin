@@ -256,6 +256,8 @@ struct PlanningDraft: Hashable {
     var harnessRepo: String? = nil
     /// A New Ask rather than a plan (`NewAskView`).
     var isAsk = false
+    /// A New Quick Change rather than a plan (`NewQuickChangeView`).
+    var isQuickChange = false
 }
 
 extension SessionStore {

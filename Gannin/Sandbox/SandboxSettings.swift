@@ -504,7 +504,7 @@ struct RemoteMachinesSection: View {
         var message = "A terminal opens on the server, where sudo asks for its password."
         if setup?.host?.isInstalled == true {
             message += " Updating stops Apple container's service there, which stops every container on it"
-            message += stopping.isEmpty ? "." : ", these sessions' sandboxes among them: " + stopping.map { "#\($0.issue.number) \($0.issue.title)" }.joined(separator: ", ") + "."
+            message += stopping.isEmpty ? "." : ", these sessions' sandboxes among them: " + stopping.map { "\($0.shortReference) \($0.issue.title)" }.joined(separator: ", ") + "."
         }
         return message
     }
