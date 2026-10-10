@@ -441,6 +441,9 @@ final class SessionStore {
     var planningDrafts: [UUID: PlanningDraft] = [:]
     /// A second tab shown beside the selected one.
     var besideTab: UUID?
+    /// The session whose tab is closing, asked first whether to wrap it up
+    /// (`WrapUp.swift`).
+    var wrappingUp: UUID?
     /// Each server's home folder, for paths an editor opens there.
     @ObservationIgnored var remoteHomes: [String: String] = [:]
     @ObservationIgnored var notificationCategories: [String: UNNotificationCategory] = [:]

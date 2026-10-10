@@ -1073,6 +1073,18 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`archivedAt`); it shows under Agents › Reviews after the active ones, opens read-only from
   the saved result without starting claude, and Resume brings it back. `ClaudeReviewBadge`
   marks PRs with a review in the Pull Requests table and the Inbox, opening its tab.
+- Closing a session's tab while claude or a helper runs (the tab's ✕, its Close Tab and ⌘W; not
+  Close Other Tabs) asks first for an issue's own session or a quick change's
+  (`Sessions/WrapUp.swift`, andrew-waters/gannin#146, `plans/2026-10-10-wrap-up-on-tab-close.md`):
+  `SessionStore.requestClose` sets `wrappingUp`, which the window shows as `WrapUpSessionSheet`:
+  claude's state, helpers running, its PRs, worktrees not pushed, and its plans and requirements
+  with their `- [ ]` items (`HarnessChecklist`, matched by their words and which of the same words
+  they are, outside front matter and code) to tick, committed in one commit against each file at
+  the head (the button naming the harness is the confirmation), or Ask Claude to Tick Them Off
+  (`tickOffPrompt`). Then Leave Running (as closing always was), End Session (`endAndClose`:
+  claude and its helpers ended, worktrees kept, resumed when opened) or, once every PR is merged,
+  Finish Session (confirmed); Cancel keeps the tab. Settings > General > Agent, Ask to wrap up when
+  closing a session's tab (`sessionsWrapUpOnClose`, on), also the sheet's Don't ask again.
 - Quitting with sessions running asks first (`GanninAppDelegate.applicationShouldTerminate`,
   `Sessions/QuitGuard.swift`): which are running and in what state, that working ones stop
   mid-task, that server sessions end with their ssh connection, and that conversations resume.

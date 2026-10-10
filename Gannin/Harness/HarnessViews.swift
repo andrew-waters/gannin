@@ -495,7 +495,7 @@ struct HarnessView: View {
 }
 
 /// "7/12" with a ring, for a plan's checkboxes.
-private struct TaskCount: View {
+struct TaskCount: View {
     let done: Int
     let total: Int
 

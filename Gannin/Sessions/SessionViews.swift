@@ -23,11 +23,14 @@ extension SessionStore {
 
 /// The sessions window: a tab per issue's session, each its terminal beside
 /// the issue or the changes in its worktrees. Closing a tab or the window
-/// leaves claude running.
+/// leaves claude running, though closing a running session's tab asks first
+/// whether to wrap it up (`WrapUpSessionSheet`).
 struct SessionsWindow: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.dismissWindow) private var dismissWindow
     @Environment(\.controlActiveState) private var activeState
+    /// ⌘W asked to wrap up the last tab: the window goes once it has.
+    @State private var closesWindow = false
 
     var body: some View {
         let selected = sessions.selectedTab.flatMap { sessions.sessions[$0] }
@@ -66,6 +69,15 @@ struct SessionsWindow: View {
         .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.isAsk ? "Ask" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
         .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : "New plan" } ?? "")
         .background { shortcuts }
+        .sheet(item: Binding(
+            get: { sessions.wrappingUp.map(WrapUpRequest.init) },
+            set: { if $0 == nil { sessions.wrappingUp = nil } }
+        ), onDismiss: {
+            if closesWindow, sessions.tabs.isEmpty { dismissWindow(id: SessionStore.windowID) }
+            closesWindow = false
+        }) { request in
+            WrapUpSessionSheet(id: request.id)
+        }
         .onChange(of: activeState, initial: true) { sessions.windowIsKey = activeState == .key }
         .onDisappear { sessions.windowIsKey = false }
     }
@@ -110,7 +122,10 @@ struct SessionsWindow: View {
     private var shortcuts: some View {
         Group {
             Button("Close Tab") {
-                if let id = sessions.selectedTab { sessions.closeTab(sessions.tabOwner(id)) }
+                if let id = sessions.selectedTab, !sessions.requestClose(sessions.tabOwner(id)) {
+                    closesWindow = true
+                    return
+                }
                 if sessions.tabs.isEmpty { dismissWindow(id: SessionStore.windowID) }
             }
             .keyboardShortcut("w", modifiers: .command)
@@ -386,7 +401,7 @@ private struct SessionTabItem: View {
             }
             Spacer(minLength: 0)
             Button {
-                sessions.closeTab(session.id)
+                sessions.requestClose(session.id)
             } label: {
                 Image(systemName: "xmark")
                     .font(.system(size: 9, weight: .semibold))
@@ -394,7 +409,7 @@ private struct SessionTabItem: View {
             }
             .buttonStyle(.borderless)
             .opacity(hovering || isSelected ? 1 : 0)
-            .help("Close the tab. Claude keeps running.")
+            .help(sessions.asksToWrapUp(session.id) ? "Close the tab, wrapping the session up first if you like" : "Close the tab. Claude keeps running.")
         }
         .font(.callout)
         .padding(.leading, 10)
@@ -428,7 +443,8 @@ private struct SessionTabItem: View {
         .contextMenu {
             Button("Rename Tab") { startRenaming() }
             Divider()
-            Button("Close Tab") { sessions.closeTab(session.id) }
+            Button("Close Tab") { sessions.requestClose(session.id) }
+            // Leaves them running, as asking about each in turn would wear.
             Button("Close Other Tabs") {
                 for id in sessions.tabs where id != session.id { sessions.closeTab(id) }
             }
@@ -1826,6 +1842,7 @@ struct SessionSettingsSection: View {
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
     @AppStorage(SessionStore.sendsFeedbackKey) private var sendsFeedback = false
     @AppStorage(SessionStore.pairReviewKey) private var pairReview = true
+    @AppStorage(SessionStore.wrapUpKey) private var wrapsUp = true
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
     @AppStorage(AutoReview.enabledKey) private var autoReview = false
     @AppStorage(AutoReview.watchKey) private var watchesReviews = true
@@ -1886,6 +1903,10 @@ struct SessionSettingsSection: View {
                 .foregroundStyle(.secondary)
             Toggle("Review a session's work with a second agent", isOn: $pairReview)
             Text("When a session's claude says its change is ready, another agent that can't edit reviews it and its findings go back to claude, round after round, until there's nothing more, \(PairReview.maxRounds) rounds have gone, or you stop it. Each session can say otherwise in its Activity pane.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Ask to wrap up when closing a session's tab", isOn: $wrapsUp)
+            Text("Closing the tab of an issue's session while claude runs shows its pull requests, what isn't pushed and its plans and requirements to tick off, then leaves it running, ends it or, once every PR is merged, finishes it.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Show in the menu bar", isOn: $showsMenuBar)
