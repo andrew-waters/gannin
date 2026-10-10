@@ -1211,18 +1211,20 @@ private struct HelperParentSection: View {
                 Text("The session it helped is gone.")
                     .foregroundStyle(.secondary)
             }
-            HStack {
-                // A quick change has no issue (number 0).
-                if session.issue.number > 0 {
-                    Link(session.issue.reference, destination: session.issue.url)
-                }
-                Spacer()
-                if session.issue.number > 0 {
-                    Button("Open Issue") { openWindow(value: session.issue) }
-                }
-                if let parent {
-                    Button("Show Session") { sessions.reveal(parent.id) }
-                        .help("The working session, with the issue, its plans and its PRs")
+            // A quick change has no issue (number 0).
+            if session.issue.number > 0 || parent != nil {
+                HStack {
+                    if session.issue.number > 0 {
+                        Link(session.issue.reference, destination: session.issue.url)
+                    }
+                    Spacer()
+                    if session.issue.number > 0 {
+                        Button("Open Issue") { openWindow(value: session.issue) }
+                    }
+                    if let parent {
+                        Button("Show Session") { sessions.reveal(parent.id) }
+                            .help("The working session, with the issue, its plans and its PRs")
+                    }
                 }
             }
         }
