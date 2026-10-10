@@ -31,7 +31,7 @@ struct OpenIssuesView: View {
         let filters = stored.wrappedValue
         let pool = pool(filters)
         let issues = pool.filter { filters.matches($0, names: name) }
-        let rows = issues.map { IssueTableRow(issue: $0, assignees: $0.assignees.map(workload.person(login:))) }
+        let rows = issues.map { IssueTableRow(issue: $0, author: $0.author.map(workload.person(login:)), assignees: $0.assignees.map(workload.person(login:))) }
         VStack(spacing: 0) {
             IssueFilterBar(filters: stored.projectedValue, pool: pool, names: name)
             Divider()
@@ -89,9 +89,8 @@ struct OpenIssuesView: View {
             }
             .width(min: 50, ideal: 70)
             .customizationID("number")
-            TableColumn("Author", value: \.author) { row in
-                if let author = row.issue.author {
-                    let person = workload.person(login: author)
+            TableColumn("Author", value: \.authorSort) { row in
+                if let person = row.author {
                     HStack(spacing: 6) {
                         Avatar(url: person.avatarUrl, size: 18)
                         Text(person.displayName).lineLimit(1)
@@ -198,13 +197,14 @@ struct OpenIssuesView: View {
 /// An issue as Issues › All's table shows it, with what its columns sort by.
 struct IssueTableRow: Identifiable {
     let issue: IssueRecord
+    let author: Person?
     let assignees: [Person]
 
     var id: String { issue.id }
     var title: String { issue.title }
     var repoName: String { issue.repo.split(separator: "/").last.map(String.init) ?? issue.repo }
     var number: Int { issue.number }
-    var author: String { issue.author?.lowercased() ?? "" }
+    var authorSort: String { author?.displayName.lowercased() ?? "" }
     var assigneeSort: String { assignees.map { $0.displayName.lowercased() }.sorted().joined(separator: ",") }
     var labelSort: String { issue.labels.joined(separator: ",").lowercased() }
     var linkedCount: Int { issue.linkedPullRequests.count + (issue.mentionedInPullRequests?.count ?? 0) }
