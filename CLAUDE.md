@@ -733,7 +733,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   is a SwiftTerm terminal (taking the room) beside a side panel in a `FixedSplit` fixing its
   trailing pane, opening at its widest, 440 points (`SessionTab.panelMaxWidth`), and dragged as
   narrow as 300 (kept in `sessionPanelWidth`): the issue (its session state, and its plans and requirements
-  from the harness, `HarnessIssueSection`, opening in a sheet) or its Changes: every worktree
+  from the harness, `HarnessIssueSection`, opening in a sheet; a helper's is Session instead, with
+  no PRs, naming the session it helps with Show Session and Open Issue, `HelperParentSection`) or its Changes: every worktree
   under the issue's folder diffed against its merge base with `origin/HEAD`, committed or not,
   new files included (`SessionChanges`). One bash script reads them all, git taking no optional
   locks, run by `Shell.run` (`Git/Shell.swift`, shared with the Repositories pages) here or, for a

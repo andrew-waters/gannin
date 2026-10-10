@@ -457,16 +457,21 @@ struct SessionTab: View {
     static let panelMinWidth: Double = 300
 
     /// An Ask's Session pane has its artifacts and files, so it has no
-    /// Changes, and PRs only once it has some; one remembered pane suits
-    /// every kind.
+    /// Changes, and PRs only once it has some; a helper's PRs are the
+    /// session it helps, so it has none. One remembered pane suits every
+    /// kind.
     private var shownPane: Binding<SessionPane> {
         Binding {
             switch pane {
             case .changes where session.isAsk: .issue
-            case .pullRequests where session.isAsk && !hasPullRequests: .issue
+            case .pullRequests where !showsPullRequests: .issue
             default: pane
             }
         } set: { pane = $0 }
+    }
+
+    private var showsPullRequests: Bool {
+        session.isAsk ? hasPullRequests : !session.isHelper
     }
 
     private var hasPullRequests: Bool {
@@ -541,11 +546,11 @@ struct SessionTab: View {
             SessionLocationBadge(session: session, prominent: true)
                 .padding([.horizontal, .top], 8)
             Picker("Show", selection: shownPane) {
-                Text(session.isAsk ? "Session" : "Issue").tag(SessionPane.issue)
+                Text(session.isAsk || session.isHelper ? "Session" : "Issue").tag(SessionPane.issue)
                 if !session.isAsk {
                     Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
                 }
-                if !session.isAsk || hasPullRequests {
+                if showsPullRequests {
                     Text(pullRequestsLabel).tag(SessionPane.pullRequests)
                 }
                 Text("Activity").tag(SessionPane.activity)
@@ -1192,6 +1197,51 @@ private struct HarnessReading: Identifiable {
     var id: String { path }
 }
 
+/// A helper's (a reviewer's, say) link back to the session it helps,
+/// where the issue, its plans and its PRs are.
+private struct HelperParentSection: View {
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
+    let session: CodeSession
+
+    var body: some View {
+        let parent = session.parentID.flatMap { sessions.sessions[$0] }
+        Section(session.isReviewer ? "Reviewing" : "Helping with") {
+            if let parent {
+                let state = sessions.state(parent.id)
+                Text(parent.title)
+                    .fontWeight(.semibold)
+                    .fixedSize(horizontal: false, vertical: true)
+                LabeledContent("State") {
+                    HStack(spacing: 6) {
+                        Circle().fill(state.color).frame(width: 8, height: 8)
+                        Text(state.label)
+                    }
+                }
+            } else {
+                Text("The session it helped is gone.")
+                    .foregroundStyle(.secondary)
+            }
+            // A quick change has no issue (number 0).
+            if session.issue.number > 0 || parent != nil {
+                HStack {
+                    if session.issue.number > 0 {
+                        Link(session.issue.reference, destination: session.issue.url)
+                    }
+                    Spacer()
+                    if session.issue.number > 0 {
+                        Button("Open Issue") { openWindow(value: session.issue) }
+                    }
+                    if let parent {
+                        Button("Show Session") { sessions.reveal(parent.id) }
+                            .help("The working session, with the issue, its plans and its PRs")
+                    }
+                }
+            }
+        }
+    }
+}
+
 private struct SessionPanel: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(HarnessStore.self) private var harness
@@ -1217,7 +1267,9 @@ private struct SessionPanel: View {
             if session.isQuickChange {
                 QuickChangeSection(session: session)
             }
-            if !session.isPlanning && !session.isAsk && !session.hasNoIssue {
+            if session.isHelper {
+                HelperParentSection(session: session)
+            } else if !session.isPlanning && !session.isAsk && !session.hasNoIssue {
             Section("Issue") {
                 Text(session.issue.title)
                     .fontWeight(.semibold)
@@ -1307,7 +1359,8 @@ private struct SessionPanel: View {
                 }
             }
             SessionFinishSection(session: session)
-            if !session.isPlanning && !session.isAsk && !session.hasNoIssue {
+            // A helper's issue, plans and PRs are on the session it helps.
+            if !session.isPlanning && !session.isAsk && !session.isHelper && !session.hasNoIssue {
                 HarnessIssueSection(reference: session.issue, showsEmpty: true, harnessRepo: session.harnessRepo)
             }
         }
