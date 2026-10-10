@@ -72,6 +72,7 @@ struct IssueWindow: View {
         .toolbar {
             ToolbarItem { PlanThisButton(reference: reference) }
             ToolbarItem { StartSessionButton(reference: reference) }
+            ToolbarItem { ScheduleForAgentButton(reference: reference) }
         }
     }
 

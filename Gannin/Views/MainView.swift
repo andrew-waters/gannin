@@ -55,6 +55,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case agentMetrics = "Agent Metrics"
     /// Sessions started on a schedule, under Agents.
     case routines = "Routines"
+    /// Issues waiting for an agent, under Agents.
+    case agentQueue = "Agent Queue"
     /// Questions about the org, answered by Claude from Gannin's data.
     case ask = "Ask"
     case epics = "Epics"
@@ -76,6 +78,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .actions: "CI"
         case .agents: "Waiting on You"
         case .agentMetrics: "Metrics"
+        case .agentQueue: "Queue"
         case .scorecard: "Scorecards"
         default: rawValue
         }
@@ -101,6 +104,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .agents: "questionmark.bubble"
         case .agentMetrics: "chart.bar.xaxis"
         case .routines: "clock.arrow.circlepath"
+        case .agentQueue: "tray.full"
         case .ask: "sparkle.magnifyingglass"
         case .epics: "square.stack.3d.up"
         case .hygiene: "wand.and.sparkles"
@@ -1323,6 +1327,7 @@ struct OrgSidebar: View {
                     row(.agentMetrics)
                     row(.agents)
                     row(.routines)
+                    row(.agentQueue)
                     SessionSidebarRows(org: selectedOrg)
                 }
 
@@ -1515,6 +1520,9 @@ struct OrgSidebar: View {
             guard let selectedOrg else { return 0 }
             let ids = Set(routines.routines(for: selectedOrg).map(\.id))
             return routines.activeRuns.filter { ids.contains($0.routine) }.count
+        case .agentQueue:
+            guard let selectedOrg else { return 0 }
+            return routines.queue(for: selectedOrg).count
         }
     }
 }

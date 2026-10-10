@@ -199,6 +199,9 @@ struct GanninApp: App {
                 PullRequestWindow(reference: reference)
                     .commandPaletteOpeningInMainWindow()
                     .environment(sessions)
+                    .environment(routines)
+                    .environment(scheduler)
+                    .environment(bankHolidays)
                     .environment(actions)
                     .environment(releases)
                     .environment(auth)
@@ -250,6 +253,7 @@ struct GanninApp: App {
                     .environment(sessions)
                     .environment(routines)
                     .environment(scheduler)
+                    .environment(bankHolidays)
             }
         }
         .defaultSize(width: 1080, height: 960)
@@ -277,6 +281,7 @@ struct GanninApp: App {
                 .environment(projects)
                 .environment(routines)
                 .environment(scheduler)
+                .environment(bankHolidays)
         }
         .defaultSize(width: 1280, height: 820)
 
