@@ -52,7 +52,7 @@ limit.
   change section; `Working here` without `Closes` or a plan when there's no issue).
 - `SessionStore.harnessFolder(for: CodeSession)` and `record` cope with no issue
   (`SessionRecord.issue` optional).
-- `QuickChangeForm` / `NewQuickChangeView` (`Sessions/QuickChange.swift`) over a `PlanningDraft`
+- `NewQuickChangeView` (`Sessions/QuickChange.swift`) over a `PlanningDraft`
   with `isQuickChange`: project, repository, note, screenshots (drop, paste, Add), Create an
   issue, prompts and skills for work, Run in (with sandboxing on), Record in the harness, Start.
 - Tab kind Quick Change; the panel shows the note and screenshots; no Open Issue without one.
