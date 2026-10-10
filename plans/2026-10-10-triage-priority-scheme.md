@@ -38,5 +38,5 @@ small `PriorityTracking` (labels, or a board field) for now; #155 can fold it in
 - [x] Model, reading and lenient decoding
 - [x] Team file, `OrgConfig` and the harness tour
 - [x] Unit tests: decoding, keys sorted, by label, by field, untriaged, conflicting
-- [ ] Build and run the tests on a Mac (not possible on this run)
+- [x] Build and run the tests (CI on macOS; not yet tried in the app)
 - [ ] The rest of #154's tasks: #155, #157 to #165
