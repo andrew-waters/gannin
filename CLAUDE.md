@@ -596,7 +596,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (on issues only, not PRs), on disk. Missing weeks are fetched as week-long "last updated"
   searches, four at a time, once for PRs and once for issues (two sync steps), then topped up
   with a changes search. When the issues step fails the PRs are still kept, and the coverage
-  isn't moved, so the next sync searches those weeks again. The work log's Filter menu (`WorkLogFilter`) hides kinds of dot
+  isn't moved (a new log covers nothing), so the next sync searches those weeks again, a week
+  at a time. The work log's Filter menu (`WorkLogFilter`) hides kinds of dot
   (`workLogHiddenKinds`, on this Mac) and narrows to one repo (per page, cleared on switching
   org); Threads and Punchcards stay PR only. An issue dot opens `issueReference`. It's only
   fetched once the People page (Activity or Standup) has been opened for an org, and Refresh includes it from then

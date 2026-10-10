@@ -108,9 +108,10 @@ final class WorkLogStore {
                     try await api.workLogIssues(query: query, onPage: onPage)
                 }
             }
-            // A new log whose issues failed counts as fetched at its start,
-            // so the next changes search covers the whole range.
-            var updated = history ?? WorkLogHistory(orgLogin: org, coveredFrom: start, fetchedAt: issues == nil ? start : now, pullRequests: [:])
+            // A new log whose issues failed covers nothing yet, so the next
+            // sync backfills the range a week at a time again (one search
+            // over it all could pass GitHub's cap of 1000).
+            var updated = history ?? WorkLogHistory(orgLogin: org, coveredFrom: issues == nil ? now : start, fetchedAt: now, pullRequests: [:])
             for pr in prs { updated.pullRequests[pr.id] = pr }
             if let issues {
                 for issue in issues { updated.issues[issue.id] = issue }
