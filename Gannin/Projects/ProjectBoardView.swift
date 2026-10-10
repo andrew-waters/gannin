@@ -55,6 +55,7 @@ struct ProjectBoardView: View {
             ToolbarItem { NewIssueButton(context: NewIssueContext(org: org, board: number, boardFilter: appliedFilter)) }
         }
         .syncOffNotice(.boards)
+        .outsideReposNotice(org: org)
         .task(id: "\(org)#\(number)") { await loadBoard() }
         .task(id: "\(org)#\(number) \(viewID ?? "") \(appliedFilter)") {
             guard viewID != nil else { return }

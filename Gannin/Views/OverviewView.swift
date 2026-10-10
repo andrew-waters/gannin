@@ -149,6 +149,7 @@ struct OverviewView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .syncOffNotice(.metrics)
+        .outsideReposNotice(org: org)
         .sheet(isPresented: $showsDigest) {
             DigestSheet(org: org, team: workload.team)
         }

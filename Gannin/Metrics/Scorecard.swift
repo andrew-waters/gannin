@@ -824,6 +824,7 @@ struct ScorecardView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .syncOffNotice(.metrics)
+        .outsideReposNotice(org: org)
         .sheet(isPresented: $adding) {
             MeasurableEditor(org: org, measurable: nil, cadence: cadence)
         }

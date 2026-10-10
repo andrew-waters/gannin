@@ -49,6 +49,7 @@ struct InvestmentsView: View {
             Divider()
             page(range)
         }
+        .outsideReposNotice(org: org)
         .sheet(item: $triage) { queue in
             InvestmentTriage(org: org, queue: queue)
         }
