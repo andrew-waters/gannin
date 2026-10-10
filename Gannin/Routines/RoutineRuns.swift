@@ -170,7 +170,8 @@ extension SessionStore {
             let placement = Self.routinePlacement(org: routine.org, repos: routine.repos, configs: configs)
             return await startMaintenanceRun(routine, run: run, setup: setup, harnessPath: path, placement: placement, goals: goals)
         case .issueQueue, .pinned:
-            return .failed("Scheduled issue runs aren't ready yet.")
+            guard let issue else { return .failed("There was no issue to work on.") }
+            return await startIssueRun(routine, issue: issue, run: run, setup: setup, goals: goals, configs: configs, issues: issues, details: details, login: login)
         }
     }
 
@@ -248,6 +249,56 @@ extension SessionStore {
         try? Data((brief + "\n" + info.briefSection).utf8).write(to: directory.appending(path: "brief.md"))
         add(session)
         return await startUnattended(id)
+    }
+
+    /// An issue from the queue or a pin: its Work on This session (R7, R8),
+    /// briefed from what Gannin has cached, its session record committed to
+    /// the harness without asking, since scheduling it was the consent (R16).
+    func startIssueRun(_ routine: Routine, issue: IssueReference, run: UUID, setup: HarnessConfig, goals: [Measurable], configs: OrgConfigStore,
+                       issues: IssueStore, details: DetailStore, login: String?) async -> RoutineStart {
+        if let existing = session(forIssue: issue.id) {
+            return .failed("\(issue.reference) already has a session (\(existing.branch)), so it wasn't started again.")
+        }
+        guard let path = Self.harnessPath(org: issue.org, repo: setup.repo) else {
+            return .failed(Self.unavailable(org: issue.org, harness: setup) ?? "The harness isn't checked out here.")
+        }
+        let history = issues.history(for: issue.org)
+        let issueRecord = history?.issues[issue.id]
+        let parent = issueRecord?.parentID.flatMap { history?.issues[$0] }
+        let detail = details.detail(for: issue.id)
+        let repos = WorkOnThisLauncher.repos(issue, issues: issues)
+        let instructions = routineInstructions(routine, setup: setup, use: .work, repos: repos, values: WorkOnThisLauncher.values(issue))
+        let placement = Self.routinePlacement(org: issue.org, repos: repos, configs: configs)
+        let info = RoutineRunInfo(routine: routine, run: run)
+        let index = harnessStore.index(for: issue.org, setup)
+        let made = start(issue, harness: setup, harnessPath: path, instructions: instructions, placement: placement) { session in
+            var scheduled = session
+            scheduled.routineRun = info
+            return SessionBrief.make(session: scheduled, record: issueRecord, detail: detail, parent: parent, harness: index, goals: goals) + "\n" + info.briefSection
+        }
+        update(made.id) { session in
+            session.routineRun = info
+            session.prompt = Self.scheduledIssuePrompt(session, note: routine.prompt)
+        }
+        // Committed before the terminal starts, so its pull brings the brief.
+        await record(made.id, startedBy: login)
+        return await startUnattended(made.id)
+    }
+
+    /// An issue run's first prompt: Work on This's, but with nobody to
+    /// approve a plan, then the routine's own note.
+    static func scheduledIssuePrompt(_ session: CodeSession, note: String) -> String {
+        let folder = ".worktrees/\(session.branch)"
+        let issue = session.issue
+        let extra = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        return """
+            You're picking up \(issue.reference), "\(issue.title)", in the team's harness, by yourself on a schedule: nobody is \
+            watching. Read \(folder)/.gannin/brief.md first: it has the issue, its discussion, where it sits on the board, any plans \
+            for it, and how far this run may go. Work out which repos it touches (those under projects/, or the harness itself when \
+            it's the code repo and has no projects/) and look through their code, then write a short plan where the brief says and \
+            carry on without waiting for it to be approved. Make the changes in a worktree per repo under \(folder)/, as the brief \
+            says, never in projects/ or the harness checkout itself.
+            """ + (extra.isEmpty ? "" : "\n\n" + extra)
     }
 
     /// `routine-<name>-<date>-<4 hex of its ID>`: a new branch each run.

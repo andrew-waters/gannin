@@ -160,3 +160,41 @@ struct RoutineVerdictTests {
         #expect(judge(.exited, worked: false) == .lost)
     }
 }
+
+/// Issue runs from the queue or a pin: Work on This's session, told it's
+/// on its own and how far it may go.
+struct ScheduledIssueRunTests {
+    private func session(limit: RoutineLimit) -> CodeSession {
+        let issue = IssueReference(org: "acme", id: "I_7", number: 7, title: "Bump the SDK", repo: "acme/app",
+                                   url: URL(string: "https://github.com/acme/app/issues/7")!)
+        var session = CodeSession(
+            id: UUID(), issue: issue, repo: "acme/harness", branch: SessionStore.branchName(issue), createdAt: .now,
+            harnessRepo: "acme/harness", harnessPath: "~/Code/acme/harness"
+        )
+        var routine = Routine.new(org: "acme", harnessRepo: "acme/harness", kind: .issueQueue, name: "Overnight")
+        routine.limit = limit
+        session.routineRun = RoutineRunInfo(routine: routine, run: UUID())
+        return session
+    }
+
+    @Test func promptDoesntWaitForAPlan() {
+        let prompt = SessionStore.scheduledIssuePrompt(session(limit: .draftPR), note: "Keep it small.")
+        #expect(prompt.contains("You're picking up acme/app#7"))
+        #expect(prompt.contains("without waiting for it to be approved"))
+        #expect(!prompt.contains("propose a plan before changing anything"))
+        #expect(prompt.hasSuffix("\n\nKeep it small."))
+        #expect(!SessionStore.scheduledIssuePrompt(session(limit: .draftPR), note: " ").hasSuffix("\n\n "))
+    }
+
+    @Test func briefFollowsTheLimit() {
+        let local = SessionBrief.make(session: session(limit: .localOnly), record: nil, detail: nil, parent: nil, harness: nil)
+        #expect(local.hasPrefix("# acme/app#7: Bump the SDK"))
+        #expect(local.contains("don't push or open a pull request"))
+        #expect(local.contains("as `.worktrees/7-bump-the-sdk/plan.md`"))
+        #expect(!local.contains("Commit and push it in the harness"))
+
+        let ready = SessionBrief.make(session: session(limit: .readyPR), record: nil, detail: nil, parent: nil, harness: nil)
+        #expect(ready.contains("open a pull request per repo with `gh pr create`, putting \"Closes acme/app#7\""))
+        #expect(ready.contains("Commit and push it in the harness"))
+    }
+}
