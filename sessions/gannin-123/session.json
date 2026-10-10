@@ -3,7 +3,8 @@
   "branch" : "123-start-work-on-a-small-change-straight",
   "issue" : "andrew-waters/gannin#123",
   "pullRequests" : [
-    "https://github.com/andrew-waters/gannin/pull/124"
+    "https://github.com/andrew-waters/gannin/pull/124",
+    "https://github.com/andrew-waters/gannin/pull/128"
   ],
   "repos" : [
 
