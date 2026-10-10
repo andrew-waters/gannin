@@ -85,7 +85,7 @@ struct PairReview: Codable, Hashable {
 
 extension CodeSession {
     /// Issue sessions only: not helpers, reviews of PRs, plans or Asks.
-    var canPairReview: Bool { !isHelper && !isPullRequestReview && !isPlanning && !isAsk }
+    var canPairReview: Bool { !isHelper && !isPullRequestReview && !isPlanning && !isAsk && !isRefine }
 
     /// The script that asks for a review, as claude runs it from where it
     /// starts (the harness root, or an older session's worktree).

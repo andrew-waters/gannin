@@ -139,7 +139,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Epics, Repositories (local git, see Local git), Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
-  Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, Refines, once set);
+  Prioritisation, Planning, Design and Refine, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, Refines, once set);
   and Agents (Metrics, Waiting on You, Routines, Queue, then sessions grouped as working on issues, reviews,
   planning and Ask). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You, Metrics, Queue);
   raw values stay as windows saved them. `OverviewView` is two pages (`OverviewView.Part`):
@@ -854,6 +854,18 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   so if it isn't; the first prompt (`quickChangePrompt`) leaves out "propose a plan first" and, with an issue, asks for it to be filled out with `gh issue edit` once the code has been looked through, before anything changes, keeping any images already in its description. Its tab
   is Quick Change (a bolt), its panel shows the note and screenshots (`QuickChangeSection`), and
   rows, notifications and helpers' prompts name it by `shortReference` / `longReference` (the repo picked, `issue.repo`, not the harness) rather than `#0`, and the team's prompts get `issueValues` (`{{issue}}` saying it's a quick change, `{{number}}` and `{{url}}` empty).
+- Design and Refine sessions (`Sessions/RefineSession.swift`, `CodeSession.refine`, `RefineInfo`: name, slug,
+  url, repos, attendees, and the findings, screenshots, transcript and agreement later tasks fill;
+  andrew-waters/gannin#134, `plans/2026-10-10-design-and-refine.md`) step through a web page with the room.
+  New Design and Refine (Rituals › Design and Refine, `RefinePage`, a `StatsTable` of them with Delete; the
+  Claude Code window's +, Agents' toolbar and the palette) opens a tab (`NewRefineView` over a `PlanningDraft`
+  with `isRefine`): the project, its repos the page's code is in (the project's first ticked), the URL
+  (`SessionStore.refineURL`, https added, http for localhost), an optional name (else the page's host and path,
+  `refineTitle`) and who's here (the org's people to tick, names typed). `startRefine` makes the session on this
+  Mac in the harness, its branch and folder `refine-<date>-<slug>` (`refineSlug`, a number added when taken),
+  claude told it's a co-reviewer that reads `projects/` and edits nothing (`refinePrompt`, `refineBrief`). Its
+  tab is Design and Refine and for now a terminal, its panel's Session pane listing the page, repos and
+  attendees (`RefineSection`, changed with `setAttendees`). It never pairs a review or offers wrap-up.
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its
   tab is flagged (`SessionStore.attention`): its tab is marked, the Dock icon counts them, a
   notification (Settings > General > Agent) opens its tab, and the tab bar's "N waiting" or

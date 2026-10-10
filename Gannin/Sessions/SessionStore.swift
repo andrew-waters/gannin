@@ -61,6 +61,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var ask: AskInfo? = nil
     /// A quick change's note and screenshots, with or without an issue.
     var quickChange: QuickChangeInfo? = nil
+    /// A Design and Refine session's page, repos, attendees and findings.
+    var refine: RefineInfo? = nil
     /// The name its tab was given, in place of the issue's or PR's title.
     var name: String? = nil
     /// A review's result, kept from its transcript so it can be read again
@@ -145,6 +147,7 @@ extension CodeSession {
         planning = try container.decodeIfPresent(PlanningInfo.self, forKey: .planning)
         ask = try container.decodeIfPresent(AskInfo.self, forKey: .ask)
         quickChange = try? container.decodeIfPresent(QuickChangeInfo.self, forKey: .quickChange)
+        refine = try? container.decodeIfPresent(RefineInfo.self, forKey: .refine)
         name = try container.decodeIfPresent(String.self, forKey: .name)
         reviewResult = try container.decodeIfPresent(SessionTranscript.ReviewResult.self, forKey: .reviewResult)
         reviewDraft = try container.decodeIfPresent(ReviewDraft.self, forKey: .reviewDraft)
@@ -816,7 +819,7 @@ final class SessionStore {
         setState(.starting, for: session.id)
         // An issue's session from before sandboxing was on says why it isn't in one.
         if SandboxCredentials.isEnabled, !session.isSandboxed, session.hostReason == nil, !session.isHelper,
-           !session.isPullRequestReview, session.planning == nil, session.ask == nil, session.isInHarness {
+           !session.isPullRequestReview, session.planning == nil, session.ask == nil, session.refine == nil, session.isInHarness {
             update(session.id) { $0.hostReason = SandboxPlacement.startedBefore }
         }
         // A new claude there may have auto mode after all.

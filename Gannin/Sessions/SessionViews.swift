@@ -47,6 +47,9 @@ struct SessionsWindow: View {
                 } else if draft.isQuickChange {
                     NewQuickChangeView(draftID: draftID, draft: draft, saved: sessions.quickChangeForms[draftID])
                         .id(draftID)
+                } else if draft.isRefine {
+                    NewRefineView(draftID: draftID, draft: draft)
+                        .id(draftID)
                 } else {
                     NewPlanningView(draftID: draftID, draft: draft)
                         .id(draftID)
@@ -66,8 +69,8 @@ struct SessionsWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 480)
-        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.routineRun?.kind == .report ? "Report" : $0.isAsk ? "Ask" : $0.isMaintenance ? "Maintenance" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
-        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : "New plan" } ?? "")
+        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.routineRun?.kind == .report ? "Report" : $0.isAsk ? "Ask" : $0.isRefine ? "Design and Refine" : $0.isMaintenance ? "Maintenance" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
+        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : $0.isRefine ? "New design and refine" : "New plan" } ?? "")
         .background { shortcuts }
         .sheet(item: Binding(
             // Gone elsewhere while asking: nothing left to wrap up.
@@ -298,6 +301,9 @@ private struct NewSessionPopover: View {
                 action("New Plan", symbol: "list.bullet", help: "Plan a topic in the harness with the room") {
                     PlanningDraft(org: org, harnessRepo: harness)
                 }
+                action("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", help: "Step through a web page with the room and note what to improve") {
+                    PlanningDraft(org: org, harnessRepo: harness, isRefine: true)
+                }
             }
         } else {
             Text("New Ask, Quick Change and Plan start from the sidebar of a main window once there's an org.")
@@ -447,6 +453,11 @@ private struct TabKind {
             symbol = "sparkle.magnifyingglass"
             reference = nil
             title = ask.title
+        } else if let refine = session.refine {
+            name = "Design and Refine"
+            symbol = "rectangle.and.pencil.and.ellipsis"
+            reference = nil
+            title = session.name ?? refine.name
         } else if let planning = session.planning {
             name = "Plan"
             symbol = "list.bullet"
@@ -487,14 +498,14 @@ private struct DraftTabItem: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle().fill(Color.secondary.opacity(0.5)).frame(width: 7, height: 7)
-            Image(systemName: draft.isAsk ? "sparkle.magnifyingglass" : draft.isQuickChange ? "bolt" : "list.bullet")
+            Image(systemName: draft.isAsk ? "sparkle.magnifyingglass" : draft.isQuickChange ? "bolt" : draft.isRefine ? "rectangle.and.pencil.and.ellipsis" : "list.bullet")
                 .font(.system(size: 20))
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: 26)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(draft.isAsk ? "New Ask" : draft.isQuickChange ? "New Quick Change" : "New Plan")
+                    Text(draft.isAsk ? "New Ask" : draft.isQuickChange ? "New Quick Change" : draft.isRefine ? "New Design and Refine" : "New Plan")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     if let issue = draft.issue {
@@ -645,7 +656,7 @@ private struct SessionTabItem: View {
                 sessions.besideTab = session.id
             }
             .disabled(isSelected || sessions.tabs.count < 2)
-            if !session.isAsk && !session.isPlanning {
+            if !session.isAsk && !session.isPlanning && !session.isRefine {
                 Button("Open Issue") { openWindow(value: session.issue) }
             }
         }
@@ -765,7 +776,7 @@ struct SessionTab: View {
     private var shownPane: Binding<SessionPane> {
         Binding {
             switch pane {
-            case .changes where session.isAsk: .issue
+            case .changes where session.isAsk || session.isRefine: .issue
             case .pullRequests where !showsPullRequests: .issue
             default: pane
             }
@@ -773,7 +784,7 @@ struct SessionTab: View {
     }
 
     private var showsPullRequests: Bool {
-        session.isAsk ? hasPullRequests : !session.isHelper
+        session.isAsk || session.isRefine ? hasPullRequests : !session.isHelper
     }
 
     private var hasPullRequests: Bool {
@@ -846,8 +857,8 @@ struct SessionTab: View {
     private var panel: some View {
         VStack(spacing: 0) {
             Picker("Show", selection: shownPane) {
-                Text(session.isAsk || session.isHelper ? "Session" : "Issue").tag(SessionPane.issue)
-                if !session.isAsk {
+                Text(session.isAsk || session.isRefine || session.isHelper ? "Session" : "Issue").tag(SessionPane.issue)
+                if !session.isAsk && !session.isRefine {
                     Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
                 }
                 if showsPullRequests {
@@ -1583,9 +1594,12 @@ private struct SessionPanel: View {
             if session.isQuickChange {
                 QuickChangeSection(session: session)
             }
+            if session.isRefine {
+                RefineSection(session: session)
+            }
             if session.isHelper {
                 HelperParentSection(session: session)
-            } else if !session.isPlanning && !session.isAsk && !session.hasNoIssue {
+            } else if !session.isPlanning && !session.isAsk && !session.isRefine && !session.hasNoIssue {
             Section("Issue") {
                 Text(session.issue.title)
                     .fontWeight(.semibold)
@@ -1684,7 +1698,7 @@ private struct SessionPanel: View {
             }
             SessionFinishSection(session: session)
             // A helper's issue, plans and PRs are on the session it helps.
-            if !session.isPlanning && !session.isAsk && !session.isHelper && !session.hasNoIssue {
+            if !session.isPlanning && !session.isAsk && !session.isRefine && !session.isHelper && !session.hasNoIssue {
                 HarnessIssueSection(reference: session.issue, showsEmpty: true, harnessRepo: session.harnessRepo)
             }
         }
@@ -1970,10 +1984,11 @@ struct SessionSidebarRows: View {
     @AppStorage("sidebarSessionsReviews") private var reviewsExpanded = true
     @AppStorage("sidebarSessionsPlanning") private var planningExpanded = true
     @AppStorage("sidebarSessionsAsk") private var askExpanded = true
+    @AppStorage("sidebarSessionsRefine") private var refineExpanded = true
 
     var body: some View {
         let all = sessions.sessions(for: org)
-        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning && !$0.isAsk }, expanded: $issuesExpanded)
+        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
         // Active reviews, newest first, then the history.
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }
@@ -1981,6 +1996,7 @@ struct SessionSidebarRows: View {
         group("Reviews", symbol: "eye", sessions: active + finished, expanded: $reviewsExpanded)
         group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter(\.isPlanning), expanded: $planningExpanded)
         group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
+        group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
     }
 
     /// A kind of session, with how many are waiting on you; empty kinds
