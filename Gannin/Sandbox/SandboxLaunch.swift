@@ -313,11 +313,13 @@ enum SandboxLaunch {
         else
           message="$*"
         fi
-        message=$(printf '%s' "$message" | tr -d '\000-\037\177' | cut -c1-500)
+        # Control characters out first, so none can split a token; both
+        # redactions before the cut, so none straddles it.
+        message=$(printf '%s' "$message" | tr -d '\000-\037\177')
         for secret in "${GH_TOKEN:-}" "${ANTHROPIC_API_KEY:-}"; do
           [ ${#secret} -ge 8 ] && message=${message//"$secret"/[redacted]}
         done
-        message=$(printf '%s' "$message" | sed -E 's/(gh[opsur]_|github_pat_|sk-ant-)[A-Za-z0-9_-]+/[redacted]/g; s/-----BEGIN [A-Z ]*PRIVATE KEY-----.*/[redacted]/')
+        message=$(printf '%s' "$message" | sed -E 's/(gh[opsur]_|github_pat_|sk-ant-)[A-Za-z0-9_-]+/[redacted]/g; s/-----BEGIN [A-Z ]*PRIVATE KEY-----.*/[redacted]/' | cut -c1-500)
         printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${GANNIN_ACTIVITY_LABEL:-session}" "$message" >> "$log" 2>/dev/null
         exit 0
         """#

@@ -325,14 +325,19 @@ struct SandboxLaunchTests {
         let script = dir.appending(path: "activity")
         try Data(SandboxLaunch.activityScript.utf8).write(to: script)
         let log = dir.appending(path: "sandbox.log")
-        let env = "GANNIN_ACTIVITY_LOG=\(SessionScript.quoted(log.path)) GANNIN_ACTIVITY_LABEL='#12' GH_TOKEN=github_pat_0123456789abcdef"
+        // An API key with no known prefix, so only redaction by value catches it.
+        let key = "plainkey0123456789"
+        let env = "GANNIN_ACTIVITY_LOG=\(SessionScript.quoted(log.path)) GANNIN_ACTIVITY_LABEL='#12' GH_TOKEN=github_pat_0123456789abcdef ANTHROPIC_API_KEY=\(key)"
         let hook = #"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl -H 'Authorization: github_pat_0123456789abcdef'"}}"#
         let run = SessionScript.quoted(script.path)
-        let result = Shell.run("printf '%s' \(SessionScript.quoted(hook)) | \(env) bash \(run) hook; \(env) bash \(run) 'Failed: ghp_abcdefghijklmnop and github_pat_0123456789abcdef'", .local)
+        let result = Shell.run("printf '%s' \(SessionScript.quoted(hook)) | \(env) bash \(run) hook; \(env) bash \(run) 'Failed: ghp_abcdefghijklmnop and github_pat_0123456789abcdef and \(key)'; \(env) bash \(run) '\(String(repeating: "x", count: 490))\(key)'", .local)
         #expect(result.ok, "\(result.failure)")
         let text = try String(contentsOf: log, encoding: .utf8)
         #expect(text.contains("[#12] Using Bash"))
-        #expect(text.contains("Failed: [redacted] and [redacted]"))
+        #expect(text.contains("Failed: [redacted] and [redacted] and [redacted]"))
+        // Across the 500-character cut too: not even its start is left.
+        #expect(!text.contains("plainkey"))
+        #expect(!text.contains("xpl"))
         #expect(!text.contains("curl"))
         #expect(!text.contains("github_pat_"))
         #expect(!text.contains("ghp_"))
