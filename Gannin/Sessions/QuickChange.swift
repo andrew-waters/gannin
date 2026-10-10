@@ -213,6 +213,15 @@ struct QuickChangeForm {
     var choseDefaults = false
 }
 
+/// How Start is going, and what went wrong, kept on `SessionStore` by tab
+/// rather than in the view: Start carries on when another tab is picked,
+/// and the tab comes back to it still running, or to its error.
+struct QuickChangeProgress {
+    var working = false
+    var steps: [String] = []
+    var error: String?
+}
+
 /// A New Quick Change tab in the Claude Code window, until it's started:
 /// the project and repo, the note, screenshots, whether to file an issue,
 /// the team's prompts and skills for work, where it runs, and Start.
@@ -243,9 +252,6 @@ struct NewQuickChangeView: View {
     @State private var sandboxed: Bool
     @State private var choice: PromptChoice
     @State private var choseDefaults: Bool
-    @State private var working = false
-    @State private var steps: [String] = []
-    @State private var error: String?
     @State private var dropTargeted = false
     @FocusState private var focused: Bool
 
@@ -274,6 +280,17 @@ struct NewQuickChangeView: View {
     private let restored: Bool
 
     private var org: String { pickedOrg ?? draft.org }
+
+    private var progress: QuickChangeProgress { sessions.quickChangeProgress[draftID] ?? QuickChangeProgress() }
+    private var working: Bool { progress.working }
+    private var steps: [String] { progress.steps }
+    private var error: String? { progress.error }
+
+    /// Changes the progress, while the tab's still a draft.
+    private func update(_ change: (inout QuickChangeProgress) -> Void) {
+        guard sessions.planningDrafts[draftID] != nil else { return }
+        change(&sessions.quickChangeProgress[draftID, default: QuickChangeProgress()])
+    }
 
     /// What's been entered, kept on the store while the tab is away.
     private var form: QuickChangeForm {
@@ -646,13 +663,13 @@ struct NewQuickChangeView: View {
             addImageData(data)
             return true
         }
-        if !fromKeyboard { error = "There's no picture on the clipboard." }
+        if !fromKeyboard { update { $0.error = "There's no picture on the clipboard." } }
         return false
     }
 
     private func addFile(_ url: URL) {
         guard let type = UTType(filenameExtension: url.pathExtension), type.conforms(to: .image) else {
-            error = "\(url.lastPathComponent) isn't an image."
+            update { $0.error = "\(url.lastPathComponent) isn't an image." }
             return
         }
         guard let data = try? Data(contentsOf: url) else { return }
@@ -668,10 +685,10 @@ struct NewQuickChangeView: View {
 
     private func append(name: String, data: Data) {
         guard data.count <= QuickChangeAttachment.maxBytes else {
-            error = "\(name) is over 20 MB. Attach a smaller screenshot."
+            update { $0.error = "\(name) is over 20 MB. Attach a smaller screenshot." }
             return
         }
-        error = nil
+        update { $0.error = nil }
         attachments.append(QuickChangeAttachment(name: name, data: data, image: NSImage(data: data)))
     }
 
@@ -682,9 +699,7 @@ struct NewQuickChangeView: View {
         let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = effectiveTitle
         guard !note.isEmpty, !repo.isEmpty else { return }
-        working = true
-        error = nil
-        steps = []
+        update { $0 = QuickChangeProgress(working: true) }
         let org = org
         let repo = repo
         let decided = placement
@@ -696,7 +711,7 @@ struct NewQuickChangeView: View {
         let login = auth.viewer?.login
         let addsScreenshots = addsScreenshots
         Task {
-            defer { working = false }
+            defer { update { $0.working = false } }
             var issue: IssueReference?
             var boardError: String?
             if createsIssue {
@@ -712,7 +727,8 @@ struct NewQuickChangeView: View {
                         issueImages.keep(Set(attachments.map(\.id)))
                         for attachment in attachments where !issueImages.images.contains(where: { $0.id == attachment.id }) {
                             guard issueImages.add(name: attachment.name, data: attachment.data, id: attachment.id) != nil else {
-                                self.error = issueImages.error
+                                let message = issueImages.error
+                                update { $0.error = message }
                                 return
                             }
                         }
@@ -720,14 +736,16 @@ struct NewQuickChangeView: View {
                         links = try await issueImages.commit(org: org, repo: repo, setup: setup, harness: harness)
                         committedTo = setup.repo
                         writing = "the issue"
-                        steps.append("Committed \(links.count == 1 ? "a screenshot" : "\(links.count) screenshots") to \(setup.repo)")
+                        let committed = "Committed \(links.count == 1 ? "a screenshot" : "\(links.count) screenshots") to \(setup.repo)"
+                        update { $0.steps.append(committed) }
                     }
                     let made = try await api.createIssue(repo: repo, title: title, body: IssueImages.body(note, links: links), assigneeIDs: assignees)
                     issue = IssueReference(org: org, id: made.id, number: made.number, title: title, repo: repo, url: made.url)
-                    steps.append("Created \(repo)#\(made.number)")
+                    update { $0.steps.append("Created \(repo)#\(made.number)") }
                 } catch {
                     let kept = committedTo.map { "The images are committed to \($0), and trying again links them rather than committing them twice. " } ?? ""
-                    self.error = "\(kept)GitHub didn't take \(writing): \(error.localizedDescription)"
+                    let message = "\(kept)GitHub didn't take \(writing): \(error.localizedDescription)"
+                    update { $0.error = message }
                     return
                 }
                 // The board is a nicety: the session starts whatever happens,
@@ -743,10 +761,10 @@ struct NewQuickChangeView: View {
                 if let definition, let made = issue {
                     do {
                         let item = try await api.addToBoard(projectID: definition.id, contentID: made.id)
-                        steps.append("Added it to \(definition.title)")
+                        update { $0.steps.append("Added it to \(definition.title)") }
                         if let status, let field = definition.field(named: "Status"), let value = field.value(from: status) {
                             try await api.setProjectField(projectID: definition.id, itemID: item, field: field.projectField, value: value)
-                            steps.append("Set Status to \(status)")
+                            update { $0.steps.append("Set Status to \(status)") }
                         }
                     } catch {
                         boardError = "GitHub didn't put \(made.reference) on \(definition.title): \(error.localizedDescription)"
