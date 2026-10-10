@@ -31,7 +31,11 @@ struct OpenIssuesView: View {
         let filters = stored.wrappedValue
         let pool = pool(filters)
         let issues = pool.filter { filters.matches($0, names: name) }
-        let rows = IssueTableRow.tree(issues) { IssueTableRow(issue: $0, author: $0.author.map(workload.person(login:)), assignees: $0.assignees.map(workload.person(login:))) }
+        let row = { (issue: IssueRecord) in IssueTableRow(issue: issue, author: issue.author.map(workload.person(login:)), assignees: issue.assignees.map(workload.person(login:))) }
+        // Narrowed, every match is a row of its own, so none is tucked under
+        // a collapsed parent; otherwise sub-issues sit under their parent.
+        let rows = filters.isNarrowed ? issues.map(row) : IssueTableRow.tree(issues, row: row)
+        let nested = issues.count - rows.count
         VStack(spacing: 0) {
             IssueFilterBar(filters: stored.projectedValue, pool: pool, names: name)
             Divider()
@@ -42,7 +46,8 @@ struct OpenIssuesView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                table(rows, title: issues.count == pool.count ? "\(pool.count) \(noun(filters))" : "\(issues.count) of \(pool.count) \(noun(filters))")
+                table(rows, title: (issues.count == pool.count ? "\(pool.count) \(noun(filters))" : "\(issues.count) of \(pool.count) \(noun(filters))")
+                    + (nested > 0 ? ", \(nested) under their parent" : ""))
             }
             if let history = store.history(for: org), filters.state != .open {
                 Divider()

@@ -651,9 +651,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - `Gannin/Issues/`: the Issues page (`IssuesStatsView`) is issue metrics, with a search over its
   In progress now list. Under Issues in the sidebar, All (`OpenIssuesView`) is the issue history's
   issues (every open one, and those closed since the window's start) as a table, as Pull Requests
-  is, sub-issues folded under their parent when it's listed too (`IssueTableRow.tree`, each level
-  sorted on its own) (title, repository, number, author, assignees, labels, linked PRs, opened, closed; columns
-  sort, and are kept in `allIssuesColumns`), and Not on a board those on
+  is (title, repository, number, author, assignees, labels, linked PRs, opened, closed; columns
+  sort, and are kept in `allIssuesColumns`), sub-issues folded under their parent when it's listed
+  too (`IssueTableRow.tree`, each level sorted on its own) and flat while a search or filter narrows it, and Not on a board those on
   no board. Both have `IssueFilterBar` at the top of the page, as Views has: search, Assignee (Me,
   Anyone assigned, Unassigned, people), Repository, Label, Field (a submenu per board field picked from options, single or multi
   select or iteration, with its values in the board's order and No value; any value within a field,
