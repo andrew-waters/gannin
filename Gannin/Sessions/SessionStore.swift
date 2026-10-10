@@ -439,6 +439,10 @@ final class SessionStore {
     /// Start Planning makes the session in its place. Not kept across
     /// launches.
     var planningDrafts: [UUID: PlanningDraft] = [:]
+    /// What's been entered in New Quick Change tabs not showing, by tab.
+    var quickChangeForms: [UUID: QuickChangeForm] = [:]
+    /// How Start is going in New Quick Change tabs, by tab.
+    var quickChangeProgress: [UUID: QuickChangeProgress] = [:]
     /// A second tab shown beside the selected one.
     var besideTab: UUID?
     /// The session whose tab is closing, asked first whether to wrap it up
@@ -529,6 +533,8 @@ final class SessionStore {
     /// The session started from a draft, in the draft's tab.
     func replaceDraft(_ draftID: UUID, with id: UUID) {
         planningDrafts[draftID] = nil
+        quickChangeForms[draftID] = nil
+        quickChangeProgress[draftID] = nil
         tabs.removeAll { $0 == id }
         if let index = tabs.firstIndex(of: draftID) {
             tabs[index] = id
@@ -541,6 +547,8 @@ final class SessionStore {
 
     func closeTab(_ id: UUID) {
         planningDrafts[id] = nil
+        quickChangeForms[id] = nil
+        quickChangeProgress[id] = nil
         guard let index = tabs.firstIndex(of: id) else {
             // A helper showing in its session's tab: back to the work.
             if selectedTab == id, let parent = sessions[id]?.parentID { selectedTab = parent }

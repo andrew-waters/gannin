@@ -45,7 +45,7 @@ struct SessionsWindow: View {
                     NewAskView(draftID: draftID, draft: draft)
                         .id(draftID)
                 } else if draft.isQuickChange {
-                    NewQuickChangeView(draftID: draftID, draft: draft)
+                    NewQuickChangeView(draftID: draftID, draft: draft, saved: sessions.quickChangeForms[draftID])
                         .id(draftID)
                 } else {
                     NewPlanningView(draftID: draftID, draft: draft)
