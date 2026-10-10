@@ -47,5 +47,6 @@ struct PromptWritingTests {
         #expect(PromptWriting.reply(in: "Here:\n```json\n{\"message\": \"Which repo?\"}\n```") == .init(message: "Which repo?"))
         #expect(PromptWriting.reply(in: "Just talking {not json}") == .init(message: "Just talking {not json}"))
         #expect(PromptWriting.reply(in: "{}") == .init(message: "{}"))
+        #expect(PromptWriting.reply(in: #"{"message": "Which repo?", "draft": "  ", "title": ""}"#) == .init(message: "Which repo?"))
     }
 }

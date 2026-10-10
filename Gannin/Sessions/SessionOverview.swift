@@ -183,8 +183,8 @@ struct SessionPromptSettingsSection: View {
                         TextField("Name", text: $snippet.title)
                             .fontWeight(.medium)
                         WriteWithClaudeButton(purpose: .savedPrompt, text: snippet.prompt, title: snippet.title, compact: true) { draft, title in
-                            $snippet.wrappedValue.prompt = draft
-                            if let title, !title.isEmpty { $snippet.wrappedValue.title = title }
+                            snippet.prompt = draft
+                            if let title, !title.isEmpty { snippet.title = title }
                         }
                         Button {
                             snippets.removeAll { $0.id == snippet.id }

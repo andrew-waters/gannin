@@ -100,9 +100,14 @@ enum PromptWriting {
     }
 
     /// The reply's JSON, or, when it's only talking, all of it as said.
+    /// An empty field is no field: `"draft": ""` never empties the draft.
     static func reply(in text: String) -> Reply {
-        if let parsed = ClaudeRunner.json(Reply.self, in: text), parsed.message != nil || parsed.draft != nil || parsed.title != nil {
-            return parsed
+        func given(_ value: String?) -> String? {
+            value.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
+        }
+        if let parsed = ClaudeRunner.json(Reply.self, in: text) {
+            let reply = Reply(message: given(parsed.message), draft: given(parsed.draft), title: given(parsed.title))
+            if reply.message != nil || reply.draft != nil || reply.title != nil { return reply }
         }
         return Reply(message: text)
     }
@@ -127,7 +132,8 @@ struct WriteWithClaudeButton: View {
                 Button {
                     showing = true
                 } label: {
-                    Image(systemName: "sparkles")
+                    Label("Write with Claude…", systemImage: "sparkles")
+                        .labelStyle(.iconOnly)
                 }
                 .buttonStyle(.borderless)
             } else {
@@ -152,6 +158,8 @@ struct PromptWritingSheet: View {
         let id = UUID()
         let fromClaude: Bool
         let text: String
+        /// A run that failed, shown apart and not counted as a conversation.
+        var isError = false
     }
 
     @State private var draft: String
@@ -175,7 +183,7 @@ struct PromptWritingSheet: View {
         _title = State(initialValue: initialTitle ?? "")
     }
 
-    private var changed: Bool { draft != initial || title != initialTitle || turns.contains { $0.fromClaude } }
+    private var changed: Bool { draft != initial || title != initialTitle || turns.contains { $0.fromClaude && !$0.isError } }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -309,7 +317,8 @@ struct PromptWritingSheet: View {
                 .textSelection(.enabled)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .background(turn.fromClaude ? Color.secondary.opacity(0.12) : Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+                .foregroundStyle(turn.isError ? Color.red : Color.primary)
+                .background(turn.isError ? Color.red.opacity(0.1) : turn.fromClaude ? Color.secondary.opacity(0.12) : Color.accentColor.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
             if turn.fromClaude { Spacer(minLength: 40) }
         }
     }
@@ -338,7 +347,7 @@ struct PromptWritingSheet: View {
                 if purpose.titled, let value = reply.title, !value.isEmpty { title = value }
                 turns.append(Turn(fromClaude: true, text: reply.message ?? (reply.draft != nil ? "Drafted. Check it over on the right." : "No changes.")))
             } catch {
-                turns.append(Turn(fromClaude: true, text: error.localizedDescription))
+                turns.append(Turn(fromClaude: true, text: error.localizedDescription, isError: true))
                 // A first message that failed starts afresh next time.
                 if isFirst { conversation = UUID() }
             }
