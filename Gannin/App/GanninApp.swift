@@ -72,6 +72,8 @@ struct GanninApp: App {
         let sessions = SessionStore(harness: harness)
         _sessions = State(initialValue: sessions)
         GanninAppDelegate.sessions = sessions
+        // A font picked in Settings > General reaches every terminal already running.
+        EditorFontStore.shared.onChange = { [weak sessions] font in sessions?.applyEditorFont(font) }
         sessions.api = { [weak auth] in auth?.api }
         sessions.viewerLogin = { [weak auth] in auth?.viewer?.login }
         sessions.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }

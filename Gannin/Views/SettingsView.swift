@@ -49,6 +49,23 @@ struct GeneralSettings: View {
                 .pickerStyle(.segmented)
                 .onChange(of: appearance) { _, value in value.apply() }
             }
+            Section {
+                HStack {
+                    Text(EditorFontStore.shared.fontDescription)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if EditorFontStore.shared.isCustom {
+                        Button("Reset") { EditorFontStore.shared.resetToDefault() }
+                    }
+                    Button("Change Font…") { EditorFontStore.shared.showPanel() }
+                }
+            } header: {
+                Text("Font")
+            } footer: {
+                Text("Diffs (Repositories, sessions and PR reviews) and the Claude Code terminal.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Account") {
                 if let viewer = auth.viewer {
                     LabeledContent("Signed in as") {

@@ -931,7 +931,7 @@ private struct DiffPaneRow: View {
                 .help("Undo this part of the change in the file. Claude isn't told.")
             }
         }
-        .font(.system(size: 11, design: .monospaced))
+        .font(Font(EditorFontStore.shared.font))
         .padding(.trailing, 6)
         .background(DiffStyle.background(line.kind))
         .onHover { inside in
