@@ -5,14 +5,34 @@ Mac app, signs it with Developer ID, notarises and staples it, packs it in a DMG
 for Sparkle, and publishes it to gannin.ai. Gannin's copies already installed see it in their
 next update check, or straight away from Gannin › Check for Updates.
 
-```bash
-git tag -a v1.2.0 -m "A headline for the release" -m "- What changed
-- And what else"
-git push origin v1.2.0
-```
+Every release has its section in [`CHANGELOG.md`](../CHANGELOG.md), which becomes its notes.
 
-The tag's first line is the release's title and the rest its notes, on GitHub and in
-Sparkle's update panel. Tags are `v<major>.<minor>.<patch>`; the app's version comes from the
+1. **Changes go in as they're made.** Each pull request with a change someone using the app
+   would notice adds a line under `## [Unreleased]`, in an `Added`, `Changed` or `Fixed` group
+   ([Keep a Changelog](https://keepachangelog.com/en/1.1.0/), as Orchard does). The PR
+   template's checklist asks for it. CI, docs and harness files (plans, sessions, skills) need
+   no entry.
+2. **Promote Unreleased** on a branch, look over what it says, and merge it in a pull request:
+   ```bash
+   scripts/promote-changelog.sh 1.2.0
+   ```
+   It renames `## [Unreleased]` to `## [1.2.0] - <today>` and puts an empty Unreleased above
+   it. It refuses a version that already has a section, or an Unreleased with nothing in it.
+3. **Tag the merged commit** and push the tag:
+   ```bash
+   git tag -a v1.2.0 -m "A headline for the release"
+   git push origin v1.2.0
+   ```
+
+The tag's first line is the release's title. Its notes, on GitHub and in Sparkle's update
+panel, are the version's section of `CHANGELOG.md` at the tag (Markdown for GitHub, HTML for
+Sparkle, both from `.github/scripts/changelog_to_html.py`, the script Orchard uses). Any more
+lines in the tag message (`-m "Title" -m "A word before the changes"`) go above the changes as
+an introduction. A tag whose commit has no section for its version, or an empty one, fails
+the release's first steps, before anything is built: promote and merge, then delete the tag
+(`git push origin :v1.2.0`, `git tag -d v1.2.0`) and tag again.
+
+Tags are `v<major>.<minor>.<patch>`; the app's version comes from the
 tag (project.yml keeps `0.0.0`, and CI fails a pull request that changes it) and its build
 number from the workflow's run, so it only goes up.
 

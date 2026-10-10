@@ -50,6 +50,7 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
 4. **Check the repo's own rules.** Read the repo's `CLAUDE.md` and do what it asks. For the Gannin app (the repo with `project.yml`):
    - `Gannin.xcodeproj` isn't checked in; if files were added or removed, run `xcodegen generate` but don't commit the project.
    - `project.yml`'s `MARKETING_VERSION` stays at the `0.0.0` placeholder (`ci.yml` enforces it; the version comes from the release tag).
+   - A change someone using the app would notice gets a line in `CHANGELOG.md` under `## [Unreleased]`, in an `Added`, `Changed` or `Fixed` group (add the group if it isn't there), written for them in the style of the entries below it. That section becomes the next release's notes on GitHub and in Sparkle's update panel (`docs/RELEASING.md`). CI, docs and harness files (plans, sessions, skills, prompts) need none.
    - If the change alters behaviour that `CLAUDE.md` describes (a store, a page, a setting, a sync rule), update `CLAUDE.md` in the same PR, in its style.
    - GitHub calls stay reads, except the confirmed writes `CLAUDE.md` lists; a new mutation must be confirmed first and noted there.
 
@@ -65,13 +66,13 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
    git push -u origin HEAD
    ```
 
-7. **Check for a PR template** and use it if there is one:
+7. **Start from the repo's PR template**, if it has one:
    ```bash
    ls .github/pull_request_template.md .github/PULL_REQUEST_TEMPLATE 2>/dev/null
    ```
-   TODO: the harness doesn't define a PR template. Without one, use the description below.
+   The Gannin app's is `.github/pull_request_template.md`: the sections below, then a checklist. Copy it into the description file, fill each section, replace its HTML comments, and tick only what's true: the changelog box or the "no user-facing change" box (one of the two), the build and tests only if they ran in this session, `CLAUDE.md` and `MARKETING_VERSION` as checked in step 4, and the screenshots box when there's no UI change or Verified has them (a session that can't capture the app leaves it unticked and says so in Verified). Leave a box unticked rather than ticking it hopefully, and say why in Verified. A repo with no template gets the description below.
 
-8. **Write the description** in a file, so it isn't mangled by the shell:
+8. **Write the description** in a file, so it isn't mangled by the shell (from the template, when there is one):
    ```markdown
    Closes <owner>/<repo>#<number>
 
@@ -115,6 +116,7 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
 - Every PR names its issue (`Closes` or `Part of`, as `owner/repo#number`). If there's no issue, stop and ask rather than opening an unlinked PR. The exception is a quick change Gannin started without one (its brief says so, and its branch is `quick-…`): don't file an issue or invent a reference; put `Quick change, no issue.` where `Closes` would go. Gannin still finds the PR by its branch, and it counts in pull request metrics, though not in issue metrics or on the board.
 - Open as a draft until the build passes and the description's Verified section is honest. Ready for review starts the review clock, so mark it ready only when it really is.
 - Say what was and wasn't verified. Don't claim a build or test passed unless it ran in this session.
+- A user-facing change to the Gannin app comes with its `CHANGELOG.md` entry in the same PR; the template's checklist asks for it.
 - Keep the PR to the issue. Unrelated fixes get their own issue and PR.
 - No Claude attribution anywhere: no `Co-Authored-By: Claude` trailers on commits, no "Generated with Claude Code" lines in the PR body.
 - No em dashes, en dashes or the single-character ellipsis in the title, body or commit messages.
