@@ -190,8 +190,8 @@ struct ScheduleForAgentButton: View {
     }
 }
 
-/// Marks an issue in the agent queue or pinned to a time, where the issue is
-/// listed or shown; nothing when it's neither. The store is passed in rather
+/// Marks an issue in the agent queue, pinned to a time, or with a scheduled
+/// session going, where the issue is listed or shown; nothing otherwise. The store is passed in rather
 /// than read from the environment: a table's cells, rebuilt when it sorts or
 /// a row expands, don't always get the page's environment objects.
 struct ScheduledForAgentPill: View {
@@ -199,7 +199,13 @@ struct ScheduledForAgentPill: View {
     let issueID: String
 
     var body: some View {
-        if let pin = routines.pin(for: issueID) {
+        if let run = routines.activeRuns.first(where: { $0.issue?.id == issueID }) {
+            if run.outcome == .needsYou {
+                pill("Agent Needs You", help: "Its scheduled session is waiting on you")
+            } else {
+                pill("Agent Working", help: "Its scheduled session is running")
+            }
+        } else if let pin = routines.pin(for: issueID) {
             pill("Pinned for Agent", help: "Pinned to \(pin.schedule.summary)")
         } else if let queued = routines.queue.first(where: { $0.issue.id == issueID }) {
             let position = (routines.queue(for: queued.issue.org).firstIndex { $0.id == issueID } ?? 0) + 1
@@ -215,19 +221,30 @@ struct ScheduledForAgentPill: View {
 }
 
 /// The items of Schedule for Agent, for its menu and context menus. Pin to
-/// a Time sets `editing`, whose sheet is on the list, not the row.
+/// a Time sets `editing`, whose sheet is on the list, not the row. An issue
+/// with a session already can't be queued or pinned: its start would fail
+/// (`startIssueRun`), so it offers that session instead.
 struct ScheduleForAgentItems: View {
     @Environment(RoutineStore.self) private var routines
     @Environment(IssueStore.self) private var issues
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
     let reference: IssueReference
     @Binding var editing: EditedRoutine?
 
     var body: some View {
+        let existing = sessions.session(forIssue: reference.id)
+        if let existing {
+            Section("Already has a session") {
+                Button("Open Session") { sessions.show(existing.id, with: openWindow) }
+            }
+        }
         if routines.isQueued(reference.id) {
             Button("Remove from Agent Queue") { routines.dequeue(reference.id) }
         } else {
             Button("Add to Agent Queue") { routines.enqueue(reference) }
+                .disabled(existing != nil)
         }
         if let pin = routines.pin(for: reference.id) {
             Button("Change Pinned Time…") { editing = EditedRoutine(routine: pin, isNew: false) }
@@ -238,6 +255,7 @@ struct ScheduleForAgentItems: View {
                     ?? configs.config(for: reference.org).allHarnesses.first?.repo ?? ""
                 editing = EditedRoutine(routine: Routine.new(org: reference.org, harnessRepo: repo, kind: .pinned, issue: reference), isNew: true)
             }
+            .disabled(existing != nil)
         }
     }
 }
