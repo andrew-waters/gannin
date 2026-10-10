@@ -1,0 +1,31 @@
+---
+title: Gannin docs
+description: How to use, set up and configure Gannin, in plain words.
+template: splash
+hero:
+  tagline: What each part of Gannin does, how to set it up, and what every setting changes.
+  actions:
+    - text: Get started
+      link: /docs/get-started/requirements/
+      icon: right-arrow
+    - text: Settings reference
+      link: /docs/settings/
+      variant: minimal
+---
+
+import { Card, CardGrid } from '@astrojs/starlight/components';
+
+<CardGrid>
+  <Card title="Get started" icon="rocket">
+    What Gannin needs, installing it, signing in with GitHub, orgs and projects, and making a harness. [Start here](/docs/get-started/requirements/).
+  </Card>
+  <Card title="Concepts" icon="open-book">
+    Where things are kept, projects and harnesses, the GitHub budget, how every number is worked out, and privacy. [Read the concepts](/docs/concepts/where-things-are-kept/).
+  </Card>
+  <Card title="Ways to run sessions" icon="laptop">
+    Claude Code on this Mac, on a server, or in a sandbox. [Choose one](/docs/sessions/).
+  </Card>
+  <Card title="Settings reference" icon="setting">
+    Every option in every Settings pane, its default, what it changes and where it's kept. [Look one up](/docs/settings/).
+  </Card>
+</CardGrid>
