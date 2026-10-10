@@ -221,30 +221,19 @@ struct ScheduledForAgentPill: View {
 }
 
 /// The items of Schedule for Agent, for its menu and context menus. Pin to
-/// a Time sets `editing`, whose sheet is on the list, not the row. An issue
-/// with a session already can't be queued or pinned: its start would fail
-/// (`startIssueRun`), so it offers that session instead.
+/// a Time sets `editing`, whose sheet is on the list, not the row.
 struct ScheduleForAgentItems: View {
     @Environment(RoutineStore.self) private var routines
     @Environment(IssueStore.self) private var issues
     @Environment(OrgConfigStore.self) private var configs
-    @Environment(SessionStore.self) private var sessions
-    @Environment(\.openWindow) private var openWindow
     let reference: IssueReference
     @Binding var editing: EditedRoutine?
 
     var body: some View {
-        let existing = sessions.session(forIssue: reference.id)
-        if let existing {
-            Section("Already has a session") {
-                Button("Open Session") { sessions.show(existing.id, with: openWindow) }
-            }
-        }
         if routines.isQueued(reference.id) {
             Button("Remove from Agent Queue") { routines.dequeue(reference.id) }
         } else {
             Button("Add to Agent Queue") { routines.enqueue(reference) }
-                .disabled(existing != nil)
         }
         if let pin = routines.pin(for: reference.id) {
             Button("Change Pinned Time…") { editing = EditedRoutine(routine: pin, isNew: false) }
@@ -255,7 +244,6 @@ struct ScheduleForAgentItems: View {
                     ?? configs.config(for: reference.org).allHarnesses.first?.repo ?? ""
                 editing = EditedRoutine(routine: Routine.new(org: reference.org, harnessRepo: repo, kind: .pinned, issue: reference), isNew: true)
             }
-            .disabled(existing != nil)
         }
     }
 }

@@ -17,7 +17,6 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ### Fixed
 - Issues › All no longer crashes when you expand an issue with sub-issues after scheduling one for an agent
 - An issue's Queued for Agent mark no longer vanishes when its queue window starts it: it shows Agent Working (or Agent Needs You) while the session runs
-- Schedule for Agent can't queue or pin an issue that already has a session, which would have failed and dropped off the queue; it offers Open Session instead
 
 ## [0.0.2] - 2026-10-05
 
