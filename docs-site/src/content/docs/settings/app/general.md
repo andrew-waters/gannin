@@ -68,16 +68,16 @@ Rules that block what a Claude Code session can do, whatever Claude decides. Not
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | No force push | Off | Blocks `git push --force`, `-f`, `--force-with-lease` and `+branch` refspecs. | This Mac |
-| Push only to the session's branch | Off | Blocks `git push` to any branch but the session's own (`HEAD`, or the branch by name), and `--all`, `--mirror` and `--tags`. | This Mac |
-| No branch or tag deletes | Off | Blocks `git branch -d`, `git tag -d`, `git push --delete` or `:branch`, and deleting refs through `gh api`. | This Mac |
+| Push only to the session's branch | Off | Blocks `git push` to any branch but the session's own, and `--all`, `--mirror` and `--tags`. The branch has to be named, as `git push origin HEAD:<branch>`: a bare `git push` or `git push origin HEAD` pushes whatever is checked out, so it's blocked. | This Mac |
+| No branch or tag deletes | Off | Blocks `git branch -d`, `git tag -d`, `git update-ref -d`, `git push --delete`, `--prune` or `:branch`, and deleting refs through `gh api`. | This Mac |
 | No gh release writes | Off | Blocks `gh release create`, `edit`, `upload`, `delete` and `delete-asset`, and writes to releases through `gh api`. Reading releases is fine. | This Mac |
-| Limit PR comments and reviews | Off | Allows a session at most this many PR or issue comments and reviews an hour (`gh pr comment`, `gh pr review`, `gh issue comment`, comment and review writes through `gh api`, and GitHub MCP tools that comment or review), then blocks the next. 10 when turned on. | This Mac |
+| Limit PR comments and reviews | Off | Allows a session at most this many PR or issue comments and reviews an hour (`gh pr comment`, `gh pr review`, `gh issue comment`, comment and review writes through `gh api`, and the GitHub MCP tools that add a comment, reply or review), then blocks the next. 10 when turned on. | This Mac |
 | Name | Empty | A custom rule's name, shown in Activity and told to claude. | This Mac |
-| Pattern | Empty | What a custom rule matches, as an extended regular expression over the whole command (`grep -E`); plain words work as they are. A rule with no pattern does nothing. | This Mac |
+| Pattern | Empty | What a custom rule matches, as an extended regular expression over the whole command (`grep -E`); plain words work as they are. A rule with no pattern does nothing; one that isn't a valid expression blocks every command until it's fixed, and Settings says so. | This Mac |
 | When it matches | Block | Block stops the command. Ask me turns it into a permission prompt, so the session goes to Needs you until you Allow or Deny it. | This Mac |
 | Add Rule | Not applicable | Adds a custom rule. | This Mac |
 
-While any rule is on, a session also can't change Gannin's settings, its own settings file, or Claude Code's settings (`.claude/settings*.json`, `disableAllHooks`), so it can't remove or edit its own rules.
+While any rule is on, a session also can't change Gannin's settings, its own settings file, or Claude Code's settings (`.claude/settings*.json`, `disableAllHooks`), so it can't remove or edit its own rules. Reading them with `cat`, `grep` and the like is fine; any other command naming them is blocked. It can't set git config that changes what a push does or makes an alias (`git -c` or `git config` with `alias.*`, `push.*` or `remote.*.push`) either. If the check itself can't run on a box, every command is blocked rather than let through.
 
 Rules match commands as they are written. That stops mistakes and casual prompt injection, but not someone set on getting round them, for example with an encoded or scripted command. Protect shared branches on GitHub as well.
 

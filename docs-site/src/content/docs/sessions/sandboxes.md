@@ -134,7 +134,7 @@ reason, and say so.
 - **Its repos' git is read-only, bar what commits and worktrees need.** The sandbox can commit,
   fetch and make worktrees in the issue's repos, but can't change their git config or hooks. That
   stops it from making git on your Mac run something. A few things don't work in there: branches
-  can't be deleted, no upstream is recorded (push with `git push origin HEAD`), and a rebase or
+  can't be deleted, no upstream is recorded (push with `git push origin HEAD:<branch>`), and a rebase or
   pull prints a harmless error about `packed-refs.lock`.
 - **It can move branches.** A sandbox can update any branch in the issue's repos, the default
   branch's local copy included, though nothing it can push without your token's say. Other

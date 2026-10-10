@@ -1,7 +1,7 @@
 ---
 type: plan
 status: In progress
-summary: Session rules, set in Settings › General › Agent, enforced by a PreToolUse hook Gannin writes into every session's settings on each start and resume, so a session can't run what they block whatever Claude decides.
+summary: Session rules, set in Settings › General › Session rules, enforced by a PreToolUse hook Gannin writes into every session's settings on each start and resume, so a session can't run what they block whatever Claude decides.
 issues: [andrew-waters/gannin#129]
 domains: [sessions]
 touches: [andrew-waters/gannin]
@@ -39,7 +39,7 @@ Activity with the rule's name, and out of the session's reach.
   that touch Gannin's preferences or Application Support (`dev.andon.gannin`), a session's
   `.gannin/settings*.json`, Claude Code's own settings files or `disableAllHooks`.
 - **Stored on this Mac** as JSON in `UserDefaults` (`sessionRules`), the user's own setting like
-  the rest of Settings › General › Agent; never in the harness, where a session could commit it.
+  the rest of Settings › General; never in the harness, where a session could commit it.
 
 ### Limits, said plainly
 
@@ -60,5 +60,9 @@ server-side checks for MCP GitHub tools beyond comments) is the next step, left 
       the comment limit, and custom rules (name, pattern, Block or Ask me).
 - [x] Tests: the hook run in bash against each rule, the count limit, ask, the guard, and no rules
       meaning no hook.
+- [x] Pair review round 1: quoted and tabbed commands, flags in any order, gh's flags before
+      its verb, `-c` and `git config` that change push, `update-ref -d`, pushes naming the
+      branch, GitHub MCP writes only, custom rules before the count, invalid patterns and a
+      broken hook failing closed, reads of the guarded files allowed.
 - [x] Docs: Settings › General's page, the sessions guide, CHANGELOG.
 - [ ] Try each rule in an Unattended session on this Mac, a server and a sandbox (needs a Mac).

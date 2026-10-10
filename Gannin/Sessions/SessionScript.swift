@@ -316,8 +316,8 @@ enum SessionScript {
             group["matcher"] = matcher
             return group
         }
-        // Session rules come first, so a blocked call doesn't mark the
-        // session working.
+        // Session rules: Claude Code runs every matching hook at once, and a
+        // deny wins whatever the order.
         let ruleGroups = rules.map { [group([command($0)], matcher: SessionRules.matcher)] } ?? []
         let hooks: [String: Any] = [
             "SessionStart": [group([write(.idle)])],
@@ -544,7 +544,7 @@ enum SessionBrief {
                 "  ```",
                 "",
                 session.isSandboxed
-                    ? "  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (\(SandboxLaunch.cloneRepos(session).joined(separator: ", "))), and a clone made in it would vanish when it stops. If the \(session.hasNoIssue ? "change" : "issue") needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. The repos' git dirs are read-only apart from what commits, fetches and worktrees write, so git config and hooks can't be changed, no upstream is recorded (push with `git push origin HEAD` and open the PR with `gh pr create --head <branch>`), branches can't be deleted, and an error about packed-refs.lock after a rebase or pull is expected and harmless."
+                    ? "  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (\(SandboxLaunch.cloneRepos(session).joined(separator: ", "))), and a clone made in it would vanish when it stops. If the \(session.hasNoIssue ? "change" : "issue") needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. The repos' git dirs are read-only apart from what commits, fetches and worktrees write, so git config and hooks can't be changed, no upstream is recorded (push with `git push origin HEAD:\(session.branch)` and open the PR with `gh pr create --head <branch>`), branches can't be deleted, and an error about packed-refs.lock after a rebase or pull is expected and harmless."
                     : "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
                 "- If the harness has no `projects/` folder, it's the code repo too: the code is \(harnessRepo) itself. Don't work in its checkout; give it one worktree in the issue's folder the same way, with `git -C . fetch origin` and `git -C . worktree add \"$PWD/\(folder)/\(harnessRepo.split(separator: "/").last ?? "")\" -b \(session.branch) origin/HEAD`, and do everything there, the plan included.",
             ]
