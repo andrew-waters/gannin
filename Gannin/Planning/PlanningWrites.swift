@@ -65,4 +65,14 @@ extension GitHubAPI {
             }
             """, variables: ["parent": parent, "child": child])
     }
+
+    /// Comments on an issue or pull request. A write.
+    func addComment(subjectID: String, body: String) async throws {
+        struct Response: Decodable {}
+        let _: Response = try await mutate("""
+            mutation($subject: ID!, $body: String!) {
+              addComment(input: { subjectId: $subject, body: $body }) { subject { id } }
+            }
+            """, variables: ["subject": subjectID, "body": body])
+    }
 }
