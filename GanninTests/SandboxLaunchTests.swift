@@ -289,4 +289,52 @@ struct SandboxLaunchTests {
         let permissions = try FileManager.default.attributesOfItem(atPath: folder + "/secrets.env")[.posixPermissions] as? Int
         #expect(permissions == 0o600)
     }
+
+    /// What's happening inside reaches container logs (andrew-waters/gannin#152).
+    @Test func theSandboxsOwnProcessFollowsItsActivityLog() throws {
+        let steps = SandboxLaunch.hostSteps(session(), folder: ".worktrees/x")
+        #expect(steps.contains(#"log="$si/sandbox.log""#))
+        #expect(steps.contains(#"tail -n 200 -F "$0" & wait' "$log""#))
+        #expect(!steps.contains("sleep infinity"))
+        #expect(steps.contains(#"bash "$s/inner.sh" "$s" "$h" "$log""#))
+        let inner = SandboxLaunch.innerScript(session())
+        #expect(inner.contains("export GANNIN_ACTIVITY_LOG=${3:-}"))
+        #expect(inner.contains("export GANNIN_ACTIVITY_LABEL='#12'"))
+        #expect(parses(SandboxLaunch.activityScript).ok)
+
+        func hooks(_ json: String) throws -> [String: Any] {
+            let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+            return try #require(object["hooks"] as? [String: Any])
+        }
+        let sandboxed = try hooks(SessionScript.settings(directory: "/tmp/s", isRemote: true, sandboxed: true))
+        let commands = { (event: String) in
+            ((sandboxed[event] as? [[String: Any]]) ?? []).flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }.compactMap { $0["command"] as? String }
+        }
+        for event in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUseFailure", "Notification", "Stop", "SessionEnd"] {
+            #expect(commands(event).contains { $0.contains("\(SandboxLaunch.activityScriptPath) hook") }, "\(event)")
+        }
+        let onTheMac = SessionScript.settings(directory: "/tmp/s", isRemote: false)
+        #expect(!onTheMac.contains("gannin-activity"))
+    }
+
+    /// Events and tool names only, never what's in them, and tokens redacted.
+    @Test func theActivityLogShowsEventsNotWhatsInThem() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let script = dir.appending(path: "activity")
+        try Data(SandboxLaunch.activityScript.utf8).write(to: script)
+        let log = dir.appending(path: "sandbox.log")
+        let env = "GANNIN_ACTIVITY_LOG=\(SessionScript.quoted(log.path)) GANNIN_ACTIVITY_LABEL='#12' GH_TOKEN=github_pat_0123456789abcdef"
+        let hook = #"{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"curl -H 'Authorization: github_pat_0123456789abcdef'"}}"#
+        let run = SessionScript.quoted(script.path)
+        let result = Shell.run("printf '%s' \(SessionScript.quoted(hook)) | \(env) bash \(run) hook; \(env) bash \(run) 'Failed: ghp_abcdefghijklmnop and github_pat_0123456789abcdef'", .local)
+        #expect(result.ok, "\(result.failure)")
+        let text = try String(contentsOf: log, encoding: .utf8)
+        #expect(text.contains("[#12] Using Bash"))
+        #expect(text.contains("Failed: [redacted] and [redacted]"))
+        #expect(!text.contains("curl"))
+        #expect(!text.contains("github_pat_"))
+        #expect(!text.contains("ghp_"))
+    }
 }
