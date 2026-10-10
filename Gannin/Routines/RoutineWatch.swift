@@ -46,11 +46,11 @@ extension SessionStore {
                 }
                 continue
             }
-            let state = state(id)
-            if state == .working { routineSessionsWorked.insert(id) }
+            let current = self.state(id)
+            if current == .working { routineSessionsWorked.insert(id) }
             let cost = ([id] + helpers(of: id).map(\.id)).compactMap { transcripts[$0]?.costUSD }.reduce(0, +)
             let verdict = RoutineVerdict.judge(
-                state: state, isRunning: isRunning(id), hasWorked: routineSessionsWorked.contains(id) || transcripts[id]?.lastReply != nil,
+                state: current, isRunning: isRunning(id), hasWorked: routineSessionsWorked.contains(id) || transcripts[id]?.lastReply != nil,
                 inPairReview: isQuietForPairReview(id), elapsed: now.timeIntervalSince(run.startedAt ?? now),
                 cost: cost, maxMinutes: info.maxMinutes, maxCost: info.maxCost
             )
