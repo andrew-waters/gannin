@@ -56,7 +56,7 @@ enum SessionScript {
             #"[ -e "$session/brief.md" ] || cp "$harness"/"# + quoted(recorded) + #"/brief.md "$session/brief.md" || fail "The brief isn't in the harness yet. Pull it, then Restart."\#n"#
         } ?? ""
         let prepare = """
-            # Written by Gannin for \(session.issue.reference). Run in the session's terminal.
+            # Written by Gannin for \(session.longReference). Run in the session's terminal.
             session=\(directory)
             harness=\(harness)
             harness_repo=\(quoted(session.harnessRepo ?? session.repo))
@@ -85,7 +85,7 @@ enum SessionScript {
 
             mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
             \(briefSource)cp "$session/brief.md" "$folder/.gannin/"
-            \(session.isAsk ? askFolder : "")\(readyForReviewStep(session, directory: directory, into: #""$folder/.gannin""#))cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
+            \(session.isQuickChange ? attachmentsStep : "")\(session.isAsk ? askFolder : "")\(readyForReviewStep(session, directory: directory, into: #""$folder/.gannin""#))cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
             cd "$harness" || fail "The harness isn't there."
 
             """
@@ -94,6 +94,15 @@ enum SessionScript {
         }
         return prepare + claudeSteps(session, settings: #""$folder/.gannin/"# + settingsName(session) + #"""#, shellNote: "This shell is in the harness")
     }
+
+    /// A quick change's screenshots, from the session's folder into its
+    /// `.gannin/`. Ends with a newline.
+    private static let attachmentsStep = """
+        if [ -d "$session/\(SessionStore.attachmentsFolder)" ]; then
+          mkdir -p "$folder/.gannin/\(SessionStore.attachmentsFolder)" && cp -R "$session/\(SessionStore.attachmentsFolder)/." "$folder/.gannin/\(SessionStore.attachmentsFolder)/" || warn "Couldn't copy the screenshots into the session's folder."
+        fi
+
+        """
 
     /// Whether git on the box is guarded for this session: a sandbox could
     /// have written the harness's `.git` (`SandboxGitGuard`).
@@ -167,7 +176,7 @@ enum SessionScript {
     static func readyForReview(_ session: CodeSession, directory: String) -> String {
         """
         #!/bin/bash
-        # Written by Gannin for \(session.issue.reference). Run it when the change is ready for a second agent
+        # Written by Gannin for \(session.longReference). Run it when the change is ready for a second agent
         # to review, with a note on what changed and where to look.
         note=$(printf '%s' "$*" | tr '\\n' ' ')
         printf '%s %s\\n' "$(date +%s)-$$" "$note" > \(directory)/review-request || { echo "Couldn't tell Gannin." >&2; exit 1; }
@@ -395,7 +404,9 @@ enum SessionBrief {
     /// those a change bears on are listed, as guidance.
     static func make(session: CodeSession, record: IssueRecord?, detail: ItemDetail?, parent: IssueRecord?, harness: HarnessIndex?, goals: [Measurable] = []) -> String {
         let reference = session.issue
-        var lines = ["# \(reference.reference): \(reference.title)", "", reference.url.absoluteString, ""]
+        var lines = session.hasNoIssue
+            ? ["# Quick change in \(reference.repo): \(reference.title)", ""]
+            : ["# \(reference.reference): \(reference.title)", "", reference.url.absoluteString, ""]
 
         var facts: [String] = []
         if let record {
@@ -419,25 +430,30 @@ enum SessionBrief {
             lines.append("")
         }
 
-        lines += ["## Description", ""]
-        if let detail {
-            let body = detail.body.trimmingCharacters(in: .whitespacesAndNewlines)
-            lines += [body.isEmpty ? "(No description.)" : body, ""]
-            if !detail.recentComments.isEmpty {
-                let heading = detail.commentCount > detail.recentComments.count
-                    ? "## Recent comments (\(detail.recentComments.count) of \(detail.commentCount))"
-                    : "## Comments"
-                lines += [heading, ""]
-                for comment in detail.recentComments {
-                    let who = comment.author.map { "@\($0.login)" } ?? "someone"
-                    lines += ["### \(who), \(comment.createdAt.formatted(date: .abbreviated, time: .shortened))", "", comment.body, ""]
-                }
-            }
+        if session.isQuickChange {
+            // The note is the issue's description, if it has one.
+            lines += quickChangeSections(session)
         } else {
-            lines += ["(Not loaded in Gannin yet. `gh issue view \(reference.number) --repo \(reference.repo) --comments` has it.)", ""]
+            lines += ["## Description", ""]
+            if let detail {
+                let body = detail.body.trimmingCharacters(in: .whitespacesAndNewlines)
+                lines += [body.isEmpty ? "(No description.)" : body, ""]
+                if !detail.recentComments.isEmpty {
+                    let heading = detail.commentCount > detail.recentComments.count
+                        ? "## Recent comments (\(detail.recentComments.count) of \(detail.commentCount))"
+                        : "## Comments"
+                    lines += [heading, ""]
+                    for comment in detail.recentComments {
+                        let who = comment.author.map { "@\($0.login)" } ?? "someone"
+                        lines += ["### \(who), \(comment.createdAt.formatted(date: .abbreviated, time: .shortened))", "", comment.body, ""]
+                    }
+                }
+            } else {
+                lines += ["(Not loaded in Gannin yet. `gh issue view \(reference.number) --repo \(reference.repo) --comments` has it.)", ""]
+            }
         }
 
-        if let harness {
+        if let harness, !session.hasNoIssue {
             let matches = harness.matches(repo: reference.repo, number: reference.number)
             if !matches.isEmpty {
                 lines += [
@@ -512,8 +528,12 @@ enum SessionBrief {
                 working.append("- The issue lives in \(reference.repo).")
             }
             working += [
-                "- Commit in each worktree, and open a pull request per repo with `gh pr create`, putting \"Closes \(reference.reference)\" in its body so it links to the issue.",
-                "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land. When the harness is the code repo, the plan goes in its worktree and ships in the same pull request, and only if the repo keeps a `plans/` folder.",
+                session.hasNoIssue
+                    ? "- Commit in the worktree, and open a pull request with `gh pr create`. There's no issue, so don't make one or invent a reference: put \"Quick change, no issue.\" in its body where `Closes` would go, and keep the branch's name, `\(session.branch)`."
+                    : "- Commit in each worktree, and open a pull request per repo with `gh pr create`, putting \"Closes \(reference.reference)\" in its body so it links to the issue.",
+                session.isQuickChange
+                    ? "- A quick change needs no plan document. If it grows to need one, stop and say so instead."
+                    : "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land. When the harness is the code repo, the plan goes in its worktree and ships in the same pull request, and only if the repo keeps a `plans/` folder.",
                 "- `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` and `projects/` are kept out of the harness's git.",
                 "",
             ]

@@ -1332,20 +1332,30 @@ struct OrgSidebar: View {
                 await projectStore.loadRepoBoards(org: selectedOrg, repo: repo)
             }
         }
-        // Ask: straight into a New Ask tab of the Claude Code window.
+        // Ask and Quick Change: straight into a new tab of the Claude Code window.
         .safeAreaInset(edge: .top, spacing: 0) {
             if let selectedOrg, !configs.config(for: selectedOrg).allHarnesses.isEmpty {
-                Button {
-                    sessions.showNewAsk(org: selectedOrg, harnessRepo: configs.config(for: selectedOrg).harnesses.first?.repo, with: openWindow)
-                } label: {
-                    Label("New Ask", systemImage: "sparkle.magnifyingglass")
-                        .frame(maxWidth: .infinity)
+                let harness = configs.config(for: selectedOrg).harnesses.first?.repo
+                HStack(spacing: 6) {
+                    Button {
+                        sessions.showNewAsk(org: selectedOrg, harnessRepo: harness, with: openWindow)
+                    } label: {
+                        Label("New Ask", systemImage: "sparkle.magnifyingglass")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .help("Ask Claude anything in a new tab of the Claude Code window, in this project's harness")
+                    Button {
+                        sessions.showNewQuickChange(org: selectedOrg, harnessRepo: harness, with: openWindow)
+                    } label: {
+                        Label("Quick Change", systemImage: "bolt")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .help("Start work on a small change from a note and screenshots, with or without an issue, in a new tab of the Claude Code window")
                 }
                 .controlSize(.large)
                 .buttonStyle(.bordered)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
-                .help("Ask Claude anything in a new tab of the Claude Code window, in this project's harness")
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {

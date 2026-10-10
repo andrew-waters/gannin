@@ -66,6 +66,14 @@ struct AgentsPage: View {
             }
             ToolbarItem {
                 Button {
+                    sessions.showNewQuickChange(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo, with: openWindow)
+                } label: {
+                    Label("New Quick Change", systemImage: "bolt")
+                }
+                .help("Start work on a small change from a note and screenshots, with or without an issue")
+            }
+            ToolbarItem {
+                Button {
                     sessions.showNewPlan(PlanningDraft(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo), with: openWindow)
                 } label: {
                     Label("New Plan", systemImage: "list.bullet")
@@ -147,7 +155,7 @@ private struct WaitingAgent: View {
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             Circle().fill(state.color).frame(width: 9, height: 9)
             VStack(alignment: .leading, spacing: 2) {
-                Text("#\(String(session.issue.number)) \(session.title)")
+                Text("\(session.shortReference) \(session.title)")
                     .font(.title3.weight(.semibold))
                     .lineLimit(2)
                 HStack(spacing: 8) {
@@ -240,7 +248,7 @@ private struct WorkingAgentRow: View {
         } label: {
             HStack(spacing: 8) {
                 Circle().fill(state.color).frame(width: 8, height: 8)
-                Text("#\(String(session.issue.number)) \(session.title)")
+                Text("\(session.shortReference) \(session.title)")
                     .lineLimit(1)
                 Spacer()
                 if let last = transcript?.events.last {

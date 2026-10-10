@@ -146,7 +146,7 @@ extension SessionStore {
             update(id) { $0.pairing = pairing }
             let folder = session.isInHarness ? ".worktrees/\(session.branch)/" : "the worktree"
             let prompt = """
-                The agent working on \(session.issue.reference) has changed things since your last look.\(said)
+                The agent working on \(session.longReference) has changed things since your last look.\(said)
 
                 Look at every change in \(folder) again as it is now, committed or not. Leave out findings it has dealt with, \
                 and don't raise again ones it explained away unless you still disagree, saying why. Don't edit anything. \

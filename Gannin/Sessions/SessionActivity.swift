@@ -148,7 +148,7 @@ struct SessionActivityPane: View {
         let parent = session.parentID.flatMap { sessions.sessions[$0] } ?? session
         let others = ([parent] + sessions.helpers(of: parent.id)).filter { $0.id != session.id }
         let learnings = sessions.reviewLearnings(for: parent)
-        return Section("Agents on #\(String(session.issue.number))") {
+        return Section("Agents on \(session.shortReference)") {
             ForEach(others) { other in
                 Button {
                     sessions.reveal(other.id)

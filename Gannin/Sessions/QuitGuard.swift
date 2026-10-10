@@ -66,7 +66,7 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
 
         var lines: [String] = []
         for session in running.prefix(8) {
-            lines.append("• #\(session.issue.number) \(session.issue.title): \(sessions.state(session.id).label)")
+            lines.append("• \(session.shortReference) \(session.issue.title): \(sessions.state(session.id).label)")
         }
         if running.count > 8 { lines.append("• and \(running.count - 8) more") }
         var explanation: [String] = []

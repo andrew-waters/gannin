@@ -112,7 +112,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   granularity stay `@AppStorage`, shared.
 - `Gannin/Views/`: `MainView` is a sidebar plus a stack of pages (`PageStack`). The sidebar
   (`OrgSidebar`) is grouped by what you're trying to do, laid out as Mail's: Dashboard (the
-  page a window opens on), Inbox at the top, under a New Ask button that opens a New Ask tab in the Claude Code window; Work (Pull Requests, Issues with All and Not on a board,
+  page a window opens on), Inbox at the top, under New Ask and Quick Change buttons that open a New Ask or New Quick Change tab in the Claude Code window; Work (Pull Requests, Issues with All and Not on a board,
   Epics, Repositories (local git, see Local git), Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
@@ -774,6 +774,33 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   in the sidebar's Agents › Ask, opening to resume, with Rename and Delete
   (confirmed; `finish` removes the folder and its files, Delete Anyway when it won't go). They
   never offer Finish Session.
+- Quick changes (`Sessions/QuickChange.swift`, `CodeSession.quickChange`, `QuickChangeInfo`: the note,
+  screenshots by file name, whether it has an issue; andrew-waters/gannin#123,
+  `plans/2026-10-10-quick-change.md`) start work on a small change (a snag, a tweak, a one-line fix)
+  from a note rather than a written-up issue. New Quick Change (the sidebar's Quick Change button
+  beside New Ask, the Claude Code window's +, Agents' toolbar and the palette) opens a tab
+  (`NewQuickChangeView` over a `PlanningDraft` with `isQuickChange`): the project, the repo (the
+  project's first, then the org's), the note and an optional title (else its first line),
+  screenshots (dropped, pasted or added, images only, 20 MB each, `QuickChangeAttachment`), Create an
+  issue for it (`quickChangeCreatesIssue`, on by default, asked each time), the team's prompts and
+  skills for work, Run in (with sandboxing on) and Record the session in the harness. With an issue,
+  Start files it from the note (`createIssue`, the button saying so is the confirmation), adds it to
+  the project's workflow board and sets Status to its first in-progress option (a failure there is
+  kept as `boardError` and shown in the panel; the session starts anyway), and the session is that
+  issue's, as Work on This's. Without one, `issue` is a stand-in named for the repo (number 0,
+  `quick-<id>`, as an Ask's), the branch `quick-<title>-<4 hex of its ID>`
+  (`SessionStore.quickBranchName`), the harness folder `sessions/<branch>`
+  (`harnessFolder(for: CodeSession)`, `SessionRecord.issue` nil), and the brief says to put "Quick
+  change, no issue." in the PR where `Closes` would go (`skills/create-pull-request.md` allows it).
+  `SessionStore.startQuickChange` copies the screenshots into the session's `attachments/` (safe names,
+  `attachmentNames`), which `start.sh` copies into `.worktrees/<branch>/.gannin/attachments/` (a
+  sandbox mounts it) and which go to a server one file a call over ssh on standard input before its
+  terminal starts (`remoteAttachmentScript`); they're never uploaded to GitHub or committed. The
+  brief (`SessionBrief.quickChangeSections`) has the note in place of the description, the
+  screenshots' paths, and that it's meant to be small, needs no plan document, and to stop and say
+  so if it isn't; the first prompt (`quickChangePrompt`) leaves out "propose a plan first". Its tab
+  is Quick Change (a bolt), its panel shows the note and screenshots (`QuickChangeSection`), and
+  rows and notifications name it by `shortReference` / `longReference` rather than `#0`.
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its
   tab is flagged (`SessionStore.attention`): its tab is marked, the Dock icon counts them, a
   notification (Settings > General > Agent) opens its tab, and the tab bar's "N waiting" or

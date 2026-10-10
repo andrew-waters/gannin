@@ -56,7 +56,7 @@ private struct SessionCard: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                Text("#\(String(session.issue.number)) \(session.title)")
+                Text("\(session.shortReference) \(session.title)")
                     .font(.headline)
                     .lineLimit(2)
                     .multilineTextAlignment(.leading)

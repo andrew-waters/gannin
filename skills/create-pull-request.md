@@ -30,13 +30,13 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
    git status --short
    git branch --show-current   # should be <number>-short-title, e.g. 123-fix-sync-footer
    ```
-   If the branch doesn't follow `<issue number>-short-title`, stop and say so rather than renaming a branch that's already pushed.
+   If the branch doesn't follow `<issue number>-short-title`, stop and say so rather than renaming a branch that's already pushed. The one exception is a quick change Gannin started with no issue: its branch is `quick-short-title-<4 characters>` and its brief says there's no issue (see Rules).
 
 2. **Read the issue again** so the PR answers what was asked:
    ```bash
    gh issue view <number> --repo <owner>/<repo> --comments
    ```
-   Also read any plans and requirements about it in the harness (`plans/`, `requirements/`, the brief lists them). Note anything in scope that isn't done; it goes in the description.
+   Also read any plans and requirements about it in the harness (`plans/`, `requirements/`, the brief lists them). Note anything in scope that isn't done; it goes in the description. A quick change with no issue has no issue to read: its note, in the brief, is what was asked.
 
 3. **Look over the whole diff against the base**, committed or not:
    ```bash
@@ -91,7 +91,7 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
    ## Not in this PR
    Anything from the issue left for later, with its issue if there is one.
    ```
-   Use `Closes` only when the PR finishes the issue; use `Part of <owner>/<repo>#<number>` when it doesn't, so the issue isn't closed early.
+   Use `Closes` only when the PR finishes the issue; use `Part of <owner>/<repo>#<number>` when it doesn't, so the issue isn't closed early. For a quick change with no issue, the first line is `Quick change, no issue.` instead, and Why gives the note.
 
 9. **Open the PR with `gh pr create`** (not a web page or another client: the session's hook reads its output to record the PR in `session.json`):
    ```bash
@@ -111,8 +111,8 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
 
 ## Rules
 
-- One PR per repo per issue, from the issue's branch (`<number>-short-title`). Don't push to the default branch, and don't force-push a branch someone has reviewed without saying so.
-- Every PR names its issue (`Closes` or `Part of`, as `owner/repo#number`). If there's no issue, stop and ask rather than opening an unlinked PR.
+- One PR per repo per issue, from the issue's branch (`<number>-short-title`, or a quick change's `quick-…`). Don't push to the default branch, and don't force-push a branch someone has reviewed without saying so.
+- Every PR names its issue (`Closes` or `Part of`, as `owner/repo#number`). If there's no issue, stop and ask rather than opening an unlinked PR. The exception is a quick change Gannin started without one (its brief says so, and its branch is `quick-…`): don't file an issue or invent a reference; put `Quick change, no issue.` where `Closes` would go. Gannin still finds the PR by its branch, and it counts in pull request metrics, though not in issue metrics or on the board.
 - Open as a draft until the build passes and the description's Verified section is honest. Ready for review starts the review clock, so mark it ready only when it really is.
 - Say what was and wasn't verified. Don't claim a build or test passed unless it ran in this session.
 - Keep the PR to the issue. Unrelated fixes get their own issue and PR.

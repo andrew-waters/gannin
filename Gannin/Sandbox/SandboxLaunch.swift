@@ -194,7 +194,7 @@ enum SandboxLaunch {
     static func innerScript(_ session: CodeSession) -> String {
         let folder = ".worktrees/\(session.branch)"
         return """
-            # Written by Gannin for \(session.issue.reference). Runs inside its sandbox.
+            # Written by Gannin for \(session.longReference). Runs inside its sandbox.
             session=$1
             harness=$2
             id=\(SessionScript.quoted(session.claudeID))

@@ -62,6 +62,8 @@ enum PaletteCommand: Hashable {
     case openClaudeCode
     /// A New Ask tab in the Claude Code window, in the org's project.
     case newAsk(org: String)
+    /// A New Quick Change tab in the Claude Code window.
+    case newQuickChange(org: String)
     case nextSessionWaiting
     /// Flips a Bool preference (`excludeDrafts`, `showHidden`).
     case toggle(key: String)
@@ -341,6 +343,7 @@ struct PaletteSources {
         items.append(PaletteItem(id: "action:\(org):switch", group: .actions, title: "Switch to \(name)", systemImage: "building.2", org: org, keywords: ["organisation", "organization", "org"], action: go(.org)))
         if !config.allHarnesses.isEmpty {
             items.append(PaletteItem(id: "action:\(org):new-ask", group: .actions, title: "New Ask", systemImage: "sparkle.magnifyingglass", org: org, keywords: ["claude", "question", "research", "agent"], action: .run(.newAsk(org: org))))
+            items.append(PaletteItem(id: "action:\(org):new-quick-change", group: .actions, title: "New Quick Change", systemImage: "bolt", org: org, keywords: ["claude", "fix", "snag", "tweak", "agent", "work"], action: .run(.newQuickChange(org: org))))
         }
         if config.repoProjects.count > 1 {
             for project in config.repoProjects {
@@ -445,9 +448,10 @@ struct PaletteSources {
     private func sessionItems() -> [PaletteItem] {
         sessions.sessions.values.map { session in
             PaletteItem(
-                id: "session:\(session.id)", group: .sessions, title: session.title, detail: session.issue.reference,
-                systemImage: session.isPullRequestReview ? "checkmark.bubble" : "terminal", org: session.org,
-                number: session.issue.number, repo: session.issue.repo, isOpen: session.archivedAt == nil,
+                id: "session:\(session.id)", group: .sessions, title: session.title,
+                detail: session.hasNoIssue ? "Quick change in \(session.issue.repo)" : session.issue.reference,
+                systemImage: session.isPullRequestReview ? "checkmark.bubble" : session.isQuickChange ? "bolt" : "terminal", org: session.org,
+                number: session.hasNoIssue ? nil : session.issue.number, repo: session.issue.repo, isOpen: session.archivedAt == nil,
                 keywords: [session.branch], action: .run(.session(session.id))
             )
         }
