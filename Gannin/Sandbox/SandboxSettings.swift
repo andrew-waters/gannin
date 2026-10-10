@@ -9,6 +9,7 @@ struct SandboxSettingsSection: View {
     @AppStorage(SandboxCredentials.claudeKindKey) private var claudeKind: SandboxCredentials.ClaudeKind = .signIn
     @AppStorage(SandboxCredentials.cpusKey) private var cpus = SandboxCredentials.defaultCPUs
     @AppStorage(SandboxCredentials.memoryKey) private var memory = SandboxCredentials.defaultMemoryGB
+    @AppStorage(SandboxCredentials.claudeMemoryKey) private var claudeMemory = ""
     @State private var setup = SandboxSetup(box: .local)
     /// Bumped after a keychain change, which nothing observes, to redraw.
     @State private var revision = 0
@@ -120,6 +121,26 @@ struct SandboxSettingsSection: View {
             Text("Commit signing")
         } footer: {
             Text("Commits made in a sandbox are signed with this key and carry your git name and email. It's a key of its own, kept in the keychain; your SSH keys never go in. Add it to GitHub as a Signing Key so its commits show as Verified.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+
+        Section {
+            TextEditor(text: $claudeMemory)
+                .font(.body.monospaced())
+                .frame(minHeight: 120)
+            HStack {
+                Button("Copy from This Mac") {
+                    if let text = try? String(contentsOf: SandboxCredentials.macClaudeMemory, encoding: .utf8) { claudeMemory = text }
+                }
+                .disabled(!FileManager.default.fileExists(atPath: SandboxCredentials.macClaudeMemory.path))
+                .help("Fills this with your ~/.claude/CLAUDE.md, to edit before it goes in")
+                Spacer()
+            }
+        } header: {
+            Text("House rules for Claude")
+        } footer: {
+            Text("Your own rules for Claude in every sandbox, as the CLAUDE.md in the config your sandboxes share: how to write commits and pull requests, attribution, anything you'd keep in ~/.claude/CLAUDE.md on this Mac. A sandbox's Claude reads them each time it starts, here or on a server. Your own ~/.claude never goes in; copy from it here.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

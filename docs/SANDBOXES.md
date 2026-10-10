@@ -56,7 +56,11 @@ All of this is in Gannin's Settings, under Sandbox, except the GitHub token, whi
 
    The image build takes a few minutes the first time and about 3.6 GB.
 
-Below that you can set how many CPUs and how much memory each sandbox gets.
+Below that, **House rules for Claude** is your own CLAUDE.md for every sandbox: how you like commits
+and pull requests written, attribution, and anything else you'd keep in `~/.claude/CLAUDE.md` on
+your Mac. That file never goes in by itself; Copy from This Mac fills the box with it to edit. A
+sandbox's Claude reads the rules each time it starts, on this Mac or a server. Then you can set
+how many CPUs and how much memory each sandbox gets.
 
 ## Working with it
 

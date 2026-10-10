@@ -87,6 +87,20 @@ struct SandboxLaunchTests {
         #expect(result.output == "Andy O'Brien|github_pat_1|-----BEGIN-----\nkey\n")
     }
 
+    @Test func houseRulesReachClaudesMemory() {
+        var credentials = SandboxLaunch.Credentials(
+            apiKey: nil, gitHubToken: "t", signingKey: "k", gitName: "n", gitEmail: "e",
+            claudeMemory: "# Rules\n\n- Don't add 'Co-Authored-By' lines.\n"
+        )
+        let result = Shell.run("set -a; \(SandboxLaunch.secretsFile(credentials))set +a; printf %s \"$GANNIN_CLAUDE_MD\" | base64 -d", .local)
+        #expect(result.output == "# Rules\n\n- Don't add 'Co-Authored-By' lines.\n")
+        credentials.claudeMemory = ""
+        #expect(SandboxLaunch.secretsFile(credentials).contains("GANNIN_CLAUDE_MD=''"))
+        let inner = SandboxLaunch.innerScript(session())
+        #expect(inner.contains(#"base64 -d > "$CLAUDE_CONFIG_DIR/CLAUDE.md""#))
+        #expect(inner.contains(#"rm -f "$CLAUDE_CONFIG_DIR/CLAUDE.md""#))
+    }
+
     @Test func secretsAreReadableOnlyByTheUser() throws {
         let url = FileManager.default.temporaryDirectory.appending(path: "gannin-secrets-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: url) }

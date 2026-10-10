@@ -227,6 +227,14 @@ enum SandboxLaunch {
             git config --global gc.auto 0
             git config --global maintenance.auto false
             unset GANNIN_GIT_NAME GANNIN_GIT_EMAIL
+            # The house rules from Settings › Sandbox, as claude's own memory
+            # in the config every sandbox shares; none set, none left there.
+            if [ -n "${GANNIN_CLAUDE_MD:-}" ]; then
+              printf %s "$GANNIN_CLAUDE_MD" | base64 -d > "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+            else
+              rm -f "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+            fi
+            unset GANNIN_CLAUDE_MD
             cd "$harness" || fail "The harness isn't mounted."
             \(seedClaudeConfig)
             # One Claude credential at most: an API key, or claude's own login.
@@ -259,6 +267,8 @@ enum SandboxLaunch {
         var signingKey: String
         var gitName: String
         var gitEmail: String
+        /// The house rules for claude's `CLAUDE.md`; empty for none.
+        var claudeMemory = ""
     }
 
     /// What's missing for the session's org, or the credentials.
@@ -275,7 +285,7 @@ enum SandboxLaunch {
         guard let token, let key, missing.isEmpty else {
             return .failure(SandboxRuntime.Failure(message: "The sandbox needs \(missing.joined(separator: ", ")).", output: ""))
         }
-        return .success(Credentials(apiKey: apiKey, gitHubToken: token, signingKey: key, gitName: identity.name, gitEmail: identity.email))
+        return .success(Credentials(apiKey: apiKey, gitHubToken: token, signingKey: key, gitName: identity.name, gitEmail: identity.email, claudeMemory: SandboxCredentials.claudeMemory))
     }
 
     /// `secrets.env`: shell assignments the inner script reads and removes.
@@ -287,6 +297,7 @@ enum SandboxLaunch {
             ("GANNIN_SIGNING_KEY", Data(credentials.signingKey.utf8).base64EncodedString()),
             ("GANNIN_GIT_NAME", credentials.gitName),
             ("GANNIN_GIT_EMAIL", credentials.gitEmail),
+            ("GANNIN_CLAUDE_MD", Data(credentials.claudeMemory.utf8).base64EncodedString()),
         ]
         return values.map { "\($0.0)=\(SandboxRuntime.quoted($0.1))" }.joined(separator: "\n") + "\n"
     }

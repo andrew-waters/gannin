@@ -95,6 +95,21 @@ nonisolated enum SandboxCredentials {
     /// The same on a server, as a shell expression there.
     static let remoteClaudeFolder = #""$HOME"/.gannin/sandbox/claude"#
 
+    /// House rules every sandboxed claude follows (andrew-waters/gannin#127):
+    /// the user's own Claude Code memory, written as `CLAUDE.md` in the
+    /// shared config folder each time a sandbox's claude starts, here or on
+    /// a server. Empty leaves none.
+    static let claudeMemoryKey = "sandbox.claudeMemory"
+
+    static var claudeMemory: String {
+        UserDefaults.standard.string(forKey: claudeMemoryKey)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    /// This Mac's own `~/.claude/CLAUDE.md`, offered to copy in.
+    static var macClaudeMemory: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/CLAUDE.md")
+    }
+
     // MARK: GitHub
 
     static func gitHubToken(org: String) -> String? {

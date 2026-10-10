@@ -1152,7 +1152,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Settings › Sandbox, a pane of its own (`SandboxSettingsSection`, then `RemoteMachinesSection`): on only once this Mac is ready (service,
   kernel, base image) and the credential and signing key are there (R18); Install or Update asked
   first; Sign Out of Claude in Sandboxes removes the shared login; the signing key's public half
-  with Add to GitHub; CPUs and memory per sandbox
+  with Add to GitHub; House rules for Claude (`sandbox.claudeMemory`, andrew-waters/gannin#127,
+  with Copy from This Mac's `~/.claude/CLAUDE.md`), passed in `secrets.env` and written by
+  `inner.sh` as the shared config's `CLAUDE.md` at each start (removed when empty); CPUs and memory per sandbox
   (`sandbox.cpus`, `sandbox.memoryGB`). Turning it off asks to remove what Gannin made or keep it.
   Remote machines (`RemoteMachinesSection`, with Connect with set) shows the server's container with
   Set Up and Install or Update in `CommandTerminalSheet`. Settings › Harness has the org's GitHub token
