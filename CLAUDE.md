@@ -1204,7 +1204,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   org has no GitHub token. With sandboxing on, Work on This always shows its sheet, with Run in.
   `CodeSession.sandbox` is the issue's container (`gannin-<session id>`), `hostReason` why not.
   Where a session runs (`SessionLocation`: this Mac, a sandbox, the Connect with server by its ssh
-  host, or a sandbox there) is a banner atop its panel and a chip in the compact header
+  host, or a sandbox there) is a banner at the foot of its panel and a chip in the compact header
   (`SessionLocationBadge`, with `SandboxStatus`), and an icon on its tab when it isn't this Mac.
 - Launch: `SessionScript.harnessStart` prepares the harness on the box as for any session, then
   `SandboxLaunch.hostSteps` checks the box (Apple Silicon, macOS 26 or later, container at least the
