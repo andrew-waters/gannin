@@ -51,8 +51,8 @@ struct IssueImagesTests {
 
     @Test func createTitleNamesTheImages() {
         #expect(IssueImages.createTitle("Create Issue", count: 0) == "Create Issue")
-        #expect(IssueImages.createTitle("Create Issue", count: 1) == "Create Issue and Commit 1 Image")
-        #expect(IssueImages.createTitle("Add Draft", count: 3) == "Add Draft and Commit 3 Images")
+        #expect(IssueImages.createTitle("Create Issue", count: 1) == "Commit 1 Image and Create Issue")
+        #expect(IssueImages.createTitle("Add Draft", count: 3) == "Commit 3 Images and Add Draft")
     }
 
     @Test func webImagesAreKeptAndOthersBecomePNG() throws {

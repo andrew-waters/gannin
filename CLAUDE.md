@@ -701,10 +701,11 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   only pictures, or Paste) or added. In New Issue each adds `![name](attachment:name)` to the end
   of the description, to move or keep, and Draft with Claude is told to keep them; on Create
   (`IssueImages.body`) placeholders point at the commit, images with none left go at the end and
-  placeholders for images removed are dropped. The Create button names them ("Create Issue and
-  Commit 2 Images"), which is the confirmation; they're committed before the issue, and
-  `IssueImageSet` keeps what was committed so a retry after GitHub refuses the issue doesn't
-  commit them again. With no harness, images can't be attached. `skills/create-issue.md` does
+  placeholders for images removed are dropped. The Create button names them first ("Commit 2
+  Images and Create Issue"), which is the confirmation; they're committed before the issue, and
+  `IssueImageSet` keeps what was committed so a retry after GitHub refuses the issue (whose
+  error says they're committed) doesn't commit them again, unless the repo, and so maybe the
+  harness, has changed. With no harness, images can't be attached. `skills/create-issue.md` does
   the same from a session with `gh api` on the contents API.
 - Issues › Not on a board (`OffBoardIssuesView`) lists stored issues on no board, or not on a
   chosen one (starting from the investments board), open, closed or all. Select them and add

@@ -488,10 +488,15 @@ struct WriteIssueSheet: View {
         creating = true
         let labelList = labels.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         Task {
+            var writing = "the issue"
+            var committedTo: String?
             do {
                 var links: [(name: String, url: URL)] = []
                 if !images.isEmpty, let setup = imageHarness {
+                    writing = "the images"
                     links = try await images.commit(org: org, repo: repo, setup: setup, harness: harness)
+                    committedTo = setup.repo
+                    writing = "the issue"
                 }
                 let issue = try await api.createIssue(repo: repo, title: title, body: IssueImages.body(bodyText, links: links), labels: labelList)
                 if addToBoard, let number = configs.config(for: org).workflow.projectNumber,
@@ -501,7 +506,8 @@ struct WriteIssueSheet: View {
                 created(.init(id: issue.id, repo: repo, number: issue.number, title: title, url: issue.url))
                 dismiss()
             } catch {
-                status = "GitHub didn't take it: \(error.localizedDescription)"
+                let kept = committedTo.map { "The images are committed to \($0), and trying again links them rather than committing them twice. " } ?? ""
+                status = "\(kept)GitHub didn't take \(writing): \(error.localizedDescription)"
             }
             creating = false
         }

@@ -22,12 +22,15 @@ enum IssueImageError: LocalizedError {
     case notImage(String)
     case unreadable(String)
     case tooLarge(String)
+    /// GitHub took the commit but gave nothing back to link to.
+    case notCommitted
 
     var errorDescription: String? {
         switch self {
         case .notImage(let name): "\(name) isn't an image."
         case .unreadable(let name): "Gannin couldn't read \(name) as a picture."
         case .tooLarge(let name): "\(name) is over \(ByteCountFormatter.string(fromByteCount: Int64(IssueImages.maxBytes), countStyle: .file)), even as a JPEG: more than Gannin commits through GitHub's API. Attach a smaller one."
+        case .notCommitted: "The images weren't committed, so the issue wasn't created."
         }
     }
 }
@@ -53,21 +56,22 @@ enum IssueImages {
         let stem = (name as NSString).deletingPathExtension
         let type = UTType(filenameExtension: ext)
         guard type?.conforms(to: .image) ?? true else { throw IssueImageError.notImage(name) }
-        var name = name
+        // Errors name the file as picked, not as it'd be kept.
+        var kept = name
         var data = data
         if !(type.map { kind in webTypes.contains { kind.conforms(to: $0) } } ?? false) {
             guard let png = encoded(data, as: .png) else { throw IssueImageError.unreadable(name) }
-            name = "\(stem).png"
+            kept = "\(stem).png"
             data = png
         }
         if data.count > maxBytes {
             guard type?.conforms(to: .gif) != true, let jpeg = encoded(data, as: .jpeg), jpeg.count <= maxBytes else {
                 throw IssueImageError.tooLarge(name)
             }
-            name = "\(stem).jpg"
+            kept = "\(stem).jpg"
             data = jpeg
         }
-        return (name, data)
+        return (kept, data)
     }
 
     private static func encoded(_ data: Data, as type: NSBitmapImageRep.FileType) -> Data? {
@@ -100,9 +104,9 @@ enum IssueImages {
         return place + " Git keeps them in its history, so leave out customer details and anything else sensitive."
     }
 
-    /// A Create button's title, naming the images it commits.
+    /// A Create button's title, naming the images it commits first.
     static func createTitle(_ title: String, count: Int) -> String {
-        count == 0 ? title : "\(title) and Commit \(count == 1 ? "1 Image" : "\(count) Images")"
+        count == 0 ? title : "Commit \(count == 1 ? "1 Image" : "\(count) Images") and \(title)"
     }
 
     // MARK: The description
@@ -157,6 +161,9 @@ final class IssueImageSet {
     var error: String?
     /// Links to those committed, by image.
     private var committed: [UUID: URL] = [:]
+    /// The harness and issue repo they were committed for: another (the
+    /// repo changed before a retry) commits them again there.
+    private var committedFor: (harness: String, repo: String)?
     /// Names the folder they go in, from when they were first attached.
     private let folderID = UUID()
     private let started = Date.now
@@ -241,6 +248,9 @@ final class IssueImageSet {
     /// returns every image's link. `repo` is the issue's, naming the folder.
     /// Callers have had it confirmed.
     func commit(org: String, repo: String, setup: HarnessConfig, harness: HarnessStore) async throws -> [(name: String, url: URL)] {
+        if let done = committedFor, done.harness != setup.repo || done.repo != repo {
+            committed = [:]
+        }
         let pending = images.filter { committed[$0.id] == nil }
         if !pending.isEmpty {
             let folder = IssueImages.folder(repo: repo, id: folderID, date: started)
@@ -249,7 +259,8 @@ final class IssueImageSet {
             let commit = try await harness.commit(org: org, setup: setup, refreshing: false) { _ in
                 HarnessChange(message: message, files: [:], data: files)
             }
-            guard let commit else { return [] }
+            guard let commit else { throw IssueImageError.notCommitted }
+            committedFor = (setup.repo, repo)
             for image in pending {
                 committed[image.id] = IssueImages.url(harness: setup.repo, commit: commit, path: "\(folder)/\(image.name)")
             }

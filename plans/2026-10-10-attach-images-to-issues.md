@@ -38,10 +38,11 @@ read that repo, private ones included.
   `![name](attachment:name)` to the end of the description, which can be moved; removing the
   image removes it. Placeholders are pointed at the committed image when the issue is created, and
   an image whose placeholder was removed (or that Claude's draft dropped) goes at the end.
-- **Confirmation**: the Create button names the images ("Create Issue and Commit 2 Images"),
+- **Confirmation**: the Create button names the images ("Commit 2 Images and Create Issue"), saying what happens first,
   beside a line saying where they go, who sees them and to leave out sensitive data. Nothing is
   written before it's pressed. Images are committed first, then the issue; when GitHub refuses
-  the issue, a retry links the images already committed rather than committing them again.
+  the issue, the error says the images are committed and a retry links them rather than committing
+  them again (again into the new harness when the repo has changed since).
 
 ## Tasks
 
