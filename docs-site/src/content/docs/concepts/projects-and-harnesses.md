@@ -25,4 +25,4 @@ A harness can also be the code repo itself, when a project is one repo. Then it 
 
 ## Home
 
-The org's first project is its **home**. Its harness holds the org-wide settings as well as its own. You can make another project home in [Org settings › Projects](/docs/settings/org/projects/), and Gannin offers to copy the org-wide files across.
+The org's first project is its **home**. Its harness holds the org-wide settings as well as its own. You can make another project home in [Org settings › Projects](/docs/settings/org/projects/), and Gannin offers to copy the org-wide files committed in the old home's harness across.

@@ -132,7 +132,7 @@ struct StorageSettings: View {
             } header: {
                 Text("Entered in Gannin")
             } footer: {
-                Text("Stored on this device and never sent anywhere: hidden items, stars, and the settings and people's dates of any org with no harness. An org with a harness keeps its settings and people's dates there instead (Settings › Harness), where everyone reads the same copy, and deleting here doesn't touch them. Deleting can't be undone.")
+                Text("Stored on this device and never sent anywhere: hidden items, stars, which harnesses are each org's projects, and the settings and people's dates of any org with no harness. An org with a harness keeps its team settings and people's dates there (Settings › Harness), where everyone reads the same copy. Deleting forgets which harnesses are your projects and drops changes not yet committed, but leaves what's committed in the harness. It can't be undone.")
                     .foregroundStyle(.secondary)
             }
 

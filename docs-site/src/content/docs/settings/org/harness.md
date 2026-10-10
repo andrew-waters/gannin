@@ -25,7 +25,7 @@ This section says where things are kept. It names the window's project and its h
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | The project's name | The project's harness repo | Shows the harness repo the project's data is read from. Read only. | This Mac |
-| Home | The first project's harness repo | Shown only when the window's project is not Home. Read only. | This Mac |
+| Home (the project's name) | The first project's harness repo | Shown only when the window's project is not Home. Read only. | This Mac |
 
 Where each kind of setting is kept:
 
@@ -82,6 +82,9 @@ The team's prompts are what Claude Code sessions are told besides Gannin's own p
 | Only for repos | Any repo | Shown when it is a default. A comma-separated list of repos. A default for named repos takes the place of the general defaults there. | Harness (`prompts/<name>.md`) |
 | A skill's name | Unticked | Under "Skills it brings", one checkbox for each skill in the harness's skills folder. Ticked skills come with the prompt. | Harness (`prompts/<name>.md`) |
 | Prompt | Empty | The text itself, in Markdown. `{{issue}}`, `{{title}}`, `{{url}}`, `{{repo}}`, `{{number}}` and `{{branch}}` are filled in. Required. | Harness (`prompts/<name>.md`) |
+| Message | Empty | In the Draft with Claude section at the top. What you tell Claude about the prompt, or your answer to its questions. | Not kept |
+| Start with Claude | Not applied | Sends the first message. Once Claude has answered, the button reads Send. Claude drafts into the fields below and says what it did. | Not kept |
+| Start Over | Not applied | Shown once there is a conversation. Forgets it; what is in the editor stays. | Not kept |
 | Cancel | Not applied | Closes the editor. | This Mac |
 | Delete | Not applied | Shown on an existing prompt. Asks first. | Harness (`prompts/<name>.md`) |
 | Delete from Harness | Not applied | The confirmation: commits the prompt's removal. Sessions already started keep what they were told. | Harness (`prompts/<name>.md`) |
@@ -93,7 +96,7 @@ This is what Claude is told when it drafts a new document from the Harness page.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| For | Skills | Picks the kind of document you are editing guidance for: Plans, Requirements, Findings, Skills, Prompts or Learnings. | This Mac |
+| For | Skills | Picks the kind of document you are editing guidance for: Plans, Requirements, Findings, Skills, Prompts or Learnings. | Not kept |
 | Write with Claude | Not applied | Opens a conversation with Claude to write the guidance with you. Nothing changes until you press Use This Draft. | Harness (`.gannin/authoring.json`) |
 | Restore Default | Not applied | Goes back to Gannin's default for that kind. Disabled while it is already the default. | Harness (`.gannin/authoring.json`) |
 | Save | Not applied | Saves the text as the org's guidance for that kind. Disabled until the text changes. Saving Gannin's default, or nothing, clears it. | Harness (`.gannin/authoring.json`) |
@@ -104,7 +107,7 @@ A disclosure group, open by default, with one "Claude Code" section for each pro
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| On this Mac | A checkout already in a usual place, else `<workspace>/<org>-harness` | Shows the folder sessions use. Each issue's code is a git worktree under `.worktrees`, beside the shared clones in `projects`. If it is not checked out yet, the first session clones it. | This Mac |
+| On this Mac | A checkout already in a usual place, else `<workspace>/<org>-<repo name>` (`<org>-harness` when the repo is named harness) | Shows the folder sessions use. Each issue's code is a git worktree under `.worktrees`, beside the shared clones in `projects`. If it is not checked out yet, the first session clones it. | This Mac |
 | Choose | Not applied | Opens a folder picker for the harness's checkout, or the folder to clone it into. | This Mac |
 | Default | Not applied | Shown once you have chosen a folder. Goes back to the default folder. | This Mac |
 | On the server | Empty (prompt `~/<org>-harness`) | Shown only when Connect with is set in [Settings › General](/docs/settings/app/general/). Where the harness is checked out on that server, as a path on that box. | This Mac |

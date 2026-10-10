@@ -29,7 +29,7 @@ Caches are kept so pages open warm. Cleared data is fetched again when a page ne
 
 ## Entered in Gannin
 
-This is stored only on this device and never sent anywhere. What the team shares belongs in the org's harness (Settings › Harness), where everyone reads the same copy. Deleting it cannot be undone.
+This is stored only on this device and never sent anywhere: hidden items, stars, which harnesses are each org's projects, and the settings and people's dates of any org with no harness. Deleting forgets which harnesses are projects and drops changes not yet committed, but leaves what is committed in the harnesses alone. What the team shares belongs in the org's harness (Settings › Harness), where everyone reads the same copy. Deleting it cannot be undone.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
@@ -38,7 +38,7 @@ This is stored only on this device and never sent anywhere. What the team shares
 | Hidden items | 0 | Shows how many PRs and issues you have hidden. Read only. | This Mac |
 | Starred orgs | 0 | Shows how many orgs you have starred. Read only. | This Mac |
 | Stored | Empty | Shows the size of what you have entered. Read only. | This Mac |
-| Delete Your Data | Not applicable | Removes your people's dates and time off, every org's settings, hidden items, stars, and changes not yet committed to a harness. What is already in a harness stays there. It asks first, and is greyed out when there is nothing to delete. | This Mac |
+| Delete Your Data | Not applicable | Removes your people's dates and time off, hidden items and stars, and wipes every org's local settings, including which harnesses are its projects. It also drops harness changes not yet committed. What is already committed in a harness stays there. It asks first, and is greyed out when there is nothing to delete. | This Mac |
 
 ## Erase Everything and Sign Out
 
@@ -46,4 +46,4 @@ The last section has one button.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Erase Everything and Sign Out | Not applicable | Clears every cache and everything you have entered, removes your GitHub token from the keychain, and signs you out. It asks first with Erase Everything and Cancel, and cannot be undone. | This Mac |
+| Erase Everything and Sign Out | Not applicable | Clears every cache and everything you have entered, deletes the daily download history that Clear keeps, removes your GitHub token from the keychain, and signs you out. It leaves your app settings, your sessions and routines, the sandbox credentials in the keychain, and the sandbox containers and images alone (turning sandboxing off offers to remove those). It asks first with Erase Everything and Cancel, and cannot be undone. | This Mac |

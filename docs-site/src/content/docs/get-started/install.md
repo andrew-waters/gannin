@@ -17,4 +17,9 @@ Gannin checks gannin.ai for new versions by itself and offers to install them. T
 
 ## Uninstall
 
-Quit Gannin and drag it to the Bin. To remove what it keeps as well, first use **Settings › Storage › Erase Everything and Sign Out**, which deletes its caches, what you've entered and your GitHub token.
+Quit Gannin and drag it to the Bin. To remove what it keeps as well, first:
+
+1. Turn sandboxing off in **Settings › Sandbox**, if it's on, and say yes to removing the sandboxes and images Gannin made.
+2. Use **Settings › Storage › Erase Everything and Sign Out**, which deletes its caches, the release download history, what you've entered and your GitHub token.
+
+That still leaves your app settings, agent sessions and routines (in `~/Library/Application Support/dev.andon.gannin` and Gannin's preferences) and any sandbox credentials in the keychain (under `dev.andon.gannin.sandbox`). Delete those by hand if you want them gone.

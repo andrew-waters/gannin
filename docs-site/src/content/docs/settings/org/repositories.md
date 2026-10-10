@@ -15,7 +15,7 @@ The list shows every repo GitHub has told Gannin about, included ones first, the
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Filter | Empty | Narrows the list as you type (the prompt reads "Type to filter repositories"). Esc clears it. The bulk buttons below then change only the repos shown. | This Mac |
+| Filter | Empty | Narrows the list as you type (the prompt reads "Type to filter repositories"). Esc clears it. The bulk buttons below then change only the repos shown. | Not kept |
 | Included | On | Switch at the end of a row. Off leaves the repo out everywhere in the org: the workload lists, People and the stats. | Harness (`.gannin/exclusions.json`) |
 | Needs Review | On | Checkbox on a row. Untick it for a repo whose PRs can merge without a review (docs, config, the harness), so they are not flagged as merged without review. Disabled while the repo is not included. | Harness (`.gannin/exclusions.json`) |
 | Needs the Mac | Off | Checkbox on a row. Tick it for a repo that only builds on a Mac (an Xcode app), so its Claude Code sessions run on the Mac rather than in a sandbox. Disabled while the repo is not included. | Harness (`.gannin/exclusions.json`) |
@@ -24,7 +24,7 @@ A window that has a project picked also narrows to that project's repos. A repo 
 
 ## Change all (or the shown)
 
-The row of small buttons above the list says "Change all N", or "Change the N shown" while a filter is typed. Each button changes every repo it names in one go, as a single change to the settings. They are disabled when there is nothing to change.
+The row of small buttons above the list says "Change all N", or "Change the N shown" while a filter is typed. Each button changes every repo it names in one go, as a single change to the settings. They are disabled when no repos are listed.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |

@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-Gannin has no server of its own and no analytics. It talks to these services, and only these.
+Gannin has no server of its own and no analytics. It talks to these services.
 
 | Service | What Gannin sends | Why |
 | --- | --- | --- |
@@ -14,10 +14,17 @@ Gannin has no server of its own and no analytics. It talks to these services, an
 | date.nager.at | A country code and a year. | Bank holidays for the regions you pick in Working Time. |
 | Anthropic, through Claude Code | What you and the session give Claude: prompts, the issue's brief, files Claude reads. | Agent sessions and Claude's drafting help. Claude Code sends this, signed in as you; Gannin doesn't call Anthropic itself. |
 | github.com (Apple's `container` releases) | A download request. | Installing or updating `container` for sandboxes, when you say so. |
+| Docker Hub, Debian's package mirrors, cli.github.com and npm | Download requests, from the sandbox's image build. | Building Gannin's sandbox base image (Node, git, gh and Claude Code), when sandboxing is on. A repo's own Containerfile may fetch more. |
 
 ## What Gannin writes to GitHub
 
-Only what you ask for, and every write is confirmed first: requesting reviewers, posting a review, creating issues and sub-issues, adding labels, setting board fields, making or closing boards, and commits to a harness (team settings, documents, session and review records, attached images). Automatic reviews, when you turn them on in Settings › General, post as comments and never approve or request changes.
+What you ask for, confirmed first: creating and closing issues and sub-issues, adding and removing labels, requesting and removing reviewers, posting a review and resolving its threads, adding issues to boards and setting their fields, editing a board's fields, making, copying, linking, unlinking, closing and reopening boards, creating a harness repo, and commits to a harness (team settings, documents, session and review records, attached images).
+
+The exceptions, each one you turn on yourself:
+
+- **Post automatic reviews** (Settings › General) posts the reviews Gannin starts by itself as comments, and resolves the threads they say are dealt with. They never approve or request changes.
+- **Don't ask again** on recording a session commits its record to the harness without asking, for that org. Org settings › Harness undoes it.
+- **Routines** that work on an issue commit its session record without asking: scheduling it is the consent.
 
 Agent sessions run Claude Code as you, so what a session does on GitHub (pushing a branch, opening a pull request) is done with your own git and gh login. Routines' limits say how far an unattended session may go.
 

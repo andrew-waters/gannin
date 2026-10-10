@@ -18,7 +18,7 @@ Settings › General is where you set how Gannin looks, who you are signed in as
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | Reset | Only shown once you have chosen a font | Puts the font back to the default. | This Mac |
-| Change Font | The default font | Opens the macOS font panel. The font is used for diffs (Repositories, sessions and PR reviews) and the Claude Code terminal. | This Mac |
+| Change Font | The system monospaced font at 12 pt | Opens the macOS font panel. The font is used for diffs (Repositories, sessions and PR reviews) and the Claude Code terminal. | This Mac |
 
 ## Account
 
@@ -50,7 +50,6 @@ Settings › General is where you set how Gannin looks, who you are signed in as
 | Ask to wrap up when closing a session's tab | On | Closing a running session's tab first shows its pull requests, what is not pushed, and its plans and requirements. | This Mac |
 | Show in the menu bar | On | Shows Gannin in the macOS menu bar. | This Mac |
 | Notify when a session needs you | On | Sends a notification when Claude asks something or finishes its turn and you are not looking at its tab. | This Mac |
-| Write with Claude | Not applicable | Only appears beside prompts. Drafts a prompt by talking it through with Claude. Nothing changes until you use the draft. | This Mac |
 
 How often Gannin looks for review requests is set in [Settings › Sync](/docs/settings/app/sync/).
 
@@ -69,7 +68,9 @@ How often Gannin looks for review requests is set in [Settings › Sync](/docs/s
 | Open files in | Visual Studio Code | The editor files open in: Visual Studio Code, Cursor, Zed or Xcode. Xcode only opens files on this Mac. | This Mac |
 | Name | Five starter prompts | The name of a saved prompt. | This Mac |
 | Prompt | Five starter prompts | The text of a saved prompt. | This Mac |
-| Add Prompt | Not applicable | Adds a new, empty prompt. | This Mac |
+| Write with Claude | Not applicable | The sparkles button beside each saved prompt. Drafts the prompt by talking it through with Claude. Nothing changes until you use the draft. | This Mac |
+| Remove this prompt | Not applicable | The minus button beside each saved prompt. Removes it at once. | This Mac |
+| Add Prompt | Not applicable | Adds a prompt named "New prompt" with no text. | This Mac |
 | Restore Defaults | Not applicable | Replaces your saved prompts with the five starters. | This Mac |
 
 Saved prompts are sent from the menu under a session's terminal. The first nine have the shortcuts ⌃1 to ⌃9.

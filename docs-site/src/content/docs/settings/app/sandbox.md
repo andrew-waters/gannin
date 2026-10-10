@@ -17,22 +17,23 @@ Settings › Sandbox is where you turn on sandboxed Claude Code sessions and giv
 ## Setting up
 
 1. Open Settings › Sandbox. If the switch says it needs something first, add a signing key, and an API key if you chose that.
-2. Turn on Run Work on This sessions in a sandbox. Gannin gets this Mac ready: Apple container installed, its service running, a Linux kernel set and Gannin's base image built. This takes a few minutes the first time.
-3. Watch the steps: Check this Mac, Install Apple container, Start Apple container, Set the Linux kernel and Build Gannin's base image. Done ones show a tick.
-4. Start a Work on This session. Each one can also be started on this Mac instead.
+2. If Apple container is not installed, press Install Apple container first. Turning the switch on does not install it.
+3. Turn on Run Work on This sessions in a sandbox. Gannin gets this Mac ready: its service running, a Linux kernel set and Gannin's base image built. This takes a few minutes the first time.
+4. Watch the steps: Check this Mac, Start Apple container, Set the Linux kernel and Build Gannin's base image. Steps already done show "Already done".
+5. Start a Work on This session. Each one can also be started on this Mac instead.
 
 ## Sandbox
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | Run Work on This sessions in a sandbox | Off | Starts new Work on This sessions in a sandbox. Turning it on sets this Mac up first. Repos marked Needs the Mac stay on this Mac. Turning it off asks first. | This Mac |
-| Apple container | Not installed, until checked | Shows the installed version and whether it is running. Read only. | This Mac |
+| Apple container | Shown once checked | Shows "<version>, running", "<version>, stopped" or "Not installed". Read only. | This Mac |
 | Install Apple container | Only shown when it is not installed | Downloads Apple's signed installer, checks it, and installs it. macOS asks for your password once. | This Mac |
 | Update to | Only shown when an update is offered | Updates Apple container to the version Gannin was tested with. This stops every container running on this Mac, Gannin's or not. | This Mac |
-| Set Up | Only shown when this Mac is not ready | Starts the service, sets a kernel and builds the base image, without installing. | This Mac |
+| Set Up | Only shown when this Mac is not ready | Starts the service, sets a kernel and builds the base image, without installing. Once the Mac is ready and the signing key and Claude sign-in are there, it also turns sandboxing on. | This Mac |
 | Check Again | Not applicable | Checks this Mac again. | This Mac |
 | Show Output | Only shown once there is output | Shows what Apple container said. | This Mac |
-| Install | Not applicable | Confirms the install. | This Mac |
+| Install | Not applicable | Confirms the install. Gannin then does the same as Set Up: it starts the service, sets a kernel, builds the base image, and turns sandboxing on once the Mac is ready and the keys are there. | This Mac |
 | Turn Off and Remove | Not applicable | Turns sandboxing off and deletes every container and image Gannin made on this Mac, a running session's sandbox included, and nothing else. | This Mac |
 | Turn Off, Keep Them | Not applicable | Turns sandboxing off. Sessions already in a sandbox stay in one. | This Mac |
 | Cancel | Not applicable | Closes a confirmation without changing anything. | This Mac |
@@ -91,8 +92,8 @@ This section only appears once Connect with is set in [Settings › General](/do
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Connect with | Empty | Set in Settings › General. Names the server shown here. | This Mac |
-| Apple container | Not installed, until checked | Shows the version and whether it is running on the server. Read only. | This Mac |
+| The server's name | Empty | The row is labelled with the server's name, set by Connect with in Settings › General. It shows the server's architecture and macOS version. Read only. | This Mac |
+| Apple container | Shown once checked | Shows "<version>, running", "<version>, stopped" or "Not installed" for the server. Read only. | This Mac |
 | Install Apple container | Only shown when it is not installed | Opens a terminal on the server, where sudo asks for its password. | This Mac |
 | Update to | Only shown when an update is offered | Updates Apple container there. This stops every container on that server. | This Mac |
 | Install | Not applicable | Confirms the install in the dialog. | This Mac |

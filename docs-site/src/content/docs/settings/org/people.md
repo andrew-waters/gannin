@@ -13,8 +13,8 @@ The list is the org's members plus anyone who authored or reviewed a PR in the m
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Filter | Empty | Narrows the list as you type by name or login (the prompt reads "Type to filter people"). Esc clears it. | This Mac |
-| A person's name | Ticked, except accounts ending in -bot, which start unticked | One tick for each person. Unticking leaves them out of the workload lists, People and the stats. Ticking a -bot account counts it anyway. | Harness (`.gannin/exclusions.json`) |
+| Filter | Empty | Narrows the list as you type by name or login (the prompt reads "Type to filter people"). Esc clears it. | Not kept |
+| A person's name | Ticked, except accounts ending in -bot or [bot], which start unticked | One tick for each person. Unticking leaves them out of the workload lists, People and the stats. Ticking a -bot or [bot] account counts it anyway. | Harness (`.gannin/exclusions.json`) |
 
 An org with a harness keeps the choices in the home project's harness, and changes wait in the sidebar ("N changes to commit") until you review and commit them. An org with no harness keeps them on this Mac.
 

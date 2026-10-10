@@ -12,7 +12,7 @@ Each page has a table per section of the pane: the option as the app labels it, 
 
 ## Where a setting is kept
 
-- **This Mac**: only you see it, and only on this Mac. All app settings are kept here, and so are a few org settings: where the harness is checked out, automatic review per org, recording sessions without asking, the sandbox's GitHub token and what you've hidden.
+- **This Mac**: only you see it, and only on this Mac. All app settings are kept here, and so are a few org settings: which harnesses are the org's projects, where each is checked out, automatic review per org, recording sessions without asking, the sandbox's GitHub token and what you've hidden.
 - **Harness**: most org settings are team settings. When the org has a harness they live in it as files under `.gannin/`, so everyone on the team reads the same copy. Changing one waits as a change to commit at the foot of the sidebar until you review it. An org with no harness keeps them on this Mac instead.
 
 [Where things are kept](/docs/concepts/where-things-are-kept/) says more.

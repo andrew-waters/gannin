@@ -15,7 +15,7 @@ Pull requests, issues, reviews, boards, checks, releases and repos stay on GitHu
 
 When an org has a [harness](/docs/concepts/projects-and-harnesses/), the team's settings live in it as JSON files under `.gannin/`, so everyone reads the same copy on every Mac:
 
-- **Each project's harness:** its project (name, repos, boards) in `project.json`, the issue workflow (`workflow.json`), investments (`investments.json`), goals (`goals.json`), scorecard (`scorecard.json`), recap cadence (`recap.json`), the committed date field (`prioritisation.json`) and notes from the field (`field-notes.json`).
+- **Each project's harness:** its project (name, repos, boards) in `project.json`, the issue workflow (`workflow.json`), investments (`investments.json`), goals (`goals.json`), scorecard (`scorecard.json`), recap cadence (`recap.json`), the committed date field (`prioritisation.json`), notes from the field (`field-notes.json`), the review config (`review.json`) and any repo's own sandbox image (`sandbox/<repo>.Containerfile`).
 - **The home project's harness also holds the org-wide ones:** views (`views.json`), the working week (`working-week.json`), leave (`leave.json`), excluded repos and people and the Needs Review and Needs the Mac ticks (`exclusions.json`), drafting guidance (`authoring.json`), and each person's dates and time off (`people/<login>.json`).
 
 Plans, requirements, findings, skills, prompts, learnings, session records and review records are in the harness too, as Markdown and JSON.

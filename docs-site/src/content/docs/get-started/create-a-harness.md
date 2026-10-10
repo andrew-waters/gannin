@@ -20,6 +20,6 @@ The new harness is a project from then on, and the org's **home** project if it'
 
 In **Org settings › Projects**, Add Project and pick the repo. Then, in **Org settings › Harness**, say where it's checked out on this Mac if sessions should run in it.
 
-## Moving settings across
+## Changing home
 
-An org that had no harness kept its team settings on this Mac. Making a harness the home project offers to copy them into it, so the team reads the same copy from then on.
+Settings an org kept on this Mac before it had a harness stay on this Mac; nothing copies them into a harness. Once there's a harness, make it home and set them there. When you make a different project home in **Org settings › Projects**, Copy the Org's Data and Make Home copies the org-wide files committed in the old home's harness to the new one.

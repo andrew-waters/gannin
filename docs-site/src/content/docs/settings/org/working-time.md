@@ -28,7 +28,7 @@ Allowances are in working days, with bank holidays on top. Each person's is pro-
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | Leave year starts | January | The month each leave year begins. | Harness (`.gannin/leave.json`) |
-| Allowance | 25 days a year | The days a full-time person gets, from 0 to 100 in half days. Type a number or use the stepper. | Harness (`.gannin/leave.json`) |
+| Allowance | 25 days a year | The days a full-time person gets, The stepper holds it between 0 and 100 in half days; a number you type is not limited. | Harness (`.gannin/leave.json`) |
 | Pro-rate for part-time patterns | On | Scales the allowance by working days a week for people with a working pattern of their own. | Harness (`.gannin/leave.json`) |
 | This leave year | The current leave year's dates | Shows the dates of the leave year now under way. Read only. | Harness (`.gannin/leave.json`) |
 
@@ -53,7 +53,7 @@ The editor sheet has these sections. Each change applies at once and waits as a 
 | End date | Off | Turns on a last day. Days after it are dimmed. A date picker appears when it is on. | Harness (`.gannin/people/<login>.json`) |
 | Bank holidays | The org's (or None, if the org has none) | The person's own bank holiday country, and region where there is one. | Harness (`.gannin/people/<login>.json`) |
 | Own allowance | Off | Gives the person a full-year allowance of their own, pro-rated for their start and end dates only. | Harness (`.gannin/people/<login>.json`) |
-| Days a year | The org's allowance | Their own allowance, from 0 to 100 in half days. Shown when Own allowance is on. | Harness (`.gannin/people/<login>.json`) |
+| Days a year | The org's allowance | Their own allowance. The stepper holds it between 0 and 100 in half days; a number you type is only held at 0 or above. Shown when Own allowance is on. | Harness (`.gannin/people/<login>.json`) |
 | Carried over into (the leave year) | 0 | Days carried over into the current leave year, from -50 to 50 in half days. | Harness (`.gannin/people/<login>.json`) |
 | Own working pattern | Off | Gives the person days and hours of their own (part time, or other hours on some days), starting from the org's week. | Harness (`.gannin/people/<login>.json`) |
 | Hours a week | Worked out | Shows their hours against the org's, with the full-time equivalent. Read only. | Harness (`.gannin/people/<login>.json`) |
@@ -61,7 +61,8 @@ The editor sheet has these sections. Each change applies at once and waits as a 
 | Add Holiday | Not applied | Starts a holiday entry in the time off sheet. | Harness (`.gannin/people/<login>.json`) |
 | Add Sick | Not applied | Starts a sick entry in the time off sheet. | Harness (`.gannin/people/<login>.json`) |
 | Approve | Not applied | Books a requested holiday. Shown only on requested ones. | Harness (`.gannin/people/<login>.json`) |
-| Edit | Not applied | Opens an existing entry in the time off sheet. | Harness (`.gannin/people/<login>.json`) |
+| Edit | Not applied | Opens an existing entry in the time off sheet. Double-clicking the row does the same. |
+| Remove | Not applied | The minus button on a time off row. Removes the entry at once, without asking. | Harness (`.gannin/people/<login>.json`) |
 
 The other lines in the sheet (Summary, Sick this year, Next time off, Next bank holiday, Allowance (leave year), Used, Org's working week) are read only. While Own working pattern is on, each day has a checkbox and a pair of start and end hours.
 

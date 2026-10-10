@@ -7,7 +7,7 @@ sidebar:
 
 ## Orgs
 
-Every window works in one org at a time. Pick it from the org menu at the foot of the sidebar. Your personal GitHub account is listed first, under Personal, and works as an org does (with you as the only member and no teams). Star an org to keep it near the top; stars are yours, on this Mac.
+Every window works in one org at a time. Pick it from the org menu at the foot of the sidebar. Starred orgs are listed first, then your personal GitHub account under Personal, which works as an org does (with you as the only member and no teams). Stars are yours, on this Mac.
 
 Each window and tab keeps its own org, page and project, so you can have two orgs open side by side (File › New Window, ⌥⌘N, or File › New Tab).
 

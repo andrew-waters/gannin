@@ -25,7 +25,7 @@ The header is the project's name. The footer says where it is saved: `.gannin/pr
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Name | The name given when it was made | Renames the project. | Harness (`.gannin/project.json`) |
+| Name | The name given in Create Harness, else the harness repo's name | Renames the project. | Harness (`.gannin/project.json`) |
 | Repositories | None yet, which means every repo | The code repos the project covers. Use the plus button to add one and the cross on a repo to remove it. With a project picked, every other repo is left out of the workload, the stats, CI and the issue pages. | Harness (`.gannin/project.json`) |
 
 ## Boards
@@ -42,7 +42,7 @@ The header is the project's name. The footer says where it is saved: `.gannin/pr
 | Branch | Default (the repo's default branch) | The branch Gannin reads the harness from and commits to. | This Mac |
 | Make Home | Not applied | Makes this project Home, so the org's data is read from its harness. Shown only on projects that are not Home. | This Mac |
 
-Make Home asks first. Choose Copy the Org's Data and Make Home to have Gannin commit a copy of the org's files to the new home first, or Make Home Without Copying to switch straight away. The old copy stays where it is either way.
+Make Home asks first. Choose Copy the Org's Data and Make Home to have Gannin commit a copy to the new home first of the org-wide files committed in the current home's harness (not settings from this Mac), or Make Home Without Copying to switch straight away. The old copy stays where it is either way.
 
 ## Prompts
 

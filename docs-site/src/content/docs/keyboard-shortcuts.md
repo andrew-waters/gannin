@@ -50,7 +50,6 @@ In the Claude Code window, a focused terminal keeps ⌘K for itself, so the key 
 | --- | --- | --- |
 | ← and → | Step to the previous or next issue in the view that opened the issue drawer | Not in a menu |
 | Esc | Closes the drawer | Not in a menu |
-| ⌘O | Opens the issue on GitHub (in Assign to Categories) | Not in a menu |
 | ↓ and ↑ | Move through the branches or worktrees in the Repositories popovers, and through the choices in a searchable picker | Not in a menu |
 | ↩ | Picks the highlighted branch, worktree or choice | Not in a menu |
 
@@ -97,7 +96,7 @@ A drawer's arrow keys only work when nothing inside it wants them, so typing in 
 | A, B, C and so on | Pick the matching option of a question, in the One at a Time style | Not in a menu |
 | ↓ and ↑ | Move through the options in the Keyboard List style | Not in a menu |
 | ↩ | Picks the highlighted option in the Keyboard List style | Not in a menu |
-| Space | Ticks the highlighted option when a question allows several answers | Not in a menu |
+| Space | Ticks the highlighted option when a question allows several answers, in the Keyboard List style | Not in a menu |
 | ⌘↩ | Sends the poll's most popular answer in Poll the Room, or moves on (or sends) a multiple-choice question | Not in a menu |
 | ↩ | Sends your comment to the session from the box at the foot of the stage | Not in a menu |
 | ⇧↩ or ⌥↩ | Adds a new line in that comment box | Not in a menu |
@@ -114,7 +113,7 @@ These work in Assign to Categories, which takes you through issues one at a time
 | ← | Goes back to the previous issue | Not in a menu |
 | → | Skips to the next issue | Not in a menu |
 | ↩ | Reviews and writes your choices (or Done, when nothing is written to GitHub) | Not in a menu |
-| Esc | Cancels | Not in a menu |
+| Esc | Cancels, when your choices are written to GitHub | Not in a menu |
 | ⌘O | Opens the issue on GitHub | Not in a menu |
 
 ## Prioritisation
@@ -130,7 +129,7 @@ These work in Fill In, which takes you through issues that are missing a board f
 | Shortcut | What it does | Where |
 | --- | --- | --- |
 | 1 to 9 | Chooses the option with that number | Not in a menu |
-| 0 | Skips the current field | Not in a menu |
+| 0 | Skips the current field, when Fill In covers more than one field | Not in a menu |
 | ← and → | Go to the previous or next issue | Not in a menu |
 | ↩ | Reviews and writes your changes | Not in a menu |
 | Esc | Cancels | Not in a menu |

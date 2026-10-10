@@ -9,8 +9,8 @@ sidebar:
 
 - **The window.** The metrics pages share a window picked in the toolbar: a number of days, or this or last month, quarter or year. Changes are against **the period before**: as many days before, or the same stretch of the previous month, quarter or year (the whole one before, for a whole one). A change only shows once the history reaches back that far.
 - **Medians and p75, not averages.** Half of PRs were quicker than the median; three in four were quicker than the p75. One very slow PR doesn't drag them about as it would an average.
-- **Left out everywhere:** repos and people unticked in Org settings › Repositories and People, PRs and issues you've hidden, and the repos outside the window's project. Draft PRs are left out of the workload when Exclude drafts is on (Settings › General).
-- **Bots:** PRs by bot accounts, and by logins ending `-bot` or `[bot]`, are left out of the PR metrics, unless re-included in the org's settings. Bot reviews never count as a first review.
+- **Left out everywhere:** repos and people unticked in Org settings › Repositories and People, PRs and issues you've hidden, and the repos outside the window's project. Draft PRs are left out of the workload when Exclude draft PRs is on (Settings › General).
+- **Bots:** PRs by GitHub's bot accounts are always left out of the PR metrics. PRs by ordinary accounts whose logins end `-bot` or `[bot]` are left out too, unless re-included in the org's settings. Bot reviews never count as a first review.
 
 ## Pull requests (Dashboard and PR flow)
 
@@ -24,7 +24,7 @@ sidebar:
 | Merging | Last approval to merge. | |
 | PRs merged (throughput) | PRs merged in the window. | |
 | PRs opened | A count from GitHub's search. | It ignores the org's exclusions. |
-| Merged without review | PRs merged with no approving review, as a share of merged PRs. | Repos marked No Review in Org settings › Repositories. |
+| Merged without review | PRs merged with no review of any kind, as a share of merged PRs. | Repos marked No Review in Org settings › Repositories. |
 | Size and Files | Each person's median lines changed (added plus removed) and files changed per PR merged in the window. A large PR is over 400 lines. | |
 | Rushed large PRs | Large PRs approved within 15 minutes with nothing asked, or merged unreviewed. | |
 
@@ -61,10 +61,10 @@ Issues closed as not planned are left out of cycle and lead time.
 Each goal has a cadence (weekly, monthly, quarterly, annual), a source and a target (at least or at most).
 
 - A goal is judged on its **last whole period**. The period under way is shaded and judged on its share so far.
-- A count's target is held to the column's length: 20 a week is about 3 a day when viewed by day.
+- A count's target is held to the column's length, rounded down: 20 a week is 2 a day when viewed by day.
 - **Hit** is how many whole periods were on target.
-- Hand-entered numbers are judged only in their own periods, and added up (unjudged) in longer ones.
-- From other sources: reviews waiting over a day (requested in the period and answered after a day, or never), open PRs at the period's end, issue cycle time (as above), and flaky CI runs (below).
+- Hand-entered numbers are judged only in their own periods, and added up (unjudged) in longer ones, or averaged for percentages.
+- From other sources: reviews waiting over a day (requested in the period and answered after a day, never, or still pending on an open PR), open PRs at the period's end, issue cycle time (as above), and flaky CI runs (below).
 
 ## CI (GitHub Actions)
 
@@ -76,6 +76,6 @@ Each goal has a cadence (weekly, monthly, quarterly, annual), a source and a tar
 | Re-runs | Runs with more than one attempt. | |
 | Flaky | A run that passed only on a re-run, or a commit with both a failed and a passing run. | |
 | Default branch health | Runs on the default branch outside PRs: red now and since when, and time back to green. | |
-| Needs attention | Red default branches, often-failing ones, flaky workflows, and ones 25% slower in the window's second half. | Failures on PRs alone: that's CI doing its job. |
+| Needs attention | Red default branches, often-failing ones, flaky workflows, and workflows with a median of a minute or more that ran 25% slower in the window's second half. | Failures on PRs alone: that's CI doing its job. |
 
 Runs older than 190 days are dropped, and excluded repos aren't fetched.

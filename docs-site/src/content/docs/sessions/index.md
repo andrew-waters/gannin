@@ -14,7 +14,7 @@ Agent sessions (Work on This, Quick Change, routines and their helpers) run Clau
 | **Claude signs in** | Your own Claude Code login on this Mac | Claude Code's login on the server | Inside the sandbox, through Anthropic's sign-in, or an API key | As a sandbox here |
 | **Set up in** | Nothing | [Settings › General](/docs/settings/app/general/) (Connect with), Org settings › Harness (the server's checkout) | [Settings › Sandbox](/docs/settings/app/sandbox/), Org settings › Harness (token) | Settings › Sandbox › Remote machines |
 
-Review with Claude, planning sessions and Ask always run on this Mac.
+Review with Claude and planning sessions are never sandboxed: they follow Connect with, running on the server when one is set. Ask (and routine reports) always run on this Mac.
 
 - [This Mac](/docs/sessions/this-mac/)
 - [A server](/docs/sessions/server/)

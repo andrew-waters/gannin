@@ -15,7 +15,7 @@ GitHub gives your token a fixed number of points an hour. This section shows wha
 | --- | --- | --- | --- |
 | GraphQL | Not known until the next request | Shows the GraphQL points left and when they reset. Read only. | This Mac |
 | REST | Shown once known | Shows the REST requests left and when they reset. Read only. | This Mac |
-| Spent in the last hour | Nothing yet | Shows the points and REST requests used in the last hour. A warning appears above half the hourly budget. Read only. | This Mac |
+| Spent in the last hour | 0 points | Shows the points used in the last hour, and the REST requests too when there are some. A warning appears above half the hourly budget. Read only. | This Mac |
 | Keep in reserve | 500 points | The reserve: points held back for what you open or Refresh by hand. Once fewer are left, automatic fetches and background checks wait for the reset. Choose 250, 500, 1000, 1500 or 2500. | This Mac |
 
 If GitHub refuses a request for its rate limit, Gannin pauses and says when it will ask again.
@@ -32,21 +32,21 @@ Some work is charged in the list but has no setting, because it happens when you
 
 ## Workload
 
-Open PRs and issues, and what changed since the last fetch. This group is always on. Rows are fetched when a page needs them and the data is older than the interval.
+Open PRs and issues, and what changed since the last fetch. This group is always on. Rows are fetched when a page needs them and the data is older than the interval, so their choices read "After" followed by a time.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Workload | Every 5 minutes. Cannot be turned off. | Open PRs and issues, and PRs merged in the lookback. | This Mac |
-| Members and teams | Every 1 hour. Cannot be turned off. | The org's members and teams. Refresh fetches them too. | This Mac |
-| Full search | Every 1 day. Cannot be turned off. | Searches everything again rather than only what changed. | This Mac |
+| Workload | After 5 minutes. Cannot be turned off. | Open PRs and issues, and PRs merged in the lookback. | This Mac |
+| Members and teams | After 1 hour. Cannot be turned off. | The org's members and teams. Refresh fetches them too. | This Mac |
+| Full search | After 1 day. Cannot be turned off. | Searches everything again rather than only what changed. | This Mac |
 
 ## Issues
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Issue history | Every 10 minutes. Can be turned Off. | Issues closed in the window and open ones, with board moves, for the issue pages, Inbox, Views and meetings. | This Mac |
-| Every open issue | Every 1 hour. Cannot be turned off on its own. | Fetches every open issue again, as board moves do not count as updates. It goes off with Issue history. | This Mac |
-| Issue descriptions and comments | Every 10 minutes. Can be turned Off. | Fetches text for searching in descriptions, after each issue sync. It goes off with Issue history. | This Mac |
+| Issue history | After 10 minutes. Can be turned Off. | Issues closed in the window and open ones, with board moves, for the issue pages, Inbox, Views and meetings. | This Mac |
+| Every open issue | After 1 hour. Cannot be turned off on its own. | Fetches every open issue again, as board moves do not count as updates. It goes off with Issue history. | This Mac |
+| Issue descriptions and comments | After 10 minutes. Can be turned Off. | Fetches text for searching in descriptions, after each issue sync. It goes off with Issue history. | This Mac |
 
 ## Pages
 

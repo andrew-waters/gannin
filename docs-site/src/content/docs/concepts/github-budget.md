@@ -16,7 +16,7 @@ GitHub gives each signed-in token a budget for its API: **5,000 points an hour**
 
 Each row in [Settings › Sync](/docs/settings/app/sync/) is something Gannin fetches, with how often. Pages fetch what they show when you open them and it's older than its interval; background checks (your review requests, watched reviews, sessions' pull requests) run on their own timers. A refresh only fetches what changed since the last one, with a full fetch once a day.
 
-To spend less, make rows less frequent or turn off the ones you don't use. Off means not fetched at all, Refresh included. A few rows can't be turned off (the workload and the harness, which hold what every page needs); they can only be spaced out.
+To spend less, make rows less frequent or turn off the ones you don't use. Off means not fetched at all, Refresh included. A few rows can't be turned off, only spaced out: the workload with its members and teams and full search (what every page stands on), the harness (the team's settings), every open issue, and while checks run.
 
 ## The reserve
 

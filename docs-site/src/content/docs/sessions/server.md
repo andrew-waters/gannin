@@ -15,7 +15,7 @@ Set **Connect with** in [Settings › General](/docs/settings/app/general/) (und
 
 ## How it works
 
-Gannin packs each session's script, brief and settings into one command and runs it through Connect with. Its terminal is still a tab in Gannin's Claude Code window, and the panel's Changes and state are read over the same connection (one shared ssh connection, every couple of seconds). A session's screenshots are copied to the server before it starts.
+Gannin packs each session's script, brief and settings into one command and runs it through Connect with. Its terminal is still a tab in Gannin's Claude Code window, and the panel reads over one shared ssh connection: the session's state every couple of seconds, and its Changes when Claude edits (at least every 30 seconds). A session's screenshots are copied to the server before it starts.
 
 Quitting Gannin ends server sessions with their connection; their conversations resume when opened again.
 

@@ -15,8 +15,8 @@ GitHub's sign-in for apps like Gannin offers broad scopes only, so Gannin asks f
 | --- | --- |
 | `read:user` | Your name, login and avatar. |
 | `read:org` | The orgs you belong to, their members and teams. |
-| `repo` | Reading pull requests, issues, checks and files in private repos. GitHub has no read-only scope for private repos, so this one also allows writing. Gannin only writes when you ask it to, and asks you to confirm first: requesting reviewers, creating issues and labels, posting a review, and committing to a harness. |
-| `project` | Reading project boards (the Issues pages and Boards need it), and changing them when you ask: adding an issue to a board, setting a field, making or closing a board. |
+| `repo` | Reading pull requests, issues, checks and files in private repos. GitHub has no read-only scope for private repos, so this one also allows writing. Gannin writes when you ask it to, and confirms first: issues, labels, reviewers, reviews, boards and harness commits. A few writes you can switch to happen by themselves; [Privacy and terms](/docs/concepts/privacy/) lists every write and those exceptions. |
+| `project` | Reading project boards (the Issues pages and Boards need it), and changing them when you ask: adding an issue to a board, setting a field, editing a board's fields, making, copying, linking or closing a board. |
 
 ## If your org isn't listed
 
