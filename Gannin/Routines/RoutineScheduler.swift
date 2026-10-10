@@ -1,0 +1,165 @@
+import AppKit
+import Foundation
+import Observation
+
+/// What starting a scheduled run came to.
+enum RoutineStart {
+    case started(session: UUID)
+    case failed(String)
+}
+
+/// Starts agent sessions by themselves while Gannin runs: each routine's
+/// times as they come, and queue windows draining the agent queue. Ticks
+/// every 15 seconds, and at once when the Mac wakes. Times older than the
+/// grace (Gannin was closed or the Mac asleep) are recorded as missed and
+/// not run (R2); while paused, as skipped (R14).
+@Observable
+final class RoutineScheduler {
+    let store: RoutineStore
+    /// Starts a run of the routine at its time; for a queue window or a
+    /// pinned issue, of the issue given. Set by the app (`SessionStore`).
+    @ObservationIgnored var start: (Routine, IssueReference?, UUID) async -> RoutineStart = { _, _, _ in .failed("Gannin isn't ready to start sessions.") }
+    /// The org's working days: its working week less its bank holidays.
+    @ObservationIgnored var workingDays: (String) -> RoutineSchedule.WorkingDays = { _ in RoutineSchedule.everyWeekday }
+    /// Called each tick to watch the runs going (limits, outcomes).
+    @ObservationIgnored var watch: () -> Void = {}
+
+    static let tick: Duration = .seconds(15)
+    /// How late a time may be noticed and still run.
+    static let grace: TimeInterval = 120
+
+    @ObservationIgnored private var loop: Task<Void, Never>?
+    @ObservationIgnored private var wakeObserver: NSObjectProtocol?
+    /// Routines with a run being started, so a slow start isn't doubled.
+    @ObservationIgnored private var starting: Set<UUID> = []
+    /// While a look is under way: the wake's and the loop's never overlap.
+    @ObservationIgnored private var checking = false
+
+    init(store: RoutineStore) {
+        self.store = store
+    }
+
+    func begin() {
+        guard loop == nil else { return }
+        loop = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                await self.check()
+                try? await Task.sleep(for: Self.tick)
+            }
+        }
+        // Waking, look straight away: what came due while asleep is missed.
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                Task { await self.check() }
+            }
+        }
+    }
+
+    /// What the routine's times since the last look come to.
+    struct Plan: Equatable {
+        /// The time to run now, if one is due.
+        var due: Date?
+        var missed: [Date] = []
+        var skipped: [Date] = []
+    }
+
+    /// The routine's times after `since` (or its creation, if later) up to
+    /// `now`: the latest within the grace runs, unless paused; older ones
+    /// were missed; while paused all are skipped. Queue windows have no
+    /// times to run: they drain while open.
+    static func plan(_ routine: Routine, since: Date, now: Date, paused: Bool, calendar: Calendar = .current, isWorkingDay: RoutineSchedule.WorkingDays) -> Plan {
+        guard routine.isEnabled, !routine.schedule.isWindow else { return Plan() }
+        let from = max(since, routine.createdAt)
+        guard from < now else { return Plan() }
+        let times = routine.schedule.times(after: from, through: now, calendar: calendar, isWorkingDay: isWorkingDay)
+        guard !times.isEmpty else { return Plan() }
+        if paused { return Plan(skipped: times) }
+        var plan = Plan()
+        if let last = times.last, now.timeIntervalSince(last) <= grace {
+            plan.due = last
+            plan.missed = Array(times.dropLast())
+        } else {
+            plan.missed = times
+        }
+        return plan
+    }
+
+    /// How many more of the window's runs may start now: none while it's
+    /// shut, paused or off, else its concurrency less those going.
+    static func freeSlots(_ routine: Routine, active: Int, now: Date, paused: Bool, calendar: Calendar = .current, isWorkingDay: RoutineSchedule.WorkingDays) -> Int {
+        guard routine.isEnabled, !paused, routine.schedule.isOpen(at: now, calendar: calendar, isWorkingDay: isWorkingDay) else { return 0 }
+        return max(0, routine.concurrency - active)
+    }
+
+    /// One look: watch what's going, then each routine's times, then the
+    /// queue windows.
+    func check(now: Date = .now) async {
+        guard !checking else { return }
+        checking = true
+        defer { checking = false }
+        watch()
+        let since = store.checkedAt ?? now
+        store.checked(at: now)
+        for routine in store.routines {
+            let days = workingDays(routine.org)
+            let plan = Self.plan(routine, since: since, now: now, paused: store.isPaused, isWorkingDay: days)
+            store.recordGap(plan.missed, routine: routine.id, outcome: .missed, issue: routine.issue)
+            store.recordGap(plan.skipped, routine: routine.id, outcome: .skippedPaused, issue: routine.issue)
+            // A pin's time has come and gone, run or not.
+            if routine.kind == .pinned, plan.due != nil || !plan.missed.isEmpty || !plan.skipped.isEmpty {
+                store.update(routine.id) { $0.isEnabled = false }
+            }
+            if let due = plan.due {
+                await run(routine, scheduledAt: due, issue: routine.issue)
+            }
+        }
+        for routine in store.routines where routine.kind == .issueQueue {
+            await drain(routine, now: now)
+        }
+    }
+
+    /// Starts the next queued issues while the window has room (R7), each
+    /// taken off the queue as it starts.
+    private func drain(_ routine: Routine, now: Date) async {
+        let days = workingDays(routine.org)
+        while true {
+            let active = store.activeRuns.filter { $0.routine == routine.id }.count + (starting.contains(routine.id) ? 1 : 0)
+            guard Self.freeSlots(routine, active: active, now: now, paused: store.isPaused, isWorkingDay: days) > 0,
+                  let next = store.queue(for: routine.org).first else { return }
+            store.dequeue(next.issue.id)
+            await run(routine, scheduledAt: now, issue: next.issue)
+        }
+    }
+
+    /// Records the run as going, then starts its session.
+    private func run(_ routine: Routine, scheduledAt: Date, issue: IssueReference?) async {
+        let id = UUID()
+        starting.insert(routine.id)
+        defer { starting.remove(routine.id) }
+        store.record(RoutineRun(id: id, routine: routine.id, scheduledAt: scheduledAt, issue: issue, startedAt: .now, outcome: .running))
+        switch await start(routine, issue, id) {
+        case .started(let session):
+            store.updateRun(id) { $0.session = session }
+        case .failed(let why):
+            store.updateRun(id) { run in
+                run.outcome = .failed
+                run.endedAt = .now
+                run.note = why
+            }
+        }
+    }
+
+    /// Runs the routine now, outside its schedule (Run Now).
+    func runNow(_ routine: Routine) async {
+        guard !starting.contains(routine.id) else { return }
+        if routine.kind == .issueQueue {
+            guard let next = store.queue(for: routine.org).first else { return }
+            store.dequeue(next.issue.id)
+            await run(routine, scheduledAt: .now, issue: next.issue)
+        } else {
+            await run(routine, scheduledAt: .now, issue: routine.issue)
+        }
+    }
+}

@@ -433,6 +433,9 @@ final class SessionStore {
     @ObservationIgnored var pendingFeedback: [UUID: (prompt: String, keys: [String])] = [:]
     /// What happened on reviewed PRs, for the Inbox's catch-up.
     let activity = ReviewActivity()
+    /// Routines and their runs, for naming and watching scheduled runs
+    /// (`Routines/`); set by the app.
+    @ObservationIgnored var routines: RoutineStore?
     /// Every session at once instead of a tab.
     var showingOverview = false
     /// New plans being set up, by their tab's ID: a tab of their own until
