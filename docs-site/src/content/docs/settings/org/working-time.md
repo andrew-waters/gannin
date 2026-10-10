@@ -28,7 +28,7 @@ Allowances are in working days, with bank holidays on top. Each person's is pro-
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | Leave year starts | January | The month each leave year begins. | Harness (`.gannin/leave.json`) |
-| Allowance | 25 days a year | The days a full-time person gets, The stepper holds it between 0 and 100 in half days; a number you type is not limited. | Harness (`.gannin/leave.json`) |
+| Allowance | 25 days a year | The days a full-time person gets. The stepper holds it between 0 and 100 in half days; a number you type is not limited. | Harness (`.gannin/leave.json`) |
 | Pro-rate for part-time patterns | On | Scales the allowance by working days a week for people with a working pattern of their own. | Harness (`.gannin/leave.json`) |
 | This leave year | The current leave year's dates | Shows the dates of the leave year now under way. Read only. | Harness (`.gannin/leave.json`) |
 
@@ -61,7 +61,7 @@ The editor sheet has these sections. Each change applies at once and waits as a 
 | Add Holiday | Not applied | Starts a holiday entry in the time off sheet. | Harness (`.gannin/people/<login>.json`) |
 | Add Sick | Not applied | Starts a sick entry in the time off sheet. | Harness (`.gannin/people/<login>.json`) |
 | Approve | Not applied | Books a requested holiday. Shown only on requested ones. | Harness (`.gannin/people/<login>.json`) |
-| Edit | Not applied | Opens an existing entry in the time off sheet. Double-clicking the row does the same. |
+| Edit | Not applied | Opens an existing entry in the time off sheet. Double-clicking the row does the same. | Not kept |
 | Remove | Not applied | The minus button on a time off row. Removes the entry at once, without asking. | Harness (`.gannin/people/<login>.json`) |
 
 The other lines in the sheet (Summary, Sick this year, Next time off, Next bank holiday, Allowance (leave year), Used, Org's working week) are read only. While Own working pattern is on, each day has a checkbox and a pair of start and end hours.

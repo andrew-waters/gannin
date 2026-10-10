@@ -41,7 +41,7 @@ Each row shows the category's colour, name and a summary, with arrows to reorder
 | Label | Empty | With GitHub labels tracking: the label that puts an issue in this category. The field is named after the tracking, so it reads, for example, "Bucket option" for a board field called Bucket. | Harness (`.gannin/investments.json`) |
 | Field | Label | In a rule's condition: what to compare (Label, Title, Repository, Issue type, Milestone or Project field). | Harness (`.gannin/investments.json`) |
 | Operator | is | In a condition: is, contains, starts with or matches regex. | Harness (`.gannin/investments.json`) |
-| Value | Empty | In a condition: what to compare against. An empty value never matches. A menu beside it lists the values seen in the stored history, and picking one fills it in. |
+| Value | Empty | In a condition: what to compare against. An empty value never matches. A menu beside it lists the values seen in the stored history, and picking one fills it in. | Harness (`.gannin/investments.json`) |
 | Remove condition | Not applied | The minus button on a condition row. Removes that condition. | Harness (`.gannin/investments.json`) |
 | Add Condition | Not applied | Adds another condition to a rule. A rule matches when all of its conditions do. | Harness (`.gannin/investments.json`) |
 | Remove Rule | Not applied | Removes the rule. | Harness (`.gannin/investments.json`) |
