@@ -53,13 +53,24 @@ struct LegacyProject: Decodable {
 
 /// What views check a repo against: with a project picked, anything
 /// outside its repos (which count even if excluded for the org, since the
-/// project names them); else the org's excluded repos.
+/// project names them); else the org's excluded repos. A repo the account
+/// doesn't own, named by some project (`outside`), is shown only within
+/// the project that names it, even when another project's focus is nil
+/// (every repo it owns).
 struct RepoExclusion: Hashable {
     let excluded: Set<String>
     /// Nil with no project picked.
     let focus: Set<String>?
+    let outside: Set<String>
+
+    init(excluded: Set<String>, focus: Set<String>?, outside: Set<String> = []) {
+        self.excluded = excluded
+        self.focus = focus
+        self.outside = outside
+    }
 
     func contains(_ repo: String) -> Bool {
+        if outside.contains(repo) { return !(focus?.contains(repo) ?? false) }
         if let focus { return !focus.contains(repo) }
         return excluded.contains(repo)
     }

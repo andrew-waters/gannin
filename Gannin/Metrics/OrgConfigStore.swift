@@ -58,6 +58,12 @@ struct OrgConfig: Codable, Hashable {
     /// Projects, one a harness, home first, as `OrgConfigStore` reads them
     /// from their harnesses; never saved. A window works in one.
     var repoProjects: [RepoProject] = []
+    /// `repoProjects`' repos this account doesn't own, case aside: an
+    /// outside collaborator's client repo, or an open-source repo someone
+    /// contributes to. Set by `OrgConfigStore.baseConfig(for:)` from the
+    /// account's login; never saved. Shown only within the project that
+    /// names them (`repoExclusion`).
+    var outsideRepos: Set<String> = []
     /// The window's project's repos, set by `OrgConfigStore.config(for:)`
     /// and never saved: everything outside them is left out as excluded
     /// repos are.
@@ -71,7 +77,7 @@ struct OrgConfig: Codable, Hashable {
     var boardsRepo: String? { scope?.boardsRepo }
 
     /// What views check a repo against: excluded, or outside the project.
-    var repoExclusion: RepoExclusion { RepoExclusion(excluded: excludedRepos, focus: focusRepos) }
+    var repoExclusion: RepoExclusion { RepoExclusion(excluded: excludedRepos, focus: focusRepos, outside: outsideRepos) }
 
     /// Repos not to fetch CI runs for: excluded ones no project names, the
     /// same whichever project a window has picked.
@@ -194,6 +200,14 @@ struct OrgConfig: Codable, Hashable {
         return lower.hasSuffix("-bot") || lower.hasSuffix("[bot]")
     }
 
+    /// `projects`' repos whose owner isn't `account`, case aside.
+    static func outsideRepos(_ account: String, in projects: [RepoProject]) -> Set<String> {
+        Set(projects.flatMap(\.repos).filter { repo in
+            let owner = repo.split(separator: "/").first.map(String.init) ?? repo
+            return owner.caseInsensitiveCompare(account) != .orderedSame
+        })
+    }
+
     /// Whether the repo's PRs should have a review before they merge.
     func needsReview(_ repo: String) -> Bool { !reposWithoutReview.contains(repo) }
 
@@ -304,6 +318,7 @@ final class OrgConfigStore {
         config.committedDateField = nil
         config.priorityScheme = nil
         config.repoProjects = projects(org, own: own, team: team)
+        config.outsideRepos = OrgConfig.outsideRepos(org, in: config.repoProjects)
         return config
     }
 
