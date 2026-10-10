@@ -589,10 +589,15 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - `Gannin/WorkLog/`: the Activity page under People (`WorkLogPage`), with Work log, Threads and
   Punchcards as tabs (`ActivityView`) sharing one scale and page. The work log is people by day
   (14 per page) or week (12 per page), paging back up to a year, a packed cluster of dots per cell
-  (commits, reviews, PRs opened, PRs merged; commit dots grow with lines changed).
-  `WorkLogStore` keeps PRs updated since the earliest range viewed (28 days at first) with
-  their commits (last 100) and reviews, on disk. Missing weeks are fetched as week-long
-  "last updated" searches, four at a time, then topped up with a changes search. It's only
+  (commits, reviews, PRs opened, PRs merged, issues opened, issue comments; commit dots grow
+  with lines changed; andrew-waters/gannin#193). `WorkLogStore` keeps PRs updated since the
+  earliest range viewed (28 days at first) with their commits (last 100) and reviews, and issues
+  updated in the same range (`WorkLogIssue`, `WorkLogHistory.issues`) with their last 30 comments
+  (on issues only, not PRs), on disk. Missing weeks are fetched as week-long "last updated"
+  searches, four at a time, once for PRs and once for issues (two sync steps), then topped up
+  with a changes search. The work log's Filter menu (`WorkLogFilter`) hides kinds of dot
+  (`workLogHiddenKinds`, on this Mac) and narrows to one repo (per page, cleared on switching
+  org); Threads and Punchcards stay PR only. An issue dot opens `issueReference`. It's only
   fetched once the People page (Activity or Standup) has been opened for an org, and Refresh includes it from then
   on. Commits count for their
   GitHub author when the email is linked, else the PR author.
@@ -667,7 +672,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   log and threads shade their days off, and punchcards use their hours and, when set, their
   time zone for every event instead of commit offsets.
 - `WorkLogHistory.version` discards caches from before a field was added (closedAt, commit
-  offsets), so they're fetched again.
+  offsets, issues), so they're fetched again.
 
 ## Issue metrics
 

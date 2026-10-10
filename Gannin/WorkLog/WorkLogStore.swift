@@ -1,7 +1,7 @@
 import Foundation
 import Observation
 
-/// Recent PR activity per org for the work log, persisted as JSON in
+/// Recent PR and issue activity per org for the work log, persisted as JSON in
 /// Application Support. Only fetched for orgs whose work log has been opened.
 @Observable
 final class WorkLogStore {
@@ -59,22 +59,25 @@ final class WorkLogStore {
         let start = min(requested ?? defaultStart, defaultStart)
         let history = histories[org]
 
-        // Searches, each a week of "last updated", so none reaches the cap.
-        var searches: [String] = []
+        // Ranges, each a week of "last updated", so no search reaches the cap.
+        // Each is searched for PRs and again for issues.
+        var ranges: [(Date, Date?)] = []
         if let history {
             if start < history.coveredFrom {
-                searches += Self.weeks(from: start, to: history.coveredFrom).map { GitHubAPI.workLogSearch(org: org, from: $0.0, to: $0.1) }
+                ranges += Self.weeks(from: start, to: history.coveredFrom).map { ($0.0, Optional($0.1)) }
             }
             let isStale = SyncSettings.isDue(.workLog, since: history.fetchedAt, now: now)
             if force || (isStale && !auth.shouldHoldOff) {
-                searches.append(GitHubAPI.workLogSearch(org: org, from: history.fetchedAt.addingTimeInterval(-Self.overlap)))
+                ranges.append((history.fetchedAt.addingTimeInterval(-Self.overlap), nil))
             }
         } else {
             let weeks = Self.weeks(from: start, to: now)
-            searches += weeks.dropLast().map { GitHubAPI.workLogSearch(org: org, from: $0.0, to: $0.1) }
-            if let last = weeks.last { searches.append(GitHubAPI.workLogSearch(org: org, from: last.0)) }
+            ranges += weeks.dropLast().map { ($0.0, Optional($0.1)) }
+            if let last = weeks.last { ranges.append((last.0, nil)) }
         }
-        guard !searches.isEmpty else { return }
+        guard !ranges.isEmpty else { return }
+        let searches = ranges.map { GitHubAPI.workLogSearch(org: org, from: $0.0, to: $0.1) }
+        let issueSearches = ranges.map { GitHubAPI.workLogIssueSearch(org: org, from: $0.0, to: $0.1) }
 
         syncing.insert(org)
         defer { syncing.remove(org) }
@@ -83,17 +86,28 @@ final class WorkLogStore {
             ? "Last \(calendar.dateComponents([.day], from: start, to: now).day ?? Self.keptDays) days, \(searches.count) searches"
             : "\(searches.count == 1 ? "1 search" : "\(searches.count) searches")"
         run.add("prs", title: "PR activity", detail: detail)
+        run.add("issues", title: "Issues and comments", detail: detail)
 
-        let keyed = Dictionary(uniqueKeysWithValues: searches.enumerated().map { ("w\($0.offset)", $0.element) })
+        let keyed = Dictionary(uniqueKeysWithValues: searches.enumerated().map { ("w\($0.offset)", $0.element) }
+            + issueSearches.enumerated().map { ("i\($0.offset)", $0.element) })
         if let counts = try? await run.overhead({ try await api.counts(searches: keyed) }) {
-            run.setTotal(counts.values.map { min($0, 1000) }.reduce(0, +), for: "prs")
+            run.setTotal(counts.filter { $0.key.hasPrefix("w") }.values.map { min($0, 1000) }.reduce(0, +), for: "prs")
+            run.setTotal(counts.filter { $0.key.hasPrefix("i") }.values.map { min($0, 1000) }.reduce(0, +), for: "issues")
         }
         do {
             let prs = try await run.track("prs", count: \.count) { progress in
-                try await Self.fetch(searches, api: api, progress: progress)
+                try await Self.fetch(searches, progress: progress) { query, onPage in
+                    try await api.workLogPullRequests(query: query, onPage: onPage)
+                }
+            }
+            let issues = try await run.track("issues", count: \.count) { progress in
+                try await Self.fetch(issueSearches, progress: progress) { query, onPage in
+                    try await api.workLogIssues(query: query, onPage: onPage)
+                }
             }
             var updated = history ?? WorkLogHistory(orgLogin: org, coveredFrom: start, fetchedAt: now, pullRequests: [:])
             for pr in prs { updated.pullRequests[pr.id] = pr }
+            for issue in issues { updated.issues[issue.id] = issue }
             updated.coveredFrom = min(updated.coveredFrom, start)
             updated.fetchedAt = now
             histories[org] = updated
@@ -115,20 +129,24 @@ final class WorkLogStore {
     /// secondary rate limits.
     private static let concurrency = 4
 
-    /// Runs the searches in parallel, reporting PRs fetched across them all.
-    private static func fetch(_ searches: [String], api: GitHubAPI, progress: @escaping (Int, Int?) -> Void) async throws -> [WorkLogPullRequest] {
+    /// Runs the searches in parallel, reporting items fetched across them all.
+    private static func fetch<Item: Sendable>(
+        _ searches: [String],
+        progress: @escaping (Int, Int?) -> Void,
+        search: @escaping @MainActor @Sendable (String, (Int, Int?) -> Void) async throws -> [Item]
+    ) async throws -> [Item] {
         let tally = Tally(report: progress)
-        func task(_ index: Int) -> @MainActor @Sendable () async throws -> [WorkLogPullRequest] {
+        func task(_ index: Int) -> @MainActor @Sendable () async throws -> [Item] {
             let query = searches[index]
-            return { try await api.workLogPullRequests(query: query) { fetched, _ in tally.set(index, fetched) } }
+            return { try await search(query) { fetched, _ in tally.set(index, fetched) } }
         }
-        return try await withThrowingTaskGroup(of: [WorkLogPullRequest].self) { group in
+        return try await withThrowingTaskGroup(of: [Item].self) { group in
             var next = 0
             while next < min(concurrency, searches.count) {
                 group.addTask(operation: task(next))
                 next += 1
             }
-            var results: [WorkLogPullRequest] = []
+            var results: [Item] = []
             while let batch = try await group.next() {
                 results += batch
                 if next < searches.count {

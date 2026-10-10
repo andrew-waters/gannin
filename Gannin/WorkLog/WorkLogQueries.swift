@@ -3,12 +3,28 @@ import Foundation
 extension GitHubAPI {
     /// The search for PRs in the org last updated in `[from, to)`, or since
     /// `from` when `to` is nil, in any state.
-    static func workLogSearch(org: String, from: Date, to: Date? = nil) -> String {
+    static func workLogSearch(org: String, from: Date, to: Date? = nil, kind: String = "pr") -> String {
         // Search takes a full timestamp; `+00:00` rather than `Z` is the form
         // GitHub documents.
         func stamp(_ date: Date) -> String { date.formatted(.iso8601).replacingOccurrences(of: "Z", with: "+00:00") }
         let range = to.map { "\(stamp(from))..\(stamp($0))" } ?? ">=\(stamp(from))"
-        return "\(GitHubAccounts.scope(org)) archived:false is:pr updated:\(range)"
+        return "\(GitHubAccounts.scope(org)) archived:false is:\(kind) updated:\(range)"
+    }
+
+    /// The same search for issues, for issues opened and their comments.
+    static func workLogIssueSearch(org: String, from: Date, to: Date? = nil) -> String {
+        workLogSearch(org: org, from: from, to: to, kind: "issue")
+    }
+
+    /// Issues matching a `workLogIssueSearch`, with their last comments.
+    func workLogIssues(query: String, onPage: (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }) async throws -> [WorkLogIssue] {
+        let nodes: [Lossy<RawWorkLogIssue>] = try await search(
+            query,
+            fields: RawWorkLogIssue.fields,
+            pageSize: 50,
+            onPage: onPage
+        )
+        return nodes.compactMap { $0.value?.model }
     }
 
     /// PRs matching a `workLogSearch`, with their commits and reviews.
@@ -130,6 +146,50 @@ private struct RawWorkLogPullRequest: Decodable {
             isDraft: isDraft,
             closingIssues: (closingIssuesReferences?.nodes ?? []).map {
                 LinkedItem(id: $0.id, number: $0.number, title: $0.title, url: $0.url, repo: $0.repository.nameWithOwner, state: $0.state)
+            }
+        )
+    }
+}
+
+private struct RawWorkLogIssue: Decodable {
+    struct Actor: Decodable { let login: String }
+    struct Repository: Decodable { let nameWithOwner: String }
+    struct Comment: Decodable {
+        let createdAt: Date
+        let url: URL?
+        let author: Actor?
+    }
+
+    let id: String
+    let number: Int
+    let title: String
+    let url: URL
+    let createdAt: Date
+    let repository: Repository
+    let author: Actor?
+    let comments: Connection<Comment>?
+
+    static let fields = """
+        ... on Issue {
+          id number title url createdAt
+          repository { nameWithOwner }
+          author { login }
+          comments(last: 30) { nodes { createdAt url author { login } } }
+        }
+        """
+
+    var model: WorkLogIssue {
+        WorkLogIssue(
+            id: id,
+            number: number,
+            title: title,
+            url: url,
+            repo: repository.nameWithOwner,
+            author: author?.login,
+            createdAt: createdAt,
+            comments: (comments?.nodes ?? []).compactMap { comment in
+                guard let login = comment.author?.login else { return nil }
+                return WorkLogIssueComment(createdAt: comment.createdAt, author: login, url: comment.url)
             }
         )
     }
