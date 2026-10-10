@@ -72,9 +72,9 @@ struct RoutineRunInfo: Codable, Hashable {
         case (true, .localOnly):
             "- Local only: commit your work on this branch in its worktrees, and stop there. Don't push, open or update a pull request, or comment on GitHub; Gannin won't let `git push` or `gh pr create` run. Someone will look at the branch."
         case (true, .draftPR):
-            "- Draft PR: once the change is committed, built and checked, push with `git push origin HEAD` and open a draft pull request (`gh pr create --draft`). Don't mark it ready for review or merge it."
+            "- Draft PR: once the change is committed, built and checked, push with `git push origin HEAD:<branch>` (this session's branch) and open a draft pull request (`gh pr create --draft`). Don't mark it ready for review or merge it."
         case (true, .readyPR):
-            "- Ready PR: once the change is committed, built and checked, push with `git push origin HEAD` and open a pull request ready for review. Don't merge it."
+            "- Ready PR: once the change is committed, built and checked, push with `git push origin HEAD:<branch>` (this session's branch) and open a pull request ready for review. Don't merge it."
         }
         return """
             ## Scheduled run

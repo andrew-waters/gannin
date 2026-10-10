@@ -295,9 +295,11 @@ enum SessionScript {
     /// `isRemote` is whether this runs on a server: the user's own
     /// statusLine command, read from this Mac, wouldn't exist there.
     /// `allowing` is commands it runs without asking (the pair review's
-    /// script). `sandboxed` adds hooks that write what claude's doing to the
-    /// sandbox's activity log (`SandboxLaunch.activityScript`).
-    static func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], sandboxed: Bool = false) -> String {
+    /// script). `rules` is the session rules' hook command
+    /// (`SessionRules.hookCommand`), nil with none set. `sandboxed` adds hooks
+    /// that write what claude's doing to the sandbox's activity log
+    /// (`SandboxLaunch.activityScript`).
+    static func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], rules: String? = nil, sandboxed: Bool = false) -> String {
         func signal(_ payload: String) -> String {
             #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
         }
@@ -316,6 +318,9 @@ enum SessionScript {
             group["matcher"] = matcher
             return group
         }
+        // Session rules: Claude Code runs every matching hook at once, and a
+        // deny wins whatever the order.
+        let ruleGroups = rules.map { [group([command($0)], matcher: SessionRules.matcher)] } ?? []
         var hooks: [String: Any] = [
             "SessionStart": [group([write(.idle)])],
             "UserPromptSubmit": [group([command("touch \(dir)/started"), write(.working)])],
@@ -333,7 +338,7 @@ enum SessionScript {
             // A permission prompt clears the moment its tool is let through,
             // not once it's finished running: a slow command would otherwise
             // leave the card up for as long as the command takes.
-            "PreToolUse": [
+            "PreToolUse": ruleGroups + [
                 group([write(.working)], matcher: "*"),
                 // Its questions, as they're shown; listed after "*" so this
                 // wins when both match AskUserQuestion's own tool call.
@@ -436,7 +441,7 @@ enum SessionBrief {
 
     /// `goals` are the project's measurables (`OrgConfig.measurables`);
     /// those a change bears on are listed, as guidance.
-    static func make(session: CodeSession, record: IssueRecord?, detail: ItemDetail?, parent: IssueRecord?, harness: HarnessIndex?, goals: [Measurable] = []) -> String {
+    static func make(session: CodeSession, record: IssueRecord?, detail: ItemDetail?, parent: IssueRecord?, harness: HarnessIndex?, goals: [Measurable] = [], rules: SessionRules = .current) -> String {
         let reference = session.issue
         var lines = session.isMaintenance
             ? ["# Maintenance in \(reference.repo): \(reference.title)", ""]
@@ -552,7 +557,7 @@ enum SessionBrief {
                 "  ```",
                 "",
                 session.isSandboxed
-                    ? "  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (\(SandboxLaunch.cloneRepos(session).joined(separator: ", "))), and a clone made in it would vanish when it stops. If the \(session.hasNoIssue ? "change" : "issue") needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. The repos' git dirs are read-only apart from what commits, fetches and worktrees write, so git config and hooks can't be changed, no upstream is recorded (push with `git push origin HEAD` and open the PR with `gh pr create --head <branch>`), branches can't be deleted, and an error about packed-refs.lock after a rebase or pull is expected and harmless."
+                    ? "  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (\(SandboxLaunch.cloneRepos(session).joined(separator: ", "))), and a clone made in it would vanish when it stops. If the \(session.hasNoIssue ? "change" : "issue") needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. The repos' git dirs are read-only apart from what commits, fetches and worktrees write, so git config and hooks can't be changed, no upstream is recorded (push with `git push origin HEAD:\(session.branch)` and open the PR with `gh pr create --head <branch>`), branches can't be deleted, and an error about packed-refs.lock after a rebase or pull is expected and harmless."
                     : "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
                 "- If the harness has no `projects/` folder, it's the code repo too: the code is \(harnessRepo) itself. Don't work in its checkout; give it one worktree in the issue's folder the same way, with `git -C . fetch origin` and `git -C . worktree add \"$PWD/\(folder)/\(harnessRepo.split(separator: "/").last ?? "")\" -b \(session.branch) origin/HEAD`, and do everything there, the plan included.",
             ]
@@ -587,7 +592,7 @@ enum SessionBrief {
                     ? "- Maintenance needs no plan document. Say what you changed and why in the commit messages."
                     : limit == .localOnly
                     ? "- A plan for this issue goes in its folder as `\(folder)/plan.md`, with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out. This run is Local only and can't push it to the harness; whoever picks the branch up moves it in."
-                    : "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land. When the harness is the code repo, the plan goes in its worktree and ships in the same pull request, and only if the repo keeps a `plans/` folder.",
+                    : "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. \(rules.pushOnlyToBranch ? "Commit it in the harness but don't push it: the session rule Push only to the session's branch blocks a push to the harness's default branch, so say in your last message that the plan's commit is waiting to be pushed. Tick" : "Commit and push it in the harness, and tick") its checkboxes off as tasks land. When the harness is the code repo, the plan goes in its worktree and ships in the same pull request, and only if the repo keeps a `plans/` folder.",
                 "- `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` and `projects/` are kept out of the harness's git.",
                 "",
             ]

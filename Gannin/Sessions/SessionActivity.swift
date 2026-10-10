@@ -225,9 +225,11 @@ private struct ActivityRow: View {
 
     private var title: String {
         switch event.kind {
-        case .prompt: "You"
-        case .reply: "Claude"
-        case .tool(let name): event.failed == true ? "\(name), failed" : name
+        case .prompt: return "You"
+        case .reply: return "Claude"
+        case .tool(let name):
+            if let rule = event.blockedBy { return "\(name), blocked by “\(rule)”" }
+            return event.failed == true ? "\(name), failed" : name
         }
     }
 
@@ -235,6 +237,7 @@ private struct ActivityRow: View {
         switch event.kind {
         case .prompt: return "person.fill"
         case .reply: return "sparkle"
+        case .tool where event.blockedBy != nil: return "hand.raised.fill"
         case .tool(let name):
             switch name {
             case "Bash": return "terminal"

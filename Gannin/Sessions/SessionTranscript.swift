@@ -20,6 +20,8 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         let text: String
         /// For a tool: whether its result was an error; nil until it has one.
         var failed: Bool?
+        /// For a tool: the session rule that blocked it (`SessionRules`).
+        var blockedBy: String?
     }
 
     /// A Claude artifact the session published (a claude.ai page) with its
@@ -411,7 +413,10 @@ nonisolated struct TranscriptReader: Sendable {
     private mutating func result(_ item: [String: Any], at: Date?) {
         guard let id = item["tool_use_id"] as? String else { return }
         let failed = (item["is_error"] as? Bool) ?? false
-        if let index = toolIndex[id], index < summary.events.count { summary.events[index].failed = failed }
+        if let index = toolIndex[id], index < summary.events.count {
+            summary.events[index].failed = failed
+            if failed { summary.events[index].blockedBy = SessionRules.blockedRule(in: Self.text(of: item["content"])) }
+        }
         if let command = checkCommands.removeValue(forKey: id) {
             summary.lastCheck = .init(command: command, passed: !failed, at: at)
         }

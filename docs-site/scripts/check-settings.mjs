@@ -19,6 +19,7 @@ const pages = join(repo, 'docs-site/src/content/docs/settings');
 const panes = [
   ['Gannin/Views/SettingsView.swift', ['GeneralSettings'], ['app/general']],
   ['Gannin/Sessions/SessionViews.swift', ['SessionSettingsSection'], ['app/general']],
+  ['Gannin/Sessions/SessionRules.swift', ['SessionRulesSection'], ['app/general']],
   ['Gannin/Sessions/SessionOverview.swift', ['SessionPromptSettingsSection'], ['app/general']],
   ['Gannin/Views/SyncSettingsView.swift', null, ['app/sync']],
   ['Gannin/Sandbox/SandboxSettings.swift', ['SandboxSettingsSection', 'RemoteMachinesSection'], ['app/sandbox']],

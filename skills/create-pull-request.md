@@ -63,7 +63,7 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
 
 6. **Push the branch:**
    ```bash
-   git push -u origin HEAD
+   git push -u origin HEAD:<branch>
    ```
 
 7. **Start from the repo's PR template**, if it has one:
