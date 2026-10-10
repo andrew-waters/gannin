@@ -429,7 +429,12 @@ extension GitHubAPI {
 
     /// Marks a review thread resolved. A write: not retried.
     func resolveReviewThread(_ id: String) async throws {
-        struct Response: Decodable {}
+        // resolveReviewThread is nullable: an empty Response would decode
+        // past a refusal (no write access) rather than surfacing it.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Thread: Decodable { let id: String }; let thread: Thread }
+            let resolveReviewThread: Payload
+        }
         let _: Response = try await mutate("""
             mutation($thread: ID!) {
               resolveReviewThread(input: { threadId: $thread }) { thread { id } }

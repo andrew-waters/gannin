@@ -79,7 +79,13 @@ extension GitHubAPI {
 
     /// Comments on an issue or pull request. A write.
     func addComment(subjectID: String, body: String) async throws {
-        struct Response: Decodable {}
+        // addComment is nullable: GitHub refusing (no write access, an
+        // outside repo gone read-only) leaves it null alongside an error,
+        // which an empty Response would decode past silently.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Subject: Decodable { let id: String }; let subject: Subject }
+            let addComment: Payload
+        }
         let _: Response = try await mutate("""
             mutation($subject: ID!, $body: String!) {
               addComment(input: { subjectId: $subject, body: $body }) { subject { id } }

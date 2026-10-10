@@ -62,7 +62,12 @@ extension GitHubAPI {
 
     /// Shows a board on a repo's Projects tab. A write.
     func linkBoard(_ projectID: String, repositoryID: String) async throws {
-        struct Response: Decodable {}
+        // linkProjectV2ToRepository is nullable: an empty Response would
+        // decode past a refusal (no write access) rather than surfacing it.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Repository: Decodable { let id: String }; let repository: Repository }
+            let linkProjectV2ToRepository: Payload
+        }
         let _: Response = try await mutate("""
             mutation($project: ID!, $repo: ID!) {
               linkProjectV2ToRepository(input: { projectId: $project, repositoryId: $repo }) { repository { id } }
@@ -72,7 +77,11 @@ extension GitHubAPI {
 
     /// Takes a board off a repo's Projects tab; the board is untouched. A write.
     func unlinkBoard(_ projectID: String, repositoryID: String) async throws {
-        struct Response: Decodable {}
+        // Nullable, as linkProjectV2ToRepository is.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Repository: Decodable { let id: String }; let repository: Repository }
+            let unlinkProjectV2FromRepository: Payload
+        }
         let _: Response = try await mutate("""
             mutation($project: ID!, $repo: ID!) {
               unlinkProjectV2FromRepository(input: { projectId: $project, repositoryId: $repo }) { repository { id } }
@@ -82,7 +91,11 @@ extension GitHubAPI {
 
     /// Closes or reopens a board. A write.
     func setBoardClosed(_ projectID: String, closed: Bool) async throws {
-        struct Response: Decodable {}
+        // Nullable, as the other board mutations are.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Board: Decodable { let id: String }; let projectV2: Board }
+            let updateProjectV2: Payload
+        }
         let _: Response = try await mutate("""
             mutation($project: ID!, $closed: Boolean!) {
               updateProjectV2(input: { projectId: $project, closed: $closed }) { projectV2 { id } }
