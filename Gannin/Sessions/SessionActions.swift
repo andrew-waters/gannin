@@ -240,7 +240,7 @@ extension SessionStore {
         let urls = session.pullRequests.filter { !searched.contains($0) }
         do {
             let result = try await chargingTo(.sessionPullRequests) {
-                try await api.sessionPullRequests(org: session.org, branch: session.branch, urls: urls)
+                try await api.sessionPullRequests(org: session.org, branch: session.branch, urls: urls, repos: [session.issue.repo, session.repo])
             }
             let found = result.pullRequests
             foundBySearch[id] = result.searched

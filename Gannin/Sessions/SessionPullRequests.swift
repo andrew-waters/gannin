@@ -381,12 +381,28 @@ private struct DotLabelStyle: LabelStyle {
 // MARK: - GitHub
 
 extension GitHubAPI {
+    /// `repos` whose owner isn't `org`, as `repo:` qualifiers to OR into a
+    /// search alongside its `org:`/`user:` scope (GitHub ORs them): a
+    /// session's own repo might be one the account doesn't own, whose PRs
+    /// the branch search otherwise wouldn't find (R13).
+    static func outsideRepoQualifiers(_ repos: Set<String>, org: String) -> String {
+        repos
+            .filter { repo in
+                let owner = repo.split(separator: "/").first.map(String.init) ?? repo
+                return owner.caseInsensitiveCompare(org) != .orderedSame
+            }
+            .sorted()
+            .map { "repo:\($0)" }
+            .joined(separator: " ")
+    }
+
     /// The org's PRs from the branch, and those at the URLs given, each
     /// once: newest first, with the URLs of those the branch search found.
-    /// GitHub charges for what's asked, not what comes back, so the search
-    /// asks for five PRs and 50 threads each, which a session's branch
-    /// never needs more of.
-    func sessionPullRequests(org: String, branch: String, urls: [URL]) async throws -> (pullRequests: [SessionPullRequest], searched: Set<URL>) {
+    /// `repos` are the session's own, so one outside the account still has
+    /// its branch searched (R13). GitHub charges for what's asked, not what
+    /// comes back, so the search asks for five PRs and 50 threads each,
+    /// which a session's branch never needs more of.
+    func sessionPullRequests(org: String, branch: String, urls: [URL], repos: Set<String> = []) async throws -> (pullRequests: [SessionPullRequest], searched: Set<URL>) {
         let known = urls.prefix(10).enumerated().map { ("u\($0.offset)", $0.element) }
         let definitions = (["$q: String!"] + known.map { "$\($0.0): URI!" }).joined(separator: ", ")
         let lookups = known.map { "\($0.0): resource(url: $\($0.0)) { ...SessionPR }" }.joined(separator: "\n")
@@ -409,7 +425,9 @@ extension GitHubAPI {
                 comments(last: 20) { nodes { author { login } body url } } } }
             }
             """
-        var values: [String: Any] = ["q": "\(GitHubAccounts.scope(org)) is:pr head:\(branch)"]
+        let outside = Self.outsideRepoQualifiers(repos, org: org)
+        let scope = outside.isEmpty ? GitHubAccounts.scope(org) : "\(GitHubAccounts.scope(org)) \(outside)"
+        var values: [String: Any] = ["q": "\(scope) is:pr head:\(branch)"]
         for (name, url) in known { values[name] = url.absoluteString }
         let response: SessionPRResponse = try await self.query(query, values: values)
         var seen: Set<String> = []
