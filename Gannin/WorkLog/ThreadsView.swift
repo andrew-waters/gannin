@@ -86,7 +86,10 @@ struct ThreadsContent: View {
                             .contentShape(Rectangle().inset(by: -3))
                             .help(review.summary)
                             .offset(x: x(review.at) - 4.5, y: height - ThreadLayout.reviewRow + 3)
-                            .onTapGesture { open(review.pullRequest) }
+                            .onTapGesture {
+                                // Reviews are only ever on PRs.
+                                if case .pullRequest(let pr) = review.subject { open(pr) }
+                            }
                     }
                     if lane.bars.isEmpty && lane.reviews.isEmpty {
                         Text("Nothing in this range")
