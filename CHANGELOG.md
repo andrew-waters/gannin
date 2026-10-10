@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
 
 ## [0.0.2] - 2026-10-05

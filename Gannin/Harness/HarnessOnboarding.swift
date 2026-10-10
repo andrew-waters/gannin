@@ -24,6 +24,7 @@ enum HarnessTour {
         Entry(name: "skills/", isFolder: true, text: "Reusable workflows for Claude Code, a Markdown file each."),
         Entry(name: "prompts/", isFolder: true, text: "The team's prompts for starting work, reviews and planning, offered when a session starts."),
         Entry(name: "learnings/", isFolder: true, text: "Rules people gave in review, by repo, that later reviews apply."),
+        Entry(name: "refines/", isFolder: true, text: "A record of each Design and Refine session: who was there, the issues it made, its screenshots."),
         Entry(name: "sessions/", isFolder: true, text: "A record of each Claude Code session: its brief, who started it, its pull requests."),
         Entry(name: "projects/", isFolder: true, isLocal: true, text: "The code repos, cloned here for sessions to work from. Kept out of git."),
         Entry(name: ".worktrees/", isFolder: true, isLocal: true, text: "A worktree per issue, where a session makes its changes. Kept out of git."),
@@ -40,6 +41,7 @@ enum HarnessTour {
         Entry(name: "recap.json", depth: 1, text: "How often the team looks back on what it closed."),
         Entry(name: "prioritisation.json", depth: 1, text: "The board's date field that says an issue is committed to."),
         Entry(name: "field-notes.json", depth: 1, text: "Points raised in prioritisation, until they're dealt with."),
+        Entry(name: "triage.json", depth: 1, text: "The priority buckets, the label or board option each is, and the last triage pass."),
     ]
 
     /// The org's, in the home project's harness only.

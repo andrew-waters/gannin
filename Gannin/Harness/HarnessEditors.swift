@@ -24,6 +24,9 @@ struct HarnessNewDocumentSheet: View {
         case .research:
             // Committed from an Ask's Files instead.
             EmptyView()
+        case .refines:
+            // Committed when a Design and Refine session is agreed instead.
+            EmptyView()
         }
     }
 
@@ -489,7 +492,7 @@ struct HarnessAuthoringSection: View {
         let saved = config.authoring?[kind.singular] ?? HarnessAuthoring.defaultGuidance(kind)
         Section {
             Picker("For", selection: $kind) {
-                ForEach(HarnessKind.allCases.filter { $0 != .research }) { Text($0.rawValue).tag($0) }
+                ForEach(HarnessKind.allCases.filter { !$0.isRecord }) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             TextEditor(text: $text)
