@@ -1,0 +1,14 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "quick-allow-users-to-create-projects-4bdf",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+    "andrew-waters/gannin"
+  ],
+  "startedAt" : "2026-10-10T12:09:48Z",
+  "startedBy" : "andrew-waters",
+  "title" : "allow users to create projects for repos they are not a",
+  "url" : "https://github.com/andrew-waters/gannin"
+}
