@@ -206,13 +206,7 @@ struct ScheduledForAgentPill: View {
     }
 
     private func pill(_ text: String, help: String) -> some View {
-        Label(text, systemImage: "clock.badge.checkmark")
-            .font(.caption2.weight(.semibold))
-            .labelStyle(.titleAndIcon)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .foregroundStyle(.teal)
-            .background(Color.teal.opacity(0.15), in: Capsule())
+        Pill(text: text, color: .teal, systemImage: "clock.badge.checkmark")
             .fixedSize()
             .help(help)
     }

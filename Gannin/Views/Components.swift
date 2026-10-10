@@ -51,14 +51,21 @@ struct CountBadge: View {
 struct Pill: View {
     let text: String
     let color: Color
+    var systemImage: String? = nil
 
     var body: some View {
-        Text(text)
-            .font(.caption2.weight(.semibold))
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .foregroundStyle(color)
-            .background(color.opacity(0.15), in: Capsule())
+        Group {
+            if let systemImage {
+                Label(text, systemImage: systemImage)
+            } else {
+                Text(text)
+            }
+        }
+        .font(.caption2.weight(.semibold))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .foregroundStyle(color)
+        .background(color.opacity(0.15), in: Capsule())
     }
 }
 

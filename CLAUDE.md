@@ -1277,7 +1277,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   order, dragged to reorder, Move to Top or Bottom, Remove; which windows drain it and when they next
   open; and the issues pinned to a time. Schedule for Agent (`ScheduleForAgentButton`, beside Work on
   This in the issue drawer and window; `ScheduleForAgentItems` in Issues › All's menu) adds the issue
-  to the queue or takes it off, and Pin to a Time opens the editor for a pinned routine.
+  to the queue or takes it off, and Pin to a Time opens the editor for a pinned routine. An issue
+  queued or pinned shows `ScheduledForAgentPill` (Queued for Agent with its place in the queue, or
+  Pinned for Agent with its time) after its title in Issues › All and beside its state in the drawer
+  and the issue window.
 
 ## Sandboxed sessions
 
