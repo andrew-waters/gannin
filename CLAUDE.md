@@ -808,7 +808,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `plans/2026-10-10-quick-change.md`) start work on a small change (a snag, a tweak, a one-line fix)
   from a note rather than a written-up issue. New Quick Change (the sidebar's Quick Change button
   beside New Ask, the Claude Code window's +, Agents' toolbar and the palette) opens a tab
-  (`NewQuickChangeView` over a `PlanningDraft` with `isQuickChange`): the project, the repo (the
+  (`NewQuickChangeView` over a `PlanningDraft` with `isQuickChange`, what's entered kept on the store by tab while another shows, `quickChangeForms`, and Start's progress and error too, `quickChangeProgress`, so leaving mid-start can't start it twice): the project, the repo (the
   project's first, then the org's), the note and an optional title (else its first line),
   screenshots (dropped on its drop zone, `ScreenshotDropTarget`, an AppKit view reading the drag's pasteboard for files, file promises or a picture, since the form's own views take a drag before SwiftUI's drop destinations; pasted, by ⌘V caught in its window while the clipboard holds only pictures or image files, so text still pastes into the note, or Paste; or added; images only, 20 MB each, `QuickChangeAttachment`), Create an
   issue for it (`quickChangeCreatesIssue`, on by default, asked each time), the team's prompts and
