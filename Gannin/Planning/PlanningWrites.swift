@@ -5,7 +5,13 @@ import Foundation
 extension GitHubAPI {
     /// Closes the issue as completed. A write.
     func closeIssue(id: String) async throws {
-        struct Response: Decodable {}
+        // closeIssue is nullable: GitHub refusing (no write access, an
+        // outside repo gone read-only) leaves it null alongside an error,
+        // which an empty Response would decode past silently.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Issue: Decodable { let id: String }; let issue: Issue }
+            let closeIssue: Payload
+        }
         let _: Response = try await mutate("""
             mutation($issue: ID!) {
               closeIssue(input: { issueId: $issue, stateReason: COMPLETED }) { issue { id } }
@@ -58,7 +64,12 @@ extension GitHubAPI {
 
     /// Makes `child` a sub-issue of `parent`. A write.
     func addSubIssue(parent: String, child: String) async throws {
-        struct Response: Decodable {}
+        // Nullable, as closeIssue is: an empty Response would mask a
+        // refusal rather than surfacing it.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Issue: Decodable { let id: String }; let issue: Issue }
+            let addSubIssue: Payload
+        }
         let _: Response = try await mutate("""
             mutation($parent: ID!, $child: ID!) {
               addSubIssue(input: { issueId: $parent, subIssueId: $child }) { issue { id } }

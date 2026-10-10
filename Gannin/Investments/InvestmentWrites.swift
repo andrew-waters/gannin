@@ -188,22 +188,30 @@ extension GitHubAPI {
     }
 
     /// Creates a grey label in the repo. A write.
-    func createLabel(_ name: String, repositoryID: String) async throws -> String? {
+    func createLabel(_ name: String, repositoryID: String) async throws -> String {
+        // createLabel is nullable, so an optional Payload would decode a
+        // refusal (no write access to the repo) as a plain nil rather than
+        // the error GitHub gave.
         struct Response: Decodable {
-            struct Payload: Decodable { struct Label: Decodable { let id: String }; let label: Label? }
-            let createLabel: Payload?
+            struct Payload: Decodable { struct Label: Decodable { let id: String }; let label: Label }
+            let createLabel: Payload
         }
         let response: Response = try await query("""
             mutation($repo: ID!, $name: String!) {
               createLabel(input: { repositoryId: $repo, name: $name, color: "ededed" }) { label { id } }
             }
             """, variables: ["repo": repositoryID, "name": name])
-        return response.createLabel?.label?.id
+        return response.createLabel.label.id
     }
 
     /// Adds a label to an issue. A write.
     func addLabel(_ labelID: String, to issueID: String) async throws {
-        struct Response: Decodable {}
+        // addLabelsToLabelable is nullable: an empty Response would decode
+        // past a refusal (no write access) rather than surfacing it.
+        struct Response: Decodable {
+            struct Payload: Decodable { let clientMutationId: String? }
+            let addLabelsToLabelable: Payload
+        }
         let _: Response = try await query("""
             mutation($issue: ID!, $label: ID!) {
               addLabelsToLabelable(input: { labelableId: $issue, labelIds: [$label] }) { clientMutationId }
@@ -213,7 +221,11 @@ extension GitHubAPI {
 
     /// Takes a label off an issue. A write.
     func removeLabel(_ labelID: String, from issueID: String) async throws {
-        struct Response: Decodable {}
+        // Nullable, as addLabelsToLabelable is.
+        struct Response: Decodable {
+            struct Payload: Decodable { let clientMutationId: String? }
+            let removeLabelsFromLabelable: Payload
+        }
         let _: Response = try await query("""
             mutation($issue: ID!, $label: ID!) {
               removeLabelsFromLabelable(input: { labelableId: $issue, labelIds: [$label] }) { clientMutationId }
