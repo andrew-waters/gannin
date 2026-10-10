@@ -80,7 +80,7 @@ struct OrgSettingsView: View {
                 header("Repositories", excluded: excluded.count)
             }
         case .projects:
-            ProjectsSettingsSection(org: org, repos: Self.repositories(snapshot: snapshot, history: history).map(\.name))
+            ProjectsSettingsSection(org: org, repos: Self.repositories(snapshot: snapshot, history: history).map(\.name), unreadableRepos: snapshot?.unreadableRepos ?? [:])
         case .people:
             let everyone = Self.people(snapshot: snapshot, history: history)
             let people = everyone.filter { matches($0.person.login) || matches($0.person.displayName) }

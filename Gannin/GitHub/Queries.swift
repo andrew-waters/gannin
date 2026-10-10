@@ -64,7 +64,11 @@ extension GitHubAPI {
         let scope = "\(GitHubAccounts.scope(org)) archived:false"
         let fetchPeople = plan.people || previous == nil
         let changesSince = previous == nil ? nil : plan.changesSince
-        let outsideBatches = Self.outsideRepoBatches(outsideRepos)
+        // Repos already known unreadable are left out of this cycle's
+        // searches (R8); `readableRepos` below checks the whole set, so a
+        // recovered one rejoins them next cycle.
+        let priorUnreadable = previous?.unreadableRepos ?? [:]
+        let outsideBatches = Self.outsideRepoBatches(outsideRepos.subtracting(priorUnreadable.keys))
 
         if fetchPeople {
             run.add("members", title: "Members")
@@ -118,6 +122,9 @@ extension GitHubAPI {
         async let teamResult: [Team]? = fetchPeople ? fetchTeams(org: org, run: run) : nil
         async let items = fetchChanges(searches: plannedSearches, run: run, outsideBatchCount: outsideBatches.count)
         async let fullItems = changesSince == nil ? fetchAll(searches: plannedSearches, run: run, outsideBatchCount: outsideBatches.count) : nil
+        // With members and teams, so hourly and on Refresh: which outside
+        // repos (if any) can still be read.
+        async let unreadableCheck: [String: String] = fetchPeople && !outsideRepos.isEmpty ? readableRepos(outsideRepos) : [:]
 
         var warnings = previous?.warnings ?? []
         var teamList = previous?.teams ?? []
@@ -132,15 +139,28 @@ extension GitHubAPI {
         }
         let members = try await memberList ?? previous?.members ?? []
 
+        var unreadableRepos = priorUnreadable
+        if fetchPeople, !outsideRepos.isEmpty, let result = try? await unreadableCheck {
+            unreadableRepos = result
+        }
+
         var open: [PullRequest]
         var merged: [PullRequest]
         var issues: [Issue]
         if let full = try await fullItems {
             (open, merged, issues) = full
+            if let previous {
+                open = Self.carryingOverUnreadable(open, previous: previous.openPullRequests, unreadable: unreadableRepos, repo: \.repo)
+                merged = Self.carryingOverUnreadable(merged, previous: previous.mergedPullRequests, unreadable: unreadableRepos, repo: \.repo)
+                issues = Self.carryingOverUnreadable(issues, previous: previous.issues, unreadable: unreadableRepos, repo: \.repo)
+            }
         } else if let changes = try await items, let previous {
             guard !changes.truncated else {
                 // Too much changed to trust a merge: search everything instead.
-                let carried = previous.with(members: members, teams: teamList, warnings: warnings, peopleFetchedAt: fetchPeople ? startedAt : previous.peopleFetchedAt)
+                let carried = previous.with(
+                    members: members, teams: teamList, warnings: warnings,
+                    peopleFetchedAt: fetchPeople ? startedAt : previous.peopleFetchedAt, unreadableRepos: unreadableRepos
+                )
                 return try await snapshot(org: org, lookbackDays: lookbackDays, previous: carried, plan: SnapshotPlan(people: false), run: run, outsideRepos: outsideRepos)
             }
             (open, merged, issues) = previous.merging(changes, mergedSince: mergedSince)
@@ -159,6 +179,7 @@ extension GitHubAPI {
             openPullRequests: open,
             mergedPullRequests: merged,
             issues: issues,
+            unreadableRepos: unreadableRepos.isEmpty ? nil : unreadableRepos,
             warnings: warnings
         )
     }
@@ -277,6 +298,16 @@ extension GitHubAPI {
         return items.filter { seen.insert($0.id).inserted }
     }
 
+    /// `fresh`, plus any of `previous` whose repo is in `unreadable` and
+    /// isn't already in `fresh`: search silently drops a repo it can't
+    /// read, so on a full fetch its last items stay, stale, rather than
+    /// vanishing from the lists (R8).
+    static func carryingOverUnreadable<T: Identifiable>(_ fresh: [T], previous: [T], unreadable: [String: String], repo: (T) -> String) -> [T] where T.ID: Hashable {
+        guard !unreadable.isEmpty else { return fresh }
+        let freshIDs = Set(fresh.map(\.id))
+        return fresh + previous.filter { unreadable[repo($0)] != nil && !freshIDs.contains($0.id) }
+    }
+
     /// Outside repos grouped into `repo:` qualifier batches small enough
     /// that a search naming them, plus up to `reserve` more characters for
     /// the rest of the query (the suffix isn't known here: `archived:false`,
@@ -325,6 +356,46 @@ extension GitHubAPI {
             result["outside-changed-issues-\(n)"] = "\(qualifiers) archived:false is:issue updated:>=\(timestamp)"
         }
         return result
+    }
+
+    /// Every outside repo, read in one aliased query, to find which have
+    /// stopped being readable since they were added: the repo doesn't
+    /// exist, this token can't read it (GitHub answers the same for both),
+    /// or it's been renamed. A repo not in the result is readable.
+    func readableRepos(_ repos: Set<String>) async throws -> [String: String] {
+        let sorted = repos.sorted()
+        var variables: [String: Any] = [:]
+        var definitions: [String] = []
+        var fields: [String] = []
+        var aliases: [String: String] = [:]
+        for (index, repo) in sorted.enumerated() {
+            let parts = repo.split(separator: "/").map(String.init)
+            guard parts.count == 2 else { continue }
+            let alias = "r\(index)"
+            aliases[alias] = repo
+            variables["owner\(index)"] = parts[0]
+            variables["name\(index)"] = parts[1]
+            definitions.append("$owner\(index): String!, $name\(index): String!")
+            fields.append("\(alias): repository(owner: $owner\(index), name: $name\(index)) { nameWithOwner }")
+        }
+        guard !fields.isEmpty else { return [:] }
+
+        struct RepoNode: Decodable { let nameWithOwner: String }
+        let (response, reasons): ([String: RepoNode?], [String: String]) = try await queryReportingReasonsByField(
+            "query(\(definitions.joined(separator: ", "))) { \(fields.joined(separator: " ")) }",
+            values: variables
+        )
+        var unreadable: [String: String] = [:]
+        for (alias, repo) in aliases {
+            guard let node = response[alias] ?? nil else {
+                unreadable[repo] = reasons[alias] ?? "GitHub couldn't find \(repo), or this token can't read it."
+                continue
+            }
+            if node.nameWithOwner.caseInsensitiveCompare(repo) != .orderedSame {
+                unreadable[repo] = "Renamed to \(node.nameWithOwner)"
+            }
+        }
+        return unreadable
     }
 
     private func members(org: String, onPage: (Int, Int?) -> Void) async throws -> [Person] {
@@ -568,7 +639,7 @@ extension OrgSnapshot {
     }
 
     /// A copy with fresh members and teams.
-    func with(members: [Person], teams: [Team], warnings: [String], peopleFetchedAt: Date?) -> OrgSnapshot {
+    func with(members: [Person], teams: [Team], warnings: [String], peopleFetchedAt: Date?, unreadableRepos: [String: String]) -> OrgSnapshot {
         OrgSnapshot(
             orgLogin: orgLogin,
             fetchedAt: fetchedAt,
@@ -580,6 +651,7 @@ extension OrgSnapshot {
             openPullRequests: openPullRequests,
             mergedPullRequests: mergedPullRequests,
             issues: issues,
+            unreadableRepos: unreadableRepos.isEmpty ? nil : unreadableRepos,
             warnings: warnings
         )
     }

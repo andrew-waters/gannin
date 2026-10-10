@@ -89,6 +89,7 @@ struct Workload {
             openPullRequests: raw.openPullRequests.filter { isVisible($0.id) && isIncluded($0) && !(options.excludeDrafts && $0.isDraft) },
             mergedPullRequests: raw.mergedPullRequests.filter { isVisible($0.id) && isIncluded($0) },
             issues: raw.issues.filter { isVisible($0.id) && !options.config.repoExclusion.contains($0.repo) },
+            unreadableRepos: raw.unreadableRepos,
             warnings: raw.warnings
         )
         self.snapshot = snapshot

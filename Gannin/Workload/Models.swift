@@ -160,6 +160,12 @@ struct OrgSnapshot: Codable {
     var openPullRequests: [PullRequest]
     let mergedPullRequests: [PullRequest]
     let issues: [Issue]
+    /// Outside repos (`OrgConfig.outsideRepos`) that have stopped being
+    /// readable, by `owner/name`: GitHub's reason, or that it's been
+    /// renamed and where to. Left out of searches; their last items stay,
+    /// marked stale. Nil for a snapshot from before outside repos, or an
+    /// account with none.
+    var unreadableRepos: [String: String]?
     /// Non-fatal problems (e.g. teams hidden from this token).
     let warnings: [String]
 

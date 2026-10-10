@@ -90,6 +90,9 @@ struct ProjectsSettingsSection: View {
     let org: String
     /// Every repo there is to pick from.
     let repos: [String]
+    /// Outside repos that have stopped being readable, by `owner/name`:
+    /// GitHub's reason, or that it's been renamed (`OrgSnapshot.unreadableRepos`).
+    var unreadableRepos: [String: String] = [:]
     /// The project being edited, by its harness's repo.
     @SceneStorage("settingsProject") private var selectedID = ""
     @State private var isCreatingHarness = false
@@ -272,6 +275,15 @@ struct ProjectsSettingsSection: View {
                                         .background(Capsule().fill(Color.orange.opacity(0.18)))
                                         .foregroundStyle(.orange)
                                 }
+                                if let reason = unreadableRepos[repo] {
+                                    Text("Can't be read")
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(Color.red.opacity(0.18)))
+                                        .foregroundStyle(.red)
+                                        .help(reason)
+                                }
                                 Button {
                                     update(project.id) { $0.repos.removeAll { $0 == repo } }
                                 } label: {
@@ -283,7 +295,7 @@ struct ProjectsSettingsSection: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(Capsule().fill(Color.secondary.opacity(0.12)))
-                            .help(repo)
+                            .help(unreadableRepos[repo] ?? repo)
                         }
                         Button {
                             addRepoError = nil
