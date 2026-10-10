@@ -20,6 +20,12 @@ enum SandboxLaunch {
         "com.orchard.sandbox.owner=dev.andon.gannin",
         "com.orchard.sandbox.network=nat",
     ]
+    /// The sandbox's activity log, in the issue's folder on the Mac: what its
+    /// sessions are doing, a line an event, which the container's own process
+    /// follows so `container logs` (and Orchard) show it (andrew-waters/gannin#152).
+    static let activityLogName = "sandbox.log"
+    /// The script hooks and `inner.sh` write the log through, outside every mount.
+    static let activityScriptPath = "/run/gannin-activity"
 
     /// After the harness is prepared (`$session`, `$harness`, `$folder` and
     /// `$id` set, in the harness): container's service up, the issue's repos
@@ -88,6 +94,8 @@ enum SandboxLaunch {
             si=$(cd \(issueFolder) && pwd -P) || sandbox_failed "The issue's session folder isn't there."
             f="$h"/\(SandboxRuntime.quoted(folder))
             mkdir -p "$s/claude-home" "$si/claude-home"
+            log="$si/\(activityLogName)"
+            touch "$log"
             name=\(SandboxRuntime.quoted(name))
             if "$c" list --format json 2>/dev/null | grep -q "\\"id\\":\\"$name\\""; then
               note "The sandbox is running; claude starts in it"
@@ -142,10 +150,12 @@ enum SandboxLaunch {
               cf=$(cd \(claudeFolder) && pwd -P)
               args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$cf,target=\(claudeHome)" --mount "type=bind,source=$si/claude-home/projects,target=\(claudeHome)/projects")
               note "Starting the sandbox $name ($image)"
-              "$c" "${args[@]}" "$image" sh -c "trap 'exit 0' TERM; sleep infinity & wait" >/dev/null || sandbox_failed "The sandbox didn't start. Run container logs $name to see why."
+              # Its own process follows the activity log, so container logs
+              # says what's going on in here (the last 200 lines, then more).
+              "$c" "${args[@]}" "$image" sh -c 'trap "exit 0" TERM; tail -n 200 -F "$0" & wait' "$log" >/dev/null || sandbox_failed "The sandbox didn't start. Run container logs $name to see why."
             fi
             printf running > "$session/sandbox"
-            exec "$c" exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e CLAUDE_CONFIG_DIR=\(claudeHome) "$name" bash "$s/inner.sh" "$s" "$h"
+            exec "$c" exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e CLAUDE_CONFIG_DIR=\(claudeHome) "$name" bash "$s/inner.sh" "$s" "$h" "$log"
             """
     }
 
@@ -197,6 +207,12 @@ enum SandboxLaunch {
             # Written by Gannin for \(session.longReference). Runs inside its sandbox.
             session=$1
             harness=$2
+            # What it's doing goes to the sandbox's activity log, names and
+            # events only (activityScript).
+            export GANNIN_ACTIVITY_LOG=${3:-}
+            export GANNIN_ACTIVITY_LABEL=\(SessionScript.quoted(activityLabel(session)))
+            ( umask 022; printf %s \(Data(activityScript.utf8).base64EncodedString()) | base64 -d > \(activityScriptPath).$$ && chmod +x \(activityScriptPath).$$ && mv \(activityScriptPath).$$ \(activityScriptPath) ) || rm -f \(activityScriptPath).$$
+            activity() { [ -x \(activityScriptPath) ] && \(activityScriptPath) "$@"; true; }
             id=\(SessionScript.quoted(session.claudeID))
             folder="$harness"/\(SessionScript.quoted(folder))
 
@@ -206,14 +222,17 @@ enum SandboxLaunch {
             fail() {
               printf '\\033[31mGannin: %s\\033[0m\\n' "$1"
               printf 'failed: %s' "$1" > "$session/sandbox" 2>/dev/null
+              activity "Failed: $1"
               exit 1
             }
+            activity "Sandbox session starting"
 
             [ -f "$session/secrets.env" ] || fail "There are no credentials for this sandbox. Resume the session in Gannin."
             set -a
             . "$session/secrets.env"
             set +a
             rm -f "$session/secrets.env"
+            activity "Credentials taken; setting up git and Claude Code"
             ( umask 077; printf %s "$GANNIN_SIGNING_KEY" | base64 -d > \(signingKeyPath) )
             unset GANNIN_SIGNING_KEY
             git config --global user.name "$GANNIN_GIT_NAME"
@@ -252,11 +271,58 @@ enum SandboxLaunch {
             unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
             if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
               note "Claude isn't signed in in your sandboxes yet. When it asks, choose your Claude account, open the link it shows, sign in, and paste the code back. Your other sandboxes stay signed in."
+              activity "Waiting for you: Claude needs signing in, in the session's terminal"
             fi
+            activity "Starting Claude Code"
 
-            \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "", afterExit: "note \"Claude Code has exited, so its sandbox stops once nothing else uses it. Resume the session to go on.\"\nexit 0"))
+            \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "", afterExit: "activity \"Claude Code has exited\"\nnote \"Claude Code has exited, so its sandbox stops once nothing else uses it. Resume the session to go on.\"\nexit 0"))
             """
     }
+
+    /// Who a line in the activity log is from: the issue's session, or a
+    /// helper by its role.
+    static func activityLabel(_ session: CodeSession) -> String {
+        session.role.map { "\(session.shortReference) \($0.lowercased())" } ?? session.shortReference
+    }
+
+    /// Writes a line to the activity log (`$GANNIN_ACTIVITY_LOG`): a hook's
+    /// event (`hook`, its JSON on standard input) or `inner.sh`'s own words.
+    /// What's safe to show was settled in andrew-waters/gannin#152: events
+    /// and tool names only, never a command, prompt, file's contents, tool
+    /// output or error text, since any of those can hold a secret. Tokens
+    /// are redacted anyway, by their shapes and by the sandbox's own values,
+    /// in case one turns up in a name.
+    static let activityScript = #"""
+        #!/bin/bash
+        # Written by Gannin: one line in the sandbox's activity log. Events and names only.
+        log=${GANNIN_ACTIVITY_LOG:-}
+        [ -n "$log" ] || exit 0
+        if [ "${1:-}" = hook ]; then
+          IFS=$'\t' read -r event tool < <(jq -r '[.hook_event_name // "", .tool_name // ""] | @tsv' 2>/dev/null)
+          tool=$(printf '%s' "$tool" | tr -cd 'A-Za-z0-9_.:-' | cut -c1-80)
+          case "$event" in
+            SessionStart) message="Claude Code is ready" ;;
+            UserPromptSubmit) message="Working on a prompt" ;;
+            PreToolUse) message="Using ${tool:-a tool}" ;;
+            PostToolUseFailure) message="${tool:-A tool} failed" ;;
+            Notification) message="Waiting for you: a permission prompt or question" ;;
+            Stop) message="Turn ended; waiting for a prompt" ;;
+            SessionEnd) message="Claude Code is ending" ;;
+            *) exit 0 ;;
+          esac
+        else
+          message="$*"
+        fi
+        # Control characters out first, so none can split a token; both
+        # redactions before the cut, so none straddles it.
+        message=$(printf '%s' "$message" | tr -d '\000-\037\177')
+        for secret in "${GH_TOKEN:-}" "${ANTHROPIC_API_KEY:-}"; do
+          [ ${#secret} -ge 8 ] && message=${message//"$secret"/[redacted]}
+        done
+        message=$(printf '%s' "$message" | sed -E 's/(gh[opsur]_|github_pat_|sk-ant-)[A-Za-z0-9_-]+/[redacted]/g; s/-----BEGIN [A-Z ]*PRIVATE KEY-----.*/[redacted]/' | cut -c1-500)
+        printf '%s [%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${GANNIN_ACTIVITY_LABEL:-session}" "$message" >> "$log" 2>/dev/null
+        exit 0
+        """#
 
     /// The house rules' file in the shared config, imported by its CLAUDE.md.
     static let houseRulesFile = "gannin-house-rules.md"

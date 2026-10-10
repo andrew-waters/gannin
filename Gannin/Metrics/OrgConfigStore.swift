@@ -52,9 +52,18 @@ struct OrgConfig: Codable, Hashable {
     var committedDateField: String?
 
     var committedDate: String { committedDateField ?? "Committed" }
+    /// How the project marks loose priority (Rituals › Triage); nil until
+    /// one is set.
+    var priorityScheme: PriorityScheme?
     /// Projects, one a harness, home first, as `OrgConfigStore` reads them
     /// from their harnesses; never saved. A window works in one.
     var repoProjects: [RepoProject] = []
+    /// `repoProjects`' repos this account doesn't own, case aside: an
+    /// outside collaborator's client repo, or an open-source repo someone
+    /// contributes to. Set by `OrgConfigStore.baseConfig(for:)` from the
+    /// account's login; never saved. Shown only within the project that
+    /// names them (`repoExclusion`).
+    var outsideRepos: Set<String> = []
     /// The window's project's repos, set by `OrgConfigStore.config(for:)`
     /// and never saved: everything outside them is left out as excluded
     /// repos are.
@@ -68,7 +77,7 @@ struct OrgConfig: Codable, Hashable {
     var boardsRepo: String? { scope?.boardsRepo }
 
     /// What views check a repo against: excluded, or outside the project.
-    var repoExclusion: RepoExclusion { RepoExclusion(excluded: excludedRepos, focus: focusRepos) }
+    var repoExclusion: RepoExclusion { RepoExclusion(excluded: excludedRepos, focus: focusRepos, outside: outsideRepos) }
 
     /// Repos not to fetch CI runs for: excluded ones no project names, the
     /// same whichever project a window has picked.
@@ -179,15 +188,24 @@ struct OrgConfig: Codable, Hashable {
         let legacy = (try? container.decodeIfPresent([LegacyProject].self, forKey: .repoProjects)) ?? nil
         for setup in (legacy ?? []).compactMap(\.harness) { addHarness(HarnessConfig(repo: setup.repo, branch: setup.branch)) }
         committedDateField = try container.decodeIfPresent(String.self, forKey: .committedDateField)
+        priorityScheme = try? container.decodeIfPresent(PriorityScheme.self, forKey: .priorityScheme)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil && priorityScheme == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.
     static func looksLikeBot(_ login: String) -> Bool {
         let lower = login.lowercased()
         return lower.hasSuffix("-bot") || lower.hasSuffix("[bot]")
+    }
+
+    /// `projects`' repos whose owner isn't `account`, case aside.
+    static func outsideRepos(_ account: String, in projects: [RepoProject]) -> Set<String> {
+        Set(projects.flatMap(\.repos).filter { repo in
+            let owner = repo.split(separator: "/").first.map(String.init) ?? repo
+            return owner.caseInsensitiveCompare(account) != .orderedSame
+        })
     }
 
     /// Whether the repo's PRs should have a review before they merge.
@@ -209,7 +227,7 @@ struct OrgConfig: Codable, Hashable {
 /// (`HarnessTeamStore`): the org-wide parts (views, working week, leave
 /// policy, exclusions, drafting prompts) in the home project's, and each
 /// project's own (investments, issue workflow, goals, scorecard, recap
-/// cadence, committed date field, name and repos) in its own; changes wait
+/// cadence, committed date field, priority scheme, name and repos) in its own; changes wait
 /// to be committed there. Which harnesses are its projects stays the
 /// user's own.
 ///
@@ -298,7 +316,9 @@ final class OrgConfigStore {
         config.recap = nil
         config.scorecard = nil
         config.committedDateField = nil
+        config.priorityScheme = nil
         config.repoProjects = projects(org, own: own, team: team)
+        config.outsideRepos = OrgConfig.outsideRepos(org, in: config.repoProjects)
         return config
     }
 

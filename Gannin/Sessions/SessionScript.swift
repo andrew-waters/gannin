@@ -296,8 +296,10 @@ enum SessionScript {
     /// statusLine command, read from this Mac, wouldn't exist there.
     /// `allowing` is commands it runs without asking (the pair review's
     /// script). `rules` is the session rules' hook command
-    /// (`SessionRules.hookCommand`), nil with none set.
-    static func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], rules: String? = nil) -> String {
+    /// (`SessionRules.hookCommand`), nil with none set. `sandboxed` adds hooks
+    /// that write what claude's doing to the sandbox's activity log
+    /// (`SandboxLaunch.activityScript`).
+    static func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], rules: String? = nil, sandboxed: Bool = false) -> String {
         func signal(_ payload: String) -> String {
             #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
         }
@@ -319,7 +321,7 @@ enum SessionScript {
         // Session rules: Claude Code runs every matching hook at once, and a
         // deny wins whatever the order.
         let ruleGroups = rules.map { [group([command($0)], matcher: SessionRules.matcher)] } ?? []
-        let hooks: [String: Any] = [
+        var hooks: [String: Any] = [
             "SessionStart": [group([write(.idle)])],
             "UserPromptSubmit": [group([command("touch \(dir)/started"), write(.working)])],
             "PostToolUse": [
@@ -345,6 +347,17 @@ enum SessionScript {
             "Stop": [group([write(.idle)])],
             "SessionEnd": [group([write(.exited)])],
         ]
+        if sandboxed {
+            // Events and tool names only, never what's in them.
+            let activity = [command("[ -x \(SandboxLaunch.activityScriptPath) ] && \(SandboxLaunch.activityScriptPath) hook; exit 0")]
+            let matchers: [String: String?] = [
+                "SessionStart": nil, "UserPromptSubmit": nil, "PreToolUse": "*", "PostToolUseFailure": "*",
+                "Notification": "permission_prompt|elicitation_dialog", "Stop": nil, "SessionEnd": nil,
+            ]
+            for (event, matcher) in matchers {
+                hooks[event] = ((hooks[event] as? [[String: Any]]) ?? []) + [group(activity, matcher: matcher)]
+            }
+        }
         // Its `context_window` tells Gannin the model's real limit.
         // `--settings` replaces rather than merges a scalar key like
         // `statusLine`, so this would otherwise blank out a statusLine the

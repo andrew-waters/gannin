@@ -139,7 +139,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Epics, Repositories (local git, see Local git), Projects (the boards), Views); Delivery (Scorecards, PR flow, Issue
   flow, Releases, Investments, CI); Team
   (Everyone and each team opening to their members, Activity, Time off); Rituals (Standup,
-  Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, once set);
+  Prioritisation, Planning, Board Hygiene); Harness (Plans, Requirements, Findings, Skills, Prompts, Learnings, Research, Refines, once set);
   and Agents (Metrics, Waiting on You, Routines, Queue, then sessions grouped as working on issues, reviews,
   planning and Ask). `WorkloadTab.title` is the name shown (CI, Scorecards, Waiting on You, Metrics, Queue);
   raw values stay as windows saved them. `OverviewView` is two pages (`OverviewView.Part`):
@@ -1388,7 +1388,12 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Mac first; `refs/` stays writable, so it can move any branch. Inside,
   `branch.autoSetupMerge`, gc and maintenance are off, branches can't be deleted, and rebase and pull
   print a harmless `packed-refs.lock` error (the sandboxed brief says so, and to push with
-  `git push origin HEAD`). Then the issue's session folder, the shared `claudeFolder` as
+  `git push origin HEAD`). The container's own process follows the issue's `sandbox.log`
+  (`SandboxLaunch.activityLogName`, its last 200 lines then more), so `container logs` and
+  Orchard show what it's doing (andrew-waters/gannin#152); `inner.sh` writes
+  `activityScript` to `/run` and its steps there, and a sandboxed session's settings
+  (`settings(sandboxed:)`) add hooks calling it. Events and tool names only, never a
+  command, prompt, file, output or error text, and tokens redacted by shape and value. Then the issue's session folder, the shared `claudeFolder` as
   `/root/.claude` (claude's own login and settings) with the issue's `claude-home/projects` over its
   `projects/` (transcripts); Gannin's and Orchard's labels
   (`com.orchard.sandbox`, andrew-waters/orchard#122) and the caps. Then `container exec -it` runs
@@ -1489,8 +1494,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Team data in the harnesses (`HarnessTeamData.swift`): an org with a harness keeps its team
   data as JSON under `.gannin/` (`TeamFile`), keys sorted and calendar days as `2026-10-03`
   (`TeamCoding`). Each project's harness has its own `project.json`, `investments.json`,
-  `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json` and
-  `field-notes.json`; the
+  `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json`,
+  `triage.json` and `field-notes.json`; the
   home project's (the first) also has the org's (`TeamFile.isOrgWide`): `views.json`,
   `working-week.json`, `leave.json`, `exclusions.json`, `authoring.json` and
   `people/<login>.json` (time off with sick days included). The index reads `.gannin/*.json`
@@ -1518,7 +1523,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (the busiest, ticked). Someone with no project starts at the beginning, anyone else at the name
   with the tour a link away. Then REST `POST /orgs/{org}/repos` (private, `auto_init` so there's a
   branch) and one commit of `HarnessSkeleton` (README, a starter CLAUDE.md listing its repos, a
-  generic `STANDARDS.md`, requirements, plans, findings and learnings with front matter templates,
+  generic `STANDARDS.md`, requirements, plans, findings, learnings and refines with front matter templates,
   skills, sessions, `.gannin/README.md` from `HarnessTour.readme`, and a `.gitignore` keeping out
   `projects/` and `.worktrees/`) with its `project.json`; it's a project from then on, home if
   it's the first.
@@ -1526,7 +1531,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `requirements/<module>/plans/`), requirements the rest of `requirements/`, `findings/`,
   `skills/`, `prompts/`, `learnings/` (grouped by their repo folder), `research/` (each
   `research/<folder>/README.md` the document, `HarnessKind.research`, with no New: files come from
-  an Ask's Commit to Harness); other READMEs and `_templates` left out. A front matter `type` overrides the folder, and
+  an Ask's Commit to Harness), `refines/` (each `refines/<date>-<slug>/README.md` the document, front
+  matter type `refine`, its screenshots beside it, `HarnessKind.refines`, with no New: a Design and
+  Refine session's Agree commits it, andrew-waters/gannin#135; research and refines are
+  `HarnessKind.isRecord`); other READMEs and `_templates` left out. A front matter `type` overrides the folder, and
   plans and requirements are grouped by their first domain, else their module folder
   (`HarnessDocument.area`). A document is
   about an issue named in its file name (`prd-123`) or its header table's GitHub row
@@ -1539,7 +1547,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Harness page and a document's page, and a session's brief gives the summary of documents that
   only mention its issue. `HarnessDocument.parserVersion` makes a cached index read its
   documents again when the reading changes.
-- Plans, Requirements, Findings, Skills, Prompts, Learnings and Research are rows under Harness in the sidebar
+- Plans, Requirements, Findings, Skills, Prompts, Learnings, Research and Refines are rows under Harness in the sidebar
   (`SidebarItem.harnessKind`, with counts of standard documents), sharing the `harnessKind` scene
   storage the Harness page reads; the Harness row itself shows the kind last picked.
 - The Harness page has a bar at the top: search over title, summary, path, domains and issues;
@@ -1628,6 +1636,14 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   it: text, who (remembered), customer, kind and urgency (`FieldNote`), ⌘↩ to add. Notes are
   linked to an issue, or raised as one (`WriteIssueSheet`: Claude drafts the repo, title,
   description and labels, with images to attach, then `createIssue` and onto the board for triage).
+- Triage's priority scheme (`Triage/PriorityScheme.swift`, andrew-waters/gannin#156, part of
+  andrew-waters/gannin#154, `plans/2026-10-10-a-new-triage-feature-in-rituals-the-idea.md`):
+  `PriorityScheme` is a project's ordered `PriorityBucket`s (name, colour slot, `githubValue`)
+  kept on GitHub as labels or as options of a single-select field on one board
+  (`PriorityTracking`), with `lastPass`, the day the last pass was written. It's a project team
+  file, `.gannin/triage.json` (`OrgConfig.priorityScheme`, laid on as recap's is), read leniently.
+  `reading(_:)` is an issue's bucket as GitHub has it (`PriorityReading`): none is untriaged,
+  labels of two buckets conflicting. The Triage page, queue and editor are still to come.
 - Triage with Claude (`TriageWithClaudeSheet`) suggests board fields, investment category and
   whether an issue suits an agent, for ticking and writing through `FieldWriteSheet`.
 
