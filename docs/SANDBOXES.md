@@ -58,8 +58,10 @@ All of this is in Gannin's Settings, under Sandbox, except the GitHub token, whi
 
 Below that, **House rules for Claude** is your own CLAUDE.md for every sandbox: how you like commits
 and pull requests written, attribution, and anything else you'd keep in `~/.claude/CLAUDE.md` on
-your Mac. That file never goes in by itself; Copy from This Mac fills the box with it to edit. A
-sandbox's Claude reads the rules each time it starts, on this Mac or a server. Then you can set
+your Mac. That file never goes in by itself; Copy from This Mac fills the box with it to edit
+(leave out its `@` imports, which name files a sandbox can't read). Each time a sandbox's Claude
+starts, on this Mac or a server, the rules are written to `gannin-house-rules.md` in the config your
+sandboxes share, which their `CLAUDE.md` imports, so what Claude remembers there is kept. Then you can set
 how many CPUs and how much memory each sandbox gets.
 
 ## Working with it

@@ -227,12 +227,23 @@ enum SandboxLaunch {
             git config --global gc.auto 0
             git config --global maintenance.auto false
             unset GANNIN_GIT_NAME GANNIN_GIT_EMAIL
-            # The house rules from Settings › Sandbox, as claude's own memory
-            # in the config every sandbox shares; none set, none left there.
+            # The house rules from Settings › Sandbox, in a file of their own
+            # that claude's memory in the shared config imports, so what
+            # claude saved in CLAUDE.md is never touched. Written whole and
+            # moved into place, as other sandboxes may be reading it.
+            rules="$CLAUDE_CONFIG_DIR/\(houseRulesFile)"
+            if [ -n "${GANNIN_CLAUDE_MD:-}" ] || [ -f "$rules" ]; then
+              if printf %s "${GANNIN_CLAUDE_MD:-}" | base64 -d > "$rules.$$"; then
+                mv "$rules.$$" "$rules"
+              else
+                rm -f "$rules.$$"
+                note "Gannin couldn't write your house rules for Claude, so this sandbox has the ones it had before."
+              fi
+            fi
             if [ -n "${GANNIN_CLAUDE_MD:-}" ]; then
-              printf %s "$GANNIN_CLAUDE_MD" | base64 -d > "$CLAUDE_CONFIG_DIR/CLAUDE.md"
-            else
-              rm -f "$CLAUDE_CONFIG_DIR/CLAUDE.md"
+              memory="$CLAUDE_CONFIG_DIR/CLAUDE.md"
+              grep -qxF '@\(houseRulesFile)' "$memory" 2>/dev/null \\
+                || { { cat "$memory" 2>/dev/null; printf '\\n@\(houseRulesFile)\\n'; } > "$memory.$$" && mv "$memory.$$" "$memory"; }
             fi
             unset GANNIN_CLAUDE_MD
             cd "$harness" || fail "The harness isn't mounted."
@@ -246,6 +257,9 @@ enum SandboxLaunch {
             \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "", afterExit: "note \"Claude Code has exited, so its sandbox stops once nothing else uses it. Restart the session to go on.\"\nexit 0"))
             """
     }
+
+    /// The house rules' file in the shared config, imported by its CLAUDE.md.
+    static let houseRulesFile = "gannin-house-rules.md"
 
     /// The repos to have cloned before the sandbox starts: the issue's and
     /// those of the PRs it has opened.

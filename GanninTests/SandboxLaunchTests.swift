@@ -97,8 +97,25 @@ struct SandboxLaunchTests {
         credentials.claudeMemory = ""
         #expect(SandboxLaunch.secretsFile(credentials).contains("GANNIN_CLAUDE_MD=''"))
         let inner = SandboxLaunch.innerScript(session())
-        #expect(inner.contains(#"base64 -d > "$CLAUDE_CONFIG_DIR/CLAUDE.md""#))
-        #expect(inner.contains(#"rm -f "$CLAUDE_CONFIG_DIR/CLAUDE.md""#))
+        // Run as inner.sh runs it: claude's own memory kept, the rules in
+        // their own file, imported once, and an empty box empties it.
+        let start = inner.range(of: "rules=")!.lowerBound
+        let end = inner.range(of: "unset GANNIN_CLAUDE_MD")!.lowerBound
+        let block = "note() { :; }\n" + inner[start..<end]
+        let folder = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try? "remembered\n".write(to: folder.appending(path: "CLAUDE.md"), atomically: true, encoding: .utf8)
+        let rules = Data("rule\n".utf8).base64EncodedString()
+        for value in [rules, rules] {
+            _ = Shell.run("CLAUDE_CONFIG_DIR=\(SandboxRuntime.quoted(folder.path)); GANNIN_CLAUDE_MD=\(value)\n\(block)", .local)
+        }
+        let memory = try? String(contentsOf: folder.appending(path: "CLAUDE.md"), encoding: .utf8)
+        #expect(memory == "remembered\n\n@\(SandboxLaunch.houseRulesFile)\n")
+        let written = try? String(contentsOf: folder.appending(path: SandboxLaunch.houseRulesFile), encoding: .utf8)
+        #expect(written == "rule\n")
+        _ = Shell.run("CLAUDE_CONFIG_DIR=\(SandboxRuntime.quoted(folder.path)); GANNIN_CLAUDE_MD=\n\(block)", .local)
+        #expect((try? String(contentsOf: folder.appending(path: SandboxLaunch.houseRulesFile), encoding: .utf8)) == "")
     }
 
     @Test func secretsAreReadableOnlyByTheUser() throws {

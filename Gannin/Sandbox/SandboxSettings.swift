@@ -23,6 +23,7 @@ struct SandboxSettingsSection: View {
     @State private var confirmingInstall = false
     @State private var confirmingOff = false
     @State private var showingOutput = false
+    @State private var confirmingCopy = false
 
     var body: some View {
         let _ = revision
@@ -131,18 +132,24 @@ struct SandboxSettingsSection: View {
                 .frame(minHeight: 120)
             HStack {
                 Button("Copy from This Mac") {
-                    if let text = try? String(contentsOf: SandboxCredentials.macClaudeMemory, encoding: .utf8) { claudeMemory = text }
+                    if claudeMemory.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { copyMacMemory() } else { confirmingCopy = true }
                 }
                 .disabled(!FileManager.default.fileExists(atPath: SandboxCredentials.macClaudeMemory.path))
-                .help("Fills this with your ~/.claude/CLAUDE.md, to edit before it goes in")
+                .help("Fills this with your ~/.claude/CLAUDE.md, to edit before it goes in. Its @ imports name files on this Mac, which a sandbox can't read.")
                 Spacer()
             }
         } header: {
             Text("House rules for Claude")
         } footer: {
-            Text("Your own rules for Claude in every sandbox, as the CLAUDE.md in the config your sandboxes share: how to write commits and pull requests, attribution, anything you'd keep in ~/.claude/CLAUDE.md on this Mac. A sandbox's Claude reads them each time it starts, here or on a server. Your own ~/.claude never goes in; copy from it here.")
+            Text("Your own rules for Claude in every sandbox: how to write commits and pull requests, attribution, anything you'd keep in ~/.claude/CLAUDE.md on this Mac. They're written to a file of their own each time a sandbox's Claude starts, here or on a server, and imported by the CLAUDE.md your sandboxes share, so what Claude remembers there stays. Your own ~/.claude never goes in; copy from it here, leaving out @ imports, which name files a sandbox can't read.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+        }
+        .confirmationDialog("Replace your house rules with this Mac's CLAUDE.md?", isPresented: $confirmingCopy) {
+            Button("Replace", role: .destructive, action: copyMacMemory)
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("What's in the box now is lost.")
         }
 
         Section {
@@ -154,6 +161,10 @@ struct SandboxSettingsSection: View {
         } header: {
             Text("Each sandbox gets")
         }
+    }
+
+    private func copyMacMemory() {
+        if let text = try? String(contentsOf: SandboxCredentials.macClaudeMemory, encoding: .utf8) { claudeMemory = text }
     }
 
     // MARK: Setup
