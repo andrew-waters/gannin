@@ -500,6 +500,10 @@ struct HarnessAuthoringSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
+                WriteWithClaudeButton(purpose: .authoring(kind), text: text) { draft, _ in
+                    text = draft
+                    save()
+                }
                 Button("Restore Default") {
                     configs.update(org) { config in
                         config.authoring?[kind.singular] = nil
@@ -508,18 +512,8 @@ struct HarnessAuthoringSection: View {
                     text = HarnessAuthoring.defaultGuidance(kind)
                 }
                 .disabled(!HarnessAuthoring.isCustom(kind, config: config))
-                Button("Save") {
-                    let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    configs.update(org) { config in
-                        if value.isEmpty || value == HarnessAuthoring.defaultGuidance(kind) {
-                            config.authoring?[kind.singular] = nil
-                            if config.authoring?.isEmpty == true { config.authoring = nil }
-                        } else {
-                            config.authoring = (config.authoring ?? [:]).merging([kind.singular: value]) { $1 }
-                        }
-                    }
-                }
-                .disabled(text == saved)
+                Button("Save", action: save)
+                    .disabled(text == saved)
             }
         } header: {
             Text("Drafting with Claude")
@@ -530,6 +524,20 @@ struct HarnessAuthoringSection: View {
         }
         .onAppear { text = saved }
         .onChange(of: kind) { text = configs.config(for: org).authoring?[kind.singular] ?? HarnessAuthoring.defaultGuidance(kind) }
+    }
+
+    /// The editor's text as the org's guidance for the kind; Gannin's
+    /// default, or nothing, clears it.
+    private func save() {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        configs.update(org) { config in
+            if value.isEmpty || value == HarnessAuthoring.defaultGuidance(kind) {
+                config.authoring?[kind.singular] = nil
+                if config.authoring?.isEmpty == true { config.authoring = nil }
+            } else {
+                config.authoring = (config.authoring ?? [:]).merging([kind.singular: value]) { $1 }
+            }
+        }
     }
 
     private var footer: String {
