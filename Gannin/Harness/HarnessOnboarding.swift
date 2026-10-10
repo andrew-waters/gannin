@@ -40,6 +40,7 @@ enum HarnessTour {
         Entry(name: "recap.json", depth: 1, text: "How often the team looks back on what it closed."),
         Entry(name: "prioritisation.json", depth: 1, text: "The board's date field that says an issue is committed to."),
         Entry(name: "field-notes.json", depth: 1, text: "Points raised in prioritisation, until they're dealt with."),
+        Entry(name: "triage.json", depth: 1, text: "The priority buckets, the label or board option each is, and the last triage pass."),
     ]
 
     /// The org's, in the home project's harness only.
