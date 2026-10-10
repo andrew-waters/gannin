@@ -42,13 +42,14 @@ Arguments (ask for anything missing that you can't work out):
    ## Proposal
    What should change. Leave out the how unless it's already decided.
 
-   ## Acceptance
+   ## Acceptance criteria
    - [ ] Checkable outcomes
+   - [ ] Docs: which pages at gannin.ai/docs change, or "none"
 
    ## Context
    Links: parent issue, harness document (owner/name:path), PRs, findings.
    ```
-   TODO(andrew-waters): confirm the team's preferred issue body if it differs from this.
+   andrew-waters/gannin's own template is `.github/ISSUE_TEMPLATE/issue.md`, the shape above; keep its Docs item.
 
 4. **Draft the title, body and labels.** Make the title short and specific, a statement of the outcome rather than a task list. Refer to issues as `owner/name#123` so Gannin and the harness link them. Only use labels that already exist in the repo (`gh label list --repo OWNER/NAME`). Don't create labels.
 

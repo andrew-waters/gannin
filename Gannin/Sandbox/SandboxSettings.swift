@@ -223,7 +223,7 @@ struct SandboxSettingsSection: View {
     private func enabledNote(missing: [String]) -> String {
         if enabled { return "New Work on This sessions start in a sandbox, and each can be started on this Mac instead." }
         if !missing.isEmpty { return "Needs \(missing.joined(separator: " and ")) first, below." }
-        return "Turning it on gets this Mac ready first: Apple container installed, its service running, a Linux kernel set and Gannin's base image built, which takes a few minutes the first time."
+        return "Turning it on gets this Mac ready first: Apple container's service running, a Linux kernel set and Gannin's base image built, which takes a few minutes the first time. Install Apple container below first if it isn't here."
     }
 
     private func turn(_ on: Bool) {
