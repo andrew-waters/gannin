@@ -135,10 +135,25 @@ struct GitHubAPI {
     /// exist, or this token can't read) comes back nil without throwing, so
     /// this is the only way to learn why.
     func queryReportingReason<T: Decodable>(_ query: String, values: [String: Any] = [:]) async throws -> (T, [String]) {
-        try await send(query, variables: values)
+        let (result, messages): (T, [Message]) = try await send(query, variables: values)
+        return (result, messages.map(\.message))
     }
 
-    private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> (T, [String]) {
+    /// Like `queryReportingReason`, but keyed by the failing aliased
+    /// field's name (GraphQL's error `path`): for a batch of aliased
+    /// lookups (several repos in one query) where one failing doesn't stop
+    /// the rest decoding, and each needs its own reason.
+    func queryReportingReasonsByField<T: Decodable>(_ query: String, values: [String: Any] = [:]) async throws -> (T, [String: String]) {
+        let (result, messages): (T, [Message]) = try await send(query, variables: values)
+        var byField: [String: String] = [:]
+        for message in messages {
+            guard let field = message.path?.first else { continue }
+            byField[field] = message.message
+        }
+        return (result, byField)
+    }
+
+    private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> (T, [Message]) {
         if let until = pausedUntil?(false), until > .now { throw APIError.rateLimited(until: until) }
         let isMutation = query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("mutation")
         let source = isMutation ? .writes : APIUsage.currentSource
@@ -205,7 +220,7 @@ struct GitHubAPI {
         guard let result = envelope.data?.value else {
             throw APIError.graphQL(envelope.errors?.map(\.message) ?? ["Empty response"])
         }
-        return (result, envelope.errors?.map(\.message) ?? [])
+        return (result, envelope.errors ?? [])
     }
 
     /// Adds `rateLimit` to the query's top-level selection. Variable
@@ -240,6 +255,9 @@ struct GitHubAPI {
     private struct Message: Decodable {
         let message: String
         let type: String?
+        /// The failing field's path, an aliased query's first element its
+        /// alias (`["r3"]`); nil for one with no field to blame.
+        let path: [String]?
     }
 
     private struct ErrorsEnvelope: Decodable {
