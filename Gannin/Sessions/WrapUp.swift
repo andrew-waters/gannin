@@ -80,9 +80,15 @@ extension SessionStore {
     /// change's. Reviews, plans and Asks have their own ways to finish.
     static func offersWrapUp(_ session: CodeSession) -> Bool { session.canPairReview }
 
+    /// Claude itself is running, not just the shell it's left behind
+    /// once it exits.
+    func isClaudeRunning(_ id: UUID) -> Bool {
+        isRunning(id) && ![SessionState.exited, .stopped].contains(state(id))
+    }
+
     /// Claude, or one of its helpers, is still running.
     func isRunningWithHelpers(_ id: UUID) -> Bool {
-        isRunning(id) || helpers(of: id).contains { isRunning($0.id) }
+        isClaudeRunning(id) || helpers(of: id).contains { isClaudeRunning($0.id) }
     }
 
     func asksToWrapUp(_ id: UUID) -> Bool {
@@ -122,6 +128,13 @@ extension SessionStore {
     }
 }
 
+/// A worktree's line in the sheet: what isn't committed or pushed.
+private struct WorktreeNote: Identifiable {
+    let name: String
+    let text: String
+    var id: String { name }
+}
+
 /// The session `SessionStore.wrappingUp` names, for the window's sheet.
 struct WrapUpRequest: Identifiable {
     let id: UUID
@@ -146,16 +159,24 @@ struct WrapUpSessionSheet: View {
     @State private var askedClaude = false
     @State private var confirmingFinish = false
     @State private var finishing = false
+    /// The worktrees read twice, whatever mode the session's own Changes
+    /// pane is in: what isn't committed, and the branch since its base.
+    @State private var uncommitted = SessionChanges()
+    @State private var branch = SessionChanges()
 
     var body: some View {
         if let session = sessions.sessions[id] {
             content(session)
+        } else {
+            // Finished or removed elsewhere while this was open.
+            Color.clear
+                .frame(width: 1, height: 1)
+                .onAppear { sessions.wrappingUp = nil }
         }
     }
 
     private func content(_ session: CodeSession) -> some View {
         let documents = documents(session)
-        let changes = sessions.changes(for: session)
         return VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Wrap up \(session.longReference)?")
@@ -169,7 +190,7 @@ struct WrapUpSessionSheet: View {
             .padding(.bottom, 8)
 
             Form {
-                sessionSection(session, changes: changes)
+                sessionSection(session)
                 if !session.hasNoIssue {
                     plansSection(session, documents: documents)
                 }
@@ -182,7 +203,11 @@ struct WrapUpSessionSheet: View {
         }
         .frame(width: 560)
         .frame(minHeight: 420, maxHeight: 720)
-        .task { await changes.refresh(session) }
+        .task {
+            uncommitted.mode = .uncommitted
+            await uncommitted.refresh(session)
+            await branch.refresh(session)
+        }
         .confirmationDialog("Finish this session?", isPresented: $confirmingFinish) {
             Button("Finish and Remove Worktrees", role: .destructive) { finish(session) }
         } message: {
@@ -192,8 +217,8 @@ struct WrapUpSessionSheet: View {
 
     // MARK: Session
 
-    private func sessionSection(_ session: CodeSession, changes: SessionChanges) -> some View {
-        let running = sessions.helpers(of: id).filter { sessions.isRunning($0.id) }
+    private func sessionSection(_ session: CodeSession) -> some View {
+        let running = sessions.helpers(of: id).filter { sessions.isClaudeRunning($0.id) }
         return Section("Session") {
             LabeledContent("Claude") {
                 Text(sessions.state(id).label)
@@ -220,12 +245,35 @@ struct WrapUpSessionSheet: View {
                     }
                 }
             }
-            ForEach(changes.worktrees.filter { worktree in worktree.unpushed.map { $0 > 0 } ?? !worktree.files.isEmpty }) { worktree in
-                LabeledContent(worktree.name) {
-                    Text(worktree.unpushed.map { $0 == 1 ? "1 commit not pushed" : "\($0) commits not pushed" } ?? "Never pushed")
+            ForEach(worktreeNotes) { note in
+                LabeledContent(note.name) {
+                    Text(note.text)
                         .foregroundStyle(.orange)
                 }
             }
+        }
+    }
+
+    /// What ending or finishing would leave behind or lose, per worktree:
+    /// files not committed, commits not pushed, and work on a branch with
+    /// no upstream, which may never have been pushed.
+    private var worktreeNotes: [WorktreeNote] {
+        let names = (uncommitted.worktrees.map(\.name) + branch.worktrees.map(\.name)).reduce(into: [String]()) { names, name in
+            if !names.contains(name) { names.append(name) }
+        }
+        return names.compactMap { name in
+            let dirty = uncommitted.worktrees.first { $0.name == name }?.files.count ?? 0
+            let since = branch.worktrees.first { $0.name == name }
+            var parts: [String] = []
+            if dirty > 0 { parts.append(dirty == 1 ? "1 file not committed" : "\(dirty) files not committed") }
+            if let since {
+                if let unpushed = since.unpushed, unpushed > 0 {
+                    parts.append(unpushed == 1 ? "1 commit not pushed" : "\(unpushed) commits not pushed")
+                } else if !since.hasUpstream, !since.files.isEmpty {
+                    parts.append("no upstream, so maybe not pushed")
+                }
+            }
+            return parts.isEmpty ? nil : WorktreeNote(name: name, text: parts.joined(separator: ", "))
         }
     }
 
@@ -241,7 +289,9 @@ struct WrapUpSessionSheet: View {
     private func documents(_ session: CodeSession) -> [HarnessDocument] {
         guard !session.hasNoIssue, let setup = setup(session),
               let index = harness.index(for: session.issue.org, setup) ?? harness.anyIndex(org: session.issue.org, repo: setup.repo) else { return [] }
+        // Only those about the issue: one that just mentions it is another's.
         return index.matches(repo: session.issue.repo, number: session.issue.number)
+            .filter(\.isSubject)
             .map(\.document)
             .filter(\.followsStandard)
     }
@@ -288,7 +338,7 @@ struct WrapUpSessionSheet: View {
                 Button("Ask Claude to Tick Them Off") {
                     askedClaude = sessions.submit(SessionStore.tickOffPrompt(documents.map(\.path)), to: id)
                 }
-                .disabled(!sessions.isRunning(id) || askedClaude)
+                .disabled(!sessions.isClaudeRunning(id) || askedClaude)
                 .help("Pastes a prompt asking claude to tick off what its work met and commit it to the harness")
                 Spacer()
                 if committing { ProgressView().controlSize(.small) }

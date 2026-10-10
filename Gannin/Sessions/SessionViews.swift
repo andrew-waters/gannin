@@ -70,7 +70,8 @@ struct SessionsWindow: View {
         .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : "New plan" } ?? "")
         .background { shortcuts }
         .sheet(item: Binding(
-            get: { sessions.wrappingUp.map(WrapUpRequest.init) },
+            // Gone elsewhere while asking: nothing left to wrap up.
+            get: { sessions.wrappingUp.flatMap { sessions.sessions[$0] == nil ? nil : WrapUpRequest(id: $0) } },
             set: { if $0 == nil { sessions.wrappingUp = nil } }
         ), onDismiss: {
             if closesWindow, sessions.tabs.isEmpty { dismissWindow(id: SessionStore.windowID) }
