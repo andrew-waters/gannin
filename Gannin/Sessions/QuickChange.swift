@@ -196,6 +196,23 @@ struct QuickChangeAttachment: Identifiable {
     static let maxBytes = 20 * 1024 * 1024
 }
 
+/// What's been entered in a New Quick Change tab, kept on `SessionStore`
+/// while another tab is showing.
+struct QuickChangeForm {
+    var pickedOrg: String?
+    var picked: String?
+    var repo = ""
+    var title = ""
+    var note = ""
+    var attachments: [QuickChangeAttachment] = []
+    var screenshotsInIssue = false
+    var issueImages = IssueImageSet()
+    var recording = true
+    var sandboxed = true
+    var choice = PromptChoice()
+    var choseDefaults = false
+}
+
 /// A New Quick Change tab in the Claude Code window, until it's started:
 /// the project and repo, the note, screenshots, whether to file an issue,
 /// the team's prompts and skills for work, where it runs, and Start.
@@ -212,27 +229,59 @@ struct NewQuickChangeView: View {
 
     @State private var pickedOrg: String?
     @State private var picked: String?
-    @State private var repo = ""
-    @State private var title = ""
-    @State private var note = ""
-    @State private var attachments: [QuickChangeAttachment] = []
+    @State private var repo: String
+    @State private var title: String
+    @State private var note: String
+    @State private var attachments: [QuickChangeAttachment]
     @AppStorage("quickChangeCreatesIssue") private var createsIssue = true
     /// Whether the issue shows the screenshots, committed to the harness.
-    @State private var screenshotsInIssue = false
+    @State private var screenshotsInIssue: Bool
     /// The screenshots as the issue's images, kept so trying again after
     /// GitHub refuses the issue doesn't commit them twice.
-    @State private var issueImages = IssueImageSet()
-    @State private var recording = true
-    @State private var sandboxed = true
-    @State private var choice = PromptChoice()
-    @State private var choseDefaults = false
+    @State private var issueImages: IssueImageSet
+    @State private var recording: Bool
+    @State private var sandboxed: Bool
+    @State private var choice: PromptChoice
+    @State private var choseDefaults: Bool
     @State private var working = false
     @State private var steps: [String] = []
     @State private var error: String?
     @State private var dropTargeted = false
     @FocusState private var focused: Bool
 
+    /// Starts from what was entered before the tab was left, if anything.
+    init(draftID: UUID, draft: PlanningDraft, saved: QuickChangeForm?) {
+        self.draftID = draftID
+        self.draft = draft
+        let form = saved ?? QuickChangeForm()
+        _pickedOrg = State(initialValue: form.pickedOrg)
+        _picked = State(initialValue: form.picked)
+        _repo = State(initialValue: form.repo)
+        _title = State(initialValue: form.title)
+        _note = State(initialValue: form.note)
+        _attachments = State(initialValue: form.attachments)
+        _screenshotsInIssue = State(initialValue: form.screenshotsInIssue)
+        _issueImages = State(initialValue: form.issueImages)
+        _recording = State(initialValue: form.recording)
+        _sandboxed = State(initialValue: form.sandboxed)
+        _choice = State(initialValue: form.choice)
+        _choseDefaults = State(initialValue: form.choseDefaults)
+        restored = saved != nil
+    }
+
+    /// Whether the form came back from a tab left earlier, so its choices
+    /// aren't put back to the defaults.
+    private let restored: Bool
+
     private var org: String { pickedOrg ?? draft.org }
+
+    /// What's been entered, kept on the store while the tab is away.
+    private var form: QuickChangeForm {
+        QuickChangeForm(pickedOrg: pickedOrg, picked: picked, repo: repo, title: title, note: note,
+                        attachments: attachments, screenshotsInIssue: screenshotsInIssue,
+                        issueImages: issueImages, recording: recording, sandboxed: sandboxed,
+                        choice: choice, choseDefaults: choseDefaults)
+    }
 
     var body: some View {
         let config = configs.config(for: org)
@@ -266,7 +315,12 @@ struct NewQuickChangeView: View {
         .onAppear {
             focused = true
             if repo.isEmpty { repo = defaultRepo(setup: setup) }
-            sandboxed = placement.isSandboxed
+            if !restored { sandboxed = placement.isSandboxed }
+        }
+        .onDisappear {
+            // Switching tabs drops this view: keep what's entered, unless
+            // the tab's gone (closed, or started as a session).
+            if sessions.planningDrafts[draftID] != nil { sessions.quickChangeForms[draftID] = form }
         }
         .onChange(of: setup?.repo) { repo = defaultRepo(setup: setup) }
         .onChange(of: repo) { sandboxed = placement.isSandboxed }

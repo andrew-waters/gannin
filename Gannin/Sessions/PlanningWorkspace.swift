@@ -1148,10 +1148,13 @@ struct PlanningWorkspaceView: View {
         let dismissed = (planning?.dismissed ?? []).contains(finding.id)
         let risk = finding.kind?.lowercased() == "risk"
         return HStack(alignment: .top, spacing: 12) {
+            // One width for every kind, so the paths and notes line up.
             Text(finding.label)
                 .font(.caption.weight(.semibold))
+                .lineLimit(1)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 2)
+                .frame(minWidth: 64)
                 .background((risk ? Color.orange : ChartPalette.blue).opacity(0.18), in: Capsule())
             VStack(alignment: .leading, spacing: 4) {
                 if let path = finding.path {
