@@ -191,9 +191,11 @@ struct ScheduleForAgentButton: View {
 }
 
 /// Marks an issue in the agent queue or pinned to a time, where the issue is
-/// listed or shown; nothing when it's neither.
+/// listed or shown; nothing when it's neither. The store is passed in rather
+/// than read from the environment: a table's cells, rebuilt when it sorts or
+/// a row expands, don't always get the page's environment objects.
 struct ScheduledForAgentPill: View {
-    @Environment(RoutineStore.self) private var routines
+    let routines: RoutineStore
     let issueID: String
 
     var body: some View {

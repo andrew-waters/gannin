@@ -8,6 +8,7 @@ extension IssueReference: Identifiable {}
 /// window) and investment category; one column when the drawer is narrow.
 struct IssueSheet: View {
     @Environment(IssueStore.self) private var issueStore
+    @Environment(RoutineStore.self) private var routines
     @Environment(DetailStore.self) private var details
     @Environment(OrgStore.self) private var orgs
     @Environment(OrgConfigStore.self) private var configs
@@ -134,7 +135,7 @@ struct IssueSheet: View {
                 Link(destination: reference.url) {
                     Text(verbatim: "\(reference.repo)#\(reference.number)")
                 }
-                ScheduledForAgentPill(issueID: reference.id)
+                ScheduledForAgentPill(routines: routines, issueID: reference.id)
                 Spacer()
                 // A real page: navigate would open the drawer again.
                 if let open = openAsPage ?? navigate {

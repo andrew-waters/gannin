@@ -33,6 +33,7 @@ struct IssueReference: Codable, Hashable {
 /// under the org's workflow, board history, linked PRs and description.
 struct IssueWindow: View {
     @Environment(IssueStore.self) private var store
+    @Environment(RoutineStore.self) private var routines
     @Environment(OrgConfigStore.self) private var configs
     @Environment(DetailStore.self) private var details
     let reference: IssueReference
@@ -80,7 +81,7 @@ struct IssueWindow: View {
     private func header(record: IssueRecord?, workflow: IssueWorkflow) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             ItemHeader(title: reference.title, reference: "\(reference.repo)#\(reference.number)", url: reference.url, pill: pill(record),
-                       accessory: AnyView(ScheduledForAgentPill(issueID: reference.id)))
+                       accessory: AnyView(ScheduledForAgentPill(routines: routines, issueID: reference.id)))
             if let record {
                 let timing = IssueTiming(record, workflow: workflow, now: .now)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16, alignment: .topLeading)], alignment: .leading, spacing: 12) {
