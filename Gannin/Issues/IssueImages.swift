@@ -37,7 +37,7 @@ enum IssueImages {
     /// kept as a PNG.
     static let webTypes: [UTType] = [.png, .jpeg, .gif, .webP]
     /// The most an image can be, as a harness commit takes it.
-    static let maxBytes = HarnessChange.maxDataBytes
+    nonisolated static let maxBytes = HarnessChange.maxDataBytes
     /// Where in the harness they go.
     static let root = "attachments/issues"
     /// A placeholder's link, `attachment:<name>`, until the image is committed.
