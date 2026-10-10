@@ -21,6 +21,7 @@ enum TeamFile {
     static let project = ".gannin/project.json"
     static let prioritisation = ".gannin/prioritisation.json"
     static let fieldNotes = ".gannin/field-notes.json"
+    static let triage = ".gannin/triage.json"
     static let peoplePrefix = ".gannin/people/"
 
     /// The org's, in the home harness, rather than each project's.
@@ -52,6 +53,7 @@ enum TeamFile {
         case project: "the project's name and repos"
         case prioritisation: "the committed date field"
         case fieldNotes: "notes from the field"
+        case triage: "the priority scheme"
         default: login(path).map { "dates for \($0)" } ?? path
         }
     }
@@ -93,6 +95,7 @@ struct HarnessTeamData {
     var legacyProjects: [LegacyProject]?
     var prioritisation: TeamPrioritisation?
     var fieldNotes: [FieldNote]?
+    var triage: PriorityScheme?
     var people: [String: PersonDates] = [:]
 
     init(files: [String: String]) {
@@ -110,6 +113,7 @@ struct HarnessTeamData {
         legacyProjects = files[TeamFile.repoProjects].flatMap { TeamCoding.decode([LegacyProject].self, $0) }
         prioritisation = files[TeamFile.prioritisation].flatMap { TeamCoding.decode(TeamPrioritisation.self, $0) }
         fieldNotes = files[TeamFile.fieldNotes].flatMap { TeamCoding.decode([FieldNote].self, $0) }
+        triage = files[TeamFile.triage].flatMap { TeamCoding.decode(PriorityScheme.self, $0) }
         for (path, text) in files {
             if let login = TeamFile.login(path), let dates = TeamCoding.decode(PersonDates.self, text) {
                 people[login] = dates
@@ -142,6 +146,7 @@ struct HarnessTeamData {
         config.recap = recap
         config.scorecard = scorecard
         config.committedDateField = prioritisation?.committedDateField
+        config.priorityScheme = triage
         return config
     }
 
@@ -163,6 +168,7 @@ struct HarnessTeamData {
         if before.committedDateField != after.committedDateField {
             files[TeamFile.prioritisation] = after.committedDateField.flatMap { TeamCoding.encode(TeamPrioritisation(committedDateField: $0)) }
         }
+        if before.priorityScheme != after.priorityScheme { files[TeamFile.triage] = after.priorityScheme.flatMap(TeamCoding.encode) }
         if before.excludedRepos != after.excludedRepos || before.excludedAuthors != after.excludedAuthors || before.includedAuthors != after.includedAuthors
             || before.reposWithoutReview != after.reposWithoutReview || before.reposNeedingMac != after.reposNeedingMac {
             files[TeamFile.exclusions] = exclusionsFile(after)

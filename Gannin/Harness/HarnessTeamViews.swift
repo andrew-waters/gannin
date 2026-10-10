@@ -125,7 +125,7 @@ struct TeamDataSection: View {
             LabeledContent(project.name) {
                 Text(project.harness.repo)
             }
-            Text("The project's name and repos, investment categories, issue workflow, goals, scorecard, recap cadence, committed date field and notes from the field are read from .gannin in its harness.")
+            Text("The project's name and repos, investment categories, issue workflow, goals, scorecard, recap cadence, committed date field, priority scheme and notes from the field are read from .gannin in its harness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if home.id != project.id {

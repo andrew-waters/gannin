@@ -1451,8 +1451,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - Team data in the harnesses (`HarnessTeamData.swift`): an org with a harness keeps its team
   data as JSON under `.gannin/` (`TeamFile`), keys sorted and calendar days as `2026-10-03`
   (`TeamCoding`). Each project's harness has its own `project.json`, `investments.json`,
-  `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json` and
-  `field-notes.json`; the
+  `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json`,
+  `triage.json` and `field-notes.json`; the
   home project's (the first) also has the org's (`TeamFile.isOrgWide`): `views.json`,
   `working-week.json`, `leave.json`, `exclusions.json`, `authoring.json` and
   `people/<login>.json` (time off with sick days included). The index reads `.gannin/*.json`
@@ -1590,6 +1590,14 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   it: text, who (remembered), customer, kind and urgency (`FieldNote`), ⌘↩ to add. Notes are
   linked to an issue, or raised as one (`WriteIssueSheet`: Claude drafts the repo, title,
   description and labels, with images to attach, then `createIssue` and onto the board for triage).
+- Triage's priority scheme (`Triage/PriorityScheme.swift`, andrew-waters/gannin#156, part of
+  andrew-waters/gannin#154, `plans/2026-10-10-a-new-triage-feature-in-rituals-the-idea.md`):
+  `PriorityScheme` is a project's ordered `PriorityBucket`s (name, colour slot, `githubValue`)
+  kept on GitHub as labels or as options of a single-select field on one board
+  (`PriorityTracking`), with `lastPass`, the day the last pass was written. It's a project team
+  file, `.gannin/triage.json` (`OrgConfig.priorityScheme`, laid on as recap's is), read leniently.
+  `reading(_:)` is an issue's bucket as GitHub has it (`PriorityReading`): none is untriaged,
+  labels of two buckets conflicting. The Triage page, queue and editor are still to come.
 - Triage with Claude (`TriageWithClaudeSheet`) suggests board fields, investment category and
   whether an issue suits an agent, for ticking and writing through `FieldWriteSheet`.
 
