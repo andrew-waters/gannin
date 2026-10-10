@@ -135,6 +135,7 @@ enum SessionTabColors {
 
 private struct SessionTabBar: View {
     @Environment(SessionStore.self) private var sessions
+    @State private var showingAdd = false
 
     var body: some View {
         HStack(spacing: 0) {
@@ -189,42 +190,225 @@ private struct SessionTabBar: View {
         }
     }
 
-    /// Sessions already started that have no tab open.
+    /// New Ask, Quick Change and Plan, and the sessions already started
+    /// that have no tab open.
     private var addMenu: some View {
-        let closed = sessions.sessions.values
-            // Helpers show in their session's tab.
-            .filter { !sessions.tabs.contains($0.id) && $0.archivedAt == nil && !$0.isHelper }
-            .sorted { $0.createdAt > $1.createdAt }
-        let org = sessions.selectedTab.flatMap { sessions.sessions[$0]?.org } ?? sessions.sessions.values.first?.org
-        return Menu {
-            if let org {
-                // In the harness of the session showing, when there is one.
-                let harness = sessions.selectedTab.flatMap { sessions.sessions[$0]?.harnessRepo }
-                Button("New Ask") {
-                    sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness, isAsk: true))
-                }
-                Button("New Quick Change") {
-                    sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness, isQuickChange: true))
-                }
-                Button("New Plan") {
-                    sessions.openDraft(PlanningDraft(org: org, harnessRepo: harness))
-                }
-                Divider()
-            }
-            if closed.isEmpty {
-                Text("Every session is open")
-            }
-            ForEach(closed) { session in
-                Button("\(session.issue.number > 0 ? "#\(session.issue.number) " : "")\(session.title)\(sessions.isStale(session) ? " (stale)" : "")") { sessions.reveal(session.id) }
-            }
+        Button {
+            showingAdd.toggle()
         } label: {
             Image(systemName: "plus")
         }
-        .menuStyle(.button)
         .buttonStyle(.borderless)
-        .menuIndicator(.hidden)
-        .fixedSize()
-        .help("Open another session in a tab. Work on This on an issue starts a new one.")
+        .help("Start an Ask, Quick Change or Plan, or open a session that has no tab")
+        .popover(isPresented: $showingAdd, arrowEdge: .bottom) {
+            NewSessionPopover { showingAdd = false }
+        }
+    }
+}
+
+/// The tab bar's +: buttons for what can be started here, then the sessions
+/// already started that have no tab open, filtered as you type.
+private struct NewSessionPopover: View {
+    @Environment(SessionStore.self) private var sessions
+    let dismiss: () -> Void
+    @State private var search = ""
+    @State private var highlighted: CodeSession.ID?
+    @FocusState private var searching: Bool
+
+    /// Not in a tab, not archived, and not a helper (helpers show in their
+    /// session's tab), newest first.
+    private var closed: [CodeSession] {
+        sessions.sessions.values
+            .filter { !sessions.tabs.contains($0.id) && $0.archivedAt == nil && !$0.isHelper }
+            .sorted { sessions.lastActive($0) > sessions.lastActive($1) }
+    }
+
+    private var matching: [CodeSession] {
+        let words = search.lowercased().split(separator: " ").map(String.init)
+        guard !words.isEmpty else { return closed }
+        return closed.filter { session in
+            let kind = TabKind(session)
+            let text = [kind.name, kind.reference ?? "", kind.title, session.title, session.issue.repo]
+                .joined(separator: " ").lowercased()
+            return words.allSatisfy { text.contains($0) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            quickActions
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Open a Session")
+                    .font(.headline)
+                Text("Sessions already started that have no tab open: closing a tab leaves claude running. Work on This on an issue, Review with Claude on a pull request and Plan This start new ones from their pages.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            let rows = matching
+            PopoverSearchField(text: $search, prompt: "Filter sessions", focused: $searching) {
+                if let session = rows.first(where: { $0.id == highlighted }) { open(session) }
+            } move: { step in
+                guard !rows.isEmpty else { return }
+                let index = rows.firstIndex { $0.id == highlighted } ?? (step > 0 ? -1 : rows.count)
+                highlighted = rows[max(0, min(rows.count - 1, index + step))].id
+            }
+            .padding(-10)
+            list(rows)
+        }
+        .padding(14)
+        .frame(width: 420)
+        .onAppear {
+            highlighted = matching.first?.id
+            searching = true
+        }
+        .onChange(of: search) { highlighted = matching.first?.id }
+    }
+
+    @ViewBuilder
+    private var quickActions: some View {
+        let org = sessions.selectedTab.flatMap { sessions.sessions[$0]?.org } ?? sessions.sessions.values.first?.org
+        if let org {
+            // In the harness of the session showing, when there is one.
+            let harness = sessions.selectedTab.flatMap { sessions.sessions[$0]?.harnessRepo }
+            HStack(spacing: 8) {
+                action("New Ask", symbol: "sparkle.magnifyingglass", help: "A conversation about anything, not tied to an issue") {
+                    PlanningDraft(org: org, harnessRepo: harness, isAsk: true)
+                }
+                action("Quick Change", symbol: "bolt", help: "Work on a small change from a note") {
+                    PlanningDraft(org: org, harnessRepo: harness, isQuickChange: true)
+                }
+                action("New Plan", symbol: "list.bullet", help: "Plan a topic in the harness with the room") {
+                    PlanningDraft(org: org, harnessRepo: harness)
+                }
+            }
+        } else {
+            Text("New Ask, Quick Change and Plan start from the sidebar of a main window once there's an org.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func action(_ title: String, symbol: String, help: String, draft: @escaping () -> PlanningDraft) -> some View {
+        Button {
+            sessions.openDraft(draft())
+            dismiss()
+        } label: {
+            VStack(spacing: 6) {
+                Image(systemName: symbol)
+                    .font(.system(size: 18))
+                Text(title)
+                    .font(.callout)
+            }
+            .frame(maxWidth: .infinity, minHeight: 52)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .help(help)
+    }
+
+    @ViewBuilder
+    private func list(_ rows: [CodeSession]) -> some View {
+        if closed.isEmpty {
+            Text("Every session is open in a tab.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        } else if rows.isEmpty {
+            Text("No session matches.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+        } else {
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(rows) { session in
+                            SessionPickerRow(
+                                session: session,
+                                lastActive: sessions.lastActive(session),
+                                isStale: sessions.isStale(session),
+                                isHighlighted: session.id == highlighted
+                            ) { open(session) }
+                            .id(session.id)
+                            .onHover { if $0 { highlighted = session.id } }
+                        }
+                    }
+                }
+                .onChange(of: highlighted) { _, id in
+                    if let id { proxy.scrollTo(id) }
+                }
+            }
+            // A popover sizes a scroll view by its frame, so as tall as its
+            // rows (about 42 points each) up to eight.
+            .frame(height: min(CGFloat(rows.count) * 42, 336))
+        }
+    }
+
+    private func open(_ session: CodeSession) {
+        sessions.reveal(session.id)
+        dismiss()
+    }
+}
+
+/// A session in the +'s list: its kind's icon, kind and issue or PR above
+/// its title, and when it was last active; highlighted as the branch
+/// popover's rows are.
+private struct SessionPickerRow: View {
+    let session: CodeSession
+    let lastActive: Date
+    let isStale: Bool
+    let isHighlighted: Bool
+    let open: () -> Void
+
+    var body: some View {
+        let kind = TabKind(session)
+        Button(action: open) {
+            HStack(spacing: 10) {
+                Image(systemName: kind.symbol)
+                    .font(.system(size: 15))
+                    .foregroundStyle(isHighlighted ? Color.white.opacity(0.8) : .secondary)
+                    .frame(width: 20)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 1) {
+                    HStack(spacing: 6) {
+                        Text(kind.name)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(isHighlighted ? Color.white.opacity(0.8) : .secondary)
+                        if let reference = kind.reference {
+                            Text(reference)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(isHighlighted ? Color.white.opacity(0.8) : .secondary)
+                                .lineLimit(1)
+                                .truncationMode(.head)
+                        }
+                        if isStale {
+                            Text("Stale")
+                                .font(.caption)
+                                .foregroundStyle(isHighlighted ? Color.white : .orange)
+                        }
+                    }
+                    Text(kind.title)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                }
+                Spacer(minLength: 8)
+                Text(lastActive, format: .relative(presentation: .named))
+                    .font(.caption)
+                    .foregroundStyle(isHighlighted ? Color.white.opacity(0.8) : .secondary)
+                    .lineLimit(1)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .foregroundStyle(isHighlighted ? Color.white : Color.primary)
+            .background(isHighlighted ? Color.accentColor : Color.clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isHighlighted ? .isSelected : [])
+        .accessibilityLabel("\(kind.name) \(kind.reference ?? "") \(kind.title)")
     }
 }
 

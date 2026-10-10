@@ -730,7 +730,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   for a menu, as the menu closes) starts the issue's session in the window's project's harness, no repo to pick, and opens it
   as a tab in the one Claude Code window (`SessionsWindow`, `SessionStore.tabs`, kept across
   launches; each tab two lines beside a large icon for its kind, the kind (Plan, Review, Code or a
-  helper's role) and issue or PR above its title, `TabKind`; + opens a session already started, ⌘W closes a tab, claude keeps running;
+  helper's role) and issue or PR above its title, `TabKind`; + is a popover (`NewSessionPopover`) of New Ask, Quick Change and New Plan buttons over a filterable list of sessions already started with no tab open, ⌘W closes a tab, claude keeps running;
   tabs are dragged into order, and Rename Tab or a double-click names one, `CodeSession.name`, in
   place of its title everywhere, empty going back). A session's helpers have no tab of their own
   (andrew-waters/gannin#131): they show in its tab (`SessionStore.tabOwner`; `reveal` and
