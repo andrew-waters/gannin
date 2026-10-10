@@ -2,7 +2,7 @@
   "box" : "Andrew’s MacBook Air",
   "branch" : "quick-subissues-should-be-under-the-e816",
   "pullRequests" : [
-
+    "https://github.com/andrew-waters/gannin/pull/143"
   ],
   "repos" : [
     "andrew-waters/gannin"
