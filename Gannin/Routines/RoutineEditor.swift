@@ -165,12 +165,15 @@ struct RoutineEditor: View {
                 }
             }
             let harnesses = configs.config(for: routine.org).allHarnesses
-            Picker("Project", selection: $routine.harnessRepo) {
-                ForEach(harnesses, id: \.repo) { harness in
-                    Text(harness.repo).tag(harness.repo)
-                }
-                if !harnesses.contains(where: { $0.repo == routine.harnessRepo }) {
-                    Text(routine.harnessRepo).tag(routine.harnessRepo)
+            // Issue runs go to the project covering the issue's repos.
+            if routine.kind == .report || routine.kind == .code {
+                Picker("Project", selection: $routine.harnessRepo) {
+                    ForEach(harnesses, id: \.repo) { harness in
+                        Text(harness.repo).tag(harness.repo)
+                    }
+                    if !harnesses.contains(where: { $0.repo == routine.harnessRepo }) {
+                        Text(routine.harnessRepo).tag(routine.harnessRepo)
+                    }
                 }
             }
             if let issue = routine.issue {

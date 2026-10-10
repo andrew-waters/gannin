@@ -156,9 +156,23 @@ extension SessionStore {
     /// recorded by the scheduler.
     func startRoutine(_ routine: Routine, issue: IssueReference?, run: UUID, configs: OrgConfigStore, issues: IssueStore, details: DetailStore, login: String?) async -> RoutineStart {
         let project = configs.scoped(routine.harnessRepo)
-        guard let setup = project.config(for: routine.org).harness(repo: routine.harnessRepo) else {
-            return .failed("\(routine.harnessRepo) isn't one of \(routine.org)'s projects any more.")
+        let own = project.config(for: routine.org).harness(repo: routine.harnessRepo)
+        let gone = "\(routine.harnessRepo) isn't one of \(routine.org)'s projects any more."
+        switch routine.kind {
+        case .issueQueue, .pinned:
+            guard let issue else { return .failed("There was no issue to work on.") }
+            // The queue is the org's: each issue runs in the harness covering
+            // its repos, as Work on This picks it; the routine's project only
+            // when none does.
+            guard let covering = configs.config(for: issue.org).harness(covering: WorkOnThisLauncher.repos(issue, issues: issues)) ?? own else {
+                return .failed(gone)
+            }
+            let goals = configs.scoped(covering.repo).config(for: issue.org).measurables
+            return await startIssueRun(routine, issue: issue, run: run, setup: covering, goals: goals, configs: configs, issues: issues, details: details, login: login)
+        case .report, .code:
+            break
         }
+        guard let setup = own else { return .failed(gone) }
         let goals = project.config(for: routine.org).measurables
         switch routine.kind {
         case .report:
@@ -170,12 +184,7 @@ extension SessionStore {
             let placement = Self.routinePlacement(org: routine.org, repos: routine.repos, configs: configs)
             return await startMaintenanceRun(routine, run: run, setup: setup, harnessPath: path, placement: placement, goals: goals)
         case .issueQueue, .pinned:
-            guard let issue else { return .failed("There was no issue to work on.") }
-            // The queue is the org's: each issue runs in the harness covering
-            // its repos, as Work on This picks it, not the window's own.
-            let covering = configs.config(for: issue.org).harness(covering: WorkOnThisLauncher.repos(issue, issues: issues)) ?? setup
-            let issueGoals = covering.repo == setup.repo ? goals : configs.scoped(covering.repo).config(for: issue.org).measurables
-            return await startIssueRun(routine, issue: issue, run: run, setup: covering, goals: issueGoals, configs: configs, issues: issues, details: details, login: login)
+            return .failed("There was no issue to work on.")
         }
     }
 

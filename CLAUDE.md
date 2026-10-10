@@ -1229,8 +1229,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `concurrency` runs are going (`freeSlots`), each taken off the queue as it starts. No look awaits a
   start (one can take minutes): each run is recorded as going and started in a task of its own
   (`starting`), so limits are still watched meanwhile. A queued issue whose start fails goes back to
-  the front and its window holds off five minutes (`heldUntil`), unless the issue itself was the
-  trouble (`RoutineStart.failed(_:retry:)`). Run Now starts one outside the schedule. At launch, runs
+  the front and its window holds off five minutes, doubling with each failure in a row, and after
+  four stops until it next opens or Run Now (`heldUntil`, `failures`, `queueNote` on its row), unless
+  the issue itself was the trouble (`RoutineStart.failed(_:retry:)`). Run Now starts one outside the schedule. At launch, runs
   still marked going are failed (terminals don't outlive Gannin). Deleting a routine keeps its runs
   still going, so their limits are watched until they end.
 - Starting (`SessionStore.startRoutine`, `Routines/RoutineRuns.swift`): the run's session carries
@@ -1253,7 +1254,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
     description (`maintenanceSections`), placed as Work on This would be (a sandbox clones every repo
     it names, `SandboxLaunch.cloneRepos`).
   - An issue from a queue window or pin (`startIssueRun`) is the issue's Work on This session, in the
-    harness covering its repos (the queue is the org's, not a project's), briefed
+    harness covering its repos (the queue is the org's, not a project's; the routine's project only when
+    none does, and the editor offers no Project for these), briefed
     from the history and any cached detail, its record committed to the harness without asking
     (scheduling it is the consent), its first prompt `scheduledIssuePrompt` (write a short plan and
     carry on) with the routine's note. An issue that already has a session fails the run.

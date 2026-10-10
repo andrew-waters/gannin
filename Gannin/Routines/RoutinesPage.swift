@@ -146,6 +146,7 @@ struct EditedRoutine: Identifiable {
 /// outcome and whether it's on.
 private struct RoutineRow: View {
     @Environment(RoutineStore.self) private var routines
+    @Environment(RoutineScheduler.self) private var scheduler
     let routine: Routine
     let isWorkingDay: RoutineSchedule.WorkingDays
 
@@ -186,6 +187,11 @@ private struct RoutineRow: View {
                 if let last {
                     RunOutcomeLabel(run: last)
                         .font(.caption)
+                }
+                if let note = scheduler.queueNote(routine.id) {
+                    Text(note)
+                        .font(.caption)
+                        .foregroundStyle(.orange)
                 }
             }
             Toggle("On", isOn: Binding(get: { routine.isEnabled }, set: { on in routines.update(routine.id) { $0.isEnabled = on } }))
@@ -313,7 +319,7 @@ struct RoutinePage: View {
             }
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 4) {
                 fact("Kind", routine.kind.label)
-                fact("Project", routine.harnessRepo)
+                fact("Project", routine.kind.touchesCode && routine.kind != .code ? "The one covering each issue's repos" : routine.harnessRepo)
                 fact("When", routine.schedule.summary)
                 if let issue = routine.issue { fact("Issue", "\(issue.reference) \(issue.title)") }
                 if !routine.repos.isEmpty { fact("Repos", routine.repos.joined(separator: ", ")) }

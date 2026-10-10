@@ -32,8 +32,11 @@ final class RoutineScheduler {
     /// How late a time may be noticed and still run.
     static let grace: TimeInterval = 120
     /// How long a queue window waits after a start fails before trying the
-    /// issue (put back at the front) again.
+    /// issue (put back at the front) again, doubled for each failure in a row.
     static let holdAfterFailure: TimeInterval = 5 * 60
+    /// Failures in a row after which a window stops trying until it next
+    /// opens, or Run Now.
+    static let maxFailures = 4
 
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var wakeObserver: NSObjectProtocol?
@@ -41,7 +44,9 @@ final class RoutineScheduler {
     /// image, the harness commit), so none is awaited by a look.
     @ObservationIgnored private var starting: [UUID: Task<Void, Never>] = [:]
     /// Queue windows held off after a failed start, until when.
-    @ObservationIgnored private var heldUntil: [UUID: Date] = [:]
+    private(set) var heldUntil: [UUID: Date] = [:]
+    /// Each queue window's failed starts in a row.
+    private(set) var failures: [UUID: Int] = [:]
     /// While a look is under way: the wake's and the loop's never overlap.
     @ObservationIgnored private var checking = false
 
@@ -144,8 +149,13 @@ final class RoutineScheduler {
     /// taken off the queue as it starts. Runs being started count, as
     /// they're recorded as going at once.
     private func drain(_ routine: Routine, now: Date) {
-        if let held = heldUntil[routine.id], now < held { return }
         let days = workingDays(routine.org)
+        // Shut, it starts afresh when it next opens.
+        if !routine.schedule.isOpen(at: now, calendar: calendar, isWorkingDay: days) {
+            failures[routine.id] = nil
+            heldUntil[routine.id] = nil
+        }
+        if let held = heldUntil[routine.id], now < held { return }
         while true {
             let active = store.activeRuns.filter { $0.routine == routine.id }.count
             guard Self.freeSlots(routine, active: active, now: now, paused: store.isPaused, calendar: calendar, isWorkingDay: days) > 0,
@@ -169,6 +179,10 @@ final class RoutineScheduler {
             switch result {
             case .started(let session):
                 self.store.updateRun(id) { $0.session = session }
+                if fromQueue {
+                    self.failures[routine.id] = nil
+                    self.heldUntil[routine.id] = nil
+                }
             case .failed(let why, let retry):
                 self.store.updateRun(id) { run in
                     run.outcome = .failed
@@ -177,10 +191,25 @@ final class RoutineScheduler {
                 }
                 if fromQueue, retry, let issue {
                     self.store.enqueue(issue, atFront: true)
-                    self.heldUntil[routine.id] = max(scheduledAt, .now).addingTimeInterval(Self.holdAfterFailure)
+                    let count = (self.failures[routine.id] ?? 0) + 1
+                    self.failures[routine.id] = count
+                    // Backs off, then gives up until the window next opens.
+                    self.heldUntil[routine.id] = count >= Self.maxFailures
+                        ? .distantFuture
+                        : max(scheduledAt, .now).addingTimeInterval(Self.holdAfterFailure * pow(2, Double(count - 1)))
                 }
             }
         }
+    }
+
+    /// Why a queue window isn't starting issues after failed starts, for
+    /// its row: waiting to try again, or stopped until it next opens.
+    func queueNote(_ routine: UUID, now: Date = .now) -> String? {
+        guard let held = heldUntil[routine], held > now, let count = failures[routine] else { return nil }
+        if held == .distantFuture {
+            return "Stopped after \(count) failed starts in a row, until it next opens or Run Now"
+        }
+        return "\(count) failed start\(count == 1 ? "" : "s"), trying again \(held.formatted(.relative(presentation: .named)))"
     }
 
     /// Whether one of the routine's runs is being started.
@@ -202,6 +231,7 @@ final class RoutineScheduler {
             guard let next = store.queue(for: routine.org).first else { return }
             store.dequeue(next.issue.id)
             heldUntil[routine.id] = nil
+            failures[routine.id] = nil
             run(routine, scheduledAt: .now, issue: next.issue, fromQueue: true)
         } else {
             run(routine, scheduledAt: .now, issue: routine.issue)
