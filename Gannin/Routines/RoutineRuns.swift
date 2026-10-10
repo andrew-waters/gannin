@@ -11,6 +11,9 @@ struct RoutineRunInfo: Codable, Hashable {
     let limit: RoutineLimit
     let maxMinutes: Int
     let maxCost: Double
+    /// A maintenance routine's repos and task, as they were when it ran.
+    let repos: [String]
+    let task: String
 
     init(routine: Routine, run: UUID) {
         self.routine = routine.id
@@ -20,6 +23,27 @@ struct RoutineRunInfo: Codable, Hashable {
         limit = routine.limit
         maxMinutes = routine.maxMinutes
         maxCost = routine.maxCost
+        repos = routine.repos
+        task = routine.prompt
+    }
+
+    /// A maintenance run's task and repos, in its brief where an issue's
+    /// description would be.
+    var maintenanceSections: [String] {
+        var lines = [
+            "## Routine maintenance",
+            "",
+            "Started on a schedule by the routine \"\(name)\" rather than from an issue, so there's no issue for it. Each run has a branch of its own.",
+            "",
+            "## The task",
+            "",
+            task.trimmingCharacters(in: .whitespacesAndNewlines),
+            "",
+        ]
+        if !repos.isEmpty {
+            lines += ["## Repos", ""] + repos.map { "- \($0)" } + [""]
+        }
+        return lines
     }
 
     /// What claude may not run (`--disallowedTools`), as far as the limit
@@ -121,5 +145,138 @@ extension SessionStore {
         content.body = body
         content.sound = .default
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "routine-\(UUID().uuidString)", content: content, trigger: nil))
+    }
+}
+
+// MARK: - Making a run's session
+
+extension SessionStore {
+    /// Starts a run of the routine: a report, maintenance, or the issue a
+    /// queue window or pin hands it. Read from the app's stores; the run is
+    /// recorded by the scheduler.
+    func startRoutine(_ routine: Routine, issue: IssueReference?, run: UUID, configs: OrgConfigStore, issues: IssueStore, details: DetailStore, login: String?) async -> RoutineStart {
+        let project = configs.scoped(routine.harnessRepo)
+        guard let setup = project.config(for: routine.org).harness(repo: routine.harnessRepo) else {
+            return .failed("\(routine.harnessRepo) isn't one of \(routine.org)'s projects any more.")
+        }
+        let goals = project.config(for: routine.org).measurables
+        switch routine.kind {
+        case .report:
+            return await startReportRun(routine, run: run, setup: setup)
+        case .code:
+            guard let path = Self.harnessPath(org: routine.org, repo: setup.repo) else {
+                return .failed(Self.unavailable(org: routine.org, harness: setup) ?? "The harness isn't checked out here.")
+            }
+            let placement = Self.routinePlacement(org: routine.org, repos: routine.repos, configs: configs)
+            return await startMaintenanceRun(routine, run: run, setup: setup, harnessPath: path, placement: placement, goals: goals)
+        case .issueQueue, .pinned:
+            return .failed("Scheduled issue runs aren't ready yet.")
+        }
+    }
+
+    /// Where a scheduled code run goes, as Work on This decides (a sandbox
+    /// once sandboxing is on, unless a repo needs the Mac).
+    static func routinePlacement(org: String, repos: [String], configs: OrgConfigStore) -> SandboxPlacement {
+        SandboxPlacement.decide(
+            enabled: SandboxCredentials.isEnabled, repos: repos,
+            reposNeedingMac: configs.config(for: org).reposNeedingMac, org: org,
+            hasGitHubToken: SandboxCredentials.gitHubToken(org: org) != nil,
+            connectsBySSH: connectCommand.map { Shell.sshArguments($0) != nil } ?? true
+        )
+    }
+
+    /// The team's prompts the routine names, else the defaults for `use`.
+    func routineInstructions(_ routine: Routine, setup: HarnessConfig, use: PromptUse, repos: [String], values: [String: String]) -> String? {
+        var choice: PromptChoice?
+        if !routine.teamPrompts.isEmpty {
+            let library = promptLibrary(org: routine.org, setup: setup)
+            let picked = library.prompts.filter { routine.teamPrompts.contains($0.path) }
+            choice = PromptChoice(prompts: Set(picked.map(\.path)), skills: Set(picked.flatMap(\.skills).compactMap { library.skill(named: $0)?.path }))
+        }
+        return launchInstructions(org: routine.org, setup: setup, use: use, repos: repos, choice: choice, values: values)
+    }
+
+    /// A report: an Ask session (on this Mac, its files kept in its folder
+    /// for the Files pane and Commit to Harness) with the routine's question
+    /// and no code worktree (R4).
+    func startReportRun(_ routine: Routine, run: UUID, setup: HarnessConfig) async -> RoutineStart {
+        let harnessPath = Self.localHarnessPath(org: routine.org, repo: setup.repo)
+        let id = UUID()
+        let slug = "\(Date.now.formatted(.iso8601.year().month().day()))-\(id.uuidString.prefix(8).lowercased())"
+        let branch = "ask-\(slug)"
+        let title = "\(routine.name), \(Date.now.formatted(date: .abbreviated, time: .shortened))"
+        let info = RoutineRunInfo(routine: routine, run: run)
+        let instructions = routineInstructions(routine, setup: setup, use: .ask, repos: [], values: ["title": title, "repo": setup.repo, "branch": branch])
+        var session = CodeSession(
+            id: id, issue: IssueReference(org: routine.org, id: "ask-\(id.uuidString)", number: 0, title: title, repo: setup.repo,
+                                              url: URL(string: "https://github.com/\(setup.repo)")!),
+            repo: setup.repo, branch: branch, createdAt: .now,
+            connect: nil, harnessRepo: setup.repo, harnessPath: harnessPath,
+            prompt: Self.askPrompt(routine.prompt, branch: branch), instructions: instructions,
+            ask: AskInfo(title: title, slug: slug, message: routine.prompt)
+        )
+        session.routineRun = info
+        let directory = Self.directory(for: id)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try? Data((Self.askBrief(session) + "\n" + info.briefSection).utf8).write(to: directory.appending(path: "brief.md"))
+        add(session)
+        return await startUnattended(id)
+    }
+
+    /// Maintenance: a session with no issue, as a quick change without one
+    /// is, on a branch of its own per run, told to give each of the
+    /// routine's repos a worktree as Work on This lays them out (R5).
+    func startMaintenanceRun(_ routine: Routine, run: UUID, setup: HarnessConfig, harnessPath: String, placement: SandboxPlacement, goals: [Measurable]) async -> RoutineStart {
+        guard let repo = routine.repos.first else { return .failed("The routine names no repo to work in.") }
+        let id = UUID()
+        let reference = IssueReference(org: routine.org, id: "routine-\(id.uuidString)", number: 0, title: routine.name, repo: repo,
+                                       url: URL(string: "https://github.com/\(repo)")!)
+        let branch = Self.routineBranchName(name: routine.name, id: id)
+        let instructions = routineInstructions(routine, setup: setup, use: .work, repos: routine.repos,
+                                               values: HarnessPromptLibrary.values(reference: "maintenance in \(repo)", title: routine.name, url: reference.url, repo: repo, number: 0, branch: branch))
+        var session = CodeSession(
+            id: id, issue: reference, repo: setup.repo, branch: branch, createdAt: .now,
+            connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath, instructions: instructions,
+            sandbox: placement.isSandboxed ? SandboxPlacement.containerName(for: id) : nil, hostReason: placement.reason
+        )
+        let info = RoutineRunInfo(routine: routine, run: run)
+        session.routineRun = info
+        session.prompt = Self.maintenancePrompt(session)
+        let directory = Self.directory(for: id)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let brief = SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: harnessStore.index(for: routine.org, setup), goals: goals)
+        try? Data((brief + "\n" + info.briefSection).utf8).write(to: directory.appending(path: "brief.md"))
+        add(session)
+        return await startUnattended(id)
+    }
+
+    /// `routine-<name>-<date>-<4 hex of its ID>`: a new branch each run.
+    static func routineBranchName(name: String, id: UUID, on day: Date = .now) -> String {
+        let words = String(name.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : " " }).split(separator: " ")
+        var slug = ""
+        for word in words {
+            let next = slug.isEmpty ? String(word) : "\(slug)-\(word)"
+            if next.count > 32 { break }
+            slug = next
+        }
+        let date = day.formatted(.iso8601.year().month().day().dateSeparator(.omitted))
+        let suffix = id.uuidString.prefix(4).lowercased()
+        return (["routine"] + (slug.isEmpty ? [] : [slug]) + [date, suffix]).joined(separator: "-")
+    }
+
+    /// A maintenance run's first prompt: the task, and where to work.
+    static func maintenancePrompt(_ session: CodeSession) -> String {
+        let folder = ".worktrees/\(session.branch)"
+        let repos = session.routineRun?.repos ?? [session.issue.repo]
+        return """
+            You're doing routine maintenance in \(repos.joined(separator: ", ")) for the routine "\(session.routineRun?.name ?? session.issue.title)", \
+            in the team's harness, by yourself: nobody is watching. Read \(folder)/.gannin/brief.md first: it has the task and how far \
+            you may go. Make the changes in a worktree per repo under \(folder)/, as the brief says, never in projects/ or the harness \
+            checkout itself. Don't wait for anyone to approve a plan.
+
+            The task:
+
+            \(session.routineRun?.task.trimmingCharacters(in: .whitespacesAndNewlines) ?? "")
+            """
     }
 }

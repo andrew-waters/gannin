@@ -426,7 +426,9 @@ enum SessionBrief {
     /// those a change bears on are listed, as guidance.
     static func make(session: CodeSession, record: IssueRecord?, detail: ItemDetail?, parent: IssueRecord?, harness: HarnessIndex?, goals: [Measurable] = []) -> String {
         let reference = session.issue
-        var lines = session.hasNoIssue
+        var lines = session.isMaintenance
+            ? ["# Maintenance in \(reference.repo): \(reference.title)", ""]
+            : session.hasNoIssue
             ? ["# Quick change in \(reference.repo): \(reference.title)", ""]
             : ["# \(reference.reference): \(reference.title)", "", reference.url.absoluteString, ""]
 
@@ -455,6 +457,8 @@ enum SessionBrief {
         if session.isQuickChange {
             // The note is the issue's description, if it has one.
             lines += quickChangeSections(session)
+        } else if let run = session.routineRun, session.isMaintenance {
+            lines += run.maintenanceSections
         } else {
             lines += ["## Description", ""]
             if let detail {
@@ -546,17 +550,31 @@ enum SessionBrief {
             if !linkedRepos.isEmpty {
                 working.append("- The issue's linked pull requests are in \(linkedRepos.map { "`\($0)`" }.joined(separator: ", ")), so start there.")
             }
-            if session.hasNoIssue {
+            if session.isMaintenance {
+                let repos = session.routineRun?.repos ?? []
+                working.append("- The work is in \((repos.isEmpty ? [reference.repo] : repos).joined(separator: ", ")).")
+            } else if session.hasNoIssue {
                 working.append("- The change is in \(reference.repo).")
             } else if reference.repo != harnessRepo {
                 working.append("- The issue lives in \(reference.repo).")
             }
+            // A scheduled run opens a pull request only as its limit allows.
+            let limit = session.routineRun?.limit
+            let create = limit == .draftPR ? "a draft pull request with `gh pr create --draft`" : "a pull request with `gh pr create`"
+            let createEach = limit == .draftPR ? "a draft pull request per repo with `gh pr create --draft`" : "a pull request per repo with `gh pr create`"
+            let noIssueNote = session.isMaintenance ? "Routine maintenance, no issue." : "Quick change, no issue."
             working += [
-                session.hasNoIssue
-                    ? "- Commit in the worktree, and open a pull request with `gh pr create`. There's no issue, so don't make one or invent a reference: put \"Quick change, no issue.\" in its body where `Closes` would go, and keep the branch's name, `\(session.branch)`."
-                    : "- Commit in each worktree, and open a pull request per repo with `gh pr create`, putting \"Closes \(reference.reference)\" in its body so it links to the issue.",
+                limit == .localOnly
+                    ? "- Commit in each worktree, and stop there: this run is Local only, so don't push or open a pull request (see Scheduled run)."
+                    : session.hasNoIssue
+                    ? "- Commit in the worktree, and open \(create). There's no issue, so don't make one or invent a reference: put \"\(noIssueNote)\" in its body where `Closes` would go, and keep the branch's name, `\(session.branch)`."
+                    : "- Commit in each worktree, and open \(createEach), putting \"Closes \(reference.reference)\" in its body so it links to the issue.",
                 session.isQuickChange
                     ? "- A quick change needs no plan document. If it grows to need one, stop and say so instead."
+                    : session.isMaintenance
+                    ? "- Maintenance needs no plan document. Say what you changed and why in the commit messages."
+                    : limit == .localOnly
+                    ? "- A plan for this issue goes in its folder as `\(folder)/plan.md`, with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out. This run is Local only and can't push it to the harness; whoever picks the branch up moves it in."
                     : "- A plan for this issue goes in the harness as `plans/YYYY-MM-DD-<slug>.md` from `plans/_template.md` (older harnesses keep plans in `requirements/<module>/plans/`), with `issues: [\(reference.reference)]` and a summary in its front matter as the harness's STANDARDS.md sets out, so Gannin links it to the issue. Commit and push it in the harness, and tick its checkboxes off as tasks land. When the harness is the code repo, the plan goes in its worktree and ships in the same pull request, and only if the repo keeps a `plans/` folder.",
                 "- `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks). `.worktrees/` and `projects/` are kept out of the harness's git.",
                 "",

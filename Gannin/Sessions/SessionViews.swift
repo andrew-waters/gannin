@@ -66,7 +66,7 @@ struct SessionsWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 480)
-        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.isAsk ? "Ask" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
+        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.routineRun?.kind == .report ? "Report" : $0.isAsk ? "Ask" : $0.isMaintenance ? "Maintenance" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
         .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : "New plan" } ?? "")
         .background { shortcuts }
         .sheet(item: Binding(
@@ -437,7 +437,12 @@ private struct TabKind {
     let title: String
 
     init(_ session: CodeSession) {
-        if let ask = session.ask {
+        if let run = session.routineRun, !session.isHelper {
+            name = run.kind == .report ? "Report" : run.kind == .code ? "Maintenance" : "Scheduled"
+            symbol = run.kind.systemImage
+            reference = session.hasNoIssue || session.isAsk ? nil : session.issue.reference
+            title = session.name ?? session.ask?.title ?? session.issue.title
+        } else if let ask = session.ask {
             name = "Ask"
             symbol = "sparkle.magnifyingglass"
             reference = nil

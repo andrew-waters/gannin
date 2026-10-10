@@ -24,15 +24,18 @@ struct QuickChangeInfo: Codable, Hashable {
 
 extension CodeSession {
     var isQuickChange: Bool { quickChange != nil }
-    /// A quick change with no issue: its `issue` is a stand-in.
-    var hasNoIssue: Bool { quickChange?.hasIssue == false }
+    /// A quick change with no issue, or a scheduled maintenance run: its
+    /// `issue` is a stand-in.
+    var hasNoIssue: Bool { quickChange?.hasIssue == false || isMaintenance }
+    /// A maintenance routine's run (`Routines/`), which has no issue.
+    var isMaintenance: Bool { routineRun?.kind == .code }
 
     /// `#123` as rows and notifications show it, or Quick change with no
     /// issue to number.
-    var shortReference: String { hasNoIssue ? "Quick change" : "#\(issue.number)" }
+    var shortReference: String { isMaintenance ? "Maintenance" : hasNoIssue ? "Quick change" : "#\(issue.number)" }
     /// `owner/name#123`, or the repo a quick change with no issue is in
     /// (the stand-in's repo: `repo` is the harness).
-    var longReference: String { hasNoIssue ? "a quick change in \(issue.repo)" : issue.reference }
+    var longReference: String { isMaintenance ? "maintenance in \(issue.repo)" : hasNoIssue ? "a quick change in \(issue.repo)" : issue.reference }
 
     /// The team's prompts' placeholders for its issue (`HarnessPromptLibrary`).
     /// With no issue, `{{issue}}` says what it is and `{{number}}` and
@@ -40,6 +43,10 @@ extension CodeSession {
     var issueValues: [String: String] {
         var values = HarnessPromptLibrary.values(reference: issue.reference, title: issue.title, url: issue.url, repo: issue.repo, number: issue.number, branch: branch)
         if hasNoIssue { values.merge(SessionStore.noIssueValues(repo: issue.repo)) { $1 } }
+        if isMaintenance {
+            values["issue"] = longReference
+            values["pr"] = longReference
+        }
         return values
     }
 }

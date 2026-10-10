@@ -79,3 +79,54 @@ struct RoutineRunsTests {
         #expect(withRun.routineRun == info)
     }
 }
+
+/// Maintenance runs: no issue, a branch a run, the task in the brief.
+struct MaintenanceRunTests {
+    @Test func branchIsNewEachRun() {
+        let id = UUID(uuidString: "3F9A2C1D-0000-0000-0000-000000000000")!
+        let day = Date(timeIntervalSince1970: 1_791_547_200) // 9 Oct 2026, noon UTC
+        let name = SessionStore.routineBranchName(name: "Tidy dependencies!", id: id, on: day)
+        #expect(name.hasPrefix("routine-tidy-dependencies-2026100"))
+        #expect(name.hasSuffix("-3f9a"))
+        #expect(SessionStore.routineBranchName(name: "✨", id: id, on: day).hasPrefix("routine-2026"))
+    }
+
+    @Test func briefAndReferences() {
+        var routine = Routine.new(org: "acme", harnessRepo: "acme/harness", kind: .code, name: "Tidy dependencies")
+        routine.repos = ["acme/app", "acme/api"]
+        routine.prompt = "Bump patch versions and run the tests."
+        let id = UUID()
+        var session = CodeSession(
+            id: id, issue: IssueReference(org: "acme", id: "routine-\(id.uuidString)", number: 0, title: routine.name, repo: "acme/app",
+                                          url: URL(string: "https://github.com/acme/app")!),
+            repo: "acme/harness", branch: SessionStore.routineBranchName(name: routine.name, id: id), createdAt: .now,
+            harnessRepo: "acme/harness", harnessPath: "~/Code/acme/harness"
+        )
+        session.routineRun = RoutineRunInfo(routine: routine, run: UUID())
+        #expect(session.hasNoIssue)
+        #expect(session.isMaintenance)
+        #expect(session.shortReference == "Maintenance")
+        #expect(session.longReference == "maintenance in acme/app")
+        #expect(SessionStore.harnessFolder(for: session) == "sessions/\(session.branch)")
+
+        let brief = SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: nil)
+        #expect(brief.hasPrefix("# Maintenance in acme/app: Tidy dependencies"))
+        #expect(brief.contains("## The task\n\nBump patch versions and run the tests."))
+        #expect(brief.contains("- acme/api"))
+        #expect(brief.contains("The work is in acme/app, acme/api."))
+        // Local only: no pull request, and no plan document.
+        #expect(brief.contains("this run is Local only, so don't push or open a pull request"))
+        #expect(!brief.contains("gh pr create"))
+        #expect(!brief.contains("## Description"))
+        #expect(brief.contains("Maintenance needs no plan document."))
+
+        session.routineRun = RoutineRunInfo(routine: { var draft = routine; draft.limit = .draftPR; return draft }(), run: UUID())
+        let draft = SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: nil)
+        #expect(draft.contains("open a draft pull request with `gh pr create --draft`"))
+        #expect(draft.contains("Routine maintenance, no issue."))
+
+        let prompt = SessionStore.maintenancePrompt(session)
+        #expect(prompt.contains("acme/app, acme/api"))
+        #expect(prompt.hasSuffix("Bump patch versions and run the tests."))
+    }
+}

@@ -47,7 +47,8 @@ struct GanninApp: App {
         _bankHolidays = State(initialValue: bankHolidays)
         let orgs = OrgStore(auth: auth, activity: activity, database: database)
         _orgs = State(initialValue: orgs)
-        _details = State(initialValue: DetailStore(auth: auth))
+        let details = DetailStore(auth: auth)
+        _details = State(initialValue: details)
         let metrics = MetricsStore(auth: auth, activity: activity)
         _metrics = State(initialValue: metrics)
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
@@ -134,6 +135,10 @@ struct GanninApp: App {
             }
             let calendar = bankHolidays.calendar(week: week, region: week.holidays, years: year...(year + 1))
             return { calendar.isWorkingDay($0) }
+        }
+        scheduler.start = { [weak sessions, weak orgConfigs, weak issues, weak details, weak auth] routine, issue, run in
+            guard let sessions, let orgConfigs, let issues, let details else { return .failed("Gannin is closing.") }
+            return await sessions.startRoutine(routine, issue: issue, run: run, configs: orgConfigs, issues: issues, details: details, login: auth?.viewer?.login)
         }
         scheduler.begin()
         TabMenuRename.shared.install()
