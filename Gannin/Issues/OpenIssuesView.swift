@@ -31,7 +31,11 @@ struct OpenIssuesView: View {
         let filters = stored.wrappedValue
         let pool = pool(filters)
         let issues = pool.filter { filters.matches($0, names: name) }
-        let rows = issues.map { IssueTableRow(issue: $0, author: $0.author.map(workload.person(login:)), assignees: $0.assignees.map(workload.person(login:))) }
+        let row = { (issue: IssueRecord) in IssueTableRow(issue: issue, author: issue.author.map(workload.person(login:)), assignees: issue.assignees.map(workload.person(login:))) }
+        // Narrowed, every match is a row of its own, so none is tucked under
+        // a collapsed parent; otherwise sub-issues sit under their parent.
+        let rows = filters.isNarrowed ? issues.map(row) : IssueTableRow.tree(issues, row: row)
+        let nested = issues.count - rows.count
         VStack(spacing: 0) {
             IssueFilterBar(filters: stored.projectedValue, pool: pool, names: name)
             Divider()
@@ -42,7 +46,8 @@ struct OpenIssuesView: View {
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                table(rows, title: issues.count == pool.count ? "\(pool.count) \(noun(filters))" : "\(issues.count) of \(pool.count) \(noun(filters))")
+                table(rows, title: (issues.count == pool.count ? "\(pool.count) \(noun(filters))" : "\(issues.count) of \(pool.count) \(noun(filters))")
+                    + (nested > 0 ? ", \(nested) under their parent" : ""))
             }
             if let history = store.history(for: org), filters.state != .open {
                 Divider()
@@ -150,7 +155,7 @@ struct OpenIssuesView: View {
             .customizationID("closed")
         } rows: {
             Section("\(title)") {
-                ForEach(sortOrder.isEmpty ? rows : rows.sorted(using: sortOrder)) { TableRow($0) }
+                OutlineGroup(sortOrder.isEmpty ? rows : IssueTableRow.sorted(rows, using: sortOrder), children: \.children) { TableRow($0) }
             }
         }
         .contextMenu(forSelectionType: String.self) { ids in
@@ -195,10 +200,35 @@ struct OpenIssuesView: View {
 }
 
 /// An issue as Issues › All's table shows it, with what its columns sort by.
+/// Sub-issues whose parent is listed too sit under it, so the table is a tree.
 struct IssueTableRow: Identifiable {
     let issue: IssueRecord
     let author: Person?
     let assignees: [Person]
+    /// Its sub-issues in the list, nil when it has none (a leaf).
+    var children: [IssueTableRow]?
+
+    /// The issues as a tree, in the order given: one whose parent isn't in
+    /// the list (or has none) is a root, the rest under their parent.
+    static func tree(_ issues: [IssueRecord], row: (IssueRecord) -> IssueTableRow) -> [IssueTableRow] {
+        let ids = Set(issues.map(\.id))
+        let byParent = Dictionary(grouping: issues.filter { $0.parentID.map(ids.contains) ?? false }) { $0.parentID! }
+        func node(_ issue: IssueRecord) -> IssueTableRow {
+            var built = row(issue)
+            if let children = byParent[issue.id] { built.children = children.map(node) }
+            return built
+        }
+        return issues.filter { !($0.parentID.map(ids.contains) ?? false) }.map(node)
+    }
+
+    /// Each level sorted on its own, so sub-issues stay under their parent.
+    static func sorted(_ rows: [IssueTableRow], using order: [KeyPathComparator<IssueTableRow>]) -> [IssueTableRow] {
+        rows.sorted(using: order).map { row in
+            var sorted = row
+            sorted.children = row.children.map { Self.sorted($0, using: order) }
+            return sorted
+        }
+    }
 
     var id: String { issue.id }
     var title: String { issue.title }
