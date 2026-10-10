@@ -648,6 +648,7 @@ struct NewQuickChangeView: View {
             if createsIssue {
                 guard let api = auth.api else { return }
                 var writing = "the issue"
+                var committedTo: String?
                 do {
                     // Assigned to whoever started it, so it's in their workload.
                     var assignees: [String] = []
@@ -663,6 +664,7 @@ struct NewQuickChangeView: View {
                         }
                         writing = "the screenshots"
                         links = try await issueImages.commit(org: org, repo: repo, setup: setup, harness: harness)
+                        committedTo = setup.repo
                         writing = "the issue"
                         steps.append("Committed \(links.count == 1 ? "a screenshot" : "\(links.count) screenshots") to \(setup.repo)")
                     }
@@ -670,7 +672,8 @@ struct NewQuickChangeView: View {
                     issue = IssueReference(org: org, id: made.id, number: made.number, title: title, repo: repo, url: made.url)
                     steps.append("Created \(repo)#\(made.number)")
                 } catch {
-                    self.error = "GitHub didn't take \(writing): \(error.localizedDescription)"
+                    let kept = committedTo.map { "The images are committed to \($0), and trying again links them rather than committing them twice. " } ?? ""
+                    self.error = "\(kept)GitHub didn't take \(writing): \(error.localizedDescription)"
                     return
                 }
                 // The board is a nicety: the session starts whatever happens,
