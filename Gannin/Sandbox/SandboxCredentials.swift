@@ -96,9 +96,9 @@ nonisolated enum SandboxCredentials {
     static let remoteClaudeFolder = #""$HOME"/.gannin/sandbox/claude"#
 
     /// House rules every sandboxed claude follows (andrew-waters/gannin#127):
-    /// the user's own Claude Code memory, written as `CLAUDE.md` in the
-    /// shared config folder each time a sandbox's claude starts, here or on
-    /// a server. Empty leaves none.
+    /// written to `SandboxLaunch.houseRulesFile` in the shared config folder
+    /// each time a sandbox's claude starts, here or on a server, and imported
+    /// by its `CLAUDE.md`, which is otherwise claude's own. Empty empties it.
     static let claudeMemoryKey = "sandbox.claudeMemory"
 
     static var claudeMemory: String {

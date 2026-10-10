@@ -281,7 +281,7 @@ enum SandboxLaunch {
         var signingKey: String
         var gitName: String
         var gitEmail: String
-        /// The house rules for claude's `CLAUDE.md`; empty for none.
+        /// The house rules, for `houseRulesFile`; empty for none.
         var claudeMemory = ""
     }
 
