@@ -60,8 +60,12 @@ report inside a person's view, which are one column of several.
 
 ## Releases
 
-Tags (`v1.2.0`, annotated: the first line is the title, the rest the notes) run
-`.github/workflows/release.yml`: archive with the version from the tag and the run number as
+Tags (`v1.2.0`, annotated: the first line is the title, any more an introduction) run
+`.github/workflows/release.yml`. Its notes are the version's section of `CHANGELOG.md` (Keep a
+Changelog: pull requests add to `## [Unreleased]`, `scripts/promote-changelog.sh 1.2.0` turns it
+into the release's before tagging, and a tag with no section fails before building), rendered
+by `.github/scripts/changelog_to_html.py` (Orchard's) as Markdown for GitHub and HTML for
+Sparkle. `.github/pull_request_template.md`'s checklist asks for the entry. It goes on to archive with the version from the tag and the run number as
 build, Developer ID export, notarise (both with the App Store Connect key), DMG, Sparkle signature and appcast, published as a GitHub release here
 (`Gannin-<version>.dmg`, `.sha256`, `Gannin.dmg` for the site's Download button through
 `releases/latest/download`, and `appcast.xml`, whose enclosure is the release's DMG, so every download counts on the release).
