@@ -182,6 +182,10 @@ struct SessionPromptSettingsSection: View {
                     HStack {
                         TextField("Name", text: $snippet.title)
                             .fontWeight(.medium)
+                        WriteWithClaudeButton(purpose: .savedPrompt, text: snippet.prompt, title: snippet.title, compact: true) { draft, title in
+                            snippet.prompt = draft
+                            if let title, !title.isEmpty { snippet.title = title }
+                        }
                         Button {
                             snippets.removeAll { $0.id == snippet.id }
                         } label: {
@@ -203,7 +207,7 @@ struct SessionPromptSettingsSection: View {
         } header: {
             Text("Prompts")
         } footer: {
-            Text("Sent from the menu under a session's terminal, the first nine with ⌃1 to ⌃9.")
+            Text("Sent from the menu under a session's terminal, the first nine with ⌃1 to ⌃9. The sparkles write one with Claude.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }

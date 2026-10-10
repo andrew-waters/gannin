@@ -958,6 +958,20 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   installed here, else on the Connect with server: a bash script on standard input writes the
   prompt and any files into a folder and runs claude there with only the tools given. It
   drafts issues and triage, and rewrites notes.
+- Write with Claude (`Sessions/PromptWriting.swift`, andrew-waters/gannin#145,
+  `plans/2026-10-10-write-settings-prompts-with-claude.md`) is beside each prompt in Settings that
+  had no help writing it: House rules for Claude (Settings › Sandbox), each saved prompt (the
+  sparkles in Settings › General's Prompts, which may suggest its name too) and the drafting
+  guidance in Settings › Harness (`HarnessAuthoringSection`). The harness's prompts have
+  `DraftWithClaudeSection` already. `WriteWithClaudeButton` opens `PromptWritingSheet` over the
+  Settings window: the conversation beside the draft, editable, starting from what's in the setting
+  (Look It Over asks Claude to suggest changes). It's one `ClaudeRunner` conversation (`--resume`,
+  no tools), each reply JSON with a `message` and, once it drafts, the whole `draft`; the draft as
+  it stands goes with every later message (`PromptWriting.firstPrompt`, `followUp`, `reply`).
+  `PromptWriting.Purpose` says what's being written and where it goes (`houseRules`, `savedPrompt`,
+  `authoring(kind)`, with Gannin's default for reference when it differs). Use This Draft writes it
+  to the setting (the guidance is saved as Save does, a change to commit); Cancel, asked when
+  anything's changed, leaves it as it was, and the conversation is forgotten.
 - Planning sessions (`CodeSession.planning`, `PlanningInfo`, set up in a New Plan tab of the Claude
   Code window, `NewPlanningView` over a `PlanningDraft` in `SessionStore.planningDrafts`, opened by
   `showNewPlan` and not kept across launches, its session taking the tab, `replaceDraft`; from Rituals ›

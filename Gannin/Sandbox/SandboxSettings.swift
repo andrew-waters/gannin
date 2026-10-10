@@ -136,6 +136,7 @@ struct SandboxSettingsSection: View {
                 }
                 .disabled(!FileManager.default.fileExists(atPath: SandboxCredentials.macClaudeMemory.path))
                 .help("Fills this with your ~/.claude/CLAUDE.md, to edit before it goes in. Its @ imports name files on this Mac, which a sandbox can't read.")
+                WriteWithClaudeButton(purpose: .houseRules, text: claudeMemory) { draft, _ in claudeMemory = draft }
                 Spacer()
             }
         } header: {
