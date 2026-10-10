@@ -111,7 +111,7 @@ struct GitHubAPI {
         var attempt = 0
         while true {
             do {
-                return try await send(query, variables: variables)
+                return try await send(query, variables: variables).0
             } catch APIError.http(let status, _) where (502...504).contains(status) && attempt < 2 {
                 attempt += 1
                 try await Task.sleep(for: .seconds(attempt * 2))
@@ -121,16 +121,24 @@ struct GitHubAPI {
 
     /// A read whose variables aren't all strings (an `Int!` number, say).
     func query<T: Decodable>(_ query: String, values: [String: Any], as type: T.Type = T.self) async throws -> T {
-        try await send(query, variables: values)
+        try await send(query, variables: values).0
     }
 
     /// A mutation whose variables aren't all strings (an input object, a
     /// list). A write: not retried, since it may have gone through.
     func mutate<T: Decodable>(_ query: String, variables: [String: Any], as type: T.Type = T.self) async throws -> T {
-        try await send(query, variables: variables)
+        try await send(query, variables: variables).0
     }
 
-    private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> T {
+    /// Like `query`, but keeps GitHub's own messages alongside the result
+    /// even when it decodes fine: a nullable field (a repo that doesn't
+    /// exist, or this token can't read) comes back nil without throwing, so
+    /// this is the only way to learn why.
+    func queryReportingReason<T: Decodable>(_ query: String, values: [String: Any] = [:]) async throws -> (T, [String]) {
+        try await send(query, variables: values)
+    }
+
+    private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> (T, [String]) {
         if let until = pausedUntil?(false), until > .now { throw APIError.rateLimited(until: until) }
         let isMutation = query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("mutation")
         let source = isMutation ? .writes : APIUsage.currentSource
@@ -197,7 +205,7 @@ struct GitHubAPI {
         guard let result = envelope.data?.value else {
             throw APIError.graphQL(envelope.errors?.map(\.message) ?? ["Empty response"])
         }
-        return result
+        return (result, envelope.errors?.map(\.message) ?? [])
     }
 
     /// Adds `rateLimit` to the query's top-level selection. Variable

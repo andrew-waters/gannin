@@ -86,6 +86,7 @@ struct ProjectsSettingsSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(HarnessTeamStore.self) private var team
     @Environment(ProjectStore.self) private var boards
+    @Environment(AuthStore.self) private var auth
     let org: String
     /// Every repo there is to pick from.
     let repos: [String]
@@ -100,6 +101,8 @@ struct ProjectsSettingsSection: View {
     @State private var isMoving = false
     @State private var moveError: String?
     @State private var isAddingRepo = false
+    @State private var isCheckingRepo = false
+    @State private var addRepoError: String?
 
     var body: some View {
         let projects = configs.baseConfig(for: org).repoProjects
@@ -253,38 +256,62 @@ struct ProjectsSettingsSection: View {
         Section {
             TextField("Name", text: Binding(get: { project.name }, set: { name in update(project.id) { $0.name = name } }))
             LabeledContent("Repositories") {
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    if project.repos.isEmpty {
-                        Text("None yet: every repo").foregroundStyle(.orange)
-                    }
-                    ForEach(project.repos, id: \.self) { repo in
-                        HStack(spacing: 2) {
-                            Text(repo.split(separator: "/").last.map(String.init) ?? repo)
-                            Button {
-                                update(project.id) { $0.repos.removeAll { $0 == repo } }
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 6) {
+                        if project.repos.isEmpty {
+                            Text("None yet: every repo").foregroundStyle(.orange)
+                        }
+                        ForEach(project.repos, id: \.self) { repo in
+                            HStack(spacing: 4) {
+                                Text(isOutside(repo) ? repo : repo.split(separator: "/").last.map(String.init) ?? repo)
+                                if isOutside(repo) {
+                                    Text("Outside")
+                                        .font(.caption2.weight(.semibold))
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 1)
+                                        .background(Capsule().fill(Color.orange.opacity(0.18)))
+                                        .foregroundStyle(.orange)
+                                }
+                                Button {
+                                    update(project.id) { $0.repos.removeAll { $0 == repo } }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                }
+                                .buttonStyle(.borderless)
+                                .foregroundStyle(.tertiary)
                             }
-                            .buttonStyle(.borderless)
-                            .foregroundStyle(.tertiary)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Capsule().fill(Color.secondary.opacity(0.12)))
+                            .help(repo)
                         }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.secondary.opacity(0.12)))
-                        .help(repo)
-                    }
-                    Button {
-                        isAddingRepo = true
-                    } label: {
-                        Image(systemName: "plus.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Add a repo to this project")
-                    .popover(isPresented: $isAddingRepo, arrowEdge: .bottom) {
-                        SearchableList(choices: repoChoices(project), selection: nil, prompt: "Search repositories", isLoading: harness.repositories[org] == nil) { repo in
-                            isAddingRepo = false
-                            if let repo { update(project.id) { $0.repos.append(repo) } }
+                        Button {
+                            addRepoError = nil
+                            isAddingRepo = true
+                        } label: {
+                            Image(systemName: "plus.circle")
                         }
+                        .buttonStyle(.borderless)
+                        .help("Add a repo to this project, or type owner/name for one \(org) doesn't own")
+                        .popover(isPresented: $isAddingRepo, arrowEdge: .bottom) {
+                            SearchableList(
+                                choices: repoChoices(project),
+                                selection: nil,
+                                prompt: "Search repositories, or type owner/name",
+                                isLoading: harness.repositories[org] == nil,
+                                typedChoice: { query in
+                                    OutsideRepoEntry.parse(query, account: org, taken: Set(project.repos))
+                                        .map { SearchableChoice(value: $0, title: "Add \($0)", section: "Not \(org)'s") }
+                                }
+                            ) { repo in
+                                isAddingRepo = false
+                                if let repo { addRepo(repo, to: project) }
+                            }
+                        }
+                        if isCheckingRepo { ProgressView().controlSize(.small) }
+                    }
+                    if let addRepoError {
+                        Text(addRepoError).font(.caption).foregroundStyle(.red)
                     }
                 }
                 .font(.callout)
@@ -307,6 +334,39 @@ struct ProjectsSettingsSection: View {
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
         return active.map { SearchableChoice(value: $0, title: $0, section: "With recent PRs") }
             + rest.map { SearchableChoice(value: $0, title: $0, section: "Every other repo") }
+    }
+
+    /// Whether `repo`'s owner isn't `org`'s, case aside.
+    private func isOutside(_ repo: String) -> Bool {
+        let owner = repo.split(separator: "/").first.map(String.init) ?? repo
+        return owner.caseInsensitiveCompare(org) != .orderedSame
+    }
+
+    /// Adds a repo the account already lists at once, as today; one typed
+    /// in the popover's *Add owner/name* row is checked with GitHub first,
+    /// so it's only added once it exists and this token can read it (R2).
+    private func addRepo(_ repo: String, to project: RepoProject) {
+        guard !(harness.repositories[org] ?? []).contains(repo) else {
+            update(project.id) { $0.repos.append(repo) }
+            return
+        }
+        let parts = repo.split(separator: "/").map(String.init)
+        guard parts.count == 2, let api = auth.api else { return }
+        addRepoError = nil
+        isCheckingRepo = true
+        Task {
+            defer { isCheckingRepo = false }
+            do {
+                let (found, reason) = try await api.repository(owner: parts[0], name: parts[1])
+                guard let found else {
+                    addRepoError = reason ?? "GitHub couldn't find \(repo), or this token can't read it."
+                    return
+                }
+                update(project.id) { $0.repos.append(found.nameWithOwner) }
+            } catch {
+                addRepoError = error.localizedDescription
+            }
+        }
     }
 
     // MARK: Boards
@@ -386,4 +446,45 @@ struct ProjectsSettingsSection: View {
     private func update(_ id: String, _ change: (inout RepoProject) -> Void) {
         configs.updateProject(id, in: org, change)
     }
+}
+
+/// `owner/name` typed in the add-a-repo popover's search field, for a repo
+/// the account doesn't own.
+enum OutsideRepoEntry {
+    /// `query` as `owner/name`: two non-empty parts, not `account`'s own
+    /// (case aside, since that's not outside), and not already in `taken`.
+    static func parse(_ query: String, account: String, taken: Set<String>) -> String? {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let parts = trimmed.split(separator: "/").map(String.init)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty,
+              parts[0].caseInsensitiveCompare(account) != .orderedSame,
+              !taken.contains(trimmed) else { return nil }
+        return trimmed
+    }
+}
+
+extension GitHubAPI {
+    /// A repo by owner and name, to check an outside repo exists and the
+    /// token can read it before adding it to a project: nil when it
+    /// doesn't, or can't be read, with GitHub's reason when it gave one.
+    func repository(owner: String, name: String) async throws -> (repo: OutsideRepoLookup?, reason: String?) {
+        struct Response: Decodable { let repository: OutsideRepoLookup? }
+        let (response, messages): (Response, [String]) = try await queryReportingReason("""
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                nameWithOwner
+                isArchived
+                viewerPermission
+              }
+            }
+            """, values: ["owner": owner, "name": name])
+        return (response.repository, messages.first)
+    }
+}
+
+/// A repo as `GitHubAPI.repository(owner:name:)` looks it up.
+struct OutsideRepoLookup: Decodable {
+    let nameWithOwner: String
+    let isArchived: Bool
+    let viewerPermission: String?
 }
