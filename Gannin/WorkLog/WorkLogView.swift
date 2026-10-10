@@ -74,8 +74,16 @@ struct WorkLogPage: View {
     /// The one repo the work log shows, or nil for all.
     @State private var repoFilter: String? = nil
 
+    /// The filter as it applies here: a repo no longer listed (the project
+    /// changed, or it's been excluded) counts as all of them.
     private var filter: WorkLogFilter {
-        WorkLogFilter(hiddenKinds: WorkLogFilter.kinds(from: hiddenKindsValue), repo: repoFilter)
+        let repo = repoFilter.flatMap { repos.contains($0) ? $0 : nil }
+        return WorkLogFilter(hiddenKinds: WorkLogFilter.kinds(from: hiddenKindsValue), repo: repo)
+    }
+
+    /// Every repo with activity in the log, for the filter.
+    private var repos: [String] {
+        store.history(for: org).map { $0.repos(config: configs.config(for: org), hidden: hidden.keys) } ?? []
     }
 
     /// The chosen scale, or Days on a tab that doesn't offer Day.
@@ -241,7 +249,7 @@ struct WorkLogPage: View {
     /// Which kinds of activity show, and from which repo.
     private var filterMenu: some View {
         let filter = filter
-        let repos = store.history(for: org).map { $0.repos(config: configs.config(for: org), hidden: hidden.keys) } ?? []
+        let repos = repos
         return Menu {
             Section("Show") {
                 ForEach(WorkLogEvent.Kind.allCases, id: \.self) { kind in
@@ -256,7 +264,7 @@ struct WorkLogPage: View {
                 }
             }
             Section("Repository") {
-                Picker("Repository", selection: $repoFilter) {
+                Picker("Repository", selection: Binding(get: { filter.repo }, set: { repoFilter = $0 })) {
                     Text("All Repositories").tag(String?.none)
                     ForEach(repos, id: \.self) { Text($0).tag(String?.some($0)) }
                 }

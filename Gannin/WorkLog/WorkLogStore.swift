@@ -100,16 +100,23 @@ final class WorkLogStore {
                     try await api.workLogPullRequests(query: query, onPage: onPage)
                 }
             }
-            let issues = try await run.track("issues", count: \.count) { progress in
+            // Issues are a step of their own: when they fail (the step says
+            // why), the PRs are still kept, and the coverage stays where it
+            // was so the next sync searches the same weeks again.
+            let issues = try? await run.track("issues", count: \.count) { progress in
                 try await Self.fetch(issueSearches, progress: progress) { query, onPage in
                     try await api.workLogIssues(query: query, onPage: onPage)
                 }
             }
-            var updated = history ?? WorkLogHistory(orgLogin: org, coveredFrom: start, fetchedAt: now, pullRequests: [:])
+            // A new log whose issues failed counts as fetched at its start,
+            // so the next changes search covers the whole range.
+            var updated = history ?? WorkLogHistory(orgLogin: org, coveredFrom: start, fetchedAt: issues == nil ? start : now, pullRequests: [:])
             for pr in prs { updated.pullRequests[pr.id] = pr }
-            for issue in issues { updated.issues[issue.id] = issue }
-            updated.coveredFrom = min(updated.coveredFrom, start)
-            updated.fetchedAt = now
+            if let issues {
+                for issue in issues { updated.issues[issue.id] = issue }
+                updated.coveredFrom = min(updated.coveredFrom, start)
+                updated.fetchedAt = now
+            }
             histories[org] = updated
             errors[org] = nil
             save(updated)
@@ -218,7 +225,7 @@ final class WorkLogStore {
     }
 }
 
-/// PRs fetched so far by each parallel search, summed for the progress bar.
+/// Items fetched so far by each parallel search, summed for the progress bar.
 private final class Tally {
     private var counts: [Int: Int] = [:]
     private let report: (Int, Int?) -> Void
