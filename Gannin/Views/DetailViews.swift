@@ -541,9 +541,11 @@ struct ItemHeader: View {
                 .fixedSize(horizontal: false, vertical: true)
             // A drawer's bar has the reference and Open on GitHub.
             if isInDrawer {
-                HStack(spacing: 8) {
-                    if let pill { pill }
-                    accessory
+                if pill != nil || accessory != nil {
+                    HStack(spacing: 8) {
+                        if let pill { pill }
+                        accessory
+                    }
                 }
             } else {
                 HStack(spacing: 8) {

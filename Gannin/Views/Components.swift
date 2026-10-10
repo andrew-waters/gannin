@@ -57,6 +57,7 @@ struct Pill: View {
         Group {
             if let systemImage {
                 Label(text, systemImage: systemImage)
+                    .labelStyle(.titleAndIcon)
             } else {
                 Text(text)
             }
