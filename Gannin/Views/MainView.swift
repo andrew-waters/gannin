@@ -24,6 +24,8 @@ enum DetailSelection: Hashable {
     case milestone(String)
     /// A GitHub Release, by repo and tag.
     case release(repo: String, tag: String)
+    /// A routine and its runs, with its name for the trail.
+    case routine(id: UUID, name: String)
 }
 
 /// The sidebar's sections, in sidebar order.
@@ -51,6 +53,10 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case agents = "Agents"
     /// How Claude's reviews land, under Agents.
     case agentMetrics = "Agent Metrics"
+    /// Sessions started on a schedule, under Agents.
+    case routines = "Routines"
+    /// Issues waiting for an agent, under Agents.
+    case agentQueue = "Agent Queue"
     /// Questions about the org, answered by Claude from Gannin's data.
     case ask = "Ask"
     case epics = "Epics"
@@ -72,6 +78,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .actions: "CI"
         case .agents: "Waiting on You"
         case .agentMetrics: "Metrics"
+        case .agentQueue: "Queue"
         case .scorecard: "Scorecards"
         default: rawValue
         }
@@ -96,6 +103,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .scorecard: "target"
         case .agents: "questionmark.bubble"
         case .agentMetrics: "chart.bar.xaxis"
+        case .routines: "clock.arrow.circlepath"
+        case .agentQueue: "tray.full"
         case .ask: "sparkle.magnifyingglass"
         case .epics: "square.stack.3d.up"
         case .hygiene: "wand.and.sparkles"
@@ -591,6 +600,8 @@ struct PageTitles {
             return title
         case .release(_, let tag):
             return tag
+        case .routine(_, let name):
+            return name
         }
     }
 }
@@ -1137,6 +1148,8 @@ private struct PageStack: View {
             MilestonePage(org: org, title: title)
         case .release(let repo, let tag):
             ReleasePage(org: org, repo: repo, tag: tag)
+        case .routine(let id, _):
+            RoutinePage(org: org, id: id)
         }
     }
 
@@ -1198,6 +1211,7 @@ struct OrgSidebar: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(AuthStore.self) private var auth
     @Environment(SessionStore.self) private var sessions
+    @Environment(RoutineStore.self) private var routines
     @Environment(\.openWindow) private var openWindow
 
     /// Documents of the kind that follow the harness's standard, as the page
@@ -1312,6 +1326,8 @@ struct OrgSidebar: View {
                 Section("Agents", isExpanded: $sessionsExpanded) {
                     row(.agentMetrics)
                     row(.agents)
+                    row(.routines)
+                    row(.agentQueue)
                     SessionSidebarRows(org: selectedOrg)
                 }
 
@@ -1500,6 +1516,13 @@ struct OrgSidebar: View {
             guard let selectedOrg else { return 0 }
             return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
         case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .planning, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
+        case .routines:
+            guard let selectedOrg else { return 0 }
+            let ids = Set(routines.routines(for: selectedOrg).map(\.id))
+            return routines.activeRuns.filter { ids.contains($0.routine) }.count
+        case .agentQueue:
+            guard let selectedOrg else { return 0 }
+            return routines.queue(for: selectedOrg).count
         }
     }
 }

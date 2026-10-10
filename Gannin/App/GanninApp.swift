@@ -16,12 +16,14 @@ struct GanninApp: App {
     @State private var releases: ReleaseStore
     @State private var orgConfigs: OrgConfigStore
     @State private var peopleDates: PeopleDatesStore
-    @State private var bankHolidays = BankHolidayStore()
+    @State private var bankHolidays: BankHolidayStore
     @State private var fieldNotes: FieldNotesStore
     @State private var activity: SyncActivity
     @State private var harness: HarnessStore
     @State private var team: HarnessTeamStore
     @State private var sessions: SessionStore
+    @State private var routines: RoutineStore
+    @State private var scheduler: RoutineScheduler
     @NSApplicationDelegateAdaptor private var appDelegate: GanninAppDelegate
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
 
@@ -41,9 +43,12 @@ struct GanninApp: App {
         let peopleDates = PeopleDatesStore(database: database)
         _orgConfigs = State(initialValue: orgConfigs)
         _peopleDates = State(initialValue: peopleDates)
+        let bankHolidays = BankHolidayStore()
+        _bankHolidays = State(initialValue: bankHolidays)
         let orgs = OrgStore(auth: auth, activity: activity, database: database)
         _orgs = State(initialValue: orgs)
-        _details = State(initialValue: DetailStore(auth: auth))
+        let details = DetailStore(auth: auth)
+        _details = State(initialValue: details)
         let metrics = MetricsStore(auth: auth, activity: activity)
         _metrics = State(initialValue: metrics)
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
@@ -114,6 +119,32 @@ struct GanninApp: App {
         watch.checkWatched = { [weak sessions] in await sessions?.checkWatchedReviews() }
         watch.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
         watch.start()
+        // Routines: sessions started by themselves on a schedule, and the
+        // agent queue drained in its windows.
+        let routines = RoutineStore()
+        _routines = State(initialValue: routines)
+        sessions.routines = routines
+        let scheduler = RoutineScheduler(store: routines)
+        _scheduler = State(initialValue: scheduler)
+        // Each region's holidays asked for once a year a launch, so a failed
+        // fetch isn't tried again every tick.
+        var holidaysAsked: Set<String> = []
+        scheduler.workingDays = { [weak orgConfigs, weak bankHolidays] org in
+            guard let orgConfigs, let bankHolidays else { return RoutineSchedule.everyWeekday }
+            let week = orgConfigs.baseConfig(for: org).week
+            let year = Calendar.current.component(.year, from: .now)
+            if let region = week.holidays, holidaysAsked.insert("\(region.country) \(region.subdivision ?? "") \(year)").inserted {
+                Task { await bankHolidays.load([region], years: year...(year + 1)) }
+            }
+            let calendar = bankHolidays.calendar(week: week, region: week.holidays, years: year...(year + 1))
+            return { calendar.isWorkingDay($0) }
+        }
+        scheduler.start = { [weak sessions, weak orgConfigs, weak issues, weak details, weak auth] routine, issue, run in
+            guard let sessions, let orgConfigs, let issues, let details else { return .failed("Gannin is closing.") }
+            return await sessions.startRoutine(routine, issue: issue, run: run, configs: orgConfigs, issues: issues, details: details, login: auth?.viewer?.login)
+        }
+        scheduler.watch = { [weak sessions] in sessions?.watchRoutineRuns() }
+        scheduler.begin()
         TabMenuRename.shared.install()
     }
 
@@ -143,6 +174,8 @@ struct GanninApp: App {
                 .environment(activity)
                 .environment(database)
                 .environment(sessions)
+                .environment(routines)
+                .environment(scheduler)
         }
         .defaultSize(width: 1280, height: 800)
         .commands {
@@ -169,6 +202,9 @@ struct GanninApp: App {
                 PullRequestWindow(reference: reference)
                     .commandPaletteOpeningInMainWindow()
                     .environment(sessions)
+                    .environment(routines)
+                    .environment(scheduler)
+                    .environment(bankHolidays)
                     .environment(actions)
                     .environment(releases)
                     .environment(auth)
@@ -218,6 +254,9 @@ struct GanninApp: App {
                     .environment(team)
                     .environment(activity)
                     .environment(sessions)
+                    .environment(routines)
+                    .environment(scheduler)
+                    .environment(bankHolidays)
             }
         }
         .defaultSize(width: 1080, height: 960)
@@ -243,6 +282,9 @@ struct GanninApp: App {
                 .environment(harness)
                 .environment(team)
                 .environment(projects)
+                .environment(routines)
+                .environment(scheduler)
+                .environment(bankHolidays)
         }
         .defaultSize(width: 1280, height: 820)
 

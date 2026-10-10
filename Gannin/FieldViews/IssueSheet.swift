@@ -154,6 +154,7 @@ struct IssueSheet: View {
                 }
                 PlanThisButton(reference: reference)
                 StartSessionButton(reference: reference)
+                ScheduleForAgentButton(reference: reference)
             }
             if let record {
                 facts(record)

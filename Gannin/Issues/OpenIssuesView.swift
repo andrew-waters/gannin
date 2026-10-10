@@ -17,6 +17,8 @@ struct OpenIssuesView: View {
     private var stored = StoredIssueFilters("allIssues")
     /// The issue Work on This was picked for in a row's context menu.
     @State private var workingOn: IssueReference?
+    /// An issue being pinned to a time for an agent, from a row's menu.
+    @State private var scheduling: EditedRoutine?
     @State private var tableSelection: Set<String> = []
     @State private var sortOrder: [KeyPathComparator<IssueTableRow>] = []
     @AppStorage("allIssuesColumns") private var storedColumns = Data()
@@ -60,6 +62,9 @@ struct OpenIssuesView: View {
             }
         }
         .workOnThis($workingOn)
+        .sheet(item: $scheduling) { edited in
+            RoutineEditor(routine: edited.routine, isNew: edited.isNew)
+        }
         // A row picked opens in the drawer, as a list row did.
         .onChange(of: tableSelection) {
             if tableSelection.count == 1, let id = tableSelection.first, let reference = reference(id) {
@@ -164,6 +169,7 @@ struct OpenIssuesView: View {
                 Button(hidden.isHidden(id) ? "Unhide" : "Hide") { hidden.toggle(id) }
                 NewSubIssueItem(parent: reference)
                 WorkOnThisMenuItem(reference: reference, request: $workingOn)
+                Menu("Schedule for Agent") { ScheduleForAgentItems(reference: reference, editing: $scheduling) }
                 Button("Open on GitHub") { openURL(issue.url) }
             }
         } primaryAction: { ids in

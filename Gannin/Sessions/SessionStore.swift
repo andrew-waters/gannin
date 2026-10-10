@@ -96,6 +96,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// Why it runs on the Mac although sandboxing was on when it started:
     /// a repo that needs the Mac, no GitHub token, or the user's choice.
     var hostReason: String? = nil
+    /// The routine run that started it by itself (`Routines/`).
+    var routineRun: RoutineRunInfo? = nil
 
     var isRemote: Bool { connect != nil }
     var isSandboxed: Bool { sandbox != nil }
@@ -156,6 +158,7 @@ extension CodeSession {
         reviewRequest = try container.decodeIfPresent(String.self, forKey: .reviewRequest)
         sandbox = try container.decodeIfPresent(String.self, forKey: .sandbox)
         hostReason = try container.decodeIfPresent(String.self, forKey: .hostReason)
+        routineRun = try? container.decodeIfPresent(RoutineRunInfo.self, forKey: .routineRun)
     }
 }
 
@@ -433,6 +436,14 @@ final class SessionStore {
     @ObservationIgnored var pendingFeedback: [UUID: (prompt: String, keys: [String])] = [:]
     /// What happened on reviewed PRs, for the Inbox's catch-up.
     let activity = ReviewActivity()
+    /// Routines and their runs, for naming and watching scheduled runs
+    /// (`Routines/`); set by the app.
+    @ObservationIgnored var routines: RoutineStore?
+    /// Scheduled runs' sessions seen working since launch, so one waiting
+    /// for its first prompt isn't taken for finished.
+    @ObservationIgnored var routineSessionsWorked: Set<UUID> = []
+    /// Scheduled runs being stopped at their limit.
+    @ObservationIgnored var stoppingRoutineSessions: Set<UUID> = []
     /// Every session at once instead of a tab.
     var showingOverview = false
     /// New plans being set up, by their tab's ID: a tab of their own until
