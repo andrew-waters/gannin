@@ -25,7 +25,10 @@ enum SessionScript {
     private static func options(_ session: CodeSession) -> String {
         var options = SessionStore.model.map { " --model \(quoted($0))" } ?? ""
         // A reviewer reads and reports; it can't change the code.
-        if session.isReviewer { options += " --disallowedTools 'Edit,MultiEdit,Write,NotebookEdit'" }
+        var disallowed = session.isReviewer ? ["Edit", "MultiEdit", "Write", "NotebookEdit"] : []
+        // A scheduled run goes only as far as its routine's limit lets it.
+        if let run = session.routineRun { disallowed += run.disallowedTools }
+        if !disallowed.isEmpty { options += " --disallowedTools \(quoted(disallowed.joined(separator: ",")))" }
         return options
     }
 
@@ -33,6 +36,21 @@ enum SessionScript {
     /// picked from the team's prompts and skills.
     private static func firstPrompt(_ session: CodeSession, otherwise issuePrompt: String) -> String {
         [session.prompt ?? issuePrompt, session.instructions].compactMap { $0 }.joined(separator: "\n\n")
+    }
+
+    /// The first prompt a session in the harness is given: pasted by Gannin
+    /// for a scheduled run, once it's in auto mode, rather than passed to
+    /// claude as it starts.
+    static func openingPrompt(_ session: CodeSession) -> String {
+        let folder = ".worktrees/\(session.branch)"
+        let issue = session.issue
+        return firstPrompt(session, otherwise: """
+            You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
+            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
+            (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
+            code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
+            the brief says, never in projects/ or the harness checkout itself.
+            """)
     }
 
     /// The bash script a session runs: claude starts, or resumes once it has
@@ -146,21 +164,15 @@ enum SessionScript {
     /// `afterExit` is what follows claude's exit: by default a note and a
     /// login shell where it ran.
     static func claudeSteps(_ session: CodeSession, settings: String, shellNote: String, afterExit: String? = nil) -> String {
-        let folder = ".worktrees/\(session.branch)"
-        let issue = session.issue
-        let prompt = firstPrompt(session, otherwise: """
-            You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
-            it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
-            (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
-            code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
-            the brief says, never in projects/ or the harness checkout itself.
-            """)
+        // A scheduled run starts with no prompt: Gannin switches it to auto
+        // mode first, then pastes it (`SessionStore.startUnattended`).
+        let prompt = session.routineRun == nil ? " " + quoted(openingPrompt(session)) : ""
         return """
             command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Restart the session."
             if [ -e "$session/started" ]; then
               claude --resume "$id"\(options(session)) --settings \(settings)
             else
-              claude --session-id "$id"\(options(session)) --settings \(settings) \(quoted(prompt))
+              claude --session-id "$id"\(options(session)) --settings \(settings)\(prompt)
             fi
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null

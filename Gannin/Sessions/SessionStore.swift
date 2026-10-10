@@ -96,6 +96,8 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// Why it runs on the Mac although sandboxing was on when it started:
     /// a repo that needs the Mac, no GitHub token, or the user's choice.
     var hostReason: String? = nil
+    /// The routine run that started it by itself (`Routines/`).
+    var routineRun: RoutineRunInfo? = nil
 
     var isRemote: Bool { connect != nil }
     var isSandboxed: Bool { sandbox != nil }
@@ -156,6 +158,7 @@ extension CodeSession {
         reviewRequest = try container.decodeIfPresent(String.self, forKey: .reviewRequest)
         sandbox = try container.decodeIfPresent(String.self, forKey: .sandbox)
         hostReason = try container.decodeIfPresent(String.self, forKey: .hostReason)
+        routineRun = try? container.decodeIfPresent(RoutineRunInfo.self, forKey: .routineRun)
     }
 }
 
