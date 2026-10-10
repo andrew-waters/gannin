@@ -1,0 +1,14 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "quick-an-issue-that-is-scheduled-ab41",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+    "andrew-waters/gannin"
+  ],
+  "startedAt" : "2026-10-10T12:42:38Z",
+  "startedBy" : "andrew-waters",
+  "title" : "an issue that is scheduled should show it is - in the table",
+  "url" : "https://github.com/andrew-waters/gannin"
+}
