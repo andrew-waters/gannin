@@ -1219,13 +1219,23 @@ private struct DiffPane: View {
             let worktreeName = changes.worktrees.first { $0.path == file.worktree }?.name ?? ""
             let drafts = (sessions.drafts[session.id] ?? []).filter { $0.worktree == file.worktree && $0.path == file.path }
             VStack(spacing: 0) {
-                Text(file.path)
-                    .font(.callout.monospaced())
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
+                HStack(spacing: 8) {
+                    Text(file.path)
+                        .font(.callout.monospaced())
+                        .lineLimit(1)
+                        .truncationMode(.head)
+                    Spacer()
+                    Button {
+                        sessions.openInEditor(session, worktree: file.worktree, path: file.path, line: nil)
+                    } label: {
+                        Image(systemName: "arrow.up.forward.app")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(session.isRemote && !CodeEditor.chosen.opensRemote)
+                    .help("Open in \(CodeEditor.chosen.name), to see the rest of a file a cut-off diff doesn't show")
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
                 Divider()
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {

@@ -270,6 +270,36 @@ extension GitHubAPI {
         return paths
     }
 
+    /// The PR's whole unified diff in one request, split by file below.
+    /// The per-file `files` endpoint leaves out `patch` for a binary file
+    /// or one with too many changes, but the diff itself doesn't single
+    /// files out that way, so this is what each file's lines come from.
+    func pullRequestDiff(repo: String, number: Int) async throws -> String {
+        try await restText("repos/\(repo)/pulls/\(number)", accept: "application/vnd.github.v3.diff")
+    }
+
+    /// Splits a full diff into each file's own section, keyed by its
+    /// current path (a renamed file's new one), so it reads like the single
+    /// file's patch `GitDiff.lines` expects.
+    private static func diffSections(_ diff: String) -> [String: String] {
+        var sections: [String: String] = [:]
+        var path: String?
+        var lines: [Substring] = []
+        func finish() {
+            if let path { sections[path] = lines.joined(separator: "\n") }
+            lines = []
+        }
+        for line in diff.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("diff --git a/"), let marker = line.range(of: " b/", options: .backwards) {
+                finish()
+                path = String(line[marker.upperBound...])
+            }
+            lines.append(line)
+        }
+        finish()
+        return sections
+    }
+
     func reviewedPullRequest(repo: String, number: Int) async throws -> ReviewedPullRequest {
         struct Pull: Decodable {
             struct User: Decodable { let login: String }
@@ -291,13 +321,21 @@ extension GitHubAPI {
             let patch: String?
         }
         let pull: Pull = try await rest("repos/\(repo)/pulls/\(number)")
-        var files: [ReviewedPullRequest.File] = []
+        var batches: [File] = []
         for page in 1...30 {
             let batch: [File] = try await rest("repos/\(repo)/pulls/\(number)/files", query: ["per_page": "100", "page": "\(page)"])
-            files += batch.map { file in
-                .init(path: file.filename, status: file.status, additions: file.additions, deletions: file.deletions, lines: GitDiff.lines(of: file.patch ?? "").0)
-            }
+            batches += batch
             if batch.count < 100 { break }
+        }
+        // Each file's own patch is enough for almost every PR, so the whole
+        // diff is only fetched when something needs it: a binary file or
+        // one with too many changes, which GitHub leaves `patch` out for
+        // (a pure rename has none either, but there's nothing to show).
+        let missingPatch = batches.contains { $0.patch == nil && !($0.status == "renamed" && $0.additions == 0 && $0.deletions == 0) }
+        let sections = missingPatch ? ((try? await pullRequestDiff(repo: repo, number: number)).map(Self.diffSections) ?? [:]) : [:]
+        let files = batches.map { file in
+            let diff = file.patch ?? sections[file.filename] ?? ""
+            return ReviewedPullRequest.File(path: file.filename, status: file.status, additions: file.additions, deletions: file.deletions, lines: GitDiff.lines(of: diff).0)
         }
         return ReviewedPullRequest(
             title: pull.title, body: pull.body ?? "", author: pull.user?.login, headSHA: pull.head.sha,
@@ -1201,7 +1239,8 @@ struct PullRequestReviewView: View {
                     session: session, file: file, findings: findings.filter { $0.path == file.path }, learnings: learnings(on: file),
                     applied: (review?.applied ?? []).filter { $0.path == file.path }, resolve: { appliedLearning($0) },
                     learningURL: { harnessIndex?.url(for: $0.document) },
-                    existingComments: pullRequest.existingComments.filter { $0.path == file.path }
+                    existingComments: pullRequest.existingComments.filter { $0.path == file.path },
+                    fileURL: URL(string: "https://github.com/\(reference.repo)/blob/\(pullRequest.headSHA)/\(file.path)")
                 )
                 .id(file.path)
             } else {
@@ -1442,6 +1481,9 @@ private struct ReviewDiff: View {
     let resolve: (String) -> HarnessLearning?
     let learningURL: (HarnessLearning) -> URL?
     let existingComments: [ReviewedPullRequest.ExistingComment]
+    /// The file at the PR's head commit, for a binary or too-large diff
+    /// GitHub sent no patch for.
+    let fileURL: URL?
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
     @State private var showsFileLearnings = true
@@ -1499,11 +1541,17 @@ private struct ReviewDiff: View {
                             .padding(8)
                     }
                     if file.lines.isEmpty {
-                        Text(file.status == "renamed" && file.additions == 0 && file.deletions == 0
-                             ? "Renamed, with no changes to its contents."
-                             : "No diff to show: a binary file, or too big for GitHub to send.")
-                            .foregroundStyle(.secondary)
-                            .padding(16)
+                        let isPureRename = file.status == "renamed" && file.additions == 0 && file.deletions == 0
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(isPureRename
+                                 ? "Renamed, with no changes to its contents."
+                                 : "No diff to show: too big for GitHub to send, even as the whole pull request's diff.")
+                                .foregroundStyle(.secondary)
+                            if !isPureRename, let fileURL {
+                                Link("Open on GitHub", destination: fileURL)
+                            }
+                        }
+                        .padding(16)
                     }
                     ForEach(file.lines) { line in
                         ForEach(firstLine[line.id] ?? []) { learning in
