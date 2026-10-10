@@ -3,7 +3,9 @@ import SwiftUI
 // New Issue: an issue in a repo (or a draft item on a board), with its
 // board fields, assignees, labels and parent, written in one go when
 // Create is pressed. Claude can draft it with you, following the harness
-// skills picked, and a repo's issue templates can start it.
+// skills picked, and a repo's issue templates can start it. Images are
+// committed to the project's harness and shown in it from there
+// (`IssueImages`).
 
 // MARK: - Starting one
 
@@ -360,6 +362,7 @@ struct NewIssueSheet: View {
     @State private var labels: Set<String> = []
     @State private var parent: IssueReference?
     @State private var createAnother = false
+    @State private var images = IssueImageSet()
 
     @State private var repoLabels: [RepoLabel] = []
     @State private var templates: [IssueTemplate] = []
@@ -384,6 +387,11 @@ struct NewIssueSheet: View {
                 whatSection
                 if kind == .issue, !templates.isEmpty { templateSection }
                 textSection
+                IssueImagesSection(images: images, harness: imageHarness, repo: repo, added: { image in
+                    bodyText = IssueImages.appendingPlaceholder(for: image.name, to: bodyText)
+                }, removed: { image in
+                    bodyText = IssueImages.removingPlaceholder(for: image.name, from: bodyText)
+                })
                 claudeSection(board: boardDefinition)
             }
             .formStyle(.grouped)
@@ -407,10 +415,10 @@ struct NewIssueSheet: View {
                     .help("Keep the sheet open for the next one, with the repo, board and parent kept")
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(working ? "Creating" : (kind == .issue ? "Create Issue" : "Add Draft")) { create(board: boardDefinition) }
+                Button(working ? "Creating" : IssueImages.createTitle(kind == .issue ? "Create Issue" : "Add Draft", count: images.count)) { create(board: boardDefinition) }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(!canCreate)
-                    .help(kind == .issue ? "Creates it in \(repo.isEmpty ? "the repo" : repo) on GitHub, then sets what's picked (⌘↩)" : "Adds it to the board as a draft item (⌘↩)")
+                    .help(createHelp)
             }
         }
         .onAppear(perform: start)
@@ -422,7 +430,7 @@ struct NewIssueSheet: View {
     }
 
     private var canCreate: Bool {
-        guard !working, !title.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+        guard !working, !title.trimmingCharacters(in: .whitespaces).isEmpty, images.isEmpty || imageHarness != nil else { return false }
         return kind == .issue ? !repo.isEmpty : board != nil
     }
 
@@ -677,6 +685,19 @@ struct NewIssueSheet: View {
         return IssueReference(org: org, id: issue.id, number: issue.number, title: issue.title, repo: issue.repo, url: issue.url)
     }
 
+    private var createHelp: String {
+        let then = kind == .issue
+            ? "creates it in \(repo.isEmpty ? "the repo" : repo) on GitHub, then sets what's picked (⌘↩)"
+            : "adds it to the board as a draft item (⌘↩)"
+        let text = images.isEmpty ? then : "Commits the images to \(imageHarness?.repo ?? "the harness"), then \(then)"
+        return text.prefix(1).uppercased() + text.dropFirst()
+    }
+
+    /// The harness images are committed to: the one work in the repo runs in.
+    private var imageHarness: HarnessConfig? {
+        configs.config(for: org).harness(covering: repo.isEmpty ? [] : [repo])
+    }
+
     /// The harness's skills, from the harness work in the repo runs in.
     private var skillLibrary: [HarnessSkill] {
         let config = configs.config(for: org)
@@ -759,6 +780,9 @@ struct NewIssueSheet: View {
             }
             parts.append("It goes on the board \(board.title). Suggest values only where you can tell, from these:\n\(lines.joined(separator: "\n"))")
         }
+        if !images.isEmpty {
+            parts.append("The description has images as placeholders, lines like `\(IssueImages.placeholder(for: "screenshot.png"))`. Keep every one exactly as it is, each where it fits best.")
+        }
         if let parent {
             parts.append("It's a sub-issue of \(parent.repo)#\(parent.number): \(parent.title).")
         }
@@ -805,14 +829,28 @@ struct NewIssueSheet: View {
         let boardID = board.flatMap { number in projects.allBoardLists[org]?.first { $0.number == number }?.id } ?? definition?.id
         Task {
             defer { working = false }
+            var writing = "it"
+            var committedTo: String?
             do {
                 let people = try await api.userIDs(assignees.sorted())
+                var links: [(name: String, url: URL)] = []
+                if !images.isEmpty, let setup = imageHarness {
+                    writing = "the images"
+                    links = try await images.commit(org: org, repo: kind == .issue ? repo : "\(org)/drafts", setup: setup, harness: harness)
+                    committedTo = setup.repo
+                    writing = kind == .issue ? "the issue" : "the draft"
+                    steps.append("Committed \(links.count == 1 ? "an image" : "\(links.count) images") to \(setup.repo)")
+                }
+                let issueBody = IssueImages.body(bodyText, links: links)
                 var reference: IssueReference?
                 var itemID: String?
                 if kind == .issue {
-                    let issue = try await api.createIssue(repo: repo, title: title, body: bodyText, labels: labels.sorted(), assigneeIDs: Array(people.values))
+                    let issue = try await api.createIssue(repo: repo, title: title, body: issueBody, labels: labels.sorted(), assigneeIDs: Array(people.values))
                     reference = IssueReference(org: org, id: issue.id, number: issue.number, title: title, repo: repo, url: issue.url)
                     steps.append("Created \(repo)#\(issue.number)")
+                    // It's made: what fails from here is the rest, not the images.
+                    committedTo = nil
+                    writing = "the parent, board or fields"
                     if let parent {
                         try await api.addSubIssue(parent: parent.id, child: issue.id)
                         steps.append("Made it a sub-issue of #\(parent.number)")
@@ -822,8 +860,10 @@ struct NewIssueSheet: View {
                         steps.append("Added it to \(definition?.title ?? "the board")")
                     }
                 } else if let boardID {
-                    itemID = try await api.addDraftItem(projectID: boardID, title: title, body: bodyText, assigneeIDs: Array(people.values))
+                    itemID = try await api.addDraftItem(projectID: boardID, title: title, body: issueBody, assigneeIDs: Array(people.values))
                     steps.append("Added a draft to \(definition?.title ?? "the board")")
+                    committedTo = nil
+                    writing = "the fields"
                 }
                 if let itemID, let boardID, let definition {
                     for field in definition.fields.filter(\.isSettable) {
@@ -840,12 +880,14 @@ struct NewIssueSheet: View {
                     bodyText = ""
                     template = nil
                     conversation = []
+                    images = IssueImageSet()
                 } else {
                     dismiss()
                     created(reference)
                 }
             } catch {
-                self.error = "GitHub didn't take it: \(error.localizedDescription)"
+                let kept = committedTo.map { "The images are committed to \($0), and trying again links them rather than committing them twice. " } ?? ""
+                self.error = "\(kept)GitHub didn't take \(writing): \(error.localizedDescription)"
             }
         }
     }

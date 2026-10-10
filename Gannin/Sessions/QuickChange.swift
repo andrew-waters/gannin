@@ -137,7 +137,7 @@ extension SessionStore {
             : "You're making a quick change, \(session.issue.reference), \"\(session.issue.title)\", in the team's harness."
         let writeUp = session.hasNoIssue ? "" : "Then, before changing anything, fill out \(session.issue.reference) from what you found, "
             + "since it was filed from the note alone: with `gh issue edit`, give it a clear title and a description of the problem, "
-            + "what you'll change and where, and anything out of scope. "
+            + "what you'll change and where, and anything out of scope, keeping any images already in its description. "
         return """
             \(about) Read \(folder)/.gannin/brief.md first: it has the note\(shots ? " and the screenshots to look at" : ""). \
             It's meant to be small, so there's no plan document: look through the code, say in a line or two what you'll change. \
@@ -217,6 +217,11 @@ struct NewQuickChangeView: View {
     @State private var note = ""
     @State private var attachments: [QuickChangeAttachment] = []
     @AppStorage("quickChangeCreatesIssue") private var createsIssue = true
+    /// Whether the issue shows the screenshots, committed to the harness.
+    @State private var screenshotsInIssue = false
+    /// The screenshots as the issue's images, kept so trying again after
+    /// GitHub refuses the issue doesn't commit them twice.
+    @State private var issueImages = IssueImageSet()
     @State private var recording = true
     @State private var sandboxed = true
     @State private var choice = PromptChoice()
@@ -245,7 +250,7 @@ struct NewQuickChangeView: View {
                 Form {
                     whatSection(setup: setup)
                     screenshotsSection
-                    issueSection(workflow: workflow)
+                    issueSection(workflow: workflow, setup: setup)
                     PromptPickerSections(library: library, use: .work,
                                          values: ["title": effectiveTitle, "repo": repo], choice: $choice)
                     runSection
@@ -357,7 +362,9 @@ struct NewQuickChangeView: View {
         } header: {
             Text("Screenshots")
         } footer: {
-            Text("They stay with the session, for Claude to look at, and aren't uploaded to GitHub or committed.")
+            Text(addsScreenshots
+                 ? "They stay with the session, for Claude to look at, and are committed to the harness for the issue to show."
+                 : "They stay with the session, for Claude to look at, and aren't uploaded to GitHub or committed.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -394,15 +401,33 @@ struct NewQuickChangeView: View {
         }
     }
 
-    private func issueSection(workflow: IssueWorkflow) -> some View {
+    private func issueSection(workflow: IssueWorkflow, setup: HarnessConfig?) -> some View {
         Section {
             Toggle("Create an issue for it", isOn: $createsIssue)
             Text(issueExplanation(workflow: workflow))
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if createsIssue, !attachments.isEmpty, let setup {
+                Toggle("Add the screenshots to the issue", isOn: $screenshotsInIssue)
+                if screenshotsInIssue {
+                    Label {
+                        Text(IssueImages.audience(harness: setup.repo, repo: repo))
+                            .fixedSize(horizontal: false, vertical: true)
+                    } icon: {
+                        Image(systemName: "exclamationmark.shield.fill").foregroundStyle(.orange)
+                    }
+                    .font(.caption)
+                }
+                if let error = issueImages.error {
+                    Text(error).font(.caption).foregroundStyle(.red)
+                }
+            }
         }
     }
+
+    /// Whether Start commits the screenshots for the issue to show.
+    private var addsScreenshots: Bool { createsIssue && screenshotsInIssue && !attachments.isEmpty }
 
     private func issueExplanation(workflow: IssueWorkflow) -> String {
         guard createsIssue else {
@@ -410,11 +435,16 @@ struct NewQuickChangeView: View {
         }
         let target = repo.isEmpty ? "the repo" : repo
         guard workflow.projectNumber != nil else {
-            return "Start files an issue in \(target) from the note on GitHub, assigned to you, and the pull request closes it. The project has no workflow board (Settings › Issues), so it isn't put on one. Screenshots aren't added to it."
+            return "Start files an issue in \(target) from the note on GitHub, assigned to you, and the pull request closes it. The project has no workflow board (Settings › Issues), so it isn't put on one.\(screenshotsNote)"
         }
         let board = boardDefinition(workflow).map { "\"\($0.title)\"" } ?? "the workflow board"
         let status = inProgressStatus(workflow).map { " as \($0)" } ?? ""
-        return "Start files an issue in \(target) from the note on GitHub, assigned to you, puts it on \(board)\(status), and the pull request closes it. Screenshots aren't added to it."
+        return "Start files an issue in \(target) from the note on GitHub, assigned to you, puts it on \(board)\(status), and the pull request closes it.\(screenshotsNote)"
+    }
+
+    private var screenshotsNote: String {
+        guard !attachments.isEmpty else { return "" }
+        return addsScreenshots ? " The screenshots show in it, committed to the harness first." : " Screenshots aren't added to it."
     }
 
     @ViewBuilder
@@ -455,14 +485,16 @@ struct NewQuickChangeView: View {
             }
             HStack {
                 Spacer()
-                Button(working ? "Starting" : createsIssue ? "Create Issue and Start" : "Start") {
+                Button(working ? "Starting" : addsScreenshots ? "Commit \(attachments.count == 1 ? "1 Image" : "\(attachments.count) Images"), Create Issue and Start"
+                       : createsIssue ? "Create Issue and Start" : "Start") {
                     if let setup { start(setup: setup, workflow: workflow) }
                 }
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(working || setup == nil || blocked != nil || repo.isEmpty || note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || (createsIssue && auth.api == nil))
-                .help(createsIssue ? "Files the issue on GitHub, then starts Claude Code on it (⌘↩)" : "Starts Claude Code on it (⌘↩)")
+                .help(addsScreenshots ? "Commits the screenshots to \(setup?.repo ?? "the harness"), files the issue on GitHub showing them, then starts Claude Code on it (⌘↩)"
+                      : createsIssue ? "Files the issue on GitHub, then starts Claude Code on it (⌘↩)" : "Starts Claude Code on it (⌘↩)")
             }
         }
     }
@@ -608,21 +640,40 @@ struct NewQuickChangeView: View {
         let goals = configs.scoped(setup.repo).config(for: org).measurables
         let recording = recording
         let login = auth.viewer?.login
+        let addsScreenshots = addsScreenshots
         Task {
             defer { working = false }
             var issue: IssueReference?
             var boardError: String?
             if createsIssue {
                 guard let api = auth.api else { return }
+                var writing = "the issue"
+                var committedTo: String?
                 do {
                     // Assigned to whoever started it, so it's in their workload.
                     var assignees: [String] = []
                     if let login { assignees = Array(try await api.userIDs([login]).values) }
-                    let made = try await api.createIssue(repo: repo, title: title, body: note, assigneeIDs: assignees)
+                    var links: [(name: String, url: URL)] = []
+                    if addsScreenshots {
+                        issueImages.keep(Set(attachments.map(\.id)))
+                        for attachment in attachments where !issueImages.images.contains(where: { $0.id == attachment.id }) {
+                            guard issueImages.add(name: attachment.name, data: attachment.data, id: attachment.id) != nil else {
+                                self.error = issueImages.error
+                                return
+                            }
+                        }
+                        writing = "the screenshots"
+                        links = try await issueImages.commit(org: org, repo: repo, setup: setup, harness: harness)
+                        committedTo = setup.repo
+                        writing = "the issue"
+                        steps.append("Committed \(links.count == 1 ? "a screenshot" : "\(links.count) screenshots") to \(setup.repo)")
+                    }
+                    let made = try await api.createIssue(repo: repo, title: title, body: IssueImages.body(note, links: links), assigneeIDs: assignees)
                     issue = IssueReference(org: org, id: made.id, number: made.number, title: title, repo: repo, url: made.url)
                     steps.append("Created \(repo)#\(made.number)")
                 } catch {
-                    self.error = "GitHub didn't take the issue: \(error.localizedDescription)"
+                    let kept = committedTo.map { "The images are committed to \($0), and trying again links them rather than committing them twice. " } ?? ""
+                    self.error = "\(kept)GitHub didn't take \(writing): \(error.localizedDescription)"
                     return
                 }
                 // The board is a nicety: the session starts whatever happens,
