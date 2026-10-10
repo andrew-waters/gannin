@@ -277,6 +277,25 @@ final class RoutineStore {
         write(queue, "queue.json")
     }
 
+    /// Puts the issue at `position` in its org's queue (0 for the front, past
+    /// the end for the back), moving it there if it's queued already, as
+    /// the scheduling board drops it.
+    func insert(_ issue: IssueReference, at position: Int, now: Date = .now) {
+        let item = queue.first { $0.issue.id == issue.id } ?? QueuedIssue(issue: issue, addedAt: now)
+        queue.removeAll { $0.issue.id == issue.id }
+        let mine = queue(for: issue.org)
+        let index: Int
+        if position < mine.count, let before = queue.firstIndex(of: mine[max(0, position)]) {
+            index = before
+        } else if let last = mine.last, let after = queue.firstIndex(of: last) {
+            index = after + 1
+        } else {
+            index = queue.endIndex
+        }
+        queue.insert(item, at: index)
+        write(queue, "queue.json")
+    }
+
     func dequeue(_ issueID: String) {
         guard isQueued(issueID) else { return }
         queue.removeAll { $0.issue.id == issueID }

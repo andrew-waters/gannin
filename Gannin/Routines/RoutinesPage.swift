@@ -264,6 +264,15 @@ struct RoutinePage: View {
                 VStack(alignment: .leading, spacing: 20) {
                     header(routine)
                     upcoming(routine)
+                    if routine.kind == .issueQueue {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Schedule")
+                                .font(.headline)
+                            ScheduleBoard(org: routine.org, window: routine.id)
+                                .frame(height: 420)
+                                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.separatorLine))
+                        }
+                    }
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Runs")
                             .font(.headline)

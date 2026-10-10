@@ -1296,7 +1296,12 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
     none does, and the editor offers no Project for these), briefed
     from the history and any cached detail, its record committed to the harness without asking
     (scheduling it is the consent), its first prompt `scheduledIssuePrompt` (write a short plan and
-    carry on) with the routine's note. An issue that already has a session fails the run.
+    carry on) with the routine's note. An issue that already has a session carries on in it
+    (`resumeIssueRun`): left alone and tried again later while it's mid-turn or asking, else started
+    again if running (claude resumes, so the run's limits reach `--disallowedTools`), switched to auto
+    mode and told to carry on (`resumedIssuePrompt`, with `briefSection`). Its `RoutineRunInfo` is
+    `resumed`, so replies from before don't count as the run's work, and the session is handed back
+    (`routineRun` cleared, `handBack`) when the run finishes, stops at its limit or is lost.
 - Watching (`watchRoutineRuns`, each tick, `RoutineVerdict.judge`): a run's cost is its session's and
   helpers' transcripts' `costUSD`; past its minutes or cost it's interrupted (Esc), its helpers and
   claude ended, worktree and files kept, Stopped at limit with a notification (`stopAtLimit`). A
@@ -1311,9 +1316,18 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `ScheduleDraft` with the next five times or the problem, how far it may go, limits, and the auto
   mode warning. A routine's page (`DetailSelection.routine`, `RoutinePage`) has its settings, next
   times and its runs: scheduled, started, outcome with its note, how long, cost, PRs and Open Session.
-- Agents › Queue (`AgentQueuePage`, `WorkloadTab.agentQueue`, badge the count): the org's queue in
-  order, dragged to reorder, Move to Top or Bottom, Remove; which windows drain it and when they next
-  open; and the issues pinned to a time. Schedule for Agent (`ScheduleForAgentButton`, beside Work on
+- Agents › Queue (`AgentQueuePage`, `WorkloadTab.agentQueue`, badge the count): which windows drain
+  the org's queue and when they next open, then Board or List (`agentQueueLayout`). List is the queue
+  in order, dragged to reorder, Move to Top or Bottom, Remove, and the issues pinned to a time. Board
+  (`ScheduleBoard`, also on a queue window's page limited to its lanes) is the project's unscheduled
+  open issues, searchable, beside the coming week: a lane per run each window lets go at once, its open
+  hours shaded (`RoutineSchedule.openIntervals`), and a Pinned lane. `ScheduleProjection` lays runs
+  going, pins and queued issues on it, the queue in order into whichever lane can start each soonest,
+  every run taking its window's whole limit (so times are the latest), the rest After this week.
+  Dragging an issue onto a window's lane queues it before those projected to start after the drop
+  (`RoutineStore.insert(_:at:)`, moving it if queued, unpinning it if pinned), onto Pinned pins it on
+  the quarter hour (a new pinned routine with the defaults, or the pin moved), and back to the list
+  takes it off. Schedule for Agent (`ScheduleForAgentButton`, beside Work on
   This in the issue drawer and window; `ScheduleForAgentItems` in Issues › All's menu) adds the issue
   to the queue or takes it off, and Pin to a Time opens the editor for a pinned routine. An issue queued, pinned or with a scheduled run going shows `ScheduledForAgentPill` (Agent Working
   or Agent Needs You while its run is active, Queued for Agent with its place in the queue, or Pinned
