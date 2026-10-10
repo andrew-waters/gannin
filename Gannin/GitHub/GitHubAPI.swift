@@ -168,6 +168,13 @@ struct GitHubAPI {
         do {
             envelope = try Self.decoder.decode(Envelope<T>.self, from: data)
         } catch {
+            // A field inside `data` can be null (GitHub returns a partial
+            // response) when the mutation itself failed; decoding `T`
+            // against it throws before `errors` is ever reached, so look
+            // for it separately rather than reporting a decoding error.
+            if let errors = try? Self.decoder.decode(ErrorsEnvelope.self, from: data).errors, !errors.isEmpty {
+                throw APIError.graphQL(errors.map(\.message))
+            }
             throw APIError.decoding(String(describing: error))
         }
         // A mutation can't ask its cost; GitHub charges one point.
@@ -225,6 +232,10 @@ struct GitHubAPI {
     private struct Message: Decodable {
         let message: String
         let type: String?
+    }
+
+    private struct ErrorsEnvelope: Decodable {
+        let errors: [Message]?
     }
 }
 
