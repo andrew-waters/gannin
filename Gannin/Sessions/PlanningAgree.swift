@@ -277,7 +277,8 @@ struct PlanningAgreeSheet: View {
         defer { working = false }
         status = nil
         let planURL = URL(string: "https://github.com/\(harnessRepo)/blob/HEAD/\(planPath)")
-        let planLink = planURL.map { "\n\nPlanned in [\(title)](\($0.absoluteString))." } ?? ""
+        let planText = planURL.map { "Planned in [\(title)](\($0.absoluteString))." }
+        let planLink = planText.map { "\n\n\($0)" } ?? ""
 
         if parent == nil {
             if let issue = planning.issue {
@@ -336,6 +337,9 @@ struct PlanningAgreeSheet: View {
         } catch {
             status = "The issues are made, but the plan couldn't be committed: \(error.localizedDescription) Agree and Write again to retry."
             return
+        }
+        if planning.issue != nil, let planText {
+            try? await api.addComment(subjectID: parent.id, body: planText)
         }
 
         sessions.update(session.id) {
