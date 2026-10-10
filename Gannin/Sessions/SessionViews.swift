@@ -639,8 +639,6 @@ struct SessionTab: View {
 
     private var panel: some View {
         VStack(spacing: 0) {
-            SessionLocationBadge(session: session, prominent: true)
-                .padding([.horizontal, .top], 8)
             Picker("Show", selection: shownPane) {
                 Text(session.isAsk || session.isHelper ? "Session" : "Issue").tag(SessionPane.issue)
                 if !session.isAsk {
@@ -655,12 +653,18 @@ struct SessionTab: View {
             .labelsHidden()
             .padding(8)
             Divider()
-            switch shownPane.wrappedValue {
-            case .issue: SessionPanel(session: session)
-            case .changes: SessionChangesPane(session: session, changes: changes)
-            case .pullRequests: SessionPullRequestsPane(session: session)
-            case .activity: SessionActivityPane(session: session)
+            Group {
+                switch shownPane.wrappedValue {
+                case .issue: SessionPanel(session: session)
+                case .changes: SessionChangesPane(session: session, changes: changes)
+                case .pullRequests: SessionPullRequestsPane(session: session)
+                case .activity: SessionActivityPane(session: session)
+                }
             }
+            .frame(maxHeight: .infinity)
+            Divider()
+            SessionLocationBadge(session: session, prominent: true)
+                .padding(8)
         }
     }
 
