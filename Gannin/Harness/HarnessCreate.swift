@@ -122,9 +122,10 @@ enum HarnessSkeleton {
                 | `summary` | all | A sentence or two for deciding whether to open it, as a `>` block |
                 | `domains` | all | The product areas it belongs to, from the list below, the main one first |
                 | `issues` | when there is one | The issues it's about, as `owner/repo#123` |
-                | `touches` | plans, findings | The code it changes, as `owner/repo` or `owner/repo:path` |
+                | `touches` | plans, findings, refines | The code it changes, as `owner/repo` or `owner/repo:path` |
                 | `owner` | optional | The GitHub login driving it |
                 | `repo`, `paths`, `commit`, `source`, `author` | learnings | See `learnings/README.md` |
+                | `url`, `attendees` | refines | See `refines/README.md` |
 
                 Statuses:
 
