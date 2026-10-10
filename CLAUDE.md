@@ -1161,8 +1161,10 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   Mac with the reason when one of its repos is marked Needs the Mac (`OrgConfig.reposNeedingMac`, a
   checkbox beside Needs Review in Settings › Repositories, in the harness's `exclusions.json`) or the
   org has no GitHub token. With sandboxing on, Work on This always shows its sheet, with Run in.
-  `CodeSession.sandbox` is the issue's container (`gannin-<session id>`), `hostReason` why not; the
-  session panel shows either, with `SandboxStatus`.
+  `CodeSession.sandbox` is the issue's container (`gannin-<session id>`), `hostReason` why not.
+  Where a session runs (`SessionLocation`: this Mac, a sandbox, the Connect with server by its ssh
+  host, or a sandbox there) is a banner atop its panel and a chip in the compact header
+  (`SessionLocationBadge`, with `SandboxStatus`), and an icon on its tab when it isn't this Mac.
 - Launch: `SessionScript.harnessStart` prepares the harness on the box as for any session, then
   `SandboxLaunch.hostSteps` checks the box (Apple Silicon, macOS 26 or later, container at least the
   minimum, R17), starts the service and kernel if needed, clones the issue's repos into `projects/` (a

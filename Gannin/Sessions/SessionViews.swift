@@ -336,6 +336,13 @@ private struct SessionTabItem: View {
                             .lineLimit(1)
                             .truncationMode(.head)
                     }
+                    if session.location != .thisMac {
+                        Image(systemName: session.location.symbol)
+                            .font(.caption)
+                            .foregroundStyle(session.location.tint)
+                            .help(session.location.name)
+                            .accessibilityLabel(session.location.name)
+                    }
                 }
                 Text(kind.title)
                     .fontWeight(waiting ? .semibold : .regular)
@@ -520,6 +527,8 @@ struct SessionTab: View {
 
     private var panel: some View {
         VStack(spacing: 0) {
+            SessionLocationBadge(session: session, prominent: true)
+                .padding([.horizontal, .top], 8)
             Picker("Show", selection: shownPane) {
                 Text(session.isAsk ? "Session" : "Issue").tag(SessionPane.issue)
                 if !session.isAsk {
@@ -578,6 +587,57 @@ struct SessionTab: View {
 }
 
 /// A tab's own header when it's one of two side by side.
+extension CodeSession {
+    var location: SessionLocation { SessionLocation(sandboxed: isSandboxed, connect: connect) }
+}
+
+extension SessionLocation {
+    var tint: Color {
+        switch self {
+        case .thisMac: .orange
+        case .sandbox, .sandboxOnServer: .green
+        case .server: .blue
+        }
+    }
+}
+
+/// Where the session's claude runs, always in view: this Mac, a sandbox,
+/// the server or a sandbox there, with the sandbox's state.
+private struct SessionLocationBadge: View {
+    @Environment(SessionStore.self) private var sessions
+    let session: CodeSession
+    /// The panel's full-width banner rather than the compact header's chip.
+    let prominent: Bool
+
+    var body: some View {
+        let location = session.location
+        let status = location.isSandboxed
+            ? SandboxStatus(sessions.isRunning(session.id) ? sessions.sandboxStatus[session.id] : "stopped")
+            : nil
+        HStack(spacing: 6) {
+            Image(systemName: location.symbol)
+                .foregroundStyle(location.tint)
+            Text(location.name)
+                .fontWeight(.semibold)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if let status {
+                Circle().fill(status.color).frame(width: 7, height: 7)
+                Text(status.label)
+                    .foregroundStyle(.secondary)
+            }
+            if prominent { Spacer(minLength: 0) }
+        }
+        .font(prominent ? .callout : .caption)
+        .padding(.horizontal, prominent ? 10 : 6)
+        .padding(.vertical, prominent ? 6 : 2)
+        .background(location.tint.opacity(0.12), in: RoundedRectangle(cornerRadius: prominent ? 6 : 4))
+        .help([location.explanation, session.sandbox].compactMap { $0 }.joined(separator: "\n"))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("Runs on \(location.name)\(status.map { ", \($0.label.lowercased())" } ?? "")")
+    }
+}
+
 private struct SessionTabHeader: View {
     @Environment(SessionStore.self) private var sessions
     let session: CodeSession
@@ -589,6 +649,7 @@ private struct SessionTabHeader: View {
             Text("#\(String(session.issue.number))").foregroundStyle(.secondary)
             Text(session.title).lineLimit(1)
             Spacer()
+            SessionLocationBadge(session: session, prominent: false)
             Button {
                 panelShown.toggle()
             } label: {
@@ -1178,13 +1239,6 @@ private struct SessionPanel: View {
                 }
                 if session.isSandboxed {
                     let status = SandboxStatus(sessions.isRunning(session.id) ? sessions.sandboxStatus[session.id] : "stopped")
-                    LabeledContent("Runs in") {
-                        HStack(spacing: 6) {
-                            Circle().fill(status.color).frame(width: 8, height: 8)
-                            Text("A sandbox, \(status.label.lowercased())")
-                        }
-                    }
-                    .help(session.sandbox ?? "")
                     if let error = status.error {
                         Text(error)
                             .font(.caption)
@@ -1192,7 +1246,6 @@ private struct SessionPanel: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 } else if let reason = session.hostReason {
-                    LabeledContent("Runs in") { Text(session.isRemote ? "The server" : "This Mac") }
                     Text(reason)
                         .font(.caption)
                         .foregroundStyle(.secondary)

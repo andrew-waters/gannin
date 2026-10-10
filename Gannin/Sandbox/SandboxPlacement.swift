@@ -91,3 +91,77 @@ struct SandboxStatus: Equatable {
         }
     }
 }
+
+/// Where a session's claude actually runs, as its tab and panel say it:
+/// this Mac, a sandbox here, the Connect with server, or a sandbox there.
+nonisolated enum SessionLocation: Equatable, Sendable {
+    case thisMac
+    case sandbox
+    case server(String)
+    case sandboxOnServer(String)
+
+    init(sandboxed: Bool, connect: String?) {
+        switch (sandboxed, connect.map(Self.serverName)) {
+        case (false, nil): self = .thisMac
+        case (true, nil): self = .sandbox
+        case (false, let server?): self = .server(server)
+        case (true, let server?): self = .sandboxOnServer(server)
+        }
+    }
+
+    var name: String {
+        switch self {
+        case .thisMac: "This Mac"
+        case .sandbox: "Sandbox on this Mac"
+        case .server(let server): server
+        case .sandboxOnServer(let server): "Sandbox on \(server)"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .thisMac: "laptopcomputer"
+        case .sandbox, .sandboxOnServer: "shippingbox"
+        case .server: "server.rack"
+        }
+    }
+
+    var isSandboxed: Bool {
+        switch self {
+        case .sandbox, .sandboxOnServer: true
+        case .thisMac, .server: false
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .thisMac: "Claude runs on this Mac as you, able to reach anything you can."
+        case .sandbox: "Claude runs in a Linux sandbox on this Mac that sees only this issue's folder and what it's given."
+        case .server(let server): "Claude runs on \(server), through Settings' Connect with command, as you there."
+        case .sandboxOnServer(let server): "Claude runs in a Linux sandbox on \(server) that sees only this issue's folder and what it's given."
+        }
+    }
+
+    /// The host a Connect with command reaches: `ssh -t me@studio` is
+    /// studio. Anything else is the command itself.
+    static func serverName(_ connect: String) -> String {
+        let words = connect.split(whereSeparator: \.isWhitespace).map(String.init)
+        guard let first = words.first, first == "ssh" || first.hasSuffix("/ssh") else {
+            return connect.trimmingCharacters(in: .whitespaces)
+        }
+        // ssh's options that take a value.
+        let valued = Set("BbcDEeFIiJLlmOoPpQRSWw".map { "-\($0)" })
+        var index = 1
+        while index < words.count {
+            let word = words[index]
+            if valued.contains(word) {
+                index += 2
+            } else if word.hasPrefix("-") {
+                index += 1
+            } else {
+                return word.split(separator: "@").last.map(String.init) ?? word
+            }
+        }
+        return connect.trimmingCharacters(in: .whitespaces)
+    }
+}

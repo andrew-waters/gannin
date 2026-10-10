@@ -67,4 +67,13 @@ struct SandboxPlacementTests {
         #expect(!old.isSandboxed)
         #expect(old.hostReason == nil)
     }
+
+    @Test func sessionsSayWhereTheyRun() {
+        #expect(SessionLocation(sandboxed: false, connect: nil) == .thisMac)
+        #expect(SessionLocation(sandboxed: true, connect: nil) == .sandbox)
+        #expect(SessionLocation(sandboxed: false, connect: "ssh -t studio") == .server("studio"))
+        #expect(SessionLocation(sandboxed: true, connect: "ssh -t -p 2222 -i ~/.ssh/key me@studio.local") == .sandboxOnServer("studio.local"))
+        #expect(SessionLocation.serverName("/usr/bin/ssh -o BatchMode=yes devbox") == "devbox")
+        #expect(SessionLocation.serverName("mosh devbox") == "mosh devbox")
+    }
 }
