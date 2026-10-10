@@ -46,6 +46,9 @@ struct GanninApp: App {
         let bankHolidays = BankHolidayStore()
         _bankHolidays = State(initialValue: bankHolidays)
         let orgs = OrgStore(auth: auth, activity: activity, database: database)
+        // Every project's outside repos, the same whichever project a
+        // window has (the root store reads home, which lists them all).
+        orgs.outsideRepos = { [weak orgConfigs] org in orgConfigs?.root.baseConfig(for: org).outsideRepos ?? [] }
         _orgs = State(initialValue: orgs)
         let details = DetailStore(auth: auth)
         _details = State(initialValue: details)

@@ -19,6 +19,10 @@ final class OrgStore {
     private let auth: AuthStore
     private let activity: SyncActivity
     @ObservationIgnored private let database: UserDatabase
+    /// The account's outside repos (set by `GanninApp`, from
+    /// `OrgConfigStore`'s root store, so the cache is the same whichever
+    /// project a window has).
+    @ObservationIgnored var outsideRepos: (_ org: String) -> Set<String> = { _ in [] }
 
     /// Stars are kept in the synced `UserDatabase`.
     init(auth: AuthStore, activity: SyncActivity, database: UserDatabase) {
@@ -152,7 +156,8 @@ final class OrgStore {
                 lookbackDays: lookbackDays,
                 previous: previous,
                 plan: plan,
-                run: run
+                run: run,
+                outsideRepos: outsideRepos(login)
             )
             snapshots[login] = snapshot
             errors[login] = nil
