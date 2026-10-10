@@ -50,4 +50,26 @@ struct OutsideRepoTests {
         #expect(after.contains("acme/old"))
         #expect(!after.contains("acme/api"))
     }
+
+    // MARK: projectOutsideRepos (andrew-waters/gannin#175, R9)
+
+    @Test func projectOutsideReposIsEmptyWithNoProject() {
+        var config = OrgConfig()
+        config.outsideRepos = ["client/app"]
+        #expect(config.projectOutsideRepos.isEmpty)
+    }
+
+    @Test func projectOutsideReposIsEmptyWhenTheProjectNamesNone() {
+        var config = OrgConfig()
+        config.outsideRepos = ["client/app"]
+        config.scope = project("acme/harness", repos: [])
+        #expect(config.projectOutsideRepos.isEmpty)
+    }
+
+    @Test func projectOutsideReposIsTheIntersectionWithTheProjectsRepos() {
+        var config = OrgConfig()
+        config.outsideRepos = ["client/app", "other/thing"]
+        config.scope = project("acme/harness", repos: ["acme/api", "client/app"])
+        #expect(config.projectOutsideRepos == ["client/app"])
+    }
 }

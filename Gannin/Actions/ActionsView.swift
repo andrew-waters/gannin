@@ -20,6 +20,7 @@ struct ActionsView: View {
     var body: some View {
         dashboard
             .syncOffNotice(.actions)
+            .outsideReposNotice(org: org)
             .task(id: "\(org) \(windowDays)") { await sync(force: false) }
     }
 

@@ -79,6 +79,15 @@ struct OrgConfig: Codable, Hashable {
     /// What views check a repo against: excluded, or outside the project.
     var repoExclusion: RepoExclusion { RepoExclusion(excluded: excludedRepos, focus: focusRepos, outside: outsideRepos) }
 
+    /// The window's project's own outside repos: empty unless it names
+    /// specific repos (naming none doesn't pick up another project's, as
+    /// `repoExclusion` already keeps out of the lists). Pages that don't
+    /// fetch outside repos say so with them (`outsideReposNotice`).
+    var projectOutsideRepos: Set<String> {
+        guard let repos = scope?.repos, !repos.isEmpty else { return [] }
+        return Set(repos).intersection(outsideRepos)
+    }
+
     /// Repos not to fetch CI runs for: excluded ones no project names, the
     /// same whichever project a window has picked.
     var unfetchedRepos: Set<String> { excludedRepos.subtracting(repoProjects.flatMap(\.repos)) }

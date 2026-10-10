@@ -95,6 +95,7 @@ struct WorkLogPage: View {
         }
         .toolbar { toolbar(columns) }
         .syncOffNotice(.workLog)
+        .outsideReposNotice(org: org)
         .task(id: "\(org) \(columns.first?.start.timeIntervalSince1970 ?? 0)") {
             await store.sync(org, from: columns.first?.start)
         }

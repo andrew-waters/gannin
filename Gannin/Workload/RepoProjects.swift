@@ -500,3 +500,39 @@ struct OutsideRepoLookup: Decodable {
     let isArchived: Bool
     let viewerPermission: String?
 }
+
+/// A bar at the top when the window's project names outside repos, which
+/// this page's data doesn't include (R9): metrics (PR flow, Scorecards,
+/// Issue flow, Investments, Recap), Activity, Standup, CI, Releases and
+/// Boards.
+private struct OutsideReposNotice: ViewModifier {
+    let org: String
+    @Environment(OrgConfigStore.self) private var configs
+
+    func body(content: Content) -> some View {
+        content.safeAreaInset(edge: .top, spacing: 0) {
+            let outside = configs.config(for: org).projectOutsideRepos.sorted()
+            if !outside.isEmpty {
+                HStack(spacing: 8) {
+                    Image(systemName: "arrow.triangle.branch")
+                    Text("Doesn't cover \(outside.joined(separator: ", ")), which \(org) doesn't own.")
+                    Spacer()
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(.bar)
+                .overlay(alignment: .bottom) { Divider() }
+            }
+        }
+    }
+}
+
+extension View {
+    /// A bar at the top when the window's project names outside repos,
+    /// which this page's data doesn't include.
+    func outsideReposNotice(org: String) -> some View {
+        modifier(OutsideReposNotice(org: org))
+    }
+}

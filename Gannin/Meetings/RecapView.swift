@@ -261,6 +261,7 @@ struct RecapView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .toolbar { toolbar(config, period: period, members: members) }
+        .outsideReposNotice(org: org)
         .sheet(isPresented: $showsNotes) {
             let date = period.start.formatted(.iso8601.year().month().day())
             NotesSheet(
