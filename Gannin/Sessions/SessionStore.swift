@@ -464,32 +464,49 @@ final class SessionStore {
         SandboxCredentials.removeStoredSubscriptionToken()
         noteSandboxedHarnesses()
         reviewDrafts = sessions.compactMapValues(\.reviewDraft)
-        tabs = (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? [])
-            .compactMap(UUID.init(uuidString:))
-            .filter { sessions[$0] != nil }
+        // A helper's tab, saved before helpers were shown in their
+        // session's, is its session's.
+        var saved: [UUID] = []
+        for id in (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? []).compactMap(UUID.init(uuidString:)) {
+            guard sessions[id] != nil else { continue }
+            let tab = tabOwner(id)
+            if !saved.contains(tab) { saved.append(tab) }
+        }
+        tabs = saved
         selectedTab = tabs.first
     }
 
     // MARK: Tabs
 
-    /// Shows the session's tab, adding it after the one showing if it isn't
-    /// open.
+    /// The tab a session shows in: a helper's is the session it helps, so
+    /// the work and its review are one tab.
+    func tabOwner(_ id: UUID) -> UUID {
+        guard let parent = sessions[id]?.parentID, sessions[parent] != nil else { return id }
+        return parent
+    }
+
+    /// Shows the session, adding its tab after the one showing if it isn't
+    /// open. A helper shows in its session's tab.
     func reveal(_ id: UUID) {
         guard sessions[id] != nil else { return }
-        if !tabs.contains(id) {
-            let index = selectedTab.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
-            tabs.insert(id, at: index)
+        let tab = tabOwner(id)
+        if !tabs.contains(tab) {
+            let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) }.map { $0 + 1 } ?? tabs.endIndex
+            tabs.insert(tab, at: index)
             saveTabs()
         }
         selectedTab = id
     }
 
     /// Adds the session's tab after `neighbour`'s (else at the end) without
-    /// showing it: a helper started in the background.
+    /// showing it: a helper started in the background, whose tab is its
+    /// session's.
     func addTab(_ id: UUID, after neighbour: UUID?) {
-        guard sessions[id] != nil, !tabs.contains(id) else { return }
+        guard sessions[id] != nil else { return }
+        let tab = tabOwner(id)
+        guard !tabs.contains(tab) else { return }
         let index = neighbour.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
-        tabs.insert(id, at: index)
+        tabs.insert(tab, at: index)
         saveTabs()
     }
 
@@ -499,7 +516,7 @@ final class SessionStore {
     func openDraft(_ draft: PlanningDraft) -> UUID {
         let id = UUID()
         planningDrafts[id] = draft
-        let index = selectedTab.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
+        let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) }.map { $0 + 1 } ?? tabs.endIndex
         tabs.insert(id, at: index)
         showingOverview = false
         selectedTab = id
@@ -521,10 +538,14 @@ final class SessionStore {
 
     func closeTab(_ id: UUID) {
         planningDrafts[id] = nil
-        guard let index = tabs.firstIndex(of: id) else { return }
+        guard let index = tabs.firstIndex(of: id) else {
+            // A helper showing in its session's tab: back to the work.
+            if selectedTab == id, let parent = sessions[id]?.parentID { selectedTab = parent }
+            return
+        }
         tabs.remove(at: index)
-        if selectedTab == id {
-            selectedTab = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)]
+        if let selectedTab, tabOwner(selectedTab) == id {
+            self.selectedTab = tabs.isEmpty ? nil : tabs[min(index, tabs.count - 1)]
         }
         saveTabs()
     }
@@ -549,7 +570,7 @@ final class SessionStore {
     /// The tab `offset` along from the one showing, wrapping round.
     func selectTab(offset: Int) {
         guard !tabs.isEmpty else { return }
-        let index = selectedTab.flatMap { tabs.firstIndex(of: $0) } ?? 0
+        let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) } ?? 0
         selectedTab = tabs[((index + offset) % tabs.count + tabs.count) % tabs.count]
     }
 
@@ -738,6 +759,11 @@ final class SessionStore {
     func remove(_ id: UUID) {
         // Helpers work in its folder, so they go with it.
         for helper in helpers(of: id) { remove(helper.id) }
+        // A helper showing in its session's tab goes back to the work.
+        if let parent = sessions[id]?.parentID {
+            if selectedTab == id { selectedTab = parent }
+            if besideTab == id { besideTab = parent }
+        }
         if let session = sessions[id] { deleteSandbox(of: session) }
         terminals[id]?.terminate()
         terminals[id] = nil

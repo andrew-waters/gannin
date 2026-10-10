@@ -729,7 +729,13 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   launches; each tab two lines beside a large icon for its kind, the kind (Plan, Review, Code or a
   helper's role) and issue or PR above its title, `TabKind`; + opens a session already started, ⌘W closes a tab, claude keeps running;
   tabs are dragged into order, and Rename Tab or a double-click names one, `CodeSession.name`, in
-  place of its title everywhere, empty going back). Each tab
+  place of its title everywhere, empty going back). A session's helpers have no tab of their own
+  (andrew-waters/gannin#131): they show in its tab (`SessionStore.tabOwner`; `reveal` and
+  `addTab` open the session's, tabs saved on a helper become its session's), under a switcher of
+  Work and each helper by role with its state (`SessionAgentSwitcher`); `selectedTab` is still
+  the helper's ID, so attention and looking work as before. The session's tab shows how its pair
+  review is going (`PairReview.shortStatus`), else how many helpers it has, and is marked when one
+  is waiting on you. Each tab
   is a SwiftTerm terminal (taking the room) beside a side panel in a `FixedSplit` fixing its
   trailing pane, opening at its widest, 440 points (`SessionTab.panelMaxWidth`), and dragged as
   narrow as 300 (kept in `sessionPanelWidth`): the issue (its session state, and its plans and requirements
@@ -800,7 +806,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`remoteAttachmentScript`), the start script warning about any the brief lists that didn't arrive; they're never uploaded to GitHub or committed. The
   brief (`SessionBrief.quickChangeSections`) has the note in place of the description, the
   screenshots' paths, and that it's meant to be small, needs no plan document, and to stop and say
-  so if it isn't; the first prompt (`quickChangePrompt`) leaves out "propose a plan first". Its tab
+  so if it isn't; the first prompt (`quickChangePrompt`) leaves out "propose a plan first" and, with an issue, asks for it to be filled out with `gh issue edit` once the code has been looked through, before anything changes. Its tab
   is Quick Change (a bolt), its panel shows the note and screenshots (`QuickChangeSection`), and
   rows, notifications and helpers' prompts name it by `shortReference` / `longReference` (the repo picked, `issue.repo`, not the harness) rather than `#0`, and the team's prompts get `issueValues` (`{{issue}}` saying it's a quick change, `{{number}}` and `{{url}}` empty).
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its
@@ -879,7 +885,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   its brief says to run it with a note once the change is committed and built, before a PR is
   marked ready. It writes a token and the note to `review-request` in the session's folder, read
   by the poll (and `readRemote`) beside the hooks' files; a new token (`CodeSession.reviewRequest`)
-  starts a reviewer helper in the background (tab added, not selected; `reviewPrompt` with the
+  starts a reviewer helper in the background (in the session's tab, not shown; `reviewPrompt` with the
   note) or asks the one there to look again. A round is the reviewer's reply ending with its JSON
   list (`SessionTranscript.listedFindings`, nil without one, so `[]` means nothing found; taken
   once by `lastReplyID`, `pairRoundRead` from `store`): the findings are pasted into the working

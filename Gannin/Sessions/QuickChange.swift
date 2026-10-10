@@ -126,17 +126,22 @@ extension SessionStore {
     }
 
     /// Claude's first prompt: what to do and where, without the issue's
-    /// "propose a plan first", since it's meant to be small.
+    /// "propose a plan first", since it's meant to be small. One filed from
+    /// the note is written up once claude has looked, before it changes
+    /// anything, since a note is rarely enough to go on later.
     static func quickChangePrompt(_ session: CodeSession) -> String {
         let folder = ".worktrees/\(session.branch)"
         let shots = session.quickChange?.attachments.isEmpty == false
         let about = session.hasNoIssue
             ? "You're making a quick change in \(session.issue.repo), \"\(session.issue.title)\", in the team's harness."
             : "You're making a quick change, \(session.issue.reference), \"\(session.issue.title)\", in the team's harness."
+        let writeUp = session.hasNoIssue ? "" : "Then, before changing anything, fill out \(session.issue.reference) from what you found, "
+            + "since it was filed from the note alone: with `gh issue edit`, give it a clear title and a description of the problem, "
+            + "what you'll change and where, and anything out of scope. "
         return """
             \(about) Read \(folder)/.gannin/brief.md first: it has the note\(shots ? " and the screenshots to look at" : ""). \
-            It's meant to be small, so there's no plan document: look through the code, say in a line or two what you'll change, \
-            then make the change in a worktree of the repo under \(folder)/, as the brief says, never in projects/ or the harness \
+            It's meant to be small, so there's no plan document: look through the code, say in a line or two what you'll change. \
+            \(writeUp)Then make the change in a worktree of the repo under \(folder)/, as the brief says, never in projects/ or the harness \
             checkout itself. If it turns out not to be small, stop and say so before going further.
             """
     }

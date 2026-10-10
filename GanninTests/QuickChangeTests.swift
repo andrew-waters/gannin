@@ -84,6 +84,16 @@ struct QuickChangeTests {
         #expect(prompt.contains("the screenshots"))
         #expect(prompt.contains("no plan document"))
         #expect(prompt.contains("stop and say so"))
+        // With no issue, there's nothing to write up.
+        #expect(!prompt.contains("gh issue edit"))
+    }
+
+    @Test func promptWritesUpTheIssueBeforeChangingAnything() {
+        let prompt = SessionStore.quickChangePrompt(session(issue: true))
+        #expect(prompt.contains("before changing anything, fill out acme/app#12"))
+        #expect(prompt.contains("gh issue edit"))
+        let writeUp = prompt.range(of: "fill out")!.lowerBound
+        #expect(writeUp < prompt.range(of: "Then make the change")!.lowerBound)
     }
 
     @Test func startScriptCopiesTheScreenshots() {

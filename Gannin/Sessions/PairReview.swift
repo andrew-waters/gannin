@@ -49,6 +49,26 @@ struct PairReview: Codable, Hashable {
         if isOver { endedAt = date }
     }
 
+    /// The same in a word or two, for a tab, with its colour.
+    var shortStatus: String {
+        switch phase {
+        case .reviewing: "Reviewing"
+        case .fixing: "\(findings) to fix"
+        case .settled: "Reviewed"
+        case .limit: "Last round"
+        case .stopped: "Review stopped"
+        }
+    }
+
+    var tint: Color {
+        switch phase {
+        case .reviewing: ChartPalette.blue
+        case .fixing, .limit: .orange
+        case .settled: .green
+        case .stopped: .secondary
+        }
+    }
+
     /// What it's doing or how it ended, in a line.
     var status: String {
         let rounds = "\(round) round\(round == 1 ? "" : "s")"
