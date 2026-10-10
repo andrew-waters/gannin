@@ -781,11 +781,11 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   beside New Ask, the Claude Code window's +, Agents' toolbar and the palette) opens a tab
   (`NewQuickChangeView` over a `PlanningDraft` with `isQuickChange`): the project, the repo (the
   project's first, then the org's), the note and an optional title (else its first line),
-  screenshots (dropped on its drop zone, `ScreenshotDropTarget`, an AppKit view reading the drag's pasteboard for files, file promises or a picture, since the form's own views take a drag before SwiftUI's drop destinations; pasted or added; images only, 20 MB each, `QuickChangeAttachment`), Create an
+  screenshots (dropped on its drop zone, `ScreenshotDropTarget`, an AppKit view reading the drag's pasteboard for files, file promises or a picture, since the form's own views take a drag before SwiftUI's drop destinations; pasted, by ⌘V caught in its window while the clipboard holds only pictures or image files, so text still pastes into the note, or Paste; or added; images only, 20 MB each, `QuickChangeAttachment`), Create an
   issue for it (`quickChangeCreatesIssue`, on by default, asked each time), the team's prompts and
   skills for work, Run in (with sandboxing on) and Record the session in the harness. With an issue,
-  Start files it from the note (`createIssue`, the button saying so is the confirmation), adds it to
-  the project's workflow board and sets Status to its first in-progress option (a failure there is
+  Start files it from the note, assigned to you (`createIssue`, the button saying so is the confirmation), adds it to
+  the project's workflow board (its definition loaded first if it isn't yet) and sets Status to its first in-progress option (a failure there is
   kept as `boardError` and shown in the panel; the session starts anyway), and the session is that
   issue's, as Work on This's. Without one, `issue` is a stand-in named for the repo (number 0,
   `quick-<id>`, as an Ask's), the branch `quick-<title>-<4 hex of its ID>`
@@ -794,13 +794,14 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   change, no issue." in the PR where `Closes` would go (`skills/create-pull-request.md` allows it).
   `SessionStore.startQuickChange` copies the screenshots into the session's `attachments/` (safe names,
   `attachmentNames`), which `start.sh` copies into `.worktrees/<branch>/.gannin/attachments/` (a
-  sandbox mounts it) and which go to a server one file a call over ssh on standard input before its
-  terminal starts (`remoteAttachmentScript`); they're never uploaded to GitHub or committed. The
+  sandbox mounts it) and which go to a server before its terminal starts, those not there yet
+  (`remoteAttachmentListScript`), one file a call over ssh on standard input through a part file
+  (`remoteAttachmentScript`), the start script warning about any the brief lists that didn't arrive; they're never uploaded to GitHub or committed. The
   brief (`SessionBrief.quickChangeSections`) has the note in place of the description, the
   screenshots' paths, and that it's meant to be small, needs no plan document, and to stop and say
   so if it isn't; the first prompt (`quickChangePrompt`) leaves out "propose a plan first". Its tab
   is Quick Change (a bolt), its panel shows the note and screenshots (`QuickChangeSection`), and
-  rows and notifications name it by `shortReference` / `longReference` rather than `#0`.
+  rows, notifications and helpers' prompts name it by `shortReference` / `longReference` (the repo picked, `issue.repo`, not the harness) rather than `#0`, and the team's prompts get `issueValues` (`{{issue}}` saying it's a quick change, `{{number}}` and `{{url}}` empty).
 - A session going to Needs you, or from working to Your turn, while you aren't looking at its
   tab is flagged (`SessionStore.attention`): its tab is marked, the Dock icon counts them, a
   notification (Settings > General > Agent) opens its tab, and the tab bar's "N waiting" or

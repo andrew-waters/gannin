@@ -393,7 +393,7 @@ private struct SessionTabItem: View {
         } message: {
             Text(session.isAsk ? "The Ask's name, wherever it's listed." : "Leave it empty to go back to \(session.issue.title).")
         }
-        .help("\(session.hasNoIssue ? "Quick change in \(session.repo)" : session.issue.reference): \(session.issue.title). \(state.label).")
+        .help("\(session.hasNoIssue ? "Quick change in \(session.issue.repo)" : session.issue.reference): \(session.issue.title). \(state.label).")
         .draggable(session.id.uuidString)
         .dropDestination(for: String.self) { items, _ in
             guard let dragged = items.first.flatMap(UUID.init(uuidString:)) else { return false }

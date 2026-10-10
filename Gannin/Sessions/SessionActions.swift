@@ -406,8 +406,7 @@ extension SessionStore {
         var instructions: String?
         if reviewer, let repo = parent.harnessRepo {
             let repos = [parent.issue.repo] + (pullRequestInfo[parentID] ?? []).map(\.repo)
-            let issue = parent.issue
-            let values = HarnessPromptLibrary.values(reference: issue.reference, title: issue.title, url: issue.url, repo: issue.repo, number: issue.number, branch: parent.branch)
+            let values = parent.issueValues
             instructions = launchInstructions(org: parent.org, setup: HarnessConfig(repo: repo), use: .review, repos: repos, choice: nil, values: values)
                 .map(Self.reviewInstructions)
         }

@@ -85,7 +85,7 @@ enum SessionScript {
 
             mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
             \(briefSource)cp "$session/brief.md" "$folder/.gannin/"
-            \(session.isQuickChange ? attachmentsStep : "")\(session.isAsk ? askFolder : "")\(readyForReviewStep(session, directory: directory, into: #""$folder/.gannin""#))cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
+            \(attachmentsStep(session))\(session.isAsk ? askFolder : "")\(readyForReviewStep(session, directory: directory, into: #""$folder/.gannin""#))cp "$session/settings.json" "$folder/.gannin/\(settingsName(session))"
             cd "$harness" || fail "The harness isn't there."
 
             """
@@ -96,13 +96,23 @@ enum SessionScript {
     }
 
     /// A quick change's screenshots, from the session's folder into its
-    /// `.gannin/`. Ends with a newline.
-    private static let attachmentsStep = """
-        if [ -d "$session/\(SessionStore.attachmentsFolder)" ]; then
-          mkdir -p "$folder/.gannin/\(SessionStore.attachmentsFolder)" && cp -R "$session/\(SessionStore.attachmentsFolder)/." "$folder/.gannin/\(SessionStore.attachmentsFolder)/" || warn "Couldn't copy the screenshots into the session's folder."
-        fi
+    /// `.gannin/`, with a warning for each the brief lists that isn't there
+    /// (one that didn't reach a server, say). Empty without any, else ends
+    /// with a newline.
+    private static func attachmentsStep(_ session: CodeSession) -> String {
+        let names = session.quickChange?.attachments ?? []
+        guard !names.isEmpty else { return "" }
+        let attachments = SessionStore.attachmentsFolder
+        return """
+            if [ -d "$session/\(attachments)" ]; then
+              mkdir -p "$folder/.gannin/\(attachments)" && cp -R "$session/\(attachments)/." "$folder/.gannin/\(attachments)/" || warn "Couldn't copy the screenshots into the session's folder."
+            fi
+            for name in \(names.map(quoted).joined(separator: " ")); do
+              [ -e "$folder/.gannin/\(attachments)/$name" ] || warn "The screenshot $name didn't reach this box, so Claude can't see it. Restart the session to send it again."
+            done
 
-        """
+            """
+    }
 
     /// Whether git on the box is guarded for this session: a sandbox could
     /// have written the harness's `.git` (`SandboxGitGuard`).
@@ -506,7 +516,7 @@ enum SessionBrief {
             .filter { seen.insert($0).inserted }
             working += [
                 "- You're in the team's harness, \(harnessRepo), checked out at `\(harnessPath)`. Its CLAUDE.md lists the projects and how work goes here.",
-                "- The code repos are shared clones under `projects/<name>` (some a folder further down, as `projects/<group>/<name>`), kept on their default branch. Don't work in them. This issue's folder is `\(folder)/`: give each repo it touches a worktree there, on the branch `\(session.branch)`, from the harness root:",
+                "- The code repos are shared clones under `projects/<name>` (some a folder further down, as `projects/<group>/<name>`), kept on their default branch. Don't work in them. This \(session.hasNoIssue ? "change" : "issue")'s folder is `\(folder)/`: give each repo it touches a worktree there, on the branch `\(session.branch)`, from the harness root:",
                 "",
                 "  ```bash",
                 "  git -C projects/<name> fetch origin",
@@ -514,7 +524,7 @@ enum SessionBrief {
                 "  ```",
                 "",
                 session.isSandboxed
-                    ? "  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (\(SandboxLaunch.cloneRepos(session).joined(separator: ", "))), and a clone made in it would vanish when it stops. If the issue needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. The repos' git dirs are read-only apart from what commits, fetches and worktrees write, so git config and hooks can't be changed, no upstream is recorded (push with `git push origin HEAD` and open the PR with `gh pr create --head <branch>`), branches can't be deleted, and an error about packed-refs.lock after a rebase or pull is expected and harmless."
+                    ? "  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (\(SandboxLaunch.cloneRepos(session).joined(separator: ", "))), and a clone made in it would vanish when it stops. If the \(session.hasNoIssue ? "change" : "issue") needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. The repos' git dirs are read-only apart from what commits, fetches and worktrees write, so git config and hooks can't be changed, no upstream is recorded (push with `git push origin HEAD` and open the PR with `gh pr create --head <branch>`), branches can't be deleted, and an error about packed-refs.lock after a rebase or pull is expected and harmless."
                     : "  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.",
                 "- If the harness has no `projects/` folder, it's the code repo too: the code is \(harnessRepo) itself. Don't work in its checkout; give it one worktree in the issue's folder the same way, with `git -C . fetch origin` and `git -C . worktree add \"$PWD/\(folder)/\(harnessRepo.split(separator: "/").last ?? "")\" -b \(session.branch) origin/HEAD`, and do everything there, the plan included.",
             ]
@@ -524,7 +534,9 @@ enum SessionBrief {
             if !linkedRepos.isEmpty {
                 working.append("- The issue's linked pull requests are in \(linkedRepos.map { "`\($0)`" }.joined(separator: ", ")), so start there.")
             }
-            if reference.repo != harnessRepo {
+            if session.hasNoIssue {
+                working.append("- The change is in \(reference.repo).")
+            } else if reference.repo != harnessRepo {
                 working.append("- The issue lives in \(reference.repo).")
             }
             working += [

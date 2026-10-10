@@ -30,8 +30,18 @@ extension CodeSession {
     /// `#123` as rows and notifications show it, or Quick change with no
     /// issue to number.
     var shortReference: String { hasNoIssue ? "Quick change" : "#\(issue.number)" }
-    /// `owner/name#123`, or the repo a quick change with no issue is in.
-    var longReference: String { hasNoIssue ? "a quick change in \(repo)" : issue.reference }
+    /// `owner/name#123`, or the repo a quick change with no issue is in
+    /// (the stand-in's repo: `repo` is the harness).
+    var longReference: String { hasNoIssue ? "a quick change in \(issue.repo)" : issue.reference }
+
+    /// The team's prompts' placeholders for its issue (`HarnessPromptLibrary`).
+    /// With no issue, `{{issue}}` says what it is and `{{number}}` and
+    /// `{{url}}` are empty, rather than a stand-in's `#0`.
+    var issueValues: [String: String] {
+        var values = HarnessPromptLibrary.values(reference: issue.reference, title: issue.title, url: issue.url, repo: issue.repo, number: issue.number, branch: branch)
+        if hasNoIssue { values.merge(SessionStore.noIssueValues(repo: issue.repo)) { $1 } }
+        return values
+    }
 }
 
 extension SessionStore {
@@ -82,21 +92,32 @@ extension SessionStore {
         return slug.isEmpty ? "quick-\(suffix)" : "quick-\(slug)-\(suffix)"
     }
 
-    /// File names safe for the shell and unique: letters, digits, dots,
-    /// dashes and underscores, a number added to a repeat.
+    /// `{{issue}}`, `{{number}}` and `{{url}}` for a quick change with no issue.
+    static func noIssueValues(repo: String) -> [String: String] {
+        ["issue": "a quick change in \(repo)", "pr": "a quick change in \(repo)", "number": "", "url": ""]
+    }
+
+    /// File names safe for the shell and unique: letters, digits, dashes
+    /// and underscores, the stem and extension cleaned apart so the
+    /// extension survives a name in another script (`screenshot-N` for a
+    /// stem with nothing left), and a number added to a repeat.
     static func attachmentNames(_ names: [String]) -> [String] {
+        func clean(_ text: String) -> String {
+            String(text.map { $0.isASCII && ($0.isLetter || $0.isNumber || "-_".contains($0)) ? $0 : "-" })
+                .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        }
         var taken: Set<String> = []
         return names.enumerated().map { index, name in
-            let cleaned = String(name.map { $0.isASCII && ($0.isLetter || $0.isNumber || ".-_".contains($0)) ? $0 : "-" })
-                .trimmingCharacters(in: CharacterSet(charactersIn: ".-"))
-            let base = cleaned.isEmpty ? "screenshot-\(index + 1).png" : cleaned
-            var candidate = base
+            // An empty name as a URL would be the current folder.
+            let url = name.isEmpty ? nil : URL(filePath: name)
+            let ext = url.map { clean($0.pathExtension) } ?? "png"
+            let cleanedStem = clean(url.map { $0.pathExtension.isEmpty ? name : $0.deletingPathExtension().lastPathComponent } ?? "")
+            let stem = cleanedStem.isEmpty ? "screenshot-\(index + 1)" : cleanedStem
+            func named(_ stem: String) -> String { ext.isEmpty ? stem : "\(stem).\(ext)" }
+            var candidate = named(stem)
             var count = 2
             while taken.contains(candidate.lowercased()) {
-                let url = URL(filePath: base)
-                let ext = url.pathExtension
-                let stem = url.deletingPathExtension().lastPathComponent
-                candidate = ext.isEmpty ? "\(stem)-\(count)" : "\(stem)-\(count).\(ext)"
+                candidate = named("\(stem)-\(count)")
                 count += 1
             }
             taken.insert(candidate.lowercased())
@@ -231,7 +252,7 @@ struct NewQuickChangeView: View {
             .frame(maxWidth: 900)
             .frame(maxWidth: .infinity)
         }
-        .onPasteCommand(of: [.fileURL, .image]) { _ in paste() }
+        .onPasteCommand(of: [.fileURL, .image]) { _ in _ = pastePicture(fromKeyboard: false) }
         .onAppear {
             focused = true
             if repo.isEmpty { repo = defaultRepo(setup: setup) }
@@ -312,7 +333,7 @@ struct NewQuickChangeView: View {
                     // SwiftUI's drop destinations see it.
                     ScreenshotDropTarget(targeted: $dropTargeted, files: { urls in
                         for url in urls { addFile(url) }
-                    }, image: addImageData)
+                    }, image: addImageData, paste: { pastePicture(fromKeyboard: true) })
                 }
                 .overlay {
                     RoundedRectangle(cornerRadius: 8)
@@ -324,7 +345,7 @@ struct NewQuickChangeView: View {
                 Text(attachments.isEmpty ? "Or paste them (⌘V) or add them." : "\(attachments.count) attached")
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button("Paste") { paste() }
+                Button("Paste") { _ = pastePicture(fromKeyboard: false) }
                     .help("Attach the picture or image files on the clipboard")
                 Button("Add Screenshots") { pickFiles() }
             }
@@ -384,11 +405,11 @@ struct NewQuickChangeView: View {
         }
         let target = repo.isEmpty ? "the repo" : repo
         guard workflow.projectNumber != nil else {
-            return "Start files an issue in \(target) from the note on GitHub, and the pull request closes it. The project has no workflow board (Settings › Issues), so it isn't put on one. Screenshots aren't added to it."
+            return "Start files an issue in \(target) from the note on GitHub, assigned to you, and the pull request closes it. The project has no workflow board (Settings › Issues), so it isn't put on one. Screenshots aren't added to it."
         }
         let board = boardDefinition(workflow).map { "\"\($0.title)\"" } ?? "the workflow board"
         let status = inProgressStatus(workflow).map { " as \($0)" } ?? ""
-        return "Start files an issue in \(target) from the note on GitHub, puts it on \(board)\(status), and the pull request closes it. Screenshots aren't added to it."
+        return "Start files an issue in \(target) from the note on GitHub, assigned to you, puts it on \(board)\(status), and the pull request closes it. Screenshots aren't added to it."
     }
 
     @ViewBuilder
@@ -518,17 +539,24 @@ struct NewQuickChangeView: View {
     }
 
     /// What's on the pasteboard: image files copied in Finder, else a
-    /// picture (a screenshot taken to the clipboard).
-    private func paste() {
+    /// picture (a screenshot taken to the clipboard). From ⌘V, only when
+    /// that's all there is, so text still pastes into the note; returns
+    /// whether it took it.
+    private func pastePicture(fromKeyboard: Bool) -> Bool {
         let board = NSPasteboard.general
         let files = (board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
-        if !files.isEmpty {
+        let images = files.filter { UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) == true }
+        if !files.isEmpty, !fromKeyboard || images.count == files.count {
             for url in files { addFile(url) }
-        } else if let data = board.data(forType: .png) ?? board.data(forType: .tiff) {
-            addImageData(data)
-        } else {
-            error = "There's no picture on the clipboard."
+            return true
         }
+        if files.isEmpty, !fromKeyboard || board.string(forType: .string) == nil,
+           let data = board.data(forType: .png) ?? board.data(forType: .tiff) {
+            addImageData(data)
+            return true
+        }
+        if !fromKeyboard { error = "There's no picture on the clipboard." }
+        return false
     }
 
     private func addFile(_ url: URL) {
@@ -568,8 +596,6 @@ struct NewQuickChangeView: View {
         steps = []
         let org = org
         let repo = repo
-        let definition = boardDefinition(workflow)
-        let status = inProgressStatus(workflow)
         let decided = placement
         // Picked here: the Mac over a sandbox, never the other way.
         let chosen: SandboxPlacement = decided.isSandboxed && !sandboxed ? .host(SandboxPlacement.pickedHost) : decided
@@ -584,14 +610,26 @@ struct NewQuickChangeView: View {
             if createsIssue {
                 guard let api = auth.api else { return }
                 do {
-                    let made = try await api.createIssue(repo: repo, title: title, body: note)
+                    // Assigned to whoever started it, so it's in their workload.
+                    var assignees: [String] = []
+                    if let login { assignees = Array(try await api.userIDs([login]).values) }
+                    let made = try await api.createIssue(repo: repo, title: title, body: note, assigneeIDs: assignees)
                     issue = IssueReference(org: org, id: made.id, number: made.number, title: title, repo: repo, url: made.url)
                     steps.append("Created \(repo)#\(made.number)")
                 } catch {
                     self.error = "GitHub didn't take the issue: \(error.localizedDescription)"
                     return
                 }
-                // The board is a nicety: the session starts whatever happens.
+                // The board is a nicety: the session starts whatever happens,
+                // saying when the issue isn't on it.
+                if let number = workflow.projectNumber, boardDefinition(workflow) == nil {
+                    await projects.loadDefinition(org: org, number: number)
+                }
+                let definition = boardDefinition(workflow)
+                let status = inProgressStatus(workflow)
+                if workflow.projectNumber != nil, definition == nil, let made = issue {
+                    boardError = "\(made.reference) isn't on the workflow board: Gannin couldn't read the board. Add it from the issue."
+                }
                 if let definition, let made = issue {
                     do {
                         let item = try await api.addToBoard(projectID: definition.id, contentID: made.id)
@@ -605,7 +643,7 @@ struct NewQuickChangeView: View {
                     }
                 }
             }
-            let values = issue.map(WorkOnThisLauncher.values) ?? ["title": title, "repo": repo]
+            let values = issue.map(WorkOnThisLauncher.values) ?? SessionStore.noIssueValues(repo: repo).merging(["title": title, "repo": repo]) { $1 }
             let instructions = sessions.launchInstructions(org: org, setup: setup, use: .work, repos: [repo], choice: choice, values: values)
             let session = sessions.startQuickChange(
                 org: org, repo: repo, title: title, note: note, attachments: attachments.map { (name: $0.name, data: $0.data) }, issue: issue, boardError: boardError,
@@ -687,6 +725,9 @@ struct ScreenshotDropTarget: NSViewRepresentable {
     @Binding var targeted: Bool
     let files: ([URL]) -> Void
     let image: (Data) -> Void
+    /// ⌘V in its window, wherever the focus is (a text field's editor
+    /// would otherwise take it): true when it took a picture.
+    let paste: () -> Bool
 
     func makeNSView(context: Context) -> DropView {
         let view = DropView()
@@ -700,13 +741,16 @@ struct ScreenshotDropTarget: NSViewRepresentable {
         view.onTargeted = { targeted = $0 }
         view.onFiles = files
         view.onImage = image
+        view.onPaste = paste
     }
 
     final class DropView: NSView {
         var onTargeted: ((Bool) -> Void)?
         var onFiles: (([URL]) -> Void)?
         var onImage: ((Data) -> Void)?
+        var onPaste: (() -> Bool)?
         private let promiseQueue = OperationQueue()
+        private var keyMonitor: Any?
 
         override init(frame: NSRect) {
             super.init(frame: frame)
@@ -714,6 +758,22 @@ struct ScreenshotDropTarget: NSViewRepresentable {
         }
 
         required init?(coder: NSCoder) { nil }
+
+        /// Watches for ⌘V while it's in a window, letting it through unless
+        /// it took a picture; gone when the tab is.
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
+            keyMonitor = nil
+            guard window != nil else { return }
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self, event.window === self.window,
+                      event.modifierFlags.intersection(.deviceIndependentFlagsMask) == .command,
+                      event.charactersIgnoringModifiers == "v",
+                      self.onPaste?() == true else { return event }
+                return nil
+            }
+        }
 
         override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
             onTargeted?(true)

@@ -638,14 +638,14 @@ final class SessionStore {
         let brief = (try? String(contentsOf: Self.directory(for: id).appending(path: "brief.md"), encoding: .utf8)) ?? ""
         let record = SessionRecord(
             issue: session.hasNoIssue ? nil : session.issue.reference, title: session.issue.title, url: session.issue.url,
-            repos: session.isInHarness ? [] : [session.repo], branch: session.branch, startedBy: startedBy, startedAt: session.createdAt,
+            repos: session.hasNoIssue ? [session.issue.repo] : session.isInHarness ? [] : [session.repo], branch: session.branch, startedBy: startedBy, startedAt: session.createdAt,
             box: session.connect ?? (Host.current().localizedName ?? "Mac"), pullRequests: session.pullRequests
         )
         do {
             try await harness.commit(org: session.org, setup: HarnessConfig(repo: repo), refreshing: false) { _ in
                 HarnessChange(
                     message: session.hasNoIssue
-                        ? "Gannin: quick change in \(session.repo)\n\n\(session.issue.title), on \(session.branch)."
+                        ? "Gannin: quick change in \(session.issue.repo)\n\n\(session.issue.title), on \(session.branch)."
                         : "Gannin: session on \(session.issue.reference)\n\n\(session.issue.title), on \(session.branch).",
                     files: ["\(folder)/brief.md": brief, "\(folder)/session.json": record.json]
                 )
@@ -863,9 +863,12 @@ final class SessionStore {
                 _ = await Task.detached { Shell.run(script, remoteSecrets.runner, input: input) }.value
             }
             if let remoteAttachments {
-                // One file a call, on standard input. The start script warns
-                // if they didn't arrive.
-                for file in remoteAttachments.files {
+                // Those not there yet, one file a call, on standard input.
+                // The start script warns about any that didn't arrive.
+                let listing = Self.remoteAttachmentListScript(directory: remoteAttachments.directory)
+                let present = await Task.detached { Shell.run(listing, remoteAttachments.runner) }.value
+                let there = Set(present.output.split(separator: "\n").map(String.init))
+                for file in remoteAttachments.files where !there.contains(file.lastPathComponent) {
                     guard let data = try? Data(contentsOf: file) else { continue }
                     let script = Self.remoteAttachmentScript(directory: remoteAttachments.directory, name: file.lastPathComponent)
                     _ = await Task.detached { Shell.run(script, remoteAttachments.runner, input: data) }.value
@@ -875,10 +878,19 @@ final class SessionStore {
         }
     }
 
+    /// Lists a quick change's screenshots already in its session's folder on
+    /// a server, one name a line.
+    static func remoteAttachmentListScript(directory: String) -> String {
+        "d=\(directory)\nls -1 \"$d/\(attachmentsFolder)\" 2>/dev/null || true"
+    }
+
     /// Writes one of a quick change's screenshots, from standard input, into
-    /// its session's folder on a server.
+    /// its session's folder on a server: to a part file first, so one cut
+    /// short isn't taken as there next time.
     static func remoteAttachmentScript(directory: String, name: String) -> String {
-        "d=\(directory)\nmkdir -p \"$d/\(attachmentsFolder)\" && cat > \"$d/\(attachmentsFolder)\"/\(SessionScript.quoted(name))"
+        let file = "\"$d/\(attachmentsFolder)\"/" + SessionScript.quoted(name)
+        let part = "\"$d/\(attachmentsFolder)\"/" + SessionScript.quoted(".\(name).part")
+        return "d=\(directory)\nmkdir -p \"$d/\(attachmentsFolder)\" && cat > \(part) && mv \(part) \(file)"
     }
 
     /// Sessions whose terminal is about to start, once a stop or their
