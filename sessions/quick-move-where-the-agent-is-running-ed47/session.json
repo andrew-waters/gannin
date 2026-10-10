@@ -1,0 +1,14 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "quick-move-where-the-agent-is-running-ed47",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+    "andrew-waters/gannin"
+  ],
+  "startedAt" : "2026-10-10T10:07:40Z",
+  "startedBy" : "andrew-waters",
+  "title" : "move where the agent is running to the bottom of the right",
+  "url" : "https://github.com/andrew-waters/gannin"
+}
