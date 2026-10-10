@@ -215,8 +215,14 @@ struct StatsTable<Row: Identifiable>: View {
                 ForEach(Array(columns.enumerated()), id: \.element.id) { index, column in
                     if startsGroup(index) { gutter }
                     sized(column) {
-                        column.cell(row)
-                            .padding(.horizontal, cellPadding)
+                        // Color.clear keeps the column's width when a cell
+                        // draws nothing (an empty Group), which SwiftUI would
+                        // otherwise drop, frame and all, shifting the rest.
+                        ZStack(alignment: column.alignment) {
+                            Color.clear
+                            column.cell(row)
+                                .padding(.horizontal, cellPadding)
+                        }
                     }
                 }
             }
