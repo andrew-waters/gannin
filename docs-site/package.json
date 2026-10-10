@@ -1,0 +1,15 @@
+{
+  "name": "gannin-docs",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "check:settings": "node scripts/check-settings.mjs"
+  },
+  "dependencies": {
+    "@astrojs/starlight": "0.36.3",
+    "astro": "5.15.9",
+    "sharp": "0.34.5"
+  }
+}

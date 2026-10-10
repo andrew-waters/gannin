@@ -15,3 +15,4 @@ Run this like a good refinement session for {{title}}.
 - Before proposing an approach, look at how similar things are already done in the code, and follow those patterns.
 - Call out risks, dependencies, and anything that needs someone who isn't in the room.
 - Keep each piece of the breakdown small enough to review in one sitting, and say how it'll be checked.
+- Ask the room which pages of the user docs (gannin.ai/docs, `docs-site/src/content/docs/`) the work changes, or whether none do, and record the answer as a requirement or a task.

@@ -79,7 +79,8 @@ struct IssueWindow: View {
     /// Full width across the top: the title and the headline facts.
     private func header(record: IssueRecord?, workflow: IssueWorkflow) -> some View {
         VStack(alignment: .leading, spacing: 14) {
-            ItemHeader(title: reference.title, reference: "\(reference.repo)#\(reference.number)", url: reference.url, pill: pill(record))
+            ItemHeader(title: reference.title, reference: "\(reference.repo)#\(reference.number)", url: reference.url, pill: pill(record),
+                       accessory: AnyView(ScheduledForAgentPill(issueID: reference.id)))
             if let record {
                 let timing = IssueTiming(record, workflow: workflow, now: .now)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 16, alignment: .topLeading)], alignment: .leading, spacing: 12) {

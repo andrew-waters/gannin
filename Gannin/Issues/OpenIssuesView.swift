@@ -83,6 +83,7 @@ struct OpenIssuesView: View {
                         Pill(text: row.issue.isNotPlanned ? "Not planned" : "Closed", color: row.issue.isNotPlanned ? .secondary : .purple)
                     }
                     Text(row.title).lineLimit(1)
+                    ScheduledForAgentPill(issueID: row.id)
                 }
                 .opacity(hidden.isHidden(row.id) ? 0.45 : 1)
                 .help(row.title)

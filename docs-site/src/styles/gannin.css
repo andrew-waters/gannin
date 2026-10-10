@@ -1,0 +1,33 @@
+/* The landing page's type and colours (site/index.html), so the docs read as
+   the same site. The landing page has no dark mode; Starlight's stays, with
+   the teal lifted so it reads on a dark ground. */
+:root {
+  --sl-font: 'Geist', system-ui, sans-serif;
+  --sl-font-mono: 'Geist Mono', ui-monospace, monospace;
+  --sl-color-accent-low: #12352f;
+  --sl-color-accent: #3fae9a;
+  --sl-color-accent-high: #bfeee4;
+  --sl-color-white: #ffffff;
+  --sl-color-gray-1: #e8ecf1;
+  --sl-color-gray-2: #c9d1db;
+  --sl-color-gray-3: #9aa4b2;
+  --sl-color-gray-4: #4b5563;
+  --sl-color-gray-5: #262f3a;
+  --sl-color-gray-6: #141b24;
+  --sl-color-black: #0a0e13;
+}
+
+:root[data-theme='light'] {
+  --sl-color-accent-low: #d5efe9;
+  --sl-color-accent: #0b6b5c;
+  --sl-color-accent-high: #084f44;
+  --sl-color-white: #0e1726;
+  --sl-color-gray-1: #162131;
+  --sl-color-gray-2: #263345;
+  --sl-color-gray-3: #4a5565;
+  --sl-color-gray-4: #8d98a6;
+  --sl-color-gray-5: #e3e7ec;
+  --sl-color-gray-6: #f4f6f8;
+  --sl-color-gray-7: #f9fafb;
+  --sl-color-black: #ffffff;
+}

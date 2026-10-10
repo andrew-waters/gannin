@@ -194,6 +194,11 @@ struct GanninApp: App {
                 Divider()
             }
             SessionCommands(sessions: sessions)
+            // Help › Gannin Help opens the user docs on gannin.ai.
+            CommandGroup(replacing: .help) {
+                Button("Gannin Help") { NSWorkspace.shared.open(GanninHelp.url) }
+                    .keyboardShortcut("?", modifiers: .command)
+            }
         }
 
         // A PR opened from the work log; one window per PR.
