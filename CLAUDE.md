@@ -1079,7 +1079,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   (`Sessions/WrapUp.swift`, andrew-waters/gannin#146, `plans/2026-10-10-wrap-up-on-tab-close.md`):
   `SessionStore.requestClose` sets `wrappingUp`, which the window shows as `WrapUpSessionSheet`:
   claude's state, helpers running, its PRs, each worktree's files not committed and commits not
-  pushed (read by two `SessionChanges` of its own, whatever mode the pane is in), and the plans and
+  pushed (against its upstream, else `origin/<branch>`, as a sandbox records none, `WorktreeChanges.notPushed`; read by two `SessionChanges` of its own, whatever mode the pane is in), and the plans and
   requirements about its issue (not those only mentioning it)
   with their `- [ ]` items (`HarnessChecklist`, matched by their words and which of the same words
   they are, outside front matter and code) to tick, committed in one commit against each file at

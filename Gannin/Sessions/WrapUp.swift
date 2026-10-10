@@ -255,8 +255,8 @@ struct WrapUpSessionSheet: View {
     }
 
     /// What ending or finishing would leave behind or lose, per worktree:
-    /// files not committed, commits not pushed, and work on a branch with
-    /// no upstream, which may never have been pushed.
+    /// files not committed, commits not on its upstream or its branch on
+    /// origin, and work on a branch that's on neither, never pushed.
     private var worktreeNotes: [WorktreeNote] {
         let names = (uncommitted.worktrees.map(\.name) + branch.worktrees.map(\.name)).reduce(into: [String]()) { names, name in
             if !names.contains(name) { names.append(name) }
@@ -267,10 +267,10 @@ struct WrapUpSessionSheet: View {
             var parts: [String] = []
             if dirty > 0 { parts.append(dirty == 1 ? "1 file not committed" : "\(dirty) files not committed") }
             if let since {
-                if let unpushed = since.unpushed, unpushed > 0 {
-                    parts.append(unpushed == 1 ? "1 commit not pushed" : "\(unpushed) commits not pushed")
-                } else if !since.hasUpstream, !since.files.isEmpty {
-                    parts.append("no upstream, so maybe not pushed")
+                if let unpushed = since.notPushed {
+                    if unpushed > 0 { parts.append(unpushed == 1 ? "1 commit not pushed" : "\(unpushed) commits not pushed") }
+                } else if !since.files.isEmpty {
+                    parts.append("never pushed")
                 }
             }
             return parts.isEmpty ? nil : WorktreeNote(name: name, text: parts.joined(separator: ", "))
