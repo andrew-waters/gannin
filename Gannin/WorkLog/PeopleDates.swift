@@ -181,6 +181,12 @@ final class PeopleDatesStore {
         return dates[org]?[login] ?? PersonDates()
     }
 
+    /// Where an org's dates are kept, in words, for the footers that say so:
+    /// its home harness when it has one, else this Mac.
+    func whereKept(in org: String) -> String {
+        team?.keepsData(org) == true ? "kept in the org's harness, where everyone reads the same copy" : "kept only in this app on this Mac"
+    }
+
     func all(in org: String) -> [String: PersonDates] {
         team?.data(for: org)?.people ?? dates[org] ?? [:]
     }
@@ -321,7 +327,7 @@ struct PersonDatesSections: View {
         } header: {
             Text("Time off")
         } footer: {
-            Text("Kept only in this app on this Mac. Days count only their working days, so weekends, days outside their pattern and bank holidays are skipped. Days off show on the work log and threads, and are counted on the punchcards.")
+            Text("Time off is \(store.whereKept(in: org)). Days count only their working days, so weekends, days outside their pattern and bank holidays are skipped. Days off show on the work log and threads, and are counted on the punchcards.")
                 .foregroundStyle(.secondary)
         }
         .sheet(item: $draft) { absence in
@@ -506,7 +512,7 @@ struct PeopleDatesSection: View {
         } header: {
             Text("Dates and time off")
         } footer: {
-            Text("Start and end dates, holidays and sick days, kept only in this app on this Mac.")
+            Text("Start and end dates, holidays and sick days, \(store.whereKept(in: org)).")
                 .foregroundStyle(.secondary)
         }
         .sheet(item: $editing) { person in

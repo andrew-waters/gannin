@@ -60,18 +60,41 @@ report inside a person's view, which are one column of several.
 
 ## Releases
 
-Tags (`v1.2.0`, annotated: the first line is the title, the rest the notes) run
-`.github/workflows/release.yml`: archive with the version from the tag and the run number as
-build, Developer ID export, notarise (both with the App Store Connect key), DMG, Sparkle signature and appcast, published as a GitHub release here
+Tags (`v1.2.0`, annotated: the first line is the title, any more an introduction) run
+`.github/workflows/release.yml`. Its notes are the version's section of `CHANGELOG.md` (Keep a
+Changelog: pull requests add to `## [Unreleased]`, `scripts/promote-changelog.sh 1.2.0` turns it
+into the release's before tagging, and a tag with no section fails before building), rendered by
+`.github/scripts/changelog_to_html.py` (Orchard's) as Markdown for GitHub and HTML for Sparkle.
+`.github/pull_request_template.md`'s checklist asks for the entry. It goes on to archive with the
+version from the tag and the run number as build, Developer ID export, notarise (both with the App
+Store Connect key), DMG, Sparkle signature and appcast, published as a GitHub release here
 (`Gannin-<version>.dmg`, `.sha256`, `Gannin.dmg` for the site's Download button through
-`releases/latest/download`, and `appcast.xml`, whose enclosure is the release's DMG, so every download counts on the release).
-gannin.ai is this repo's Pages: `pages.yml` deploys `site/` with the latest release's
-`appcast.xml`, on pushes to `site/` and after each release; `ci.yml` builds pull requests and keeps project.yml's
-`MARKETING_VERSION` at the `0.0.0` placeholder. Sparkle (`App/Updater.swift`, Gannin › Check
-for Updates) reads `https://gannin.ai/appcast.xml` with the key in `Info.plist`, and
-doesn't check by itself in a 0.0.0 build. `docs/RELEASING.md` has the secrets and DNS. The
-app was `dev.andon.getgannin`; `App/BundleMove.swift` brings its preferences, Application
-Support folder and token across once.
+`releases/latest/download`, and `appcast.xml`, whose enclosure is the release's DMG, so every
+download counts on the release). gannin.ai is this repo's Pages: `pages.yml` deploys `site/` and
+the docs (see Docs) with the latest release's `appcast.xml`, on pushes to `site/` or `docs-site/`
+and after each release; `ci.yml` builds pull requests and keeps project.yml's `MARKETING_VERSION`
+at the `0.0.0` placeholder. Sparkle (`App/Updater.swift`, Gannin › Check for Updates) reads
+`https://gannin.ai/appcast.xml` with the key in `Info.plist`, and doesn't check by itself in a
+0.0.0 build. `docs/RELEASING.md` has the secrets and DNS. The app was `dev.andon.getgannin`;
+`App/BundleMove.swift` brings its preferences, Application Support folder and token across once.
+
+## Docs
+
+The user docs are gannin.ai/docs (andrew-waters/gannin#107, `plans/2026-10-10-documentation.md`):
+an Astro Starlight site in `docs-site/` (`base: '/docs'`, pages as Markdown under
+`docs-site/src/content/docs/`), built by `pages.yml` into `_site/docs` beside `site/`'s landing
+page, which it doesn't touch. Help › Gannin Help (⌘?, `GanninHelp.url`) opens it. `npm ci` and
+`npm run build` in `docs-site/` build it; `npm run dev` serves it.
+
+- **A user-facing change updates its docs page in the same pull request**: a setting added,
+  renamed or removed, a new page or flow, a changed default, a new shortcut. Name things as the
+  app shows them (labels, menu paths such as Settings › Sync), never by type or storage key alone.
+- The Settings reference (`settings/app/*.md`, `settings/org/*.md`) has every option in each pane
+  with its default, what it changes and where it's kept. `docs-site/scripts/check-settings.mjs`
+  (the `docs` job in `ci.yml`) fails when a literal control label in a pane's Swift files, or a
+  `SyncSource` title, isn't on its page; a new pane or section view goes in its `panes` map.
+- `.github/ISSUE_TEMPLATE/issue.md` asks for acceptance criteria with a Docs item, which New
+  Issue and `skills/create-issue.md` follow.
 
 ## Layout
 
@@ -1285,7 +1308,7 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 ## Sandboxed sessions
 
 - `Gannin/Sandbox/` (andrew-waters/gannin#8, `plans/2026-10-09-run-agent-sessions-in-apple-container.md`,
-  `requirements/run-agent-sessions-in-apple-container.md`, user guide `docs/SANDBOXES.md`): Work on This
+  `requirements/run-agent-sessions-in-apple-container.md`, user guide `docs-site/src/content/docs/sessions/sandboxes.md`): Work on This
   sessions and their helpers can run claude in an Apple container Linux VM, one per issue, so an agent
   reaches only its issue's folder and what it's given. Review with Claude, planning, Ask and `claude -p`
   stay on the Mac. It's Apple's `container` CLI through `Shell.run`, here or over ssh, never its Swift

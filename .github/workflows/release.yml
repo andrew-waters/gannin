@@ -7,9 +7,12 @@ name: Release
 # appcast, whose enclosure is the release's DMG, so every download counts on
 # the release. pages.yml then deploys gannin.ai with the new appcast.xml.
 #
-# The tag's message is the release: its first line the title, the rest the
-# notes, shown on GitHub and in Sparkle's update panel. Tag with
-#   git tag -a v1.2.0 -m "Title" -m "- what changed" && git push origin v1.2.0
+# The notes are the version's section of CHANGELOG.md, shown on GitHub and
+# in Sparkle's update panel; a tag without one isn't released. The tag
+# message's first line is the title, and any more lines an introduction above
+# the changes. Promote Unreleased in a pull request
+# (scripts/promote-changelog.sh 1.2.0), merge it, then tag with
+#   git tag -a v1.2.0 -m "Title" && git push origin v1.2.0
 #
 # Secrets (see docs/RELEASING.md):
 #   DEVELOPER_ID_CERTIFICATE_P12, DEVELOPER_ID_CERTIFICATE_PASSWORD  signing
@@ -62,12 +65,22 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
 
-      # The tag message, read from the API: actions/checkout makes a tag a
-      # lightweight ref, so git alone would find the commit's subject.
-      - name: Notes from the tag
+      # The notes are this version's section of CHANGELOG.md, so a tag with
+      # no section (or an empty one) stops here, before anything is built.
+      # The title is the tag message's first line, and any lines after it go
+      # above the changes as an introduction. The tag message is read from
+      # the API: actions/checkout makes a tag a lightweight ref, so git alone
+      # would find the commit's subject.
+      - name: Notes from the changelog and the tag
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
+          changes=$(python3 .github/scripts/changelog_to_html.py --markdown "$VERSION" CHANGELOG.md)
+          if ! grep -qvE '^(###.*|[[:space:]]*)$' <<< "$changes"; then
+            echo "::error::CHANGELOG.md has no changes under \"## [$VERSION]\". Run scripts/promote-changelog.sh $VERSION in a pull request, merge it, then tag that commit."
+            exit 1
+          fi
           message=""
           if [ "$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.type')" = "tag" ]; then
             sha=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$GITHUB_REF_NAME" --jq '.object.sha')
@@ -75,9 +88,16 @@ jobs:
           fi
           printf '%s\n' "${message:-$GITHUB_REF_NAME}" > tag-message.txt
           head -1 tag-message.txt > release-title.txt
-          python3 .github/scripts/release_notes.py --markdown < tag-message.txt > release-notes.md
-          python3 .github/scripts/release_notes.py < tag-message.txt > release-notes.html
-          cat tag-message.txt
+          tail -n +2 tag-message.txt | sed -e '/./,$!d' > release-intro.md
+          {
+            if [ -s release-intro.md ]; then cat release-intro.md; echo; fi
+            printf '%s\n' "$changes"
+          } > release-notes.md
+          {
+            if [ -s release-intro.md ]; then python3 .github/scripts/changelog_to_html.py --file release-intro.md; fi
+            python3 .github/scripts/changelog_to_html.py "$VERSION" CHANGELOG.md
+          } > release-notes.html
+          cat release-title.txt release-notes.md
 
       - name: Generate the project
         run: |
