@@ -295,8 +295,9 @@ enum SessionScript {
     /// `isRemote` is whether this runs on a server: the user's own
     /// statusLine command, read from this Mac, wouldn't exist there.
     /// `allowing` is commands it runs without asking (the pair review's
-    /// script).
-    static func settings(directory dir: String, isRemote: Bool, allowing: [String] = []) -> String {
+    /// script). `rules` is the session rules' hook command
+    /// (`SessionRules.hookCommand`), nil with none set.
+    static func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], rules: String? = nil) -> String {
         func signal(_ payload: String) -> String {
             #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
         }
@@ -315,6 +316,9 @@ enum SessionScript {
             group["matcher"] = matcher
             return group
         }
+        // Session rules come first, so a blocked call doesn't mark the
+        // session working.
+        let ruleGroups = rules.map { [group([command($0)], matcher: SessionRules.matcher)] } ?? []
         let hooks: [String: Any] = [
             "SessionStart": [group([write(.idle)])],
             "UserPromptSubmit": [group([command("touch \(dir)/started"), write(.working)])],
@@ -332,7 +336,7 @@ enum SessionScript {
             // A permission prompt clears the moment its tool is let through,
             // not once it's finished running: a slow command would otherwise
             // leave the card up for as long as the command takes.
-            "PreToolUse": [
+            "PreToolUse": ruleGroups + [
                 group([write(.working)], matcher: "*"),
                 // Its questions, as they're shown; listed after "*" so this
                 // wins when both match AskUserQuestion's own tool call.

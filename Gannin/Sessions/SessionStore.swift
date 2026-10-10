@@ -829,6 +829,9 @@ final class SessionStore {
         // What the login shell runs: the script here, or the Connect with
         // command carrying it to the server.
         let command: String
+        // Read on every start and resume, so a changed rule applies from
+        // the next one.
+        let rules = SessionRules.current
         /// A sandbox on a server gets its credentials over ssh before the
         /// terminal starts: nil there removes any left from before.
         var remoteSecrets: (runner: Shell.Runner, directory: String, text: String?)?
@@ -843,7 +846,7 @@ final class SessionStore {
                 directory: remoteDirectory,
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
-                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session)),
+                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: remoteDirectory, branch: session.branch)),
                 files: session.isSandboxed ? ["inner.sh": SandboxLaunch.innerScript(session)] : [:]
             )
             command = SessionScript.connecting(connect, to: remote)
@@ -865,7 +868,7 @@ final class SessionStore {
             let local = SessionScript.quoted(real.path)
             if session.isSandboxed { prepareSandbox(session, directory: real) }
             // A sandbox's statusLine can't run the user's own command, which is on the Mac.
-            try? Data(SessionScript.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session)).utf8).write(to: directory.appending(path: "settings.json"))
+            try? Data(SessionScript.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch)).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"

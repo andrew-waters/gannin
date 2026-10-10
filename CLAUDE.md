@@ -919,6 +919,21 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   off) it's also pasted into the session: now when claude is waiting for a prompt, else queued
   (`pendingFeedback`) until its turn ends, dropped if claude exits first, and marked sent only
   once pasted.
+- Session rules (`Sessions/SessionRules.swift`, andrew-waters/gannin#129,
+  `plans/2026-10-10-session-rules.md`): the user's own, on this Mac (`sessionRules` in
+  `UserDefaults`), set in Settings › General › Session rules (`SessionRulesSection`), off until one
+  is ticked. Ready-made rules (no force push, push only to the session's branch, no branch or tag
+  deletes, no `gh release` writes, at most N PR comments or reviews an hour) and custom ones (a
+  `grep -E` pattern to Block or Ask me). `SessionRules.hookCommand` is a `PreToolUse` hook, the
+  whole check inline as base64'd bash (sed, awk, grep, date only) so there's no script to edit,
+  added first by `SessionScript.settings` (`rules:`) on every start and resume, here, on a server
+  and in a sandbox; with no rules there's no hook. It prints a deny naming the rule (claude is
+  told why), or an ask (a permission prompt, so Needs you, even in auto mode); the comment count
+  is `rule-comments` in the session's folder. While any rule is on it also guards Gannin's
+  preferences and Application Support, `.gannin/settings*` and Claude Code's settings. Activity
+  shows a call it blocked (`SessionTranscript.Event.blockedBy`, from the denial's text,
+  `SessionRules.blockedRule`). Commands are split into parts and matched by their words, not
+  parsed, so an encoded or scripted command gets round it.
 - Helpers (`CodeSession.parentID`, `role`, `prompt`): more agents on an issue's folder and
   branch, each with its own settings file in `.gannin/`; Review the Changes starts one with
   edits disallowed (`isReviewer`, `--disallowedTools`) and `SessionStore.reviewPrompt`.

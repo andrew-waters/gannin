@@ -61,6 +61,26 @@ How often Gannin looks for review requests is set in [Settings › Sync](/docs/s
 | Choose | Not applicable | Opens a folder picker to set the Workspace. | This Mac |
 | Connect with | Empty | The command that reaches a server to run sessions on, for example `ssh -t devbox`. Put `{command}` where the rest goes, or it goes at the end. Empty runs sessions on this Mac. Sessions stay where they were made. | This Mac |
 
+## Session rules
+
+Rules that block what a Claude Code session can do, whatever Claude decides. Nothing is blocked until you turn one on. Gannin checks each command before claude runs it, in every session you start or resume afterwards, on this Mac, on a server or in a sandbox, Attended or Unattended. A blocked command shows in the session's Activity pane with the rule's name, and claude is told why so it can carry on another way.
+
+| Option | Default | What it changes | Kept |
+| --- | --- | --- | --- |
+| No force push | Off | Blocks `git push --force`, `-f`, `--force-with-lease` and `+branch` refspecs. | This Mac |
+| Push only to the session's branch | Off | Blocks `git push` to any branch but the session's own (`HEAD`, or the branch by name), and `--all`, `--mirror` and `--tags`. | This Mac |
+| No branch or tag deletes | Off | Blocks `git branch -d`, `git tag -d`, `git push --delete` or `:branch`, and deleting refs through `gh api`. | This Mac |
+| No gh release writes | Off | Blocks `gh release create`, `edit`, `upload`, `delete` and `delete-asset`, and writes to releases through `gh api`. Reading releases is fine. | This Mac |
+| Limit PR comments and reviews | Off | Allows a session at most this many PR or issue comments and reviews an hour (`gh pr comment`, `gh pr review`, `gh issue comment`, comment and review writes through `gh api`, and GitHub MCP tools that comment or review), then blocks the next. 10 when turned on. | This Mac |
+| Name | Empty | A custom rule's name, shown in Activity and told to claude. | This Mac |
+| Pattern | Empty | What a custom rule matches, as an extended regular expression over the whole command (`grep -E`); plain words work as they are. A rule with no pattern does nothing. | This Mac |
+| When it matches | Block | Block stops the command. Ask me turns it into a permission prompt, so the session goes to Needs you until you Allow or Deny it. | This Mac |
+| Add Rule | Not applicable | Adds a custom rule. | This Mac |
+
+While any rule is on, a session also can't change Gannin's settings, its own settings file, or Claude Code's settings (`.claude/settings*.json`, `disableAllHooks`), so it can't remove or edit its own rules.
+
+Rules match commands as they are written. That stops mistakes and casual prompt injection, but not someone set on getting round them, for example with an encoded or scripted command. Protect shared branches on GitHub as well.
+
 ## Prompts
 
 | Option | Default | What it changes | Kept |
