@@ -1662,17 +1662,24 @@ private struct SessionPanel: View {
                     }
                     Spacer()
                     if sessions.isRunning(session.id) {
-                        Button("End") { sessions.end(session.id) }
-                            .help("End claude and the shell it runs in. The worktree stays, and Restart resumes the conversation.")
+                        Button("Stop Claude") { sessions.end(session.id) }
+                            .help("End claude and the shell it runs in. The worktree stays, and Resume picks the conversation up.")
                     } else {
-                        Button("Restart") { _ = sessions.open(session) }
-                            .help("Start the terminal again, resuming claude's conversation")
+                        Button("Resume") { _ = sessions.open(session) }
+                            .help("Start the terminal again, carrying on claude's conversation")
                     }
                     // An Ask goes with its folder, from its list's Delete.
                     if !session.isAsk {
-                        Button("Remove", role: .destructive) { confirmingRemove = true }
+                        Button("Forget…", role: .destructive) { confirmingRemove = true }
+                            .help("Take the session out of Gannin, leaving its files where they are")
                     }
                 }
+                Text(sessions.isRunning(session.id)
+                     ? "Stop Claude ends it and keeps the worktree, to resume later. Forget takes the session out of Gannin and leaves its files."
+                     : "Resume starts claude again where the conversation left off. Forget takes the session out of Gannin and leaves its files.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             SessionFinishSection(session: session)
             // A helper's issue, plans and PRs are on the session it helps.
@@ -1703,8 +1710,8 @@ private struct SessionPanel: View {
                 await harness.load(org: session.org, setup: setup)
             }
         }
-        .confirmationDialog("Remove this session?", isPresented: $confirmingRemove) {
-            Button("Remove Session", role: .destructive) { sessions.remove(session.id) }
+        .confirmationDialog("Forget this session?", isPresented: $confirmingRemove) {
+            Button("Forget Session", role: .destructive) { sessions.remove(session.id) }
         } message: {
             Text("Claude is ended and Gannin forgets the session. \(session.isInHarness ? "Its folder and worktrees stay" : "The worktree stays") at \(worktreePath)\(session.isRemote ? " on the server" : "") for you to remove with git worktree remove.")
         }

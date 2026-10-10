@@ -73,7 +73,7 @@ how many CPUs and how much memory each sandbox gets.
   questions, pull requests, and the second agent's review. A session's helpers, such as the
   reviewer, run in the same sandbox.
 - The sandbox stops when its sessions' Claude Code exits or you quit Gannin, and starts again when
-  you open the session. Finish Session removes it.
+  you open the session. Finish and Clean Up removes it.
 - Claude can't clone a new repo the Mac would see. Gannin clones the issue's repos into `projects/`
   before the sandbox starts. If Claude needs another, clone it into `projects/` yourself and restart
   the session.

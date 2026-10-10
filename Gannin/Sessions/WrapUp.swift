@@ -413,36 +413,56 @@ struct WrapUpSessionSheet: View {
     // MARK: Closing
 
     private func footer(_ session: CodeSession) -> some View {
-        HStack(spacing: 8) {
-            Toggle("Don't ask again", isOn: Binding { !asks } set: { asks = !$0 })
-                .toggleStyle(.checkbox)
-                .help("Settings › General › Agent turns it back on")
-            Spacer()
+        let finished = sessions.isFinished(id)
+        return VStack(alignment: .leading, spacing: 12) {
+            // Each choice in a word on its button, and here in a sentence.
+            Text(closingChoices(finished: finished))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if let error {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .lineLimit(3)
             }
-            if finishing { ProgressView().controlSize(.small) }
-            Button("Cancel") { sessions.wrappingUp = nil }
-                .keyboardShortcut(.cancelAction)
-            if sessions.isFinished(id) {
-                Button("Finish Session…") { confirmingFinish = true }
-                    .help("Every pull request is merged: end it, remove its worktrees and mark it finished in the harness")
+            HStack(spacing: 8) {
+                Toggle("Don't ask again", isOn: Binding { !asks } set: { asks = !$0 })
+                    .toggleStyle(.checkbox)
+                    .fixedSize()
+                    .help("Closing a tab won't ask again. Settings › General › Agent turns it back on.")
+                Spacer()
+                if finishing { ProgressView().controlSize(.small) }
+                Button("Cancel") { sessions.wrappingUp = nil }
+                    .keyboardShortcut(.cancelAction)
+                    .help("Keep the tab open")
+                if finished {
+                    Button("Finish and Clean Up…") { confirmingFinish = true }
+                        .help("Every pull request is merged: end claude, remove its worktrees and mark it finished in the harness")
+                }
+                Button("Stop Claude") {
+                    sessions.wrappingUp = nil
+                    sessions.endAndClose(id)
+                }
+                .help("End claude and its helpers and close the tab. The worktrees stay; opening the session again picks the conversation up.")
+                Button("Keep Running") {
+                    sessions.wrappingUp = nil
+                    sessions.closeTab(id)
+                }
+                .keyboardShortcut(.defaultAction)
+                .help("Close the tab and leave claude working. It's under Agents in the sidebar and the + menu.")
             }
-            Button("End Session") {
-                sessions.wrappingUp = nil
-                sessions.endAndClose(id)
-            }
-            .help("Ends claude and its helpers and closes the tab. The worktrees stay; opening it again resumes the conversation.")
-            Button("Leave Running") {
-                sessions.wrappingUp = nil
-                sessions.closeTab(id)
-            }
-            .help("Closes the tab with claude still running, as closing always has")
         }
         .disabled(finishing || committing)
+    }
+
+    private func closingChoices(finished: Bool) -> String {
+        var text = "Keep Running closes the tab and leaves claude working; find it again under Agents. "
+            + "Stop Claude ends it and its helpers but keeps the worktrees, so opening it again carries on the conversation."
+        if finished {
+            text += " Every pull request is merged, so Finish and Clean Up removes the worktrees and marks it done."
+        }
+        return text
     }
 
     private func finish(_ session: CodeSession) {
