@@ -128,13 +128,29 @@ extension GitHubAPI {
     /// secondary rate limit is waited out once when GitHub says it's a
     /// minute or less; a longer refusal pauses REST requests until then.
     func rest<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
+        let data = try await restData(path, query: query, accept: "application/vnd.github+json")
+        do {
+            return try Self.restDecoder.decode(T.self, from: data)
+        } catch {
+            throw APIError.decoding(String(describing: error))
+        }
+    }
+
+    /// A GET against the REST API read as plain text, for the one GitHub
+    /// media type that isn't JSON (a pull request's full unified diff).
+    func restText(_ path: String, query: [String: String] = [:], accept: String) async throws -> String {
+        let data = try await restData(path, query: query, accept: accept)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func restData(_ path: String, query: [String: String], accept: String) async throws -> Data {
         if let until = pausedUntil?(true), until > .now { throw APIError.rateLimited(until: until) }
         let source = APIUsage.currentSource
         var components = URLComponents(url: Self.restBase.appending(path: path), resolvingAgainstBaseURL: false)!
         components.queryItems = query.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         var request = URLRequest(url: components.url!)
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
 
         var attempt = 0
@@ -168,11 +184,7 @@ extension GitHubAPI {
             guard (200..<300).contains(status) else {
                 throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
             }
-            do {
-                return try Self.restDecoder.decode(T.self, from: data)
-            } catch {
-                throw APIError.decoding(String(describing: error))
-            }
+            return data
         }
     }
 
