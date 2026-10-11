@@ -698,6 +698,15 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   that close them (with their commit and review dates). Closed weeks are fetched as parallel
   searches, changes by `updated:`, and open issues in full hourly or on Full Refresh
   (`refetchOpen`; a plain Refresh doesn't), because board moves don't touch `updatedAt`. Reading boards needs the `project` scope.
+  The window's project's outside repos (`OrgConfig.outsideRepos`) join in as their own
+  `repo:`-qualified, batched searches (`GitHubAPI.outsideRepoCohorts`/`outsideRepoBatches`, as the
+  workload snapshot's are): a repo new to the project gets the same full backfill a brand new org
+  does, a known one trusts a changes search; `IssueHistory.outsideReposFetched` and
+  `unreadableOutsideRepos` track which (andrew-waters/gannin#205). All, Not on a board and Views
+  show them once the project names them, as `repoExclusion` already let them through; Issue flow,
+  Investments, Recap, Scorecards and Standup read the same history but call
+  `OrgConfig.excludesForIssueHistoryPages` instead, which never lets an outside repo through, so
+  their `outsideReposNotice` stays accurate.
 - `MarkdownText` renders blockquotes (GitHub's alerts, `> [!NOTE]` and the like, as callouts) and the HTML GitHub allows in Markdown: `<details>`/`<summary>` fold (a
   `DisclosureGroup`, its contents as Markdown), `<b>`, `<i>`, `<code>`, `<a>`, `<img>` (as a
   link) and `<br>` become Markdown, tags with no Markdown of their own (`<sub>`, `<div>`, `<p>`)

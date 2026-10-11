@@ -56,6 +56,9 @@ struct GanninApp: App {
         _metrics = State(initialValue: metrics)
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
         let issues = IssueStore(auth: auth, activity: activity)
+        // Every project's outside repos, as OrgStore's is set (R7's for the
+        // issue history too, andrew-waters/gannin#205).
+        issues.outsideRepos = { [weak orgConfigs] org in orgConfigs?.root.baseConfig(for: org).outsideRepos ?? [] }
         _issues = State(initialValue: issues)
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))

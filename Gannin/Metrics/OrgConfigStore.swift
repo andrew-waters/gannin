@@ -79,6 +79,16 @@ struct OrgConfig: Codable, Hashable {
     /// What views check a repo against: excluded, or outside the project.
     var repoExclusion: RepoExclusion { RepoExclusion(excluded: excludedRepos, focus: focusRepos, outside: outsideRepos) }
 
+    /// `repoExclusion`, but never letting an outside repo through even
+    /// when the project names it: for pages built on the issue history
+    /// (Issue flow, Investments, Recap, Scorecards, Standup's Changelog)
+    /// that don't cover outside repos yet and show `outsideReposNotice`,
+    /// so their data matches what that notice promises
+    /// (andrew-waters/gannin#205).
+    func excludesForIssueHistoryPages(_ repo: String) -> Bool {
+        outsideRepos.contains(repo) || repoExclusion.contains(repo)
+    }
+
     /// The window's project's own outside repos: empty unless it names
     /// specific repos (naming none doesn't pick up another project's, as
     /// `repoExclusion` already keeps out of the lists). Pages that don't
