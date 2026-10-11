@@ -8,6 +8,8 @@ paths:
 ## Writes
 - Every harness write is confirmed first and goes through `HarnessStore.commit` (`createCommitOnBranch` with `expectedHeadOid`). If the branch moved, re-plan on the new head and retry once.
 - Binary `data` is capped at `HarnessChange.maxDataBytes`; refuse before sending.
+- A branch whose rules require a pull request gets one instead of a direct commit: ask first with `GET repos/{repo}/rules/branches/{branch}` (rulesets only, advisory, so a failed lookup means try a direct commit), and retry once as a pull request if a direct commit is refused for needing one (classic branch protection).
+- Once the pull request exists the write is done. A merge GitHub refuses (405 or 422) leaves it open and notifies (`HarnessStore.onPullRequestOpened`); never turn that into an error, or a retry opens a second pull request.
 - After a commit, refetch the index until GitHub reports the new head (`load(expecting:)`) so writes show without a Refresh.
 
 ## Team data (`.gannin/*.json`, `HarnessTeamData.swift`)
@@ -35,4 +37,4 @@ paths:
 - Learnings live at `learnings/<repo>/<date>-<slug>.md` with front matter `repo`, `paths` (folders end `/`), `commit`, `source`, `author`, `status` (`active`/`retired`) and `## Rule`, `## Reason`, `## Source`. Only active ones reach prompts. Editors commit one file, only when asked.
 
 ## Testing
-- Covered: `HarnessRefinesTests`, `HarnessRepoEntryTests`. Nothing covers `TeamCoding.merge`, front matter parsing or `harness(covering:)`; check by hand: edit team data, commit, and confirm another harness copy survives the merge.
+- Covered: `HarnessPullRequestTests`, `HarnessRefinesTests`, `HarnessRepoEntryTests`. Nothing covers `TeamCoding.merge`, front matter parsing or `harness(covering:)`; check by hand: edit team data, commit, and confirm another harness copy survives the merge.
