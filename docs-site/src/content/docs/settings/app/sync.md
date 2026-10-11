@@ -69,7 +69,7 @@ These are checked while Gannin runs, and held off when the budget is low. The ch
 | --- | --- | --- | --- |
 | Your reviews and PRs | Every 5 minutes. Can be turned Off. | PRs your review is asked on, your own PRs and your issues, for the menu bar, Agents and notifications. | This Mac |
 | Watched reviews | Every 5 minutes. Can be turned Off. | Reviewed PRs that Claude watches for new commits and comments. | This Mac |
-| Session pull requests | Every 2 minutes. Can be turned Off. | Each running session's PRs: checks, reviews and threads. The PRs pane still looks when you open it. | This Mac |
+| Session pull requests | Every 2 minutes. Can be turned Off. | Each running session's PRs: checks, reviews and threads. Each time it looks, one small query compares every session's PRs with the last full look, and only those that changed, have checks running or have gone 10 minutes are read in full. The PRs pane still looks when you open it. | This Mac |
 | While checks run | Every 1 minute. Cannot be turned off on its own. | How often to look while a session's PR has checks running. It goes off with Session pull requests. | This Mac |
 
 ## How much
