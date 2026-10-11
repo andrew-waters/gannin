@@ -85,7 +85,7 @@ final class ActionsStore {
         let covered = history.repositories.values.allSatisfy { $0.coveredFrom <= start }
         if !force && isFresh && covered && !history.repositories.isEmpty { return }
         // Wait out a low budget unless asked, as long as there's history to show.
-        if !force && (auth.shouldHoldOffREST || auth.shouldHoldOff) && histories[org] != nil { return }
+        if auth.holdsOff(force: force, hasData: histories[org] != nil, rest: true) { return }
 
         syncing.insert(org)
         defer { syncing.remove(org) }

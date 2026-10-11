@@ -45,7 +45,7 @@ final class ReleaseStore {
         let now = Date.now
         if !force, let history = histories[org], !SyncSettings.isDue(.releases, since: history.syncedAt, now: now) { return }
         // Wait out a low budget unless asked, as long as there's something to show.
-        if !force && auth.shouldHoldOff && histories[org] != nil { return }
+        if auth.holdsOff(force: force, hasData: histories[org] != nil) { return }
 
         syncing.insert(org)
         defer { syncing.remove(org) }
