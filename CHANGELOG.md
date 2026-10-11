@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Fixed
+- An org with more than 1000 open issues no longer loses its older open issues from Gannin when every open issue is fetched again; GitHub returns only 1000 of them, so ones it doesn't return are kept until they change
+
 ### Added
 - Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
