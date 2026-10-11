@@ -166,6 +166,13 @@ struct OrgSnapshot: Codable {
     /// marked stale. Nil for a snapshot from before outside repos, or an
     /// account with none.
     var unreadableRepos: [String: String]?
+    /// Outside repos that have had at least one full search (open PRs,
+    /// merged PRs and open issues), so a later changes-only refresh can
+    /// trust its "updated since" search rather than needing everything
+    /// again: one just added to a project hasn't, so it still gets a full
+    /// search even when the rest of the snapshot only needs its changes.
+    /// Nil for a snapshot from before outside repos, or an account with none.
+    var outsideReposFetched: Set<String>?
     /// Non-fatal problems (e.g. teams hidden from this token).
     let warnings: [String]
 
