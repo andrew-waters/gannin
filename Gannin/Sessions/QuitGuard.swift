@@ -16,7 +16,19 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         AppAppearance.current.apply()
+        // scripts/relaunch.sh quits with SIGTERM, which skips
+        // applicationWillTerminate; write pending session saves first.
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            MainActor.assumeIsolated { Self.sessions?.flushSave() }
+            exit(0)
+        }
+        source.resume()
+        termSource = source
     }
+
+    private var termSource: DispatchSourceSignal?
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
@@ -49,6 +61,10 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     /// Shown even with Gannin in front: you may be in another window.
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .sound]
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        Self.sessions?.flushSave()
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
