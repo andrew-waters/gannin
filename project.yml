@@ -63,3 +63,22 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.andon.gannin.tests
         GENERATE_INFOPLIST_FILE: YES
+  # UI tests drive the built app and need a signed-in Gannin on this Mac, so
+  # they have a scheme of their own that `ci.yml` doesn't run:
+  # `xcodebuild test -scheme GanninUITests`.
+  GanninUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - GanninUITests
+    dependencies:
+      - target: Gannin
+    scheme:
+      testTargets:
+        - GanninUITests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.andon.gannin.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        # XCTestCase's own initialisers aren't main-actor isolated.
+        SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated

@@ -89,6 +89,7 @@ struct HarnessSkillEditor: View {
                         .foregroundStyle(.secondary)
                 }
                 TextField("Description", text: $summary, prompt: Text("What it does and when to use it"), axis: .vertical)
+                    .labelsHidden()
                     .lineLimit(1...4)
                 TextField("Repos", text: $repos, prompt: Text("All, or api, web"))
             } footer: {

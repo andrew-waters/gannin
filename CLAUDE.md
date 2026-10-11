@@ -25,6 +25,12 @@ them on every pull request:
 xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS' -skipPackagePluginValidation
 ```
 
+UI tests (`GanninUITests`, XCTest) drive the built app and are on a scheme of their own that
+`ci.yml` doesn't run, as they need a Gannin signed in on the Mac (its stored sign-in, projects
+and harness): `xcodebuild test -scheme GanninUITests`, adding `CODE_SIGN_IDENTITY=-
+CODE_SIGNING_REQUIRED=NO CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=` when this Mac has no
+certificate for the team in `project.yml`. Views they look for set an `accessibilityIdentifier`.
+
 Swift 6 with `SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`, so everything is main-actor unless
 marked otherwise. The Mac app isn't sandboxed while Claude Code sessions are prototyped: they
 run git, gh and claude as the user, which a sandboxed child process can't (its login, keys and

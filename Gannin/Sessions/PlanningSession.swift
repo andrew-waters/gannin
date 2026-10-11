@@ -359,7 +359,8 @@ struct NewPlanningView: View {
                         }
                     }
                 }
-                TextField("What are we planning?", text: $text, axis: .vertical)
+                TextField("What are we planning?", text: $text, prompt: Text("What are we planning?"), axis: .vertical)
+                    .labelsHidden()
                     .lineLimit(1...3)
                 if let source {
                     LabeledContent("Starting from", value: source.path)
