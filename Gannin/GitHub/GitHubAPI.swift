@@ -93,6 +93,12 @@ struct GitHubAPI {
     var onRefused: (@MainActor @Sendable (_ until: Date, _ rest: Bool) -> Void)?
     /// Until when requests are held back, after a refusal; asked before each.
     var pausedUntil: (@MainActor @Sendable (_ rest: Bool) -> Date?)?
+    /// Where REST reads keep their ETags. Not keyed by account: signing out
+    /// empties it, and GitHub answers a 304 only to a token that may read
+    /// the resource, so a swapped token can't see another's entries.
+    var restCache: RESTCache = .shared
+    /// What REST requests go through; tests replace it.
+    var restLimiter: RequestLimiter = .shared
 
     private static let endpoint = URL(string: "https://api.github.com/graphql")!
 
