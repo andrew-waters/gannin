@@ -171,10 +171,10 @@ final class EngineerWatch {
 
     /// A pull request Gannin opened itself (a harness branch's rules
     /// required one) and couldn't merge right away: it needs a look.
-    func notifyPullRequestOpened(repo: String, url: URL) {
+    func notifyPullRequestOpened(repo: String, url: URL, note: String) {
         registerCategories()
         post(id: "harness-pr-\(url.absoluteString)", title: "Pull request opened", subtitle: repo,
-             body: "Needs changes reviewed before Gannin's commit can land.",
+             body: note,
              category: Self.harnessPullRequestCategory, info: ["pullRequest": url.absoluteString])
     }
 

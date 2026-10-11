@@ -238,6 +238,21 @@ struct PlanningMadeIssue: Codable, Hashable {
     var id: String
     var reference: String
     var url: URL
+    /// The task's title when it was made, so an entry kept by position is
+    /// only used again for the same task.
+    var title: String? = nil
+    /// Whether it's been added to its parent as a sub-issue. An issue made
+    /// but not linked is kept so a retry links it rather than making another.
+    var linked: Bool? = nil
+
+    enum Restore: Equatable { case done, linkPending, ignore }
+
+    /// What a stored entry means for the task now at its position: a
+    /// different title means the tasks changed, so it isn't theirs.
+    func restore(forTitle taskTitle: String) -> Restore {
+        guard title == taskTitle else { return .ignore }
+        return linked == true ? .done : .linkPending
+    }
 }
 
 private extension KeyedDecodingContainer {

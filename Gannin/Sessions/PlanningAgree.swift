@@ -27,6 +27,8 @@ struct PlanningAgreeSheet: View {
         var satisfies: [String] = []
         /// `owner/name#123` and its page, once made.
         var made: (reference: String, url: URL)?
+        /// Made on GitHub in an earlier attempt but not yet added to the parent.
+        var created: PlanningMadeIssue?
         var failed: String?
         /// The issue was made, but couldn't be added to the workflow board.
         var boardWarning: String?
@@ -272,7 +274,13 @@ struct PlanningAgreeSheet: View {
         let madeIssues = planning?.madeIssues ?? [:]
         drafts = (state?.tasks ?? []).enumerated().map { index, task in
             var draft = Draft(repo: task.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: task.title, body: task.body ?? "", labels: task.labels.joined(separator: ", "), satisfies: task.satisfies)
-            if let made = madeIssues[index] { draft.made = (made.reference, made.url) }
+            if let stored = madeIssues[index] {
+                switch stored.restore(forTitle: task.title) {
+                case .done: draft.made = (stored.reference, stored.url)
+                case .linkPending: draft.created = stored
+                case .ignore: break
+                }
+            }
             return draft
         }
         parentTitle = title
@@ -321,8 +329,18 @@ struct PlanningAgreeSheet: View {
             drafts[index].failed = nil
             drafts[index].boardWarning = nil
             do {
-                let issue = try await api.createIssue(repo: draft.repo, title: draft.title, body: draft.body + satisfies(draft) + planLink, labels: labels(draft.labels))
+                var issue: PlanningMadeIssue
+                if let created = draft.created {
+                    issue = created
+                } else {
+                    let made = try await api.createIssue(repo: draft.repo, title: draft.title, body: draft.body + satisfies(draft) + planLink, labels: labels(draft.labels))
+                    issue = PlanningMadeIssue(id: made.id, reference: "\(draft.repo)#\(made.number)", url: made.url, title: draft.title, linked: false)
+                    drafts[index].created = issue
+                    remember(issue, at: index)
+                }
                 try await api.addSubIssue(parent: parent.id, child: issue.id)
+                issue.linked = true
+                remember(issue, at: index)
                 if let boardID {
                     do {
                         try await api.addToProject(projectID: boardID, contentID: issue.id)
@@ -330,13 +348,8 @@ struct PlanningAgreeSheet: View {
                         drafts[index].boardWarning = "Made, but couldn't add it to the board: \(error.localizedDescription)"
                     }
                 }
-                let reference = "\(draft.repo)#\(issue.number)"
-                drafts[index].made = (reference, issue.url)
-                sessions.update(session.id) {
-                    var made = $0.planning?.madeIssues ?? [:]
-                    made[index] = PlanningMadeIssue(id: issue.id, reference: reference, url: issue.url)
-                    $0.planning?.madeIssues = made
-                }
+                drafts[index].made = (issue.reference, issue.url)
+                drafts[index].created = nil
             } catch {
                 drafts[index].failed = error.localizedDescription
             }
@@ -387,6 +400,15 @@ struct PlanningAgreeSheet: View {
         message += " There's nothing more to write; answer questions about the plan if we ask."
         _ = sessions.submit(message, to: session.id)
         dismiss()
+    }
+
+    /// Keeps an issue as made, by its task's position, with the session.
+    private func remember(_ issue: PlanningMadeIssue, at index: Int) {
+        sessions.update(session.id) {
+            var made = $0.planning?.madeIssues ?? [:]
+            made[index] = issue
+            $0.planning?.madeIssues = made
+        }
     }
 
     /// The criteria a task satisfies, as its issue says them.

@@ -61,14 +61,22 @@ extension HarnessStore {
             let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
             guard let planned = try await change(head.commit) else { return nil }
             do {
-                if try await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch) {
-                    let result = try await commitViaPullRequest(api: api, setup: setup, base: head, change: planned)
-                    if refreshing, result.onBase { Task { await load(org: org, setup: setup, force: true, expecting: result.commit) } }
-                    return result.commit
+                var viaPullRequest = await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch)
+                if !viaPullRequest {
+                    do {
+                        let commit = try await api.createCommit(repo: setup.repo, branch: head.branch, expectedHead: head.commit, change: planned)
+                        if refreshing { Task { await load(org: org, setup: setup, force: true, expecting: commit) } }
+                        return commit
+                    } catch let error as APIError where error.requiresPullRequest {
+                        // Classic branch protection, or a ruleset added since
+                        // the lookup, which the rules endpoint doesn't show.
+                        pullRequestRequired["\(setup.repo)@\(head.branch)"] = true
+                        viaPullRequest = true
+                    }
                 }
-                let commit = try await api.createCommit(repo: setup.repo, branch: head.branch, expectedHead: head.commit, change: planned)
-                if refreshing { Task { await load(org: org, setup: setup, force: true, expecting: commit) } }
-                return commit
+                let result = try await commitViaPullRequest(api: api, setup: setup, base: head, change: planned)
+                if refreshing, result.onBase { Task { await load(org: org, setup: setup, force: true, expecting: result.commit) } }
+                return result.commit
             } catch let error as APIError where error.isStaleHead && attempt == 0 {
                 continue
             }
@@ -77,30 +85,44 @@ extension HarnessStore {
     }
 
     /// Whether the branch's rules require changes through a pull request, so
-    /// a direct commit would be refused; cached for the app's run.
-    private func requiresPullRequest(api: GitHubAPI, repo: String, branch: String) async throws -> Bool {
+    /// a direct commit would be refused; cached for the app's run. The
+    /// lookup is advisory: when it fails for a reason other than the session
+    /// or the rate limit (no permission to read rules, a network blip) a
+    /// direct commit is tried, which reports GitHub's reason if it's refused,
+    /// and the failure isn't cached.
+    private func requiresPullRequest(api: GitHubAPI, repo: String, branch: String) async -> Bool {
         let key = "\(repo)@\(branch)"
         if let cached = pullRequestRequired[key] { return cached }
-        let required = try await api.branchRequiresPullRequest(repo: repo, branch: branch)
+        guard let required = try? await api.branchRequiresPullRequest(repo: repo, branch: branch) else { return false }
         pullRequestRequired[key] = required
         return required
     }
 
     /// A new branch at `base`'s commit, the change committed to it, a pull
-    /// request to `base.branch`, and an attempt to merge it right away. The
-    /// branch is cleaned up if making the commit or the pull request fails;
-    /// once the pull request exists, its branch is kept regardless of
-    /// whether the merge succeeds, since the PR is what the work is on now.
+    /// request to `base.branch`, and an attempt to merge it right away (a
+    /// user who can bypass the rules has it merged at once). The branch is
+    /// cleaned up if making the commit or the pull request fails. Once the
+    /// pull request exists the write is done: a merge GitHub won't take, or
+    /// one that fails for any reason, leaves the PR open and notifies
+    /// (`onPullRequestOpened`) rather than throwing, as a retry would open a
+    /// second branch and pull request. A merged PR's branch is deleted.
     /// `onBase` says whether the commit landed on `base.branch` (merged) or
     /// is still only on the pull request's branch.
     private func commitViaPullRequest(api: GitHubAPI, setup: HarnessConfig, base: (branch: String, commit: String), change: HarnessChange) async throws -> (commit: String, onBase: Bool) {
-        let branch = Self.pullRequestBranchName(message: change.message)
-        try await api.createRef(repo: setup.repo, branch: branch, sha: base.commit)
+        let (title, body) = change.titleAndBody
+        var branch = Self.pullRequestBranchName(title: title)
+        do {
+            try await api.createRef(repo: setup.repo, branch: branch, sha: base.commit)
+        } catch let error as APIError {
+            // A name already taken: once more with another suffix.
+            guard case .http(422, _) = error else { throw error }
+            branch = Self.pullRequestBranchName(title: title)
+            try await api.createRef(repo: setup.repo, branch: branch, sha: base.commit)
+        }
         let commit: String
         let pr: (number: Int, url: URL)
         do {
             commit = try await api.createCommit(repo: setup.repo, branch: branch, expectedHead: base.commit, change: change)
-            let (title, body) = change.titleAndBody
             pr = try await api.createPullRequest(repo: setup.repo, base: base.branch, head: branch, title: title, body: body)
         } catch {
             try? await api.deleteRef(repo: setup.repo, branch: branch)
@@ -108,29 +130,35 @@ extension HarnessStore {
         }
         do {
             let merged = try await api.mergePullRequest(repo: setup.repo, number: pr.number)
+            try? await api.deleteRef(repo: setup.repo, branch: branch)
             return (merged, true)
-        } catch let error as APIError {
-            // GitHub refusing the merge because required reviews or checks
-            // aren't satisfied yet: expected, the PR is left open. Anything
-            // else (an expired session, the network, the rate limit) is a
-            // real failure, not "needs review".
-            guard case .http(let status, _) = error, Self.notYetMergeableStatuses.contains(status) else { throw error }
-            onPullRequestOpened?(setup.repo, pr.url)
+        } catch {
+            onPullRequestOpened?(setup.repo, pr.url, Self.mergeFailureNote(error))
             return (commit, false)
         }
     }
 
-    /// HTTP statuses GitHub's merge endpoint returns when a pull request
-    /// can't be merged yet (not a failure): required reviews or status
-    /// checks outstanding.
-    private static let notYetMergeableStatuses: Set<Int> = [405, 422]
+    /// Why a pull request is left open, for its notification, from the
+    /// merge endpoint's refusal: 405 and 422 are GitHub saying it can't
+    /// merge yet, with different reasons in the body; anything else
+    /// (network, rate limit, a 5xx) means the outcome isn't known.
+    static func mergeFailureNote(_ error: Error) -> String {
+        guard case APIError.http(let status, let body) = error, status == 405 || status == 422 else {
+            return "Gannin couldn't tell whether it merged. Check it on GitHub."
+        }
+        let text = body.lowercased()
+        if text.contains("conflict") { return "It has a merge conflict to resolve." }
+        if text.contains("merge commit") || text.contains("method") && text.contains("not allowed") {
+            return "The repository doesn't allow Gannin's merge method. Merge it on GitHub."
+        }
+        return "Needs reviews or checks before Gannin's commit can land."
+    }
 
-    /// `gannin-<slug>-<4 hex>`: a new branch for a commit its branch's
+    /// `gannin-<slug>-<8 hex>`: a new branch for a commit its branch's
     /// rules won't take directly.
-    private static func pullRequestBranchName(message: String) -> String {
-        let title = message.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init) ?? "Gannin"
+    static func pullRequestBranchName(title: String) -> String {
         let slug = Slug.make(title, limit: 32)
-        let suffix = UUID().uuidString.prefix(4).lowercased()
+        let suffix = UUID().uuidString.prefix(8).lowercased()
         return slug.isEmpty ? "gannin-\(suffix)" : "gannin-\(slug)-\(suffix)"
     }
 
@@ -145,6 +173,13 @@ extension HarnessStore {
 }
 
 extension APIError {
+    /// A direct commit refused because the branch's rules or protection
+    /// require a pull request.
+    var requiresPullRequest: Bool {
+        guard case .graphQL(let messages) = self else { return false }
+        return messages.contains { $0.localizedCaseInsensitiveContains("pull request") }
+    }
+
     /// `createCommitOnBranch` refusing because `expectedHeadOid` is no
     /// longer the branch's head.
     var isStaleHead: Bool {

@@ -26,8 +26,8 @@ final class HarnessStore {
     let auth: AuthStore
     /// Told when a commit went through a pull request instead (the branch's
     /// rules required one) and GitHub wouldn't merge it right away: it's
-    /// open and needs a look.
-    var onPullRequestOpened: (@MainActor @Sendable (_ repo: String, _ url: URL) -> Void)?
+    /// open and needs a look, with why.
+    var onPullRequestOpened: (@MainActor @Sendable (_ repo: String, _ url: URL, _ note: String) -> Void)?
 
     init(auth: AuthStore) {
         self.auth = auth

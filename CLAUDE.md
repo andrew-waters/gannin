@@ -1224,13 +1224,20 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   head and retried once. The index is then fetched again until GitHub reports the new commit as
   the head (`load(expecting:)`, up to five tries a second longer apart each time), so what was
   written shows without a Refresh. A branch whose rules require a pull request (asked first,
-  `GET repos/{repo}/rules/branches/{branch}`, cached per repo and branch for the app's run)
-  gets one instead: a new branch at the head, the commit on it, a pull request to the target
-  branch, and an attempt to merge it right away. Merged, this is transparent to every caller;
-  left open (GitHub refusing for outstanding reviews or checks, HTTP 405 or 422), it's a pull
-  request to look at (`HarnessStore.onPullRequestOpened`, a system notification through
-  `EngineerWatch.notifyPullRequestOpened`). A caller still sees the write as done either way
-  (andrew-waters/gannin#252 tracks telling them apart).
+  `GET repos/{repo}/rules/branches/{branch}`, which reports rulesets only, cached per repo and
+  branch for the app's run, and not cached when the lookup fails: it's advisory, so a failure
+  means a direct commit is tried) gets one instead. A direct commit refused for needing a pull
+  request (classic branch protection, or a ruleset added since) is retried that way once and
+  remembered. A pull request is a new branch (`gannin-<slug>-<8 hex>`) at the head, the commit
+  on it, a pull request to the target branch, and an attempt to merge it right away, so a user
+  who can bypass the rules has it merged at once; the branch is deleted after a merge. Merged,
+  this is transparent to every caller. Once the pull request exists the write is done: a merge
+  GitHub won't take (HTTP 405 or 422: reviews or checks outstanding, a conflict, a merge method
+  the repo disallows) or fails for any other reason leaves it open as a pull request to look at
+  (`HarnessStore.onPullRequestOpened`, a system notification saying why, through
+  `EngineerWatch.notifyPullRequestOpened`), never an error, so a retry can't open a second one. A
+  caller still sees the write as done either way (andrew-waters/gannin#252 tracks telling them
+  apart).
 - Hooks in the session's `--settings` write its state (working, needs you, your turn, exited)
   to a file `SessionStore` reads every second while a terminal runs, and the URL from a
   `gh pr create`. claude runs signed in as the user; Gannin never handles that login.
