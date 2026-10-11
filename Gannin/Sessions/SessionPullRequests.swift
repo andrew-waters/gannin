@@ -403,12 +403,12 @@ extension GitHubAPI {
     /// comes back, so the search asks for five PRs and 50 threads each,
     /// which a session's branch never needs more of.
     func sessionPullRequests(org: String, branch: String, urls: [URL], repos: Set<String> = []) async throws -> (pullRequests: [SessionPullRequest], searched: Set<URL>) {
-        let known = urls.prefix(10).enumerated().map { ("u\($0.offset)", $0.element) }
+        let known = urls.prefix(SessionPRLimits.urls).enumerated().map { ("u\($0.offset)", $0.element) }
         let definitions = (["$q: String!"] + known.map { "$\($0.0): URI!" }).joined(separator: ", ")
         let lookups = known.map { "\($0.0): resource(url: $\($0.0)) { ...SessionPR }" }.joined(separator: "\n")
         let query = """
             query(\(definitions)) {
-              search(type: ISSUE, query: $q, first: 5) { nodes { ...SessionPR } }
+              search(type: ISSUE, query: $q, first: \(SessionPRLimits.searchResults)) { nodes { ...SessionPR } }
               \(lookups)
             }
             fragment SessionPR on PullRequest {
@@ -467,8 +467,8 @@ extension GitHubAPI {
             let scope = outside.isEmpty ? GitHubAccounts.scope(request.org) : "\(GitHubAccounts.scope(request.org)) \(outside)"
             definitions.append("$q\(index): String!")
             values["q\(index)"] = "\(scope) is:pr head:\(request.branch)"
-            fields.append("s\(index): search(type: ISSUE, query: $q\(index), first: 5) { nodes { ...Probe } }")
-            for (offset, url) in request.urls.prefix(10).enumerated() {
+            fields.append("s\(index): search(type: ISSUE, query: $q\(index), first: \(SessionPRLimits.searchResults)) { nodes { ...Probe } }")
+            for (offset, url) in request.urls.prefix(SessionPRLimits.urls).enumerated() {
                 definitions.append("$u\(index)_\(offset): URI!")
                 values["u\(index)_\(offset)"] = url.absoluteString
                 fields.append("u\(index)_\(offset): resource(url: $u\(index)_\(offset)) { ...Probe }")
@@ -492,17 +492,25 @@ extension GitHubAPI {
     }
 }
 
+/// A coding key for the aliased fields of a query's response.
+private struct DynamicKey: CodingKey {
+    let stringValue: String
+    var intValue: Int? { nil }
+    init(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { nil }
+}
+
+/// What a session's PR queries ask for, which the probe must match so it
+/// never misses a PR the full read shows.
+enum SessionPRLimits {
+    static let urls = 10
+    static let searchResults = 5
+}
+
 /// Each session's fingerprints from the probe, by the request's position:
 /// `s0`'s search nodes and `u0_0`, `u0_1` and so on for its URLs.
 struct ProbeResponse: Decodable {
     let fingerprints: [Int: Set<String>]
-
-    private struct Key: CodingKey {
-        let stringValue: String
-        var intValue: Int? { nil }
-        init(stringValue: String) { self.stringValue = stringValue }
-        init?(intValue: Int) { nil }
-    }
 
     private struct Search: Decodable { let nodes: [Probe] }
 
@@ -536,7 +544,7 @@ struct ProbeResponse: Decodable {
     }
 
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: Key.self)
+        let container = try decoder.container(keyedBy: DynamicKey.self)
         var found: [Int: Set<String>] = [:]
         for key in container.allKeys {
             let name = key.stringValue
@@ -558,17 +566,10 @@ private struct SessionPRResponse: Decodable {
     /// The search's alone.
     let searched: [RawPullRequest]
 
-    private struct Key: CodingKey {
-        let stringValue: String
-        var intValue: Int? { nil }
-        init(stringValue: String) { self.stringValue = stringValue }
-        init?(intValue: Int) { nil }
-    }
-
     private struct Search: Decodable { let nodes: [RawPullRequest] }
 
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: Key.self)
+        let container = try decoder.container(keyedBy: DynamicKey.self)
         var found: [RawPullRequest] = []
         var searched: [RawPullRequest] = []
         for key in container.allKeys {

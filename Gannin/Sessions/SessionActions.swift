@@ -216,12 +216,18 @@ extension SessionStore {
                 guard let self else { return }
                 if SyncSettings.isOn(.sessionPullRequests) && !self.holdsOff() {
                     let watched = self.sessions.values.filter { !$0.isHelper && self.needsWatching($0) }
-                    for (session, fingerprints) in await self.sessionsToLookAt(watched) {
-                        await self.refreshPullRequests(session.id)
-                        // A look that failed is made again next tick.
-                        if self.pullRequestErrors[session.id] == nil, let fingerprints {
-                            self.lastFullPullRequestLook[session.id] = (fingerprints, .now)
-                        }
+                    let probed: [UUID: Set<String>]?
+                    do { probed = try await self.probePullRequests(watched) } catch { return }
+                    let due = Self.sessionsDue(
+                        watched: watched.map(\.id), lastLooks: self.lastFullPullRequestLook, probed: probed, now: .now,
+                        hasPendingChecks: { (self.pullRequestInfo[$0] ?? []).contains { $0.state == "OPEN" && !$0.pending.isEmpty } }
+                    )
+                    for id in due {
+                        // A look that didn't read anything is made again next tick.
+                        guard await self.refreshPullRequests(id) else { continue }
+                        // With the probe down, the last fingerprints stay, so the next probe that works compares with them.
+                        let fingerprints = probed?[id] ?? (probed == nil ? self.lastFullPullRequestLook[id]?.fingerprints : nil) ?? []
+                        self.lastFullPullRequestLook[id] = (fingerprints, .now)
                     }
                 }
                 let pending = self.pullRequestInfo.values.joined().contains { $0.state == "OPEN" && !$0.pending.isEmpty }
@@ -232,13 +238,12 @@ extension SessionStore {
 
     /// Reading a session's PRs in full costs several points, and most ticks
     /// nothing has changed. So one cheap query for every watched session
-    /// compares each PR's state, update time, head commit, review decision,
-    /// mergeability and check rollup with the last full look, and only the
-    /// sessions where something differs (or that haven't been read in full
-    /// for `fullLookInterval`, in case a change doesn't show in those) are
-    /// read in full. If the probe itself fails, all of them are.
-    private func sessionsToLookAt(_ watched: [CodeSession]) async -> [(CodeSession, Set<String>?)] {
-        guard !watched.isEmpty, let api = api() else { return watched.map { ($0, nil) } }
+    /// gives each PR's state, update time, head commit, review decision,
+    /// mergeability and check rollup, to compare with the last full look.
+    /// Nil when the probe fails (its error is kept in `pullRequestProbeError`);
+    /// only cancellation is thrown.
+    private func probePullRequests(_ watched: [CodeSession]) async throws -> [UUID: Set<String>]? {
+        guard !watched.isEmpty, let api = api() else { return nil }
         let requests = watched.map { session in
             let searched = foundBySearch[session.id] ?? []
             return SessionPRProbeRequest(
@@ -247,23 +252,41 @@ extension SessionStore {
                 repos: [session.issue.repo, session.repo]
             )
         }
-        guard let probed = try? await chargingTo(.sessionPullRequests, { try await api.sessionPullRequestFingerprints(requests) }) else {
-            return watched.map { ($0, nil) }
+        do {
+            let probed = try await chargingTo(.sessionPullRequests) { try await api.sessionPullRequestFingerprints(requests) }
+            pullRequestProbeError = nil
+            return probed
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            pullRequestProbeError = error.localizedDescription
+            return nil
         }
-        let now = Date.now
-        return watched.compactMap { session in
-            let fingerprints = probed[session.id] ?? []
-            if let last = lastFullPullRequestLook[session.id], last.fingerprints == fingerprints,
-               now.timeIntervalSince(last.at) < Self.fullLookInterval {
-                return nil
-            }
-            return (session, fingerprints)
+    }
+
+    /// The watched sessions to read in full this tick. One is read when it
+    /// has had no full look, when a fingerprint differs from its last look, when
+    /// an open PR has checks pending (the rollup stays PENDING while a single
+    /// check fails, so the fingerprint can't see it), and when its last look
+    /// is `fullLookInterval` old (a change in review threads may not show in
+    /// any fingerprint). With the probe down (`probed` nil) only the last
+    /// two apply, so a probe that keeps failing costs a full read every
+    /// `fullLookInterval`, not every tick.
+    nonisolated static func sessionsDue(
+        watched: [UUID], lastLooks: [UUID: (fingerprints: Set<String>, at: Date)],
+        probed: [UUID: Set<String>]?, now: Date, hasPendingChecks: (UUID) -> Bool
+    ) -> [UUID] {
+        watched.filter { id in
+            guard let last = lastLooks[id] else { return true }
+            if hasPendingChecks(id) || now.timeIntervalSince(last.at) >= fullLookInterval { return true }
+            guard let probed else { return false }
+            return last.fingerprints != (probed[id] ?? [])
         }
     }
 
     /// How long a session's PRs go without a full read even when the probe
     /// sees no change.
-    static let fullLookInterval: TimeInterval = 10 * 60
+    nonisolated static let fullLookInterval: TimeInterval = 10 * 60
 
     private func needsWatching(_ session: CodeSession) -> Bool {
         guard session.archivedAt == nil else { return false }
@@ -272,8 +295,11 @@ extension SessionStore {
     }
 
     /// The session's PRs now, from GitHub.
-    func refreshPullRequests(_ id: UUID) async {
-        guard let session = sessions[id], let api = api() else { return }
+    /// Whether it read them; a session or sign-in that's gone, a cancellation
+    /// and an error all leave what was shown.
+    @discardableResult
+    func refreshPullRequests(_ id: UUID) async -> Bool {
+        guard let session = sessions[id], let api = api() else { return false }
         // PRs the branch search found last time are found by it again, so
         // only the others are looked up by URL.
         let searched = foundBySearch[id] ?? []
@@ -287,9 +313,12 @@ extension SessionStore {
             pullRequestErrors[id] = nil
             if pullRequestInfo[id] != found { pullRequestInfo[id] = found }
             noticeNews(in: found, for: id)
+            return true
         } catch is CancellationError {
+            return false
         } catch {
             pullRequestErrors[id] = error.localizedDescription
+            return false
         }
     }
 

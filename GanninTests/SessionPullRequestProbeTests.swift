@@ -41,4 +41,55 @@ struct SessionPullRequestProbeTests {
         let response = try decode(#"{"s0":{"nodes":[]},"u0_0":{}}"#)
         #expect(response.fingerprints[0] == nil || response.fingerprints[0]?.isEmpty == true)
     }
+
+    // MARK: Which sessions are read in full
+
+    private let id = UUID()
+    private let now = Date(timeIntervalSince1970: 1_000_000)
+
+    private func due(
+        looked: (Set<String>, Date)?, probed: [UUID: Set<String>]?, pending: Bool = false
+    ) -> [UUID] {
+        SessionStore.sessionsDue(
+            watched: [id], lastLooks: looked.map { [id: (fingerprints: $0.0, at: $0.1)] } ?? [:],
+            probed: probed, now: now, hasPendingChecks: { _ in pending }
+        )
+    }
+
+    @Test func anUnchangedSessionWithinTheIntervalIsSkipped() {
+        let recent = now.addingTimeInterval(-60)
+        #expect(due(looked: (["a"], recent), probed: [id: ["a"]]).isEmpty)
+    }
+
+    @Test func anUnchangedSessionIsReadOnceTheIntervalHasPassed() {
+        let old = now.addingTimeInterval(-SessionStore.fullLookInterval)
+        #expect(due(looked: (["a"], old), probed: [id: ["a"]]) == [id])
+    }
+
+    @Test func aChangedFingerprintIsRead() {
+        let recent = now.addingTimeInterval(-60)
+        #expect(due(looked: (["a"], recent), probed: [id: ["b"]]) == [id])
+    }
+
+    @Test func aSessionWithNoPreviousLookIsRead() {
+        #expect(due(looked: nil, probed: [id: ["a"]]) == [id])
+    }
+
+    @Test func aSessionWhosePullRequestsAllVanishedIsRead() {
+        let recent = now.addingTimeInterval(-60)
+        #expect(due(looked: (["a"], recent), probed: [:]) == [id])
+    }
+
+    @Test func pendingChecksAreAlwaysRead() {
+        let recent = now.addingTimeInterval(-60)
+        #expect(due(looked: (["a"], recent), probed: [id: ["a"]], pending: true) == [id])
+    }
+
+    @Test func aFailedProbeReadsOnlyWhatIsOldOrNew() {
+        let recent = now.addingTimeInterval(-60)
+        let old = now.addingTimeInterval(-SessionStore.fullLookInterval - 1)
+        #expect(due(looked: (["a"], recent), probed: nil).isEmpty)
+        #expect(due(looked: (["a"], old), probed: nil) == [id])
+        #expect(due(looked: nil, probed: nil) == [id])
+    }
 }

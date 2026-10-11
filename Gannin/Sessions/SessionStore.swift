@@ -417,6 +417,8 @@ final class SessionStore {
     /// What each session's PRs looked like at the last full look, and when,
     /// for `sessionsToLookAt` to compare the next cheap probe with.
     @ObservationIgnored var lastFullPullRequestLook: [UUID: (fingerprints: Set<String>, at: Date)] = [:]
+    /// Why the last probe of the watched sessions' PRs failed, nil once one works.
+    @ObservationIgnored var pullRequestProbeError: String?
     @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
     /// GitHub, once signed in; set by the app.
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }
