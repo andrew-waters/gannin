@@ -9,29 +9,34 @@ paths:
   - "Gannin/Sessions/PromptWriting*"
 ---
 
-# SessionStore, start scripts, brief, wrap-up, quit guard, ClaudeRunner
+# SessionStore, scripts, wrap-up, quit, ClaudeRunner
 
-## Storage and start
-- `SessionStore` persists `CodeSession`s in Application Support/<bundle ID>/Sessions and keeps their terminals, so closing a window leaves claude running. Work on This needs a project.
-- Each session folder holds brief, settings and `start.sh` (`SessionScript`), run by a login interactive shell. It clones the harness (gh, else git) or `git pull --ff-only` (warns, doesn't fail), adds `projects/` and `.worktrees/` to `info/exclude`, copies brief and settings into `.worktrees/<branch>/.gannin/`, then runs `claude --session-id` (`--resume` once it has had a prompt) in the harness root. Inherited `CLAUDE_CODE_*` env vars are stripped.
-- Brief: claude adds a worktree per touched repo at `.worktrees/<branch>/<name>` from the shared clone in `projects/<name>`. A harness with no `projects/` is the code repo and gets one worktree of itself, plan included. Older sessions keep the old layout (clone in the workspace, worktree beside it).
-- Harness checkout per org: `sessionsHarnessPath.<org>`, default a checkout in a usual place found by its origin's whole repo name (so `gannin` never matches `gannin-legacy`), else `<workspace>/<org>-harness`. Per harness via `SessionStore.harnessPathKey(org, repo:)`.
-- Connect with (`sessionsConnect`, e.g. `ssh -t devbox`): script, brief and settings are packed into one command (`SessionScript.remoteCommand`) and run in `sessionsRemoteHarnessPath.<org>` (no default).
-- Hooks run with no terminal, so OSC 7777 rarely arrives. `SessionStore.poll` reads the files hooks write (state, pr, changed): every 1s locally, every 2s over the shared ssh connection (`readRemote`). Hooks in `--settings` report working / needs you / your turn / exited and the URL from `gh pr create`. Gannin never handles claude's login.
-- Recording (`SessionStore.record`): one commit of `sessions/<issue repo>-<number>/brief.md` and `session.json` (`SessionRecord`: issue, repos, branch, starter, when, box, PRs) before the terminal starts, so the pull brings them; a server session reads its brief from there. A PR claude reports is layered onto the harness's `session.json`. Confirmation has a per-org "Don't ask again" (`sessionsRecordWithoutAsking.<org>`).
-- `SessionBrief` (in `SessionScript.swift`): issue facts, board fields, parent, linked PRs, description and comments, harness documents about it (full) or mentioning it (summary only), learnings for its repos, and goals (`SessionBrief.goalsSection`, `advice`: measurables with a target that a change moves) as guidance it may set aside if it says why in the PR's Why.
-- A session's Plans and requirements (`HarnessIssueSection`) come from the harness it runs in; the Claude Code window has no project, so it uses the org's home.
-- Team prompts chosen in `SessionLaunchSheet` / `PromptPickerSections` go in `CodeSession.instructions`, appended to the first prompt (`SessionScript.firstPrompt`); a review's keeps its JSON ending. Starts with no sheet (notifications, menu bar, Review the Changes) take the defaults.
+## Start and recording
+- Record the session in the harness (`sessions/<issue repo>-<number>/brief.md` and `session.json`, one commit) before the terminal starts, so the harness pull brings them; a server session reads its brief from there. Layer a PR claude reports onto the harness's `session.json`.
+- `start.sh` pulls the harness with `git pull --ff-only` and must warn, not fail, when that can't happen. It keeps `projects/` and `.worktrees/` in `info/exclude`, copies brief and settings to `.worktrees/<branch>/.gannin/`, then runs `claude --session-id` (`--resume` once it has had a prompt) in the harness root.
+- Strip inherited `CLAUDE_CODE_*` variables when starting claude.
+- Find a harness checkout by its origin's whole repo name, so `gannin` never matches a clone of `gannin-legacy`. The setting is `sessionsHarnessPath.<org>`, keyed per harness by `SessionStore.harnessPathKey`.
+- Hooks run with no terminal, so `SessionStore.poll` (and `readRemote` over ssh) reads the files they write; don't depend on OSC 7777 arriving.
+- A server session packs script, brief and settings into one command (`SessionScript.remoteCommand`).
+- Never handle claude's login; it runs as the user.
+- Keep team prompts, if picked, in `CodeSession.instructions` appended to the first prompt (`SessionScript.firstPrompt`). A review keeps its JSON ending.
+- Goals in the brief are guidance claude may set aside if it says why in the PR's Why (`SessionBrief.goalsSection`).
 
 ## Wrap-up on close (`WrapUp.swift`)
-- `SessionStore.requestClose` sets `wrappingUp` (shown as `WrapUpSessionSheet`) only for an issue's own session or a quick change's, when `isClaudeRunning` (claude or a helper, not its leftover shell). Via the tab's X, Close Tab and the close shortcut; not Close Other Tabs. Gated by `sessionsWrapUpOnClose`.
-- Unpushed commits are measured against the upstream, else `origin/<branch>` (a sandbox records no upstream), by `WorktreeChanges.notPushed` read through its own `SessionChanges`, whatever mode the pane is in.
-- Checklist ticking (`HarnessChecklist`): `- [ ]` items in plans/requirements about its issue (not mere mentions), matched by their words, outside front matter and code, committed in one commit per file at the head; the button naming the harness is the confirmation. `tickOffPrompt` asks Claude instead.
-- Outcomes: Keep Running (default), Stop Claude (`endAndClose`: ends claude and helpers, keeps worktrees, resumed on open), Finish and Clean Up only once every PR is merged (confirmed).
+- Measure unpushed commits against the upstream, else `origin/<branch>`: a sandbox records no upstream. Read it with its own `SessionChanges`, whatever mode the pane is in (`WorktreeChanges.notPushed`).
+- Ask only for an issue's own session or a quick change's, and only while `isClaudeRunning` (claude or a helper, not its leftover shell). Never ask on Close Other Tabs.
+- Tick `- [ ]` items only in plans and requirements about the issue (not mere mentions), matched by their words, outside front matter and code. Commit one commit per file at the head; the button naming the harness is the confirmation.
+- Keep Running stays the default. Finish and Clean Up is offered only once every PR is merged, and is confirmed.
 
-## Quit guard
-- `GanninAppDelegate.applicationShouldTerminate` + `QuitGuard.swift` asks when sessions run. Sandboxes stop after this question (`stopSandboxesForQuit`).
+## Feedback sent to claude
+- New PR feedback is pasted now if claude awaits a prompt, else queued in `pendingFeedback` until its turn ends. Mark it sent only once pasted, and drop it if claude exits first; never mark it sent early.
 
-## ClaudeRunner and Write with Claude
-- `ClaudeRunner` runs `claude -p` one-offs: locally if claude is installed, else on the Connect with server via a bash script on stdin that writes prompt and files into a folder and runs claude there with only the tools given. Conversations use `--resume` in the same folder.
-- `PromptWriting` (`WriteWithClaudeButton`, `PromptWritingSheet`) is one no-tools `ClaudeRunner` conversation; each reply is JSON with `message` and, once drafted, the whole `draft`, and the current draft goes with every later message (`firstPrompt`, `followUp`, `reply`). `PromptWriting.Purpose` (`houseRules`, `savedPrompt`, `authoring(kind)`) says what's written and where it goes. Cancel discards the conversation.
+## Quit
+- Sandboxes stop only after the quit question is answered (`stopSandboxesForQuit`).
+
+## ClaudeRunner and PromptWriting
+- `ClaudeRunner` runs `claude -p` locally if installed, else on the Connect with server with only the tools given; follow-ups use `--resume` in the same folder.
+- `PromptWriting` replies are JSON with `message` and, once drafted, the whole `draft`; send the current draft with every later message.
+
+## Testing
+- `WrapUpTests.swift`, `PromptWritingTests.swift`, `SessionBriefGoalsTests.swift`, `SessionModeTests.swift`, `SessionRulesTests.swift`. `SandboxLaunchTests.swift` covers script generation for sandboxes. Nothing covers `SessionStore.record` or the quit guard.

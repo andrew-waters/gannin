@@ -63,8 +63,9 @@ xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=
   `CHANGELOG.md`. Releasing is in `docs/RELEASING.md`.
 - `.github/ISSUE_TEMPLATE/issue.md` asks for acceptance criteria with a Docs item, which New Issue
   and `skills/create-issue.md` follow.
-- When you add or change something a rule describes, update the rule in the same change. Keep rules
-  to what can't be seen by reading the code.
+- Write rules as short instructions with a reason ("Never X: Y breaks"). Add one only for a
+  constraint that reading the code wouldn't reveal. Don't record how a mechanism works, constants,
+  long lists of names or what a page shows. Change a rule when your change breaks what it says.
 
 ## Rules by area
 

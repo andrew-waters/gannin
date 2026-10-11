@@ -2,21 +2,20 @@
 paths:
   - "Gannin/Sessions/**"
 ---
-# Claude Code sessions: shared mechanics
+# Sessions: shared invariants
 
-- Gannin talks to claude only by pasting at its prompt (`SessionStore.submit`: bracketed paste, then Return; claude queues it while working).
-- Keys go through `SessionTerminal.press`, which encodes for the kitty keyboard protocol Claude Code turns on (Esc is `CSI 27 u`, Shift+Tab `CSI 9;2 u`, `TerminalKeys`). Notification actions use the same path (`keys:` in `GanninAppDelegate`).
-- Questions are not answered by driving claude's menu: `SessionStore.answer` closes it (Esc) and sends every answer as one message. Permission prompts are Return (Yes), down and Return, or Esc.
-- Hooks run with no terminal, so their OSC 7777 escapes rarely arrive. `SessionStore.poll` reads the files they write (state, pr, changed, review-request): every 1s locally, 2s over the shared ssh connection (`readRemote`). A PostToolUse hook writes `changed`, which re-reads Changes (else every 10s, 30 over ssh). The `Notification` hook only marks permission prompts and dialogs; a `PreToolUse` hook marks AskUserQuestion.
-- The transcript (`~/.claude/projects/*/<id>.jsonl` on the session's box) is tailed as it grows (`TranscriptReader`, `SessionTranscript`; on a server `tail -c` from the last offset in the same ssh call as the hook files). Source of Activity, cost (`cost-state` records), the pending question, plans written under `plans/` and a reviewer's fenced JSON findings list.
-- `SessionChanges` reads every worktree under the issue's folder in one bash script (git taking no optional locks) via `Shell.run`, over ssh with `-T`, `BatchMode` and one shared connection (`ControlPath=/tmp/gannin-ssh-%C`). Diffs are against the merge base with `origin/HEAD`, new files included. Uncommitted mode discards hunks with `git apply -R`.
-- Helpers (`CodeSession.parentID`, `role`, `prompt`) share the parent's folder and branch with their own settings file in `.gannin/`. They have no tab: `SessionStore.tabOwner` maps them to the session's tab, `reveal` and `addTab` open the session's, and tabs saved on a helper become its session's. `selectedTab` stays the helper's ID so attention and looking work unchanged. Reviewer helpers have edits disallowed (`isReviewer`, `--disallowedTools`). Removing a session removes its helpers.
-- Attention (`SessionStore.attention`): a session reaching Needs you, or going working to Your turn, while its tab isn't being looked at is flagged (tab mark, Dock count, notification, Next Session Waiting on You).
-- Mode (`SessionMode.swift`): `SessionStore.modes` is read each poll off the terminal footer (`ClaudeMode.fromFooter`; the terminal is local even for a server session), else the transcript's latest `permissionMode` (only written with the next record). `switchMode` presses Shift+Tab, reads the footer back and stops on the wanted mode (`ModeCycle`). A whole cycle back at the start stops with a note (`modeNotes`). A box that never reached auto mode goes in `autoUnavailableBoxes` until claude next starts there, and Unattended is disabled. Never fall back to accept edits or bypass.
-- Leave Unattended while claude is asking is `leaveUnattended`: answer Yes, then switch once the prompt has closed. The notification quick reply (`leaveUnattendedReply`) is handled by the store, not sent as keys. Not offered when auto mode is missing or already off.
-- `SessionStore.watchPullRequests` (every 2 min, 1 while checks run; Settings › Sync) fetches PRs of every running session and any with one open, flagging new failures and review feedback in one notification (`noticeNews`). Seen state is kept in `CodeSession.pullRequestsSeen` so a relaunch flags what arrived while closed; the first look only learns. A thread is keyed by its latest comment (`comments(last: 20)`, older keys dropped); every comment since the last seen is checked, so a quick reply from the viewer (or the session's Claude, running gh as you) can't mask someone else's. Conversation comments, approvals and conflicts aren't flagged.
-- Send new feedback (`CodeSession.sendsFeedback`, default `sessionsSendFeedback`) pastes it now if claude awaits a prompt, else queues `pendingFeedback` until its turn ends. Dropped if claude exits first; marked sent only once pasted.
-- The PRs pane (`SessionPullRequests.swift`) finds PRs by `head:<branch>` across the org plus URLs the hooks caught (`CodeSession.pullRequests`; those from search aren't re-looked-up, `foundBySearch`). Failures and threads go to claude as one prompt (`SessionPrompts`, failed checks via `gh run view --log-failed`). Diff line comments are `DiffComment` in `SessionStore.drafts`.
-- Session rules (`SessionRules.swift`, `sessionRules` in `UserDefaults`): `SessionRules.hookCommand` is a `PreToolUse` hook with the whole check inline as base64 bash (sed, awk, grep, date only; no script on disk), added first by `SessionScript.settings(rules:)` on every start and resume (local, server, sandbox); no rules, no hook. It prints a deny naming the rule or an ask (a permission prompt, so Needs you even in auto mode). The PR comment count is `rule-comments` in the session folder. While any rule is on it also guards Gannin's preferences, Application Support, `.gannin/settings*` and Claude Code's settings. Blocked calls show in Activity via `SessionTranscript.Event.blockedBy` (`SessionRules.blockedRule`, parsed from the denial text). Matching is by split command words, not parsing, so encoded or scripted commands get round it.
-- Closing sessions: `finish` (`SessionStore.finish`) removes worktrees, marks `finishedAt` in the harness's `session.json` and forgets the session; Ask sessions never offer it. Idle three days is stale.
-- `Gannin/Git/Shell.swift` `Shell.run` is shared with the Repositories pages.
+## Talking to claude
+- Never drive claude's menus to answer a question. `SessionStore.answer` sends Esc, then every answer as one message.
+- Always send keys through `SessionTerminal.press`: Claude Code enables the kitty keyboard protocol, so Esc is `CSI 27 u` and Shift+Tab `CSI 9;2 u`. Raw bytes are ignored.
+- Never trust hook escape codes (OSC 7777) to arrive: hooks run with no terminal. State comes from the files hooks write in the session folder, which `SessionStore.poll` reads.
+- Read the mode from the terminal footer (`ClaudeMode.fromFooter`) even for server sessions; that terminal is local.
+
+## Trust boundaries
+- Never fall back to accept-edits or bypass mode when auto mode is unavailable. Disable Unattended and say why.
+- Never read, store or pass on claude's login. It runs signed in as the user.
+- Session rules match by split command words, not parsed commands, so encoded or scripted commands get round them. Never describe them as a security boundary.
+- While any session rule is on, keep the rules guarding Gannin's preferences, Application Support, `.gannin/settings*` and Claude Code's settings, so a session can't switch its own rules off.
+- Keep `SessionRules.hookCommand` self-contained (inline base64 bash using sed, awk, grep, date only), so no editable script exists on the box.
+
+## Testing
+`SessionModeTests`, `SessionRulesTests` and `WrapUpTests` cover mode parsing and rules. Nothing covers `TranscriptReader` or `SessionTerminal` key encoding.
