@@ -43,8 +43,9 @@ final class IssueStore {
 
     /// Backfills closed issues to the window's starting Monday a week at a
     /// time (in parallel), refetches open issues when due, and otherwise
-    /// only fetches what changed.
-    func sync(_ org: String, windowDays: Int, force: Bool = false) async {
+    /// only fetches what changed. `refetchOpen` refetches every open issue
+    /// now (Full Refresh) rather than when `.openIssues` is due.
+    func sync(_ org: String, windowDays: Int, force: Bool = false, refetchOpen: Bool = false) async {
         loadCached(org)
         guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.issues) else { return }
         let now = Date.now
@@ -62,7 +63,7 @@ final class IssueStore {
                 searches.append(("changed", "\(scope) updated:>=\(Self.stamp(history.syncedAt.addingTimeInterval(-Self.overlap)))"))
             }
             // Open issues in full every so often (see `openFetchedAt`).
-            if force || (SyncSettings.isDue(.openIssues, since: history.openFetchedAt, now: now) && !auth.shouldHoldOff) {
+            if refetchOpen || (SyncSettings.isDue(.openIssues, since: history.openFetchedAt, now: now) && !auth.shouldHoldOff) {
                 searches.append(("open", "\(scope) is:open"))
             }
         } else {
