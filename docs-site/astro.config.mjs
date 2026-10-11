@@ -27,6 +27,8 @@ export default defineConfig({
       ],
       sidebar: [
         { label: 'Get started', items: [{ autogenerate: { directory: 'get-started' } }] },
+        { label: 'Using Gannin', items: [{ autogenerate: { directory: 'guides' } }] },
+        { label: 'Claude Code', items: [{ autogenerate: { directory: 'agents' } }] },
         { label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
         { label: 'Ways to run sessions', items: [{ autogenerate: { directory: 'sessions' } }] },
         {

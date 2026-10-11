@@ -52,6 +52,9 @@ xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=
   shows them (labels, menu paths such as Settings › Sync), never by type or storage key alone.
 - User-visible behaviour is documented in `docs-site/` only. This file and the rules record what
   someone changing the code needs: invariants, reasons, limits and wiring, not what a page shows.
+  Pages live under `docs-site/src/content/docs/`: `guides/` (using the app), `agents/` (Claude Code
+  sessions, reviews, routines), `sessions/` (where sessions run), `concepts/` and `settings/`. Each
+  folder is a sidebar section in `docs-site/astro.config.mjs`, so a new folder needs an entry there.
 - The Settings reference (`docs-site/src/content/docs/settings/`) has every option with its default,
   what it changes and where it's kept. `docs-site/scripts/check-settings.mjs` (the `docs` job in
   `ci.yml`) fails when a control label in a pane's Swift files, or a `SyncSource` title, isn't on
