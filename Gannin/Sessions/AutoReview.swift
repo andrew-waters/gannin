@@ -25,6 +25,10 @@ enum AutoReview {
     /// for the default. Settings > Harness.
     static func orgKey(_ org: String) -> String { "autoReviewRequests.\(org)" }
 
+    /// The project's own choice, by its harness repo, overriding the
+    /// default: `on`, `off`, or empty for the default. Settings > Harness.
+    static func postOverrideKey(_ repo: String) -> String { "autoPostReviews.\(repo)" }
+
     static var isOnByDefault: Bool { UserDefaults.standard.bool(forKey: enabledKey) }
     static var watchesByDefault: Bool { UserDefaults.standard.object(forKey: watchKey) as? Bool ?? true }
     static var postsAutomatically: Bool { UserDefaults.standard.bool(forKey: postKey) }
@@ -34,6 +38,17 @@ enum AutoReview {
         case "on": true
         case "off": false
         default: isOnByDefault
+        }
+    }
+
+    /// Whether a finished review posts itself, for the project its session
+    /// ran in (its harness repo), falling back to Settings' own choice.
+    static func shouldPost(repo: String?) -> Bool {
+        guard let repo else { return postsAutomatically }
+        switch UserDefaults.standard.string(forKey: postOverrideKey(repo)) {
+        case "on": return true
+        case "off": return false
+        default: return postsAutomatically
         }
     }
 }
@@ -192,7 +207,7 @@ extension SessionStore {
         }
         let findings = session.reviewResult?.findings.count ?? 0
         note(id, .reviewed, text: "Claude \(verdict), with \(findings) finding\(findings == 1 ? "" : "s")")
-        if AutoReview.postsAutomatically { Task { await postAutomatically(id) } }
+        if AutoReview.shouldPost(repo: session.harnessRepo) { Task { await postAutomatically(id) } }
     }
 
     /// Posts the review as a comment: never an approval or a request for

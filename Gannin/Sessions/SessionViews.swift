@@ -2170,6 +2170,8 @@ struct HarnessCheckoutSection: View {
     @AppStorage private var recordWithoutAsking: Bool
     /// `on`, `off`, or empty for Settings > General's.
     @AppStorage private var autoReview: String
+    /// `on`, `off`, or empty for Settings > General's, for this project.
+    @AppStorage private var autoPost: String
     let org: String
     let repo: String
     /// Says which harness, when there are several.
@@ -2186,6 +2188,7 @@ struct HarnessCheckoutSection: View {
         _remotePath = AppStorage(wrappedValue: "", SessionStore.remoteHarnessPathKey(org, repo: repo))
         _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(org))
         _autoReview = AppStorage(wrappedValue: "", AutoReview.orgKey(org))
+        _autoPost = AppStorage(wrappedValue: "", AutoReview.postOverrideKey(repo))
     }
 
     var body: some View {
@@ -2231,6 +2234,14 @@ struct HarnessCheckoutSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Picker("Post automatic reviews", selection: $autoPost) {
+                Text("As in Settings (\(AutoReview.postsAutomatically ? "on" : "off"))").tag("")
+                Text("On").tag("on")
+                Text("Off").tag("off")
+            }
+            Text("Your own choice for this project, on this Mac: whether a review Claude finished by itself is posted to GitHub as a comment, or waits for Post Review.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } header: {
             Text(showsName ? "Claude Code in \(repo.split(separator: "/").last ?? "")" : "Claude Code")
         }
