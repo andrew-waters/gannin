@@ -8,8 +8,8 @@ import Testing
 struct SessionStoreSaveTests {
     private let folder = FileManager.default.temporaryDirectory.appending(path: "SessionStoreSaveTests-\(UUID().uuidString)", directoryHint: .isDirectory)
 
-    private func store() -> SessionStore {
-        SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder)
+    private func store(saveDelay: Duration = .milliseconds(500)) -> SessionStore {
+        SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: saveDelay)
     }
 
     private func session(_ number: Int) -> CodeSession {
@@ -19,15 +19,19 @@ struct SessionStoreSaveTests {
                            harnessRepo: "acme/harness", harnessPath: "~/Code/acme/harness")
     }
 
+    private func clean() { try? FileManager.default.removeItem(at: folder) }
+
     private func saved() -> [CodeSession] { store().sessions.values.sorted { $0.issue.number < $1.issue.number } }
 
     @Test func addIsWrittenAtOnce() {
+        defer { clean() }
         let first = session(1)
         store().add(first)
         #expect(saved().map(\.id) == [first.id])
     }
 
     @Test func updatesCloseTogetherAreWrittenByFlush() {
+        defer { clean() }
         let live = store()
         let first = session(1)
         live.add(first)
@@ -39,6 +43,7 @@ struct SessionStoreSaveTests {
     }
 
     @Test func updatesAreWrittenAfterTheWindow() async throws {
+        defer { clean() }
         let live = store()
         let first = session(1)
         live.add(first)
@@ -48,17 +53,19 @@ struct SessionStoreSaveTests {
     }
 
     @Test func aFlushEndsTheWaitingWrite() async throws {
-        let live = store()
+        defer { clean() }
+        // A long delay, so a loaded machine's late wake-ups stay inside the margins.
+        let live = store(saveDelay: .seconds(1))
         let first = session(1)
         live.add(first)
         live.update(first.id) { $0.name = "one" }
         live.flushSave()
-        try await Task.sleep(for: .milliseconds(300))
+        try await Task.sleep(for: .milliseconds(600))
         live.update(first.id) { $0.name = "two" }
-        // The first update's wait would have ended by now; the second's hasn't.
-        try await Task.sleep(for: .milliseconds(300))
+        // The first update's wait ended at 1 s; the second's ends at 1.6 s.
+        try await Task.sleep(for: .milliseconds(600))
         #expect(saved().first?.name == "one")
-        try await Task.sleep(for: .milliseconds(500))
+        try await Task.sleep(for: .milliseconds(1400))
         #expect(saved().first?.name == "two")
     }
 }

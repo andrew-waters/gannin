@@ -467,10 +467,12 @@ final class SessionStore {
     var harnessStore: HarnessStore { harness }
 
     @ObservationIgnored private let directory: URL
+    @ObservationIgnored private let saveDelay: Duration
 
-    init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory) {
+    init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory, saveDelay: Duration = .milliseconds(500)) {
         self.harness = harness
         self.directory = directory
+        self.saveDelay = saveDelay
         if let data = try? Data(contentsOf: directory.appending(path: "Sessions.json")),
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
@@ -1466,7 +1468,7 @@ final class SessionStore {
     func save() {
         guard pendingSave == nil else { return }
         pendingSave = Task {
-            try? await Task.sleep(for: .milliseconds(500))
+            try? await Task.sleep(for: saveDelay)
             guard !Task.isCancelled else { return }
             flushSave()
         }
