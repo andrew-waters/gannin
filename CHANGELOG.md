@@ -21,6 +21,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Issues › All, Not on a board and Views now show an outside repo's issues when the window's project names it, as Pull Requests already did; the issue history wasn't fetching them at all
 
 ### Added
+- Post automatic reviews in Settings › Harness: each project can say on, off or as in Settings, instead of every project following the one Mac-wide choice
 - Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
