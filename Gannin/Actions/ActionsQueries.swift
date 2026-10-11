@@ -157,7 +157,7 @@ extension GitHubAPI {
         while true {
             let (data, response): (Data, URLResponse)
             do {
-                (data, response) = try await URLSession.shared.data(for: request)
+                (data, response) = try await RequestLimiter.shared.data(for: request)
             } catch {
                 try Task.checkCancellation()
                 throw APIError.network(error.localizedDescription)
