@@ -389,6 +389,7 @@ struct NewQuickChangeView: View {
                 }
             }
             TextField("What to change", text: $note, prompt: Text("What to change: the Save button on Settings sits too low on small windows, nudge it up"), axis: .vertical)
+                .labelsHidden()
                 .lineLimit(4...14)
                 .focused($focused)
             TextField("Title", text: $title, prompt: Text(SessionStore.askTitle(note).isEmpty || note.isEmpty ? "From the note's first line" : SessionStore.askTitle(note)))

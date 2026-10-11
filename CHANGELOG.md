@@ -23,7 +23,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
 
 ### Fixed
-- A space typed at the end of the message in New Ask now shows as you type it, instead of appearing only once more text follows
+- A space typed at the end of a free-text box (the message in New Ask, the note in New Quick Change, Ask Claude in New Issue, the planning topic, a skill's description) now shows as you type it, instead of appearing only once more text follows
 
 ## [0.0.2] - 2026-10-05
 
