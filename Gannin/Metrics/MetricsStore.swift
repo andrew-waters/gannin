@@ -48,7 +48,7 @@ final class MetricsStore {
         let lackingFiles = history.lackingChangedFiles
         if !force && isFresh && history.coveredFrom <= start && lackingFiles.isEmpty { return }
         // Wait out a low rate limit unless asked, as long as there's history to show.
-        if auth.holdsOff(force: force, hasData: histories[org] != nil) { return }
+        if auth.shouldWaitForBudget(force: force, hasData: histories[org] != nil) { return }
 
         // Backfill anything older than we hold, then top up since the last
         // sync with a day of overlap, a week per search.

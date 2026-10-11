@@ -77,7 +77,7 @@ final class HarnessStore {
     func load(org: String, setup: HarnessConfig, force: Bool = false, expecting: String? = nil) async {
         let indexKey = Self.key(org, setup.repo)
         loadCached(org, repo: setup.repo)
-        if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge || auth.shouldHoldOff { return }
+        if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge || auth.shouldWaitForBudget() { return }
         if let running = fetches[indexKey] {
             await running.value
             // A forced fetch (after a commit, say) wants what's there now,

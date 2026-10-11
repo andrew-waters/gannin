@@ -237,7 +237,7 @@ final class ProjectStore {
         let boardStale = cached.map { now.timeIntervalSince($0.fetchedAt) >= Self.maxAge } ?? true
         let itemsStale = cached?.items[filter].map { now.timeIntervalSince($0.fetchedAt) >= Self.maxAge } ?? true
         guard force || boardStale || itemsStale else { return }
-        if auth.holdsOff(force: force, hasData: cached?.items[filter] != nil) { return }
+        if auth.shouldWaitForBudget(force: force, hasData: cached?.items[filter] != nil) { return }
 
         loading.insert(loadKey)
         defer { loading.remove(loadKey) }

@@ -283,7 +283,7 @@ extension IssueStore {
     /// Issues not yet indexed every time; the search for changed ones only
     /// once its interval (Settings › Sync) has passed since the last.
     func deepSync(_ org: String) async {
-        guard let api = auth.api, let history = histories[org], !deepSyncing.contains(org), !auth.shouldHoldOff,
+        guard let api = auth.api, let history = histories[org], !deepSyncing.contains(org), !auth.shouldWaitForBudget(),
               SyncSettings.isOn(.issueText) else { return }
         deepSyncing.insert(org)
         defer { deepSyncing.remove(org) }
