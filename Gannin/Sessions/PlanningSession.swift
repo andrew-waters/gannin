@@ -27,6 +27,13 @@ struct PlanningInfo: Codable, Hashable {
     var dismissed: Set<String>? = nil
     /// Once the room agreed: when, who, and what was written.
     var agreed: PlanningAgreement? = nil
+    /// The parent issue Agree and Write already made (nil when it plans an
+    /// existing issue, or the parent isn't made yet), and sub-issues already
+    /// made, by task title: kept until `agreed`, so a failure partway
+    /// through, or dismissing and reopening the sheet, doesn't make them
+    /// again.
+    var madeParent: PlanningMadeIssue? = nil
+    var madeIssues: [String: PlanningMadeIssue]? = nil
     /// Times round each stage (requirements, design, tasks), counted as
     /// Gannin sees claude move to it; when each was approved (claude moved
     /// past it); and those reopened since, to approve again.

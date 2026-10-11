@@ -230,6 +230,16 @@ struct PlanningAgreement: Codable, Hashable {
     var issues: [URL]
 }
 
+/// An issue Agree and Write already made: its node ID (for `addSubIssue`),
+/// `owner/name#123` and its page. Recorded as each one is made, so a
+/// failure partway through (or dismissing and reopening the sheet) doesn't
+/// make it again.
+struct PlanningMadeIssue: Codable, Hashable {
+    var id: String
+    var reference: String
+    var url: URL
+}
+
 private extension KeyedDecodingContainer {
     func lenient<T: Decodable>(_ type: T.Type, _ key: Key) -> T? {
         (try? decodeIfPresent(T.self, forKey: key)) ?? nil

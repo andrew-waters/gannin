@@ -28,6 +28,8 @@ struct PlanningAgreeSheet: View {
         /// `owner/name#123` and its page, once made.
         var made: (reference: String, url: URL)?
         var failed: String?
+        /// The issue was made, but couldn't be added to the workflow board.
+        var boardWarning: String?
     }
 
     @State private var drafts: [Draft] = []
@@ -116,12 +118,16 @@ struct PlanningAgreeSheet: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                if let status {
-                    Text(status).foregroundStyle(.secondary)
-                }
             }
             .formStyle(.grouped)
             Divider()
+            if let status {
+                Text(status)
+                    .font(.callout)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding([.horizontal, .top], 12)
+            }
             HStack {
                 Text(summary)
                     .font(.caption)
@@ -244,6 +250,9 @@ struct PlanningAgreeSheet: View {
             if let failed = draft.wrappedValue.failed {
                 Text(failed).font(.caption).foregroundStyle(.red)
             }
+            if let boardWarning = draft.wrappedValue.boardWarning {
+                Text(boardWarning).font(.caption).foregroundStyle(.orange)
+            }
         }
         .opacity(draft.wrappedValue.include ? 1 : 0.5)
         .disabled(draft.wrappedValue.made != nil)
@@ -260,11 +269,15 @@ struct PlanningAgreeSheet: View {
 
     private func fill() {
         guard drafts.isEmpty else { return }
-        drafts = (state?.tasks ?? []).map {
-            Draft(repo: $0.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: $0.title, body: $0.body ?? "", labels: $0.labels.joined(separator: ", "), satisfies: $0.satisfies)
+        let madeIssues = planning?.madeIssues ?? [:]
+        drafts = (state?.tasks ?? []).map { task in
+            var draft = Draft(repo: task.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: task.title, body: task.body ?? "", labels: task.labels.joined(separator: ", "), satisfies: task.satisfies)
+            if let made = madeIssues[task.title] { draft.made = (made.reference, made.url) }
+            return draft
         }
         parentTitle = title
         parentRepo = repos.first ?? ""
+        if let madeParent = planning?.madeParent { parent = (id: madeParent.id, reference: madeParent.reference, url: madeParent.url) }
         writesRequirement = !startedFromRequirement
         if let login = auth.viewer?.login { present.insert(login) }
     }
@@ -272,7 +285,11 @@ struct PlanningAgreeSheet: View {
     // MARK: Writing
 
     private func agree() async {
-        guard let api = auth.api, let planning, let state else { return }
+        guard let api = auth.api else {
+            status = "Your GitHub session has expired. Sign in again."
+            return
+        }
+        guard let planning, let state else { return }
         working = true
         defer { working = false }
         status = nil
@@ -286,7 +303,9 @@ struct PlanningAgreeSheet: View {
             } else {
                 do {
                     let made = try await api.createIssue(repo: parentRepo, title: parentTitle, body: (state.summary ?? "") + planLink)
-                    parent = (made.id, "\(parentRepo)#\(made.number)", made.url)
+                    let reference = "\(parentRepo)#\(made.number)"
+                    parent = (made.id, reference, made.url)
+                    sessions.update(session.id) { $0.planning?.madeParent = PlanningMadeIssue(id: made.id, reference: reference, url: made.url) }
                 } catch {
                     status = "Couldn't make the parent issue: \(error.localizedDescription)"
                     return
@@ -300,11 +319,24 @@ struct PlanningAgreeSheet: View {
         for index in drafts.indices where drafts[index].include && drafts[index].made == nil {
             let draft = drafts[index]
             drafts[index].failed = nil
+            drafts[index].boardWarning = nil
             do {
                 let issue = try await api.createIssue(repo: draft.repo, title: draft.title, body: draft.body + satisfies(draft) + planLink, labels: labels(draft.labels))
                 try await api.addSubIssue(parent: parent.id, child: issue.id)
-                if let boardID { try? await api.addToProject(projectID: boardID, contentID: issue.id) }
-                drafts[index].made = ("\(draft.repo)#\(issue.number)", issue.url)
+                if let boardID {
+                    do {
+                        try await api.addToProject(projectID: boardID, contentID: issue.id)
+                    } catch {
+                        drafts[index].boardWarning = "Made, but couldn't add it to the board: \(error.localizedDescription)"
+                    }
+                }
+                let reference = "\(draft.repo)#\(issue.number)"
+                drafts[index].made = (reference, issue.url)
+                sessions.update(session.id) {
+                    var made = $0.planning?.madeIssues ?? [:]
+                    made[draft.title] = PlanningMadeIssue(id: issue.id, reference: reference, url: issue.url)
+                    $0.planning?.madeIssues = made
+                }
             } catch {
                 drafts[index].failed = error.localizedDescription
             }
@@ -347,6 +379,8 @@ struct PlanningAgreeSheet: View {
                 at: .now, by: agreedBy, planPath: planPath, requirementPath: requirement,
                 parent: parent.reference, parentURL: parent.url, issues: made.map(\.url)
             )
+            $0.planning?.madeParent = nil
+            $0.planning?.madeIssues = nil
         }
         var message = "The room agreed. Gannin committed \(planPath)\(requirement.map { " and \($0)" } ?? "") to the harness"
         message += made.isEmpty ? " under \(parent.reference)." : ", and made \(made.map(\.reference).joined(separator: ", ")) as sub-issues of \(parent.reference)."

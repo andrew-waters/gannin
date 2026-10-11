@@ -103,13 +103,13 @@ extension GitHubAPI {
             "expectedHeadOid": expectedHead,
             "fileChanges": ["additions": additions, "deletions": deletions],
         ]
-        let response: Response = try await mutate("""
+        let (response, messages): (Response, [String]) = try await queryReportingReason("""
             mutation($input: CreateCommitOnBranchInput!) {
               createCommitOnBranch(input: $input) { commit { oid } }
             }
-            """, variables: ["input": input])
+            """, values: ["input": input])
         guard let oid = response.createCommitOnBranch?.commit?.oid else {
-            throw APIError.graphQL(["GitHub didn't make the commit."])
+            throw APIError.graphQL(messages.isEmpty ? ["GitHub didn't make the commit."] : messages)
         }
         return oid
     }
