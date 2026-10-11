@@ -152,6 +152,11 @@ extension GitHubAPI {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        // What was last answered for this URL, sent back with its ETag: a 304
+        // costs nothing against the REST budget.
+        let cacheKey = "\(accept) \(request.url!.absoluteString)"
+        let cached = await RESTCache.shared.entry(for: cacheKey)
+        if let cached { request.setValue(cached.etag, forHTTPHeaderField: "If-None-Match") }
 
         var attempt = 0
         while true {
@@ -164,9 +169,10 @@ extension GitHubAPI {
             }
             let http = response as? HTTPURLResponse
             let status = http?.statusCode ?? 0
-            APIUsage.shared.record(cost: 1, isREST: true, source: source)
+            APIUsage.shared.record(cost: status == 304 ? 0 : 1, isREST: true, source: source)
             if let http, let budget = Self.restRateLimit(http) { onRESTRateLimit?(budget) }
             if status == 401 { throw APIError.unauthorized }
+            if status == 304, let cached { return cached.data }
             if (502...504).contains(status), attempt < 2 {
                 attempt += 1
                 try await Task.sleep(for: .seconds(attempt * 2))
@@ -183,6 +189,9 @@ extension GitHubAPI {
             }
             guard (200..<300).contains(status) else {
                 throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
+            }
+            if let etag = http?.value(forHTTPHeaderField: "ETag") {
+                await RESTCache.shared.store(data, etag: etag, for: cacheKey)
             }
             return data
         }
