@@ -15,6 +15,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Fixed
 - An org with more than 1000 open issues no longer loses its older open issues from Gannin when every open issue is fetched again; GitHub returns only 1000 of them, so ones it doesn't return are kept until they change
+- A harness repo with too many files for GitHub to list at once now says so, instead of indexing only some of its documents without a word
 
 ### Added
 - Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
