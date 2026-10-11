@@ -57,6 +57,15 @@ struct RoutineStoreTests {
         #expect(RoutineStore(directory: folder).checkedAt == start.addingTimeInterval(6 * 60))
     }
 
+    @Test func aClockSetBackIsSavedAtOnce() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = RoutineStore(directory: folder)
+        store.checked(at: start)
+        let earlier = start.addingTimeInterval(-3600)
+        store.checked(at: earlier)
+        #expect(RoutineStore(directory: folder).checkedAt == earlier)
+    }
+
     @Test func queueKeepsOrderPerOrg() {
         let store = RoutineStore(directory: folder)
         store.enqueue(issue(1))

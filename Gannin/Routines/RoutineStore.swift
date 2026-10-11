@@ -363,9 +363,12 @@ final class RoutineStore {
     /// finds nothing due in the stretch that wasn't saved.
     func checked(at date: Date) {
         checkedAt = date
-        if stateSavedAt.map({ date.timeIntervalSince($0) >= Self.stateSaveInterval }) ?? true {
-            saveState()
-        }
+        // A clock set back gives a negative interval, which counts as due.
+        let due = stateSavedAt.map { saved in
+            let elapsed = date.timeIntervalSince(saved)
+            return elapsed >= Self.stateSaveInterval || elapsed < 0
+        } ?? true
+        if due { saveState() }
     }
 
     func saveState() {
