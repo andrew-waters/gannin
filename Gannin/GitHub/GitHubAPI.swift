@@ -168,7 +168,12 @@ struct GitHubAPI {
 
         let (data, response): (Data, URLResponse)
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            // A write is something you just did, so it doesn't queue behind fetches.
+            if isMutation {
+                (data, response) = try await URLSession.shared.data(for: request)
+            } else {
+                (data, response) = try await RequestLimiter.shared.data(for: request)
+            }
         } catch {
             try Task.checkCancellation()
             throw APIError.network(error.localizedDescription)

@@ -331,7 +331,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
 - When GitHub refuses a request for its limit (403 or 429 with none left, `Retry-After`, or
   GraphQL's `RATE_LIMITED`, `RateLimit.refusal`), `APIError.rateLimited` pauses every request
   of that kind until it says (`AuthStore.pausedUntil`, `restPausedUntil`, asked by `GitHubAPI`
-  before sending); REST still waits out a minute or less once.
+  before sending); REST still waits out a minute or less once. Reads (GraphQL and REST) go
+  through `RequestLimiter` (`Sync/RequestLimiter.swift`), at most 8 in flight across the app so a
+  Refresh's parallel searches can't trip GitHub's secondary limit; writes you make skip the queue.
 - A person's load (`inFlight`) is their open PRs, review requests and assigned issues with an open
   PR. Assigned issues nobody has started are backlog and not counted; an issue closed by one of
   their own PRs counts once.
