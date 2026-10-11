@@ -544,10 +544,8 @@ struct PlanningWorkspaceView: View {
         .task(id: sessions.changeCount(session.id)) {
             do {
                 try await Task.sleep(for: .milliseconds(300))
-                await sessions.refreshPlanning(session.id)
-                while true {
-                    try await Task.sleep(for: .seconds(session.isRemote ? 15 : 4))
-                    if NSApp.isActive { await sessions.refreshPlanning(session.id) }
+                try await refreshWhileActive(every: .seconds(session.isRemote ? 15 : 4)) {
+                    await sessions.refreshPlanning(session.id)
                 }
             } catch {}
         }
