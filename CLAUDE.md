@@ -334,6 +334,9 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   before sending); REST still waits out a minute or less once. Reads (GraphQL and REST) go
   through `RequestLimiter` (`Sync/RequestLimiter.swift`), at most 8 in flight across the app so a
   Refresh's parallel searches can't trip GitHub's secondary limit; writes you make skip the queue.
+  Syncs are the background lane and leave 2 of the 8 slots free; a read you start by hand (the
+  issue and PR drawers' `DetailStore.load`, the review tab's fetch) sets `RequestLimiter.lane` to
+  interactive and is served first. A cancelled request leaves the queue at once.
 - A person's load (`inFlight`) is their open PRs, review requests and assigned issues with an open
   PR. Assigned issues nobody has started are backlog and not counted; an issue closed by one of
   their own PRs counts once.

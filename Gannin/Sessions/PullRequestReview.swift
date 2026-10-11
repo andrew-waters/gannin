@@ -849,7 +849,9 @@ struct PullRequestReviewView: View {
     private func load() async {
         guard let api = auth.api else { return }
         do {
-            let fetched = try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
+            let fetched = try await RequestLimiter.$lane.withValue(.interactive) {
+                try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
+            }
             pullRequest = fetched
             error = nil
             if selectedFile == nil { selectedFile = Self.overviewTag }
