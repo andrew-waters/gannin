@@ -24,8 +24,10 @@ final class IssueStore {
     @ObservationIgnored var outsideRepos: (_ org: String) -> Set<String> = { _ in [] }
     /// Which of them the workload snapshot has found unreadable (set by
     /// `GanninApp` from `OrgStore`'s own check), so this store doesn't run
-    /// a second aliased readability query for the same repos.
-    @ObservationIgnored var unreadableOutsideRepos: (_ org: String) -> [String: String] = { _ in [:] }
+    /// a second aliased readability query for the same repos; nil when the
+    /// snapshot hasn't loaded yet, so readability simply isn't known (not
+    /// the same as "none are unreadable").
+    @ObservationIgnored var unreadableOutsideRepos: (_ org: String) -> [String: String]? = { _ in [:] }
 
     init(auth: AuthStore, activity: SyncActivity) {
         self.auth = auth
@@ -81,12 +83,9 @@ final class IssueStore {
         // The workload snapshot already runs the aliased readability query
         // for these repos (hourly, or on adding one); reading its answer
         // here avoids asking GitHub the same thing twice.
-        let unreadable = unreadableOutsideRepos(org)
-        let (searchableOutside, newOutside, knownOutside) = GitHubAPI.outsideRepoCohorts(
-            outside, priorFetched: history?.outsideReposFetched ?? [], priorUnreadable: Set(unreadable.keys)
+        let (searchableOutside, newBatches, knownBatches) = Self.outsideRepoPlan(
+            outside, priorFetched: history?.outsideReposFetched ?? [], unreadable: unreadableOutsideRepos(org)
         )
-        let newBatches = GitHubAPI.outsideRepoBatches(newOutside)
-        let knownBatches = GitHubAPI.outsideRepoBatches(knownOutside)
 
         let changedSince: Date? = history.flatMap { auth.shouldFetch(.issues, since: $0.syncedAt, now: now, force: force) ? $0.syncedAt.addingTimeInterval(-Self.overlap) : nil }
         // Open issues in full every so often (see `openFetchedAt`).
@@ -149,6 +148,19 @@ final class IssueStore {
             run.finish(error: error)
             errors[org] = error.localizedDescription
         }
+    }
+
+    /// Outside repos' cohorts and batches for this round, or none of
+    /// either when `unreadable` is nil: the workload snapshot hasn't
+    /// loaded yet, so readability isn't known, and treating that as "all
+    /// readable" could search, and so prune, a repo that's actually
+    /// unreadable, and wrongly mark it fetched before it's had a real
+    /// baseline. `priorFetched` passes through unchanged so a quiet round
+    /// doesn't look like every outside repo just lost its baseline.
+    static func outsideRepoPlan(_ outside: Set<String>, priorFetched: Set<String>, unreadable: [String: String]?) -> (searchableOutside: Set<String>, newBatches: [[String]], knownBatches: [[String]]) {
+        guard let unreadable else { return (priorFetched, [], []) }
+        let (searchable, new, known) = GitHubAPI.outsideRepoCohorts(outside, priorFetched: priorFetched, priorUnreadable: Set(unreadable.keys))
+        return (searchable, GitHubAPI.outsideRepoBatches(new), GitHubAPI.outsideRepoBatches(known))
     }
 
     /// Every search `sync` needs to run, in order: the account's own

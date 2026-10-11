@@ -60,8 +60,14 @@ struct GanninApp: App {
         // issue history too, andrew-waters/gannin#205).
         issues.outsideRepos = { [weak orgConfigs] org in orgConfigs?.root.baseConfig(for: org).outsideRepos ?? [] }
         // The workload snapshot's own readability check for the same
-        // repos, so the issue history doesn't run a second one.
-        issues.unreadableOutsideRepos = { [weak orgs] org in orgs?.snapshot(for: org)?.unreadableRepos ?? [:] }
+        // repos, so the issue history doesn't run a second one; nil
+        // (rather than an empty dictionary) until that snapshot has
+        // loaded, so "nothing's unreadable" isn't confused with "nothing
+        // checked yet".
+        issues.unreadableOutsideRepos = { [weak orgs] org in
+            guard let snapshot = orgs?.snapshot(for: org) else { return nil }
+            return snapshot.unreadableRepos ?? [:]
+        }
         _issues = State(initialValue: issues)
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))

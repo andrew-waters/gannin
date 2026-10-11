@@ -22,6 +22,39 @@ struct IssueHistoryOutsideRepoTests {
         )
     }
 
+    // MARK: outsideRepoPlan
+
+    @Test func unknownReadabilitySkipsOutsideRepsEntirely() {
+        // The workload snapshot hasn't loaded yet (unreadable: nil):
+        // guessing "all readable" could search, and so prune, a repo
+        // that's actually unreadable.
+        let (searchable, newBatches, knownBatches) = IssueStore.outsideRepoPlan(
+            ["client/app"], priorFetched: ["client/app"], unreadable: nil
+        )
+        #expect(newBatches.isEmpty)
+        #expect(knownBatches.isEmpty)
+        // Its existing baseline is left exactly as it was, not cleared.
+        #expect(searchable == ["client/app"])
+    }
+
+    @Test func knownReadabilitySplitsIntoCohortsAsUsual() {
+        let (searchable, newBatches, knownBatches) = IssueStore.outsideRepoPlan(
+            ["client/app", "other/thing"], priorFetched: ["client/app"], unreadable: [:]
+        )
+        #expect(searchable == ["client/app", "other/thing"])
+        #expect(newBatches == [["other/thing"]])
+        #expect(knownBatches == [["client/app"]])
+    }
+
+    @Test func aRepoTheSnapshotFoundUnreadableIsLeftOutOfBothCohorts() {
+        let (searchable, newBatches, knownBatches) = IssueStore.outsideRepoPlan(
+            ["client/app"], priorFetched: ["client/app"], unreadable: ["client/app": "Not found"]
+        )
+        #expect(searchable.isEmpty)
+        #expect(newBatches.isEmpty)
+        #expect(knownBatches.isEmpty)
+    }
+
     // MARK: plannedSearches
 
     @Test func noOutsideReposSendsExactlyTodaysSearchesWithNoHistory() {

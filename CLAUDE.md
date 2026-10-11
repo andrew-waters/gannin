@@ -705,8 +705,11 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   known one trusts a changes search; deep syncing their descriptions and comments the same way.
   `IssueHistory.outsideReposFetched` tracks which have a baseline; which are unreadable is read
   from the workload snapshot's own check (`OrgStore.snapshot(for:)?.unreadableRepos`) rather than
-  asking GitHub again (andrew-waters/gannin#205). A known outside repo is then fetched on its own
-  hourly schedule here as well as the workload snapshot's, an accepted doubling of its cost.
+  asking GitHub again (andrew-waters/gannin#205). Until that snapshot has loaded, readability is
+  unknown rather than assumed clear (`IssueStore.outsideRepoPlan`), so outside repos are skipped
+  that round rather than searched, and so possibly pruned, on a guess. A known outside repo is
+  then fetched on its own hourly schedule here as well as the workload snapshot's, an accepted
+  doubling of its cost.
   All, Not on a board, Views, Epics, Board Hygiene, Prioritisation, the Dashboard's committed
   overdue flag, Inbox and Ask show them once the project names them, as `repoExclusion` already
   let them through; Issue flow, Investments, Recap, Scorecards and Standup, and Weekly Digest's
