@@ -1458,7 +1458,27 @@ final class SessionStore {
 
     private static var fileURL: URL { baseDirectory.appending(path: "Sessions.json") }
 
+    /// Saves every session shortly: calls close together (a poll updating
+    /// several sessions, a review's rounds) share one write of the whole file.
     func save() {
+        guard !saveScheduled else { return }
+        saveScheduled = true
+        Task {
+            try? await Task.sleep(for: .milliseconds(500))
+            flushSave()
+        }
+    }
+
+    /// Writes now if a save is waiting; at quit, so nothing is lost.
+    func flushSave() {
+        guard saveScheduled else { return }
+        saveScheduled = false
+        writeSessions()
+    }
+
+    @ObservationIgnored private var saveScheduled = false
+
+    private func writeSessions() {
         try? FileManager.default.createDirectory(at: Self.baseDirectory, withIntermediateDirectories: true)
         let ordered = sessions.values.sorted { $0.createdAt < $1.createdAt }
         if let data = try? JSONEncoder().encode(ordered) {

@@ -51,6 +51,10 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         [.banner, .sound]
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        Self.sessions?.flushSave()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let sessions = Self.sessions else { return .terminateNow }
         let running = sessions.running
