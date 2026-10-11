@@ -32,7 +32,7 @@ Force Push is always confirmed first and uses `--force-with-lease`, so it won't 
 
 Pull follows your `pull.rebase` setting. When git can't tell how to reconcile diverged branches, Gannin asks **Merge** or **Rebase**.
 
-While the page is open, Gannin refreshes the repo every ten seconds while the app is active, and fetches from the remote every five minutes in the background. That's git's own network use, not your GitHub API [budget](/docs/concepts/github-budget/). It never runs beside something you started.
+While the page is open, Gannin refreshes the repo every ten seconds while the app is active, and fetches from the remote every five minutes in the background, only while the app is active (coming back to it fetches if one is due). That's git's own network use, not your GitHub API [budget](/docs/concepts/github-budget/). It never runs beside something you started.
 
 ## History
 
