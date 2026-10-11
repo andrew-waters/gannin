@@ -91,6 +91,7 @@ struct OpenIssuesView: View {
                     }
                     Text(row.title).lineLimit(1)
                     ScheduledForAgentPill(issueID: row.id)
+                        .environment(routines)
                 }
                 .opacity(hidden.isHidden(row.id) ? 0.45 : 1)
                 .help(row.title)
@@ -178,6 +179,9 @@ struct OpenIssuesView: View {
                 NewSubIssueItem(parent: reference)
                 WorkOnThisMenuItem(reference: reference, request: $workingOn)
                 Menu("Schedule for Agent") { ScheduleForAgentItems(reference: reference, editing: $scheduling) }
+                    .environment(routines)
+                    .environment(store)
+                    .environment(configs)
                 Button("Open on GitHub") { openURL(issue.url) }
             }
         } primaryAction: { ids in
