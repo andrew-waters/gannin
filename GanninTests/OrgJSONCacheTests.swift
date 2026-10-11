@@ -41,4 +41,21 @@ struct OrgJSONCacheTests {
         try Data("not json".utf8).write(to: cache.directory.appending(path: "one.json"))
         #expect(cache.load(Sample.self, org: "one") == nil)
     }
+
+    @Test func loadingAnOrgWithNothingSavedDoesntCreateTheFolder() {
+        let cache = makeCache()
+        defer { cache.clear() }
+        _ = cache.load(Sample.self, org: "acme")
+        #expect(!FileManager.default.fileExists(atPath: cache.directory.path))
+    }
+
+    @Test func anOrgNameCantEscapeTheFolder() {
+        let cache = makeCache()
+        defer { cache.clear() }
+        let escaping = "../escaped"
+        cache.save(Sample(name: "one", at: .distantPast), org: escaping)
+        #expect(cache.load(Sample.self, org: escaping) != nil)
+        let escapedFile = cache.directory.deletingLastPathComponent().appending(path: "escaped.json")
+        #expect(!FileManager.default.fileExists(atPath: escapedFile.path))
+    }
 }

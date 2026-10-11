@@ -18,6 +18,7 @@ struct OrgJSONCache {
 
     func save<Value: Encodable>(_ value: Value, org: String) {
         guard let data = try? Self.encoder.encode(value) else { return }
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? data.write(to: fileURL(org), options: .atomic)
     }
 
@@ -27,9 +28,12 @@ struct OrgJSONCache {
     }
 
     private func fileURL(_ org: String) -> URL {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appending(path: "\(org).json")
+        let safeOrg = org.addingPercentEncoding(withAllowedCharacters: Self.safeOrgCharacters) ?? org
+        return directory.appending(path: "\(safeOrg).json")
     }
+
+    /// Path-allowed characters less `/`, so an org name can't escape `directory`.
+    private static let safeOrgCharacters = CharacterSet.urlPathAllowed.subtracting(CharacterSet(charactersIn: "/"))
 
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
