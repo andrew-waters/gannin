@@ -124,6 +124,10 @@ struct IssueHistory: Codable {
     /// them; open issues are refetched in full now and then instead.
     var openFetchedAt: Date
     var issues: [String: IssueRecord]
+    /// Outside repos (`OrgConfig.outsideRepos`) with a full backfill to
+    /// build a changes search on; nil for none, or for a cache from before
+    /// outside repos were covered (andrew-waters/gannin#205).
+    var outsideReposFetched: Set<String>?
 }
 
 /// How an org's issues move through its board, for cycle time.

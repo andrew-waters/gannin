@@ -18,6 +18,16 @@ final class IssueStore {
 
     private let auth: AuthStore
     private let activity: SyncActivity
+    /// The account's outside repos (set by `GanninApp`, from
+    /// `OrgConfigStore`'s root store, so the history is the same whichever
+    /// project a window has), as `OrgStore.outsideRepos` is.
+    @ObservationIgnored var outsideRepos: (_ org: String) -> Set<String> = { _ in [] }
+    /// Which of them the workload snapshot has found unreadable (set by
+    /// `GanninApp` from `OrgStore`'s own check), so this store doesn't run
+    /// a second aliased readability query for the same repos; nil when the
+    /// snapshot hasn't loaded yet, so readability simply isn't known (not
+    /// the same as "none are unreadable").
+    @ObservationIgnored var unreadableOutsideRepos: (_ org: String) -> [String: String]? = { _ in [:] }
 
     init(auth: AuthStore, activity: SyncActivity) {
         self.auth = auth
@@ -42,10 +52,25 @@ final class IssueStore {
 
     func isTracking(_ org: String) -> Bool { histories[org] != nil }
 
+    /// One of `sync`'s searches: `repos` is the outside batch it covers,
+    /// nil for the account's own scope (andrew-waters/gannin#205).
+    struct IssueSearch: Equatable {
+        enum Kind { case closed, changed, open }
+        let kind: Kind
+        let query: String
+        let repos: Set<String>?
+    }
+
     /// Backfills closed issues to the window's starting Monday a week at a
     /// time (in parallel), refetches open issues when due, and otherwise
     /// only fetches what changed. `refetchOpen` refetches every open issue
     /// now (Full Refresh) rather than when `.openIssues` is due.
+    ///
+    /// Outside repos (a project's own, `outsideRepos(org)`) join in as
+    /// their own `repo:`-qualified searches, batched to stay under
+    /// GitHub's query length: a brand new one gets the same full backfill
+    /// as a brand new org, a known one trusts a changes search as the
+    /// account's own repos do (andrew-waters/gannin#205).
     func sync(_ org: String, windowDays: Int, force: Bool = false, refetchOpen: Bool = false) async {
         loadCached(org)
         guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.issues) else { return }
@@ -54,22 +79,22 @@ final class IssueStore {
         let history = histories[org]
         let scope = "\(GitHubAccounts.scope(org)) archived:false is:issue"
 
-        var searches: [(key: String, query: String)] = []
-        if let history {
-            if start < history.coveredFrom {
-                searches += ParallelSearches.weeks(from: start, to: history.coveredFrom).map { ("closed", "\(scope) closed:\(Self.stamp($0.0))..\(Self.stamp($0.1))") }
-            }
-            if auth.shouldFetch(.issues, since: history.syncedAt, now: now, force: force) {
-                searches.append(("changed", "\(scope) updated:>=\(Self.stamp(history.syncedAt.addingTimeInterval(-Self.overlap)))"))
-            }
-            // Open issues in full every so often (see `openFetchedAt`).
-            if auth.shouldFetch(.openIssues, since: history.openFetchedAt, now: now, force: refetchOpen) {
-                searches.append(("open", "\(scope) is:open"))
-            }
-        } else {
-            searches += ParallelSearches.weeks(from: start, to: now).map { ("closed", "\(scope) closed:\(Self.stamp($0.0))..\(Self.stamp($0.1))") }
-            searches.append(("open", "\(scope) is:open"))
-        }
+        let outside = outsideRepos(org)
+        // The workload snapshot already runs the aliased readability query
+        // for these repos (hourly, or on adding one); reading its answer
+        // here avoids asking GitHub the same thing twice.
+        let (searchableOutside, newBatches, knownBatches) = Self.outsideRepoPlan(
+            outside, priorFetched: history?.outsideReposFetched ?? [], unreadable: unreadableOutsideRepos(org)
+        )
+
+        let changedSince: Date? = history.flatMap { auth.shouldFetch(.issues, since: $0.syncedAt, now: now, force: force) ? $0.syncedAt.addingTimeInterval(-Self.overlap) : nil }
+        // Open issues in full every so often (see `openFetchedAt`).
+        let openDue = history.map { auth.shouldFetch(.openIssues, since: $0.openFetchedAt, now: now, force: refetchOpen) } ?? true
+
+        let searches = Self.plannedSearches(
+            accountScope: scope, start: start, now: now, history: history,
+            changedSince: changedSince, openDue: openDue, newBatches: newBatches, knownBatches: knownBatches
+        )
         guard !searches.isEmpty else { return }
 
         syncing.insert(org)
@@ -77,33 +102,37 @@ final class IssueStore {
         let run = activity.begin(.issues, org: org)
         run.add("issues", title: "Issues", detail: searches.count == 1 ? "1 search" : "\(searches.count) searches")
         let keyed = Dictionary(uniqueKeysWithValues: searches.enumerated().map { ("s\($0.offset)", $0.element.query) })
-        var openCount: Int?
-        if let counts = try? await run.overhead({ try await api.counts(searches: keyed) }) {
-            run.setTotal(counts.values.map { min($0, 1000) }.reduce(0, +), for: "issues")
-            if let index = searches.firstIndex(where: { $0.key == "open" }) { openCount = counts["s\(index)"] }
-        }
+        let counts = try? await run.overhead({ try await api.counts(searches: keyed) })
+        if let counts { run.setTotal(counts.values.map { min($0, 1000) }.reduce(0, +), for: "issues") }
+
         do {
             let queries = searches.map(\.query)
             let records = try await run.track("issues", count: \.count) { progress in
                 try await Self.fetch(queries, api: api, progress: progress)
             }
-            let refetchedOpen = searches.contains { $0.key == "open" }
+
             var updated = history ?? IssueHistory(orgLogin: org, coveredFrom: start, syncedAt: now, openFetchedAt: now, issues: [:])
-            if refetchedOpen {
-                // GitHub returns at most 1000 results, so past that the refetch
-                // is a partial list and its absentees may still be open.
-                let capped = openCount.map { $0 > Self.searchCap } ?? (records.count >= Self.searchCap)
-                if !capped {
-                    // Open issues missing from a full refetch were closed or moved
-                    // away; drop them unless they were refetched as closed.
-                    let fetched = Set(records.map(\.id))
-                    updated.issues = updated.issues.filter { !$0.value.isOpen || fetched.contains($0.key) }
-                }
+            let fetchedIDs = Set(records.map(\.id))
+            // GitHub returns at most 1000 results per search, so past that
+            // a refetch is a partial list; open issues missing from an
+            // uncapped one were closed or moved away and are dropped,
+            // scoped to the repos that search actually covers so a batch
+            // not due this round doesn't lose its last known issues.
+            for (index, entry) in searches.enumerated() where entry.kind == .open {
+                let capped = Self.isCapped(count: counts?["s\(index)"], repoScoped: entry.repos != nil, totalRecords: records.count, cap: Self.searchCap)
+                guard !capped else { continue }
+                updated.issues = Self.pruneStaleOpenIssues(updated.issues, fetchedIDs: fetchedIDs, scope: entry.repos, outside: outside)
+            }
+            if searches.contains(where: { $0.kind == .open && $0.repos == nil }) {
                 updated.openFetchedAt = now
             }
             for record in records { updated.issues[record.id] = record }
             updated.coveredFrom = min(updated.coveredFrom, start)
             updated.syncedAt = now
+            // Every readable outside repo now has a full baseline: new ones
+            // from this cycle's own full search, known ones carried over,
+            // kept current by their own changes search.
+            updated.outsideReposFetched = searchableOutside
             histories[org] = updated
             errors[org] = nil
             save(updated)
@@ -118,6 +147,90 @@ final class IssueStore {
         } catch {
             run.finish(error: error)
             errors[org] = error.localizedDescription
+        }
+    }
+
+    /// Outside repos' cohorts and batches for this round, or none of
+    /// either when `unreadable` is nil: the workload snapshot hasn't
+    /// loaded yet, so readability isn't known, and treating that as "all
+    /// readable" could search, and so prune, a repo that's actually
+    /// unreadable, and wrongly mark it fetched before it's had a real
+    /// baseline. `priorFetched` passes through unchanged so a quiet round
+    /// doesn't look like every outside repo just lost its baseline.
+    static func outsideRepoPlan(_ outside: Set<String>, priorFetched: Set<String>, unreadable: [String: String]?) -> (searchableOutside: Set<String>, newBatches: [[String]], knownBatches: [[String]]) {
+        guard let unreadable else { return (priorFetched, [], []) }
+        let (searchable, new, known) = GitHubAPI.outsideRepoCohorts(outside, priorFetched: priorFetched, priorUnreadable: Set(unreadable.keys))
+        return (searchable, GitHubAPI.outsideRepoBatches(new), GitHubAPI.outsideRepoBatches(known))
+    }
+
+    /// Every search `sync` needs to run, in order: the account's own
+    /// (closed backfill, changes, a full open refetch) exactly as before
+    /// outside repos existed, then known outside batches' own versions of
+    /// the same, then new outside batches' full backfill and open search
+    /// regardless of what's due, since they have no baseline to build on.
+    /// With no outside repos, this is exactly today's search list (R7).
+    static func plannedSearches(
+        accountScope: String, start: Date, now: Date, history: IssueHistory?,
+        changedSince: Date?, openDue: Bool, newBatches: [[String]], knownBatches: [[String]]
+    ) -> [IssueSearch] {
+        func batchScope(_ batch: [String]) -> String { "\(batch.map { "repo:\($0)" }.joined(separator: " ")) archived:false is:issue" }
+        func closed(_ scope: String, repos: Set<String>?, from: Date, to: Date) -> [IssueSearch] {
+            ParallelSearches.weeks(from: from, to: to).map { IssueSearch(kind: .closed, query: "\(scope) closed:\(stamp($0.0))..\(stamp($0.1))", repos: repos) }
+        }
+
+        var searches: [IssueSearch] = []
+        if let history {
+            if start < history.coveredFrom {
+                searches += closed(accountScope, repos: nil, from: start, to: history.coveredFrom)
+                for batch in knownBatches { searches += closed(batchScope(batch), repos: Set(batch), from: start, to: history.coveredFrom) }
+            }
+            if let changedSince {
+                searches.append(IssueSearch(kind: .changed, query: "\(accountScope) updated:>=\(stamp(changedSince))", repos: nil))
+                for batch in knownBatches {
+                    searches.append(IssueSearch(kind: .changed, query: "\(batchScope(batch)) updated:>=\(stamp(changedSince))", repos: Set(batch)))
+                }
+            }
+            if openDue {
+                searches.append(IssueSearch(kind: .open, query: "\(accountScope) is:open", repos: nil))
+                for batch in knownBatches { searches.append(IssueSearch(kind: .open, query: "\(batchScope(batch)) is:open", repos: Set(batch))) }
+            }
+        } else {
+            searches += closed(accountScope, repos: nil, from: start, to: now)
+            searches.append(IssueSearch(kind: .open, query: "\(accountScope) is:open", repos: nil))
+        }
+        // The history's own coverage may already reach further back than
+        // this window's start (a longer window, or All time, asked for it
+        // since); a new batch's first backfill has to match that, or its
+        // repos would claim coverage the search never actually ran.
+        let newBackfillFrom = history.map { min(start, $0.coveredFrom) } ?? start
+        for batch in newBatches {
+            searches += closed(batchScope(batch), repos: Set(batch), from: newBackfillFrom, to: now)
+            searches.append(IssueSearch(kind: .open, query: "\(batchScope(batch)) is:open", repos: Set(batch)))
+        }
+        return searches
+    }
+
+    /// Whether an `is:open` search's result is GitHub's 1000-result cap
+    /// rather than every open issue: `count` from the counts preflight when
+    /// it succeeded, else a fallback. An outside batch with no count can't
+    /// be checked against its own repos, so it's treated as capped rather
+    /// than risking a wrongly dropped issue; the account's own search falls
+    /// back to the whole round's record count, as it always has.
+    static func isCapped(count: Int?, repoScoped: Bool, totalRecords: Int, cap: Int) -> Bool {
+        if let count { return count > cap }
+        return repoScoped ? true : totalRecords >= cap
+    }
+
+    /// Drops issues still marked open in `issues` whose repo this round's
+    /// full `is:open` search covers (`scope`: a batch's repos, or nil for
+    /// every repo but the outside ones) but didn't return, since search
+    /// found them closed or moved away; `fetchedIDs` is every issue any of
+    /// this round's searches returned, so one refetched as closed stays.
+    static func pruneStaleOpenIssues(_ issues: [String: IssueRecord], fetchedIDs: Set<String>, scope repos: Set<String>?, outside: Set<String>) -> [String: IssueRecord] {
+        issues.filter { element in
+            guard element.value.isOpen else { return true }
+            let inScope = repos.map { $0.contains(element.value.repo) } ?? !outside.contains(element.value.repo)
+            return !inScope || fetchedIDs.contains(element.key)
         }
     }
 
@@ -263,8 +376,18 @@ extension IssueStore {
         let due = SyncSettings.isDue(.issueText, since: last, now: started)
         if let last, due {
             let since = Self.stamp(last.addingTimeInterval(-Self.overlap))
-            if let changed: [Lossy<ChangedIssue>] = try? await api.search("\(GitHubAccounts.scope(org)) archived:false is:issue updated:>=\(since)", fields: "... on Issue { id }") {
-                ids.formUnion(changed.compactMap { $0.value?.id }.filter { history.issues[$0] != nil })
+            // The account's own scope, then outside repos batched the same
+            // way sync's searches are: without this, an outside issue's
+            // text is only ever fetched once, the first time it's indexed,
+            // and a later edit or comment never catches up.
+            var scopes = ["\(GitHubAccounts.scope(org)) archived:false is:issue"]
+            scopes += GitHubAPI.outsideRepoBatches(outsideRepos(org)).map { batch in
+                "\(batch.map { "repo:\($0)" }.joined(separator: " ")) archived:false is:issue"
+            }
+            for scope in scopes {
+                if let changed: [Lossy<ChangedIssue>] = try? await api.search("\(scope) updated:>=\(since)", fields: "... on Issue { id }") {
+                    ids.formUnion(changed.compactMap { $0.value?.id }.filter { history.issues[$0] != nil })
+                }
             }
         }
         guard !ids.isEmpty else {

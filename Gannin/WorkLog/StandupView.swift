@@ -102,7 +102,7 @@ struct Standup {
             for (login, item) in reviews { entries[login]?.reviews.append(item) }
         }
 
-        for record in issues where !config.repoExclusion.contains(record.repo) {
+        for record in issues where !config.excludesForIssueHistoryPages(record.repo) {
             let opened = day.contains(record.createdAt)
             let closed = record.closedAt.map(day.contains) ?? false
             let moves = record.statusChanges.filter { day.contains($0.at) }.sorted { $0.at < $1.at }

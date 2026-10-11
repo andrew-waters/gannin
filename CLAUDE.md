@@ -698,6 +698,23 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   that close them (with their commit and review dates). Closed weeks are fetched as parallel
   searches, changes by `updated:`, and open issues in full hourly or on Full Refresh
   (`refetchOpen`; a plain Refresh doesn't), because board moves don't touch `updatedAt`. Reading boards needs the `project` scope.
+  The window's project's outside repos (`OrgConfig.outsideRepos`) join in as their own
+  `repo:`-qualified, batched searches (`GitHubAPI.outsideRepoCohorts`/`outsideRepoBatches`, as the
+  workload snapshot's are): a repo new to the project gets the same full backfill a brand new org
+  does (reaching back to the history's own `coveredFrom` when that's deeper than the window), a
+  known one trusts a changes search; deep syncing their descriptions and comments the same way.
+  `IssueHistory.outsideReposFetched` tracks which have a baseline; which are unreadable is read
+  from the workload snapshot's own check (`OrgStore.snapshot(for:)?.unreadableRepos`) rather than
+  asking GitHub again (andrew-waters/gannin#205). Until that snapshot has loaded, readability is
+  unknown rather than assumed clear (`IssueStore.outsideRepoPlan`), so outside repos are skipped
+  that round rather than searched, and so possibly pruned, on a guess. A known outside repo is
+  then fetched on its own hourly schedule here as well as the workload snapshot's, an accepted
+  doubling of its cost.
+  All, Not on a board, Views, Epics, Board Hygiene, Prioritisation, the Dashboard's committed
+  overdue flag, Inbox and Ask show them once the project names them, as `repoExclusion` already
+  let them through; Issue flow, Investments, Recap, Scorecards and Standup, and Weekly Digest's
+  Shipped list (reached from PR flow), call `OrgConfig.excludesForIssueHistoryPages` instead,
+  which never lets an outside repo through, so their `outsideReposNotice` stays accurate.
 - `MarkdownText` renders blockquotes (GitHub's alerts, `> [!NOTE]` and the like, as callouts) and the HTML GitHub allows in Markdown: `<details>`/`<summary>` fold (a
   `DisclosureGroup`, its contents as Markdown), `<b>`, `<i>`, `<code>`, `<a>`, `<img>` (as a
   link) and `<br>` become Markdown, tags with no Markdown of their own (`<sub>`, `<div>`, `<p>`)

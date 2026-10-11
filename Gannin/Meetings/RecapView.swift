@@ -94,7 +94,7 @@ struct ClosedIssuesList: View {
     /// assigned to one of `people` when any are picked.
     static func closed(in range: DateInterval, history: IssueHistory, config: OrgConfig, people: Set<String> = []) -> [IssueRecord] {
         history.issues.values
-            .filter { record in record.closedAt.map { $0 >= range.start && $0 < range.end } == true && !config.repoExclusion.contains(record.repo) }
+            .filter { record in record.closedAt.map { $0 >= range.start && $0 < range.end } == true && !config.excludesForIssueHistoryPages(record.repo) }
             .filter { people.isEmpty || isAssigned($0, to: people) }
             .sorted { ($0.closedAt ?? .distantPast) < ($1.closedAt ?? .distantPast) }
     }
