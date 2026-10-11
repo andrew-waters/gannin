@@ -21,6 +21,9 @@ struct PlanningAgreeSheet: View {
         var include = true
         var repo: String
         var title: String
+        /// The task's title in `planning.json`, which the sheet's editable
+        /// `title` starts as: what a made issue is remembered by.
+        var taskTitle: String?
         var body: String
         var labels: String
         /// The acceptance criteria it satisfies, by id.
@@ -273,7 +276,7 @@ struct PlanningAgreeSheet: View {
         guard drafts.isEmpty else { return }
         let madeIssues = planning?.madeIssues ?? [:]
         drafts = (state?.tasks ?? []).enumerated().map { index, task in
-            var draft = Draft(repo: task.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: task.title, body: task.body ?? "", labels: task.labels.joined(separator: ", "), satisfies: task.satisfies)
+            var draft = Draft(repo: task.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: task.title, taskTitle: task.title, body: task.body ?? "", labels: task.labels.joined(separator: ", "), satisfies: task.satisfies)
             if let stored = madeIssues[index] {
                 switch stored.restore(forTitle: task.title) {
                 case .done: draft.made = (stored.reference, stored.url)
@@ -334,7 +337,7 @@ struct PlanningAgreeSheet: View {
                     issue = created
                 } else {
                     let made = try await api.createIssue(repo: draft.repo, title: draft.title, body: draft.body + satisfies(draft) + planLink, labels: labels(draft.labels))
-                    issue = PlanningMadeIssue(id: made.id, reference: "\(draft.repo)#\(made.number)", url: made.url, title: draft.title, linked: false)
+                    issue = PlanningMadeIssue(id: made.id, reference: "\(draft.repo)#\(made.number)", url: made.url, title: draft.taskTitle ?? draft.title, linked: false)
                     drafts[index].created = issue
                     remember(issue, at: index)
                 }
