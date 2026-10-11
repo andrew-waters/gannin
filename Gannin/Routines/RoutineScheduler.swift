@@ -127,6 +127,9 @@ final class RoutineScheduler {
         watch()
         let since = store.checkedAt ?? now
         store.checked(at: now)
+        // A look that starts or records anything is saved at once, so a
+        // relaunch doesn't plan its times again.
+        var acted = false
         for routine in store.routines {
             let days = workingDays(routine.org)
             let plan = Self.plan(routine, since: since, now: now, paused: store.isPaused, calendar: calendar, isWorkingDay: days)
@@ -139,29 +142,33 @@ final class RoutineScheduler {
             if let due = plan.due {
                 run(routine, scheduledAt: due, issue: routine.issue)
             }
+            if plan.due != nil || !plan.missed.isEmpty || !plan.skipped.isEmpty { acted = true }
         }
         for routine in store.routines where routine.kind == .issueQueue {
-            drain(routine, now: now)
+            if drain(routine, now: now) { acted = true }
         }
+        if acted { store.saveState() }
     }
 
     /// Starts the next queued issues while the window has room (R7), each
     /// taken off the queue as it starts. Runs being started count, as
-    /// they're recorded as going at once.
-    private func drain(_ routine: Routine, now: Date) {
+    /// they're recorded as going at once. Whether it started any.
+    private func drain(_ routine: Routine, now: Date) -> Bool {
         let days = workingDays(routine.org)
         // Shut, it starts afresh when it next opens.
         if !routine.schedule.isOpen(at: now, calendar: calendar, isWorkingDay: days) {
             failures[routine.id] = nil
             heldUntil[routine.id] = nil
         }
-        if let held = heldUntil[routine.id], now < held { return }
+        if let held = heldUntil[routine.id], now < held { return false }
+        var started = false
         while true {
             let active = store.activeRuns.filter { $0.routine == routine.id }.count
             guard Self.freeSlots(routine, active: active, now: now, paused: store.isPaused, calendar: calendar, isWorkingDay: days) > 0,
-                  let next = store.queue(for: routine.org).first else { return }
+                  let next = store.queue(for: routine.org).first else { return started }
             store.dequeue(next.issue.id)
             run(routine, scheduledAt: now, issue: next.issue, fromQueue: true)
+            started = true
         }
     }
 

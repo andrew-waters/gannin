@@ -40,6 +40,23 @@ struct RoutineStoreTests {
         #expect(RoutineStore(directory: folder).runs.isEmpty)
     }
 
+    @Test func lookTimesAreWrittenAtMostEveryFiveMinutesUnlessSaved() {
+        let start = Date(timeIntervalSince1970: 1_800_000_000)
+        let store = RoutineStore(directory: folder)
+        store.checked(at: start)
+        // The first look is saved, later ones within five minutes are only kept in memory.
+        store.checked(at: start.addingTimeInterval(60))
+        #expect(RoutineStore(directory: folder).checkedAt == start)
+
+        store.checked(at: start.addingTimeInterval(5 * 60))
+        #expect(RoutineStore(directory: folder).checkedAt == start.addingTimeInterval(5 * 60))
+
+        // A look that recorded something saves itself.
+        store.checked(at: start.addingTimeInterval(6 * 60))
+        store.saveState()
+        #expect(RoutineStore(directory: folder).checkedAt == start.addingTimeInterval(6 * 60))
+    }
+
     @Test func queueKeepsOrderPerOrg() {
         let store = RoutineStore(directory: folder)
         store.enqueue(issue(1))
