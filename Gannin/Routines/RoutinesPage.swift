@@ -5,6 +5,7 @@ import SwiftUI
 /// (R14) and New Routine in the toolbar. A routine opens its page.
 struct RoutinesPage: View {
     @Environment(RoutineStore.self) private var routines
+    @Environment(SessionStore.self) private var sessions
     @Environment(OrgConfigStore.self) private var configs
     @Environment(BankHolidayStore.self) private var holidays
     @Environment(\.navigate) private var navigate
@@ -52,6 +53,10 @@ struct RoutinesPage: View {
         }
         .sheet(item: $editing) { edited in
             RoutineEditor(routine: edited.routine, isNew: edited.isNew)
+                .environment(routines)
+                .environment(sessions)
+                .environment(configs)
+                .environment(holidays)
         }
         .confirmationDialog(
             "Delete \(deleting?.name ?? "this routine")?",
@@ -294,6 +299,10 @@ struct RoutinePage: View {
             }
             .sheet(item: $editing) { edited in
                 RoutineEditor(routine: edited.routine, isNew: edited.isNew)
+                    .environment(routines)
+                    .environment(sessions)
+                    .environment(configs)
+                    .environment(holidays)
             }
             .confirmationDialog("Delete \(routine.name)?", isPresented: $deleting) {
                 Button("Delete", role: .destructive) { routines.remove(id) }

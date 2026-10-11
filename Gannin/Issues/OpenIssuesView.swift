@@ -8,6 +8,9 @@ struct OpenIssuesView: View {
     @Environment(IssueStore.self) private var store
     @Environment(HiddenStore.self) private var hidden
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(RoutineStore.self) private var routines
+    @Environment(SessionStore.self) private var sessions
+    @Environment(BankHolidayStore.self) private var holidays
     @Environment(\.openURL) private var openURL
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("showHidden") private var showHidden = false
@@ -64,6 +67,10 @@ struct OpenIssuesView: View {
         .workOnThis($workingOn)
         .sheet(item: $scheduling) { edited in
             RoutineEditor(routine: edited.routine, isNew: edited.isNew)
+                .environment(routines)
+                .environment(sessions)
+                .environment(configs)
+                .environment(holidays)
         }
         // A row picked opens in the drawer, as a list row did.
         .onChange(of: tableSelection) {
