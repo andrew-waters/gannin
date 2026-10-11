@@ -73,6 +73,7 @@ final class OrgStore {
     func clearSnapshots() {
         snapshots = [:]
         errors = [:]
+        snapshotSaves.values.forEach { $0.cancel() }
         try? FileManager.default.removeItem(at: Self.snapshotsDirectory)
     }
 
@@ -180,9 +181,20 @@ final class OrgStore {
               let index = snapshot.openPullRequests.firstIndex(where: { $0.id == id }) else { return }
         change(&snapshot.openPullRequests[index])
         snapshots[login] = snapshot
-        if let data = try? Self.encoder.encode(snapshot) {
+        // Several PRs can be changed in a row (a review request, then another).
+        saves(for: login).request()
+    }
+
+    @ObservationIgnored private var snapshotSaves: [String: SaveCoalescer] = [:]
+
+    private func saves(for login: String) -> SaveCoalescer {
+        if let saver = snapshotSaves[login] { return saver }
+        let saver = SaveCoalescer { [weak self] in
+            guard let self, let snapshot = snapshots[login], let data = try? Self.encoder.encode(snapshot) else { return }
             try? data.write(to: Self.snapshotURL(login), options: .atomic)
         }
+        snapshotSaves[login] = saver
+        return saver
     }
 
     /// Shows the cached snapshot straight away, then refreshes when there is
@@ -201,6 +213,7 @@ final class OrgStore {
         snapshots = [:]
         orgs = []
         errors = [:]
+        snapshotSaves.values.forEach { $0.cancel() }
         activity.clear()
         UserDefaults.standard.removeObject(forKey: Self.orgsKey)
         try? FileManager.default.removeItem(at: Self.snapshotsDirectory)
