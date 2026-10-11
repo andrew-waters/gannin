@@ -40,6 +40,9 @@ struct RoutinesPage: View {
             .frame(maxWidth: 980, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
+        // Toolbar content is revalidated by AppKit on window activation
+        // (including switching between windows), outside this view's normal
+        // body updates, so it can't rely on ambient @Environment.
         .toolbar {
             ToolbarItem {
                 Button {
@@ -48,8 +51,9 @@ struct RoutinesPage: View {
                     Label(routines.isPaused ? "Resume All" : "Pause All", systemImage: routines.isPaused ? "play.fill" : "pause.fill")
                 }
                 .help(routines.isPaused ? "Let routines start sessions again" : "Start no scheduled run until resumed; times passing are recorded as skipped")
+                .environment(routines)
             }
-            ToolbarItem { newMenu }
+            ToolbarItem { newMenu.environment(routines).environment(configs) }
         }
         .sheet(item: $editing) { edited in
             RoutineEditor(routine: edited.routine, isNew: edited.isNew)
@@ -284,11 +288,14 @@ struct RoutinePage: View {
                 .frame(maxWidth: 980, alignment: .leading)
                 .frame(maxWidth: .infinity)
             }
+            // See the note on RoutinesPage's toolbar above: explicit, not ambient.
             .toolbar {
                 ToolbarItem {
                     Button { scheduler.runNow(routine) } label: { Label("Run Now", systemImage: "play") }
                         .help("Start a run now, outside its schedule")
                         .disabled(routine.kind == .issueQueue && routines.queue(for: routine.org).isEmpty)
+                        .environment(routines)
+                        .environment(scheduler)
                 }
                 ToolbarItem {
                     Button { editing = EditedRoutine(routine: routine, isNew: false) } label: { Label("Edit", systemImage: "pencil") }
