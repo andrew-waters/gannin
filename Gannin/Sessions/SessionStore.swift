@@ -414,6 +414,9 @@ final class SessionStore {
     /// The URLs of each session's PRs its branch search found last time,
     /// which needn't be looked up by URL as well.
     @ObservationIgnored var foundBySearch: [UUID: Set<URL>] = [:]
+    /// What each session's PRs looked like at the last full look, and when,
+    /// for `sessionsToLookAt` to compare the next cheap probe with.
+    @ObservationIgnored var lastFullPullRequestLook: [UUID: (fingerprints: Set<String>, at: Date)] = [:]
     @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
     /// GitHub, once signed in; set by the app.
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }

@@ -215,8 +215,13 @@ extension SessionStore {
             while !Task.isCancelled {
                 guard let self else { return }
                 if SyncSettings.isOn(.sessionPullRequests) && !self.holdsOff() {
-                    for session in self.sessions.values where !session.isHelper && self.needsWatching(session) {
+                    let watched = self.sessions.values.filter { !$0.isHelper && self.needsWatching($0) }
+                    for (session, fingerprints) in await self.sessionsToLookAt(watched) {
                         await self.refreshPullRequests(session.id)
+                        // A look that failed is made again next tick.
+                        if self.pullRequestErrors[session.id] == nil, let fingerprints {
+                            self.lastFullPullRequestLook[session.id] = (fingerprints, .now)
+                        }
                     }
                 }
                 let pending = self.pullRequestInfo.values.joined().contains { $0.state == "OPEN" && !$0.pending.isEmpty }
@@ -224,6 +229,41 @@ extension SessionStore {
             }
         }
     }
+
+    /// Reading a session's PRs in full costs several points, and most ticks
+    /// nothing has changed. So one cheap query for every watched session
+    /// compares each PR's state, update time, head commit, review decision,
+    /// mergeability and check rollup with the last full look, and only the
+    /// sessions where something differs (or that haven't been read in full
+    /// for `fullLookInterval`, in case a change doesn't show in those) are
+    /// read in full. If the probe itself fails, all of them are.
+    private func sessionsToLookAt(_ watched: [CodeSession]) async -> [(CodeSession, Set<String>?)] {
+        guard !watched.isEmpty, let api = api() else { return watched.map { ($0, nil) } }
+        let requests = watched.map { session in
+            let searched = foundBySearch[session.id] ?? []
+            return SessionPRProbeRequest(
+                id: session.id, org: session.org, branch: session.branch,
+                urls: session.pullRequests.filter { !searched.contains($0) },
+                repos: [session.issue.repo, session.repo]
+            )
+        }
+        guard let probed = try? await chargingTo(.sessionPullRequests, { try await api.sessionPullRequestFingerprints(requests) }) else {
+            return watched.map { ($0, nil) }
+        }
+        let now = Date.now
+        return watched.compactMap { session in
+            let fingerprints = probed[session.id] ?? []
+            if let last = lastFullPullRequestLook[session.id], last.fingerprints == fingerprints,
+               now.timeIntervalSince(last.at) < Self.fullLookInterval {
+                return nil
+            }
+            return (session, fingerprints)
+        }
+    }
+
+    /// How long a session's PRs go without a full read even when the probe
+    /// sees no change.
+    static let fullLookInterval: TimeInterval = 10 * 60
 
     private func needsWatching(_ session: CodeSession) -> Bool {
         guard session.archivedAt == nil else { return false }
