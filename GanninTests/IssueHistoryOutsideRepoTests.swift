@@ -60,6 +60,24 @@ struct IssueHistoryOutsideRepoTests {
         #expect(searches.contains { $0.kind == .closed && $0.repos == ["client/app"] })
     }
 
+    @Test func aNewOutsideRepoBackfillsAsFarAsTheHistorysRealCoverage() {
+        // The window's own start is more recent than the history's
+        // coveredFrom (a longer window, or All time, asked for it since);
+        // a newly named repo has to match that depth, not just the
+        // window, or its coverage would be narrower than the history claims.
+        let deeperCoveredFrom = start.addingTimeInterval(-14 * 24 * 60 * 60)
+        let existing = history(coveredFrom: deeperCoveredFrom, syncedAt: now, openFetchedAt: now)
+        let searches = IssueStore.plannedSearches(
+            accountScope: "org:acme archived:false is:issue", start: start, now: now, history: existing,
+            changedSince: nil, openDue: false, newBatches: [["client/app"]], knownBatches: []
+        )
+        let closed = searches.filter { $0.kind == .closed && $0.repos == ["client/app"] }
+        // Backfilling from the window's start alone would need fewer weeks
+        // than backfilling from the history's deeper coverage.
+        #expect(closed.count == ParallelSearches.weeks(from: deeperCoveredFrom, to: now).count)
+        #expect(closed.count > ParallelSearches.weeks(from: start, to: now).count)
+    }
+
     @Test func aKnownOutsideRepoOnlyGetsAChangesSearchWhenOneIsDue() {
         let existing = history(coveredFrom: start, syncedAt: now, openFetchedAt: now)
         let searches = IssueStore.plannedSearches(

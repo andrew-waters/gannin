@@ -59,6 +59,9 @@ struct GanninApp: App {
         // Every project's outside repos, as OrgStore's is set (R7's for the
         // issue history too, andrew-waters/gannin#205).
         issues.outsideRepos = { [weak orgConfigs] org in orgConfigs?.root.baseConfig(for: org).outsideRepos ?? [] }
+        // The workload snapshot's own readability check for the same
+        // repos, so the issue history doesn't run a second one.
+        issues.unreadableOutsideRepos = { [weak orgs] org in orgs?.snapshot(for: org)?.unreadableRepos ?? [:] }
         _issues = State(initialValue: issues)
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))

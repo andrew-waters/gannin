@@ -81,10 +81,14 @@ struct OrgConfig: Codable, Hashable {
 
     /// `repoExclusion`, but never letting an outside repo through even
     /// when the project names it: for pages built on the issue history
-    /// (Issue flow, Investments, Recap, Scorecards, Standup's Changelog)
-    /// that don't cover outside repos yet and show `outsideReposNotice`,
-    /// so their data matches what that notice promises
-    /// (andrew-waters/gannin#205).
+    /// that don't cover outside repos yet and show `outsideReposNotice`
+    /// (Issue flow, Investments, Recap, Scorecards, Standup) or are
+    /// reached from one (Weekly Digest's Shipped list, from PR flow), so
+    /// their data matches what that notice promises. Other issue history
+    /// readers (Issues › All, Not on a board, Views, the Dashboard's
+    /// committed-overdue flag, Inbox, Epics, Board Hygiene, Prioritisation,
+    /// Ask) show no such notice and pick up outside repos through
+    /// `repoExclusion` instead (andrew-waters/gannin#205).
     func excludesForIssueHistoryPages(_ repo: String) -> Bool {
         outsideRepos.contains(repo) || repoExclusion.contains(repo)
     }

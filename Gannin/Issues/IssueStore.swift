@@ -22,6 +22,10 @@ final class IssueStore {
     /// `OrgConfigStore`'s root store, so the history is the same whichever
     /// project a window has), as `OrgStore.outsideRepos` is.
     @ObservationIgnored var outsideRepos: (_ org: String) -> Set<String> = { _ in [] }
+    /// Which of them the workload snapshot has found unreadable (set by
+    /// `GanninApp` from `OrgStore`'s own check), so this store doesn't run
+    /// a second aliased readability query for the same repos.
+    @ObservationIgnored var unreadableOutsideRepos: (_ org: String) -> [String: String] = { _ in [:] }
 
     init(auth: AuthStore, activity: SyncActivity) {
         self.auth = auth
@@ -74,9 +78,12 @@ final class IssueStore {
         let scope = "\(GitHubAccounts.scope(org)) archived:false is:issue"
 
         let outside = outsideRepos(org)
-        let priorUnreadable = history?.unreadableOutsideRepos ?? [:]
+        // The workload snapshot already runs the aliased readability query
+        // for these repos (hourly, or on adding one); reading its answer
+        // here avoids asking GitHub the same thing twice.
+        let unreadable = unreadableOutsideRepos(org)
         let (searchableOutside, newOutside, knownOutside) = GitHubAPI.outsideRepoCohorts(
-            outside, priorFetched: history?.outsideReposFetched ?? [], priorUnreadable: Set(priorUnreadable.keys)
+            outside, priorFetched: history?.outsideReposFetched ?? [], priorUnreadable: Set(unreadable.keys)
         )
         let newBatches = GitHubAPI.outsideRepoBatches(newOutside)
         let knownBatches = GitHubAPI.outsideRepoBatches(knownOutside)
@@ -99,20 +106,11 @@ final class IssueStore {
         let counts = try? await run.overhead({ try await api.counts(searches: keyed) })
         if let counts { run.setTotal(counts.values.map { min($0, 1000) }.reduce(0, +), for: "issues") }
 
-        // With members and teams (hourly, or when a repo's just been
-        // added), whether any outside repo has stopped being readable.
-        let checksReadability = !outside.isEmpty && (openDue || !newOutside.isEmpty)
         do {
             let queries = searches.map(\.query)
-            async let fetchedRecords = run.track("issues", count: \.count) { progress in
+            let records = try await run.track("issues", count: \.count) { progress in
                 try await Self.fetch(queries, api: api, progress: progress)
             }
-            async let readabilityResult: [String: String]? = {
-                guard checksReadability else { return nil }
-                return try? await api.readableRepos(outside)
-            }()
-            let records = try await fetchedRecords
-            let readability = await readabilityResult
 
             var updated = history ?? IssueHistory(orgLogin: org, coveredFrom: start, syncedAt: now, openFetchedAt: now, issues: [:])
             let fetchedIDs = Set(records.map(\.id))
@@ -136,7 +134,6 @@ final class IssueStore {
             // from this cycle's own full search, known ones carried over,
             // kept current by their own changes search.
             updated.outsideReposFetched = searchableOutside
-            if let readability { updated.unreadableOutsideRepos = readability }
             histories[org] = updated
             errors[org] = nil
             save(updated)
@@ -189,8 +186,13 @@ final class IssueStore {
             searches += closed(accountScope, repos: nil, from: start, to: now)
             searches.append(IssueSearch(kind: .open, query: "\(accountScope) is:open", repos: nil))
         }
+        // The history's own coverage may already reach further back than
+        // this window's start (a longer window, or All time, asked for it
+        // since); a new batch's first backfill has to match that, or its
+        // repos would claim coverage the search never actually ran.
+        let newBackfillFrom = history.map { min(start, $0.coveredFrom) } ?? start
         for batch in newBatches {
-            searches += closed(batchScope(batch), repos: Set(batch), from: start, to: now)
+            searches += closed(batchScope(batch), repos: Set(batch), from: newBackfillFrom, to: now)
             searches.append(IssueSearch(kind: .open, query: "\(batchScope(batch)) is:open", repos: Set(batch)))
         }
         return searches
@@ -362,8 +364,18 @@ extension IssueStore {
         let due = SyncSettings.isDue(.issueText, since: last, now: started)
         if let last, due {
             let since = Self.stamp(last.addingTimeInterval(-Self.overlap))
-            if let changed: [Lossy<ChangedIssue>] = try? await api.search("\(GitHubAccounts.scope(org)) archived:false is:issue updated:>=\(since)", fields: "... on Issue { id }") {
-                ids.formUnion(changed.compactMap { $0.value?.id }.filter { history.issues[$0] != nil })
+            // The account's own scope, then outside repos batched the same
+            // way sync's searches are: without this, an outside issue's
+            // text is only ever fetched once, the first time it's indexed,
+            // and a later edit or comment never catches up.
+            var scopes = ["\(GitHubAccounts.scope(org)) archived:false is:issue"]
+            scopes += GitHubAPI.outsideRepoBatches(outsideRepos(org)).map { batch in
+                "\(batch.map { "repo:\($0)" }.joined(separator: " ")) archived:false is:issue"
+            }
+            for scope in scopes {
+                if let changed: [Lossy<ChangedIssue>] = try? await api.search("\(scope) updated:>=\(since)", fields: "... on Issue { id }") {
+                    ids.formUnion(changed.compactMap { $0.value?.id }.filter { history.issues[$0] != nil })
+                }
             }
         }
         guard !ids.isEmpty else {

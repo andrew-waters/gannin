@@ -128,9 +128,6 @@ struct IssueHistory: Codable {
     /// build a changes search on; nil for none, or for a cache from before
     /// outside repos were covered (andrew-waters/gannin#205).
     var outsideReposFetched: Set<String>?
-    /// Outside repos that stopped being readable, by GitHub's reason; left
-    /// out of searches, their last fetched issues kept rather than dropped.
-    var unreadableOutsideRepos: [String: String]?
 }
 
 /// How an org's issues move through its board, for cycle time.
