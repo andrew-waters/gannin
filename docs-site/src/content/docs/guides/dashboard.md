@@ -30,7 +30,7 @@ PR flow opens with tiles for PRs opened, PRs merged, cycle time, time to first r
 - **PR size and risk**: size by repo, large PRs, and large PRs approved in a rush or never reviewed.
 - Charts such as PRs per week and median cycle time per week.
 
-A **Weekly Digest** button in the bar writes the week up. See [Weekly Digest](/docs/guides/weekly-digest/).
+A **Weekly Digest** button in the PR flow header (not on the Dashboard) writes the week up. See [Weekly Digest](/docs/guides/weekly-digest/).
 
 ## Drilling in
 
