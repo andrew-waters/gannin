@@ -7,9 +7,9 @@ import Foundation
 extension AuthStore {
     /// Whether an automatic fetch should wait for the budget: under the
     /// reserve, or GitHub refused a request. With `rest`, the REST budget
-    /// counts too (only the Actions sync spends it). Distinct from
-    /// `SessionStore.holdsOff` and `EngineerWatch.holdsOff`, the pollers'
-    /// own closures onto `shouldHoldOff`, which take no `force` or `hasData`.
+    /// counts too (only the Actions sync spends it). Not the same thing as
+    /// the `holdsOff` closures on `SessionStore` and `EngineerWatch`, which
+    /// just read `shouldHoldOff` for the pollers, with no `force` or `hasData`.
     func shouldWaitForBudget(force: Bool = false, hasData: Bool = true, rest: Bool = false) -> Bool {
         guard !force, hasData else { return false }
         return shouldHoldOff || (rest && shouldHoldOffREST)
