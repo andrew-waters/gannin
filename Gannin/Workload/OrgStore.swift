@@ -192,7 +192,7 @@ final class OrgStore {
     func refreshIfStale(_ login: String) async {
         loadCached(login)
         if let snapshot = snapshots[login] {
-            if !SyncSettings.isDue(.workload, since: snapshot.fetchedAt) || auth.shouldHoldOff { return }
+            if !auth.shouldFetch(.workload, since: snapshot.fetchedAt) { return }
         }
         await refresh(login, mode: .automatic)
     }

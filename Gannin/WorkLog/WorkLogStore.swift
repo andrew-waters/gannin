@@ -65,8 +65,7 @@ final class WorkLogStore {
             if start < history.coveredFrom {
                 searches += ParallelSearches.weeks(from: start, to: history.coveredFrom).map { GitHubAPI.workLogSearch(org: org, from: $0.0, to: $0.1) }
             }
-            let isStale = SyncSettings.isDue(.workLog, since: history.fetchedAt, now: now)
-            if force || (isStale && !auth.shouldHoldOff) {
+            if auth.shouldFetch(.workLog, since: history.fetchedAt, now: now, force: force) {
                 searches.append(GitHubAPI.workLogSearch(org: org, from: history.fetchedAt.addingTimeInterval(-Self.overlap)))
             }
         } else {

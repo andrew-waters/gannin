@@ -59,12 +59,11 @@ final class IssueStore {
             if start < history.coveredFrom {
                 searches += ParallelSearches.weeks(from: start, to: history.coveredFrom).map { ("closed", "\(scope) closed:\(Self.stamp($0.0))..\(Self.stamp($0.1))") }
             }
-            let due = SyncSettings.isDue(.issues, since: history.syncedAt, now: now)
-            if force || (due && !auth.shouldHoldOff) {
+            if auth.shouldFetch(.issues, since: history.syncedAt, now: now, force: force) {
                 searches.append(("changed", "\(scope) updated:>=\(Self.stamp(history.syncedAt.addingTimeInterval(-Self.overlap)))"))
             }
             // Open issues in full every so often (see `openFetchedAt`).
-            if refetchOpen || (SyncSettings.isDue(.openIssues, since: history.openFetchedAt, now: now) && !auth.shouldHoldOff) {
+            if auth.shouldFetch(.openIssues, since: history.openFetchedAt, now: now, force: refetchOpen) {
                 searches.append(("open", "\(scope) is:open"))
             }
         } else {
@@ -248,7 +247,7 @@ extension IssueStore {
     /// Issues not yet indexed every time; the search for changed ones only
     /// once its interval (Settings › Sync) has passed since the last.
     func deepSync(_ org: String) async {
-        guard let api = auth.api, let history = histories[org], !deepSyncing.contains(org), !auth.shouldHoldOff,
+        guard let api = auth.api, let history = histories[org], !deepSyncing.contains(org), !auth.shouldWaitForBudget(),
               SyncSettings.isOn(.issueText) else { return }
         deepSyncing.insert(org)
         defer { deepSyncing.remove(org) }
