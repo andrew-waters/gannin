@@ -81,7 +81,9 @@ final class DetailStore {
         let fetchedAt: Date
     }
 
-    /// Items opened one after another share one write of the file.
+    /// Items opened one after another share one write of the file. The write
+    /// is delayed up to a second, so a crash or force-quit in that window
+    /// loses the latest fetched details; a normal quit writes them.
     @ObservationIgnored private lazy var saver = SaveCoalescer { [weak self] in self?.save() }
 
     /// Writes the most recently fetched entries, dropping the rest.

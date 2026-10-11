@@ -38,6 +38,20 @@ struct SaveCoalescerTests {
         #expect(writes == 0)
     }
 
+    @Test func aRequestAfterCancelWaitsItsFullDelay() async throws {
+        var writes = 0
+        let saver = SaveCoalescer(delay: .milliseconds(400)) { writes += 1 }
+        saver.request()
+        try await Task.sleep(for: .milliseconds(250))
+        saver.cancel()
+        saver.request()
+        // The first request's delay ends here; the second's hasn't.
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(writes == 0)
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(writes == 1)
+    }
+
     @Test func aRequestAfterAWriteSchedulesAnother() async throws {
         var writes = 0
         let saver = SaveCoalescer(delay: .milliseconds(50)) { writes += 1 }
