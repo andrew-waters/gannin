@@ -74,6 +74,7 @@ struct GanninApp: App {
         _releases = State(initialValue: ReleaseStore(auth: auth, activity: activity))
         let harness = HarnessStore(auth: auth)
         _harness = State(initialValue: harness)
+        harness.onPullRequestOpened = { repo, url in EngineerWatch.shared.notifyPullRequestOpened(repo: repo, url: url) }
         // Team data from the harness, for orgs that have one.
         let team = HarnessTeamStore(harness: harness)
         team.harnesses = { [weak orgConfigs] org in orgConfigs?.harnesses(for: org) ?? [] }

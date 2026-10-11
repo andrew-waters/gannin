@@ -270,9 +270,9 @@ struct PlanningAgreeSheet: View {
     private func fill() {
         guard drafts.isEmpty else { return }
         let madeIssues = planning?.madeIssues ?? [:]
-        drafts = (state?.tasks ?? []).map { task in
+        drafts = (state?.tasks ?? []).enumerated().map { index, task in
             var draft = Draft(repo: task.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: task.title, body: task.body ?? "", labels: task.labels.joined(separator: ", "), satisfies: task.satisfies)
-            if let made = madeIssues[task.title] { draft.made = (made.reference, made.url) }
+            if let made = madeIssues[index] { draft.made = (made.reference, made.url) }
             return draft
         }
         parentTitle = title
@@ -334,7 +334,7 @@ struct PlanningAgreeSheet: View {
                 drafts[index].made = (reference, issue.url)
                 sessions.update(session.id) {
                     var made = $0.planning?.madeIssues ?? [:]
-                    made[draft.title] = PlanningMadeIssue(id: issue.id, reference: reference, url: issue.url)
+                    made[index] = PlanningMadeIssue(id: issue.id, reference: reference, url: issue.url)
                     $0.planning?.madeIssues = made
                 }
             } catch {

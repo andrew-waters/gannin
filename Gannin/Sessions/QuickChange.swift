@@ -88,13 +88,7 @@ extension SessionStore {
     /// `quick-short-title-3f9a`: no number to start with, so the start of
     /// the session's ID keeps it apart from another of the same name.
     static func quickBranchName(title: String, id: UUID) -> String {
-        let words = String(title.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : " " }).split(separator: " ")
-        var slug = ""
-        for word in words {
-            let next = slug.isEmpty ? String(word) : "\(slug)-\(word)"
-            if next.count > 32 { break }
-            slug = next
-        }
+        let slug = Slug.make(title, limit: 32)
         let suffix = id.uuidString.prefix(4).lowercased()
         return slug.isEmpty ? "quick-\(suffix)" : "quick-\(slug)-\(suffix)"
     }

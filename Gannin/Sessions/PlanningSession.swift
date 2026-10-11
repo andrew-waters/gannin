@@ -29,11 +29,12 @@ struct PlanningInfo: Codable, Hashable {
     var agreed: PlanningAgreement? = nil
     /// The parent issue Agree and Write already made (nil when it plans an
     /// existing issue, or the parent isn't made yet), and sub-issues already
-    /// made, by task title: kept until `agreed`, so a failure partway
-    /// through, or dismissing and reopening the sheet, doesn't make them
-    /// again.
+    /// made, by the task's position in `state.tasks` (not its title, which
+    /// claude may reword without reordering): kept until `agreed`, so a
+    /// failure partway through, or dismissing and reopening the sheet,
+    /// doesn't make them again.
     var madeParent: PlanningMadeIssue? = nil
-    var madeIssues: [String: PlanningMadeIssue]? = nil
+    var madeIssues: [Int: PlanningMadeIssue]? = nil
     /// Times round each stage (requirements, design, tasks), counted as
     /// Gannin sees claude move to it; when each was approved (claude moved
     /// past it); and those reopened since, to approve again.
@@ -172,13 +173,7 @@ extension SessionStore {
     static func statePath(branch: String) -> String { ".worktrees/\(branch)/planning.json" }
 
     static func slug(_ text: String) -> String {
-        let words = String(text.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : " " }).split(separator: " ")
-        var slug = ""
-        for word in words {
-            let next = slug.isEmpty ? String(word) : "\(slug)-\(word)"
-            if next.count > 40 { break }
-            slug = next
-        }
+        let slug = Slug.make(text, limit: 40)
         return slug.isEmpty ? "plan" : slug
     }
 

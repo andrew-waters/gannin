@@ -20,7 +20,14 @@ final class HarnessStore {
     private(set) var repositories: [String: [String]] = [:]
 
     @ObservationIgnored private var fetches: [String: Task<Void, Never>] = [:]
+    /// Whether a repo's branch needs changes through a pull request, by
+    /// `repo@branch`: cached for the app's run.
+    @ObservationIgnored var pullRequestRequired: [String: Bool] = [:]
     let auth: AuthStore
+    /// Told when a commit went through a pull request instead (the branch's
+    /// rules required one) and GitHub wouldn't merge it right away: it's
+    /// open and needs a look.
+    var onPullRequestOpened: (@MainActor @Sendable (_ repo: String, _ url: URL) -> Void)?
 
     init(auth: AuthStore) {
         self.auth = auth
