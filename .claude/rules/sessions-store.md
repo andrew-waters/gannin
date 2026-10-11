@@ -6,7 +6,6 @@ paths:
   - "Gannin/Sessions/WrapUp*"
   - "Gannin/Sessions/QuitGuard*"
   - "Gannin/Sessions/ClaudeRunner*"
-  - "Gannin/Sessions/PromptWriting*"
 ---
 
 # SessionStore, scripts, wrap-up, quit, ClaudeRunner
@@ -34,9 +33,8 @@ paths:
 ## Quit
 - Sandboxes stop only after the quit question is answered (`stopSandboxesForQuit`).
 
-## ClaudeRunner and PromptWriting
+## ClaudeRunner
 - `ClaudeRunner` runs `claude -p` locally if installed, else on the Connect with server with only the tools given; follow-ups use `--resume` in the same folder.
-- `PromptWriting` replies are JSON with `message` and, once drafted, the whole `draft`; send the current draft with every later message.
 
 ## Testing
-- `WrapUpTests.swift`, `PromptWritingTests.swift`, `SessionBriefGoalsTests.swift`, `SessionModeTests.swift`, `SessionRulesTests.swift`. `SandboxLaunchTests.swift` covers script generation for sandboxes. Nothing covers `SessionStore.record` or the quit guard.
+- `WrapUpTests.swift`, `SessionBriefGoalsTests.swift`, `SessionModeTests.swift`, `SessionRulesTests.swift`. `SandboxLaunchTests.swift` covers script generation for sandboxes. Nothing covers `SessionStore.record` or the quit guard.

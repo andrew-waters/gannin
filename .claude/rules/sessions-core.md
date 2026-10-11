@@ -18,4 +18,4 @@ paths:
 - Keep `SessionRules.hookCommand` self-contained (inline base64 bash using sed, awk, grep, date only), so no editable script exists on the box.
 
 ## Testing
-`SessionModeTests`, `SessionRulesTests` and `WrapUpTests` cover mode parsing and rules. Nothing covers `TranscriptReader` or `SessionTerminal` key encoding.
+`SessionModeTests` covers mode parsing, `TranscriptReader`'s permission mode and `TerminalKeys.encode`; `SessionRulesTests` covers session rules. Nothing covers `SessionTerminal.press` or the rest of transcript parsing (Activity, cost, questions, plans); check those by hand in a running session.
