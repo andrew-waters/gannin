@@ -39,7 +39,7 @@ final class WorkLogStore {
         guard let api = auth.api, !missing.isEmpty else { return }
         fetchingLinked.formUnion(missing)
         defer { fetchingLinked.subtract(missing) }
-        for pr in (try? await chargingTo(.details) { try await api.workLogPullRequests(urls: missing) }) ?? [] {
+        for pr in (try? await chargingTo(.details) { try await RequestLimiter.interactive { try await api.workLogPullRequests(urls: missing) } }) ?? [] {
             linked[pr.url] = pr
         }
     }

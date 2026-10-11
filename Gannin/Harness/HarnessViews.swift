@@ -1100,7 +1100,7 @@ final class HarnessReferences {
         let key = "\(repo)#\(number)"
         guard !asked.contains(key), let api = auth.api else { return }
         asked.insert(key)
-        if let item = try? await api.issueOrPullRequest(repo: repo, number: number) {
+        if let item = try? await RequestLimiter.interactive({ try await api.issueOrPullRequest(repo: repo, number: number) }) {
             items[key] = item
         }
     }

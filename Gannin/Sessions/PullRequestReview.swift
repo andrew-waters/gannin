@@ -849,7 +849,7 @@ struct PullRequestReviewView: View {
     private func load() async {
         guard let api = auth.api else { return }
         do {
-            let fetched = try await RequestLimiter.$lane.withValue(.interactive) {
+            let fetched = try await RequestLimiter.interactive {
                 try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
             }
             pullRequest = fetched

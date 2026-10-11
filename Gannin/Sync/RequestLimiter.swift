@@ -16,8 +16,13 @@ actor RequestLimiter {
     }
 
     /// The lane for requests made in this task; set it around a read you
-    /// started by hand with `$lane.withValue(.interactive)`.
+    /// started by hand with `interactive`.
     @TaskLocal static var lane: Lane = .background
+
+    /// Runs `operation` with its requests in the interactive lane.
+    nonisolated(nonsending) static func interactive<T>(_ operation: () async throws -> T) async rethrows -> T {
+        try await $lane.withValue(.interactive, operation: operation)
+    }
 
     static let defaultLimit = 8
     static let defaultReservedForInteractive = 2
