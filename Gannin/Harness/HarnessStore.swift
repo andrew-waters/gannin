@@ -108,7 +108,11 @@ final class HarnessStore {
                 }
                 indexes[indexKey] = index
                 errors[indexKey] = nil
-                save(org, repo: setup.repo)
+                // An unchanged head only moves `fetchedAt`; a relaunch checking
+                // the head again costs less than rewriting every document.
+                let unchanged = previous?.commit == index.commit && previous?.parserVersion == index.parserVersion
+                    && previous?.requestedBranch == index.requestedBranch && previous?.dataFiles != nil
+                if !unchanged { save(org, repo: setup.repo) }
             } catch APIError.unauthorized {
                 auth.signOut()
             } catch {
@@ -342,6 +346,8 @@ extension GitHubAPI {
             let truncated: Bool
         }
         let response: Response = try await rest("repos/\(repo)/git/trees/\(commit)", query: ["recursive": "1"])
+        // A cut-short listing would index only some of the documents.
+        if response.truncated { throw APIError.graphQL(["\(repo) has too many files for GitHub to list at once, so its documents can't all be indexed."]) }
         return response.tree.filter { $0.type == "blob" }
     }
 
