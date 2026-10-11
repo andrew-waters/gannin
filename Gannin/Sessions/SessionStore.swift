@@ -466,9 +466,12 @@ final class SessionStore {
 
     var harnessStore: HarnessStore { harness }
 
-    init(harness: HarnessStore) {
+    @ObservationIgnored private let directory: URL
+
+    init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory) {
         self.harness = harness
-        if let data = try? Data(contentsOf: Self.fileURL),
+        self.directory = directory
+        if let data = try? Data(contentsOf: directory.appending(path: "Sessions.json")),
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
                 var session = session
@@ -628,7 +631,7 @@ final class SessionStore {
         Self.noteFolder(of: session)
         sessions[session.id] = session
         noteSandboxedHarnesses()
-        save()
+        saveNow()
     }
 
     func helpers(of id: UUID) -> [CodeSession] {
@@ -650,7 +653,7 @@ final class SessionStore {
         }()
         sessions[session.id] = session
         noteSandboxedHarnesses()
-        save()
+        saveNow()
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(brief(session).utf8).write(to: directory.appending(path: "brief.md"))
@@ -695,7 +698,7 @@ final class SessionStore {
             }
             sessions[id]?.harnessFolder = folder
             recordErrors[id] = nil
-            save()
+            saveNow()
         } catch {
             recordErrors[id] = error.localizedDescription
         }
@@ -804,7 +807,7 @@ final class SessionStore {
         pullRequestInfo[id] = nil
         if besideTab == id { besideTab = nil }
         closeTab(id)
-        save()
+        saveNow()
         try? FileManager.default.removeItem(at: Self.directory(for: id))
     }
 
@@ -1136,7 +1139,7 @@ final class SessionStore {
     private func opened(_ url: URL, for id: UUID) {
         guard sessions[id]?.pullRequests.contains(url) == false else { return }
         sessions[id]?.pullRequests.append(url)
-        save()
+        saveNow()
         recordPullRequest(url, for: id)
     }
 
@@ -1456,33 +1459,40 @@ final class SessionStore {
         SandboxGitGuard.setRoots(sessions.values.filter { $0.isSandboxed && !$0.isRemote }.compactMap(\.harnessPath))
     }
 
-    private static var fileURL: URL { baseDirectory.appending(path: "Sessions.json") }
+    private var fileURL: URL { directory.appending(path: "Sessions.json") }
 
     /// Saves every session shortly: calls close together (a poll updating
     /// several sessions, a review's rounds) share one write of the whole file.
     func save() {
-        guard !saveScheduled else { return }
-        saveScheduled = true
-        Task {
+        guard pendingSave == nil else { return }
+        pendingSave = Task {
             try? await Task.sleep(for: .milliseconds(500))
+            guard !Task.isCancelled else { return }
             flushSave()
         }
     }
 
-    /// Writes now if a save is waiting; at quit, so nothing is lost.
-    func flushSave() {
-        guard saveScheduled else { return }
-        saveScheduled = false
+    /// Writes now, for a session added, removed or started: one a kill in the
+    /// next half second must not lose, as the relaunch script's `kill -9` can.
+    func saveNow() {
+        pendingSave?.cancel()
+        pendingSave = nil
         writeSessions()
     }
 
-    @ObservationIgnored private var saveScheduled = false
+    /// Writes now if a save is waiting; at quit, so nothing is lost.
+    func flushSave() {
+        guard pendingSave != nil else { return }
+        saveNow()
+    }
+
+    @ObservationIgnored private var pendingSave: Task<Void, Never>?
 
     private func writeSessions() {
-        try? FileManager.default.createDirectory(at: Self.baseDirectory, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let ordered = sessions.values.sorted { $0.createdAt < $1.createdAt }
         if let data = try? JSONEncoder().encode(ordered) {
-            try? data.write(to: Self.fileURL, options: .atomic)
+            try? data.write(to: fileURL, options: .atomic)
         }
     }
 }
