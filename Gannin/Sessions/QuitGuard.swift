@@ -36,7 +36,14 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         let action = response.actionIdentifier
         let review = info["review"] as? String
         let mine = info["mine"] as? String
+        let pullRequest = (info["pullRequest"] as? String).flatMap(URL.init(string:))
         await MainActor.run {
+            // A pull request Gannin opened for a protected branch, needing
+            // a look.
+            if let pullRequest {
+                NSWorkspace.shared.open(pullRequest)
+                return
+            }
             // A review request, or one of your PRs.
             if review != nil || mine != nil {
                 var keys: [String: String] = [:]

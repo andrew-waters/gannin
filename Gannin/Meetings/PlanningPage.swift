@@ -172,8 +172,11 @@ struct PlanningPage: View {
 
     private func deleteMessage(_ session: CodeSession) -> String {
         var text = "This stops the session and removes its folder, with any documents shared into it\(session.isRemote ? ", on your server" : ""). It can't be undone."
+        let madeCount = (session.planning?.madeParent != nil ? 1 : 0) + (session.planning?.madeIssues?.count ?? 0)
         if session.planning?.agreed != nil {
             text += " The plan, the requirement and the issues stay in the harness and on GitHub."
+        } else if madeCount > 0 {
+            text += " An earlier Agree and Write made \(madeCount == 1 ? "an issue" : "\(madeCount) issues") on GitHub already; those stay."
         } else {
             text += " Nothing has been written to the harness or GitHub yet."
         }

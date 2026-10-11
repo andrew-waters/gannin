@@ -19,12 +19,15 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - An org with more than 1000 open issues no longer loses its older open issues from Gannin when every open issue is fetched again; GitHub returns only 1000 of them, so ones it doesn't return are kept until they change
 - A harness repo with too many files for GitHub to list at once now says so, instead of indexing only some of its documents without a word
 - Issues › All, Not on a board and Views now show an outside repo's issues when the window's project names it, as Pull Requests already did; the issue history wasn't fetching them at all
+- Agree and Write's error when a plan can't be committed is now shown clearly (it was easy to miss, styled as an ordinary caption at the bottom of a scrolled form) and names GitHub's real reason instead of a generic "GitHub didn't make the commit."; a sub-issue made but not added to the workflow board, or an expired GitHub session, now says so instead of failing silently
+- Agree and Write no longer makes duplicate GitHub issues if its sheet is dismissed and reopened after a partial failure
 
 ### Added
 - Post automatic reviews in Settings › Harness: each project can say on, off or as in Settings, instead of every project following the one Mac-wide choice
 - Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
+- A harness commit to a repo whose rules require a pull request now goes through a new branch and a pull request, merged right away when GitHub will have it (which includes anyone who can bypass the rule); otherwise the pull request is left open and a notification says why
 
 ## [0.0.2] - 2026-10-05
 
