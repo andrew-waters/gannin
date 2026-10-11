@@ -174,10 +174,12 @@ extension HarnessStore {
 
 extension APIError {
     /// A direct commit refused because the branch's rules or protection
-    /// require a pull request.
+    /// require a pull request: classic protection says so by name, but a
+    /// ruleset's refusal (GH013) just reports "repository rule
+    /// violations" without naming the rule, so that's treated the same way.
     var requiresPullRequest: Bool {
         guard case .graphQL(let messages) = self else { return false }
-        return messages.contains { $0.localizedCaseInsensitiveContains("pull request") }
+        return messages.contains { $0.localizedCaseInsensitiveContains("pull request") || $0.localizedCaseInsensitiveContains("rule violation") }
     }
 
     /// `createCommitOnBranch` refusing because `expectedHeadOid` is no

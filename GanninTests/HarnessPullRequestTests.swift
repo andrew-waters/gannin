@@ -47,6 +47,7 @@ struct HarnessPullRequestTests {
 
     @Test func commitRefusedForNeedingAPullRequest() {
         #expect(APIError.graphQL(["Changes must be made through a pull request."]).requiresPullRequest)
+        #expect(APIError.graphQL(["Repository rule violations found for refs/heads/main."]).requiresPullRequest)
         #expect(!APIError.graphQL(["Expected branch to point to abc"]).requiresPullRequest)
         #expect(!APIError.http(status: 403, body: "").requiresPullRequest)
     }

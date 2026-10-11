@@ -22,6 +22,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Issues › All, Not on a board and Views now show an outside repo's issues when the window's project names it, as Pull Requests already did; the issue history wasn't fetching them at all
 - Agree and Write's error when a plan can't be committed is now shown clearly (it was easy to miss, styled as an ordinary caption at the bottom of a scrolled form) and names GitHub's real reason instead of a generic "GitHub didn't make the commit."; a sub-issue made but not added to the workflow board, or an expired GitHub session, now says so instead of failing silently
 - Agree and Write no longer makes duplicate GitHub issues if its sheet is dismissed and reopened after a partial failure
+- A harness commit refused by a repository ruleset now opens a pull request as a classic branch protection refusal already did; GitHub's ruleset refusal just says "repository rule violations" rather than naming the rule, so it wasn't recognised as needing one
 
 ### Added
 - Post automatic reviews in Settings › Harness: each project can say on, off or as in Settings, instead of every project following the one Mac-wide choice

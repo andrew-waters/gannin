@@ -8,7 +8,7 @@ paths:
 ## Writes
 - Every harness write is confirmed first and goes through `HarnessStore.commit` (`createCommitOnBranch` with `expectedHeadOid`). If the branch moved, re-plan on the new head and retry once.
 - Binary `data` is capped at `HarnessChange.maxDataBytes`; refuse before sending.
-- A branch whose rules require a pull request gets one instead of a direct commit: ask first with `GET repos/{repo}/rules/branches/{branch}` (rulesets only, advisory, so a failed lookup means try a direct commit), and retry once as a pull request if a direct commit is refused for needing one (classic branch protection).
+- A branch whose rules require a pull request gets one instead of a direct commit: ask first with `GET repos/{repo}/rules/branches/{branch}` (rulesets only, advisory, so a failed lookup means try a direct commit), and retry once as a pull request if a direct commit is refused for needing one. `APIError.requiresPullRequest` treats both classic branch protection's named refusal and a ruleset's generic "repository rule violations" (GH013) refusal as needing one, since GitHub doesn't always say which rule blocked the push.
 - Once the pull request exists the write is done. A merge GitHub refuses (405 or 422) leaves it open and notifies (`HarnessStore.onPullRequestOpened`); never turn that into an error, or a retry opens a second pull request.
 - After a commit, refetch the index until GitHub reports the new head (`load(expecting:)`) so writes show without a Refresh.
 
