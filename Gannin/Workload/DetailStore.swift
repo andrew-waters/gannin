@@ -41,7 +41,7 @@ final class DetailStore {
             if let detail = try await chargingTo(.details, { try await RequestLimiter.interactive { try await api.itemDetail(id: id) } }) {
                 details[id] = detail
                 fetchedAt[id] = .now
-                save()
+                saver.request()
             }
             errors[id] = nil
         } catch is CancellationError {
@@ -70,6 +70,7 @@ final class DetailStore {
         details = [:]
         errors = [:]
         fetchedAt = [:]
+        saver.cancel()
         try? FileManager.default.removeItem(at: Self.fileURL)
     }
 
@@ -79,6 +80,11 @@ final class DetailStore {
         let detail: ItemDetail
         let fetchedAt: Date
     }
+
+    /// Items opened one after another share one write of the file. The write
+    /// is delayed up to a second, so a crash or force-quit in that window
+    /// loses the latest fetched details; a normal quit writes them.
+    @ObservationIgnored private lazy var saver = SaveCoalescer { [weak self] in self?.save() }
 
     /// Writes the most recently fetched entries, dropping the rest.
     private func save() {
