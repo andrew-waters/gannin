@@ -691,8 +691,8 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   the window's starting Monday plus every open issue, with project board status changes
   (`ProjectV2ItemStatusChangedEvent`), assignments, reopenings, sub-issues added and the PRs
   that close them (with their commit and review dates). Closed weeks are fetched as parallel
-  searches, changes by `updated:`, and open issues in full hourly, because board moves don't
-  touch `updatedAt`. Reading boards needs the `project` scope.
+  searches, changes by `updated:`, and open issues in full hourly or on Full Refresh
+  (`refetchOpen`; a plain Refresh doesn't), because board moves don't touch `updatedAt`. Reading boards needs the `project` scope.
 - `MarkdownText` renders blockquotes (GitHub's alerts, `> [!NOTE]` and the like, as callouts) and the HTML GitHub allows in Markdown: `<details>`/`<summary>` fold (a
   `DisclosureGroup`, its contents as Markdown), `<b>`, `<i>`, `<code>`, `<a>`, `<img>` (as a
   link) and `<br>` become Markdown, tags with no Markdown of their own (`<sub>`, `<div>`, `<p>`)

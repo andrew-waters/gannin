@@ -45,7 +45,7 @@ Open PRs and issues, and what changed since the last fetch. This group is always
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | Issue history | After 10 minutes. Can be turned Off. | Issues closed in the window and open ones, with board moves, for the issue pages, Inbox, Views and meetings. | This Mac |
-| Every open issue | After 1 hour. Cannot be turned off on its own. | Fetches every open issue again, as board moves do not count as updates. It goes off with Issue history. | This Mac |
+| Every open issue | After 1 hour. Cannot be turned off on its own. | Fetches every open issue again, as board moves do not count as updates. Refresh leaves it to its interval; Full Refresh does it at once. It goes off with Issue history. | This Mac |
 | Issue descriptions and comments | After 10 minutes. Can be turned Off. | Fetches text for searching in descriptions, after each issue sync. It goes off with Issue history. | This Mac |
 
 ## Pages
