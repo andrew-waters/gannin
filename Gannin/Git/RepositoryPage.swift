@@ -108,13 +108,15 @@ private struct LocalRepositoryView: View {
             } catch {}
         }
         // Fetch in the background while the page is open: git's own, so
-        // nothing of GitHub's API budget.
+        // nothing of GitHub's API budget. Every five minutes, and only while
+        // Gannin is the active app: coming back to it fetches within a minute.
         .task(id: repository.root) {
             do {
                 try await Task.sleep(for: .seconds(2))
                 while true {
-                    await repository.fetch(quietly: true)
-                    try await Task.sleep(for: .seconds(300))
+                    let isStale = repository.lastFetched.map { -$0.timeIntervalSinceNow >= 300 } ?? true
+                    if NSApp.isActive, isStale { await repository.fetch(quietly: true) }
+                    try await Task.sleep(for: .seconds(60))
                 }
             } catch {}
         }
