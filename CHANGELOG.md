@@ -16,14 +16,12 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ### Fixed
 - An org with more than 1000 open issues no longer loses its older open issues from Gannin when every open issue is fetched again; GitHub returns only 1000 of them, so ones it doesn't return are kept until they change
 - A harness repo with too many files for GitHub to list at once now says so, instead of indexing only some of its documents without a word
+- A space typed at the end of a free-text box (the message in New Ask, the note in New Quick Change, Ask Claude in New Issue, the planning topic, a skill's description) now shows as you type it, instead of appearing only once more text follows
 
 ### Added
 - Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
-
-### Fixed
-- A space typed at the end of a free-text box (the message in New Ask, the note in New Quick Change, Ask Claude in New Issue, the planning topic, a skill's description) now shows as you type it, instead of appearing only once more text follows
 
 ## [0.0.2] - 2026-10-05
 
