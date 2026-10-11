@@ -52,6 +52,10 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // The routine scheduler writes its last look at most every five
+        // minutes: save it so the next launch dates ended runs and missed
+        // times from this quit.
+        Self.sessions?.routines?.saveState()
         guard let sessions = Self.sessions else { return .terminateNow }
         let running = sessions.running
         guard !running.isEmpty else { return .terminateNow }
