@@ -1223,7 +1223,14 @@ suggestions, then members, confirmed when the popover closes, and laid onto the 
   `data`, up to `HarnessChange.maxDataBytes`, 5 MB, refused before sending); when the branch moved, the change is planned again on the new
   head and retried once. The index is then fetched again until GitHub reports the new commit as
   the head (`load(expecting:)`, up to five tries a second longer apart each time), so what was
-  written shows without a Refresh.
+  written shows without a Refresh. A branch whose rules require a pull request (asked first,
+  `GET repos/{repo}/rules/branches/{branch}`, cached per repo and branch for the app's run)
+  gets one instead: a new branch at the head, the commit on it, a pull request to the target
+  branch, and an attempt to merge it right away. Merged, this is transparent to every caller;
+  left open (GitHub refusing for outstanding reviews or checks, HTTP 405 or 422), it's a pull
+  request to look at (`HarnessStore.onPullRequestOpened`, a system notification through
+  `EngineerWatch.notifyPullRequestOpened`). A caller still sees the write as done either way
+  (andrew-waters/gannin#252 tracks telling them apart).
 - Hooks in the session's `--settings` write its state (working, needs you, your turn, exited)
   to a file `SessionStore` reads every second while a terminal runs, and the URL from a
   `gh pr create`. claude runs signed in as the user; Gannin never handles that login.
