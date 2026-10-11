@@ -540,13 +540,14 @@ struct PlanningWorkspaceView: View {
         }
         // Each change signal reads the file again (a short wait lets a
         // burst of writes settle), then every few seconds in case one
-        // was missed.
+        // was missed, while Gannin is the app in front.
         .task(id: sessions.changeCount(session.id)) {
             do {
                 try await Task.sleep(for: .milliseconds(300))
+                await sessions.refreshPlanning(session.id)
                 while true {
-                    await sessions.refreshPlanning(session.id)
                     try await Task.sleep(for: .seconds(session.isRemote ? 15 : 4))
+                    if NSApp.isActive { await sessions.refreshPlanning(session.id) }
                 }
             } catch {}
         }

@@ -154,9 +154,12 @@ struct AskFilesRefresh: ViewModifier {
                 do {
                     // A short wait lets a burst of writes settle into one read.
                     if files.loaded { try await Task.sleep(for: .milliseconds(400)) }
+                    await files.refresh(folder: folder, edited: edited)
                     while true {
-                        await files.refresh(folder: folder, edited: edited)
+                        // Writes that fire no hook (MCP's) are found by looking,
+                        // while Gannin is the app in front.
                         try await Task.sleep(for: .seconds(2))
+                        if NSApp.isActive { await files.refresh(folder: folder, edited: edited) }
                     }
                 } catch {}
             }
