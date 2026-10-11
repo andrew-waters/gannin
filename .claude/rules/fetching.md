@@ -18,6 +18,7 @@ paths:
 - Automatic fetches must hold off when `RateLimit.isLow` (under `sync.reserve`) and cached data exists, so manual actions keep budget. Pollers check `holdsOff`.
 - On a refusal (`RateLimit.refusal`) throw `APIError.rateLimited`; `GitHubAPI` checks `AuthStore.pausedUntil` / `restPausedUntil` before sending, so never bypass it.
 - Reads go through `RequestLimiter` (a cap on in-flight requests avoids GitHub's secondary limit); writes skip it. A hand-started read must set the interactive lane so it isn't queued behind syncs.
+- REST GETs send `If-None-Match` with the ETag of the last answer for the URL (`RESTCache`, in memory, 20 MB); a 304 returns what was kept and costs nothing against the REST budget. That serves jobs, the harness tree and a PR's files, comments and diff. A query whose URL changes every time, as the run lists' `created=` range ending at now does, passes `cached: false` to `rest`, so it isn't stored and doesn't push out entries that can hit. `AuthStore.signOut` empties the cache; it isn't keyed by account.
 - Fetchers serving a user action should set `chargingTo(_:_:)` so `APIUsage` attributes the cost; otherwise it goes to the sync run's kind or Other.
 
 ## Sync settings
