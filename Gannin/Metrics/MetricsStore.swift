@@ -53,9 +53,9 @@ final class MetricsStore {
         // Backfill anything older than we hold, then top up since the last
         // sync with a day of overlap, a week per search.
         let backfill = history.coveredFrom > start ? GitHubAPI.weeklyChunks(from: start, to: history.coveredFrom) : []
-        let topUp = history.syncedAt != .distantPast
-            ? GitHubAPI.weeklyChunks(from: history.syncedAt.addingTimeInterval(-24 * 60 * 60), to: now)
-            : []
+        // The first top-up search starts at `topUpSince` itself, not its day.
+        let topUpSince = history.syncedAt.addingTimeInterval(-24 * 60 * 60)
+        let topUp = history.syncedAt != .distantPast ? GitHubAPI.weeklyChunks(from: topUpSince, to: now) : []
         // Opened counts are cheap: fetch missing weeks and refresh the last
         // two, which may still be changing.
         let recent = Calendar.metrics.date(byAdding: .day, value: -7, to: Calendar.metrics.startOfWeek(for: now)) ?? now
@@ -86,7 +86,7 @@ final class MetricsStore {
             searches["backfill"] = GitHubAPI.mergedSearch(org: org, from: first.0, to: last.1)
         }
         if let first = topUp.first, let last = topUp.last {
-            searches["topUp"] = GitHubAPI.mergedSearch(org: org, from: first.0, to: last.1)
+            searches["topUp"] = GitHubAPI.mergedSearch(org: org, from: first.0, to: last.1, since: topUpSince)
         }
         if !searches.isEmpty, let counts = try? await run.overhead({ try await api.counts(searches: searches) }) {
             run.setTotal(counts.values.reduce(0, +), for: "merged")
@@ -103,7 +103,8 @@ final class MetricsStore {
                     for (index, (from, to)) in ordered.enumerated() {
                         run.setParts(index, of: ordered.count, for: "merged")
                         let before = fetched
-                        let prs = try await api.metricPullRequests(org: org, from: from, to: to) { page, _ in
+                        let since = index == 0 && !topUp.isEmpty ? topUpSince : nil
+                        let prs = try await api.metricPullRequests(org: org, from: from, to: to, since: since) { page, _ in
                             progress(before + page, nil)
                         }
                         fetched += prs.count
