@@ -35,6 +35,9 @@ struct IssueWindow: View {
     @Environment(IssueStore.self) private var store
     @Environment(OrgConfigStore.self) private var configs
     @Environment(DetailStore.self) private var details
+    @Environment(SessionStore.self) private var sessions
+    @Environment(RoutineStore.self) private var routines
+    @Environment(BankHolidayStore.self) private var holidays
     let reference: IssueReference
     /// Shown as a page in a main window rather than a window of its own:
     /// the main window has the title and the investment prompt.
@@ -69,10 +72,30 @@ struct IssueWindow: View {
         .task(id: reference.id) { await details.load(reference.id) }
         .loadsHarness(org: reference.org)
         .modifier(OwnInvestmentPrompt(isEnabled: !isEmbedded))
+        // Toolbar content is hosted outside this view's normal body updates
+        // (AppKit revalidates it on window activation, including switching
+        // between windows), so ambient @Environment isn't reliable there:
+        // each button gets what it reads explicitly, as a sheet's content would.
         .toolbar {
-            ToolbarItem { PlanThisButton(reference: reference) }
-            ToolbarItem { StartSessionButton(reference: reference) }
-            ToolbarItem { ScheduleForAgentButton(reference: reference) }
+            ToolbarItem {
+                PlanThisButton(reference: reference)
+                    .environment(sessions)
+                    .environment(configs)
+            }
+            ToolbarItem {
+                StartSessionButton(reference: reference)
+                    .environment(sessions)
+                    .environment(store)
+                    .environment(configs)
+            }
+            ToolbarItem {
+                ScheduleForAgentButton(reference: reference)
+                    .environment(routines)
+                    .environment(store)
+                    .environment(sessions)
+                    .environment(configs)
+                    .environment(holidays)
+            }
         }
     }
 
