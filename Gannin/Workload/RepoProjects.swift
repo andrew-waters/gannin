@@ -97,6 +97,8 @@ struct ProjectsSettingsSection: View {
     @SceneStorage("settingsProject") private var selectedID = ""
     @State private var isCreatingHarness = false
     @State private var isAddingProject = false
+    @State private var isCheckingHarnessRepo = false
+    @State private var addProjectError: String?
     /// Asked about before it goes.
     @State private var removing: RepoProject?
     /// Asked about before it's home.
@@ -119,18 +121,30 @@ struct ProjectsSettingsSection: View {
                 projectRow(project, isSelected: project.id == selected?.id, isHome: project.id == projects.first?.id)
             }
             HStack {
-                Button("Add Project") { isAddingProject = true }
+                Button("Add Project") { addProjectError = nil; isAddingProject = true }
                     .popover(isPresented: $isAddingProject, arrowEdge: .bottom) {
-                        SearchableList(choices: harnessChoices(projects), selection: nil, prompt: "Search repositories", isLoading: harness.repositories[org] == nil) { repo in
+                        SearchableList(
+                            choices: harnessChoices(projects),
+                            selection: nil,
+                            prompt: "Search repositories, or type owner/name",
+                            isLoading: harness.repositories[org] == nil,
+                            typedChoice: { query in
+                                HarnessRepoEntry.parse(query, taken: Set(projects.map(\.id)))
+                                    .map { SearchableChoice(value: $0, title: "Add \($0)", section: "Not listed") }
+                            }
+                        ) { repo in
                             isAddingProject = false
                             guard let repo else { return }
-                            configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: repo)) }
-                            selectedID = repo
+                            addHarness(repo)
                         }
                     }
-                    .help("Make a repo \(org) has a project's harness")
+                    .help("Make a repo \(org) has a project's harness, or one you have write access to but don't own")
                 Button("Create Harness") { isCreatingHarness = true }
                     .help("Create a repo for a new project's harness")
+                if isCheckingHarnessRepo { ProgressView().controlSize(.small) }
+            }
+            if let addProjectError {
+                Text(addProjectError).font(.caption).foregroundStyle(.red)
             }
             if let moveError {
                 Text(moveError).font(.caption).foregroundStyle(.red)
@@ -226,6 +240,40 @@ struct ProjectsSettingsSection: View {
         return Set(harness.repositories[org] ?? []).subtracting(taken)
             .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
             .map { SearchableChoice(value: $0, title: $0) }
+    }
+
+    /// Adds a repo the account already lists at once, as today; one typed
+    /// in the popover is checked with GitHub first, so it's only added
+    /// once it exists and the token can push to it (a harness needs write
+    /// access, not just read, unlike an outside code repo).
+    private func addHarness(_ repo: String) {
+        guard !(harness.repositories[org] ?? []).contains(repo) else {
+            configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: repo)) }
+            selectedID = repo
+            return
+        }
+        let parts = repo.split(separator: "/").map(String.init)
+        guard parts.count == 2, let api = auth.api else { return }
+        addProjectError = nil
+        isCheckingHarnessRepo = true
+        Task {
+            defer { isCheckingHarnessRepo = false }
+            do {
+                let (found, reason) = try await api.repository(owner: parts[0], name: parts[1])
+                guard let found else {
+                    addProjectError = reason ?? "GitHub couldn't find \(repo), or this token can't read it."
+                    return
+                }
+                guard found.hasWriteAccess else {
+                    addProjectError = "You don't have write access to \(found.nameWithOwner), so Gannin can't commit a harness there."
+                    return
+                }
+                configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: found.nameWithOwner)) }
+                selectedID = found.nameWithOwner
+            } catch {
+                addProjectError = error.localizedDescription
+            }
+        }
     }
 
     private func remove(_ project: RepoProject, from projects: [RepoProject]) {
@@ -499,6 +547,27 @@ struct OutsideRepoLookup: Decodable {
     let nameWithOwner: String
     let isArchived: Bool
     let viewerPermission: String?
+
+    /// Whether the token can push to it: enough to commit a harness there,
+    /// whether or not the account owns it.
+    var hasWriteAccess: Bool {
+        guard let viewerPermission else { return false }
+        return ["WRITE", "MAINTAIN", "ADMIN"].contains(viewerPermission.uppercased())
+    }
+}
+
+/// `owner/name` typed in the Add Project popover's search field, for a
+/// harness repo not already a project: any repo the token can write to,
+/// whether or not the account owns it (`OutsideRepoLookup.hasWriteAccess`
+/// checks that once it's picked).
+enum HarnessRepoEntry {
+    /// `query` as `owner/name`: two non-empty parts, not already in `taken`.
+    static func parse(_ query: String, taken: Set<String>) -> String? {
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        let parts = trimmed.split(separator: "/").map(String.init)
+        guard parts.count == 2, !parts[0].isEmpty, !parts[1].isEmpty, !taken.contains(trimmed) else { return nil }
+        return trimmed
+    }
 }
 
 /// A bar at the top when the window's project names outside repos, which
