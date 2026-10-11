@@ -8,7 +8,6 @@ final class IssueStore {
     private static let overlap: TimeInterval = 5 * 60
     /// The most results GitHub returns for one search.
     private static let searchCap = 1000
-    private static let concurrency = 4
 
     private(set) var histories: [String: IssueHistory] = [:]
     /// Orgs whose descriptions and comments are being fetched.
@@ -58,7 +57,7 @@ final class IssueStore {
         var searches: [(key: String, query: String)] = []
         if let history {
             if start < history.coveredFrom {
-                searches += Self.weeks(from: start, to: history.coveredFrom).map { ("closed", "\(scope) closed:\(Self.stamp($0.0))..\(Self.stamp($0.1))") }
+                searches += ParallelSearches.weeks(from: start, to: history.coveredFrom).map { ("closed", "\(scope) closed:\(Self.stamp($0.0))..\(Self.stamp($0.1))") }
             }
             let due = SyncSettings.isDue(.issues, since: history.syncedAt, now: now)
             if force || (due && !auth.shouldHoldOff) {
@@ -69,7 +68,7 @@ final class IssueStore {
                 searches.append(("open", "\(scope) is:open"))
             }
         } else {
-            searches += Self.weeks(from: start, to: now).map { ("closed", "\(scope) closed:\(Self.stamp($0.0))..\(Self.stamp($0.1))") }
+            searches += ParallelSearches.weeks(from: start, to: now).map { ("closed", "\(scope) closed:\(Self.stamp($0.0))..\(Self.stamp($0.1))") }
             searches.append(("open", "\(scope) is:open"))
         }
         guard !searches.isEmpty else { return }
@@ -124,42 +123,13 @@ final class IssueStore {
     }
 
     private static func fetch(_ queries: [String], api: GitHubAPI, progress: @escaping (Int, Int?) -> Void) async throws -> [IssueRecord] {
-        let tally = IssueTally(report: progress)
-        func task(_ index: Int) -> @MainActor @Sendable () async throws -> [IssueRecord] {
-            let query = queries[index]
-            return { try await api.issueRecords(query: query) { fetched, _ in tally.set(index, fetched) } }
-        }
-        return try await withThrowingTaskGroup(of: [IssueRecord].self) { group in
-            var next = 0
-            while next < min(concurrency, queries.count) {
-                group.addTask(operation: task(next))
-                next += 1
-            }
-            var results: [IssueRecord] = []
-            while let batch = try await group.next() {
-                results += batch
-                if next < queries.count {
-                    group.addTask(operation: task(next))
-                    next += 1
-                }
-            }
-            return results
+        try await ParallelSearches.run(count: queries.count, progress: progress) { index, fetched in
+            try await api.issueRecords(query: queries[index]) { count, _ in fetched(count) }
         }
     }
 
     private static func stamp(_ date: Date) -> String {
         date.formatted(.iso8601).replacingOccurrences(of: "Z", with: "+00:00")
-    }
-
-    private static func weeks(from: Date, to: Date) -> [(Date, Date)] {
-        var ranges: [(Date, Date)] = []
-        var start = from
-        while start < to {
-            let end = min(Calendar.current.date(byAdding: .day, value: 7, to: start) ?? to, to)
-            ranges.append((start, end))
-            start = end
-        }
-        return ranges
     }
 
     /// Records a status change saved from the app, so metrics move at once
@@ -263,21 +233,6 @@ final class IssueStore {
     private static func fileURL(_ org: String) -> URL {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "\(org).json")
-    }
-}
-
-/// Issues fetched so far by each parallel search, summed for progress.
-private final class IssueTally {
-    private var counts: [Int: Int] = [:]
-    private let report: (Int, Int?) -> Void
-
-    init(report: @escaping (Int, Int?) -> Void) {
-        self.report = report
-    }
-
-    func set(_ index: Int, _ fetched: Int) {
-        counts[index] = fetched
-        report(counts.values.reduce(0, +), nil)
     }
 }
 

@@ -63,14 +63,14 @@ final class WorkLogStore {
         var searches: [String] = []
         if let history {
             if start < history.coveredFrom {
-                searches += Self.weeks(from: start, to: history.coveredFrom).map { GitHubAPI.workLogSearch(org: org, from: $0.0, to: $0.1) }
+                searches += ParallelSearches.weeks(from: start, to: history.coveredFrom).map { GitHubAPI.workLogSearch(org: org, from: $0.0, to: $0.1) }
             }
             let isStale = SyncSettings.isDue(.workLog, since: history.fetchedAt, now: now)
             if force || (isStale && !auth.shouldHoldOff) {
                 searches.append(GitHubAPI.workLogSearch(org: org, from: history.fetchedAt.addingTimeInterval(-Self.overlap)))
             }
         } else {
-            let weeks = Self.weeks(from: start, to: now)
+            let weeks = ParallelSearches.weeks(from: start, to: now)
             searches += weeks.dropLast().map { GitHubAPI.workLogSearch(org: org, from: $0.0, to: $0.1) }
             if let last = weeks.last { searches.append(GitHubAPI.workLogSearch(org: org, from: last.0)) }
         }
@@ -111,45 +111,11 @@ final class WorkLogStore {
         }
     }
 
-    /// Searches run at most this many at once, to stay clear of GitHub's
-    /// secondary rate limits.
-    private static let concurrency = 4
-
     /// Runs the searches in parallel, reporting PRs fetched across them all.
     private static func fetch(_ searches: [String], api: GitHubAPI, progress: @escaping (Int, Int?) -> Void) async throws -> [WorkLogPullRequest] {
-        let tally = Tally(report: progress)
-        func task(_ index: Int) -> @MainActor @Sendable () async throws -> [WorkLogPullRequest] {
-            let query = searches[index]
-            return { try await api.workLogPullRequests(query: query) { fetched, _ in tally.set(index, fetched) } }
+        try await ParallelSearches.run(count: searches.count, progress: progress) { index, fetched in
+            try await api.workLogPullRequests(query: searches[index]) { count, _ in fetched(count) }
         }
-        return try await withThrowingTaskGroup(of: [WorkLogPullRequest].self) { group in
-            var next = 0
-            while next < min(concurrency, searches.count) {
-                group.addTask(operation: task(next))
-                next += 1
-            }
-            var results: [WorkLogPullRequest] = []
-            while let batch = try await group.next() {
-                results += batch
-                if next < searches.count {
-                    group.addTask(operation: task(next))
-                    next += 1
-                }
-            }
-            return results
-        }
-    }
-
-    /// Week-long `[start, end)` ranges covering `[from, to)`.
-    private static func weeks(from: Date, to: Date) -> [(Date, Date)] {
-        var ranges: [(Date, Date)] = []
-        var start = from
-        while start < to {
-            let end = min(Calendar.current.date(byAdding: .day, value: 7, to: start) ?? to, to)
-            ranges.append((start, end))
-            start = end
-        }
-        return ranges
     }
 
     static var cacheDirectory: URL { directory }
@@ -200,17 +166,3 @@ final class WorkLogStore {
     }
 }
 
-/// PRs fetched so far by each parallel search, summed for the progress bar.
-private final class Tally {
-    private var counts: [Int: Int] = [:]
-    private let report: (Int, Int?) -> Void
-
-    init(report: @escaping (Int, Int?) -> Void) {
-        self.report = report
-    }
-
-    func set(_ index: Int, _ fetched: Int) {
-        counts[index] = fetched
-        report(counts.values.reduce(0, +), nil)
-    }
-}
