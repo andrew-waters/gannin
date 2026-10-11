@@ -66,21 +66,25 @@ extension GitHubAPI {
         weeks: [Date],
         onWeek: (_ done: Int) -> Void = { _ in }
     ) async throws -> [Date: Int] {
-        struct Response: Decodable {
-            struct Search: Decodable { let issueCount: Int }
-            let search: Search
-        }
         var counts: [Date: Int] = [:]
-        for week in weeks {
-            let end = Calendar.metrics.date(byAdding: .day, value: 6, to: week) ?? week
-            let response: Response = try await query("""
-                query($q: String!) { search(query: $q, type: ISSUE, first: 1) { issueCount } }
-                """, variables: ["q": "\(GitHubAccounts.scope(org)) archived:false is:pr created:\(Self.day(week))..\(Self.day(end))"])
-            counts[week] = response.search.issueCount
+        // One request per batch of weeks, keeping a long history's query small.
+        for batch in stride(from: 0, to: weeks.count, by: Self.openedBatchSize).map({ Array(weeks[$0..<min($0 + Self.openedBatchSize, weeks.count)]) }) {
+            var searches: [String: String] = [:]
+            for week in batch {
+                let end = Calendar.metrics.date(byAdding: .day, value: 6, to: week) ?? week
+                searches[Self.day(week)] = "\(GitHubAccounts.scope(org)) archived:false is:pr created:\(Self.day(week))..\(Self.day(end))"
+            }
+            let batchCounts = try await self.counts(searches: searches)
+            for week in batch {
+                if let count = batchCounts[Self.day(week)] { counts[week] = count }
+            }
             onWeek(counts.count)
         }
         return counts
     }
+
+    /// Weeks counted in one `openedCounts` request.
+    private static let openedBatchSize = 50
 
     /// Week-long `[start, end]` ranges covering `[from, to]`.
     static func weeklyChunks(from: Date, to: Date) -> [(Date, Date)] {
