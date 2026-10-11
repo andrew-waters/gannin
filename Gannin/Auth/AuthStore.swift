@@ -87,6 +87,7 @@ final class AuthStore {
         restPausedUntil = nil
         grantedScopes = nil
         UserDefaults.standard.removeObject(forKey: Self.viewerKey)
+        Task { await RESTCache.shared.removeAll() }
     }
 
     /// Refreshes the cached profile. Signs out if GitHub rejects the token;

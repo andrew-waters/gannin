@@ -68,7 +68,8 @@ extension GitHubAPI {
         while true {
             let response: RawRunsPage = try await rest(
                 "repos/\(repo)/actions/runs",
-                query: ["created": created, "per_page": "100", "page": "\(page)", "exclude_pull_requests": "true"]
+                query: ["created": created, "per_page": "100", "page": "\(page)", "exclude_pull_requests": "true"],
+                cached: false
             )
             if page == 1, response.totalCount > 1000, to.timeIntervalSince(from) > 60 * 60 {
                 let middle = from.addingTimeInterval(to.timeIntervalSince(from) / 2)
@@ -127,8 +128,12 @@ extension GitHubAPI {
     /// A GET against the REST API. Timeouts are retried twice, and a
     /// secondary rate limit is waited out once when GitHub says it's a
     /// minute or less; a longer refusal pauses REST requests until then.
-    func rest<T: Decodable>(_ path: String, query: [String: String] = [:]) async throws -> T {
-        let data = try await restData(path, query: query, accept: "application/vnd.github+json")
+    ///
+    /// `cached: false` is for a query whose URL changes every time (a range
+    /// ending now), which could never match an ETag and would only take room
+    /// from entries that can.
+    func rest<T: Decodable>(_ path: String, query: [String: String] = [:], cached: Bool = true) async throws -> T {
+        let data = try await restData(path, query: query, accept: "application/vnd.github+json", cached: cached)
         do {
             return try Self.restDecoder.decode(T.self, from: data)
         } catch {
@@ -143,7 +148,7 @@ extension GitHubAPI {
         return String(decoding: data, as: UTF8.self)
     }
 
-    private func restData(_ path: String, query: [String: String], accept: String) async throws -> Data {
+    private func restData(_ path: String, query: [String: String], accept: String, cached: Bool = true) async throws -> Data {
         if let until = pausedUntil?(true), until > .now { throw APIError.rateLimited(until: until) }
         let source = APIUsage.currentSource
         var components = URLComponents(url: Self.restBase.appending(path: path), resolvingAgainstBaseURL: false)!
@@ -152,21 +157,27 @@ extension GitHubAPI {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(accept, forHTTPHeaderField: "Accept")
         request.setValue("2022-11-28", forHTTPHeaderField: "X-GitHub-Api-Version")
+        // What was last answered for this URL, sent back with its ETag: a 304
+        // costs nothing against the REST budget.
+        let cacheKey = "\(accept) \(request.url!.absoluteString)"
+        let stored = cached ? await restCache.entry(for: cacheKey) : nil
+        if let stored { request.setValue(stored.etag, forHTTPHeaderField: "If-None-Match") }
 
         var attempt = 0
         while true {
             let (data, response): (Data, URLResponse)
             do {
-                (data, response) = try await RequestLimiter.shared.data(for: request)
+                (data, response) = try await restLimiter.data(for: request)
             } catch {
                 try Task.checkCancellation()
                 throw APIError.network(error.localizedDescription)
             }
             let http = response as? HTTPURLResponse
             let status = http?.statusCode ?? 0
-            APIUsage.shared.record(cost: 1, isREST: true, source: source)
-            if let http, let budget = Self.restRateLimit(http) { onRESTRateLimit?(budget) }
+            APIUsage.shared.record(cost: status == 304 ? 0 : 1, isREST: true, source: source)
+            if let http, let budget = Self.restRateLimit(http, cost: status == 304 ? 0 : 1) { onRESTRateLimit?(budget) }
             if status == 401 { throw APIError.unauthorized }
+            if status == 304, let stored { return stored.data }
             if (502...504).contains(status), attempt < 2 {
                 attempt += 1
                 try await Task.sleep(for: .seconds(attempt * 2))
@@ -183,6 +194,9 @@ extension GitHubAPI {
             }
             guard (200..<300).contains(status) else {
                 throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
+            }
+            if cached, let etag = http?.value(forHTTPHeaderField: "ETag") {
+                await restCache.store(data, etag: etag, for: cacheKey)
             }
             return data
         }
@@ -207,7 +221,7 @@ extension GitHubAPI {
         let http = response as? HTTPURLResponse
         let status = http?.statusCode ?? 0
         APIUsage.shared.record(cost: 1, isREST: true, source: .writes)
-        if let http, let budget = Self.restRateLimit(http) { onRESTRateLimit?(budget) }
+        if let http, let budget = Self.restRateLimit(http, cost: 1) { onRESTRateLimit?(budget) }
         if status == 401 { throw APIError.unauthorized }
         guard (200..<300).contains(status) else {
             throw APIError.http(status: status, body: String(data: data, encoding: .utf8) ?? "")
@@ -230,13 +244,13 @@ extension GitHubAPI {
         _ = try await performWrite(method, path, body: body)
     }
 
-    private static func restRateLimit(_ response: HTTPURLResponse) -> RateLimit? {
+    private static func restRateLimit(_ response: HTTPURLResponse, cost: Int) -> RateLimit? {
         guard let remaining = response.value(forHTTPHeaderField: "X-RateLimit-Remaining").flatMap(Int.init),
               let limit = response.value(forHTTPHeaderField: "X-RateLimit-Limit").flatMap(Int.init),
               let reset = response.value(forHTTPHeaderField: "X-RateLimit-Reset").flatMap(TimeInterval.init) else {
             return nil
         }
-        return RateLimit(cost: 1, remaining: remaining, limit: limit, resetAt: Date(timeIntervalSince1970: reset))
+        return RateLimit(cost: cost, remaining: remaining, limit: limit, resetAt: Date(timeIntervalSince1970: reset))
     }
 }
 
