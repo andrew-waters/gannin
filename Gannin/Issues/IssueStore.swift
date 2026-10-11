@@ -6,6 +6,8 @@ import Observation
 @Observable
 final class IssueStore {
     private static let overlap: TimeInterval = 5 * 60
+    /// The most results GitHub returns for one search.
+    private static let searchCap = 1000
     private static let concurrency = 4
 
     private(set) var histories: [String: IssueHistory] = [:]
@@ -76,8 +78,10 @@ final class IssueStore {
         let run = activity.begin(.issues, org: org)
         run.add("issues", title: "Issues", detail: searches.count == 1 ? "1 search" : "\(searches.count) searches")
         let keyed = Dictionary(uniqueKeysWithValues: searches.enumerated().map { ("s\($0.offset)", $0.element.query) })
+        var openCount: Int?
         if let counts = try? await run.overhead({ try await api.counts(searches: keyed) }) {
             run.setTotal(counts.values.map { min($0, 1000) }.reduce(0, +), for: "issues")
+            if let index = searches.firstIndex(where: { $0.key == "open" }) { openCount = counts["s\(index)"] }
         }
         do {
             let queries = searches.map(\.query)
@@ -87,10 +91,15 @@ final class IssueStore {
             let refetchedOpen = searches.contains { $0.key == "open" }
             var updated = history ?? IssueHistory(orgLogin: org, coveredFrom: start, syncedAt: now, openFetchedAt: now, issues: [:])
             if refetchedOpen {
-                // Open issues missing from a full refetch were closed or moved
-                // away; drop them unless they were refetched as closed.
-                let fetched = Set(records.map(\.id))
-                updated.issues = updated.issues.filter { !$0.value.isOpen || fetched.contains($0.key) }
+                // GitHub returns at most 1000 results, so past that the refetch
+                // is a partial list and its absentees may still be open.
+                let capped = openCount.map { $0 > Self.searchCap } ?? (records.count >= Self.searchCap)
+                if !capped {
+                    // Open issues missing from a full refetch were closed or moved
+                    // away; drop them unless they were refetched as closed.
+                    let fetched = Set(records.map(\.id))
+                    updated.issues = updated.issues.filter { !$0.value.isOpen || fetched.contains($0.key) }
+                }
                 updated.openFetchedAt = now
             }
             for record in records { updated.issues[record.id] = record }
