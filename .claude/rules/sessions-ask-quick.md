@@ -9,7 +9,7 @@ paths:
 ## Ask
 - Always run on this Mac in the local harness checkout (`connect` nil). Folder layout is `.worktrees/ask-<date>-<id>/` with `.gannin/`, `files/` and `context/`; the brief and `AskFilesRefresh` depend on it.
 - Rewrite `context/` on every start and resume (`writeAskContext`); never treat it as user data.
-- Keep refreshing the Files pane on a timer as well as on `changed`: MCP writes fire no hook.
+- Keep refreshing the Files pane on a timer (`refreshWhileActive`, so only while Gannin is the active app) as well as on `changed`: MCP writes fire no hook.
 - Only Commit to Harness (`CommitToHarnessSheet`) commits an Ask's files, to `research/<date>-<id>/<name>` with a README. Cancel stays the default button so Return never commits, and Commit stays disabled until the sensitive-data box is ticked.
 - Ask sessions never offer Finish and Clean Up. Delete removes the folder and its files.
 

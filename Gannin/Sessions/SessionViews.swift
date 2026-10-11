@@ -803,11 +803,10 @@ struct SessionTab: View {
             guard !session.isAsk else { return }
             do {
                 try await Task.sleep(for: .milliseconds(400))
-                while true {
+                // For edits made outside claude, and sessions from before the
+                // hook, slower over ssh.
+                try await refreshWhileActive(every: .seconds(session.isRemote ? 30 : 10)) {
                     await changes.refresh(session)
-                    // For edits made outside claude, and sessions from
-                    // before the hook, slower over ssh.
-                    try await Task.sleep(for: .seconds(session.isRemote ? 30 : 10))
                 }
             } catch {}
         }
