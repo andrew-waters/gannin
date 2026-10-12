@@ -1817,7 +1817,7 @@ struct WorkOnThisLauncher: ViewModifier {
             } message: { reference in
                 Text(Self.recordMessage(reference))
             }
-            .dialogSuppressionToggle("Don't ask again for \(confirming?.org ?? "this org")", isSuppressed: confirming.map(recordWithoutAsking) ?? .constant(false))
+            .dialogSuppressionToggle("Don't ask again for \(confirming.flatMap(setup)?.repo ?? "this project")", isSuppressed: confirming.map(recordWithoutAsking) ?? .constant(false))
             .sheet(item: $choosing) { reference in
                 let config = configs.config(for: reference.org)
                 let skipsAsking = recordWithoutAsking(reference).wrappedValue
@@ -1861,9 +1861,9 @@ struct WorkOnThisLauncher: ViewModifier {
         Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })
     }
 
-    /// Don't ask again before recording, per org.
+    /// Don't ask again before recording, per harness.
     private func recordWithoutAsking(_ reference: IssueReference) -> Binding<Bool> {
-        let key = SessionStore.asksBeforeRecordingKey(reference.org)
+        let key = SessionStore.asksBeforeRecordingKey(repo: setup(for: reference)?.repo ?? reference.org)
         return Binding(get: { UserDefaults.standard.bool(forKey: key) }, set: { UserDefaults.standard.set($0, forKey: key) })
     }
 
@@ -2175,17 +2175,17 @@ struct HarnessCheckoutSection: View {
     let repo: String
     /// Says which harness, when there are several.
     var showsName = false
-    /// Recording is the org's, so it's asked once, with the primary.
-    var showsRecording = true
+    /// Review requests are the org's, so it's asked once, with the primary.
+    var showsReviewRequests = true
 
-    init(org: String, repo: String, showsName: Bool = false, showsRecording: Bool = true) {
+    init(org: String, repo: String, showsName: Bool = false, showsReviewRequests: Bool = true) {
         self.org = org
         self.repo = repo
         self.showsName = showsName
-        self.showsRecording = showsRecording
+        self.showsReviewRequests = showsReviewRequests
         _localPath = AppStorage(wrappedValue: "", SessionStore.harnessPathKey(org, repo: repo))
         _remotePath = AppStorage(wrappedValue: "", SessionStore.remoteHarnessPathKey(org, repo: repo))
-        _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(org))
+        _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(repo: repo))
         _autoReview = AppStorage(wrappedValue: "", AutoReview.orgKey(org))
         _autoPost = AppStorage(wrappedValue: "", AutoReview.postOverrideKey(repo))
     }
@@ -2219,11 +2219,11 @@ struct HarnessCheckoutSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if showsRecording {
-                Toggle("Ask before recording a session", isOn: Binding(get: { !recordWithoutAsking }, set: { recordWithoutAsking = !$0 }))
-                Text("Work on This commits the session's brief and a session.json to its harness's sessions folder, and adds its pull request later. Off, it does so without asking.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Toggle("Ask before recording a session", isOn: Binding(get: { !recordWithoutAsking }, set: { recordWithoutAsking = !$0 }))
+            Text("Work on This commits the session's brief and a session.json to its harness's sessions folder, and adds its pull request later. Off, it does so without asking.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if showsReviewRequests {
                 Picker("Review requests automatically", selection: $autoReview) {
                     Text("As in Settings (\(AutoReview.isOnByDefault ? "on" : "off"))").tag("")
                     Text("On").tag("on")

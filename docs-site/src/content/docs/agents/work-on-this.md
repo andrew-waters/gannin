@@ -11,7 +11,7 @@ Work on This starts a Claude Code session for an issue. It's on the issue page's
 
 The session runs in your project's harness, so there's no repo to pick. Claude makes a worktree per repo the issue touches. A sheet asks which of the team's prompts and skills to use and lets you add a note; with [sandboxing](/docs/sessions/sandboxes/) on, it also has Run in. Where it runs is covered in [Choosing where sessions run](/docs/sessions/).
 
-If the harness records sessions, Gannin asks before committing the session's brief to it. Settings › General › Agent has Ask before recording a session, and the dialog has Don't ask again.
+If the harness records sessions, Gannin asks before committing the session's brief to it. Settings › Harness has Ask before recording a session for each project, and the dialog has Don't ask again for that project.
 
 An issue that already has a session shows Open Session instead.
 
