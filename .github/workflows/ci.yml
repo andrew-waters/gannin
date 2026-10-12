@@ -4,18 +4,16 @@ name: CI
 # main, unsigned, so a broken build or a failing test is caught before a
 # release tag is. Releases are release.yml.
 #
-# A change that only touches the changelog or Gannin's session files doesn't
-# run it. Nothing in them is built, tested or read by the docs job.
+# A pull request that only touches the changelog or Gannin's session files
+# skips the build and docs jobs, since nothing in them is built, tested or read
+# by the docs job. The skip is per job, not a workflow-level paths-ignore: the
+# main ruleset requires the `build` check, and a workflow that never starts
+# never reports it, whereas a skipped job counts as passing. Pushes to main
+# always run, so every commit there has a `build` status.
 on:
   pull_request:
-    paths-ignore:
-      - CHANGELOG.md
-      - .gannin/**
   push:
     branches: [main]
-    paths-ignore:
-      - CHANGELOG.md
-      - .gannin/**
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -25,7 +23,35 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.diff.outputs.relevant }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Relevant unless every changed file is CHANGELOG.md or under .gannin/.
+      - name: Check for changes other than the changelog and .gannin
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          relevant=true
+          if [ "$EVENT" = "pull_request" ]; then
+            others=$(git diff --name-only "$BASE" "$HEAD" | grep -vE '^(CHANGELOG\.md|\.gannin/)' || true)
+            [ -z "$others" ] && relevant=false
+          fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     # The app targets macOS 26, so its SDK, so a Tahoe runner.
     runs-on: macos-26
 
@@ -91,6 +117,8 @@ jobs:
   # The user docs (docs-site/): they must build, and every control in the
   # Settings views must be named on its Settings reference page.
   docs:
+    needs: changes
+    if: needs.changes.outputs.relevant == 'true'
     runs-on: ubuntu-latest
 
     steps:
