@@ -97,6 +97,76 @@ struct ChangeFeedTests {
         #expect(added.outsideRepos == ["client/app"])
     }
 
+    // MARK: outside repos
+
+    @Test func fallsBackWhenTheFeedDoesntCoverAnOutsideRepoTheStoreNeeds() {
+        let feed = feed([entry("a", 30)], outside: ["client/app"])
+        #expect(ChangeFeed.plan(feed: feed, cursor: at(10), needing: ["client/app", "other/thing"], stored: { _ in nil }) == .fallback)
+        #expect(ids(ChangeFeed.plan(feed: feed, cursor: at(10), needing: ["client/app"], stored: { _ in nil })) == ["a"])
+        #expect(ids(ChangeFeed.plan(feed: feed, cursor: at(10), needing: [], stored: { _ in nil })) == ["a"])
+    }
+
+    // MARK: the issue history and work log
+
+    private func record(_ id: String, updated: Double?) -> IssueRecord {
+        IssueRecord(
+            id: id, number: 1, title: "I", url: URL(string: "https://github.com/acme/api/issues/1")!, repo: "acme/api", author: nil,
+            assignees: [], labels: [], issueType: nil, milestone: nil, parentID: nil, createdAt: at(0), closedAt: nil, stateReason: nil,
+            statusChanges: [], assignedAt: [], reopenedAt: [], subIssuesAddedAt: [], linkedPullRequests: [], mentionedInPullRequests: nil,
+            projectFields: [], updatedAt: updated.map(at)
+        )
+    }
+
+    private func logged(_ id: String, updated: Double?) -> WorkLogPullRequest {
+        WorkLogPullRequest(
+            id: id, number: 1, title: "P", url: URL(string: "https://github.com/acme/api/pull/1")!, repo: "acme/api", author: nil,
+            createdAt: at(0), mergedAt: nil, closedAt: nil, mergedBy: nil, commits: [], reviews: [], updatedAt: updated.map(at)
+        )
+    }
+
+    @Test func theIssueHistoryTakesIssuesOnlyAndSkipsOnesItHolds() {
+        let history = IssueHistory(orgLogin: "acme", coveredFrom: at(0), syncedAt: at(30), openFetchedAt: at(30), issues: [
+            "held": record("held", updated: 20), "older": record("older", updated: 15), "unknown": record("unknown", updated: nil),
+        ])
+        let feed = feed([
+            entry("held", 20, kind: .issue), entry("older", 25, kind: .issue), entry("unknown", 26, kind: .issue),
+            entry("fresh", 27, kind: .issue), entry("pr", 28),
+        ])
+        guard case .fetch(let entries) = IssueStore.feedPlan(feed, cursor: at(10), history: history, knownOutside: []) else {
+            Testing.Issue.record("expected a plan")
+            return
+        }
+        #expect(Set(entries.map(\.id)) == ["older", "unknown", "fresh"])
+    }
+
+    @Test func theIssueHistorySearchesItselfWithoutAUsableFeedOrOneMissingARepo() {
+        let history = IssueHistory(orgLogin: "acme", coveredFrom: at(0), syncedAt: at(30), openFetchedAt: at(30), issues: [:])
+        #expect(IssueStore.feedPlan(nil, cursor: at(10), history: history, knownOutside: []) == .fallback)
+        #expect(IssueStore.feedPlan(feed([], from: 20), cursor: at(10), history: history, knownOutside: []) == .fallback)
+        #expect(IssueStore.feedPlan(feed([]), cursor: at(10), history: history, knownOutside: ["client/app"]) == .fallback)
+    }
+
+    @Test func anEmptyFeedMeansNothingChangedNotAFallback() {
+        let history = IssueHistory(orgLogin: "acme", coveredFrom: at(0), syncedAt: at(30), openFetchedAt: at(30), issues: [:])
+        #expect(IssueStore.feedPlan(feed([]), cursor: at(10), history: history, knownOutside: []) == .fetch([]))
+    }
+
+    @Test func theWorkLogTakesTheAccountsOwnPRsOnly() {
+        let history = WorkLogHistory(orgLogin: "acme", coveredFrom: at(0), fetchedAt: at(30), pullRequests: [
+            "held": logged("held", updated: 20), "unknown": logged("unknown", updated: nil),
+        ])
+        let feed = feed([
+            entry("held", 20), entry("unknown", 21), entry("fresh", 22), entry("issue", 23, kind: .issue),
+            entry("elsewhere", 24, repo: "client/app", outside: true),
+        ], outside: ["client/app"])
+        guard case .fetch(let entries) = WorkLogStore.feedPlan(feed, cursor: at(10), history: history) else {
+            Testing.Issue.record("expected a plan")
+            return
+        }
+        #expect(Set(entries.map(\.id)) == ["unknown", "fresh"])
+        #expect(WorkLogStore.feedPlan(nil, cursor: at(10), history: history) == .fallback)
+    }
+
     // MARK: the workload snapshot
 
     private func pr(_ id: String, state: String = "OPEN", updated: Double, merged: Double? = nil, repo: String = "acme/api") -> PullRequest {

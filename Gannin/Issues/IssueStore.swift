@@ -100,15 +100,8 @@ final class IssueStore {
         var feedIDs: [String]?
         if let changedSince, let history {
             let known = Set(knownBatches.joined())
-            let feed = await ChangeFeeds.shared.current(
-                org: org, api: api, outside: unreadableOutsideRepos(org) == nil ? nil : searchableOutside, cursor: changedSince
-            )
-            let plan = ChangeFeed.plan(
-                feed: feed, cursor: changedSince,
-                include: { $0.kind == .issue && (!$0.isOutside || known.contains($0.repo)) },
-                stored: { history.issues[$0]?.updatedAt }
-            )
-            if case .fetch(let entries) = plan {
+            let feed = await ChangeFeeds.shared.current(org: org, api: api, outside: known, cursor: changedSince)
+            if case .fetch(let entries) = Self.feedPlan(feed, cursor: changedSince, history: history, knownOutside: known) {
                 feedIDs = entries.map(\.id)
                 searchChangedSince = nil
             }
@@ -232,6 +225,16 @@ final class IssueStore {
             searches.append(IssueSearch(kind: .open, query: "\(batchScope(batch)) is:open", repos: Set(batch)))
         }
         return searches
+    }
+
+    /// The issues to fetch from `feed`, or a fallback to this store's own
+    /// changes search. An issue whose `updatedAt` is already held isn't fetched.
+    static func feedPlan(_ feed: ChangeFeed?, cursor: Date, history: IssueHistory, knownOutside: Set<String>) -> ChangeFeed.Plan {
+        ChangeFeed.plan(
+            feed: feed, cursor: cursor, needing: knownOutside,
+            include: { $0.kind == .issue && (!$0.isOutside || knownOutside.contains($0.repo)) },
+            stored: { history.issues[$0]?.updatedAt }
+        )
     }
 
     /// Whether an `is:open` search's result is GitHub's 1000-result cap

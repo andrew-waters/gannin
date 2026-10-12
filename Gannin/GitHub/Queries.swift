@@ -81,7 +81,7 @@ extension GitHubAPI {
         // back as far as `changesSince`.
         var fromFeed: FeedChanges?
         if let changesSince, let previous {
-            let feed = await ChangeFeeds.shared.current(org: org, api: self, outside: searchableOutside, cursor: changesSince, run: run)
+            let feed = await ChangeFeeds.shared.current(org: org, api: self, outside: knownOutside, cursor: changesSince, run: run)
             fromFeed = Self.feedChanges(feed, since: changesSince, previous: previous, knownOutside: knownOutside)
         }
 
@@ -554,7 +554,7 @@ extension GitHubAPI {
         for pr in previous.mergedPullRequests { held[pr.id] = pr.updatedAt }
         for issue in previous.issues { held[issue.id] = issue.updatedAt }
         let plan = ChangeFeed.plan(
-            feed: feed, cursor: since,
+            feed: feed, cursor: since, needing: knownOutside,
             include: { !$0.isOutside || knownOutside.contains($0.repo) },
             stored: { held[$0] }
         )

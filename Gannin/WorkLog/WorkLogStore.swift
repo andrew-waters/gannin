@@ -72,13 +72,8 @@ final class WorkLogStore {
             if auth.shouldFetch(.workLog, since: history.fetchedAt, now: now, force: force) {
                 // From the change feed when it can say; its own search is the fallback.
                 let cursor = history.fetchedAt.addingTimeInterval(-Self.overlap)
-                let feed = await ChangeFeeds.shared.current(org: org, api: api, outside: nil, cursor: cursor)
-                let plan = ChangeFeed.plan(
-                    feed: feed, cursor: cursor,
-                    include: { $0.kind == .pullRequest && !$0.isOutside },
-                    stored: { history.pullRequests[$0]?.updatedAt }
-                )
-                if case .fetch(let entries) = plan {
+                let feed = await ChangeFeeds.shared.current(org: org, api: api, cursor: cursor)
+                if case .fetch(let entries) = Self.feedPlan(feed, cursor: cursor, history: history) {
                     feedIDs = entries.map(\.id)
                 } else {
                     searches.append(GitHubAPI.workLogSearch(org: org, from: cursor))
@@ -124,6 +119,17 @@ final class WorkLogStore {
             run.finish(error: error)
             errors[org] = error.localizedDescription
         }
+    }
+
+    /// The PRs to fetch from `feed`, or a fallback to the work log's own
+    /// search, which covers only the account's own repos. A PR whose
+    /// `updatedAt` is already held isn't fetched.
+    static func feedPlan(_ feed: ChangeFeed?, cursor: Date, history: WorkLogHistory) -> ChangeFeed.Plan {
+        ChangeFeed.plan(
+            feed: feed, cursor: cursor,
+            include: { $0.kind == .pullRequest && !$0.isOutside },
+            stored: { history.pullRequests[$0]?.updatedAt }
+        )
     }
 
     /// Runs the searches in parallel, reporting PRs fetched across them all.

@@ -47,14 +47,17 @@ nonisolated struct ChangeFeed: Sendable {
     /// What a store needs fetched: entries updated since `cursor` that
     /// `include` accepts, leaving out any whose `updatedAt` the store already
     /// holds (`stored`). Falls back with no feed (its search failed or was
-    /// capped, which empties the feed) or one that doesn't reach back to `cursor`.
+    /// capped, which empties the feed), one that doesn't reach back to
+    /// `cursor`, or one that doesn't cover every outside repo the store
+    /// needs (`needing`), whose changes it would otherwise miss.
     static func plan(
         feed: ChangeFeed?,
         cursor: Date,
+        needing: Set<String> = [],
         include: (ChangeEntry) -> Bool = { _ in true },
         stored: (String) -> Date?
     ) -> Plan {
-        guard let feed, feed.coveredFrom <= cursor else { return .fallback }
+        guard let feed, feed.coveredFrom <= cursor, needing.isSubset(of: feed.outsideRepos) else { return .fallback }
         let wanted = feed.entries.values.filter { entry in
             guard entry.updatedAt >= cursor, include(entry) else { return false }
             return stored(entry.id).map { $0 < entry.updatedAt } ?? true
@@ -113,29 +116,39 @@ final class ChangeFeeds {
     /// The org's feed, brought up to date unless a run is under way (awaited)
     /// or just finished; nil when the search failed, so a store falls back.
     /// `cursor` is the caller's own, which sets how far back a first run
-    /// searches. `outside` is the outside repos to cover, nil to leave as
-    /// they are (the work log only reads the account's own). `run` shows the
-    /// search as a step of the caller's sync when this call is the one that starts it.
-    func current(org: String, api: GitHubAPI, outside: Set<String>?, cursor: Date, run: SyncRun? = nil) async -> ChangeFeed? {
-        if let task = running[org] { return await task.value }
-        let now = Date.now
-        if let feed = feeds[org], now.timeIntervalSince(feed.lastRunAt) < Self.freshFor, outside.map({ $0 == feed.outsideRepos }) ?? true {
+    /// searches. `outside` is the outside repos the caller needs covered
+    /// (none for the work log, which only reads the account's own): a feed
+    /// that covers more is reused, one that covers fewer is extended, so
+    /// stores with different views of which repos are readable don't undo
+    /// each other. `run` shows the search as a step of the caller's sync when
+    /// this call is the one that starts it.
+    func current(org: String, api: GitHubAPI, outside: Set<String> = [], cursor: Date, run: SyncRun? = nil) async -> ChangeFeed? {
+        // A run already under way may cover fewer repos than this caller
+        // needs, so wait for it and then look again.
+        for _ in 0..<2 {
+            if let task = running[org] {
+                if let feed = await task.value, outside.isSubset(of: feed.outsideRepos) { return feed }
+                continue
+            }
+            if let feed = feeds[org], Date.now.timeIntervalSince(feed.lastRunAt) < Self.freshFor, outside.isSubset(of: feed.outsideRepos) {
+                return feed
+            }
+            let task = Task { await self.refresh(org: org, api: api, outside: outside, cursor: cursor, run: run) }
+            running[org] = task
+            let feed = await task.value
+            running[org] = nil
             return feed
         }
-        let task = Task { await self.refresh(org: org, api: api, outside: outside, cursor: cursor, run: run) }
-        running[org] = task
-        let feed = await task.value
-        running[org] = nil
-        return feed
+        return nil
     }
 
     func clear() {
         feeds = [:]
     }
 
-    private func refresh(org: String, api: GitHubAPI, outside: Set<String>?, cursor: Date, run: SyncRun?) async -> ChangeFeed? {
+    private func refresh(org: String, api: GitHubAPI, outside: Set<String>, cursor: Date, run: SyncRun?) async -> ChangeFeed? {
         let previous = feeds[org]
-        let outsideRepos = outside ?? previous?.outsideRepos ?? []
+        let outsideRepos = outside.union(previous?.outsideRepos ?? [])
         let now = Date.now
         let continuing = previous?.outsideRepos == outsideRepos
         let since = continuing

@@ -23,7 +23,7 @@ paths:
 
 ## Change feed
 - `OrgStore`, `IssueStore` and `WorkLogStore` ask `ChangeFeeds` (one in-memory log per org) what changed and fetch those node IDs in their own shape, never running their own "updated since" search while it can answer. Never advance one shared cursor instead of keeping the log: stores sync on different schedules, and one that last ran an hour ago would miss what a cursor had moved past.
-- A store falls back to its own changes search when `ChangeFeed.plan` says so: the feed's search failed, hit GitHub's 1000-result cap (the feed empties and restarts from now), or starts after the store's cursor (a fresh launch, or the outside repos changed). Keep that search working.
+- A store falls back to its own changes search when `ChangeFeed.plan` says so: the feed's search failed, hit GitHub's 1000-result cap (the feed empties and restarts from now), starts after the store's cursor (a fresh launch), or doesn't cover every outside repo the store needs. Keep that search working. The feed's outside repos only grow (callers' needs are unioned), so stores that see different readable repos don't reset each other's feed; `AuthStore.signOut` clears it.
 - A store skips an entry whose `updatedAt` it already holds, so keep `updatedAt` on what it stores. `OrgStore` still refetches open PRs, whose checks change without `updatedAt` moving.
 - Await the feed only after the store's `syncing` flag is set, or a second sync can start while it runs. The feed's cost is charged to `.changeFeed`.
 
