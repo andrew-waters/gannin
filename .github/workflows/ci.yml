@@ -44,14 +44,19 @@ jobs:
         run: |
           relevant=true
           if [ "$EVENT" = "pull_request" ]; then
-            others=$(git diff --name-only --no-renames "$BASE...$HEAD" | grep -vE '^(CHANGELOG\.md|\.gannin/)' || true)
+            # A failed diff (a commit missing from the clone, no merge base)
+            # must not read as "nothing else changed".
+            changed=$(git diff --name-only --no-renames "$BASE...$HEAD") || { echo "git diff failed; running CI"; changed=x; }
+            others=$(printf '%s\n' "$changed" | grep -vE '^(CHANGELOG\.md$|\.gannin/)' || true)
             [ -z "$others" ] && relevant=false
           fi
           echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
 
   build:
     needs: changes
-    if: needs.changes.outputs.relevant == 'true'
+    # Runs unless `changes` positively said to skip: if it failed, its output
+    # is empty, and a skipped `build` would satisfy the ruleset unbuilt.
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     # The app targets macOS 26, so its SDK, so a Tahoe runner.
     runs-on: macos-26
 
@@ -118,7 +123,7 @@ jobs:
   # Settings views must be named on its Settings reference page.
   docs:
     needs: changes
-    if: needs.changes.outputs.relevant == 'true'
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     runs-on: ubuntu-latest
 
     steps:
