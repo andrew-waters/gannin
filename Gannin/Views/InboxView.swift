@@ -620,7 +620,9 @@ struct Inbox {
     static func otherReviews(_ pr: PullRequest, excluding login: String?) -> String {
         let verbs = ["APPROVED": "approved", "CHANGES_REQUESTED": "changes requested", "COMMENTED": "commented"]
         let names = Dictionary(pr.reviewers.map { ($0.login, $0.displayName) }, uniquingKeysWith: { first, _ in first })
-        let others = pr.humanReviewStates.filter { $0.key != login && $0.key != pr.author?.login }
+        let others = pr.humanReviewStates.filter { reviewer in
+            ![login, pr.author?.login].contains { $0?.caseInsensitiveCompare(reviewer.key) == .orderedSame }
+        }
         return verbs.keys.sorted().compactMap { state in
             let who = others.filter { $0.value == state }.keys.sorted().map { names[$0] ?? $0 }
             return who.isEmpty ? nil : "\(verbs[state]!) by \(who.joined(separator: " and "))"
