@@ -325,18 +325,24 @@ extension SessionStore {
     /// What the author has seen decides the wording: a review that was never
     /// posted isn't one they can be told has "not changed".
     static func lookAgainPrompt(_ pr: PullRequestReference, because reasons: String, wasPosted: Bool, learned: String) -> String {
-        let earlier = wasPosted
-            ? """
+        let opening: String
+        let earlier: String
+        if wasPosted {
+            opening = "Since your last review of \(pr.repo)#\(pr.number), \(reasons). Fetch the PR again with its comments and review it as it is now."
+            earlier = """
                 Answer what the comments ask of you. Leave out findings from your earlier review that still stand unchanged, and say in the \
                 summary which of them are now dealt with, and list their threads in `resolved`.
                 """
-            : """
-                Your earlier review was never posted, so the author hasn't seen it. Review the PR as it is now as if for the first time: keep \
-                the findings that still stand, answer what the comments ask of you, and write a summary that stands alone. Don't refer to \
+        } else {
+            opening = "Review \(pr.repo)#\(pr.number) as it is now; \(reasons). Fetch the PR again with its comments."
+            earlier = """
+                Your earlier review was never posted, so the author hasn't seen it. Review the PR as if for the first time: keep the \
+                findings that still stand, answer what the comments ask of you, and write a summary that stands alone. Don't refer to \
                 your earlier review or say that nothing has changed.
                 """
+        }
         return """
-            Since your last review of \(pr.repo)#\(pr.number), \(reasons). Fetch the PR again with its comments and review it as it is now. \
+            \(opening) \
             \(earlier)\(learned)
 
             End the same way with the fenced JSON block.

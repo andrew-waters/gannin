@@ -18,6 +18,7 @@ struct LookAgainPromptTests {
     @Test func unpostedReviewIsRedoneAsAFirstReview() {
         let prompt = SessionStore.lookAgainPrompt(pr, because: "new commits have been pushed", wasPosted: false, learned: "")
         #expect(prompt.contains("never posted"))
+        #expect(!prompt.contains("Since your last review"))
         #expect(prompt.contains("keep the findings that still stand"))
         #expect(!prompt.contains("Leave out findings"))
     }
