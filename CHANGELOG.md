@@ -40,11 +40,19 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Post automatic reviews in Settings › Harness: each project can say on, off or as in Settings, instead of every project following the one Mac-wide choice
 - Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
+- A scheduling board under Agents › Queue and on each queue window's page: drag open issues onto the coming week's windows to queue them, onto Pinned to pin them to a time, or back to unschedule them, and see where each queued issue should run
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
 - A harness commit to a repo whose rules require a pull request now goes through a new branch and a pull request, merged right away when GitHub will have it (which includes anyone who can bypass the rule); otherwise the pull request is left open and a notification says why
 
 ### Fixed
 - The Docs links in gannin.ai's header and footer now open the documentation at gannin.ai/docs; they went nowhere before
+
+### Changed
+- A scheduled run for an issue that already has a session carries on in that session instead of failing
+
+### Fixed
+- Issues › All no longer crashes when you expand an issue with sub-issues after scheduling one for an agent
+- An issue's Queued for Agent mark no longer vanishes when its queue window starts it: it shows Agent Working (or Agent Needs You) while the session runs
 
 ## [0.0.2] - 2026-10-05
 

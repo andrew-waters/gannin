@@ -21,9 +21,13 @@ Scheduled Claude Code sessions, run only while Gannin is open and awake. All use
 ## Runs
 - Never let a run past auto mode failing do anything: end the session and fail the run with the reason (`startUnattended`).
 - Enforce the limit with `--disallowedTools` (`RoutineRunInfo.disallowedTools`): Local only blocks `git push`, `gh pr create`, `gh pr ready`; Draft PR blocks `gh pr ready`; a report also blocks `git commit`; always block `gh pr merge`. The brief must tell claude nobody is watching.
-- An issue that already has a session fails the run rather than starting a second.
+- An issue that already has a session carries on in it (`resumeIssueRun`), never a second session: leave it while it's mid-turn or asking and try later. Mark the run `resumed` so replies from before don't count, and hand the session back (`handBack`, `routineRun` cleared) when the run finishes, stops at its limit or is lost.
 - Over its time or cost limit, interrupt, end claude and helpers, and keep the worktree and files (`stopAtLimit`). Cost is the session's plus its helpers' transcripts.
 
+## Queue and board
+- `ScheduleProjection` gives every run its window's whole limit, so projected times are the latest, not the likeliest.
+- `ScheduledForAgentPill` takes `RoutineStore` as a parameter: a table's cells are rebuilt without the page's environment objects, so reading it from the environment crashes Issues › All.
+
 ## Testing
-- `RoutineScheduleTests` (includes `CronExpression`), `RoutineSchedulerTests`, `RoutineRunsTests`, `RoutineStoreTests`.
+- `RoutineScheduleTests` (includes `CronExpression`), `RoutineSchedulerTests`, `RoutineRunsTests`, `RoutineStoreTests`, `ScheduleBoardTests`.
 - Starting a real run needs claude (and a sandbox for sandboxed runs); the tests cover planning and verdicts only.

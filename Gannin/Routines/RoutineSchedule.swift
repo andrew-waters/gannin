@@ -122,6 +122,30 @@ enum RoutineSchedule: Codable, Hashable {
         return opens(on: date) && now >= window.start.minutes && now < window.end.minutes
     }
 
+    /// A queue window's open hours that overlap `range`, soonest first and
+    /// cut to it, as `isOpen` judges them: each from its start on a day it
+    /// opens to its end that day (or the next, past midnight). Other
+    /// schedules have none.
+    func openIntervals(in range: DateInterval, calendar: Calendar = .current, isWorkingDay: WorkingDays = everyWeekday) -> [DateInterval] {
+        guard case .window(let window) = self else { return [] }
+        var intervals: [DateInterval] = []
+        // From the day before, for a window still open past midnight.
+        guard var day = calendar.date(byAdding: .day, value: -1, to: calendar.startOfDay(for: range.start)) else { return [] }
+        while day < range.end {
+            let opens = window.days.map { $0.contains(calendar.component(.weekday, from: day)) } ?? isWorkingDay(day)
+            if opens, let start = window.start.on(day, calendar: calendar),
+               let endDay = window.crossesMidnight ? calendar.date(byAdding: .day, value: 1, to: day) : day,
+               let end = window.end.on(endDay, calendar: calendar), end > start {
+                // DateInterval traps on an end before its start.
+                let from = max(start, range.start), to = min(end, range.end)
+                if to > from { intervals.append(DateInterval(start: from, end: to)) }
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return intervals
+    }
+
     /// The day's time on each matching day after `date`, up to two years on.
     private static func days(after date: Date, count: Int, at time: TimeOfDay, calendar: Calendar, matching: (Date) -> Bool) -> [Date] {
         var times: [Date] = []
