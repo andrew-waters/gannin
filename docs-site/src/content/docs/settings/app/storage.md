@@ -46,7 +46,7 @@ Each project keeps its own logins, cookies and storage for the pages its [Design
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Projects signed in | None | Shows how many projects keep logins for their pages. Read only. Sign Out of Pages here sets it back to none. | This Mac |
+| Projects signed in | None | Shows how many projects keep logins for their pages. Read only. Sign Out of Pages here sets it back to none, except for a project whose session has its page open now: that project keeps its store, emptied, and is still counted. | This Mac |
 | Sign Out of Pages | Not applicable | Forgets the logins, cookies and storage of every project's Design and Refine pages, after you confirm. Each session can also sign out of its own project's pages from its **⋯** menu. | This Mac |
 
 ## Erase Everything and Sign Out

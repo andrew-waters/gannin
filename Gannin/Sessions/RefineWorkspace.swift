@@ -35,12 +35,17 @@ enum RefineWebStore {
 
     /// Settings › Storage, and Erase Everything: signs out of every
     /// project's pages and forgets their stores, so each starts afresh. A
-    /// store a page has open can't be removed yet; its data is gone anyway.
+    /// store a page has open can't be removed yet, so it's kept (emptied)
+    /// for that page and its own Sign Out of Pages.
     static func signOutAll() async {
-        let ids = identifiers.values.compactMap(UUID.init(uuidString:))
-        for repo in projects { await signOut(repo) }
-        identifiers = [:]
-        for id in ids { try? await WKWebsiteDataStore.remove(forIdentifier: id) }
+        for repo in projects {
+            await signOut(repo)
+            guard let id = identifiers[repo].flatMap(UUID.init(uuidString:)) else { continue }
+            do {
+                try await WKWebsiteDataStore.remove(forIdentifier: id)
+                identifiers[repo] = nil
+            } catch {}
+        }
     }
 
     private static func clear(_ store: WKWebsiteDataStore) async {

@@ -128,7 +128,7 @@ struct RefineAgreeSheet: View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Toggle("", isOn: draft.include).labelsHidden().checkboxToggle()
-                    .disabled(draft.wrappedValue.made != nil)
+                    .disabled(draft.wrappedValue.made != nil || info?.agreed != nil)
                 TextField("Title", text: draft.title, prompt: Text("Title"))
                     .labelsHidden()
                     .fontWeight(.medium)
@@ -247,6 +247,9 @@ struct RefineAgreeSheet: View {
                               title: RefineDocuments.title(finding.note), body: "")
             draft.body = RefineDocuments.issueDescription(finding, info: info)
             draft.made = made[finding.id.uuidString]
+            // Once agreed, the findings left out stay out: a second go only
+            // retries the board.
+            if info.agreed != nil { draft.include = draft.made != nil }
             return draft
         }
         ticked = linked.union((info.committed ?? []).compactMap(UUID.init(uuidString:)))
@@ -287,7 +290,7 @@ struct RefineAgreeSheet: View {
             boardProblems.append("The workflow board isn't loaded, so the issues weren't added to it. Open the project's board, then Agree and Write again.")
         }
 
-        for index in drafts.indices where drafts[index].include && drafts[index].made == nil {
+        for index in drafts.indices where info.agreed == nil && drafts[index].include && drafts[index].made == nil {
             let draft = drafts[index]
             drafts[index].failed = nil
             drafts[index].boardWarning = nil
@@ -296,7 +299,8 @@ struct RefineAgreeSheet: View {
             do {
                 let created = try await api.createIssue(repo: draft.repo, title: draft.title, body: body, labels: labels(draft.labels))
                 let issue = RefineInfo.MadeIssue(id: created.id, reference: "\(draft.repo)#\(created.number)", url: created.url,
-                                                 screenshots: shots.map(\.id.uuidString), onBoard: false)
+                                                 screenshots: shots.map(\.id.uuidString),
+                                                 onBoard: boardNumber == nil ? nil : false)
                 drafts[index].made = issue
                 remember(issue, for: draft.finding.id)
             } catch {

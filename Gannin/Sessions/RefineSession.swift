@@ -97,7 +97,8 @@ struct RefineInfo: Codable, Hashable {
         var reference: String
         var url: URL
         var screenshots: [String]? = nil
-        /// Added to the workflow board; false when that failed, to retry.
+        /// Added to the workflow board; false when that failed, to retry,
+        /// and nil when the project has no workflow board.
         var onBoard: Bool? = nil
     }
 }
