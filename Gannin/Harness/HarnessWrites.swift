@@ -66,7 +66,6 @@ extension HarnessStore {
             guard let planned = try await change(head.commit) else { return nil }
             do {
                 let key = "\(setup.repo)@\(head.branch)"
-                var cacheOnSuccess = false
                 if !guessedPullRequest, !(await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch)) {
                     do {
                         let commit = try await api.createCommit(repo: setup.repo, branch: head.branch, expectedHead: head.commit, change: planned)
@@ -78,12 +77,14 @@ extension HarnessStore {
                         // A ruleset refusal that doesn't name a pull request
                         // may be for another rule, or a one-off such as a file
                         // size limit, so it's only remembered once a pull
-                        // request has worked.
-                        if error.namesPullRequest { pullRequestRequired[key] = true } else { cacheOnSuccess = true; guessedPullRequest = true }
+                        // request has worked. `guessedPullRequest` carries
+                        // that past a stale-head retry so the retry neither
+                        // repeats the refused commit nor loses the guess.
+                        if error.namesPullRequest { pullRequestRequired[key] = true } else { guessedPullRequest = true }
                     }
                 }
                 let result = try await commitViaPullRequest(api: api, setup: setup, base: head, change: planned)
-                if cacheOnSuccess { pullRequestRequired[key] = true }
+                if guessedPullRequest { pullRequestRequired[key] = true }
                 if refreshing, result.onBase { Task { await load(org: org, setup: setup, force: true, expecting: result.commit) } }
                 return result.commit
             } catch let error as APIError where error.isStaleHead && attempt == 0 {
