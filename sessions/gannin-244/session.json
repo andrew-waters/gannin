@@ -1,6 +1,7 @@
 {
   "box" : "Anius",
   "branch" : "244-give-the-header-s-status-a-fixed-size",
+  "finishedAt" : "2026-10-12T12:09:56Z",
   "issue" : "andrew-waters/gannin#244",
   "pullRequests" : [
 
