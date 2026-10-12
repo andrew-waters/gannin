@@ -759,6 +759,7 @@ struct PullRequestReviewView: View {
     /// enabled until claude's state turns to working, so a second click in
     /// that gap would paste the prompt twice.
     @State private var reviewingAgain = false
+    @State private var headerWidth: CGFloat = 0
     /// The PR's state on GitHub (conflicts, checks, review decision, open
     /// threads), for whether it can merge.
     @State private var status: SessionPullRequest?
@@ -981,15 +982,15 @@ struct PullRequestReviewView: View {
                 .disabled(pullRequest == nil || (review == nil && draft.comments.isEmpty))
         }
         return VStack(alignment: .leading, spacing: 10) {
-            // Side by side when the controls fit on one line beside the
-            // title, else stacked. The title is capped so a long one doesn't
-            // push the controls below it on every window.
-            ViewThatFits(in: .horizontal) {
+            // Chosen from the window's width alone, never from what's loaded
+            // (the diff's meta items, the Posted link), so nothing flips the
+            // layout when they appear.
+            if headerWidth >= Self.sideBySideWidth {
                 HStack(alignment: .top, spacing: 16) {
-                    titleBlock.frame(maxWidth: Self.titleWidth, alignment: .leading)
-                    Spacer(minLength: 0)
+                    titleBlock.frame(width: Self.titleWidth, alignment: .leading)
                     controls
                 }
+            } else {
                 VStack(alignment: .leading, spacing: 10) {
                     titleBlock
                     controls
@@ -1014,6 +1015,7 @@ struct PullRequestReviewView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { headerWidth = $0 }
         .padding(14)
         .background(.bar)
     }
@@ -1023,6 +1025,9 @@ struct PullRequestReviewView: View {
     private static let statusWidth: CGFloat = 280
 
     private static let titleWidth: CGFloat = 360
+
+    /// The header width from which the controls sit beside the title.
+    private static let sideBySideWidth: CGFloat = 1100
 
     @ViewBuilder
     private func status(state: SessionState, transcript: SessionTranscript?, hasReview: Bool) -> some View {
