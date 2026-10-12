@@ -69,7 +69,7 @@ enum HarnessSkeleton {
 
                 ## Documents
 
-                Every requirement, plan, finding and skill starts with YAML front matter (`type`, `status`,
+                Every requirement, plan, decision, finding and skill starts with YAML front matter (`type`, `status`,
                 `summary`, `domains`, `issues`, and for plans `touches`), as `STANDARDS.md` sets out. Scout
                 by front matter first: read the summaries, and open a document only when one says it
                 matters.
@@ -78,6 +78,8 @@ enum HarnessSkeleton {
 
                 - `requirements/<module>/`: what a feature must do (`_template.md`).
                 - `plans/`: every plan, dated (`YYYY-MM-DD-slug.md`), from `_template.md`.
+                - `decisions/`: decision records (ADRs), what was decided and why, dated
+                  (`decisions/README.md`).
                 - `findings/`: investigations and what they found, dated (`YYYY-MM-DD-topic.md`).
                 - `skills/`: reusable workflows for Claude Code (`skills/README.md`).
                 - `prompts/`: the team's prompts for Claude Code sessions, offered by Gannin when work, a
@@ -99,7 +101,7 @@ enum HarnessSkeleton {
             "STANDARDS.md": """
                 # Document standards
 
-                Every requirement, plan, finding and skill starts with YAML front matter: the facts about
+                Every requirement, plan, decision, finding and skill starts with YAML front matter: the facts about
                 it that people, scouts and tools (Gannin) read without opening the whole document. GitHub
                 shows it as a table at the top of the file.
 
@@ -117,7 +119,7 @@ enum HarnessSkeleton {
 
                 | Field | For | What it holds |
                 | ----- | --- | ------------- |
-                | `type` | all | `requirement`, `plan`, `finding`, `skill`, `learning` or `refine` |
+                | `type` | all | `requirement`, `plan`, `decision`, `finding`, `skill`, `learning` or `refine` |
                 | `status` | all but skills | One value from the list below, never a sentence |
                 | `summary` | all | A sentence or two for deciding whether to open it, as a `>` block |
                 | `domains` | all | The product areas it belongs to, from the list below, the main one first |
@@ -126,11 +128,14 @@ enum HarnessSkeleton {
                 | `owner` | optional | The GitHub login driving it |
                 | `repo`, `paths`, `commit`, `source`, `author` | learnings | See `learnings/README.md` |
                 | `url`, `attendees` | refines | See `refines/README.md` |
+                | `superseded_by`, `plans` | decisions | See `decisions/README.md` |
+                | `key` | optional | `true` puts it first in its area on Gannin's Onboarding map |
 
                 Statuses:
 
                 - Requirements: `draft`, `in-progress`, `done`
                 - Plans: `draft`, `agreed`, `in-progress`, `blocked`, `done`, `abandoned`
+                - Decisions: `proposed`, `accepted`, `rejected`, `superseded`
                 - Findings: `open`, `investigating`, `fixing`, `fixed`, `wont-fix`, with a `severity` of
                   `low`, `medium`, `high` or `critical`
                 - Learnings: `active`, `retired`
@@ -141,6 +146,7 @@ enum HarnessSkeleton {
                 ```
                 requirements/<module>/<feature>.md
                 plans/YYYY-MM-DD-<slug>.md
+                decisions/YYYY-MM-DD-<slug>.md
                 findings/YYYY-MM-DD-<slug>.md
                 skills/<name>.md
                 prompts/<name>.md
@@ -236,6 +242,58 @@ enum HarnessSkeleton {
                 ## Mechanism
 
                 ## Blast radius
+
+                """,
+            "decisions/README.md": """
+                # Decisions
+
+                Decision records (ADRs): one decision the team made, and why, so someone new can understand it
+                without asking. One file each, `YYYY-MM-DD-<slug>.md`, from `_template.md`, with the front matter
+                `STANDARDS.md` sets out. Gannin's Harness › Onboarding puts accepted decisions first in each
+                area, and folds superseded and rejected ones away.
+
+                | Field | What it holds |
+                | ----- | ------------- |
+                | `type` | `decision` |
+                | `status` | `proposed`, `accepted`, `rejected` or `superseded` |
+                | `summary` | The decision, in a sentence or two |
+                | `domains` | The areas it belongs to, the main one first |
+                | `superseded_by` | For a superseded decision, the path of the one that replaced it |
+                | `plans` | The plans it came from, by path |
+                | `key` | `true` to put it at the top of its area on the Onboarding map |
+                | `issues` | The issues it's about, as `owner/repo#123` |
+
+                Don't rewrite an accepted decision when things change: write a new one, and mark the old one
+                `superseded` with `superseded_by` pointing at it.
+
+                """,
+            "decisions/_template.md": """
+                ---
+                type: decision
+                status: proposed
+                summary: >
+                  {The decision, in a sentence or two.}
+                domains: [{domain}]
+                plans: [plans/{date}-{slug}.md]
+                ---
+
+                # {The decision, as a short statement}
+
+                ## Context
+
+                {What forced a choice: the problem, the constraints, what mattered.}
+
+                ## Decision
+
+                {What was decided, in a sentence or two.}
+
+                ## Alternatives considered
+
+                - **{An alternative}**: {why it wasn't chosen.}
+
+                ## Consequences
+
+                {What follows from it, good and bad, and what it rules out.}
 
                 """,
             "findings/README.md": """

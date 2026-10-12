@@ -98,4 +98,14 @@ struct HarnessDecisionsTests {
         draft.supersededBy = "decisions/y.md"
         #expect(!draft.fileText.contains("superseded_by"))
     }
+
+    @Test func newHarnessesHaveTheFolder() {
+        let files = HarnessSkeleton.files(org: "acme", repo: "acme/harness", projects: ["acme/app"])
+        #expect(files["decisions/README.md"] != nil)
+        let template = files["decisions/_template.md"].flatMap { $0 } ?? ""
+        #expect(template.contains("type: decision"))
+        #expect(HarnessDocumentDraft.templateBody(template)?.contains("## Alternatives considered") == true)
+        #expect(HarnessTour.layout.contains { $0.name == "decisions/" })
+        #expect((files["STANDARDS.md"].flatMap { $0 } ?? "").contains("superseded_by"))
+    }
 }
