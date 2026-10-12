@@ -1,0 +1,16 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "findings" : [
+
+  ],
+  "merged_at" : "2026-10-11T19:48:53Z",
+  "number" : 225,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-11T18:06:32Z",
+  "state" : "MERGED",
+  "title" : "Share one write of Sessions.json between close-together saves",
+  "updated_at" : "2026-10-12T17:09:31Z",
+  "verdict" : "approve"
+}
