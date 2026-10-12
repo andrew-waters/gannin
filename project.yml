@@ -15,6 +15,10 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.9.4
+  # Syntax colours for the code in a pull request's diff.
+  HighlighterSwift:
+    url: https://github.com/smittytone/HighlighterSwift
+    from: 3.1.0
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -34,6 +38,8 @@ targets:
     dependencies:
       - package: SwiftTerm
       - package: Sparkle
+      - package: HighlighterSwift
+        product: Highlighter
     scheme:
       testTargets:
         - GanninTests
