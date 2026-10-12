@@ -523,7 +523,7 @@ struct SectionHeader: View {
     }
 }
 
-struct ItemHeader: View {
+struct ItemHeader<Accessory: View>: View {
     @Environment(\.isInDrawer) private var isInDrawer
     let title: String
     let reference: String
@@ -531,7 +531,7 @@ struct ItemHeader: View {
     /// Left out where the page shows its status elsewhere.
     let pill: Pill?
     /// Shown after the pill, such as whether an agent has the issue scheduled.
-    var accessory: AnyView? = nil
+    @ViewBuilder var accessory: Accessory
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -541,7 +541,7 @@ struct ItemHeader: View {
                 .fixedSize(horizontal: false, vertical: true)
             // A drawer's bar has the reference and Open on GitHub.
             if isInDrawer {
-                if pill != nil || accessory != nil {
+                if pill != nil || Accessory.self != EmptyView.self {
                     HStack(spacing: 8) {
                         if let pill { pill }
                         accessory
@@ -560,6 +560,12 @@ struct ItemHeader: View {
             }
         }
         .padding(.vertical, 4)
+    }
+}
+
+extension ItemHeader where Accessory == EmptyView {
+    init(title: String, reference: String, url: URL, pill: Pill?) {
+        self.init(title: title, reference: reference, url: url, pill: pill) { EmptyView() }
     }
 }
 
