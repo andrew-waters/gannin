@@ -53,6 +53,16 @@ final class AuthStore {
     /// The same for the REST budget, which only the Actions sync spends.
     var shouldHoldOffREST: Bool { isRESTPaused || (restRateLimit?.isLow ?? false) }
 
+    /// Sets the budget state `rateLimit`, `restRateLimit`, `pausedUntil` and
+    /// `restPausedUntil` normally only learn from a live response, so
+    /// `shouldHoldOff` and `shouldHoldOffREST` can be tested without one.
+    func setBudgetForTesting(rateLimit: RateLimit? = nil, restRateLimit: RateLimit? = nil, pausedUntil: Date? = nil, restPausedUntil: Date? = nil) {
+        self.rateLimit = rateLimit
+        self.restRateLimit = restRateLimit
+        self.pausedUntil = pausedUntil
+        self.restPausedUntil = restPausedUntil
+    }
+
     init() {
         token = Keychain.token()
         if token != nil, let data = UserDefaults.standard.data(forKey: Self.viewerKey) {
@@ -77,6 +87,8 @@ final class AuthStore {
         restPausedUntil = nil
         grantedScopes = nil
         UserDefaults.standard.removeObject(forKey: Self.viewerKey)
+        Task { await RESTCache.shared.removeAll() }
+        ChangeFeeds.shared.clear()
     }
 
     /// Refreshes the cached profile. Signs out if GitHub rejects the token;

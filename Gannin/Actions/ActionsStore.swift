@@ -85,7 +85,7 @@ final class ActionsStore {
         let covered = history.repositories.values.allSatisfy { $0.coveredFrom <= start }
         if !force && isFresh && covered && !history.repositories.isEmpty { return }
         // Wait out a low budget unless asked, as long as there's history to show.
-        if !force && (auth.shouldHoldOffREST || auth.shouldHoldOff) && histories[org] != nil { return }
+        if auth.shouldWaitForBudget(force: force, hasData: histories[org] != nil, rest: true) { return }
 
         syncing.insert(org)
         defer { syncing.remove(org) }
@@ -323,20 +323,21 @@ final class ActionsStore {
         }
     }
 
-    static var cacheDirectory: URL { directory }
+    static var cacheDirectory: URL { cache.directory }
 
     func clear() {
         histories = [:]
         errors = [:]
-        try? FileManager.default.removeItem(at: Self.directory)
+        Self.cache.clear()
     }
 
     // MARK: Disk cache
 
+    private static let cache = OrgJSONCache(folder: "Actions")
+
     private func loadCached(_ org: String) {
         guard histories[org] == nil,
-              let data = try? Data(contentsOf: Self.fileURL(org)),
-              let history = try? Self.decoder.decode(ActionsHistory.self, from: data),
+              let history = Self.cache.load(ActionsHistory.self, org: org),
               history.version == ActionsHistory.currentVersion else {
             return
         }
@@ -344,29 +345,6 @@ final class ActionsStore {
     }
 
     private func save(_ history: ActionsHistory) {
-        if let data = try? Self.encoder.encode(history) {
-            try? data.write(to: Self.fileURL(history.orgLogin), options: .atomic)
-        }
-    }
-
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
-
-    private static var directory: URL {
-        URL.applicationSupportDirectory.appending(path: "Actions", directoryHint: .isDirectory)
-    }
-
-    private static func fileURL(_ org: String) -> URL {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        return directory.appending(path: "\(org).json")
+        Self.cache.save(history, org: history.orgLogin)
     }
 }

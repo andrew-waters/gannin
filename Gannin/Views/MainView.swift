@@ -40,11 +40,16 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case investments = "Investments"
     case projects = "Projects"
     case harness = "Harness"
+    /// The project's decisions, requirements and plans by area, first
+    /// under Harness.
+    case onboarding = "Onboarding"
     case views = "Views"
     /// The morning session with CS, under Meetings.
     case prioritisation = "Prioritisation"
     /// Planning with the team in the room, under Rituals.
     case planning = "Planning"
+    /// Stepping through a web page with the team, under Rituals.
+    case refine = "Design and Refine"
     /// What the team closed over its period, under Rituals.
     case recap = "Recap"
     /// The goals period by period, under Delivery.
@@ -96,9 +101,11 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .investments: "chart.pie"
         case .projects: "rectangle.split.3x1"
         case .harness: "text.book.closed"
+        case .onboarding: "map"
         case .views: "square.grid.3x3"
         case .prioritisation: "list.number"
         case .planning: "list.bullet.clipboard"
+        case .refine: "rectangle.and.pencil.and.ellipsis"
         case .recap: "calendar.badge.checkmark"
         case .scorecard: "target"
         case .agents: "questionmark.bubble"
@@ -1308,12 +1315,14 @@ struct OrgSidebar: View {
                     row(.recap)
                     row(.prioritisation)
                     row(.planning)
+                    row(.refine)
                     row(.hygiene)
                 }
 
                 // The team's knowledge.
                 if hasHarness {
                     Section("Harness", isExpanded: $harnessExpanded) {
+                        row(.onboarding)
                         ForEach(HarnessKind.allCases) { kind in
                             Label(kind.rawValue, systemImage: kind.systemImage)
                                 .badge(harnessCount(kind))
@@ -1515,7 +1524,7 @@ struct OrgSidebar: View {
         case .agents:
             guard let selectedOrg else { return 0 }
             return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .views, .prioritisation, .planning, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
         case .routines:
             guard let selectedOrg else { return 0 }
             let ids = Set(routines.routines(for: selectedOrg).map(\.id))

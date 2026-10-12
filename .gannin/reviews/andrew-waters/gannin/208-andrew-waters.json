@@ -1,0 +1,16 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "findings" : [
+
+  ],
+  "merged_at" : "2026-10-12T07:08:58Z",
+  "number" : 208,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-10T22:35:40Z",
+  "state" : "MERGED",
+  "title" : "Link the site's Docs links to gannin.ai/docs",
+  "updated_at" : "2026-10-12T07:10:04Z",
+  "verdict" : "approve"
+}

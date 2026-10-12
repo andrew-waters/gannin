@@ -6,9 +6,11 @@ import SwiftUI
 /// elsewhere, and a team picked narrows it to issues assigned to its members.
 struct OpenIssuesView: View {
     @Environment(IssueStore.self) private var store
-    @Environment(RoutineStore.self) private var routines
     @Environment(HiddenStore.self) private var hidden
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(RoutineStore.self) private var routines
+    @Environment(SessionStore.self) private var sessions
+    @Environment(BankHolidayStore.self) private var holidays
     @Environment(\.openURL) private var openURL
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @AppStorage("showHidden") private var showHidden = false
@@ -65,6 +67,10 @@ struct OpenIssuesView: View {
         .workOnThis($workingOn)
         .sheet(item: $scheduling) { edited in
             RoutineEditor(routine: edited.routine, isNew: edited.isNew)
+                .environment(routines)
+                .environment(sessions)
+                .environment(configs)
+                .environment(holidays)
         }
         // A row picked opens in the drawer, as a list row did.
         .onChange(of: tableSelection) {
@@ -172,6 +178,9 @@ struct OpenIssuesView: View {
                 NewSubIssueItem(parent: reference)
                 WorkOnThisMenuItem(reference: reference, request: $workingOn)
                 Menu("Schedule for Agent") { ScheduleForAgentItems(reference: reference, editing: $scheduling) }
+                    .environment(routines)
+                    .environment(store)
+                    .environment(configs)
                 Button("Open on GitHub") { openURL(issue.url) }
             }
         } primaryAction: { ids in

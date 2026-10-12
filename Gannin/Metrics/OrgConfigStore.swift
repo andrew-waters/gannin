@@ -79,6 +79,29 @@ struct OrgConfig: Codable, Hashable {
     /// What views check a repo against: excluded, or outside the project.
     var repoExclusion: RepoExclusion { RepoExclusion(excluded: excludedRepos, focus: focusRepos, outside: outsideRepos) }
 
+    /// `repoExclusion`, but never letting an outside repo through even
+    /// when the project names it: for pages built on the issue history
+    /// that don't cover outside repos yet and show `outsideReposNotice`
+    /// (Issue flow, Investments, Recap, Scorecards, Standup) or are
+    /// reached from one (Weekly Digest's Shipped list, from PR flow), so
+    /// their data matches what that notice promises. Other issue history
+    /// readers (Issues › All, Not on a board, Views, the Dashboard's
+    /// committed-overdue flag, Inbox, Epics, Board Hygiene, Prioritisation,
+    /// Ask) show no such notice and pick up outside repos through
+    /// `repoExclusion` instead (andrew-waters/gannin#205).
+    func excludesForIssueHistoryPages(_ repo: String) -> Bool {
+        outsideRepos.contains(repo) || repoExclusion.contains(repo)
+    }
+
+    /// The window's project's own outside repos: empty unless it names
+    /// specific repos (naming none doesn't pick up another project's, as
+    /// `repoExclusion` already keeps out of the lists). Pages that don't
+    /// fetch outside repos say so with them (`outsideReposNotice`).
+    var projectOutsideRepos: Set<String> {
+        guard let repos = scope?.repos, !repos.isEmpty else { return [] }
+        return Set(repos).intersection(outsideRepos)
+    }
+
     /// Repos not to fetch CI runs for: excluded ones no project names, the
     /// same whichever project a window has picked.
     var unfetchedRepos: Set<String> { excludedRepos.subtracting(repoProjects.flatMap(\.repos)) }

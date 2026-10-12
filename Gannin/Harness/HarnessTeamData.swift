@@ -394,7 +394,8 @@ final class HarnessTeamStore {
     func data(for org: String, in setup: HarnessConfig) -> HarnessTeamData {
         let key = Self.key(org, setup)
         let index = harness.index(for: org, setup)
-        let stamp = "\(index?.commit ?? "")|\(index?.fetchedAt.timeIntervalSince1970 ?? 0)|\(revision)|\(pending[key]?.count ?? 0)"
+        // `fetchedAt` is left out: a fetch finding the same head changes nothing here.
+        let stamp = "\(index?.commit ?? "")|\(index?.dataFiles?.count ?? -1)|\(revision)|\(pending[key]?.count ?? 0)"
         if let cached = cache[key], cached.key == stamp { return cached.data }
         let data = HarnessTeamData(files: files(for: key, index: index))
         cache[key] = (stamp, data)

@@ -93,6 +93,12 @@ struct GitHubAPI {
     var onRefused: (@MainActor @Sendable (_ until: Date, _ rest: Bool) -> Void)?
     /// Until when requests are held back, after a refusal; asked before each.
     var pausedUntil: (@MainActor @Sendable (_ rest: Bool) -> Date?)?
+    /// Where REST reads keep their ETags. Not keyed by account: signing out
+    /// empties it, and GitHub answers a 304 only to a token that may read
+    /// the resource, so a swapped token can't see another's entries.
+    var restCache: RESTCache = .shared
+    /// What REST requests go through; tests replace it.
+    var restLimiter: RequestLimiter = .shared
 
     private static let endpoint = URL(string: "https://api.github.com/graphql")!
 
@@ -111,7 +117,7 @@ struct GitHubAPI {
         var attempt = 0
         while true {
             do {
-                return try await send(query, variables: variables)
+                return try await send(query, variables: variables).0
             } catch APIError.http(let status, _) where (502...504).contains(status) && attempt < 2 {
                 attempt += 1
                 try await Task.sleep(for: .seconds(attempt * 2))
@@ -121,16 +127,39 @@ struct GitHubAPI {
 
     /// A read whose variables aren't all strings (an `Int!` number, say).
     func query<T: Decodable>(_ query: String, values: [String: Any], as type: T.Type = T.self) async throws -> T {
-        try await send(query, variables: values)
+        try await send(query, variables: values).0
     }
 
     /// A mutation whose variables aren't all strings (an input object, a
     /// list). A write: not retried, since it may have gone through.
     func mutate<T: Decodable>(_ query: String, variables: [String: Any], as type: T.Type = T.self) async throws -> T {
-        try await send(query, variables: variables)
+        try await send(query, variables: variables).0
     }
 
-    private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> T {
+    /// Like `query`, but keeps GitHub's own messages alongside the result
+    /// even when it decodes fine: a nullable field (a repo that doesn't
+    /// exist, or this token can't read) comes back nil without throwing, so
+    /// this is the only way to learn why.
+    func queryReportingReason<T: Decodable>(_ query: String, values: [String: Any] = [:]) async throws -> (T, [String]) {
+        let (result, messages): (T, [Message]) = try await send(query, variables: values)
+        return (result, messages.map(\.message))
+    }
+
+    /// Like `queryReportingReason`, but keyed by the failing aliased
+    /// field's name (GraphQL's error `path`): for a batch of aliased
+    /// lookups (several repos in one query) where one failing doesn't stop
+    /// the rest decoding, and each needs its own reason.
+    func queryReportingReasonsByField<T: Decodable>(_ query: String, values: [String: Any] = [:]) async throws -> (T, [String: String]) {
+        let (result, messages): (T, [Message]) = try await send(query, variables: values)
+        var byField: [String: String] = [:]
+        for message in messages {
+            guard let field = message.path?.first else { continue }
+            byField[field] = message.message
+        }
+        return (result, byField)
+    }
+
+    private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> (T, [Message]) {
         if let until = pausedUntil?(false), until > .now { throw APIError.rateLimited(until: until) }
         let isMutation = query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("mutation")
         let source = isMutation ? .writes : APIUsage.currentSource
@@ -145,7 +174,12 @@ struct GitHubAPI {
 
         let (data, response): (Data, URLResponse)
         do {
-            (data, response) = try await URLSession.shared.data(for: request)
+            // A write is something you just did, so it doesn't queue behind fetches.
+            if isMutation {
+                (data, response) = try await URLSession.shared.data(for: request)
+            } else {
+                (data, response) = try await RequestLimiter.shared.data(for: request)
+            }
         } catch {
             try Task.checkCancellation()
             throw APIError.network(error.localizedDescription)
@@ -197,7 +231,7 @@ struct GitHubAPI {
         guard let result = envelope.data?.value else {
             throw APIError.graphQL(envelope.errors?.map(\.message) ?? ["Empty response"])
         }
-        return result
+        return (result, envelope.errors ?? [])
     }
 
     /// Adds `rateLimit` to the query's top-level selection. Variable
@@ -232,6 +266,9 @@ struct GitHubAPI {
     private struct Message: Decodable {
         let message: String
         let type: String?
+        /// The failing field's path, an aliased query's first element its
+        /// alias (`["r3"]`); nil for one with no field to blame.
+        let path: [String]?
     }
 
     private struct ErrorsEnvelope: Decodable {

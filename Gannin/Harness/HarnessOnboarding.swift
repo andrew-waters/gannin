@@ -20,6 +20,7 @@ enum HarnessTour {
         Entry(name: "STANDARDS.md", text: "The front matter every document carries (type, status, summary, issues), so Gannin can list and link them."),
         Entry(name: "requirements/", isFolder: true, text: "What to build and why, by module, each naming the issues it's about."),
         Entry(name: "plans/", isFolder: true, text: "How to build it: a plan per piece of work, with tasks Gannin counts off."),
+        Entry(name: "decisions/", isFolder: true, text: "Decision records: what was decided and why, with the alternatives. What Onboarding puts first."),
         Entry(name: "findings/", isFolder: true, text: "What was learned looking into something: investigations, incidents, audits."),
         Entry(name: "skills/", isFolder: true, text: "Reusable workflows for Claude Code, a Markdown file each."),
         Entry(name: "prompts/", isFolder: true, text: "The team's prompts for starting work, reviews and planning, offered when a session starts."),

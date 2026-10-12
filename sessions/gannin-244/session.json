@@ -1,0 +1,16 @@
+{
+  "box" : "Anius",
+  "branch" : "244-give-the-header-s-status-a-fixed-size",
+  "finishedAt" : "2026-10-12T12:09:56Z",
+  "issue" : "andrew-waters/gannin#244",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-12T11:10:14Z",
+  "startedBy" : "dwrss",
+  "title" : "Give the header's status a fixed-size slot so loading and re-review do not move anything",
+  "url" : "https://github.com/andrew-waters/gannin/issues/244"
+}

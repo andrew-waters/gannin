@@ -46,12 +46,16 @@ extension GitHubAPI {
     }
 
     /// The workload snapshot. Each query is tracked as a step of `run`.
+    /// `outsideRepos` are repos the account doesn't own that some project
+    /// names (`OrgConfig.outsideRepos`): with none, exactly today's queries
+    /// run (R7).
     func snapshot(
         org: String,
         lookbackDays: Int,
         previous: OrgSnapshot?,
         plan: SnapshotPlan,
-        run: SyncRun
+        run: SyncRun,
+        outsideRepos: Set<String> = []
     ) async throws -> OrgSnapshot {
         let startedAt = Date.now
         let mergedSince = Calendar.current.startOfDay(
@@ -60,33 +64,79 @@ extension GitHubAPI {
         let scope = "\(GitHubAccounts.scope(org)) archived:false"
         let fetchPeople = plan.people || previous == nil
         let changesSince = previous == nil ? nil : plan.changesSince
+        // Repos already known unreadable are left out of this cycle's
+        // searches (R8); `readableRepos` below checks the whole set, so a
+        // recovered one rejoins them next cycle, needing a full search
+        // again since nothing was tracked for it while it was unreadable.
+        let priorUnreadable = previous?.unreadableRepos ?? [:]
+        let (searchableOutside, newOutside, knownOutside) = Self.outsideRepoCohorts(
+            outsideRepos, priorFetched: previous?.outsideReposFetched ?? [], priorUnreadable: Set(priorUnreadable.keys)
+        )
+        let outsideBatches = Self.outsideRepoBatches(searchableOutside)
+        let newOutsideBatches = Self.outsideRepoBatches(newOutside)
+        let knownOutsideBatches = Self.outsideRepoBatches(knownOutside)
 
         if fetchPeople {
             run.add("members", title: "Members")
             run.add("teams", title: "Teams")
         }
+        async let memberList: [Person]? = fetchPeople ? fetchMembers(org: org, run: run) : nil
+        async let teamResult: [Team]? = fetchPeople ? fetchTeams(org: org, run: run) : nil
+        // With members and teams, so hourly and on Refresh: which outside
+        // repos (if any) can still be read.
+        async let unreadableCheck: [String: String] = fetchPeople && !outsideRepos.isEmpty ? readableRepos(outsideRepos) : [:]
+
+        // Changes mode asks the change feed what to fetch, after the member,
+        // team and readability lookups have started so they run alongside it.
+        // Its own searches are the fallback when the feed failed, was capped
+        // or doesn't reach back as far as `changesSince`.
+        var fromFeed: FeedChanges?
+        if let changesSince, let previous {
+            let feed = await ChangeFeeds.shared.current(org: org, api: self, outside: knownOutside, cursor: changesSince, run: run)
+            fromFeed = Self.feedChanges(feed, since: changesSince, previous: previous, knownOutside: knownOutside)
+        }
+
         if let changesSince {
             let since = changesSince.formatted(date: .omitted, time: .shortened)
-            run.add("changed-prs", title: "Pull requests", detail: "Changed since \(since)")
-            run.add("changed-issues", title: "Issues", detail: "Changed since \(since)")
+            run.add("changed-prs", title: "Pull requests", detail: fromFeed == nil ? "Changed since \(since)" : "From the change feed")
+            run.add("changed-issues", title: "Issues", detail: fromFeed == nil ? "Changed since \(since)" : "From the change feed")
+            for (index, batch) in knownOutsideBatches.enumerated() where fromFeed == nil {
+                run.add("outside-changed-prs-\(index + 1)", title: "Pull requests outside \(org)", detail: batch.joined(separator: ", "))
+                run.add("outside-changed-issues-\(index + 1)", title: "Issues outside \(org)", detail: batch.joined(separator: ", "))
+            }
+            for (index, batch) in newOutsideBatches.enumerated() {
+                run.add("outside-open-prs-\(index + 1)", title: "Open PRs outside \(org)", detail: "New to this project: \(batch.joined(separator: ", "))")
+                run.add("outside-merged-prs-\(index + 1)", title: "Merged PRs outside \(org)", detail: batch.joined(separator: ", "))
+                run.add("outside-issues-\(index + 1)", title: "Open issues outside \(org)", detail: batch.joined(separator: ", "))
+            }
         } else {
             run.add("open-prs", title: "Open PRs")
             run.add("merged-prs", title: "Merged PRs", detail: "Last \(lookbackDays) days")
             run.add("issues", title: "Open issues")
+            for (index, batch) in outsideBatches.enumerated() {
+                run.add("outside-open-prs-\(index + 1)", title: "Open PRs outside \(org)", detail: batch.joined(separator: ", "))
+                run.add("outside-merged-prs-\(index + 1)", title: "Merged PRs outside \(org)", detail: batch.joined(separator: ", "))
+                run.add("outside-issues-\(index + 1)", title: "Open issues outside \(org)", detail: batch.joined(separator: ", "))
+            }
         }
 
+        let since = mergedSince.formatted(.iso8601.year().month().day())
         var searches: [String: String] = [:]
         if let changesSince {
             // Search takes a full timestamp; `+00:00` rather than `Z` is the
             // form GitHub documents.
             let timestamp = changesSince.formatted(.iso8601).replacingOccurrences(of: "Z", with: "+00:00")
-            searches["changed-prs"] = "\(scope) is:pr updated:>=\(timestamp)"
-            searches["changed-issues"] = "\(scope) is:issue updated:>=\(timestamp)"
+            if fromFeed == nil {
+                searches["changed-prs"] = "\(scope) is:pr updated:>=\(timestamp)"
+                searches["changed-issues"] = "\(scope) is:issue updated:>=\(timestamp)"
+                searches.merge(Self.outsideChangesSearches(knownOutsideBatches, timestamp: timestamp)) { _, new in new }
+            }
+            searches.merge(Self.outsideFullSearches(newOutsideBatches, since: since)) { _, new in new }
         } else {
-            let since = mergedSince.formatted(.iso8601.year().month().day())
             searches["open-prs"] = "\(scope) is:pr is:open sort:updated-desc"
             searches["merged-prs"] = "\(scope) is:pr is:merged merged:>=\(since) sort:updated-desc"
             searches["issues"] = "\(scope) is:issue is:open sort:updated-desc"
+            searches.merge(Self.outsideFullSearches(outsideBatches, since: since)) { _, new in new }
         }
 
         // Every step's total up front, in one cheap request, so progress is
@@ -97,11 +147,17 @@ extension GitHubAPI {
             for (id, count) in counts { run.setTotal(min(count, limits[id] ?? 1000), for: id) }
         }
 
+        if let fromFeed {
+            run.setTotal(fromFeed.pullRequestIDs.count, for: "changed-prs")
+            run.setTotal(fromFeed.issueIDs.count, for: "changed-issues")
+        }
+
         let plannedSearches = searches
-        async let memberList: [Person]? = fetchPeople ? fetchMembers(org: org, run: run) : nil
-        async let teamResult: [Team]? = fetchPeople ? fetchTeams(org: org, run: run) : nil
-        async let items = fetchChanges(searches: plannedSearches, run: run)
-        async let fullItems = changesSince == nil ? fetchAll(searches: plannedSearches, run: run) : nil
+        async let items = fetchChanges(searches: plannedSearches, run: run, outsideBatchCount: knownOutsideBatches.count, feed: fromFeed)
+        async let fullItems = changesSince == nil ? fetchAll(searches: plannedSearches, run: run, outsideBatchCount: outsideBatches.count) : nil
+        // Changes mode still gives a newly outside repo its own full
+        // search, since it has no baseline for "updated since" to build on.
+        async let newOutsideItems: ([PullRequest], [PullRequest], [Issue]) = changesSince == nil ? ([], [], []) : fetchOutsideAll(searches: plannedSearches, run: run, batchCount: newOutsideBatches.count)
 
         var warnings = previous?.warnings ?? []
         var teamList = previous?.teams ?? []
@@ -116,18 +172,35 @@ extension GitHubAPI {
         }
         let members = try await memberList ?? previous?.members ?? []
 
+        var unreadableRepos = priorUnreadable
+        if fetchPeople, !outsideRepos.isEmpty, let result = try? await unreadableCheck {
+            unreadableRepos = result
+        }
+
         var open: [PullRequest]
         var merged: [PullRequest]
         var issues: [Issue]
         if let full = try await fullItems {
             (open, merged, issues) = full
+            if let previous {
+                open = Self.carryingOverUnreadable(open, previous: previous.openPullRequests, unreadable: unreadableRepos, repo: \.repo)
+                merged = Self.carryingOverUnreadable(merged, previous: previous.mergedPullRequests, unreadable: unreadableRepos, repo: \.repo)
+                issues = Self.carryingOverUnreadable(issues, previous: previous.issues, unreadable: unreadableRepos, repo: \.repo)
+            }
         } else if let changes = try await items, let previous {
             guard !changes.truncated else {
                 // Too much changed to trust a merge: search everything instead.
-                let carried = previous.with(members: members, teams: teamList, warnings: warnings, peopleFetchedAt: fetchPeople ? startedAt : previous.peopleFetchedAt)
-                return try await snapshot(org: org, lookbackDays: lookbackDays, previous: carried, plan: SnapshotPlan(people: false), run: run)
+                let carried = previous.with(
+                    members: members, teams: teamList, warnings: warnings,
+                    peopleFetchedAt: fetchPeople ? startedAt : previous.peopleFetchedAt, unreadableRepos: unreadableRepos
+                )
+                return try await snapshot(org: org, lookbackDays: lookbackDays, previous: carried, plan: SnapshotPlan(people: false), run: run, outsideRepos: outsideRepos)
             }
             (open, merged, issues) = previous.merging(changes, mergedSince: mergedSince)
+            let newItems = try await newOutsideItems
+            open = Self.deduplicated(open + newItems.0)
+            merged = Self.deduplicated(merged + newItems.1)
+            issues = Self.deduplicated(issues + newItems.2)
         } else {
             (open, merged, issues) = ([], [], [])
         }
@@ -143,6 +216,11 @@ extension GitHubAPI {
             openPullRequests: open,
             mergedPullRequests: merged,
             issues: issues,
+            unreadableRepos: unreadableRepos.isEmpty ? nil : unreadableRepos,
+            // Every readable outside repo now has a full baseline: new ones
+            // from this cycle's own full search, known ones carried over
+            // from a previous one, kept current by the changes search.
+            outsideReposFetched: searchableOutside.isEmpty ? nil : searchableOutside,
             warnings: warnings
         )
     }
@@ -156,8 +234,9 @@ extension GitHubAPI {
     }
 
     /// Open PRs, PRs merged in the lookback and open issues, in full; nil
-    /// when `searches` is for changes.
-    private func fetchAll(searches: [String: String], run: SyncRun) async throws -> ([PullRequest], [PullRequest], [Issue])? {
+    /// when `searches` is for changes. Outside repos' batches join in,
+    /// each its own steps.
+    private func fetchAll(searches: [String: String], run: SyncRun, outsideBatchCount: Int) async throws -> ([PullRequest], [PullRequest], [Issue])? {
         guard let openQuery = searches["open-prs"], let mergedQuery = searches["merged-prs"], let issueQuery = searches["issues"] else {
             return nil
         }
@@ -170,12 +249,30 @@ extension GitHubAPI {
         async let issueList = run.track("issues", count: \.count) {
             try await issues(issueQuery, onPage: $0).items
         }
-        return try await (open, merged, issueList)
+        async let outside = fetchOutsideAll(searches: searches, run: run, batchCount: outsideBatchCount)
+        let (openItems, mergedItems, issueItems) = try await (open, merged, issueList)
+        let (outsideOpen, outsideMerged, outsideIssues) = try await outside
+        return (
+            Self.deduplicated(openItems + outsideOpen),
+            Self.deduplicated(mergedItems + outsideMerged),
+            Self.deduplicated(issueItems + outsideIssues)
+        )
     }
 
     /// PRs and issues in any state updated since the last fetch; nil when
-    /// `searches` is for everything.
-    private func fetchChanges(searches: [String: String], run: SyncRun) async throws -> SnapshotChanges? {
+    /// `searches` is for everything. Outside repos' batches join in, each
+    /// its own steps.
+    private func fetchChanges(searches: [String: String], run: SyncRun, outsideBatchCount: Int, feed: FeedChanges?) async throws -> SnapshotChanges? {
+        if let feed {
+            async let prs = run.track("changed-prs", count: \.count) {
+                try await pullRequests(ids: feed.pullRequestIDs, onPage: $0)
+            }
+            async let issueList = run.track("changed-issues", count: \.count) {
+                try await issues(ids: feed.issueIDs, onPage: $0)
+            }
+            let (prItems, issueItems) = try await (prs, issueList)
+            return SnapshotChanges(pullRequests: prItems, issues: issueItems, truncated: false, removedIDs: feed.removedIDs)
+        }
         guard let prQuery = searches["changed-prs"], let issueQuery = searches["changed-issues"] else { return nil }
         async let prs = run.track("changed-prs", count: \.items.count) {
             try await pullRequests(prQuery, onPage: $0)
@@ -183,12 +280,188 @@ extension GitHubAPI {
         async let issueList = run.track("changed-issues", count: \.items.count) {
             try await issues(issueQuery, onPage: $0)
         }
+        async let outside = fetchOutsideChanges(searches: searches, run: run, batchCount: outsideBatchCount)
         let (prResult, issueResult) = try await (prs, issueList)
+        let outsideResult = try await outside
         return SnapshotChanges(
-            pullRequests: prResult.items,
-            issues: issueResult.items,
-            truncated: prResult.isTruncated || issueResult.isTruncated
+            pullRequests: Self.deduplicated(prResult.items + outsideResult.pullRequests),
+            issues: Self.deduplicated(issueResult.items + outsideResult.issues),
+            truncated: prResult.isTruncated || issueResult.isTruncated || outsideResult.truncated
         )
+    }
+
+    /// Outside repos' open PRs, merged PRs and open issues, one batch at a
+    /// time (each batch's three searches run together); empty with none.
+    private func fetchOutsideAll(searches: [String: String], run: SyncRun, batchCount: Int) async throws -> ([PullRequest], [PullRequest], [Issue]) {
+        guard batchCount > 0 else { return ([], [], []) }
+        var open: [PullRequest] = []
+        var merged: [PullRequest] = []
+        var issueList: [Issue] = []
+        for index in 1...batchCount {
+            guard let openQuery = searches["outside-open-prs-\(index)"],
+                  let mergedQuery = searches["outside-merged-prs-\(index)"],
+                  let issueQuery = searches["outside-issues-\(index)"] else { continue }
+            async let batchOpen = run.track("outside-open-prs-\(index)", count: \.count) {
+                try await pullRequests(openQuery, onPage: $0).items
+            }
+            async let batchMerged = run.track("outside-merged-prs-\(index)", count: \.count) {
+                try await pullRequests(mergedQuery, onPage: $0).items
+            }
+            async let batchIssues = run.track("outside-issues-\(index)", count: \.count) {
+                try await issues(issueQuery, onPage: $0).items
+            }
+            let (openItems, mergedItems, issueItems) = try await (batchOpen, batchMerged, batchIssues)
+            open += openItems
+            merged += mergedItems
+            issueList += issueItems
+        }
+        return (open, merged, issueList)
+    }
+
+    /// Outside repos' changed PRs and issues, one batch at a time; empty
+    /// and not truncated with none.
+    private func fetchOutsideChanges(searches: [String: String], run: SyncRun, batchCount: Int) async throws -> SnapshotChanges {
+        guard batchCount > 0 else { return SnapshotChanges(pullRequests: [], issues: [], truncated: false) }
+        var prs: [PullRequest] = []
+        var issueList: [Issue] = []
+        var truncated = false
+        for index in 1...batchCount {
+            guard let prQuery = searches["outside-changed-prs-\(index)"], let issueQuery = searches["outside-changed-issues-\(index)"] else { continue }
+            async let prResult = run.track("outside-changed-prs-\(index)", count: \.items.count) {
+                try await pullRequests(prQuery, onPage: $0)
+            }
+            async let issueResult = run.track("outside-changed-issues-\(index)", count: \.items.count) {
+                try await issues(issueQuery, onPage: $0)
+            }
+            let (pr, issue) = try await (prResult, issueResult)
+            prs += pr.items
+            issueList += issue.items
+            truncated = truncated || pr.isTruncated || issue.isTruncated
+        }
+        return SnapshotChanges(pullRequests: prs, issues: issueList, truncated: truncated)
+    }
+
+    /// `items`, keeping the first of each id: outside repos can't overlap
+    /// with the account's own, but this keeps a batching mistake from
+    /// double-counting rather than failing loudly.
+    private static func deduplicated<T: Identifiable>(_ items: [T]) -> [T] where T.ID: Hashable {
+        var seen: Set<T.ID> = []
+        return items.filter { seen.insert($0.id).inserted }
+    }
+
+    /// Splits `outsideRepos` for one fetch: `searchable` leaves out ones
+    /// already known unreadable (R8, checked again regardless, so a
+    /// recovered one rejoins); `new` are `searchable` repos with no full
+    /// search yet to build on (just added to a project, or recovered from
+    /// being unreadable, since nothing was tracked for it meanwhile), which
+    /// need one of their own even when the rest of the snapshot only needs
+    /// its changes; `known` can trust a changes-only "updated since" search.
+    static func outsideRepoCohorts(_ outsideRepos: Set<String>, priorFetched: Set<String>, priorUnreadable: Set<String>) -> (searchable: Set<String>, new: Set<String>, known: Set<String>) {
+        let searchable = outsideRepos.subtracting(priorUnreadable)
+        let fetched = priorFetched.subtracting(priorUnreadable)
+        let new = searchable.subtracting(fetched)
+        let known = searchable.subtracting(new)
+        return (searchable, new, known)
+    }
+
+    /// `fresh`, plus any of `previous` whose repo is in `unreadable` and
+    /// isn't already in `fresh`: search silently drops a repo it can't
+    /// read, so on a full fetch its last items stay, stale, rather than
+    /// vanishing from the lists (R8).
+    static func carryingOverUnreadable<T: Identifiable>(_ fresh: [T], previous: [T], unreadable: [String: String], repo: (T) -> String) -> [T] where T.ID: Hashable {
+        guard !unreadable.isEmpty else { return fresh }
+        let freshIDs = Set(fresh.map(\.id))
+        return fresh + previous.filter { unreadable[repo($0)] != nil && !freshIDs.contains($0.id) }
+    }
+
+    /// Outside repos grouped into `repo:` qualifier batches small enough
+    /// that a search naming them, plus up to `reserve` more characters for
+    /// the rest of the query (the suffix isn't known here: `archived:false`,
+    /// `is:`, dates and a sort), stays within GitHub's 256-character search
+    /// limit.
+    static func outsideRepoBatches(_ repos: Set<String>, reserve: Int = 100, limit: Int = 256) -> [[String]] {
+        var result: [[String]] = []
+        var current: [String] = []
+        for repo in repos.sorted() {
+            let candidate = current + [repo]
+            let length = candidate.map { "repo:\($0)" }.joined(separator: " ").count
+            if !current.isEmpty && length + reserve > limit {
+                result.append(current)
+                current = [repo]
+            } else {
+                current = candidate
+            }
+        }
+        if !current.isEmpty { result.append(current) }
+        return result
+    }
+
+    /// The named searches for a full fetch's outside batches, the same
+    /// suffix the account's own full searches use (`outside-open-prs-1`,
+    /// `outside-merged-prs-1`, `outside-issues-1`, and on for each batch).
+    static func outsideFullSearches(_ batches: [[String]], since: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for (index, batch) in batches.enumerated() {
+            let qualifiers = batch.map { "repo:\($0)" }.joined(separator: " ")
+            let n = index + 1
+            result["outside-open-prs-\(n)"] = "\(qualifiers) archived:false is:pr is:open sort:updated-desc"
+            result["outside-merged-prs-\(n)"] = "\(qualifiers) archived:false is:pr is:merged merged:>=\(since) sort:updated-desc"
+            result["outside-issues-\(n)"] = "\(qualifiers) archived:false is:issue is:open sort:updated-desc"
+        }
+        return result
+    }
+
+    /// The named searches for a changes fetch's outside batches
+    /// (`outside-changed-prs-1`, `outside-changed-issues-1`, and on).
+    static func outsideChangesSearches(_ batches: [[String]], timestamp: String) -> [String: String] {
+        var result: [String: String] = [:]
+        for (index, batch) in batches.enumerated() {
+            let qualifiers = batch.map { "repo:\($0)" }.joined(separator: " ")
+            let n = index + 1
+            result["outside-changed-prs-\(n)"] = "\(qualifiers) archived:false is:pr updated:>=\(timestamp)"
+            result["outside-changed-issues-\(n)"] = "\(qualifiers) archived:false is:issue updated:>=\(timestamp)"
+        }
+        return result
+    }
+
+    /// Every outside repo, read in one aliased query, to find which have
+    /// stopped being readable since they were added: the repo doesn't
+    /// exist, this token can't read it (GitHub answers the same for both),
+    /// or it's been renamed. A repo not in the result is readable.
+    func readableRepos(_ repos: Set<String>) async throws -> [String: String] {
+        let sorted = repos.sorted()
+        var variables: [String: Any] = [:]
+        var definitions: [String] = []
+        var fields: [String] = []
+        var aliases: [String: String] = [:]
+        for (index, repo) in sorted.enumerated() {
+            let parts = repo.split(separator: "/").map(String.init)
+            guard parts.count == 2 else { continue }
+            let alias = "r\(index)"
+            aliases[alias] = repo
+            variables["owner\(index)"] = parts[0]
+            variables["name\(index)"] = parts[1]
+            definitions.append("$owner\(index): String!, $name\(index): String!")
+            fields.append("\(alias): repository(owner: $owner\(index), name: $name\(index)) { nameWithOwner }")
+        }
+        guard !fields.isEmpty else { return [:] }
+
+        struct RepoNode: Decodable { let nameWithOwner: String }
+        let (response, reasons): ([String: RepoNode?], [String: String]) = try await queryReportingReasonsByField(
+            "query(\(definitions.joined(separator: ", "))) { \(fields.joined(separator: " ")) }",
+            values: variables
+        )
+        var unreadable: [String: String] = [:]
+        for (alias, repo) in aliases {
+            guard let node = response[alias] ?? nil else {
+                unreadable[repo] = reasons[alias] ?? "GitHub couldn't find \(repo), or this token can't read it."
+                continue
+            }
+            if node.nameWithOwner.caseInsensitiveCompare(repo) != .orderedSame {
+                unreadable[repo] = "Renamed to \(node.nameWithOwner)"
+            }
+        }
+        return unreadable
     }
 
     private func members(org: String, onPage: (Int, Int?) -> Void) async throws -> [Person] {
@@ -262,6 +535,51 @@ extension GitHubAPI {
             onPage($0, $1)
         }
         return SearchResult(items: nodes.compactMap { $0.value?.model }, total: total)
+    }
+
+    /// What a snapshot takes from the change feed instead of searching: PRs
+    /// and issues to fetch, and those it can see closed without fetching.
+    struct FeedChanges: Equatable {
+        var pullRequestIDs: [String]
+        var issueIDs: [String]
+        var removedIDs: Set<String>
+    }
+
+    /// `feed`'s entries as `previous` needs them, nil to search instead. Open
+    /// PRs are fetched whenever updated since `since`, as before, since their
+    /// checks change without `updatedAt` moving; a merged PR or issue whose
+    /// `updatedAt` is already held isn't. A PR closed unmerged or an issue
+    /// closed is only removed from the open lists, so it isn't fetched.
+    /// Outside repos not yet in `knownOutside` get their own full search.
+    static func feedChanges(_ feed: ChangeFeed?, since: Date, previous: OrgSnapshot, knownOutside: Set<String>) -> FeedChanges? {
+        var held: [String: Date] = [:]
+        for pr in previous.mergedPullRequests { held[pr.id] = pr.updatedAt }
+        for issue in previous.issues { held[issue.id] = issue.updatedAt }
+        let plan = ChangeFeed.plan(
+            feed: feed, cursor: since, needing: knownOutside,
+            include: { !$0.isOutside || knownOutside.contains($0.repo) },
+            stored: { held[$0] }
+        )
+        guard case .fetch(let entries) = plan else { return nil }
+        var changes = FeedChanges(pullRequestIDs: [], issueIDs: [], removedIDs: [])
+        for entry in entries {
+            if entry.state == "CLOSED" {
+                changes.removedIDs.insert(entry.id)
+            } else if entry.kind == .pullRequest {
+                changes.pullRequestIDs.append(entry.id)
+            } else {
+                changes.issueIDs.append(entry.id)
+            }
+        }
+        return changes
+    }
+
+    private func pullRequests(ids: [String], onPage: @escaping (Int, Int?) -> Void) async throws -> [PullRequest] {
+        try await nodes(ids: ids, fields: RawPullRequest.fields, batchSize: 50, progress: onPage) { (raw: RawPullRequest) in raw.model }
+    }
+
+    private func issues(ids: [String], onPage: @escaping (Int, Int?) -> Void) async throws -> [Issue] {
+        try await nodes(ids: ids, fields: RawIssue.fields, batchSize: 100, progress: onPage) { (raw: RawIssue) in raw.model }
     }
 
     private func issues(_ searchQuery: String, onPage: (Int, Int?) -> Void) async throws -> SearchResult<Issue> {
@@ -406,6 +724,9 @@ struct SnapshotChanges {
     let pullRequests: [PullRequest]
     let issues: [Issue]
     let truncated: Bool
+    /// Items the change feed showed closed, dropped from the open lists
+    /// without being fetched.
+    var removedIDs: Set<String> = []
 }
 
 extension OrgSnapshot {
@@ -423,6 +744,10 @@ extension OrgSnapshot {
         for issue in changes.issues {
             openIssues[issue.id] = issue.state == "OPEN" ? issue : nil
         }
+        for id in changes.removedIDs {
+            open[id] = nil
+            openIssues[id] = nil
+        }
         let newestFirst = { (a: PullRequest, b: PullRequest) in a.updatedAt > b.updatedAt }
         return (
             open.values.sorted(by: newestFirst),
@@ -432,7 +757,7 @@ extension OrgSnapshot {
     }
 
     /// A copy with fresh members and teams.
-    func with(members: [Person], teams: [Team], warnings: [String], peopleFetchedAt: Date?) -> OrgSnapshot {
+    func with(members: [Person], teams: [Team], warnings: [String], peopleFetchedAt: Date?, unreadableRepos: [String: String]) -> OrgSnapshot {
         OrgSnapshot(
             orgLogin: orgLogin,
             fetchedAt: fetchedAt,
@@ -444,6 +769,8 @@ extension OrgSnapshot {
             openPullRequests: openPullRequests,
             mergedPullRequests: mergedPullRequests,
             issues: issues,
+            unreadableRepos: unreadableRepos.isEmpty ? nil : unreadableRepos,
+            outsideReposFetched: outsideReposFetched,
             warnings: warnings
         )
     }

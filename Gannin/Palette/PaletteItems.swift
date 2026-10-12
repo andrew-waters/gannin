@@ -64,6 +64,8 @@ enum PaletteCommand: Hashable {
     case newAsk(org: String)
     /// A New Quick Change tab in the Claude Code window.
     case newQuickChange(org: String)
+    /// A New Design and Refine tab in the Claude Code window.
+    case newRefine(org: String)
     case nextSessionWaiting
     /// Flips a Bool preference (`excludeDrafts`, `showHidden`).
     case toggle(key: String)
@@ -344,6 +346,7 @@ struct PaletteSources {
         if !config.allHarnesses.isEmpty {
             items.append(PaletteItem(id: "action:\(org):new-ask", group: .actions, title: "New Ask", systemImage: "sparkle.magnifyingglass", org: org, keywords: ["claude", "question", "research", "agent"], action: .run(.newAsk(org: org))))
             items.append(PaletteItem(id: "action:\(org):new-quick-change", group: .actions, title: "New Quick Change", systemImage: "bolt", org: org, keywords: ["claude", "fix", "snag", "tweak", "agent", "work"], action: .run(.newQuickChange(org: org))))
+            items.append(PaletteItem(id: "action:\(org):new-refine", group: .actions, title: "New Design and Refine", systemImage: "rectangle.and.pencil.and.ellipsis", org: org, keywords: ["claude", "review", "ui", "page", "walkthrough", "ritual"], action: .run(.newRefine(org: org))))
         }
         if config.repoProjects.count > 1 {
             for project in config.repoProjects {
@@ -352,8 +355,9 @@ struct PaletteSources {
         }
 
         // Pages, as the sidebar lists them.
-        // Ask is the New Ask action, not a page.
-        for tab in WorkloadTab.allCases where tab != .harness && tab != .ask {
+        // Ask is the New Ask action, not a page; Onboarding is with the
+        // harness's pages, only when there's a harness.
+        for tab in WorkloadTab.allCases where tab != .harness && tab != .ask && tab != .onboarding {
             items.append(PaletteItem(id: "page:\(org):\(tab.rawValue)", group: .pages, title: tab.title, systemImage: tab.systemImage, org: org, keywords: [tab.rawValue], action: go(.sidebar(.tab(tab)))))
         }
         for list in IssueList.allCases {
@@ -363,6 +367,8 @@ struct PaletteSources {
             items.append(PaletteItem(id: "page:\(org):people:\(view.rawValue)", group: .pages, title: view.rawValue, systemImage: view.systemImage, org: org, keywords: ["people"], action: go(.sidebar(.peopleView(view)))))
         }
         if !config.allHarnesses.isEmpty {
+            let onboarding = WorkloadTab.onboarding
+            items.append(PaletteItem(id: "page:\(org):\(onboarding.rawValue)", group: .pages, title: onboarding.title, systemImage: onboarding.systemImage, org: org, keywords: ["harness", "decisions", "new"], action: go(.sidebar(.tab(onboarding)))))
             for kind in HarnessKind.allCases {
                 items.append(PaletteItem(id: "page:\(org):harness:\(kind.rawValue)", group: .pages, title: kind.rawValue, systemImage: kind.systemImage, org: org, keywords: ["harness"], action: go(.sidebar(.harnessKind(kind)))))
             }

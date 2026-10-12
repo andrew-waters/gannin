@@ -6,6 +6,7 @@ import SwiftUI
 /// over the coming week (`ScheduleBoard`); List is the queue in order.
 struct AgentQueuePage: View {
     @Environment(RoutineStore.self) private var routines
+    @Environment(SessionStore.self) private var sessions
     @Environment(OrgConfigStore.self) private var configs
     @Environment(BankHolidayStore.self) private var holidays
     @Environment(\.navigate) private var navigate
@@ -76,6 +77,10 @@ struct AgentQueuePage: View {
         }
         .sheet(item: $editing) { edited in
             RoutineEditor(routine: edited.routine, isNew: edited.isNew)
+                .environment(routines)
+                .environment(sessions)
+                .environment(configs)
+                .environment(holidays)
         }
     }
 
@@ -177,7 +182,9 @@ private struct PinnedIssueRow: View {
 struct ScheduleForAgentButton: View {
     @Environment(RoutineStore.self) private var routines
     @Environment(IssueStore.self) private var issues
+    @Environment(SessionStore.self) private var sessions
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(BankHolidayStore.self) private var holidays
     let reference: IssueReference
     @State private var editing: EditedRoutine?
 
@@ -191,6 +198,10 @@ struct ScheduleForAgentButton: View {
         .disabled(configs.config(for: reference.org).allHarnesses.isEmpty)
         .sheet(item: $editing) { edited in
             RoutineEditor(routine: edited.routine, isNew: edited.isNew)
+                .environment(routines)
+                .environment(sessions)
+                .environment(configs)
+                .environment(holidays)
         }
     }
 

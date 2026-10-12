@@ -47,6 +47,9 @@ struct SessionsWindow: View {
                 } else if draft.isQuickChange {
                     NewQuickChangeView(draftID: draftID, draft: draft, saved: sessions.quickChangeForms[draftID])
                         .id(draftID)
+                } else if draft.isRefine {
+                    NewRefineView(draftID: draftID, draft: draft)
+                        .id(draftID)
                 } else {
                     NewPlanningView(draftID: draftID, draft: draft)
                         .id(draftID)
@@ -66,8 +69,8 @@ struct SessionsWindow: View {
             }
         }
         .frame(minWidth: 900, minHeight: 480)
-        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.routineRun?.kind == .report ? "Report" : $0.isAsk ? "Ask" : $0.isMaintenance ? "Maintenance" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
-        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : "New plan" } ?? "")
+        .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.routineRun?.kind == .report ? "Report" : $0.isAsk ? "Ask" : $0.isRefine ? "Design and Refine" : $0.isMaintenance ? "Maintenance" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
+        .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : $0.isRefine ? "New design and refine" : "New plan" } ?? "")
         .background { shortcuts }
         .sheet(item: Binding(
             // Gone elsewhere while asking: nothing left to wrap up.
@@ -298,6 +301,9 @@ private struct NewSessionPopover: View {
                 action("New Plan", symbol: "list.bullet", help: "Plan a topic in the harness with the room") {
                     PlanningDraft(org: org, harnessRepo: harness)
                 }
+                action("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", help: "Step through a web page with the room and note what to improve") {
+                    PlanningDraft(org: org, harnessRepo: harness, isRefine: true)
+                }
             }
         } else {
             Text("New Ask, Quick Change and Plan start from the sidebar of a main window once there's an org.")
@@ -447,6 +453,11 @@ private struct TabKind {
             symbol = "sparkle.magnifyingglass"
             reference = nil
             title = ask.title
+        } else if let refine = session.refine {
+            name = "Design and Refine"
+            symbol = "rectangle.and.pencil.and.ellipsis"
+            reference = nil
+            title = session.name ?? refine.name
         } else if let planning = session.planning {
             name = "Plan"
             symbol = "list.bullet"
@@ -487,14 +498,14 @@ private struct DraftTabItem: View {
     var body: some View {
         HStack(spacing: 8) {
             Circle().fill(Color.secondary.opacity(0.5)).frame(width: 7, height: 7)
-            Image(systemName: draft.isAsk ? "sparkle.magnifyingglass" : draft.isQuickChange ? "bolt" : "list.bullet")
+            Image(systemName: draft.isAsk ? "sparkle.magnifyingglass" : draft.isQuickChange ? "bolt" : draft.isRefine ? "rectangle.and.pencil.and.ellipsis" : "list.bullet")
                 .font(.system(size: 20))
                 .foregroundStyle(isSelected ? .primary : .secondary)
                 .frame(width: 26)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
-                    Text(draft.isAsk ? "New Ask" : draft.isQuickChange ? "New Quick Change" : "New Plan")
+                    Text(draft.isAsk ? "New Ask" : draft.isQuickChange ? "New Quick Change" : draft.isRefine ? "New Design and Refine" : "New Plan")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
                     if let issue = draft.issue {
@@ -645,7 +656,7 @@ private struct SessionTabItem: View {
                 sessions.besideTab = session.id
             }
             .disabled(isSelected || sessions.tabs.count < 2)
-            if !session.isAsk && !session.isPlanning {
+            if !session.isAsk && !session.isPlanning && !session.isRefine {
                 Button("Open Issue") { openWindow(value: session.issue) }
             }
         }
@@ -765,7 +776,7 @@ struct SessionTab: View {
     private var shownPane: Binding<SessionPane> {
         Binding {
             switch pane {
-            case .changes where session.isAsk: .issue
+            case .changes where session.isAsk || session.isRefine: .issue
             case .pullRequests where !showsPullRequests: .issue
             default: pane
             }
@@ -773,7 +784,7 @@ struct SessionTab: View {
     }
 
     private var showsPullRequests: Bool {
-        session.isAsk ? hasPullRequests : !session.isHelper
+        session.isAsk || session.isRefine ? hasPullRequests : !session.isHelper
     }
 
     private var hasPullRequests: Bool {
@@ -803,11 +814,10 @@ struct SessionTab: View {
             guard !session.isAsk else { return }
             do {
                 try await Task.sleep(for: .milliseconds(400))
-                while true {
+                // For edits made outside claude, and sessions from before the
+                // hook, slower over ssh.
+                try await refreshWhileActive(every: .seconds(session.isRemote ? 30 : 10)) {
                     await changes.refresh(session)
-                    // For edits made outside claude, and sessions from
-                    // before the hook, slower over ssh.
-                    try await Task.sleep(for: .seconds(session.isRemote ? 30 : 10))
                 }
             } catch {}
         }
@@ -846,8 +856,8 @@ struct SessionTab: View {
     private var panel: some View {
         VStack(spacing: 0) {
             Picker("Show", selection: shownPane) {
-                Text(session.isAsk || session.isHelper ? "Session" : "Issue").tag(SessionPane.issue)
-                if !session.isAsk {
+                Text(session.isAsk || session.isRefine || session.isHelper ? "Session" : "Issue").tag(SessionPane.issue)
+                if !session.isAsk && !session.isRefine {
                     Text(changes.fileCount > 0 ? "Changes \(changes.fileCount)" : "Changes").tag(SessionPane.changes)
                 }
                 if showsPullRequests {
@@ -1583,9 +1593,12 @@ private struct SessionPanel: View {
             if session.isQuickChange {
                 QuickChangeSection(session: session)
             }
+            if session.isRefine {
+                RefineSection(session: session)
+            }
             if session.isHelper {
                 HelperParentSection(session: session)
-            } else if !session.isPlanning && !session.isAsk && !session.hasNoIssue {
+            } else if !session.isPlanning && !session.isAsk && !session.isRefine && !session.hasNoIssue {
             Section("Issue") {
                 Text(session.issue.title)
                     .fontWeight(.semibold)
@@ -1684,7 +1697,7 @@ private struct SessionPanel: View {
             }
             SessionFinishSection(session: session)
             // A helper's issue, plans and PRs are on the session it helps.
-            if !session.isPlanning && !session.isAsk && !session.isHelper && !session.hasNoIssue {
+            if !session.isPlanning && !session.isAsk && !session.isRefine && !session.isHelper && !session.hasNoIssue {
                 HarnessIssueSection(reference: session.issue, showsEmpty: true, harnessRepo: session.harnessRepo)
             }
         }
@@ -1811,23 +1824,23 @@ struct WorkOnThisLauncher: ViewModifier {
                 let setup = setup(for: reference)
                 Button("Commit to Harness") { start(reference, recording: true, choice: nil, setup: setup) }
                 Button("Don't Record") {
-                    recordWithoutAsking(reference).wrappedValue = false
+                    recordWithoutAsking(setup).wrappedValue = false
                     start(reference, recording: false, choice: nil, setup: setup)
                 }
-                Button("Cancel", role: .cancel) { recordWithoutAsking(reference).wrappedValue = false }
+                Button("Cancel", role: .cancel) { recordWithoutAsking(setup).wrappedValue = false }
             } message: { reference in
                 Text(Self.recordMessage(reference))
             }
-            .dialogSuppressionToggle("Don't ask again for \(confirming?.org ?? "this org")", isSuppressed: confirming.map(recordWithoutAsking) ?? .constant(false))
+            .dialogSuppressionToggle("Don't ask again for \(confirming.flatMap(setup)?.repo ?? "this project")", isSuppressed: recordWithoutAsking(confirming.flatMap(setup)))
             .sheet(item: $choosing) { reference in
                 let config = configs.config(for: reference.org)
-                let skipsAsking = recordWithoutAsking(reference).wrappedValue
+                let skipsAsking = setup(for: reference).map { SessionStore.recordsWithoutAsking(repo: $0.repo) } ?? false
                 if let initial = setup(for: reference) {
                     SessionLaunchSheet(
                         title: "Work on \(reference.reference)", org: reference.org, harnesses: config.harnesses, initial: initial,
                         use: .work, repos: Self.repos(reference, issues: issues), values: Self.values(reference), startTitle: "Work on This"
                     ) { choice, picked in
-                        start(reference, recording: skipsAsking || recording, choice: choice, setup: picked)
+                        start(reference, recording: SessionStore.recordsWithoutAsking(repo: picked.repo) || recording, choice: choice, setup: picked)
                     } extra: {
                         if SandboxCredentials.isEnabled {
                             let offered = placement(for: reference)
@@ -1862,10 +1875,10 @@ struct WorkOnThisLauncher: ViewModifier {
         Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })
     }
 
-    /// Don't ask again before recording, per org.
-    private func recordWithoutAsking(_ reference: IssueReference) -> Binding<Bool> {
-        let key = SessionStore.asksBeforeRecordingKey(reference.org)
-        return Binding(get: { UserDefaults.standard.bool(forKey: key) }, set: { UserDefaults.standard.set($0, forKey: key) })
+    /// Don't ask again before recording, per harness; never on without one.
+    private func recordWithoutAsking(_ setup: HarnessConfig?) -> Binding<Bool> {
+        guard let repo = setup?.repo else { return .constant(false) }
+        return Binding(get: { SessionStore.recordsWithoutAsking(repo: repo) }, set: { SessionStore.setRecordsWithoutAsking($0, repo: repo) })
     }
 
     private func setup(for reference: IssueReference) -> HarnessConfig? {
@@ -1885,7 +1898,7 @@ struct WorkOnThisLauncher: ViewModifier {
             recording = true
             sandboxed = placement(for: reference).isSandboxed
             choosing = reference
-        } else if recordWithoutAsking(reference).wrappedValue {
+        } else if recordWithoutAsking(setup).wrappedValue {
             start(reference, recording: true, choice: nil, setup: setup)
         } else {
             confirming = reference
@@ -1970,10 +1983,11 @@ struct SessionSidebarRows: View {
     @AppStorage("sidebarSessionsReviews") private var reviewsExpanded = true
     @AppStorage("sidebarSessionsPlanning") private var planningExpanded = true
     @AppStorage("sidebarSessionsAsk") private var askExpanded = true
+    @AppStorage("sidebarSessionsRefine") private var refineExpanded = true
 
     var body: some View {
         let all = sessions.sessions(for: org)
-        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning && !$0.isAsk }, expanded: $issuesExpanded)
+        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
         // Active reviews, newest first, then the history.
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }
@@ -1981,6 +1995,7 @@ struct SessionSidebarRows: View {
         group("Reviews", symbol: "eye", sessions: active + finished, expanded: $reviewsExpanded)
         group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter(\.isPlanning), expanded: $planningExpanded)
         group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
+        group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
     }
 
     /// A kind of session, with how many are waiting on you; empty kinds
@@ -2167,25 +2182,26 @@ struct HarnessCheckoutSection: View {
     @AppStorage(SessionStore.connectKey) private var connect = ""
     @AppStorage private var localPath: String
     @AppStorage private var remotePath: String
-    @AppStorage private var recordWithoutAsking: Bool
     /// `on`, `off`, or empty for Settings > General's.
     @AppStorage private var autoReview: String
+    /// `on`, `off`, or empty for Settings > General's, for this project.
+    @AppStorage private var autoPost: String
     let org: String
     let repo: String
     /// Says which harness, when there are several.
     var showsName = false
-    /// Recording is the org's, so it's asked once, with the primary.
-    var showsRecording = true
+    /// Review requests are the org's, so it's asked once, with the primary.
+    var showsReviewRequests = true
 
-    init(org: String, repo: String, showsName: Bool = false, showsRecording: Bool = true) {
+    init(org: String, repo: String, showsName: Bool = false, showsReviewRequests: Bool = true) {
         self.org = org
         self.repo = repo
         self.showsName = showsName
-        self.showsRecording = showsRecording
+        self.showsReviewRequests = showsReviewRequests
         _localPath = AppStorage(wrappedValue: "", SessionStore.harnessPathKey(org, repo: repo))
         _remotePath = AppStorage(wrappedValue: "", SessionStore.remoteHarnessPathKey(org, repo: repo))
-        _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(org))
         _autoReview = AppStorage(wrappedValue: "", AutoReview.orgKey(org))
+        _autoPost = AppStorage(wrappedValue: "", AutoReview.postOverrideKey(repo))
     }
 
     var body: some View {
@@ -2217,11 +2233,11 @@ struct HarnessCheckoutSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            if showsRecording {
-                Toggle("Ask before recording a session", isOn: Binding(get: { !recordWithoutAsking }, set: { recordWithoutAsking = !$0 }))
-                Text("Work on This commits the session's brief and a session.json to its harness's sessions folder, and adds its pull request later. Off, it does so without asking.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            Toggle("Ask before recording a session", isOn: Binding(get: { !SessionStore.recordsWithoutAsking(repo: repo) }, set: { SessionStore.setRecordsWithoutAsking(!$0, repo: repo) }))
+            Text("Work on This commits the session's brief and a session.json to its harness's sessions folder, and adds its pull request later. Off, it does so without asking.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if showsReviewRequests {
                 Picker("Review requests automatically", selection: $autoReview) {
                     Text("As in Settings (\(AutoReview.isOnByDefault ? "on" : "off"))").tag("")
                     Text("On").tag("on")
@@ -2231,6 +2247,14 @@ struct HarnessCheckoutSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Picker("Post automatic reviews", selection: $autoPost) {
+                Text("As in Settings (\(AutoReview.postsAutomatically ? "on" : "off"))").tag("")
+                Text("On").tag("on")
+                Text("Off").tag("off")
+            }
+            Text("Your own choice for this project, on this Mac: whether a review Claude finished by itself is posted to GitHub as a comment, or waits for Post Review.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         } header: {
             Text(showsName ? "Claude Code in \(repo.split(separator: "/").last ?? "")" : "Claude Code")
         }

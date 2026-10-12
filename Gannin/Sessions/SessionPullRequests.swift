@@ -381,18 +381,34 @@ private struct DotLabelStyle: LabelStyle {
 // MARK: - GitHub
 
 extension GitHubAPI {
+    /// `repos` whose owner isn't `org`, as `repo:` qualifiers to OR into a
+    /// search alongside its `org:`/`user:` scope (GitHub ORs them): a
+    /// session's own repo might be one the account doesn't own, whose PRs
+    /// the branch search otherwise wouldn't find (R13).
+    static func outsideRepoQualifiers(_ repos: Set<String>, org: String) -> String {
+        repos
+            .filter { repo in
+                let owner = repo.split(separator: "/").first.map(String.init) ?? repo
+                return owner.caseInsensitiveCompare(org) != .orderedSame
+            }
+            .sorted()
+            .map { "repo:\($0)" }
+            .joined(separator: " ")
+    }
+
     /// The org's PRs from the branch, and those at the URLs given, each
     /// once: newest first, with the URLs of those the branch search found.
-    /// GitHub charges for what's asked, not what comes back, so the search
-    /// asks for five PRs and 50 threads each, which a session's branch
-    /// never needs more of.
-    func sessionPullRequests(org: String, branch: String, urls: [URL]) async throws -> (pullRequests: [SessionPullRequest], searched: Set<URL>) {
-        let known = urls.prefix(10).enumerated().map { ("u\($0.offset)", $0.element) }
+    /// `repos` are the session's own, so one outside the account still has
+    /// its branch searched (R13). GitHub charges for what's asked, not what
+    /// comes back, so the search asks for five PRs and 50 threads each,
+    /// which a session's branch never needs more of.
+    func sessionPullRequests(org: String, branch: String, urls: [URL], repos: Set<String> = []) async throws -> (pullRequests: [SessionPullRequest], searched: Set<URL>) {
+        let known = urls.prefix(SessionPRLimits.urls).enumerated().map { ("u\($0.offset)", $0.element) }
         let definitions = (["$q: String!"] + known.map { "$\($0.0): URI!" }).joined(separator: ", ")
         let lookups = known.map { "\($0.0): resource(url: $\($0.0)) { ...SessionPR }" }.joined(separator: "\n")
         let query = """
             query(\(definitions)) {
-              search(type: ISSUE, query: $q, first: 5) { nodes { ...SessionPR } }
+              search(type: ISSUE, query: $q, first: \(SessionPRLimits.searchResults)) { nodes { ...SessionPR } }
               \(lookups)
             }
             fragment SessionPR on PullRequest {
@@ -409,7 +425,9 @@ extension GitHubAPI {
                 comments(last: 20) { nodes { author { login } body url } } } }
             }
             """
-        var values: [String: Any] = ["q": "\(GitHubAccounts.scope(org)) is:pr head:\(branch)"]
+        let outside = Self.outsideRepoQualifiers(repos, org: org)
+        let scope = outside.isEmpty ? GitHubAccounts.scope(org) : "\(GitHubAccounts.scope(org)) \(outside)"
+        var values: [String: Any] = ["q": "\(scope) is:pr head:\(branch)"]
         for (name, url) in known { values[name] = url.absoluteString }
         let response: SessionPRResponse = try await self.query(query, values: values)
         var seen: Set<String> = []
@@ -421,23 +439,137 @@ extension GitHubAPI {
     }
 }
 
+/// One session's PRs to look at in `sessionPullRequestFingerprints`.
+struct SessionPRProbeRequest {
+    let id: UUID
+    let org: String
+    let branch: String
+    /// PRs known by URL that a branch search doesn't find.
+    let urls: [URL]
+    let repos: Set<String>
+}
+
+extension GitHubAPI {
+    /// What each session's PRs look like at a glance: for every PR the
+    /// branch search and the known URLs give, a string of its state, last
+    /// update, head commit, review decision, mergeability and check rollup.
+    /// For all the sessions in one query that asks for a handful of fields
+    /// (GitHub charges for what's asked), so it costs about a point where
+    /// reading every session's PRs in full costs several each. A session whose
+    /// strings haven't changed has nothing new for `sessionPullRequests`.
+    func sessionPullRequestFingerprints(_ requests: [SessionPRProbeRequest]) async throws -> [UUID: Set<String>] {
+        guard !requests.isEmpty else { return [:] }
+        var definitions: [String] = []
+        var fields: [String] = []
+        var values: [String: Any] = [:]
+        for (index, request) in requests.enumerated() {
+            let outside = Self.outsideRepoQualifiers(request.repos, org: request.org)
+            let scope = outside.isEmpty ? GitHubAccounts.scope(request.org) : "\(GitHubAccounts.scope(request.org)) \(outside)"
+            definitions.append("$q\(index): String!")
+            values["q\(index)"] = "\(scope) is:pr head:\(request.branch)"
+            fields.append("s\(index): search(type: ISSUE, query: $q\(index), first: \(SessionPRLimits.searchResults)) { nodes { ...Probe } }")
+            for (offset, url) in request.urls.prefix(SessionPRLimits.urls).enumerated() {
+                definitions.append("$u\(index)_\(offset): URI!")
+                values["u\(index)_\(offset)"] = url.absoluteString
+                fields.append("u\(index)_\(offset): resource(url: $u\(index)_\(offset)) { ...Probe }")
+            }
+        }
+        let query = """
+            query(\(definitions.joined(separator: ", "))) {
+              \(fields.joined(separator: "\n"))
+            }
+            fragment Probe on PullRequest {
+              id state updatedAt mergeable reviewDecision
+              commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
+            }
+            """
+        let response: ProbeResponse = try await self.query(query, values: values)
+        var result: [UUID: Set<String>] = [:]
+        for (index, request) in requests.enumerated() {
+            result[request.id] = response.fingerprints[index] ?? []
+        }
+        return result
+    }
+}
+
+/// A coding key for the aliased fields of a query's response.
+private struct DynamicKey: CodingKey {
+    let stringValue: String
+    var intValue: Int? { nil }
+    init(stringValue: String) { self.stringValue = stringValue }
+    init?(intValue: Int) { nil }
+}
+
+/// What a session's PR queries ask for, which the probe must match so it
+/// never misses a PR the full read shows.
+enum SessionPRLimits {
+    static let urls = 10
+    static let searchResults = 5
+}
+
+/// Each session's fingerprints from the probe, by the request's position:
+/// `s0`'s search nodes and `u0_0`, `u0_1` and so on for its URLs.
+struct ProbeResponse: Decodable {
+    let fingerprints: [Int: Set<String>]
+
+    private struct Search: Decodable { let nodes: [Probe] }
+
+    /// Every field optional: a URL that isn't a PR comes back as an empty object.
+    private struct Probe: Decodable {
+        struct Commits: Decodable {
+            struct Node: Decodable {
+                struct Commit: Decodable {
+                    struct Rollup: Decodable { let state: String? }
+                    let oid: String?
+                    let statusCheckRollup: Rollup?
+                }
+                let commit: Commit?
+            }
+            let nodes: [Node?]?
+        }
+        let id: String?
+        let state: String?
+        let updatedAt: String?
+        let mergeable: String?
+        let reviewDecision: String?
+        let commits: Commits?
+
+        var fingerprint: String? {
+            guard let id else { return nil }
+            let commit = commits?.nodes?.compactMap { $0 }.first?.commit
+            return [id, state, updatedAt, mergeable, reviewDecision, commit?.oid, commit?.statusCheckRollup?.state]
+                .map { $0 ?? "-" }
+                .joined(separator: "|")
+        }
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: DynamicKey.self)
+        var found: [Int: Set<String>] = [:]
+        for key in container.allKeys {
+            let name = key.stringValue
+            if name.hasPrefix("s"), let index = Int(name.dropFirst()) {
+                let nodes = (try? container.decode(Search.self, forKey: key).nodes) ?? []
+                found[index, default: []].formUnion(nodes.compactMap(\.fingerprint))
+            } else if name.hasPrefix("u"), let index = Int(name.dropFirst().prefix { $0 != "_" }),
+                      let probe = try? container.decode(Probe.self, forKey: key), let fingerprint = probe.fingerprint {
+                found[index, default: []].insert(fingerprint)
+            }
+        }
+        fingerprints = found
+    }
+}
+
 /// The search's nodes and each looked-up URL, keyed `u0`, `u1` and so on.
 private struct SessionPRResponse: Decodable {
     let pullRequests: [RawPullRequest]
     /// The search's alone.
     let searched: [RawPullRequest]
 
-    private struct Key: CodingKey {
-        let stringValue: String
-        var intValue: Int? { nil }
-        init(stringValue: String) { self.stringValue = stringValue }
-        init?(intValue: Int) { nil }
-    }
-
     private struct Search: Decodable { let nodes: [RawPullRequest] }
 
     init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: Key.self)
+        let container = try decoder.container(keyedBy: DynamicKey.self)
         var found: [RawPullRequest] = []
         var searched: [RawPullRequest] = []
         for key in container.allKeys {

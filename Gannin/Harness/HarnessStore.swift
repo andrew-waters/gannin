@@ -20,7 +20,14 @@ final class HarnessStore {
     private(set) var repositories: [String: [String]] = [:]
 
     @ObservationIgnored private var fetches: [String: Task<Void, Never>] = [:]
+    /// Whether a repo's branch needs changes through a pull request, by
+    /// `repo@branch`: cached for the app's run.
+    @ObservationIgnored var pullRequestRequired: [String: Bool] = [:]
     let auth: AuthStore
+    /// Told when a commit went through a pull request instead (the branch's
+    /// rules required one) and GitHub wouldn't merge it right away: it's
+    /// open and needs a look, with why.
+    var onPullRequestOpened: (@MainActor @Sendable (_ repo: String, _ url: URL, _ note: String) -> Void)?
 
     init(auth: AuthStore) {
         self.auth = auth
@@ -77,7 +84,7 @@ final class HarnessStore {
     func load(org: String, setup: HarnessConfig, force: Bool = false, expecting: String? = nil) async {
         let indexKey = Self.key(org, setup.repo)
         loadCached(org, repo: setup.repo)
-        if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge || auth.shouldHoldOff { return }
+        if !force, let index = index(for: org, setup), -index.fetchedAt.timeIntervalSinceNow < Self.maxAge || auth.shouldWaitForBudget() { return }
         if let running = fetches[indexKey] {
             await running.value
             // A forced fetch (after a commit, say) wants what's there now,
@@ -108,7 +115,11 @@ final class HarnessStore {
                 }
                 indexes[indexKey] = index
                 errors[indexKey] = nil
-                save(org, repo: setup.repo)
+                // An unchanged head only moves `fetchedAt`; a relaunch checking
+                // the head again costs less than rewriting every document.
+                let unchanged = previous?.commit == index.commit && previous?.parserVersion == index.parserVersion
+                    && previous?.requestedBranch == index.requestedBranch && previous?.dataFiles != nil
+                if !unchanged { save(org, repo: setup.repo) }
             } catch APIError.unauthorized {
                 auth.signOut()
             } catch {
@@ -342,6 +353,8 @@ extension GitHubAPI {
             let truncated: Bool
         }
         let response: Response = try await rest("repos/\(repo)/git/trees/\(commit)", query: ["recursive": "1"])
+        // A cut-short listing would index only some of the documents.
+        if response.truncated { throw APIError.graphQL(["\(repo) has too many files for GitHub to list at once, so its documents can't all be indexed."]) }
         return response.tree.filter { $0.type == "blob" }
     }
 

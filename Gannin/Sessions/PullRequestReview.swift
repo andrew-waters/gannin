@@ -429,7 +429,12 @@ extension GitHubAPI {
 
     /// Marks a review thread resolved. A write: not retried.
     func resolveReviewThread(_ id: String) async throws {
-        struct Response: Decodable {}
+        // resolveReviewThread is nullable: an empty Response would decode
+        // past a refusal (no write access) rather than surfacing it.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Thread: Decodable { let id: String }; let thread: Thread }
+            let resolveReviewThread: Payload
+        }
         let _: Response = try await mutate("""
             mutation($thread: ID!) {
               resolveReviewThread(input: { threadId: $thread }) { thread { id } }
@@ -754,6 +759,7 @@ struct PullRequestReviewView: View {
     /// enabled until claude's state turns to working, so a second click in
     /// that gap would paste the prompt twice.
     @State private var reviewingAgain = false
+    @State private var headerWidth: CGFloat = 0
     /// The PR's state on GitHub (conflicts, checks, review decision, open
     /// threads), for whether it can merge.
     @State private var status: SessionPullRequest?
@@ -844,7 +850,9 @@ struct PullRequestReviewView: View {
     private func load() async {
         guard let api = auth.api else { return }
         do {
-            let fetched = try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
+            let fetched = try await RequestLimiter.interactive {
+                try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
+            }
             pullRequest = fetched
             error = nil
             if selectedFile == nil { selectedFile = Self.overviewTag }
@@ -875,100 +883,118 @@ struct PullRequestReviewView: View {
     private func header(review: SessionTranscript.ReviewResult?, transcript: SessionTranscript?) -> some View {
         let state = sessions.state(session.id)
         let draft = sessions.reviewDrafts[session.id] ?? ReviewDraft()
-        return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Link(destination: reference.url) {
-                        Text(reference.title)
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
-                    .help("Open the pull request on GitHub")
-                    HStack(spacing: 8) {
-                        Link(destination: reference.url) {
-                            Label(reference.repo + "#" + String(reference.number), systemImage: "arrow.up.right.square")
-                        }
-                        .help("Open the pull request on GitHub")
-                        if let pullRequest {
-                            if let author = pullRequest.author { Text("by \(author)") }
-                            Text("+\(pullRequest.additions)").foregroundStyle(ChartPalette.good)
-                            Text("-\(pullRequest.deletions)").foregroundStyle(ChartPalette.critical)
-                            Text("\(pullRequest.files.count) files")
-                            if pullRequest.state != "open" { Text(pullRequest.state.capitalized).foregroundStyle(.purple) }
-                        }
-                    }
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                }
-                Spacer()
-                status(state: state, transcript: transcript, hasReview: review != nil)
-                let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
-                if session.archivedAt == nil {
-                    Button {
-                        conversation = !showsConversation
-                    } label: {
-                        Label("Conversation", systemImage: showsConversation ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
-                    }
-                    .help(showsConversation ? "Hide the conversation with the reviewer" : "Ask the reviewer more (resumes claude)")
-                }
+        let titleBlock = VStack(alignment: .leading, spacing: 3) {
+            Link(destination: reference.url) {
+                Text(reference.title)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+            }
+            .help("Open the pull request on GitHub")
+            FlowRow(spacing: 8) {
                 Link(destination: reference.url) {
-                    Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                    Label(reference.repo + "#" + String(reference.number), systemImage: "arrow.up.right.square")
                 }
+                .fixedSize()
+                .help("Open the pull request on GitHub")
+                if let pullRequest {
+                    if let author = pullRequest.author { Text("by \(author)") }
+                    Text("+\(pullRequest.additions)").foregroundStyle(ChartPalette.good)
+                    Text("-\(pullRequest.deletions)").foregroundStyle(ChartPalette.critical)
+                    Text("\(pullRequest.files.count) files")
+                    if pullRequest.state != "open" { Text(pullRequest.state.capitalized).foregroundStyle(.purple) }
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+        let controls = FlowRow(spacing: 10, alignment: .center) {
+            status(state: state, transcript: transcript, hasReview: review != nil)
+                .frame(width: Self.statusWidth, alignment: .leading)
+            let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
+            if session.archivedAt == nil {
+                Button {
+                    conversation = !showsConversation
+                } label: {
+                    Label("Conversation", systemImage: showsConversation ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
+                }
+                .help(showsConversation ? "Hide the conversation with the reviewer" : "Ask the reviewer more (resumes claude)")
+            }
+            Link(destination: reference.url) {
+                Label("Open on GitHub", systemImage: "arrow.up.right.square")
+            }
+            .buttonStyle(.bordered)
+            ExplainPullRequestButton(reference: reference, walkthrough: review?.walkthrough ?? [])
                 .buttonStyle(.bordered)
-                ExplainPullRequestButton(reference: reference, walkthrough: review?.walkthrough ?? [])
-                    .buttonStyle(.bordered)
-                Button("Review Again") {
-                    reviewingAgain = true
-                    Task {
-                        defer { reviewingAgain = false }
-                        // The diff may cover more of the repo than it did
-                        // when the review started, so the learnings fixed
-                        // into its first prompt may now fall short.
-                        let learnings = await sessions.reviewLearnings(org: reference.org, harnessRepo: session.harnessRepo, repo: reference.repo, number: reference.number)
-                        let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
-                        sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block, listing in `resolved` the threads now dealt with.\(learned)", to: session.id)
-                        // It's looking at what changed, so the watch needn't.
-                        sessions.update(session.id) { session in
-                            session.watch?.hasNewCommits = false
-                            session.watch?.newComments = 0
-                            session.watch?.changedAt = nil
-                        }
-                        await load()
+            Button("Review Again") {
+                reviewingAgain = true
+                Task {
+                    defer { reviewingAgain = false }
+                    // The diff may cover more of the repo than it did
+                    // when the review started, so the learnings fixed
+                    // into its first prompt may now fall short.
+                    let learnings = await sessions.reviewLearnings(org: reference.org, harnessRepo: session.harnessRepo, repo: reference.repo, number: reference.number)
+                    let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
+                    sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block, listing in `resolved` the threads now dealt with.\(learned)", to: session.id)
+                    // It's looking at what changed, so the watch needn't.
+                    sessions.update(session.id) { session in
+                        session.watch?.hasNewCommits = false
+                        session.watch?.newComments = 0
+                        session.watch?.changedAt = nil
                     }
+                    await load()
                 }
-                .disabled(!sessions.isRunning(session.id) || state == .working || reviewingAgain)
-                .help("Ask claude to review the PR again, as it is now")
-                if let posted = draft.posted {
-                    Link(destination: posted) {
-                        let label = draft.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
-                        Label(draft.postedAt.map { "\(label.text) \($0.formatted(.relative(presentation: .named)))" } ?? label.text, systemImage: label.symbol)
-                            .foregroundStyle(label.color)
-                    }
-                    .help("Open the review on GitHub")
+            }
+            .disabled(!sessions.isRunning(session.id) || state == .working || reviewingAgain)
+            .help("Ask claude to review the PR again, as it is now")
+            if let posted = draft.posted {
+                Link(destination: posted) {
+                    let label = draft.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
+                    Label(draft.postedAt.map { "\(label.text) \($0.formatted(.relative(presentation: .named)))" } ?? label.text, systemImage: label.symbol)
+                        .foregroundStyle(label.color)
                 }
-                if review != nil {
-                    Toggle("Watch for changes", isOn: Binding(
-                        get: { sessions.sessions[session.id]?.watch?.isOn ?? false },
-                        set: { sessions.setWatching(session.id, $0) }
-                    ))
-                    .checkboxToggle()
-                    .help("Review it again by itself when new commits are pushed or someone comments, until it's merged or closed")
+                .help("Open the review on GitHub")
+            }
+            // Kept in the row while the first review runs, so it appearing
+            // doesn't reflow the buttons.
+            Toggle("Watch for changes", isOn: Binding(
+                get: { sessions.sessions[session.id]?.watch?.isOn ?? false },
+                set: { sessions.setWatching(session.id, $0) }
+            ))
+            .checkboxToggle()
+            .help("Review it again by itself when new commits are pushed or someone comments, until it's merged or closed")
+            .opacity(review == nil ? 0 : 1)
+            .disabled(review == nil)
+            .accessibilityHidden(review == nil)
+            if session.archivedAt != nil {
+                Button("Resume") {
+                    sessions.resumeReview(session.id)
+                    conversation = true
                 }
-                if session.archivedAt != nil {
-                    Button("Resume") {
-                        sessions.resumeReview(session.id)
-                        conversation = true
-                    }
-                    .help("Take it out of the history and pick the conversation back up")
-                } else {
-                    Button("Finish") { confirmingFinish = true }
-                        .help("End the reviewer and keep the review in your history")
+                .help("Take it out of the history and pick the conversation back up")
+            } else {
+                Button("Finish") { confirmingFinish = true }
+                    .help("End the reviewer and keep the review in your history")
+            }
+            Button("Post Review") { posting = true }
+                .buttonStyle(.borderedProminent)
+                .disabled(pullRequest == nil || (review == nil && draft.comments.isEmpty))
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            // Chosen from the window's width alone, never from what's loaded
+            // (the diff's meta items, the Posted link), so nothing flips the
+            // layout when they appear.
+            if headerWidth >= Self.sideBySideWidth {
+                HStack(alignment: .top, spacing: 16) {
+                    titleBlock.frame(width: Self.titleWidth, alignment: .leading)
+                    controls
                 }
-                Button("Post Review") { posting = true }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(pullRequest == nil || (review == nil && draft.comments.isEmpty))
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    titleBlock
+                    controls
+                }
             }
             HStack(spacing: 10) {
                 if let review { verdictPill(review.verdict) }
@@ -988,9 +1014,20 @@ struct PullRequestReviewView: View {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .onGeometryChange(for: CGFloat.self, of: { $0.size.width }) { headerWidth = $0 }
         .padding(14)
         .background(.bar)
     }
+
+    /// Every status takes this width, so the buttons beside it don't move or
+    /// re-wrap as it changes; the working label is the widest and truncates.
+    private static let statusWidth: CGFloat = 280
+
+    private static let titleWidth: CGFloat = 360
+
+    /// The header width from which the controls sit beside the title.
+    private static let sideBySideWidth: CGFloat = 1100
 
     @ViewBuilder
     private func status(state: SessionState, transcript: SessionTranscript?, hasReview: Bool) -> some View {
@@ -1007,7 +1044,7 @@ struct PullRequestReviewView: View {
                 Text(transcript?.events.last.map { activity($0) } ?? "Starting")
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 260, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .foregroundStyle(.secondary)
             .font(.callout)
@@ -1487,9 +1524,27 @@ private struct ReviewDiff: View {
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
     @State private var showsFileLearnings = true
+    @Environment(\.colorScheme) private var colorScheme
+    /// Syntax colours with the lines they were made from; nil for a file
+    /// that isn't highlighted, which shows plain. Kept while new ones are
+    /// made, and used only while the lines are unchanged.
+    @State private var highlights: Highlights?
+
+    /// What the highlights were made from, so a new file or appearance
+    /// makes them again.
+    private struct Highlights {
+        let lines: [DiffLine]
+        let colours: [DiffLine.ID: AttributedString]
+    }
+
+    private struct HighlightKey: Equatable {
+        let lines: [DiffLine]
+        let dark: Bool
+    }
 
     var body: some View {
         let drafts = sessions.reviewDrafts[session.id] ?? ReviewDraft()
+        let colours = highlights.flatMap { $0.lines == file.lines ? $0.colours : nil }
         let placement = learningPlacement()
         let firstLine = placement.firstLine
         let marked = placement.marked
@@ -1562,7 +1617,7 @@ private struct ReviewDiff: View {
                                 .padding(.trailing, 8)
                                 .padding(.vertical, 4)
                         }
-                        DiffRow(sessionID: session.id, filePath: file.path, line: line, isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting)
+                        DiffRow(sessionID: session.id, filePath: file.path, line: line, highlight: colours?[line.id], isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting)
                         if let newLine = line.newLine {
                             ForEach(appliedAt[newLine] ?? [], id: \.entry) { pair in
                                 AppliedLearningCard(session: session, entry: pair.entry, learning: pair.learning, url: pair.learning.flatMap(learningURL), showsLocation: false)
@@ -1593,6 +1648,20 @@ private struct ReviewDiff: View {
                 }
             }
         }
+        .task(id: HighlightKey(lines: file.lines, dark: colorScheme == .dark)) {
+            await computeHighlights()
+        }
+    }
+
+    private func computeHighlights() async {
+        let key = HighlightKey(lines: file.lines, dark: colorScheme == .dark)
+        guard let language = DiffLanguage.name(forPath: file.path) else {
+            highlights = nil
+            return
+        }
+        let result = await DiffHighlighter.shared.highlight(key.lines, language: language, dark: key.dark)
+        guard !Task.isCancelled else { return }
+        highlights = result.map { Highlights(lines: key.lines, colours: $0) }
     }
 
     private typealias Applied = (entry: SessionTranscript.AppliedLearning, learning: HarnessLearning?)
@@ -1647,6 +1716,9 @@ private struct DiffRow: View {
     let sessionID: UUID
     let filePath: String
     let line: DiffLine
+    /// The line's code coloured by its language, without its marker; nil
+    /// draws the plain line.
+    var highlight: AttributedString?
     /// A learning's lines take it in: marked down the edge.
     var isLearned = false
     @Binding var hovered: DiffLine.ID?
@@ -1667,14 +1739,25 @@ private struct DiffRow: View {
             .padding(.trailing, 6)
             .contentShape(Rectangle())
             .onTapGesture { if anchor != nil { commenting = line.id } }
-            Text(line.text.isEmpty ? " " : line.text)
-                .foregroundStyle(line.kind == .hunk ? .secondary : .primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
+            if let highlight {
+                // The marker stays in the gutter, tinted harder than the row.
+                Text(String(line.text.prefix(1)))
+                    .foregroundStyle(Self.markerColor(line.kind))
+                    .frame(width: 14)
+                    .background(Self.gutterTint(line.kind))
+                Text(highlight.characters.isEmpty ? AttributedString(" ") : highlight)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            } else {
+                Text(line.text.isEmpty ? " " : line.text)
+                    .foregroundStyle(line.kind == .hunk ? .secondary : .primary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
         }
         .font(Font(EditorFontStore.shared.font))
         .padding(.trailing, 6)
-        .background(Self.background(line.kind))
+        .background(Self.background(line.kind, highlighted: highlight != nil))
         .overlay(alignment: .leading) {
             if isLearned {
                 Rectangle().fill(Color.yellow.opacity(0.7)).frame(width: 3)
@@ -1698,12 +1781,29 @@ private struct DiffRow: View {
         }
     }
 
-    private static func background(_ kind: DiffLine.Kind) -> Color {
+    /// The row's tint: lighter when the marker's gutter carries the strong one.
+    private static func background(_ kind: DiffLine.Kind, highlighted: Bool) -> Color {
         switch kind {
-        case .added: ChartPalette.good.opacity(0.14)
-        case .removed: ChartPalette.critical.opacity(0.14)
+        case .added: ChartPalette.good.opacity(highlighted ? 0.07 : 0.14)
+        case .removed: ChartPalette.critical.opacity(highlighted ? 0.07 : 0.14)
         case .hunk: Color.secondary.opacity(0.1)
         case .context, .note: .clear
+        }
+    }
+
+    private static func gutterTint(_ kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: ChartPalette.good.opacity(0.3)
+        case .removed: ChartPalette.critical.opacity(0.3)
+        default: .clear
+        }
+    }
+
+    private static func markerColor(_ kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: ChartPalette.good
+        case .removed: ChartPalette.critical
+        default: Color.secondary
         }
     }
 }

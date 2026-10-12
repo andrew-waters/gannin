@@ -220,12 +220,13 @@ struct OrgRefresh {
     func callAsFunction(_ org: String, mode: OrgStore.RefreshMode) {
         let config = configs.config(for: org)
         let syncDays = MetricsWindow(code: windowDays).syncDays()
+        let refetchOpenIssues = mode == .full
         Task {
             async let workload: Void = orgs.refresh(org, mode: mode)
             async let metrics: Void = metricsStore.sync(org, windowDays: syncDays, force: true)
             // The work log only once it's been opened for this org.
             async let log: Void = workLog.isTracking(org) ? workLog.sync(org, force: true) : ()
-            async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: syncDays, force: true) : ()
+            async let issues: Void = issueStore.isTracking(org) ? issueStore.sync(org, windowDays: syncDays, force: true, refetchOpen: refetchOpenIssues) : ()
             // Actions runs likewise, once the Actions page has been opened.
             async let runs: Void = actions.isTracking(org)
                 ? actions.sync(org, windowDays: (syncDays + 1) / 2, excluding: config.unfetchedRepos, force: true)

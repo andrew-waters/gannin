@@ -1,15 +1,17 @@
 import Foundation
 
 extension GitHubAPI {
-    /// Merged PRs in `[from, to]`. Keep the range to a week (see
-    /// `weeklyChunks`) so the search stays under GitHub's 1000 result cap.
+    /// Merged PRs in `[from, to]`, or from `since` when given. Keep the range
+    /// to a week (see `weeklyChunks`) so the search stays under GitHub's 1000
+    /// result cap.
     func metricPullRequests(
         org: String,
         from: Date,
         to: Date,
+        since: Date? = nil,
         onPage: (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }
     ) async throws -> [MetricPullRequest] {
-        let query = Self.mergedSearch(org: org, from: from, to: to)
+        let query = Self.mergedSearch(org: org, from: from, to: to, since: since)
         let nodes: [Lossy<RawMetricPullRequest>] = try await search(
             query,
             fields: RawMetricPullRequest.fields,
@@ -48,9 +50,14 @@ extension GitHubAPI {
         }
     }
 
-    /// The search for PRs merged in `[from, to]`, by day.
-    static func mergedSearch(org: String, from: Date, to: Date) -> String {
-        "\(GitHubAccounts.scope(org)) archived:false is:pr is:merged merged:\(day(from))..\(day(to))"
+    /// The search for PRs merged in `[from, to]`, by day, or from the exact
+    /// time `since` (to the second) when it's given, so a top-up doesn't fetch
+    /// the rest of the day it starts in again.
+    static func mergedSearch(org: String, from: Date, to: Date, since: Date? = nil) -> String {
+        let scope = "\(GitHubAccounts.scope(org)) archived:false is:pr is:merged"
+        guard let since else { return "\(scope) merged:\(day(from))..\(day(to))" }
+        let start = since.formatted(.iso8601).replacingOccurrences(of: "Z", with: "+00:00")
+        return "\(scope) merged:\(start)..\(day(to))T23:59:59+00:00"
     }
 
     /// Number of PRs opened in each week starting at the given dates.
@@ -59,21 +66,25 @@ extension GitHubAPI {
         weeks: [Date],
         onWeek: (_ done: Int) -> Void = { _ in }
     ) async throws -> [Date: Int] {
-        struct Response: Decodable {
-            struct Search: Decodable { let issueCount: Int }
-            let search: Search
-        }
         var counts: [Date: Int] = [:]
-        for week in weeks {
-            let end = Calendar.metrics.date(byAdding: .day, value: 6, to: week) ?? week
-            let response: Response = try await query("""
-                query($q: String!) { search(query: $q, type: ISSUE, first: 1) { issueCount } }
-                """, variables: ["q": "\(GitHubAccounts.scope(org)) archived:false is:pr created:\(Self.day(week))..\(Self.day(end))"])
-            counts[week] = response.search.issueCount
+        // One request per batch of weeks, keeping a long history's query small.
+        for batch in stride(from: 0, to: weeks.count, by: Self.openedBatchSize).map({ Array(weeks[$0..<min($0 + Self.openedBatchSize, weeks.count)]) }) {
+            var searches: [String: String] = [:]
+            for week in batch {
+                let end = Calendar.metrics.date(byAdding: .day, value: 6, to: week) ?? week
+                searches[Self.day(week)] = "\(GitHubAccounts.scope(org)) archived:false is:pr created:\(Self.day(week))..\(Self.day(end))"
+            }
+            let batchCounts = try await self.counts(searches: searches)
+            for week in batch {
+                if let count = batchCounts[Self.day(week)] { counts[week] = count }
+            }
             onWeek(counts.count)
         }
         return counts
     }
+
+    /// Weeks counted in one `openedCounts` request.
+    private static let openedBatchSize = 50
 
     /// Week-long `[start, end]` ranges covering `[from, to]`.
     static func weeklyChunks(from: Date, to: Date) -> [(Date, Date)] {

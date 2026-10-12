@@ -34,7 +34,13 @@ the release's first steps, before anything is built: promote and merge, then del
 
 Tags are `v<major>.<minor>.<patch>`; the app's version comes from the
 tag (project.yml keeps `0.0.0`, and CI fails a pull request that changes it) and its build
-number from the workflow's run, so it only goes up.
+number from the workflow's run, so it only goes up. A build from a pull request or a local build
+is `0.0.0`, and Sparkle (`App/Updater.swift`, Gannin › Check for Updates) doesn't check for
+updates by itself in one. It reads `https://gannin.ai/appcast.xml` and verifies updates with
+the public key in `Gannin/Info.plist`.
+
+The app was `dev.andon.getgannin` before it was `dev.andon.gannin`; `App/BundleMove.swift`
+brings its preferences, Application Support folder and token across once.
 
 ## Where things go
 
@@ -43,9 +49,10 @@ number from the workflow's run, so it only goes up.
   `Gannin-<version>.dmg`, and the site's Download for Mac button is
   `releases/latest/download/Gannin.dmg`, so every download, by hand or by Sparkle, counts in
   the release's download numbers (which Delivery › Releases reads).
-- **gannin.ai** is this repo's GitHub Pages site, deployed by `pages.yml`: `site/` plus the
+- **gannin.ai** is this repo's GitHub Pages site, deployed by `pages.yml`: `site/`, the user
+  docs built from `docs-site/` into `/docs`, and the
   latest release's `appcast.xml`, so `https://gannin.ai/appcast.xml` is always the newest. It
-  deploys on every push to `main` that touches `site/`, and a release starts it once the
+  deploys on every push to `main` that touches `site/` or `docs-site/`, and a release starts it once the
   release is up, so the appcast never points at a file that isn't there.
 
 ## Secrets

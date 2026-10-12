@@ -39,6 +39,8 @@ struct OrgWorkloadView: View {
                 ActionsView(org: org, selection: $selection)
             } else if tab == .harness {
                 HarnessView(org: org, selection: $selection)
+            } else if tab == .onboarding {
+                OnboardingView(org: org)
             } else if tab == .agents || tab == .ask {
                 // Ask is the sidebar's New Ask button now; a window saved
                 // on its old row shows Agents, which lists Ask sessions.
@@ -64,6 +66,8 @@ struct OrgWorkloadView: View {
                 ScorecardView(org: org)
             } else if tab == .planning {
                 PlanningPage(org: org)
+            } else if tab == .refine {
+                RefinePage(org: org)
             } else if tab == .prioritisation, let workload {
                 PrioritisationView(org: org, workload: workload, selection: $selection)
             } else if tab == .views {
@@ -223,7 +227,7 @@ struct OrgWorkloadView: View {
         case .repositories: EmptyView()
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
-        case .projects, .actions, .harness, .views, .prioritisation, .planning, .recap, .scorecard, .agents, .agentMetrics, .routines, .agentQueue, .ask, .epics, .hygiene, .releases, .settings: EmptyView()
+        case .projects, .actions, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agents, .agentMetrics, .routines, .agentQueue, .ask, .epics, .hygiene, .releases, .settings: EmptyView()
         }
     }
 

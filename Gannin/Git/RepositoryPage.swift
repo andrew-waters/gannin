@@ -108,18 +108,27 @@ private struct LocalRepositoryView: View {
             } catch {}
         }
         // Fetch in the background while the page is open: git's own, so
-        // nothing of GitHub's API budget.
+        // nothing of GitHub's API budget. Every five minutes, and only while
+        // Gannin is the active app: coming back to it fetches straight away
+        // if one is due.
         .task(id: repository.root) {
             do {
                 try await Task.sleep(for: .seconds(2))
                 while true {
-                    await repository.fetch(quietly: true)
-                    try await Task.sleep(for: .seconds(300))
+                    if NSApp.isActive, BackgroundFetch.isDue(lastFetched: repository.lastFetched) {
+                        await repository.fetch(quietly: true)
+                    }
+                    try await Task.sleep(for: .seconds(BackgroundFetch.tick))
                 }
             } catch {}
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
-            Task { await repository.refresh() }
+            Task {
+                await repository.refresh()
+                if BackgroundFetch.isDue(lastFetched: repository.lastFetched) {
+                    await repository.fetch(quietly: true)
+                }
+            }
         }
         .confirmationDialog(
             "You have changes on \(repository.status?.branch ?? "this branch")",
@@ -421,5 +430,21 @@ private struct RepositoryPartPicker: View {
         .pickerStyle(.segmented)
         .labelsHidden()
         .fixedSize()
+    }
+}
+
+/// When a repository page's background `git fetch` runs.
+enum BackgroundFetch {
+    /// How often a fetch is due while the app is active.
+    static let interval: TimeInterval = 300
+    /// How often the page checks whether one is due.
+    static let tick: TimeInterval = 60
+    /// A tick landing just short of `interval` fetches anyway, so the cadence
+    /// doesn't slip to `interval + tick`.
+    static let slack: TimeInterval = 10
+
+    static func isDue(lastFetched: Date?, now: Date = .now) -> Bool {
+        guard let lastFetched else { return true }
+        return now.timeIntervalSince(lastFetched) >= interval - slack
     }
 }
