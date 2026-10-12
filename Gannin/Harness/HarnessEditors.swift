@@ -14,7 +14,7 @@ struct HarnessNewDocumentSheet: View {
             HarnessSkillEditor(org: org, setup: setup, document: nil)
         case .prompts:
             HarnessPromptEditor(org: org, setup: setup, library: HarnessPromptLibrary(index: harness.index(for: org, setup)), prompt: nil)
-        case .requirements, .findings:
+        case .requirements, .findings, .decisions:
             HarnessDocumentEditor(kind: kind, org: org, setup: setup)
         case .plans:
             // Plans open as a tab in the Claude Code window instead.

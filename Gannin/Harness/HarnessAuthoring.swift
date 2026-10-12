@@ -52,6 +52,12 @@ enum HarnessAuthoring {
 
             Follow STANDARDS.md and the requirements template: the problem and who has it, what the feature must do as numbered, testable statements, what's out of scope, and open questions. Keep it to what was asked for; mark guesses as open questions rather than stating them. Its status is draft unless I say otherwise.
             """
+        case .decisions:
+            """
+            You're writing a decision record (an ADR) for {{org}}'s harness, {{harness}}: one decision the team made, and why, so someone new can understand it without asking.
+
+            Follow STANDARDS.md and the decisions template: the context (what forced a choice, and the constraints), the decision itself in a sentence or two, the alternatives considered and why each lost, and the consequences, good and bad, including what it rules out. Keep to one decision; if there are several, say so and draft the most important. Keep the team's reasons as they gave them, and mark anything you're inferring. Its status is proposed unless I say it was agreed (accepted). If an existing decision covers the same ground, tell me which, and whether this one supersedes it.
+            """
         case .findings:
             """
             You're writing up a finding for {{org}}'s harness, {{harness}}: an investigation and what it found.
@@ -176,6 +182,7 @@ struct HarnessDocumentDraft {
         case .learnings: ["active", "retired"]
         case .research: []
         case .refines: ["agreed"]
+        case .decisions: ["proposed", "accepted", "rejected", "superseded"]
         case .plans, .requirements: ["draft", "in-progress", "done"]
         }
     }
