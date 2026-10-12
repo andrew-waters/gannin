@@ -112,6 +112,9 @@ final class ChangeFeeds {
 
     private var feeds: [String: ChangeFeed] = [:]
     private var running: [String: Task<ChangeFeed?, Never>] = [:]
+    /// Bumped by `clear`, so a run that started before it doesn't store its
+    /// feed (the last account's) afterwards.
+    private var generation = 0
 
     /// The org's feed, brought up to date unless a run is under way (awaited)
     /// or just finished; nil when the search failed, so a store falls back.
@@ -135,18 +138,23 @@ final class ChangeFeeds {
             }
             let task = Task { await self.refresh(org: org, api: api, outside: outside, cursor: cursor, run: run) }
             running[org] = task
+            let started = generation
             let feed = await task.value
-            running[org] = nil
+            if started == generation { running[org] = nil }
             return feed
         }
         return nil
     }
 
     func clear() {
+        generation += 1
         feeds = [:]
+        running.values.forEach { $0.cancel() }
+        running = [:]
     }
 
     private func refresh(org: String, api: GitHubAPI, outside: Set<String>, cursor: Date, run: SyncRun?) async -> ChangeFeed? {
+        let started = generation
         let previous = feeds[org]
         let outsideRepos = outside.union(previous?.outsideRepos ?? [])
         let now = Date.now
@@ -165,6 +173,7 @@ final class ChangeFeeds {
                 result = try await search()
             }
             let feed = ChangeFeed.updated(previous, found: result.entries, capped: result.capped, outsideRepos: outsideRepos, since: since, now: now)
+            guard started == generation else { return nil }
             feeds[org] = feed
             return feed
         } catch {
