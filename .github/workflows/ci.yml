@@ -3,10 +3,19 @@ name: CI
 # Builds the Mac app and runs its tests on every pull request and push to
 # main, unsigned, so a broken build or a failing test is caught before a
 # release tag is. Releases are release.yml.
+#
+# A change that only touches the changelog or Gannin's session files doesn't
+# run it. Nothing in them is built, tested or read by the docs job.
 on:
   pull_request:
+    paths-ignore:
+      - CHANGELOG.md
+      - .gannin/**
   push:
     branches: [main]
+    paths-ignore:
+      - CHANGELOG.md
+      - .gannin/**
 
 concurrency:
   group: ci-${{ github.ref }}
