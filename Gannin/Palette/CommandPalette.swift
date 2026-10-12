@@ -521,6 +521,8 @@ struct CommandPalette: View {
             sessions.showNewAsk(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo, with: openWindow)
         case .newQuickChange(let org):
             sessions.showNewQuickChange(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo, with: openWindow)
+        case .newRefine(let org):
+            sessions.showNewRefine(org: org, harnessRepo: configs.config(for: org).harnesses.first?.repo, with: openWindow)
         case .nextSessionWaiting:
             if let next = sessions.nextWaiting { sessions.show(next, with: openWindow) }
         case .toggle(let key):

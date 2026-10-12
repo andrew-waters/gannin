@@ -86,6 +86,7 @@ xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=
 | `sessions-pair-review` | Pair review loop |
 | `sessions-review` | PR reviews, auto review, records, config, approval queue |
 | `sessions-planning` | Planning sessions |
+| `sessions-refine` | Design and Refine sessions |
 | `routines` | Scheduled runs and the agent queue (`Routines/`) |
 | `sandbox` | Apple container sandboxes and their trust boundaries (`Sandbox/`) |
 | `harness` | Harness indexing, team data, projects, documents, prompts (`Harness/`) |

@@ -64,6 +64,8 @@ enum PaletteCommand: Hashable {
     case newAsk(org: String)
     /// A New Quick Change tab in the Claude Code window.
     case newQuickChange(org: String)
+    /// A New Design and Refine tab in the Claude Code window.
+    case newRefine(org: String)
     case nextSessionWaiting
     /// Flips a Bool preference (`excludeDrafts`, `showHidden`).
     case toggle(key: String)
@@ -344,6 +346,7 @@ struct PaletteSources {
         if !config.allHarnesses.isEmpty {
             items.append(PaletteItem(id: "action:\(org):new-ask", group: .actions, title: "New Ask", systemImage: "sparkle.magnifyingglass", org: org, keywords: ["claude", "question", "research", "agent"], action: .run(.newAsk(org: org))))
             items.append(PaletteItem(id: "action:\(org):new-quick-change", group: .actions, title: "New Quick Change", systemImage: "bolt", org: org, keywords: ["claude", "fix", "snag", "tweak", "agent", "work"], action: .run(.newQuickChange(org: org))))
+            items.append(PaletteItem(id: "action:\(org):new-refine", group: .actions, title: "New Design and Refine", systemImage: "rectangle.and.pencil.and.ellipsis", org: org, keywords: ["claude", "review", "ui", "page", "walkthrough", "ritual"], action: .run(.newRefine(org: org))))
         }
         if config.repoProjects.count > 1 {
             for project in config.repoProjects {

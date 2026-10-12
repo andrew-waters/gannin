@@ -17,7 +17,7 @@ The rows are grouped by what you're trying to do.
 - **Work**: Pull Requests; Issues (with All and Not on a board); Epics; Repositories ([local git](/docs/guides/repositories/)); Projects (your GitHub boards); and Views.
 - **Delivery**: Scorecards, PR flow, Issue flow, Releases, Investments and CI.
 - **Team**: Everyone and each team (open one to see its members), then Activity and Time off.
-- **Rituals**: Standup, Recap, Prioritisation, Planning and Board Hygiene.
+- **Rituals**: Standup, Recap, Prioritisation, Planning, Design and Refine, and Board Hygiene.
 - **Harness**: Plans, Requirements, Findings, Skills, Prompts, Learnings, Research and Refines. It appears once the project has a harness.
 - **Agents**: Metrics, Waiting on You, Routines and Queue, then your Claude Code sessions.
 
