@@ -1,13 +1,16 @@
 {
+  "author" : "dwrss",
   "effort" : 3,
   "findings" : [
 
   ],
+  "merged_at" : "2026-10-11T22:32:17Z",
   "number" : 239,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "dwrss",
   "started_at" : "2026-10-11T20:22:17Z",
+  "state" : "MERGED",
   "title" : "Probe session PRs cheaply and read in full only what changed",
-  "updated_at" : "2026-10-12T12:39:43Z",
+  "updated_at" : "2026-10-12T12:39:45Z",
   "verdict" : "approve"
 }
