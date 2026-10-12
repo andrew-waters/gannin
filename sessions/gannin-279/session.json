@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "279-onboarding-to-the-harness",
+  "finishedAt" : "2026-10-12T14:35:08Z",
   "issue" : "andrew-waters/gannin#279",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/291"
