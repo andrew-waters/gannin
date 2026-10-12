@@ -996,6 +996,7 @@ struct PullRequestReviewView: View {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(.bar)
     }
