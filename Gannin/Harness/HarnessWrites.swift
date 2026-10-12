@@ -61,8 +61,9 @@ extension HarnessStore {
             let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
             guard let planned = try await change(head.commit) else { return nil }
             do {
-                var viaPullRequest = await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch)
-                if !viaPullRequest {
+                let key = "\(setup.repo)@\(head.branch)"
+                var cacheOnSuccess = false
+                if !(await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch)) {
                     do {
                         let commit = try await api.createCommit(repo: setup.repo, branch: head.branch, expectedHead: head.commit, change: planned)
                         if refreshing { Task { await load(org: org, setup: setup, force: true, expecting: commit) } }
@@ -70,11 +71,15 @@ extension HarnessStore {
                     } catch let error as APIError where error.requiresPullRequest {
                         // Classic branch protection, or a ruleset added since
                         // the lookup, which the rules endpoint doesn't show.
-                        pullRequestRequired["\(setup.repo)@\(head.branch)"] = true
-                        viaPullRequest = true
+                        // A ruleset refusal that doesn't name a pull request
+                        // may be for another rule, or a one-off such as a file
+                        // size limit, so it's only remembered once a pull
+                        // request has worked.
+                        if error.namesPullRequest { pullRequestRequired[key] = true } else { cacheOnSuccess = true }
                     }
                 }
                 let result = try await commitViaPullRequest(api: api, setup: setup, base: head, change: planned)
+                if cacheOnSuccess { pullRequestRequired[key] = true }
                 if refreshing, result.onBase { Task { await load(org: org, setup: setup, force: true, expecting: result.commit) } }
                 return result.commit
             } catch let error as APIError where error.isStaleHead && attempt == 0 {
@@ -180,6 +185,13 @@ extension APIError {
     var requiresPullRequest: Bool {
         guard case .graphQL(let messages) = self else { return false }
         return messages.contains { $0.localizedCaseInsensitiveContains("pull request") || $0.localizedCaseInsensitiveContains("rule violation") }
+    }
+
+    /// Whether the refusal names a pull request outright, rather than just
+    /// reporting a generic rule violation that happens to need one too.
+    var namesPullRequest: Bool {
+        guard case .graphQL(let messages) = self else { return false }
+        return messages.contains { $0.localizedCaseInsensitiveContains("pull request") }
     }
 
     /// `createCommitOnBranch` refusing because `expectedHeadOid` is no
