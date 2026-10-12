@@ -7,7 +7,7 @@ sidebar:
 
 Org settings › Harness is about the harness behind the project your window is working in: where the team's data lives, what Claude Code sessions are told, where the harness is checked out on this Mac, and the GitHub token sandboxed sessions use. Open it with the cog beside the account menu in the sidebar's footer, then pick Harness in the toolbar. Projects themselves are added and edited under [Projects](/docs/settings/org/projects/).
 
-A harness is a repo of plans, requirements, findings, skills and prompts beside the code. Gannin keeps the team's settings in it as JSON files under `.gannin/`, so everyone in the org works from the same copies. Changes to those settings apply at once and wait in the sidebar ("N changes to commit") until you review and commit them. An org with no harness keeps its team data on this Mac instead.
+A harness is a repo of plans, requirements, decisions, findings, skills and prompts beside the code. Gannin keeps the team's settings in it as JSON files under `.gannin/`, so everyone in the org works from the same copies. Changes to those settings apply at once and wait in the sidebar ("N changes to commit") until you review and commit them. An org with no harness keeps its team data on this Mac instead.
 
 ## Harness
 
@@ -96,7 +96,7 @@ This is what Claude is told when it drafts a new document from the Harness page.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| For | Skills | Picks the kind of document you are editing guidance for: Plans, Requirements, Findings, Skills, Prompts or Learnings. | Not kept |
+| For | Skills | Picks the kind of document you are editing guidance for: Plans, Requirements, Decisions, Findings, Skills, Prompts or Learnings. | Not kept |
 | Write with Claude | Not applied | Opens a conversation with Claude to write the guidance with you. Nothing changes until you press Use This Draft. | Harness (`.gannin/authoring.json`) |
 | Restore Default | Not applied | Goes back to Gannin's default for that kind. Disabled while it is already the default. | Harness (`.gannin/authoring.json`) |
 | Save | Not applied | Saves the text as the org's guidance for that kind. Disabled until the text changes. Saving Gannin's default, or nothing, clears it. | Harness (`.gannin/authoring.json`) |

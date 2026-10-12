@@ -10,6 +10,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Harness › Onboarding maps the project's decisions, requirements and plans by area, in reading order, so someone new can find the part they'll work on and read why it is the way it is; what you've opened is marked read on this Mac, and says when it's changed since
+- Harness › Decisions keeps the team's decision records (ADRs) in `decisions/`, with a template, Draft with Claude, links to what superseded them, and Suggest Decisions, where Claude proposes them from the harness's plans for you to review and commit
+- Create Harness adds a `decisions/` folder with a README and template
 - Inbox › Needs your review now says when someone else has already reviewed a PR, such as "Review requested, approved by Sam"
 
 ### Changed
