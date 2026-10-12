@@ -44,7 +44,7 @@ jobs:
         run: |
           relevant=true
           if [ "$EVENT" = "pull_request" ]; then
-            others=$(git diff --name-only "$BASE" "$HEAD" | grep -vE '^(CHANGELOG\.md|\.gannin/)' || true)
+            others=$(git diff --name-only --no-renames "$BASE...$HEAD" | grep -vE '^(CHANGELOG\.md|\.gannin/)' || true)
             [ -z "$others" ] && relevant=false
           fi
           echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
