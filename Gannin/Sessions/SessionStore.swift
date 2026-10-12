@@ -321,8 +321,21 @@ final class SessionStore {
     }
 
     /// Whether Work on This asks before committing a session's brief and
-    /// record to the org's harness; off once "Don't ask again" is ticked.
-    static func asksBeforeRecordingKey(_ org: String) -> String { "sessionsRecordWithoutAsking.\(org)" }
+    /// record to a harness; off once "Don't ask again" is ticked. Per
+    /// harness (`owner/name`), as an org can have several.
+    static func asksBeforeRecordingKey(repo: String) -> String { "sessionsRecordWithoutAsking.\(repo)" }
+
+    /// A harness's "Don't ask again", else the one its owner had when it
+    /// was per org.
+    static func recordsWithoutAsking(repo: String) -> Bool {
+        let defaults = UserDefaults.standard
+        if let own = defaults.object(forKey: asksBeforeRecordingKey(repo: repo)) as? Bool { return own }
+        return defaults.bool(forKey: "sessionsRecordWithoutAsking.\(repo.split(separator: "/").first.map(String.init) ?? repo)")
+    }
+
+    static func setRecordsWithoutAsking(_ value: Bool, repo: String) {
+        UserDefaults.standard.set(value, forKey: asksBeforeRecordingKey(repo: repo))
+    }
 
     /// The one window sessions open in, each a tab.
     static let windowID = "sessions"

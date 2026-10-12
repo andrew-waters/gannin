@@ -1315,7 +1315,7 @@ struct HarnessSettingsSection: View {
             DisclosureGroup("Checkouts", isExpanded: $isCheckoutsExpanded) {
                 let checkouts = config.repoProjects.map(\.harness)
                 ForEach(checkouts, id: \.repo) { setup in
-                    HarnessCheckoutSection(org: org, repo: setup.repo, showsName: checkouts.count > 1, showsRecording: setup.repo == checkouts.first?.repo)
+                    HarnessCheckoutSection(org: org, repo: setup.repo, showsName: checkouts.count > 1, showsReviewRequests: setup.repo == checkouts.first?.repo)
                 }
             }
             .loadsHarness(org: org)
