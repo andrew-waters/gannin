@@ -58,6 +58,8 @@ struct HarnessView: View {
     @State private var sort: StatsSort?
     /// New on the page, and Edit on a skill or prompt.
     @State private var creatingIn: HarnessChoice?
+    /// Suggest Decisions on the Decisions page, in that harness.
+    @State private var suggestingIn: HarnessChoice?
     @State private var editingSkill: HarnessEdit<HarnessDocument>?
     @State private var editingPrompt: HarnessEdit<HarnessPrompt>?
 
@@ -130,6 +132,34 @@ struct HarnessView: View {
                     }
                 }
             }
+        }
+        .toolbar {
+            if let setup, kind == .decisions {
+                ToolbarItem {
+                    if harnesses.count > 1 {
+                        Menu {
+                            ForEach(harnesses, id: \.repo) { choice in
+                                Button(choice.repo) { suggestingIn = HarnessChoice(setup: choice) }
+                                    .disabled(harness.index(for: org, choice) == nil)
+                            }
+                        } label: {
+                            Label("Suggest Decisions", systemImage: "sparkles")
+                        }
+                        .help("Claude reads one harness's plans and proposes decisions worth keeping")
+                    } else {
+                        Button {
+                            suggestingIn = HarnessChoice(setup: setup)
+                        } label: {
+                            Label("Suggest Decisions", systemImage: "sparkles")
+                        }
+                        .disabled(harness.index(for: org, setup) == nil)
+                        .help("Claude reads the plans and proposes decisions worth keeping, for you to review and commit")
+                    }
+                }
+            }
+        }
+        .sheet(item: $suggestingIn) { choice in
+            SuggestDecisionsSheet(org: org, setup: choice.setup)
         }
         .sheet(item: $creatingIn) { choice in
             HarnessNewDocumentSheet(kind: kind, org: org, setup: choice.setup)

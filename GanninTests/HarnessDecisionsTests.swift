@@ -108,4 +108,57 @@ struct HarnessDecisionsTests {
         #expect(HarnessTour.layout.contains { $0.name == "decisions/" })
         #expect((files["STANDARDS.md"].flatMap { $0 } ?? "").contains("superseded_by"))
     }
+
+    @Test func suggestionsSkipCitedPlansAndGoInBatches() {
+        func plan(_ name: String, domains: String) -> HarnessDocument {
+            HarnessDocument(path: "plans/\(name).md", sha: "abc", kind: .plans, text: "---\ntype: plan\nstatus: done\nsummary: x\ndomains: [\(domains)]\n---\n\n# \(name)\n")
+        }
+        let plans = (1...7).map { plan("2026-10-0\($0)-p\($0)", domains: $0 == 7 ? "harness" : "sessions") }
+        let cited = Self.decision("decisions/a.md", status: "accepted", plans: [plans[0].path])
+        let index = Self.index(plans + [cited])
+        #expect(DecisionSuggestions.areas(index) == ["harness", "sessions"])
+        let sessions = DecisionSuggestions.uncitedPlans(index, area: "sessions")
+        #expect(sessions.count == 5)
+        #expect(!sessions.contains { $0.path == plans[0].path })
+        #expect(sessions.first?.path == plans[5].path)
+        #expect(DecisionSuggestions.uncitedPlans(index, area: nil).count == 6)
+        #expect(DecisionSuggestions.batches(DecisionSuggestions.uncitedPlans(index, area: nil)).map(\.count) == [5, 1])
+    }
+
+    @Test func suggestionsCommitAsProposedDecisionsWithUnusedNames() throws {
+        let plan = HarnessDocument(path: "plans/2026-10-01-p.md", sha: "abc", kind: .plans, text: "---\ntype: plan\nsummary: x\ndomains: [sessions]\n---\n\n# P\n")
+        let existing = Self.decision("decisions/2026-10-12-use-the-harness.md", status: "accepted")
+        let json = #"{"decisions": [{"title": "Use the harness", "summary": "S", "plan": "plans/2026-10-01-p.md", "context": "C", "decision": "D", "alternatives": "- A", "consequences": "Q"}, {"title": "Use the harness", "plan": "plans/unknown.md"}]}"#
+        let reply = try #require(ClaudeRunner.json(DecisionSuggestions.Reply.self, in: json))
+        var drafts = reply.decisions.map { DecisionSuggestions.Draft($0, batch: [plan]) }
+        // A plan it didn't read isn't guessed at: the person picks one, or it cites none.
+        #expect(drafts[1].plan == "")
+        #expect(drafts[1].choices == [plan.path])
+        #expect(drafts[0].domains == "sessions")
+        drafts.append(DecisionSuggestions.Draft(reply.decisions[0], batch: [plan]))
+        drafts[2].include = false
+        let files = DecisionSuggestions.files(for: drafts, index: Self.index([existing]), today: "2026-10-12")
+        #expect(Set(files.keys) == ["decisions/2026-10-12-use-the-harness-2.md", "decisions/2026-10-12-use-the-harness-3.md"])
+        let text = try #require(files["decisions/2026-10-12-use-the-harness-2.md"] ?? nil)
+        let document = HarnessDocument(path: "decisions/x.md", sha: "abc", kind: .decisions, text: text)
+        #expect(document.status == "proposed")
+        #expect(document.citedPlans == [plan.path])
+        #expect(document.body.contains("## Alternatives considered\n\n- A"))
+        let uncited = try #require(files["decisions/2026-10-12-use-the-harness-3.md"] ?? nil)
+        #expect(HarnessDocument(path: "decisions/y.md", sha: "abc", kind: .decisions, text: uncited).citedPlans.isEmpty)
+    }
+
+    @Test func namedPlansMatchByPathOrUniqueFileName() {
+        func plan(_ path: String) -> HarnessDocument {
+            HarnessDocument(path: path, sha: "abc", kind: .plans, text: "---\ntype: plan\nsummary: x\n---\n\n# P\n")
+        }
+        let batch = [plan("plans/2026-10-01-a.md"), plan("requirements/x/plans/b.md"), plan("requirements/y/plans/b.md")]
+        #expect(DecisionSuggestions.plan(named: "plans/2026-10-01-a.md", in: batch)?.path == "plans/2026-10-01-a.md")
+        #expect(DecisionSuggestions.plan(named: "./plans/2026-10-01-a.md", in: batch)?.path == "plans/2026-10-01-a.md")
+        #expect(DecisionSuggestions.plan(named: "/plans/2026-10-01-a.md", in: batch)?.path == "plans/2026-10-01-a.md")
+        #expect(DecisionSuggestions.plan(named: "2026-10-01-a.md", in: batch)?.path == "plans/2026-10-01-a.md")
+        // Two plans share the name, so neither is guessed.
+        #expect(DecisionSuggestions.plan(named: "b.md", in: batch) == nil)
+        #expect(DecisionSuggestions.plan(named: "plans/other.md", in: batch) == nil)
+    }
 }
