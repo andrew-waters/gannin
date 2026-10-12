@@ -58,6 +58,8 @@ struct HarnessView: View {
     @State private var sort: StatsSort?
     /// New on the page, and Edit on a skill or prompt.
     @State private var creatingIn: HarnessChoice?
+    /// Suggest Decisions on the Decisions page, in that harness.
+    @State private var suggestingIn: HarnessChoice?
     @State private var editingSkill: HarnessEdit<HarnessDocument>?
     @State private var editingPrompt: HarnessEdit<HarnessPrompt>?
 
@@ -130,6 +132,34 @@ struct HarnessView: View {
                     }
                 }
             }
+        }
+        .toolbar {
+            if let setup, kind == .decisions {
+                ToolbarItem {
+                    if harnesses.count > 1 {
+                        Menu {
+                            ForEach(harnesses, id: \.repo) { choice in
+                                Button(choice.repo) { suggestingIn = HarnessChoice(setup: choice) }
+                                    .disabled(harness.index(for: org, choice) == nil)
+                            }
+                        } label: {
+                            Label("Suggest Decisions", systemImage: "sparkles")
+                        }
+                        .help("Claude reads one harness's plans and proposes decisions worth keeping")
+                    } else {
+                        Button {
+                            suggestingIn = HarnessChoice(setup: setup)
+                        } label: {
+                            Label("Suggest Decisions", systemImage: "sparkles")
+                        }
+                        .disabled(harness.index(for: org, setup) == nil)
+                        .help("Claude reads the plans and proposes decisions worth keeping, for you to review and commit")
+                    }
+                }
+            }
+        }
+        .sheet(item: $suggestingIn) { choice in
+            SuggestDecisionsSheet(org: org, setup: choice.setup)
         }
         .sheet(item: $creatingIn) { choice in
             HarnessNewDocumentSheet(kind: kind, org: org, setup: choice.setup)
@@ -233,6 +263,7 @@ struct HarnessView: View {
     /// no filter.
     private static let unfilterable: Set<String> = [
         "type", "summary", "description", "title", "name", "branch", "issues", "prs", "depends-on", "requirement", "notion", "github", "issue",
+        "superseded_by", "plans",
     ]
 
     /// Known fields first, in the standard's order, then the rest by name.
@@ -290,7 +321,7 @@ struct HarnessView: View {
         )
     }
 
-    private static let statusOrder = ["draft", "agreed", "open", "investigating", "in-progress", "fixing", "blocked", "done", "fixed", "abandoned", "wont-fix"]
+    private static let statusOrder = ["draft", "proposed", "accepted", "agreed", "open", "investigating", "in-progress", "fixing", "blocked", "done", "fixed", "abandoned", "wont-fix", "rejected", "superseded"]
 
     private func title(_ value: String, field: String) -> String {
         switch field {
@@ -396,7 +427,7 @@ struct HarnessView: View {
                         sortKey: { .text(($0.area ?? "").lowercased()) },
                         cell: { AnyView(Text($0.area.map(Self.prettify) ?? "").lineLimit(1).help(($0.domains ?? []).joined(separator: ", "))) }),
         ]
-        if linkable || kind == .findings {
+        if linkable || kind == .findings || kind == .decisions {
             columns.append(StatsColumn(id: "issues", title: "Issues", help: "The issues it's about", width: 200,
                                        sortKey: { .number(Double($0.subjects.first?.number ?? 0)) },
                                        cell: { document in
@@ -831,6 +862,9 @@ struct HarnessDocumentPage: View {
         if let requirement = document.requirement {
             Section("Requirement") { documentRow(requirement, index: index) }
         }
+        if document.kind == .decisions {
+            decisionSections(document, index: index)
+        }
         if let dependsOn = document.dependsOn, !dependsOn.isEmpty {
             Section(header: SectionHeader(title: "Depends on", count: dependsOn.count)) {
                 ForEach(dependsOn, id: \.self) { item in
@@ -874,6 +908,26 @@ struct HarnessDocumentPage: View {
                     .font(.caption)
                     .foregroundStyle(.orange)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    /// A decision's links: the one that superseded it, those it
+    /// supersedes, and the plans it came from.
+    @ViewBuilder
+    private func decisionSections(_ document: HarnessDocument, index: HarnessIndex) -> some View {
+        if let next = document.supersededBy {
+            Section("Superseded by") { documentRow(index.resolve(next, from: document), index: index) }
+        }
+        let earlier = index.supersedes(document)
+        if !earlier.isEmpty {
+            Section(header: SectionHeader(title: "Supersedes", count: earlier.count)) {
+                ForEach(earlier) { HarnessDocumentRow(document: $0) }
+            }
+        }
+        if !document.citedPlans.isEmpty {
+            Section(header: SectionHeader(title: "From plans", count: document.citedPlans.count)) {
+                ForEach(document.citedPlans, id: \.self) { documentRow(index.resolve($0, from: document), index: index) }
             }
         }
     }

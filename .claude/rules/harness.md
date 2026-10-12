@@ -31,10 +31,12 @@ paths:
 - Only documents with front matter and a summary are listed (`followsStandard`); session briefs still include older ones.
 - An issue's documents come from the file name (`prd-123`), header table GitHub row or front matter `github:`; other issues are mentions.
 - `research/` and `refines/` are records (`isRecord`): no New, written by Ask's Commit to Harness and Refine's Agree.
+- Decisions' `superseded_by` and `plans` are paths in their own harness: resolve them with `HarnessIndex.resolve(_:from:)`, never compare them raw, or a combined index's `owner/name:` prefix breaks the link.
+- Onboarding read marks (`HarnessReadMarks`) never leave this Mac: don't commit, sync or report them. Keep their cache out of observation (only `version` is observed), since reading defaults mid-draw must not count as a change.
 
 ## Prompts and learnings
 - Prompt front matter: `use`, `default`, `repos`, `skills`. Placeholders `{{issue}}`, `{{title}}`, `{{url}}`, `{{repo}}`, `{{number}}`, `{{branch}}`; keep the code that fills them in step (a quick change leaves `{{number}}` and `{{url}}` empty).
 - Learnings live at `learnings/<repo>/<date>-<slug>.md` with front matter `repo`, `paths` (folders end `/`), `commit`, `source`, `author`, `status` (`active`/`retired`) and `## Rule`, `## Reason`, `## Source`. Only active ones reach prompts. Editors commit one file, only when asked.
 
 ## Testing
-- Covered: `HarnessPullRequestTests`, `HarnessRefinesTests`, `HarnessRepoEntryTests`. Nothing covers `TeamCoding.merge`, front matter parsing or `harness(covering:)`; check by hand: edit team data, commit, and confirm another harness copy survives the merge.
+- Covered: `HarnessPullRequestTests`, `HarnessRefinesTests`, `HarnessRepoEntryTests`, `HarnessDecisionsTests` (decisions, Suggest Decisions), `OnboardingMapTests` (the map and read marks). Nothing covers `TeamCoding.merge`, front matter parsing or `harness(covering:)`; check by hand: edit team data, commit, and confirm another harness copy survives the merge.
