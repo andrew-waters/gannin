@@ -47,8 +47,18 @@ struct HarnessPullRequestTests {
 
     @Test func commitRefusedForNeedingAPullRequest() {
         #expect(APIError.graphQL(["Changes must be made through a pull request."]).requiresPullRequest)
+        #expect(APIError.graphQL(["Repository rule violations found for refs/heads/main."]).requiresPullRequest)
         #expect(!APIError.graphQL(["Expected branch to point to abc"]).requiresPullRequest)
+        #expect(!APIError.graphQL(["Could not resolve to a Repository."]).requiresPullRequest)
+        #expect(APIError.graphQL(["Expected branch to point to abc", "Changes must be made through a pull request."]).requiresPullRequest)
+        #expect(APIError.graphQL(["Something else", "Repository rule violations found."]).requiresPullRequest)
         #expect(!APIError.http(status: 403, body: "").requiresPullRequest)
+    }
+
+    @Test func onlyANamedPullRequestIsCertain() {
+        #expect(APIError.graphQL(["Changes must be made through a pull request."]).namesPullRequest)
+        #expect(!APIError.graphQL(["Repository rule violations found for refs/heads/main."]).namesPullRequest)
+        #expect(!APIError.graphQL(["Could not resolve to a Repository."]).namesPullRequest)
     }
 
     @Test func madeIssueRestoredOnlyForTheSameTask() {

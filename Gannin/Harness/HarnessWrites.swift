@@ -57,12 +57,16 @@ extension HarnessStore {
         guard let api = auth.api else { throw APIError.unauthorized }
         let parts = setup.repo.split(separator: "/").map(String.init)
         guard parts.count == 2 else { throw HarnessWriteError.invalidRepo(setup.repo) }
+        // Set once a generic rule-violation refusal guesses a pull request is
+        // needed, so a stale-head retry goes straight to one instead of
+        // repeating the direct commit that was just refused.
+        var guessedPullRequest = false
         for attempt in 0..<2 {
             let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
             guard let planned = try await change(head.commit) else { return nil }
             do {
-                var viaPullRequest = await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch)
-                if !viaPullRequest {
+                let key = "\(setup.repo)@\(head.branch)"
+                if !guessedPullRequest, !(await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch)) {
                     do {
                         let commit = try await api.createCommit(repo: setup.repo, branch: head.branch, expectedHead: head.commit, change: planned)
                         if refreshing { Task { await load(org: org, setup: setup, force: true, expecting: commit) } }
@@ -70,11 +74,17 @@ extension HarnessStore {
                     } catch let error as APIError where error.requiresPullRequest {
                         // Classic branch protection, or a ruleset added since
                         // the lookup, which the rules endpoint doesn't show.
-                        pullRequestRequired["\(setup.repo)@\(head.branch)"] = true
-                        viaPullRequest = true
+                        // A ruleset refusal that doesn't name a pull request
+                        // may be for another rule, or a one-off such as a file
+                        // size limit, so it's only remembered once a pull
+                        // request has worked. `guessedPullRequest` carries
+                        // that past a stale-head retry so the retry neither
+                        // repeats the refused commit nor loses the guess.
+                        if error.namesPullRequest { pullRequestRequired[key] = true } else { guessedPullRequest = true }
                     }
                 }
                 let result = try await commitViaPullRequest(api: api, setup: setup, base: head, change: planned)
+                if guessedPullRequest { pullRequestRequired[key] = true }
                 if refreshing, result.onBase { Task { await load(org: org, setup: setup, force: true, expecting: result.commit) } }
                 return result.commit
             } catch let error as APIError where error.isStaleHead && attempt == 0 {
@@ -174,8 +184,17 @@ extension HarnessStore {
 
 extension APIError {
     /// A direct commit refused because the branch's rules or protection
-    /// require a pull request.
+    /// require a pull request: classic protection says so by name, but a
+    /// ruleset's refusal (GH013) just reports "repository rule
+    /// violations" without naming the rule, so that's treated the same way.
     var requiresPullRequest: Bool {
+        guard case .graphQL(let messages) = self else { return false }
+        return messages.contains { $0.localizedCaseInsensitiveContains("pull request") || $0.localizedCaseInsensitiveContains("rule violation") }
+    }
+
+    /// Whether the refusal names a pull request outright, rather than just
+    /// reporting a generic rule violation that happens to need one too.
+    var namesPullRequest: Bool {
         guard case .graphQL(let messages) = self else { return false }
         return messages.contains { $0.localizedCaseInsensitiveContains("pull request") }
     }
