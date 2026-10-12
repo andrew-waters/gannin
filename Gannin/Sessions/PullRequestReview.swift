@@ -1525,12 +1525,18 @@ private struct ReviewDiff: View {
     @State private var commenting: DiffLine.ID?
     @State private var showsFileLearnings = true
     @Environment(\.colorScheme) private var colorScheme
-    /// Syntax colours by line; nil while computing, or for a file that
-    /// isn't highlighted, which shows plain.
-    @State private var highlights: [DiffLine.ID: AttributedString]?
+    /// Syntax colours with the lines they were made from; nil for a file
+    /// that isn't highlighted, which shows plain. Kept while new ones are
+    /// made, and used only while the lines are unchanged.
+    @State private var highlights: Highlights?
 
     /// What the highlights were made from, so a new file or appearance
     /// makes them again.
+    private struct Highlights {
+        let lines: [DiffLine]
+        let colours: [DiffLine.ID: AttributedString]
+    }
+
     private struct HighlightKey: Equatable {
         let lines: [DiffLine]
         let dark: Bool
@@ -1538,6 +1544,7 @@ private struct ReviewDiff: View {
 
     var body: some View {
         let drafts = sessions.reviewDrafts[session.id] ?? ReviewDraft()
+        let colours = highlights.flatMap { $0.lines == file.lines ? $0.colours : nil }
         let placement = learningPlacement()
         let firstLine = placement.firstLine
         let marked = placement.marked
@@ -1610,7 +1617,7 @@ private struct ReviewDiff: View {
                                 .padding(.trailing, 8)
                                 .padding(.vertical, 4)
                         }
-                        DiffRow(sessionID: session.id, filePath: file.path, line: line, highlight: highlights?[line.id], isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting)
+                        DiffRow(sessionID: session.id, filePath: file.path, line: line, highlight: colours?[line.id], isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting)
                         if let newLine = line.newLine {
                             ForEach(appliedAt[newLine] ?? [], id: \.entry) { pair in
                                 AppliedLearningCard(session: session, entry: pair.entry, learning: pair.learning, url: pair.learning.flatMap(learningURL), showsLocation: false)
@@ -1648,10 +1655,13 @@ private struct ReviewDiff: View {
 
     private func computeHighlights() async {
         let key = HighlightKey(lines: file.lines, dark: colorScheme == .dark)
-        highlights = nil
-        guard let language = DiffLanguage.name(forPath: file.path) else { return }
+        guard let language = DiffLanguage.name(forPath: file.path) else {
+            highlights = nil
+            return
+        }
         let result = await DiffHighlighter.shared.highlight(key.lines, language: language, dark: key.dark)
-        if !Task.isCancelled { highlights = result }
+        guard !Task.isCancelled else { return }
+        highlights = result.map { Highlights(lines: key.lines, colours: $0) }
     }
 
     private typealias Applied = (entry: SessionTranscript.AppliedLearning, learning: HarnessLearning?)
@@ -1714,12 +1724,6 @@ private struct DiffRow: View {
     @Binding var hovered: DiffLine.ID?
     @Binding var commenting: DiffLine.ID?
 
-    /// Whether the colours are for this line's code: never draw another
-    /// line's text while highlights are being made again.
-    private var usesHighlight: Bool {
-        highlight.map { String($0.characters) == String(line.text.dropFirst()) } ?? false
-    }
-
     var body: some View {
         let anchor = line.anchor
         HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -1735,7 +1739,7 @@ private struct DiffRow: View {
             .padding(.trailing, 6)
             .contentShape(Rectangle())
             .onTapGesture { if anchor != nil { commenting = line.id } }
-            if let highlight, usesHighlight {
+            if let highlight {
                 // The marker stays in the gutter, tinted harder than the row.
                 Text(String(line.text.prefix(1)))
                     .foregroundStyle(Self.markerColor(line.kind))
@@ -1753,7 +1757,7 @@ private struct DiffRow: View {
         }
         .font(Font(EditorFontStore.shared.font))
         .padding(.trailing, 6)
-        .background(Self.background(line.kind, highlighted: usesHighlight))
+        .background(Self.background(line.kind, highlighted: highlight != nil))
         .overlay(alignment: .leading) {
             if isLearned {
                 Rectangle().fill(Color.yellow.opacity(0.7)).frame(width: 3)

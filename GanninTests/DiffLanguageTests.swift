@@ -6,7 +6,10 @@ import Testing
 struct DiffLanguageTests {
     @Test(arguments: [
         ("Gannin/App/Gannin.swift", "swift"),
-        ("web/src/app.tsx", "typescript"),
+        ("web/src/app.ts", "typescript"),
+        ("web/src/app.jsx", "javascript"),
+        ("Dockerfile.dev", "dockerfile"),
+        ("ci/app.dockerfile", "dockerfile"),
         ("web/src/app.js", "javascript"),
         ("cmd/main.go", "go"),
         ("src/Index.php", "php"),
@@ -26,7 +29,7 @@ struct DiffLanguageTests {
         #expect(DiffLanguage.name(forPath: "Sources/Main.SWIFT") == "swift")
     }
 
-    @Test(arguments: ["logo.png", "LICENSE", "notes.txt", "dir.swift/file", "Gannin.xcodeproj/project.pbxproj"])
+    @Test(arguments: ["logo.png", "web/src/app.tsx", "LICENSE", "notes.txt", "dir.swift/file", "Gannin.xcodeproj/project.pbxproj"])
     func otherFilesAreNotHighlighted(path: String) {
         #expect(DiffLanguage.name(forPath: path) == nil)
     }

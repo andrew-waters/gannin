@@ -5,6 +5,8 @@ paths:
   - "Gannin/Sessions/AutoReview*"
   - "Gannin/Sessions/ApprovalQueue*"
   - "Gannin/Sessions/EngineerWatch*"
+  - "Gannin/Git/DiffHighlighter*"
+  - "Gannin/Git/DiffLanguage*"
 ---
 
 # Reviews
@@ -21,7 +23,8 @@ paths:
 - Reviews run in the harness with edits disallowed (`--disallowedTools`). Keep that when changing `startReview`.
 
 ## Diff highlighting
-- Never hand `DiffHighlighter` a line's `+`, `-` or space marker, and never change `DiffLine` ids: it reads the marker as code, and comments anchor to lines by id. `DiffRow` draws the marker itself. `DiffStyle` stays as it is, since session changes and Repositories diffs share it.
+- Never hand `DiffHighlighter` a line's `+`, `-` or space marker, and never change `DiffLine` ids: it would read the marker as code, and comments anchor to lines by id. `DiffRow` draws the marker itself.
+- Keep the review diff's styling in `DiffRow`, apart from the shared `DiffStyle`: session changes and Repositories diffs use that, and aren't highlighted.
 
 ## Automatic review
 - Gate on: not draft, not dismissed, not already started (`autoReviewedRequests`). Cap concurrent runs at `AutoReview.maxRunning`.

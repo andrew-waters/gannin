@@ -26,8 +26,10 @@ actor DiffHighlighter {
         var result: [DiffLine.ID: AttributedString] = [:]
         for hunk in Self.hunks(lines) {
             for side in [hunk.new, hunk.old] {
+                if Task.isCancelled { return nil }
                 guard let coloured = Self.colour(side, with: highlighter, language: language) else { return nil }
-                result.merge(coloured) { new, _ in new }
+                // A context line is in both sides: the new side, done first, wins.
+                result.merge(coloured) { existing, _ in existing }
             }
         }
         return result

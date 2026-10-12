@@ -5,12 +5,13 @@ import Foundation
 nonisolated enum DiffLanguage {
     private static let byExtension: [String: String] = [
         "swift": "swift",
-        "ts": "typescript", "tsx": "typescript", "mts": "typescript", "cts": "typescript",
+        "ts": "typescript", "mts": "typescript", "cts": "typescript",
         "js": "javascript", "jsx": "javascript", "mjs": "javascript", "cjs": "javascript",
         "go": "go",
         "php": "php",
         "py": "python", "pyi": "python",
         "json": "json", "jsonc": "json",
+        "dockerfile": "dockerfile",
         "yml": "yaml", "yaml": "yaml",
         "md": "markdown", "markdown": "markdown",
         "sh": "bash", "bash": "bash", "zsh": "bash",
@@ -27,6 +28,7 @@ nonisolated enum DiffLanguage {
     static func name(forPath path: String) -> String? {
         let file = (path as NSString).lastPathComponent.lowercased()
         if let language = byFilename[file] { return language }
+        if file.hasPrefix("dockerfile.") { return "dockerfile" }
         let ext = (file as NSString).pathExtension
         return ext.isEmpty ? nil : byExtension[ext]
     }
