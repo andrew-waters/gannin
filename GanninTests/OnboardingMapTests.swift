@@ -82,4 +82,23 @@ struct OnboardingMapTests {
         #expect(DecisionSuggestions.areas(of: plan) == OnboardingMap.areas(of: plan))
         #expect(DecisionSuggestions.areas(HarnessDecisionsTests.index([plan])) == ["harness", "sessions"])
     }
+
+    @Test func readMarksStayOnThisMacAndNoticeChanges() throws {
+        let defaults = try #require(UserDefaults(suiteName: "OnboardingMapTests.\(UUID().uuidString)"))
+        let marks = HarnessReadMarks(defaults: defaults)
+        let plan = Self.document("plans/2026-10-01-a.md", type: "plan", domains: ["sessions"])
+        #expect(marks.state(of: plan, primary: "acme/harness") == .unread)
+        marks.markRead(plan, primary: "acme/harness")
+        #expect(marks.state(of: plan, primary: "acme/harness") == .read)
+        // Kept across launches, by the harness's repo and the document's own path.
+        #expect(HarnessReadMarks(defaults: defaults).state(of: plan, primary: "acme/harness") == .read)
+        #expect(HarnessReadMarks(defaults: defaults).state(of: plan.prefixed("acme/harness"), primary: "acme/other") == .read)
+        #expect(marks.state(of: plan, primary: "acme/other") == .unread)
+
+        let changed = HarnessDocument(path: plan.path, sha: "def", kind: .plans, text: plan.text)
+        #expect(marks.state(of: changed, primary: "acme/harness") == .updated)
+        #expect(marks.readCount([changed, Self.document("plans/2026-10-02-b.md", type: "plan")], primary: "acme/harness") == 1)
+        marks.markRead(changed, primary: "acme/harness")
+        #expect(marks.state(of: changed, primary: "acme/harness") == .read)
+    }
 }

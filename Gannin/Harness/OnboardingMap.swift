@@ -94,6 +94,7 @@ struct OnboardingView: View {
     @Environment(\.navigate) private var navigate
     let org: String
 
+    private let reads = HarnessReadMarks.shared
     @State private var search = ""
     /// Areas folded, by name.
     @State private var folded: Set<String> = []
@@ -180,9 +181,11 @@ struct OnboardingView: View {
                         .rotationEffect(.degrees(isFolded ? 0 : 90))
                     Text(area.name == OnboardingMap.other ? area.name : HarnessView.prettify(area.name))
                         .font(.title3.weight(.semibold))
-                    Text(verbatim: "\(area.all.count)")
-                        .foregroundStyle(.secondary)
+                    let read = reads.readCount(area.all, primary: index.repo)
+                    Text(verbatim: "\(read) of \(area.all.count) read")
+                        .foregroundStyle(read == area.all.count ? AnyShapeStyle(ChartPalette.good) : AnyShapeStyle(.secondary))
                         .monospacedDigit()
+                        .help("Read on this Mac; marks never leave it")
                     Spacer()
                 }
                 .contentShape(Rectangle())
@@ -220,10 +223,11 @@ struct OnboardingView: View {
     /// a link to what replaced it.
     private func row(_ document: HarnessDocument, index: HarnessIndex) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            documentButton(document)
+            documentButton(document, index: index)
             if let next = document.supersededBy {
                 let path = index.resolve(next, from: document)
                 Button("Superseded by \(index.document(at: path)?.title ?? next)") {
+                    if let successor = index.document(at: path) { reads.markRead(successor, primary: index.repo) }
                     navigate?(.harnessDocument(path))
                 }
                 .linkButton()
@@ -234,8 +238,10 @@ struct OnboardingView: View {
         }
     }
 
-    private func documentButton(_ document: HarnessDocument) -> some View {
-        Button {
+    private func documentButton(_ document: HarnessDocument, index: HarnessIndex) -> some View {
+        let state = reads.state(of: document, primary: index.repo)
+        return Button {
+            reads.markRead(document, primary: index.repo)
             navigate?(.harnessDocument(document.path))
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
@@ -253,8 +259,17 @@ struct OnboardingView: View {
                     if let summary = document.summary {
                         Text(summary).font(.callout).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading)
                     }
+                    if state == .updated {
+                        Label("Updated since you read it", systemImage: "arrow.triangle.2.circlepath")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                    }
                 }
                 Spacer(minLength: 12)
+                Image(systemName: state == .unread ? "circle" : "checkmark.circle.fill")
+                    .foregroundStyle(state == .unread ? AnyShapeStyle(.tertiary) : AnyShapeStyle(ChartPalette.good))
+                    .help(state == .unread ? "Not read yet" : "Read on this Mac")
+                    .accessibilityLabel(state == .unread ? "Not read" : state == .read ? "Read" : "Updated since read")
                 if let status = document.shortStatus {
                     Pill(text: status, color: .secondary).lineLimit(1)
                 }
@@ -269,5 +284,71 @@ struct OnboardingView: View {
         }
         .buttonStyle(.plain)
         .help(document.path)
+    }
+}
+
+/// What's been read on the Onboarding map, on this Mac only: per harness
+/// repo, each document's path with the blob SHA it had when opened, so a
+/// changed one shows as updated rather than going back to unread. Never
+/// committed or sent anywhere.
+@Observable
+final class HarnessReadMarks {
+    static let shared = HarnessReadMarks()
+
+    enum State: Equatable {
+        case unread
+        case read
+        /// Read, but its file has changed since.
+        case updated
+    }
+
+    @ObservationIgnored private let defaults: UserDefaults
+    /// By harness repo, then path, the SHA when read; read from defaults
+    /// as each repo is first asked about, which mustn't count as a change
+    /// while a view is drawing.
+    @ObservationIgnored private var marks: [String: [String: String]] = [:]
+    /// Bumped on each mark, so views reading any of them redraw.
+    private var version = 0
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    private static func key(_ repo: String) -> String { "harnessReadMarks.\(repo)" }
+
+    /// The harness and its own path, for a document in a combined index
+    /// whose primary harness is `primary`.
+    private func place(_ document: HarnessDocument, primary: String) -> (repo: String, path: String) {
+        let (repo, path) = HarnessIndex.split(document.path)
+        return (repo ?? primary, path)
+    }
+
+    private func marks(for repo: String) -> [String: String] {
+        _ = version
+        if let loaded = marks[repo] { return loaded }
+        let stored = defaults.dictionary(forKey: Self.key(repo)) as? [String: String] ?? [:]
+        marks[repo] = stored
+        return stored
+    }
+
+    func state(of document: HarnessDocument, primary: String) -> State {
+        let (repo, path) = place(document, primary: primary)
+        guard let sha = marks(for: repo)[path] else { return .unread }
+        return sha == document.sha ? .read : .updated
+    }
+
+    func markRead(_ document: HarnessDocument, primary: String) {
+        let (repo, path) = place(document, primary: primary)
+        var repoMarks = marks(for: repo)
+        guard repoMarks[path] != document.sha else { return }
+        repoMarks[path] = document.sha
+        marks[repo] = repoMarks
+        defaults.set(repoMarks, forKey: Self.key(repo))
+        version += 1
+    }
+
+    /// How many of the documents are read, changed since or not.
+    func readCount(_ documents: [HarnessDocument], primary: String) -> Int {
+        documents.count(where: { state(of: $0, primary: primary) != .unread })
     }
 }
