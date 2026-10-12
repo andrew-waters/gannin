@@ -1,0 +1,13 @@
+{
+  "effort" : 3,
+  "findings" : [
+
+  ],
+  "number" : 239,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-11T20:22:17Z",
+  "title" : "Probe session PRs cheaply and read in full only what changed",
+  "updated_at" : "2026-10-12T12:39:43Z",
+  "verdict" : "approve"
+}

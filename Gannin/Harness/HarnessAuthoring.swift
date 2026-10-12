@@ -52,6 +52,12 @@ enum HarnessAuthoring {
 
             Follow STANDARDS.md and the requirements template: the problem and who has it, what the feature must do as numbered, testable statements, what's out of scope, and open questions. Keep it to what was asked for; mark guesses as open questions rather than stating them. Its status is draft unless I say otherwise.
             """
+        case .decisions:
+            """
+            You're writing a decision record (an ADR) for {{org}}'s harness, {{harness}}: one decision the team made, and why, so someone new can understand it without asking.
+
+            Follow STANDARDS.md and the decisions template: the context (what forced a choice, and the constraints), the decision itself in a sentence or two, the alternatives considered and why each lost, and the consequences, good and bad, including what it rules out. Keep to one decision; if there are several, say so and draft the most important. Keep the team's reasons as they gave them, and mark anything you're inferring. Its status is proposed unless I say it was agreed (accepted). If an existing decision covers the same ground, tell me which, and whether this one supersedes it.
+            """
         case .findings:
             """
             You're writing up a finding for {{org}}'s harness, {{harness}}: an investigation and what it found.
@@ -111,6 +117,7 @@ enum HarnessAuthoring {
         case .skills: #"{"name": "kebab-case", "description": "one line", "repos": ["name"] or [] for all, "body": "..."}"#
         case .prompts: #"{"title": "...", "summary": "one line", "uses": ["work" | "review" | "planning" | "ask" | "session"], "skills": ["skill-name"], "body": "..."}"#
         case .findings: #"{"title": "...", "summary": "a sentence or two", "status": "open", "severity": "low" | "medium" | "high" | "critical", "domains": ["..."], "issues": ["owner/repo#123"], "body": "..."}"#
+        case .decisions: #"{"title": "...", "summary": "the decision, in a sentence or two", "status": "proposed" | "accepted", "domains": ["..."], "issues": ["owner/repo#123"], "plans": ["plans/....md"], "body": "..."}"#
         case .learnings: #"{"title": "...", "summary": "the rule, in a sentence", "repos": ["owner/name"], "paths": ["folder/", "file", "file#L10-L24"], "reason": "why, in Markdown"}"#
         default: #"{"title": "...", "summary": "a sentence or two", "status": "draft", "domains": ["..."], "issues": ["owner/repo#123"], "body": "..."}"#
         }
@@ -132,6 +139,8 @@ enum HarnessAuthoring {
         var reason: String?
         var domains: [String]?
         var issues: [String]?
+        /// A decision's plans it came from, by path.
+        var plans: [String]?
         var body: String?
         /// What Claude says to you: questions, or what it did.
         var message: String?
@@ -139,13 +148,13 @@ enum HarnessAuthoring {
         /// Whether it drafted anything, rather than only asking.
         var hasDraft: Bool {
             [name, title, description, summary, status, severity, body, reason].contains { $0 != nil }
-                || [repos, uses, skills, paths, domains, issues].contains { $0 != nil }
+                || [repos, uses, skills, paths, domains, issues, plans].contains { $0 != nil }
         }
     }
 }
 
-/// A requirement or finding as the editor writes it: front matter as
-/// STANDARDS.md has it, the title, then the body.
+/// A requirement, decision or finding as the editor writes it: front
+/// matter as STANDARDS.md has it, the title, then the body.
 struct HarnessDocumentDraft {
     var kind: HarnessKind
     var title = ""
@@ -154,6 +163,11 @@ struct HarnessDocumentDraft {
     var summary = ""
     var domains: [String] = []
     var issues: [String] = []
+    /// A decision's: the one that replaced it, the plans it came from, and
+    /// whether it's key to its area.
+    var supersededBy = ""
+    var plans: [String] = []
+    var isKey = false
     var body = ""
 
     var fileText: String {
@@ -164,6 +178,11 @@ struct HarnessDocumentDraft {
         if !summary.isEmpty { lines += ["summary: >", "  " + summary.split(whereSeparator: \.isNewline).joined(separator: " ")] }
         if !domains.isEmpty { lines.append("domains: \(list(domains))") }
         if !issues.isEmpty { lines.append("issues: \(list(issues))") }
+        if kind == .decisions {
+            if status == "superseded", !supersededBy.isEmpty { lines.append("superseded_by: \(supersededBy)") }
+            if !plans.isEmpty { lines.append("plans: \(list(plans))") }
+            if isKey { lines.append("key: true") }
+        }
         lines += ["---", "", "# \(title)", "", body.trimmingCharacters(in: .whitespacesAndNewlines), ""]
         return lines.joined(separator: "\n")
     }
@@ -176,6 +195,7 @@ struct HarnessDocumentDraft {
         case .learnings: ["active", "retired"]
         case .research: []
         case .refines: ["agreed"]
+        case .decisions: ["proposed", "accepted", "rejected", "superseded"]
         case .plans, .requirements: ["draft", "in-progress", "done"]
         }
     }
@@ -188,6 +208,26 @@ struct HarnessDocumentDraft {
     }
 
     static let severities = ["low", "medium", "high", "critical"]
+
+    /// A decision's body when the harness has no `decisions/_template.md`
+    /// (one made before decisions were a kind).
+    static let decisionTemplate = """
+        ## Context
+
+        What forced a choice: the problem, the constraints, what mattered.
+
+        ## Decision
+
+        What was decided, in a sentence or two.
+
+        ## Alternatives considered
+
+        - **An alternative**: why it wasn't chosen.
+
+        ## Consequences
+
+        What follows from it, good and bad, and what it rules out.
+        """
 
     /// A template's body, less its front matter and title heading, for a
     /// new document to start from.
