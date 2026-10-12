@@ -16,7 +16,19 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         AppAppearance.current.apply()
+        // scripts/relaunch.sh quits with SIGTERM, which skips
+        // applicationWillTerminate; write pending session saves first.
+        signal(SIGTERM, SIG_IGN)
+        let source = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+        source.setEventHandler {
+            MainActor.assumeIsolated { Self.sessions?.flushSave() }
+            exit(0)
+        }
+        source.resume()
+        termSource = source
     }
+
+    private var termSource: DispatchSourceSignal?
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
         let info = response.notification.request.content.userInfo
@@ -24,7 +36,14 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         let action = response.actionIdentifier
         let review = info["review"] as? String
         let mine = info["mine"] as? String
+        let pullRequest = (info["pullRequest"] as? String).flatMap(URL.init(string:))
         await MainActor.run {
+            // A pull request Gannin opened for a protected branch, needing
+            // a look.
+            if let pullRequest {
+                NSWorkspace.shared.open(pullRequest)
+                return
+            }
             // A review request, or one of your PRs.
             if review != nil || mine != nil {
                 var keys: [String: String] = [:]
@@ -51,7 +70,15 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         [.banner, .sound]
     }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        Self.sessions?.flushSave()
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        // The routine scheduler writes its last look at most every five
+        // minutes: save it so the next launch dates ended runs and missed
+        // times from this quit.
+        Self.sessions?.routines?.saveState()
         guard let sessions = Self.sessions else { return .terminateNow }
         let running = sessions.running
         guard !running.isEmpty else { return .terminateNow }

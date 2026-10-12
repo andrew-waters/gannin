@@ -28,7 +28,7 @@ The Spent list shows what each source used, most first. Sources that used nothin
 | --- | --- | --- | --- |
 | Spent | Last hour | Chooses the window for the list: Last hour or Last day. | This Mac |
 
-Some work is charged in the list but has no setting, because it happens when you do something: Items you open, Changes you make, Account and settings, and Other.
+Some work is charged in the list but has no setting. Change feed is the one search per org that says which PRs and issues changed since the last cycle: the workload, issue history and work log read it instead of each searching for changes, and use their own search only when it fails or finds more than GitHub will return. The work log reads it for PRs only; its issues and comments still use their own search. It follows their intervals, so it has no interval of its own. The rest happens when you do something: Items you open, Changes you make, Account and settings, and Other.
 
 ## Workload
 
@@ -45,7 +45,7 @@ Open PRs and issues, and what changed since the last fetch. This group is always
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | Issue history | After 10 minutes. Can be turned Off. | Issues closed in the window and open ones, with board moves, for the issue pages, Inbox, Views and meetings. | This Mac |
-| Every open issue | After 1 hour. Cannot be turned off on its own. | Fetches every open issue again, as board moves do not count as updates. It goes off with Issue history. | This Mac |
+| Every open issue | After 1 hour. Cannot be turned off on its own. | Fetches every open issue again, as board moves do not count as updates. Refresh leaves it to its interval; Full Refresh does it at once. It goes off with Issue history. | This Mac |
 | Issue descriptions and comments | After 10 minutes. Can be turned Off. | Fetches text for searching in descriptions, after each issue sync. It goes off with Issue history. | This Mac |
 
 ## Pages
@@ -69,7 +69,7 @@ These are checked while Gannin runs, and held off when the budget is low. The ch
 | --- | --- | --- | --- |
 | Your reviews and PRs | Every 5 minutes. Can be turned Off. | PRs your review is asked on, your own PRs and your issues, for the menu bar, Agents and notifications. | This Mac |
 | Watched reviews | Every 5 minutes. Can be turned Off. | Reviewed PRs that Claude watches for new commits and comments. | This Mac |
-| Session pull requests | Every 2 minutes. Can be turned Off. | Each running session's PRs: checks, reviews and threads. The PRs pane still looks when you open it. | This Mac |
+| Session pull requests | Every 2 minutes. Can be turned Off. | Each running session's PRs: checks, reviews and threads. Each time it looks, one small query compares every session's PRs with the last full look, and only those that changed, have checks running or have gone 10 minutes are read in full. The PRs pane still looks when you open it. | This Mac |
 | While checks run | Every 1 minute. Cannot be turned off on its own. | How often to look while a session's PR has checks running. It goes off with Session pull requests. | This Mac |
 
 ## How much

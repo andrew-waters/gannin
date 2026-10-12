@@ -321,8 +321,21 @@ final class SessionStore {
     }
 
     /// Whether Work on This asks before committing a session's brief and
-    /// record to the org's harness; off once "Don't ask again" is ticked.
-    static func asksBeforeRecordingKey(_ org: String) -> String { "sessionsRecordWithoutAsking.\(org)" }
+    /// record to a harness; off once "Don't ask again" is ticked. Per
+    /// harness (`owner/name`), as an org can have several.
+    static func asksBeforeRecordingKey(repo: String) -> String { "sessionsRecordWithoutAsking.\(repo)" }
+
+    /// A harness's "Don't ask again", else the one its owner had when it
+    /// was per org.
+    static func recordsWithoutAsking(repo: String) -> Bool {
+        let defaults = UserDefaults.standard
+        if let own = defaults.object(forKey: asksBeforeRecordingKey(repo: repo)) as? Bool { return own }
+        return defaults.bool(forKey: "sessionsRecordWithoutAsking.\(repo.split(separator: "/").first.map(String.init) ?? repo)")
+    }
+
+    static func setRecordsWithoutAsking(_ value: Bool, repo: String) {
+        UserDefaults.standard.set(value, forKey: asksBeforeRecordingKey(repo: repo))
+    }
 
     /// The one window sessions open in, each a tab.
     static let windowID = "sessions"
@@ -414,6 +427,11 @@ final class SessionStore {
     /// The URLs of each session's PRs its branch search found last time,
     /// which needn't be looked up by URL as well.
     @ObservationIgnored var foundBySearch: [UUID: Set<URL>] = [:]
+    /// What each session's PRs looked like at the last full look, and when,
+    /// for `sessionsDue` to compare the next cheap probe with.
+    @ObservationIgnored var lastFullPullRequestLook: [UUID: (fingerprints: Set<String>, at: Date)] = [:]
+    /// Why the last probe of the watched sessions' PRs failed, nil once one works.
+    @ObservationIgnored var pullRequestProbeError: String?
     @ObservationIgnored var watchingPullRequests: Task<Void, Never>?
     /// GitHub, once signed in; set by the app.
     @ObservationIgnored var api: () -> GitHubAPI? = { nil }
@@ -466,9 +484,14 @@ final class SessionStore {
 
     var harnessStore: HarnessStore { harness }
 
-    init(harness: HarnessStore) {
+    @ObservationIgnored private let directory: URL
+    @ObservationIgnored private let saveDelay: Duration
+
+    init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory, saveDelay: Duration = .milliseconds(500)) {
         self.harness = harness
-        if let data = try? Data(contentsOf: Self.fileURL),
+        self.directory = directory
+        self.saveDelay = saveDelay
+        if let data = try? Data(contentsOf: directory.appending(path: "Sessions.json")),
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
                 var session = session
@@ -628,7 +651,7 @@ final class SessionStore {
         Self.noteFolder(of: session)
         sessions[session.id] = session
         noteSandboxedHarnesses()
-        save()
+        saveNow()
     }
 
     func helpers(of id: UUID) -> [CodeSession] {
@@ -650,7 +673,7 @@ final class SessionStore {
         }()
         sessions[session.id] = session
         noteSandboxedHarnesses()
-        save()
+        saveNow()
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(brief(session).utf8).write(to: directory.appending(path: "brief.md"))
@@ -695,7 +718,7 @@ final class SessionStore {
             }
             sessions[id]?.harnessFolder = folder
             recordErrors[id] = nil
-            save()
+            saveNow()
         } catch {
             recordErrors[id] = error.localizedDescription
         }
@@ -804,7 +827,7 @@ final class SessionStore {
         pullRequestInfo[id] = nil
         if besideTab == id { besideTab = nil }
         closeTab(id)
-        save()
+        saveNow()
         try? FileManager.default.removeItem(at: Self.directory(for: id))
     }
 
@@ -1136,7 +1159,7 @@ final class SessionStore {
     private func opened(_ url: URL, for id: UUID) {
         guard sessions[id]?.pullRequests.contains(url) == false else { return }
         sessions[id]?.pullRequests.append(url)
-        save()
+        saveNow()
         recordPullRequest(url, for: id)
     }
 
@@ -1456,13 +1479,40 @@ final class SessionStore {
         SandboxGitGuard.setRoots(sessions.values.filter { $0.isSandboxed && !$0.isRemote }.compactMap(\.harnessPath))
     }
 
-    private static var fileURL: URL { baseDirectory.appending(path: "Sessions.json") }
+    private var fileURL: URL { directory.appending(path: "Sessions.json") }
 
+    /// Saves every session shortly: calls close together (a poll updating
+    /// several sessions, a review's rounds) share one write of the whole file.
     func save() {
-        try? FileManager.default.createDirectory(at: Self.baseDirectory, withIntermediateDirectories: true)
+        guard pendingSave == nil else { return }
+        pendingSave = Task {
+            try? await Task.sleep(for: saveDelay)
+            guard !Task.isCancelled else { return }
+            flushSave()
+        }
+    }
+
+    /// Writes now, for a session added, removed or started: one a kill in the
+    /// next half second must not lose, as the relaunch script's `kill -9` can.
+    func saveNow() {
+        pendingSave?.cancel()
+        pendingSave = nil
+        writeSessions()
+    }
+
+    /// Writes now if a save is waiting; at quit, so nothing is lost.
+    func flushSave() {
+        guard pendingSave != nil else { return }
+        saveNow()
+    }
+
+    @ObservationIgnored private var pendingSave: Task<Void, Never>?
+
+    private func writeSessions() {
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let ordered = sessions.values.sorted { $0.createdAt < $1.createdAt }
         if let data = try? JSONEncoder().encode(ordered) {
-            try? data.write(to: Self.fileURL, options: .atomic)
+            try? data.write(to: fileURL, options: .atomic)
         }
     }
 }

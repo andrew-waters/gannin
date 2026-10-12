@@ -32,7 +32,8 @@ Anyone whose work spans repos their accounts don't own: first an outside collabo
 
 ## Out of scope
 
-- Metrics history, issue history (Issue flow, Investments, Recap, Scorecards from them), work log and Standup for outside repos
+- PR metrics history (PR flow) and work log for outside repos
+- Issue flow, Investments, Recap, Scorecards and Standup, and Weekly Digest's Shipped list (reached from PR flow), for outside repos: they read the issue history too, which now covers outside repos (andrew-waters/gannin#205), but keep excluding them deliberately (`OrgConfig.excludesForIssueHistoryPages`) so their `outsideReposNotice` stays accurate
 - CI (Actions) and Releases for outside repos
 - Boards owned by the outside repo's owner
 - An account of its own for an outside owner
@@ -55,5 +56,11 @@ Anyone whose work spans repos their accounts don't own: first an outside collabo
 - **R11** When outside repos are fetched, their cost shall be charged to the workload in the usage ledger, so Settings › Sync shows it with the rest.
 - **R12** When a window's project doesn't name an outside repo, that repo's items shall not show in it.
 - **R13** When a Claude Code session works on an outside repo's issue, the system shall find the PRs it opens on that repo for its PRs pane, as it does for the account's own repos.
+- **R14** When the issue history is fetched for an account whose window's project names outside repos, the system shall include those repos' issues (closed since the window's start, and every open one), in the full search and the incremental changes search alike, so Issues › All, Not on a board, Views, Epics, Board Hygiene, Prioritisation, the Dashboard's committed-overdue flag, Inbox and Ask cover them as the account's own repos' do.
+
+**Decisions:**
+
+- R5 said Issues › All would show an outside repo's issues, but only the workload snapshot was extended to outside repos (R4); the issue history behind Issues › All (`IssueStore`) was explicitly out of scope, so R5 and the scope contradicted each other (andrew-waters/gannin#201, andrew-waters/gannin#205). **Resolved by extending the issue history fetch itself (R14), the same way the workload snapshot was: a new outside repo gets a full backfill (reaching back to the history's own coverage, not just the window), a known one a changes search, batched and capped as R4's are. Issue flow, Investments, Recap, Scorecards, Standup and Weekly Digest's Shipped list read the same issue history but keep excluding outside repos on purpose (`OrgConfig.excludesForIssueHistoryPages`), so their `outsideReposNotice` stays true. Every other reader of the issue history (Epics, Board Hygiene, Prioritisation, the Dashboard's committed-overdue flag, Inbox, Ask) shows no such notice, so it picks outside repos up through `repoExclusion` as it always would; Board Hygiene's writes on them go through the same confirmed-write, GitHub's-refusal-shown path as any other repo's (R10).**
+- Checking readability a second time, just for the issue history, would repeat the workload snapshot's own hourly aliased query for the same repos. **Resolved by reading the snapshot's `unreadableRepos` through a closure (`OrgStore.snapshot(for:)`) instead of calling `readableRepos` again; a known outside repo is still fetched on its own schedule here as well as the snapshot's, an accepted doubling of its query cost for issues specifically.**
 
 Planned in [plans/2026-10-10-plan-projects-that-cover-repos-outside.md](../plans/2026-10-10-plan-projects-that-cover-repos-outside.md).

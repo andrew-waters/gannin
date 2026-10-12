@@ -43,9 +43,7 @@ final class ReleaseStore {
         loadCached(org)
         guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.releases) else { return }
         let now = Date.now
-        if !force, let history = histories[org], !SyncSettings.isDue(.releases, since: history.syncedAt, now: now) { return }
-        // Wait out a low budget unless asked, as long as there's something to show.
-        if !force && auth.shouldHoldOff && histories[org] != nil { return }
+        if !auth.shouldFetch(.releases, since: histories[org]?.syncedAt, now: now, force: force, hasData: histories[org] != nil) { return }
 
         syncing.insert(org)
         defer { syncing.remove(org) }

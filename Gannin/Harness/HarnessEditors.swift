@@ -14,7 +14,7 @@ struct HarnessNewDocumentSheet: View {
             HarnessSkillEditor(org: org, setup: setup, document: nil)
         case .prompts:
             HarnessPromptEditor(org: org, setup: setup, library: HarnessPromptLibrary(index: harness.index(for: org, setup)), prompt: nil)
-        case .requirements, .findings:
+        case .requirements, .findings, .decisions:
             HarnessDocumentEditor(kind: kind, org: org, setup: setup)
         case .plans:
             // Plans open as a tab in the Claude Code window instead.
@@ -169,7 +169,7 @@ struct HarnessSkillEditor: View {
     }
 }
 
-/// A new requirement or finding: its title, where it goes, its front
+/// A new requirement, decision or finding: its title, where it goes, its front
 /// matter facts as STANDARDS.md has them, and the body, starting from the
 /// harness's template for the kind.
 struct HarnessDocumentEditor: View {
@@ -184,8 +184,14 @@ struct HarnessDocumentEditor: View {
     @State private var fileName = ""
     @State private var domains = ""
     @State private var issues = ""
+    @State private var plans = ""
     @State private var saving = false
     @State private var error: String?
+
+    /// The decisions already in this harness, for Superseded by.
+    private var decisionPaths: [String] {
+        (harness.index(for: org, setup)?.documents(.decisions) ?? []).map(\.path).sorted(by: >)
+    }
 
     init(kind: HarnessKind, org: String, setup: HarnessConfig) {
         self.kind = kind
@@ -207,6 +213,7 @@ struct HarnessDocumentEditor: View {
                 if let value = reply.severity, HarnessDocumentDraft.severities.contains(value) { draft.severity = value }
                 if let value = reply.domains { domains = value.joined(separator: ", ") }
                 if let value = reply.issues { issues = value.joined(separator: ", ") }
+                if let value = reply.plans { plans = value.joined(separator: ", ") }
                 if let value = reply.body { draft.body = value }
             }
             Section {
@@ -237,6 +244,17 @@ struct HarnessDocumentEditor: View {
                 }
                 TextField("Domains", text: $domains, prompt: Text("billing, data-capture"))
                 TextField("Issues", text: $issues, prompt: Text("\(org)/repo#123"))
+                if kind == .decisions {
+                    if draft.status == "superseded" {
+                        Picker("Superseded by", selection: $draft.supersededBy) {
+                            Text("None").tag("")
+                            ForEach(decisionPaths, id: \.self) { Text($0).tag($0) }
+                        }
+                    }
+                    TextField("From plans", text: $plans, prompt: Text("plans/2026-10-01-topic.md"))
+                    Toggle("Key to its area", isOn: $draft.isKey)
+                        .help("Lifted to the top of its area on the Onboarding map")
+                }
             } header: {
                 Text("Front matter")
             } footer: {
@@ -270,6 +288,8 @@ struct HarnessDocumentEditor: View {
             let folder = kind == .plans ? "plans" : kind.rawValue.lowercased()
             if draft.body.isEmpty, let body = HarnessDocumentDraft.templateBody(guides["\(folder)/_template.md"]) {
                 draft.body = body
+            } else if draft.body.isEmpty, kind == .decisions {
+                draft.body = HarnessDocumentDraft.decisionTemplate
             }
         }
     }
@@ -292,6 +312,7 @@ struct HarnessDocumentEditor: View {
         var draft = draft
         draft.domains = list(domains)
         draft.issues = list(issues)
+        draft.plans = list(plans)
         let change = HarnessChange(message: "Gannin: add the \(kind.singular) \(draft.title)", files: [path: draft.fileText])
         HarnessCommitting.commit(harness, org: org, setup: setup, change, saving: $saving, error: $error, dismiss: dismiss)
     }
@@ -423,6 +444,7 @@ struct DraftWithClaudeSection: View {
         case .prompts: "Reviews of the billing service should check money handling and idempotency"
         case .findings: "Exports time out for orgs with over 10k jobs; it's the N+1 in job_exports"
         case .learnings: "Sync writes go through the actor in SyncStore because two windows can refresh at once"
+        case .decisions: "We run every session in the harness root rather than in the code repo, so plans sit beside the code"
         default: "What it should cover"
         }
     }
@@ -567,6 +589,8 @@ struct HarnessDetailsEditor: View {
     @State private var status: String
     @State private var owner: String
     @State private var domains: String
+    /// A superseded decision's successor, by path in its harness.
+    @State private var supersededBy: String
     @State private var saving = false
     @State private var error: String?
 
@@ -578,6 +602,12 @@ struct HarnessDetailsEditor: View {
         _status = State(initialValue: document.status ?? "")
         _owner = State(initialValue: document.owner ?? "")
         _domains = State(initialValue: (document.domains ?? []).joined(separator: ", "))
+        _supersededBy = State(initialValue: document.supersededBy ?? "")
+    }
+
+    /// The harness's other decisions, newest first, for Superseded by.
+    private var decisionPaths: [String] {
+        (harness.index(for: org, setup)?.documents(.decisions) ?? []).map(\.path).filter { $0 != path }.sorted(by: >)
     }
 
     var body: some View {
@@ -598,6 +628,13 @@ struct HarnessDetailsEditor: View {
                     ForEach(members) { Text("\($0.displayName) (\($0.login))").tag($0.login) }
                 }
                 TextField("Domains", text: $domains, prompt: Text("billing, data-capture"))
+                if document.kind == .decisions, status == "superseded" {
+                    Picker("Superseded by", selection: $supersededBy) {
+                        Text("None").tag("")
+                        if !supersededBy.isEmpty && !decisionPaths.contains(supersededBy) { Text(supersededBy).tag(supersededBy) }
+                        ForEach(decisionPaths, id: \.self) { Text($0).tag($0) }
+                    }
+                }
             } footer: {
                 Text("Written into \(path)'s front matter and committed to \(setup.repo). The rest of the file is left as it is.")
                     .font(.caption)
@@ -621,11 +658,16 @@ struct HarnessDetailsEditor: View {
     }
 
     private func save() {
-        let updates: [(key: String, value: HarnessFrontMatter.Value?)] = [
+        var updates: [(key: String, value: HarnessFrontMatter.Value?)] = [
             ("status", status.isEmpty ? nil : .text(status)),
             ("owner", owner.isEmpty ? nil : .text(owner)),
             ("domains", .list(domains.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) })),
         ]
+        // Only a superseded decision names its successor; moving off
+        // superseded clears it.
+        if document.kind == .decisions {
+            updates.append(("superseded_by", status == "superseded" && !supersededBy.isEmpty ? .text(supersededBy) : nil))
+        }
         let message = "Gannin: details of \(path)"
         saving = true
         error = nil

@@ -50,4 +50,48 @@ struct OutsideRepoTests {
         #expect(after.contains("acme/old"))
         #expect(!after.contains("acme/api"))
     }
+
+    // MARK: projectOutsideRepos (andrew-waters/gannin#175, R9)
+
+    @Test func projectOutsideReposIsEmptyWithNoProject() {
+        var config = OrgConfig()
+        config.outsideRepos = ["client/app"]
+        #expect(config.projectOutsideRepos.isEmpty)
+    }
+
+    @Test func projectOutsideReposIsEmptyWhenTheProjectNamesNone() {
+        var config = OrgConfig()
+        config.outsideRepos = ["client/app"]
+        config.scope = project("acme/harness", repos: [])
+        #expect(config.projectOutsideRepos.isEmpty)
+    }
+
+    @Test func projectOutsideReposIsTheIntersectionWithTheProjectsRepos() {
+        var config = OrgConfig()
+        config.outsideRepos = ["client/app", "other/thing"]
+        config.scope = project("acme/harness", repos: ["acme/api", "client/app"])
+        #expect(config.projectOutsideRepos == ["client/app"])
+    }
+
+    // MARK: excludesForIssueHistoryPages (andrew-waters/gannin#205)
+
+    @Test func excludesForIssueHistoryPagesExcludesAnOutsideRepoEvenWhenTheProjectNamesIt() {
+        var config = OrgConfig()
+        config.outsideRepos = ["client/app"]
+        config.focusRepos = ["client/app"]
+        // repoExclusion alone would let it through, since the project names it.
+        #expect(!config.repoExclusion.contains("client/app"))
+        #expect(config.excludesForIssueHistoryPages("client/app"))
+    }
+
+    @Test func excludesForIssueHistoryPagesStillExcludesOrdinarilyExcludedRepos() {
+        var config = OrgConfig()
+        config.excludedRepos = ["acme/old"]
+        #expect(config.excludesForIssueHistoryPages("acme/old"))
+    }
+
+    @Test func excludesForIssueHistoryPagesLeavesOrdinaryRepos() {
+        let config = OrgConfig()
+        #expect(!config.excludesForIssueHistoryPages("acme/api"))
+    }
 }

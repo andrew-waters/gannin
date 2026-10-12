@@ -46,6 +46,9 @@ struct GanninApp: App {
         let bankHolidays = BankHolidayStore()
         _bankHolidays = State(initialValue: bankHolidays)
         let orgs = OrgStore(auth: auth, activity: activity, database: database)
+        // Every project's outside repos, the same whichever project a
+        // window has (the root store reads home, which lists them all).
+        orgs.outsideRepos = { [weak orgConfigs] org in orgConfigs?.root.baseConfig(for: org).outsideRepos ?? [] }
         _orgs = State(initialValue: orgs)
         let details = DetailStore(auth: auth)
         _details = State(initialValue: details)
@@ -53,12 +56,25 @@ struct GanninApp: App {
         _metrics = State(initialValue: metrics)
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
         let issues = IssueStore(auth: auth, activity: activity)
+        // Every project's outside repos, as OrgStore's is set (R7's for the
+        // issue history too, andrew-waters/gannin#205).
+        issues.outsideRepos = { [weak orgConfigs] org in orgConfigs?.root.baseConfig(for: org).outsideRepos ?? [] }
+        // The workload snapshot's own readability check for the same
+        // repos, so the issue history doesn't run a second one; nil
+        // (rather than an empty dictionary) until that snapshot has
+        // loaded, so "nothing's unreadable" isn't confused with "nothing
+        // checked yet".
+        issues.unreadableOutsideRepos = { [weak orgs] org in
+            guard let snapshot = orgs?.snapshot(for: org) else { return nil }
+            return snapshot.unreadableRepos ?? [:]
+        }
         _issues = State(initialValue: issues)
         _projects = State(initialValue: ProjectStore(auth: auth, activity: activity))
         _actions = State(initialValue: ActionsStore(auth: auth, activity: activity))
         _releases = State(initialValue: ReleaseStore(auth: auth, activity: activity))
         let harness = HarnessStore(auth: auth)
         _harness = State(initialValue: harness)
+        harness.onPullRequestOpened = { repo, url, note in EngineerWatch.shared.notifyPullRequestOpened(repo: repo, url: url, note: note) }
         // Team data from the harness, for orgs that have one.
         let team = HarnessTeamStore(harness: harness)
         team.harnesses = { [weak orgConfigs] org in orgConfigs?.harnesses(for: org) ?? [] }

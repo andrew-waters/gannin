@@ -21,6 +21,9 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
     case watchedReviews
     case sessionPullRequests
     case sessionChecks
+    /// The one search per org that says which PRs and issues changed, shared by
+    /// the workload, issue history and work log.
+    case changeFeed
     /// Opening an issue, PR or anything looked up for it.
     case details
     /// Writes you confirmed.
@@ -40,7 +43,7 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
 
     var isSetting: Bool {
         switch self {
-        case .details, .writes, .account, .other: false
+        case .details, .writes, .account, .other, .changeFeed: false
         default: true
         }
     }
@@ -63,6 +66,7 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
         case .watchedReviews: "Watched reviews"
         case .sessionPullRequests: "Session pull requests"
         case .sessionChecks: "While checks run"
+        case .changeFeed: "Change feed"
         case .details: "Items you open"
         case .writes: "Changes you make"
         case .account: "Account and settings"
@@ -88,6 +92,7 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
         case .watchedReviews: "Reviewed PRs Claude watches for new commits and comments."
         case .sessionPullRequests: "Each running session's PRs: checks, reviews and threads. The PRs pane still looks when you open it."
         case .sessionChecks: "How often while a session's PR has checks running."
+        case .changeFeed: "Which PRs and issues changed, found once and used by the workload, issue history and work log instead of each searching for them."
         case .details: "Issues and PRs opened in a drawer or window, and what's looked up for them."
         case .writes: "Issues created, fields set, reviews posted and commits to the harness."
         case .account: "Your profile, orgs, and pickers in Settings."

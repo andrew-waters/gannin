@@ -167,6 +167,16 @@ final class EngineerWatch {
 
     private static let reviewCategory = "reviewRequest"
     private static let pullRequestCategory = "myPullRequest"
+    private static let harnessPullRequestCategory = "harnessPullRequest"
+
+    /// A pull request Gannin opened itself (a harness branch's rules
+    /// required one) and couldn't merge right away: it needs a look.
+    func notifyPullRequestOpened(repo: String, url: URL, note: String) {
+        registerCategories()
+        post(id: "harness-pr-\(url.absoluteString)", title: "Pull request opened", subtitle: repo,
+             body: note,
+             category: Self.harnessPullRequestCategory, info: ["pullRequest": url.absoluteString])
+    }
 
     private func notice(_ reviews: [PullRequestItem], mine: [PullRequestItem]) async {
         let notifies = UserDefaults.standard.object(forKey: SessionStore.notifiesKey) as? Bool ?? true
@@ -232,12 +242,15 @@ final class EngineerWatch {
         let mine = UNNotificationCategory(identifier: Self.pullRequestCategory, actions: [
             UNNotificationAction(identifier: "review:open", title: "Open on GitHub"),
         ], intentIdentifiers: [])
+        let harnessPullRequest = UNNotificationCategory(identifier: Self.harnessPullRequestCategory, actions: [], intentIdentifiers: [])
         // Categories are app-wide: keep the sessions' quick replies.
         Task {
             let center = UNUserNotificationCenter.current()
-            var all = await center.notificationCategories().filter { $0.identifier != Self.reviewCategory && $0.identifier != Self.pullRequestCategory }
+            let ours: Set = [Self.reviewCategory, Self.pullRequestCategory, Self.harnessPullRequestCategory]
+            var all = await center.notificationCategories().filter { !ours.contains($0.identifier) }
             all.insert(review)
             all.insert(mine)
+            all.insert(harnessPullRequest)
             center.setNotificationCategories(all)
         }
     }

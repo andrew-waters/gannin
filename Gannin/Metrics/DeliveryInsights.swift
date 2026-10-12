@@ -369,7 +369,7 @@ enum WeeklyDigest {
         lines.append("")
 
         if let issues {
-            let completed = issues.issues.values.filter { $0.isCompleted && ($0.closedAt ?? .distantPast) >= start && ($0.closedAt ?? .distantPast) < now && !config.repoExclusion.contains($0.repo) }
+            let completed = issues.issues.values.filter { $0.isCompleted && ($0.closedAt ?? .distantPast) >= start && ($0.closedAt ?? .distantPast) < now && !config.excludesForIssueHistoryPages($0.repo) }
             if !completed.isEmpty {
                 lines += ["## Shipped", ""]
                 let investments = config.investmentConfig

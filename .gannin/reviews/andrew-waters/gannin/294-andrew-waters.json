@@ -1,0 +1,61 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "A failing `git diff` is swallowed and reads as 'only CHANGELOG/.gannin changed'.",
+      "key" : ".github/workflows/ci.yml:47:A failing `git diff` is swallowed and reads as 'only CHANGEL",
+      "line" : 47,
+      "path" : ".github/workflows/ci.yml",
+      "posted_at" : "2026-10-12T13:27:46Z",
+      "resolved_at" : "2026-10-12T13:34:59Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "If the `changes` job fails or is skipped for any reason (checkout flake, runner ",
+      "key" : ".github/workflows/ci.yml:54:If the `changes` job fails or is skipped for any reason (che",
+      "line" : 54,
+      "path" : ".github/workflows/ci.yml",
+      "posted_at" : "2026-10-12T13:27:46Z",
+      "resolved_at" : "2026-10-12T13:34:59Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Same fail-open condition as `build`: if `changes` fails, `docs` is skipped rathe",
+      "key" : ".github/workflows/ci.yml:121:Same fail-open condition as `build`: if `changes` fails, `do",
+      "line" : 121,
+      "path" : ".github/workflows/ci.yml",
+      "posted_at" : "2026-10-12T13:27:46Z",
+      "resolved_at" : "2026-10-12T13:34:59Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`^(CHANGELOG\\.md|\\.gannin/)` has no end anchor after `CHANGELOG\\.md`, so a top-l",
+      "key" : ".github/workflows/ci.yml:47:`^(CHANGELOG\\.md|\\.gannin/)` has no end anchor after `CHANGE",
+      "line" : 47,
+      "path" : ".github/workflows/ci.yml",
+      "posted_at" : "2026-10-12T13:27:46Z",
+      "resolved_at" : "2026-10-12T13:34:59Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 294,
+  "posted_at" : "2026-10-12T13:27:46Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-12T13:26:42Z",
+  "state" : "OPEN",
+  "title" : "Skip build and docs CI for CHANGELOG-only and .gannin-only changes",
+  "updated_at" : "2026-10-12T13:34:59Z",
+  "verdict" : "approve"
+}

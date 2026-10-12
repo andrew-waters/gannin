@@ -112,6 +112,7 @@ struct IssuesStatsView: View {
             ToolbarItem { syncIndicator }
         }
         .syncOffNotice(.issues)
+        .outsideReposNotice(org: org)
         .task(id: "\(org) \(windowDays)") { await store.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
         .onAppear {
             order = UserDefaults.standard.string(forKey: "inProgressOrder.\(org)") ?? ""
