@@ -44,11 +44,11 @@ struct StorageSettings: View {
         var help: String {
             switch self {
             case .snapshots: "Members, teams, open and recently merged PRs, and open issues, per org"
-            case .metrics: "Merged PRs with their review timings, behind the delivery and people stats"
-            case .pullRequests: "Every PR fetched, kept once for the pages that read it, starting with the merged PR history"
+            case .metrics: "Which weeks of merged PRs are covered, and PRs opened per week, behind the delivery and people stats (the PRs are under Pull requests)"
+            case .pullRequests: "Every PR fetched, kept once for the merged PR history and the work log"
             case .issues: "Issues with their board history, behind the issue metrics and investments"
             case .issueText: "Issues' descriptions and recent comments, for searching them"
-            case .workLog: "PRs with their commits and reviews, behind Activity"
+            case .workLog: "Issues with their comments and which weeks are covered, behind Activity (the PRs are under Pull requests)"
             case .projects: "Project board definitions and items"
             case .actions: "Workflow runs and the jobs of those opened, behind Actions"
             case .releases: "Milestones, every GitHub Release and stars per repository, behind Releases (the daily download totals are kept)"

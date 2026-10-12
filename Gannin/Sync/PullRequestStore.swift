@@ -19,17 +19,18 @@ struct PullRequestCore: Codable, Hashable, Identifiable {
     var deletions: Int?
     var changedFiles: Int?
 
-    /// This PR's fields with `incoming`'s laid over them, field by field: a
-    /// field one fetch didn't read (a work log fetch has no `changedFiles`)
-    /// keeps what another stored. When the held `updatedAt` is newer than
-    /// the incoming one, the held fields win and incoming only fills gaps.
+    /// The newer person, keeping a name or avatar only the older one has.
     private static func merged(_ newer: Person?, _ older: Person?) -> Person? {
         guard let newer, let older, newer.login == older.login else { return newer ?? older }
         return Person(login: newer.login, name: newer.name ?? older.name, avatarUrl: newer.avatarUrl ?? older.avatarUrl)
     }
 
+    /// This PR's fields with `incoming`'s laid over them, field by field: a
+    /// field one fetch didn't read (a work log fetch has no `changedFiles`)
+    /// keeps what another stored. When the held `updatedAt` is newer than
+    /// the incoming one, the held fields win and incoming only fills gaps.
     func merged(with incoming: PullRequestCore) -> PullRequestCore {
-        let incomingIsStale = updatedAt.flatMap { held in incoming.updatedAt.map { held > $0 } } ?? false
+        let incomingIsStale = updatedAt.map { held in incoming.updatedAt.map { held > $0 } ?? true } ?? false
         let (newer, older) = incomingIsStale ? (self, incoming) : (incoming, self)
         return PullRequestCore(
             id: id, number: newer.number, title: newer.title, url: newer.url, repo: newer.repo,
@@ -181,10 +182,11 @@ extension StoredPullRequest {
         return next
     }
 
-    /// The incoming part, unless the held one was fetched at a newer `updatedAt`.
+    /// The incoming part, unless the held one was fetched at a newer `updatedAt`
+    /// or the incoming one has none (carried over from an old cache).
     private static func newer<Extras>(_ held: Extras?, _ incoming: Extras?, stamp: (Extras) -> Date?) -> Extras? {
         guard let held, let incoming else { return incoming ?? held }
-        if let heldAt = stamp(held), let incomingAt = stamp(incoming), heldAt > incomingAt { return held }
+        if let heldAt = stamp(held), stamp(incoming).map({ heldAt > $0 }) ?? true { return held }
         return incoming
     }
 

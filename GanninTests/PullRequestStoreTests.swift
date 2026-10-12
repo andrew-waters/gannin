@@ -46,6 +46,34 @@ struct PullRequestStoreTests {
         #expect(store.pullRequests(org: "acme")["a"]?.core.changedFiles == 5)
     }
 
+    @Test func aCarriedOverPullRequestOnlyFillsGapsInOneHeldWithADate() {
+        let store = makeStore()
+        defer { store.clear() }
+        let fresh = Date(timeIntervalSince1970: 7_000)
+        store.merge([StoredPullRequest(metrics: metricPR("a", updatedAt: fresh, files: 4))], org: "acme")
+        var carried = StoredPullRequest(workLog: workLogPR("a"))
+        carried.core = PullRequestCore(
+            id: "a", number: 1, title: "Old title", url: carried.core.url, repo: "acme/app", author: nil, authorIsBot: nil,
+            createdAt: carried.core.createdAt, mergedAt: nil, updatedAt: nil, additions: nil, deletions: nil, changedFiles: nil
+        )
+        store.merge([carried], org: "acme")
+        let held = store.pullRequests(org: "acme")["a"]
+        #expect(held?.core.title == "Title")
+        #expect(held?.core.updatedAt == fresh)
+        #expect(held?.core.changedFiles == 4)
+        #expect(held?.workLog != nil)
+    }
+
+    @Test func aCarriedOverSlotDoesNotReplaceOneFetchedAtADate() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(workLog: workLogPR("a", updatedAt: Date(timeIntervalSince1970: 7_000)))], org: "acme")
+        var carried = StoredPullRequest(workLog: workLogPR("a"))
+        carried.workLog = WorkLogExtras(updatedAt: nil, closedAt: nil, mergedBy: nil, commits: [], reviews: [], isDraft: nil, closingIssues: [])
+        store.merge([carried], org: "acme")
+        #expect(store.pullRequests(org: "acme")["a"]?.workLog?.commits.count == 1)
+    }
+
     @Test func aPullRequestWithoutUpdatedAtIsReplacedByAFetchedOne() {
         let store = makeStore()
         defer { store.clear() }
