@@ -37,13 +37,14 @@
       "severity" : "minor"
     }
   ],
+  "merged_at" : "2026-10-12T09:07:51Z",
   "number" : 260,
   "posted_at" : "2026-10-12T08:53:20Z",
   "repo" : "andrew-waters/gannin",
   "reviewer" : "dwrss",
   "started_at" : "2026-10-12T00:52:21Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Share one change feed per org between the workload, issue history and work log",
-  "updated_at" : "2026-10-12T08:53:24Z",
+  "updated_at" : "2026-10-12T09:16:28Z",
   "verdict" : "approve"
 }
