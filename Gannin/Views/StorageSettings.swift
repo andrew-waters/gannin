@@ -198,7 +198,11 @@ struct StorageSettings: View {
         switch cache {
         case .snapshots: orgs.clearSnapshots()
         case .metrics: metrics.clear()
-        case .pullRequests: PullRequestStore.shared.clear()
+        case .pullRequests:
+            // The histories hold coverage of PRs that are going, so they go too.
+            metrics.clear()
+            workLog.clear()
+            PullRequestStore.shared.clear()
         case .issues: issues.clear()
         case .issueText: Task { await IssueTextIndex.shared.clear() }
         case .workLog: workLog.clear()

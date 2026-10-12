@@ -7,7 +7,7 @@ struct PullRequestStoreTests {
         PullRequestStore(folder: "PullRequestStoreTests-\(UUID().uuidString)")
     }
 
-    private func metricPR(_ id: String, updatedAt: Date? = nil, files: Int? = nil) -> MetricPullRequest {
+    func metricPR(_ id: String, updatedAt: Date? = nil, files: Int? = nil) -> MetricPullRequest {
         MetricPullRequest(
             id: id, number: 1, title: "Title", url: URL(string: "https://github.com/acme/app/pull/1")!, repo: "acme/app",
             author: Person(login: "sam", name: nil, avatarUrl: nil), authorIsBot: false,
@@ -66,7 +66,7 @@ struct PullRequestStoreTests {
         #expect(store.pullRequests(org: "acme")["a"]?.metrics?.reviews.count == 1)
     }
 
-    private func workLogPR(_ id: String, updatedAt: Date? = nil) -> WorkLogPullRequest {
+    func workLogPR(_ id: String, updatedAt: Date? = nil) -> WorkLogPullRequest {
         WorkLogPullRequest(
             id: id, number: 1, title: "Title", url: URL(string: "https://github.com/acme/app/pull/1")!, repo: "acme/app",
             author: "sam", createdAt: Date(timeIntervalSince1970: 1_000), mergedAt: Date(timeIntervalSince1970: 5_000),
@@ -115,6 +115,39 @@ struct PullRequestStoreTests {
         #expect(held["a"]?.metrics == nil)
         #expect(held["a"]?.workLogPullRequest != nil)
         #expect(held["b"] == nil)
+    }
+
+    @Test func aStoreThatDidntFetchAPullRequestAtItsNewestUpdateSeesItsOwnCopyAsOld() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(workLog: workLogPR("a", updatedAt: Date(timeIntervalSince1970: 6_000)))], org: "acme")
+        store.merge([StoredPullRequest(metrics: metricPR("a", updatedAt: Date(timeIntervalSince1970: 8_000)))], org: "acme")
+        let held = store.pullRequests(org: "acme")["a"]
+        #expect(held?.core.updatedAt == Date(timeIntervalSince1970: 8_000))
+        #expect(held?.workLogPullRequest?.updatedAt == Date(timeIntervalSince1970: 6_000))
+        #expect(held?.metricPullRequest?.updatedAt == Date(timeIntervalSince1970: 8_000))
+    }
+
+    @Test func anOlderFetchDoesNotReplaceANewerSlot() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(workLog: workLogPR("a", updatedAt: Date(timeIntervalSince1970: 8_000)))], org: "acme")
+        store.merge([StoredPullRequest(workLog: workLogPR("a", updatedAt: Date(timeIntervalSince1970: 6_000)))], org: "acme")
+        #expect(store.pullRequests(org: "acme")["a"]?.workLogPullRequest?.updatedAt == Date(timeIntervalSince1970: 8_000))
+    }
+
+    @Test func anAuthorsNameSurvivesAFetchThatDidntKnowIt() {
+        let store = makeStore()
+        defer { store.clear() }
+        var named = StoredPullRequest(metrics: metricPR("a"))
+        named.core = PullRequestCore(
+            id: "a", number: 1, title: "Title", url: named.core.url, repo: "acme/app",
+            author: Person(login: "sam", name: "Sam Jones", avatarUrl: nil), authorIsBot: false,
+            createdAt: named.core.createdAt, mergedAt: named.core.mergedAt, updatedAt: nil, additions: 1, deletions: 1, changedFiles: nil
+        )
+        store.merge([named], org: "acme")
+        store.merge([StoredPullRequest(workLog: workLogPR("a"))], org: "acme")
+        #expect(store.pullRequests(org: "acme")["a"]?.core.author?.name == "Sam Jones")
     }
 
     @Test func updateChangesAHeldPullRequestAndIgnoresAnUnknownOne() {

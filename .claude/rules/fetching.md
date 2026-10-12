@@ -31,6 +31,7 @@ paths:
 - PRs live in `PullRequestStore` (core fields plus one extras slot per consumer: metrics, work log), written through `merge` and changed through `update`, never kept in a store's own cache file. A copy beside it can drift from the one `updatedAt` is compared against.
 - A store's own file keeps its coverage (what range it has fetched), not the PRs. It must be dropped when the store holds fewer of its PRs than it saved (`storedCount`), or it would claim coverage the PRs no longer back.
 - Clear a store's own part with `clear(_ slot:)`, never the whole store: clearing the work log mustn't force the metrics to backfill. Core fields merge one by one (`PullRequestCore.merged`) because a fetch may not read them all; keep new core fields optional.
+- Each slot records the `updatedAt` it was fetched at (`MetricsExtras.updatedAt`); a store's skip check reads that, never `core.updatedAt`, which is the newest any store saw and would hide a stale slot from the store that holds it.
 - A PR carried over from an old cache has no `updatedAt`; it is fetched again once when the feed reports it changed. Don't invent one.
 
 ## Sync settings
@@ -45,4 +46,4 @@ paths:
 - The app has no entitlements beyond hardened runtime and isn't sandboxed (sessions run git, gh and claude as the user).
 
 ## Testing
-- `ChangeFeedTests` covers the feed's plan, merging, what the workload snapshot takes from it and `ChangeFeeds`' sharing of a run (with a stubbed search); `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests`, `PullRequestStoreTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.
+- `ChangeFeedTests` covers the feed's plan, merging, what the workload snapshot takes from it and `ChangeFeeds`' sharing of a run (with a stubbed search); `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests`, `PullRequestStoreTests`, `PullRequestMigrationTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.

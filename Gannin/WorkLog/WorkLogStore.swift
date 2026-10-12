@@ -17,11 +17,13 @@ final class WorkLogStore {
     private let auth: AuthStore
     private let activity: SyncActivity
     private let pullRequestStore: PullRequestStore
+    private let directory: URL
 
-    init(auth: AuthStore, activity: SyncActivity, pullRequestStore: PullRequestStore = .shared) {
+    init(auth: AuthStore, activity: SyncActivity, pullRequestStore: PullRequestStore = .shared, directory: URL = WorkLogStore.defaultDirectory) {
         self.auth = auth
         self.activity = activity
         self.pullRequestStore = pullRequestStore
+        self.directory = directory
     }
 
     func history(for org: String) -> WorkLogHistory? { histories[org] }
@@ -141,7 +143,7 @@ final class WorkLogStore {
             }
             histories[org] = updated
             errors[org] = nil
-            save(updated)
+            save(updated, merging: prs)
             run.finish()
         } catch is CancellationError {
             run.finish()
@@ -179,7 +181,7 @@ final class WorkLogStore {
         }
     }
 
-    static var cacheDirectory: URL { directory }
+    static var cacheDirectory: URL { defaultDirectory }
 
     /// Also removes the work log's part of every stored PR: the log is rebuilt
     /// from it, so a log kept after its PRs are gone would claim a coverage
@@ -187,14 +189,14 @@ final class WorkLogStore {
     func clear() {
         histories = [:]
         errors = [:]
-        try? FileManager.default.removeItem(at: Self.directory)
+        try? FileManager.default.removeItem(at: directory)
         pullRequestStore.clear(.workLog)
     }
 
     // MARK: Disk cache
 
-    private func loadCached(_ org: String) {
-        guard histories[org] == nil, let data = try? Data(contentsOf: Self.fileURL(org)) else { return }
+    func loadCached(_ org: String) {
+        guard histories[org] == nil, let data = try? Data(contentsOf: fileURL(org)) else { return }
         // A log from before PRs were kept in the shared store brings its PRs
         // along, so the upgrade doesn't fetch them again.
         if let legacy = try? Self.decoder.decode(WorkLogHistory.Legacy.self, from: data), legacy.version == WorkLogHistory.Legacy.version,
@@ -202,7 +204,7 @@ final class WorkLogStore {
             pullRequestStore.merge(legacy.pullRequests.values.map { StoredPullRequest(workLog: $0) }, org: org)
             history.version = WorkLogHistory.currentVersion
             history.pullRequests = legacy.pullRequests
-            save(history)
+            save(history, merging: [])
             histories[org] = history
             return
         }
@@ -219,12 +221,12 @@ final class WorkLogStore {
 
     /// The PRs go to the store first: a log saved without them would claim a
     /// coverage the store doesn't have.
-    private func save(_ history: WorkLogHistory) {
-        pullRequestStore.merge(history.pullRequests.values.map { StoredPullRequest(workLog: $0) }, org: history.orgLogin)
+    private func save(_ history: WorkLogHistory, merging fetched: [WorkLogPullRequest]) {
+        pullRequestStore.merge(fetched.map { StoredPullRequest(workLog: $0) }, org: history.orgLogin)
         var saved = history
         saved.storedCount = history.pullRequests.count
         if let data = try? Self.encoder.encode(saved) {
-            try? data.write(to: Self.fileURL(history.orgLogin), options: .atomic)
+            try? data.write(to: fileURL(history.orgLogin), options: .atomic)
         }
     }
 
@@ -240,11 +242,11 @@ final class WorkLogStore {
         return decoder
     }()
 
-    private static var directory: URL {
+    static var defaultDirectory: URL {
         URL.applicationSupportDirectory.appending(path: "WorkLog", directoryHint: .isDirectory)
     }
 
-    private static func fileURL(_ org: String) -> URL {
+    private func fileURL(_ org: String) -> URL {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "\(org).json")
     }
