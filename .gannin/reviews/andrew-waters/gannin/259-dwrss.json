@@ -1,0 +1,32 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "\"rule violation\" matches every ruleset refusal, not only a pull request requirem",
+      "key" : "Gannin/Harness/HarnessWrites.swift:182:\"rule violation\" matches every ruleset refusal, not only a p",
+      "line" : 182,
+      "path" : "Gannin/Harness/HarnessWrites.swift",
+      "severity" : "major"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The test only covers the positive match. Add a case for a different non-PR graph",
+      "key" : "GanninTests/HarnessPullRequestTests.swift:49:The test only covers the positive match. Add a case for a di",
+      "line" : 49,
+      "path" : "GanninTests/HarnessPullRequestTests.swift",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 259,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-12T00:50:32Z",
+  "state" : "OPEN",
+  "title" : "Open a pull request when a harness commit hits a repository ruleset",
+  "updated_at" : "2026-10-12T00:51:51Z",
+  "verdict" : "comment"
+}
