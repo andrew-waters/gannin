@@ -1810,23 +1810,23 @@ struct WorkOnThisLauncher: ViewModifier {
                 let setup = setup(for: reference)
                 Button("Commit to Harness") { start(reference, recording: true, choice: nil, setup: setup) }
                 Button("Don't Record") {
-                    recordWithoutAsking(reference).wrappedValue = false
+                    recordWithoutAsking(setup).wrappedValue = false
                     start(reference, recording: false, choice: nil, setup: setup)
                 }
-                Button("Cancel", role: .cancel) { recordWithoutAsking(reference).wrappedValue = false }
+                Button("Cancel", role: .cancel) { recordWithoutAsking(setup).wrappedValue = false }
             } message: { reference in
                 Text(Self.recordMessage(reference))
             }
-            .dialogSuppressionToggle("Don't ask again for \(confirming.flatMap(setup)?.repo ?? "this project")", isSuppressed: confirming.map(recordWithoutAsking) ?? .constant(false))
+            .dialogSuppressionToggle("Don't ask again for \(confirming.flatMap(setup)?.repo ?? "this project")", isSuppressed: recordWithoutAsking(confirming.flatMap(setup)))
             .sheet(item: $choosing) { reference in
                 let config = configs.config(for: reference.org)
-                let skipsAsking = recordWithoutAsking(reference).wrappedValue
+                let skipsAsking = setup(for: reference).map { SessionStore.recordsWithoutAsking(repo: $0.repo) } ?? false
                 if let initial = setup(for: reference) {
                     SessionLaunchSheet(
                         title: "Work on \(reference.reference)", org: reference.org, harnesses: config.harnesses, initial: initial,
                         use: .work, repos: Self.repos(reference, issues: issues), values: Self.values(reference), startTitle: "Work on This"
                     ) { choice, picked in
-                        start(reference, recording: skipsAsking || recording, choice: choice, setup: picked)
+                        start(reference, recording: SessionStore.recordsWithoutAsking(repo: picked.repo) || recording, choice: choice, setup: picked)
                     } extra: {
                         if SandboxCredentials.isEnabled {
                             let offered = placement(for: reference)
@@ -1861,10 +1861,10 @@ struct WorkOnThisLauncher: ViewModifier {
         Binding(get: { confirming != nil }, set: { if !$0 { confirming = nil } })
     }
 
-    /// Don't ask again before recording, per harness.
-    private func recordWithoutAsking(_ reference: IssueReference) -> Binding<Bool> {
-        let key = SessionStore.asksBeforeRecordingKey(repo: setup(for: reference)?.repo ?? reference.org)
-        return Binding(get: { UserDefaults.standard.bool(forKey: key) }, set: { UserDefaults.standard.set($0, forKey: key) })
+    /// Don't ask again before recording, per harness; never on without one.
+    private func recordWithoutAsking(_ setup: HarnessConfig?) -> Binding<Bool> {
+        guard let repo = setup?.repo else { return .constant(false) }
+        return Binding(get: { SessionStore.recordsWithoutAsking(repo: repo) }, set: { SessionStore.setRecordsWithoutAsking($0, repo: repo) })
     }
 
     private func setup(for reference: IssueReference) -> HarnessConfig? {
@@ -1884,7 +1884,7 @@ struct WorkOnThisLauncher: ViewModifier {
             recording = true
             sandboxed = placement(for: reference).isSandboxed
             choosing = reference
-        } else if recordWithoutAsking(reference).wrappedValue {
+        } else if recordWithoutAsking(setup).wrappedValue {
             start(reference, recording: true, choice: nil, setup: setup)
         } else {
             confirming = reference
@@ -2166,7 +2166,6 @@ struct HarnessCheckoutSection: View {
     @AppStorage(SessionStore.connectKey) private var connect = ""
     @AppStorage private var localPath: String
     @AppStorage private var remotePath: String
-    @AppStorage private var recordWithoutAsking: Bool
     /// `on`, `off`, or empty for Settings > General's.
     @AppStorage private var autoReview: String
     /// `on`, `off`, or empty for Settings > General's, for this project.
@@ -2185,7 +2184,6 @@ struct HarnessCheckoutSection: View {
         self.showsReviewRequests = showsReviewRequests
         _localPath = AppStorage(wrappedValue: "", SessionStore.harnessPathKey(org, repo: repo))
         _remotePath = AppStorage(wrappedValue: "", SessionStore.remoteHarnessPathKey(org, repo: repo))
-        _recordWithoutAsking = AppStorage(wrappedValue: false, SessionStore.asksBeforeRecordingKey(repo: repo))
         _autoReview = AppStorage(wrappedValue: "", AutoReview.orgKey(org))
         _autoPost = AppStorage(wrappedValue: "", AutoReview.postOverrideKey(repo))
     }
@@ -2219,7 +2217,7 @@ struct HarnessCheckoutSection: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Toggle("Ask before recording a session", isOn: Binding(get: { !recordWithoutAsking }, set: { recordWithoutAsking = !$0 }))
+            Toggle("Ask before recording a session", isOn: Binding(get: { !SessionStore.recordsWithoutAsking(repo: repo) }, set: { SessionStore.setRecordsWithoutAsking(!$0, repo: repo) }))
             Text("Work on This commits the session's brief and a session.json to its harness's sessions folder, and adds its pull request later. Off, it does so without asking.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
