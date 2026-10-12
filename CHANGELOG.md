@@ -30,6 +30,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
 - A harness commit to a repo whose rules require a pull request now goes through a new branch and a pull request, merged right away when GitHub will have it (which includes anyone who can bypass the rule); otherwise the pull request is left open and a notification says why
 
+### Fixed
+- The Docs links in gannin.ai's header and footer now open the documentation at gannin.ai/docs; they went nowhere before
+
 ## [0.0.2] - 2026-10-05
 
 ### Added
