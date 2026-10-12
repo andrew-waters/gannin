@@ -1,0 +1,15 @@
+{
+  "box" : "Anius",
+  "branch" : "258-diffs-use-language-aware-syntax",
+  "issue" : "andrew-waters/gannin#258",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-12T12:29:49Z",
+  "startedBy" : "dwrss",
+  "title" : "Diffs use language-aware syntax highlighting",
+  "url" : "https://github.com/andrew-waters/gannin/issues/258"
+}
