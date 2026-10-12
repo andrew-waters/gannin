@@ -19,8 +19,12 @@ Open **Rituals › Design and Refine** and press **New Design and Refine** (it's
 
 **Start** (⌘↩) opens the session in its tab. It always runs on this Mac, in the project's harness, in its own folder `.worktrees/refine-<date>-<name>/`, which is kept out of git. Claude is told it's a co-reviewer: it reads the code and never changes it.
 
-## While it runs
+## Stepping through the page
 
-The session's panel shows the page, its repos and who's here; add or take people off as the meeting goes. The session is kept with Gannin's others, so quitting and opening Gannin again brings it back with its attendees.
+The session's tab shows the page in a browser inside Gannin, with the findings beside it. Above the page are **Back**, **Forward**, **Reload** and the address: type a new one and press Return to go there. Links work as they would in a browser. **Terminal** opens Claude's terminal below, with its composer.
 
-Stepping through the page inside Gannin, capturing findings and screenshots, and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).
+Each project keeps its own logins for these pages, so signing in to staging once lasts from one session to the next, and never reaches another project's sessions. **⋯ › Sign Out of Pages** forgets this project's logins; Settings › Storage signs out of every project's. Plain `http` pages, such as `localhost`, load here too.
+
+The session is kept with Gannin's others, so quitting and opening Gannin again brings it back on the page it was last on.
+
+Capturing findings and screenshots, and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).

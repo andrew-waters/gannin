@@ -6,6 +6,11 @@
 	<string>https://gannin.ai/appcast.xml</string>
 	<key>SUPublicEDKey</key>
 	<string>yxjzBI3bw2opCG+nY61LXKWqHR00J4gi9F4C0SZqR3I=</string>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+	</dict>
 	<key>SUEnableInstallerLauncherService</key>
 	<false/>
 </dict>
