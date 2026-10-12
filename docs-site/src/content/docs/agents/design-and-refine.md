@@ -2,7 +2,7 @@
 title: Design and Refine
 description: Step through a web page with the team, note what to improve, and end with issues.
 sidebar:
-  order: 5
+  order: 16
 ---
 
 Design and Refine is a ritual for the team to walk through a page it has already shipped, together on the shared screen, and turn the rough edges it spots into issues. One person drives; Claude Code sits in as co-reviewer, reading the code behind the page.

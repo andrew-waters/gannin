@@ -56,6 +56,10 @@ struct SearchableList: View {
     let selection: String?
     var prompt = "Search"
     var isLoading = false
+    /// An extra choice from the query text itself, appended last, when it
+    /// returns one and `choices` doesn't already have it (the add-a-repo
+    /// popover's *Add owner/name* row); nil to offer none.
+    var typedChoice: ((String) -> SearchableChoice?)? = nil
     let onPick: (String?) -> Void
 
     @State private var query = ""
@@ -174,17 +178,26 @@ struct SearchableList: View {
     }
 
     /// Everything, or those whose name holds the query: names whose last
-    /// part (the repo, not the org) starts with it first.
+    /// part (the repo, not the org) starts with it first; `typedChoice`'s
+    /// row, when there is one not already among them, goes last.
     private var matches: [SearchableChoice] {
         let query = query.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty else { return choices }
-        let found = choices.filter { $0.title.localizedCaseInsensitiveContains(query) }
-        let starts = found.filter { choice in
-            let name = choice.title.split(separator: "/").last.map(String.init) ?? choice.title
-            return name.lowercased().hasPrefix(query.lowercased())
+        let base: [SearchableChoice]
+        if query.isEmpty {
+            base = choices
+        } else {
+            let found = choices.filter { $0.title.localizedCaseInsensitiveContains(query) }
+            let starts = found.filter { choice in
+                let name = choice.title.split(separator: "/").last.map(String.init) ?? choice.title
+                return name.lowercased().hasPrefix(query.lowercased())
+            }
+            let startIDs = Set(starts.map(\.id))
+            base = starts + found.filter { !startIDs.contains($0.id) }
         }
-        let startIDs = Set(starts.map(\.id))
-        return starts + found.filter { !startIDs.contains($0.id) }
+        if let typed = typedChoice?(query), !choices.contains(where: { $0.id == typed.id }) {
+            return base + [typed]
+        }
+        return base
     }
 
     /// Consecutive choices with the same section, in order. While searching

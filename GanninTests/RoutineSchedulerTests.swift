@@ -110,6 +110,26 @@ struct RoutineSchedulerTests {
         #expect(store.queue(for: "acme").map(\.issue.number) == [3])
     }
 
+    @Test func aLookThatActsSavesItsTimeAndAQuietOneDoesNot() async {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "RoutineSchedulerTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let store = RoutineStore(directory: folder)
+        store.save(routine(.every(minutes: 60, anchor: date(2026, 10, 9))))
+        let scheduler = RoutineScheduler(store: store)
+        scheduler.calendar = calendar
+        scheduler.workingDays = { _ in { _ in true } }
+        scheduler.start = { _, _, _ in .started(session: UUID()) }
+        let first = date(2026, 10, 9, 9, 59, 50)
+        store.checked(at: first)
+        // Nothing due: the time stays in memory.
+        await scheduler.check(now: date(2026, 10, 9, 9, 59, 55))
+        #expect(RoutineStore(directory: folder).checkedAt == first)
+        // The 10:00 run is due: the look's time is on disk.
+        let acting = date(2026, 10, 9, 10, 0, 5)
+        await scheduler.check(now: acting)
+        await scheduler.startsFinished()
+        #expect(RoutineStore(directory: folder).checkedAt == acting)
+    }
+
     @Test func aFailedQueuedStartGoesBackAndHoldsTheWindow() async {
         let folder = FileManager.default.temporaryDirectory.appending(path: "RoutineSchedulerTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         let store = RoutineStore(directory: folder)

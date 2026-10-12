@@ -34,7 +34,8 @@ fi
 [ -d "$app" ] || { echo "No build at $app; run without --no-build first."; exit 1; }
 
 # Detached, so it outlives a session whose terminal belongs to the Gannin
-# it quits. SIGTERM skips the quit prompt; sessions are on disk and resume.
+# it quits. SIGTERM skips the quit prompt, and Gannin writes its pending
+# session saves before exiting; the kill -9 fallback can lose the last half second.
 nohup sh -c '
     sleep 3
     pids=$(pgrep -f "Gannin.app/Contents/MacOS/Gannin$" || true)

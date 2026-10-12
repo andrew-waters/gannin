@@ -356,14 +356,28 @@ final class RoutineStore {
         saveState()
     }
 
+    /// Notes when the scheduler last looked. It looks every few seconds, so
+    /// the file is written at most every `stateSaveInterval`, and by the
+    /// scheduler itself (`saveState`) when a look starts or records anything:
+    /// what's saved then is as good as writing every look, since a relaunch
+    /// finds nothing due in the stretch that wasn't saved.
     func checked(at date: Date) {
         checkedAt = date
-        saveState()
+        // A clock set back gives a negative interval, which counts as due.
+        let due = stateSavedAt.map { saved in
+            let elapsed = date.timeIntervalSince(saved)
+            return elapsed >= Self.stateSaveInterval || elapsed < 0
+        } ?? true
+        if due { saveState() }
     }
 
-    private func saveState() {
+    func saveState() {
+        stateSavedAt = checkedAt ?? .now
         write(State(isPaused: isPaused, checkedAt: checkedAt), "state.json")
     }
+
+    private static let stateSaveInterval: TimeInterval = 5 * 60
+    @ObservationIgnored private var stateSavedAt: Date?
 
     // MARK: Disk
 

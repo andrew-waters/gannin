@@ -316,13 +316,7 @@ extension SessionStore {
 
     /// `routine-<name>-<date>-<4 hex of its ID>`: a new branch each run.
     static func routineBranchName(name: String, id: UUID, on day: Date = .now) -> String {
-        let words = String(name.lowercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : " " }).split(separator: " ")
-        var slug = ""
-        for word in words {
-            let next = slug.isEmpty ? String(word) : "\(slug)-\(word)"
-            if next.count > 32 { break }
-            slug = next
-        }
+        let slug = Slug.make(name, limit: 32)
         let date = day.formatted(.iso8601.year().month().day().dateSeparator(.omitted))
         let suffix = id.uuidString.prefix(4).lowercased()
         return (["routine"] + (slug.isEmpty ? [] : [slug]) + [date, suffix]).joined(separator: "-")

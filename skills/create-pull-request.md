@@ -51,8 +51,8 @@ Why it matters: Gannin finds a session's PRs through `head:<branch>` and the URL
    - `Gannin.xcodeproj` isn't checked in; if files were added or removed, run `xcodegen generate` but don't commit the project.
    - `project.yml`'s `MARKETING_VERSION` stays at the `0.0.0` placeholder (`ci.yml` enforces it; the version comes from the release tag).
    - A change someone using the app would notice gets a line in `CHANGELOG.md` under `## [Unreleased]`, in an `Added`, `Changed` or `Fixed` group (add the group if it isn't there), written for them in the style of the entries below it. That section becomes the next release's notes on GitHub and in Sparkle's update panel (`docs/RELEASING.md`). CI, docs and harness files (plans, sessions, skills, prompts) need none.
-   - If the change alters behaviour that `CLAUDE.md` describes (a store, a page, a setting, a sync rule), update `CLAUDE.md` in the same PR, in its style.
-   - GitHub calls stay reads, except the confirmed writes `CLAUDE.md` lists; a new mutation must be confirmed first and noted there.
+   - If the change alters something a rule in `.claude/rules/` describes (a store, a sync rule, an invariant), update that rule in the same PR, in its style. A user-facing change updates its page in `docs-site/` instead, as `CLAUDE.md`'s working rules say.
+   - GitHub calls stay reads, except the confirmed writes `.claude/rules/fetching.md` lists; a new mutation must be confirmed first and noted there.
 
 5. **Build once, at the end.** Builds slow the whole machine, so don't build after each edit; do one pass when the change is complete. For the Gannin app:
    ```bash

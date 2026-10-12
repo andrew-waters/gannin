@@ -3,6 +3,13 @@ name: CI
 # Builds the Mac app and runs its tests on every pull request and push to
 # main, unsigned, so a broken build or a failing test is caught before a
 # release tag is. Releases are release.yml.
+#
+# A pull request that only touches the changelog or Gannin's session files
+# skips the build and docs jobs, since nothing in them is built, tested or read
+# by the docs job. The skip is per job, not a workflow-level paths-ignore: the
+# main ruleset requires the `build` check, and a workflow that never starts
+# never reports it, whereas a skipped job counts as passing. Pushes to main
+# always run, so every commit there has a `build` status.
 on:
   pull_request:
   push:
@@ -16,7 +23,40 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      relevant: ${{ steps.diff.outputs.relevant }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Relevant unless every changed file is CHANGELOG.md or under .gannin/.
+      - name: Check for changes other than the changelog and .gannin
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          relevant=true
+          if [ "$EVENT" = "pull_request" ]; then
+            # A failed diff (a commit missing from the clone, no merge base)
+            # must not read as "nothing else changed".
+            changed=$(git diff --name-only --no-renames "$BASE...$HEAD") || { echo "git diff failed; running CI"; changed=x; }
+            others=$(printf '%s\n' "$changed" | grep -vE '^(CHANGELOG\.md$|\.gannin/)' || true)
+            [ -z "$others" ] && relevant=false
+          fi
+          echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
+
   build:
+    needs: changes
+    # Runs unless `changes` positively said to skip: if it failed, its output
+    # is empty, and a skipped `build` would satisfy the ruleset unbuilt.
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     # The app targets macOS 26, so its SDK, so a Tahoe runner.
     runs-on: macos-26
 
@@ -82,6 +122,8 @@ jobs:
   # The user docs (docs-site/): they must build, and every control in the
   # Settings views must be named on its Settings reference page.
   docs:
+    needs: changes
+    if: ${{ !cancelled() && needs.changes.outputs.relevant != 'false' }}
     runs-on: ubuntu-latest
 
     steps:

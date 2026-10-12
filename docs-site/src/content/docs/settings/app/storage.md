@@ -17,7 +17,7 @@ Caches are kept so pages open warm. Cleared data is fetched again when a page ne
 | Merged PR history | Fills as you use the app | Merged PRs with their review timings, behind the delivery and people stats. | This Mac |
 | Issue history | Fills as you use the app | Issues with their board history, behind the issue metrics and investments. | This Mac |
 | Issue search index | Fills as you use the app | Issues' descriptions and recent comments, for searching them. | This Mac |
-| Work log | Fills as you use the app | PRs with their commits and reviews, behind Activity. | This Mac |
+| Work log | Fills as you use the app | PRs with their commits and reviews, and issues with their comments, behind Activity. | This Mac |
 | Project boards | Fills as you use the app | Project board definitions and items. | This Mac |
 | Actions runs | Fills as you use the app | Workflow runs and the jobs of those opened, behind Actions. | This Mac |
 | Milestones and releases | Fills as you use the app | Milestones, every GitHub Release and stars per repository, behind Releases. The daily download totals are kept. | This Mac |

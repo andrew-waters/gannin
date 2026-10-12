@@ -514,7 +514,7 @@ enum Scorecard {
             let workflow = config.workflow
             issues = sources.issues.map { history in
                 history.issues.values
-                    .filter { $0.isCompleted && ($0.closedAt ?? .distantPast) >= earliest && !config.repoExclusion.contains($0.repo) }
+                    .filter { $0.isCompleted && ($0.closedAt ?? .distantPast) >= earliest && !config.excludesForIssueHistoryPages($0.repo) }
                     .map { IssueTiming($0, workflow: workflow, now: now) }
             }
             issuesFrom = sources.issues?.coveredFrom
@@ -824,6 +824,7 @@ struct ScorecardView: View {
         }
         .frame(maxHeight: .infinity, alignment: .top)
         .syncOffNotice(.metrics)
+        .outsideReposNotice(org: org)
         .sheet(isPresented: $adding) {
             MeasurableEditor(org: org, measurable: nil, cadence: cadence)
         }

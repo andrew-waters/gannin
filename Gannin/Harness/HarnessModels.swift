@@ -51,6 +51,9 @@ nonisolated extension HarnessDocument {
 nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case plans = "Plans"
     case requirements = "Requirements"
+    /// Decision records (ADRs): what was decided and why, with the
+    /// alternatives and consequences, `decisions/<date>-<slug>.md`.
+    case decisions = "Decisions"
     case findings = "Findings"
     case skills = "Skills"
     /// The team's prompts for Claude Code sessions (`HarnessPrompt`).
@@ -72,6 +75,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         switch self {
         case .plans: "list.bullet.clipboard"
         case .requirements: "doc.text"
+        case .decisions: "scale.3d"
         case .findings: "magnifyingglass"
         case .skills: "wand.and.stars"
         case .prompts: "text.bubble"
@@ -81,7 +85,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         }
     }
 
-    /// A front matter `type`: `plan`, `requirement`, `finding`, `skill`,
+    /// A front matter `type`: `plan`, `requirement`, `decision`, `finding`, `skill`,
     /// `prompt`, `learning`, `research`, `refine`.
     init?(type: String) {
         guard let kind = Self.allCases.first(where: { $0.singular == type.lowercased() }) else { return nil }
@@ -92,6 +96,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         switch self {
         case .plans: "plan"
         case .requirements: "requirement"
+        case .decisions: "decision"
         case .findings: "finding"
         case .skills: "skill"
         case .prompts: "prompt"
@@ -107,7 +112,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
 
     /// The harness's layout: `plans/` for plans (and, until they're moved,
     /// `requirements/<module>/plans/`), the rest of `requirements/` for
-    /// requirements, `findings/`, `skills/`, `prompts/` and `learnings/`. READMEs and templates
+    /// requirements, `decisions/`, `findings/`, `skills/`, `prompts/` and `learnings/`. READMEs and templates
     /// describe the layout rather than being part of it, except in
     /// `research/` and `refines/`, where each folder's README is its document.
     init?(path: String) {
@@ -122,6 +127,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         switch top {
         case "plans": self = .plans
         case "requirements": self = parts.contains("plans") ? .plans : .requirements
+        case "decisions": self = .decisions
         case "findings": self = .findings
         case "skills": self = .skills
         case "prompts": self = .prompts
@@ -185,7 +191,7 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 9
+    static let parserVersion = 10
 
     /// The status in a word or two, for a table: an older document's
     /// sentence cut at its first clause.
@@ -197,6 +203,21 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// It follows the harness's STANDARDS.md: front matter with a summary.
     var followsStandard: Bool { hasFrontMatter == true && summary != nil }
+
+    /// A decision's `superseded_by`: the path of the one that replaced it.
+    var supersededBy: String? { frontMatter?["superseded_by"]?.first.flatMap { $0.isEmpty ? nil : $0 } }
+
+    /// Front matter `key: true`: lifted to the top of its area on the
+    /// Onboarding map.
+    var isKey: Bool { frontMatter?["key"]?.first?.lowercased() == "true" }
+
+    /// A decision's `plans`: the plans it came from, by path.
+    var citedPlans: [String] { frontMatter?["plans"] ?? [] }
+
+    /// A decision no longer in force: superseded or rejected.
+    var isRetiredDecision: Bool {
+        kind == .decisions && ["superseded", "rejected"].contains(status?.lowercased() ?? "")
+    }
 
     /// The status as a label: `in-progress` as "In progress", and older
     /// documents' spellings brought together ("Complete" as "Done"), a
@@ -304,6 +325,29 @@ nonisolated struct HarnessIndex: Codable, Sendable {
     func documents(_ kind: HarnessKind) -> [HarnessDocument] { documents.filter { $0.kind == kind } }
 
     func document(at path: String) -> HarnessDocument? { documents.first { $0.path == path } }
+
+    /// A path a document's front matter names (`superseded_by`, `plans`),
+    /// from the harness root (`decisions/x.md`, `/decisions/x.md`) or
+    /// beside the document (`./x.md`, `../plans/y.md`), as it's found in
+    /// this index: under the document's own harness in a combined one.
+    func resolve(_ link: String, from document: HarnessDocument) -> String {
+        let (repo, own) = Self.split(document.path)
+        var path = link.trimmingCharacters(in: .whitespaces)
+        if path.hasPrefix("./") || path.hasPrefix("../") {
+            let base = URL(filePath: "/" + own).deletingLastPathComponent()
+            path = String(URL(filePath: path, relativeTo: base).standardizedFileURL.path(percentEncoded: false).dropFirst())
+        } else if path.hasPrefix("/") {
+            path.removeFirst()
+        }
+        return repo.map { "\($0):\(path)" } ?? path
+    }
+
+    /// The decisions that name this one as what superseded them.
+    func supersedes(_ document: HarnessDocument) -> [HarnessDocument] {
+        documents(.decisions).filter { decision in
+            decision.supersededBy.map { resolve($0, from: decision) } == document.path
+        }
+    }
 
     /// The repo most references name, which `PRD-123` means.
     var issuesRepo: String? {

@@ -78,6 +78,7 @@ struct ReleasesView: View {
             }
         }
         .syncOffNotice(.releases)
+        .outsideReposNotice(org: org)
         .task(id: org) {
             async let releases: Void = store.sync(org, excluding: config.unfetchedRepos)
             async let issues: Void = issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays())

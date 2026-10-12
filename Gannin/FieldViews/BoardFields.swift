@@ -30,7 +30,13 @@ extension GitHubAPI {
     /// Renames a field and/or replaces its options (the whole list, each
     /// existing one with its ID). A write.
     func updateProjectField(fieldID: String, name: String?, options: [FieldOptionInput]?, multiSelect: Bool) async throws {
-        struct Response: Decodable {}
+        // updateProjectV2Field is nullable: an empty Response would decode
+        // past a refusal (no write access to the board) rather than
+        // surfacing it.
+        struct Response: Decodable {
+            struct Payload: Decodable { let clientMutationId: String? }
+            let updateProjectV2Field: Payload
+        }
         var input = ["fieldId: $field"]
         var variables = ["field": fieldID]
         if let name {
@@ -49,7 +55,11 @@ extension GitHubAPI {
 
     /// A new field on the board, with its options for a select. A write.
     func createProjectField(projectID: String, name: String, dataType: String, options: [FieldOptionInput]) async throws {
-        struct Response: Decodable {}
+        // Nullable, as updateProjectV2Field is.
+        struct Response: Decodable {
+            struct Payload: Decodable { let clientMutationId: String? }
+            let createProjectV2Field: Payload
+        }
         var input = ["projectId: $project", "name: $name", "dataType: \(dataType)"]
         if dataType == "SINGLE_SELECT" || dataType == "MULTI_SELECT" {
             input.append("\(dataType == "MULTI_SELECT" ? "multiSelectOptions" : "singleSelectOptions"): [\(options.map(\.literal).joined(separator: ", "))]")
@@ -63,7 +73,11 @@ extension GitHubAPI {
 
     /// Deletes a field, and every item's value in it. A write.
     func deleteProjectField(fieldID: String) async throws {
-        struct Response: Decodable {}
+        // Nullable, as the other field mutations are.
+        struct Response: Decodable {
+            struct Payload: Decodable { let clientMutationId: String? }
+            let deleteProjectV2Field: Payload
+        }
         let _: Response = try await query("""
             mutation($field: ID!) {
               deleteProjectV2Field(input: { fieldId: $field }) { clientMutationId }

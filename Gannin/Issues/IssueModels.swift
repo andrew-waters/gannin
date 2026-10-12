@@ -37,6 +37,10 @@ struct IssueRecord: Codable, Hashable, Identifiable {
     /// The issue's field values on each project board it's on. A var so edits
     /// from the issue window show before the next fetch.
     var projectFields: [IssueProjectFields]
+    /// When GitHub last updated it, so the change feed can skip an issue
+    /// already held at that time. Optional so records from before it was
+    /// fetched still load; they're fetched once when next seen changed.
+    var updatedAt: Date? = nil
 
     func fields(onProject number: Int) -> IssueProjectFields? {
         projectFields.first { $0.projectNumber == number }
@@ -124,6 +128,10 @@ struct IssueHistory: Codable {
     /// them; open issues are refetched in full now and then instead.
     var openFetchedAt: Date
     var issues: [String: IssueRecord]
+    /// Outside repos (`OrgConfig.outsideRepos`) with a full backfill to
+    /// build a changes search on; nil for none, or for a cache from before
+    /// outside repos were covered (andrew-waters/gannin#205).
+    var outsideReposFetched: Set<String>?
 }
 
 /// How an org's issues move through its board, for cycle time.

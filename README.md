@@ -14,7 +14,32 @@ xcodegen generate
 open Gannin.xcodeproj
 ```
 
+The project is generated from `project.yml` and isn't checked in, so run `xcodegen generate`
+again after adding or removing files. To build and test from the command line:
+
+```bash
+xcodebuild -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS' build
+xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=macOS' -skipPackagePluginValidation
+```
+
+`scripts/relaunch.sh` builds a signed copy, so it reads the same keychain token, and then
+replaces any running Gannin with it. `--no-build` relaunches the last build.
+
 Releases are tags; see [docs/RELEASING.md](docs/RELEASING.md).
+
+## Layout
+
+- `Gannin/`: the app, one folder per feature (`Sessions/`, `Harness/`, `Metrics/`, `Sandbox/`
+  and so on). `GanninTests/` holds its unit tests (Swift Testing).
+- `docs-site/`: the user docs at [gannin.ai/docs](https://gannin.ai/docs), an Astro Starlight
+  site. `npm ci` and `npm run build` there build it, and `npm run dev` serves it. `site/` is
+  the landing page.
+- `docs/`: notes for people working on Gannin, such as [releasing](docs/RELEASING.md).
+- `plans/`, `requirements/`, `learnings/`, `prompts/`, `skills/`, `sessions/`: this repo is also
+  its own harness, so the team's plans and the guidance its Claude Code sessions follow live here.
+- `scripts/`: `relaunch.sh` and `promote-changelog.sh`.
+- `CLAUDE.md` and `.claude/rules/`: guidance for Claude Code. The per-feature rules load when
+  it opens files in that feature's folder.
 
 ## Claude
 

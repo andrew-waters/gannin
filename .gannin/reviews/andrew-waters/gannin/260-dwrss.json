@@ -1,0 +1,50 @@
+{
+  "author" : "dwrss",
+  "effort" : 3,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "A failed feed search returns nil, and the `continue` below treats that the same ",
+      "key" : "Gannin/Sync/ChangeFeed.swift:134:A failed feed search returns nil, and the `continue` below t",
+      "line" : 134,
+      "path" : "Gannin/Sync/ChangeFeed.swift",
+      "posted_at" : "2026-10-12T02:57:36Z",
+      "resolved_at" : "2026-10-12T08:53:24Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "performance",
+      "decision" : "kept",
+      "excerpt" : "The feed is awaited serially before the `async let` members, teams and new-outsi",
+      "key" : "Gannin/GitHub/Queries.swift:84:The feed is awaited serially before the `async let` members,",
+      "line" : 84,
+      "path" : "Gannin/GitHub/Queries.swift",
+      "posted_at" : "2026-10-12T02:57:36Z",
+      "resolved_at" : "2026-10-12T08:53:24Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`ChangeFeeds.current` holds the trickiest logic in the PR: sharing a run between",
+      "key" : "Gannin/Sync/ChangeFeed.swift:129:`ChangeFeeds.current` holds the trickiest logic in the PR: s",
+      "line" : 129,
+      "path" : "Gannin/Sync/ChangeFeed.swift",
+      "posted_at" : "2026-10-12T02:57:36Z",
+      "resolved_at" : "2026-10-12T08:53:24Z",
+      "severity" : "minor"
+    }
+  ],
+  "merged_at" : "2026-10-12T09:07:51Z",
+  "number" : 260,
+  "posted_at" : "2026-10-12T08:53:20Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-12T00:52:21Z",
+  "state" : "MERGED",
+  "title" : "Share one change feed per org between the workload, issue history and work log",
+  "updated_at" : "2026-10-12T09:16:28Z",
+  "verdict" : "approve"
+}

@@ -114,7 +114,7 @@ final class ProjectStore {
     func loadBoards(org: String, force: Bool = false) async {
         loadCachedBoards(org)
         guard let api = auth.api, SyncSettings.isOn(.boards) else { return }
-        guard force || (SyncSettings.isDue(.boards, since: listFetchedAt[org]) && !(auth.shouldHoldOff && allBoardLists[org] != nil)) else { return }
+        guard auth.shouldFetch(.boards, since: listFetchedAt[org], force: force, hasData: allBoardLists[org] != nil) else { return }
         listFetchedAt[org] = .now
         if let projects = try? await chargingTo(.boards, { try await api.orgProjects(org: org) }) {
             allBoardLists[org] = projects
@@ -146,7 +146,7 @@ final class ProjectStore {
         }
         guard let api = auth.api, SyncSettings.isOn(.boards) else { return }
         let key = "repo:\(repo)"
-        guard force || (SyncSettings.isDue(.boards, since: listFetchedAt[key]) && !(auth.shouldHoldOff && allRepoBoardLists[repo] != nil)) else { return }
+        guard auth.shouldFetch(.boards, since: listFetchedAt[key], force: force, hasData: allRepoBoardLists[repo] != nil) else { return }
         listFetchedAt[key] = .now
         if let projects = try? await chargingTo(.boards, { try await api.repoProjects(org: org, repo: repo) }) {
             allRepoBoardLists[repo] = projects
@@ -237,7 +237,7 @@ final class ProjectStore {
         let boardStale = cached.map { now.timeIntervalSince($0.fetchedAt) >= Self.maxAge } ?? true
         let itemsStale = cached?.items[filter].map { now.timeIntervalSince($0.fetchedAt) >= Self.maxAge } ?? true
         guard force || boardStale || itemsStale else { return }
-        if cached?.items[filter] != nil, !force, auth.shouldHoldOff { return }
+        if auth.shouldWaitForBudget(force: force, hasData: cached?.items[filter] != nil) { return }
 
         loading.insert(loadKey)
         defer { loading.remove(loadKey) }

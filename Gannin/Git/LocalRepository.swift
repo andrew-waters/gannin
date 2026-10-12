@@ -32,6 +32,7 @@ final class LocalRepository {
     /// What's running, as a word for the toolbar: Fetching, Pushing.
     private(set) var busy: String?
     private(set) var lastFetched: Date?
+    private var isFetching = false
     /// Why the last background fetch failed, shown quietly.
     private(set) var fetchError: String?
 
@@ -340,7 +341,11 @@ final class LocalRepository {
     func fetch(quietly: Bool = false) async {
         // Never beside a pull, push or switch, which would fight it for
         // ref locks; a background fetch just waits for the next tick.
-        guard busy == nil else { return }
+        // A quiet fetch doesn't set `busy`, so the page's tick and the app
+        // becoming active could otherwise start two at once.
+        guard busy == nil, !isFetching else { return }
+        isFetching = true
+        defer { isFetching = false }
         let failure = await git("git fetch --all --prune --quiet", doing: quietly ? nil : "Fetching")
         lastFetched = .now
         fetchError = failure

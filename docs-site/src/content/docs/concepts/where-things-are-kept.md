@@ -18,7 +18,7 @@ When an org has a [harness](/docs/concepts/projects-and-harnesses/), the team's 
 - **Each project's harness:** its project (name, repos, boards) in `project.json`, the issue workflow (`workflow.json`), investments (`investments.json`), goals (`goals.json`), scorecard (`scorecard.json`), recap cadence (`recap.json`), the committed date field (`prioritisation.json`), notes from the field (`field-notes.json`), the review config (`review.json`) and any repo's own sandbox image (`sandbox/<repo>.Containerfile`).
 - **The home project's harness also holds the org-wide ones:** views (`views.json`), the working week (`working-week.json`), leave (`leave.json`), excluded repos and people and the Needs Review and Needs the Mac ticks (`exclusions.json`), drafting guidance (`authoring.json`), and each person's dates and time off (`people/<login>.json`).
 
-Plans, requirements, findings, skills, prompts, learnings, session records and review records are in the harness too, as Markdown and JSON.
+Plans, requirements, decisions, findings, skills, prompts, learnings, session records and review records are in the harness too, as Markdown and JSON.
 
 Changing a team setting applies at once for you and waits as **N changes to commit** at the foot of the sidebar. Review commits them (one commit per harness), or discards them. Changes made by someone else in the meantime are kept.
 
@@ -34,6 +34,7 @@ These are yours alone and never leave this Mac:
 - Your GitHub token, and sandbox credentials, in the keychain.
 - Caches of what was fetched from GitHub (Settings › Storage shows their size, with Clear).
 - Agent sessions, routines and their runs.
+- What you've read on Harness › Onboarding, never committed or shared.
 - Release download history, which GitHub can't give back once lost, so only Erase Everything removes it.
 
 Nothing is synced through iCloud.
