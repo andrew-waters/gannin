@@ -6,6 +6,8 @@ paths:
 # Work log, Standup, time off
 
 - Must bump `WorkLogHistory.version` when adding a field to cached work-log models, or old caches keep decoding without it. Not for a field whose absence only means "fetch again" (`WorkLogPullRequest.updatedAt`, which the change feed compares): bumping would refetch every week for nothing.
+- Keep the work log's issues step failing on its own: a failed issue search must still save the PRs and leave `coveredFrom` and `fetchedAt` where they were (a new log covers nothing), or those weeks never get their issues.
+- Issues don't go through the change feed: `WorkLogIssue` has no `updatedAt` to compare and there's no fetch by ID for it yet. Add both before routing them through `feedPlan`.
 - Keep newly added fields optional (as `IssueRecord.author`) so older records still load.
 - Fetch only once the People page has been opened for an org.
 - Attribute commits to the GitHub author when the email is linked, else the PR author. GitHub doesn't say who moved or closed an issue, so those count for the assignees.
@@ -19,4 +21,4 @@ paths:
 - `Absence.half` is for single days only. `Absence.approval` applies to holiday only.
 
 ## Testing
-- `OutsideRepoTests.swift` covers outside-repo exclusion. Work log, leave and calendar logic have no tests; check by hand, including a cache from before a field was added.
+- `OutsideRepoTests.swift` covers outside-repo exclusion; `WorkLogIssuesTests.swift` covers issue events, the work log filter and the grid. Leave and calendar logic have no tests; check by hand, including a cache from before a field was added.

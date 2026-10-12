@@ -28,7 +28,7 @@ The Spent list shows what each source used, most first. Sources that used nothin
 | --- | --- | --- | --- |
 | Spent | Last hour | Chooses the window for the list: Last hour or Last day. | This Mac |
 
-Some work is charged in the list but has no setting. Change feed is the one search per org that says which PRs and issues changed since the last cycle: the workload, issue history and work log read it instead of each searching for changes, and use their own search only when it fails or finds more than GitHub will return. It follows their intervals, so it has no interval of its own. The rest happens when you do something: Items you open, Changes you make, Account and settings, and Other.
+Some work is charged in the list but has no setting. Change feed is the one search per org that says which PRs and issues changed since the last cycle: the workload, issue history and work log read it instead of each searching for changes, and use their own search only when it fails or finds more than GitHub will return. The work log reads it for PRs only; its issues and comments still use their own search. It follows their intervals, so it has no interval of its own. The rest happens when you do something: Items you open, Changes you make, Account and settings, and Other.
 
 ## Workload
 
@@ -55,7 +55,7 @@ These are fetched when a page that shows them opens and they are older than the 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | PR metrics | After 10 minutes. Can be turned Off. | Merged PRs for the Dashboard, PR flow and Scorecard. | This Mac |
-| Work log | After 10 minutes. Can be turned Off. | Commits and reviews for Activity and Standup, once one has been opened. | This Mac |
+| Work log | After 10 minutes. Can be turned Off. | Commits, reviews, issues opened and issue comments for Activity and Standup, once one has been opened. | This Mac |
 | Project boards | After 10 minutes. Can be turned Off. | Board lists, fields and items. | This Mac |
 | Milestones and releases | After 10 minutes. Can be turned Off. | Milestones, releases, downloads and stars, once the Releases page has been opened. | This Mac |
 | GitHub Actions | After 10 minutes. Can be turned Off. | Workflow runs for the CI page, once it has been opened. Uses the REST budget. | This Mac |
