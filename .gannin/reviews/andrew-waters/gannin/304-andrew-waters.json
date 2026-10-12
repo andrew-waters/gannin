@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The `requirements/` alternative is `\\` followed by an invisible U+200E left-to-r",
+      "key" : ".github/workflows/ci.yml:49:The `requirements/` alternative is `\\` followed by an invisi",
+      "line" : 49,
+      "path" : ".github/workflows/ci.yml",
+      "posted_at" : "2026-10-12T17:03:36Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`\\s` in GNU grep is the whitespace class, so `^\\sessions/` matches a space follo",
+      "key" : ".github/workflows/ci.yml:49:`\\s` in GNU grep is the whitespace class, so `^\\sessions/` m",
+      "line" : 49,
+      "path" : ".github/workflows/ci.yml",
+      "posted_at" : "2026-10-12T17:03:36Z",
+      "severity" : "major"
+    }
+  ],
+  "number" : 304,
+  "posted_at" : "2026-10-12T17:03:36Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-12T17:02:30Z",
+  "state" : "OPEN",
+  "title" : "Add `plans` and `requirements` to directories that don't trigger CI",
+  "updated_at" : "2026-10-12T17:03:37Z",
+  "verdict" : "request_changes"
+}
