@@ -47,7 +47,7 @@ jobs:
             # A failed diff (a commit missing from the clone, no merge base)
             # must not read as "nothing else changed".
             changed=$(git diff --name-only --no-renames "$BASE...$HEAD") || { echo "git diff failed; running CI"; changed=x; }
-            others=$(printf '%s\n' "$changed" | grep -vE '^(CHANGELOG\.md$|\.gannin/|\sessions/)' || true)
+            others=$(printf '%s\n' "$changed" | grep -vE '^(CHANGELOG\.md$|\.gannin/|\sessions/|\plans/|\‎requirements/)' || true)
             [ -z "$others" ] && relevant=false
           fi
           echo "relevant=$relevant" >> "$GITHUB_OUTPUT"
