@@ -29,12 +29,32 @@ struct RefineInfo: Codable, Hashable {
         var screenshots: [UUID] = []
     }
 
-    /// A screenshot of the page, its file in the session's `screenshots/`.
+    /// A screenshot of the page, its file in the session's `screenshots/`
+    /// with the marks drawn on; the page as it was, without them, is kept
+    /// in `originals/` so the marks can be changed.
     struct Screenshot: Codable, Hashable, Identifiable {
         var id = UUID()
-        let file: String
+        var file: String
         let url: String
         let at: Date
+        var pageTitle: String? = nil
+        var marks: [Mark]? = nil
+    }
+
+    /// A box, an arrow or some text drawn on a screenshot, in fractions of
+    /// its width and height so it doesn't depend on the image's size.
+    struct Mark: Codable, Hashable, Identifiable {
+        enum Kind: String, Codable, CaseIterable {
+            case box = "Box"
+            case arrow = "Arrow"
+            case text = "Text"
+        }
+
+        var id = UUID()
+        var kind: Kind
+        var from: CGPoint
+        var to: CGPoint
+        var text: String? = nil
     }
 
     /// As its tab and lists name it: what's being looked at.

@@ -11,6 +11,9 @@ struct RefineFindingsPanel: View {
     let page: WebPage
     @State private var text = ""
     @FocusState private var focused: Bool
+    @State private var annotating: RefineAnnotating?
+    @State private var capturing = false
+    @State private var error: String?
 
     private var findings: [RefineInfo.Finding] { session.refine?.findings ?? [] }
 
@@ -27,13 +30,21 @@ struct RefineFindingsPanel: View {
                             .foregroundStyle(.secondary)
                     }
                     ForEach(findings) { finding in
-                        RefineFindingRow(session: session, finding: finding)
+                        RefineFindingRow(session: session, finding: finding) { annotating = $0 }
                     }
                     .onMove { sessions.moveFindings(from: $0, to: $1, in: session.id) }
                 }
             }
         }
         .onAppear { focused = true }
+        .sheet(item: $annotating) { annotating in
+            RefineAnnotateSheet(session: session, annotating: annotating)
+        }
+        .alert("Couldn't take a screenshot", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(error ?? "")
+        }
     }
 
     private var capture: some View {
@@ -53,6 +64,13 @@ struct RefineFindingsPanel: View {
                     .truncationMode(.middle)
                     .help("Noted against the page shown now")
                 Spacer(minLength: 0)
+                Button {
+                    screenshot()
+                } label: {
+                    Label("Screenshot", systemImage: "camera.viewfinder")
+                }
+                .disabled(capturing || page.url == nil)
+                .help("Take a screenshot of the page as it's shown, to mark up and attach to a finding")
                 Button("Add Finding", action: add)
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
@@ -64,6 +82,21 @@ struct RefineFindingsPanel: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
+    }
+
+    private func screenshot() {
+        capturing = true
+        let url = page.url?.absoluteString ?? ""
+        let title = page.title
+        Task {
+            defer { capturing = false }
+            do {
+                let image = try await RefineScreenshots.capture(page)
+                annotating = RefineAnnotating(image: image, url: url, pageTitle: title.isEmpty ? nil : title)
+            } catch {
+                self.error = error.localizedDescription
+            }
+        }
     }
 
     private func add() {
@@ -80,6 +113,8 @@ struct RefineFindingRow: View {
     @Environment(SessionStore.self) private var sessions
     let session: CodeSession
     let finding: RefineInfo.Finding
+    /// Opens a screenshot to change its marks.
+    let annotate: (RefineAnnotating) -> Void
     @State private var editing = false
     @State private var draft = ""
     @FocusState private var focused: Bool
@@ -110,6 +145,11 @@ struct RefineFindingRow: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                if !shots.isEmpty {
+                    HStack(spacing: 6) {
+                        ForEach(shots) { shot in thumbnail(shot) }
+                    }
+                }
             }
             Spacer(minLength: 0)
             if editing {
@@ -122,6 +162,45 @@ struct RefineFindingRow: View {
             Button("Edit", action: edit)
             Button("Delete", role: .destructive) { sessions.removeFinding(finding.id, from: session.id) }
         }
+    }
+
+    private var shots: [RefineInfo.Screenshot] {
+        let all = session.refine?.screenshots ?? []
+        return finding.screenshots.compactMap { id in all.first { $0.id == id } }
+    }
+
+    private func thumbnail(_ shot: RefineInfo.Screenshot) -> some View {
+        let file = RefineScreenshots.url(shot, in: session)
+        return Button {
+            open(shot)
+        } label: {
+            Group {
+                if let file, let image = NSImage(contentsOf: file) {
+                    Image(nsImage: image).resizable().aspectRatio(contentMode: .fill)
+                } else {
+                    Image(systemName: "photo").foregroundStyle(.secondary)
+                }
+            }
+            .frame(width: 72, height: 46)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.separatorLine))
+        }
+        .buttonStyle(.plain)
+        .help("\(shot.file): click to change its marks")
+        .contextMenu {
+            Button("Change Marks…") { open(shot) }
+            if let file {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+            }
+            Button("Delete Screenshot", role: .destructive) { sessions.removeScreenshot(shot, from: session.id) }
+        }
+    }
+
+    /// The page as it was, without its marks, to draw them again.
+    private func open(_ shot: RefineInfo.Screenshot) {
+        let source = RefineScreenshots.original(shot, in: session).flatMap(NSImage.init(contentsOf:))
+        guard let image = source ?? RefineScreenshots.url(shot, in: session).flatMap(NSImage.init(contentsOf:)) else { return }
+        annotate(RefineAnnotating(image: image, url: shot.url, pageTitle: shot.pageTitle, existing: shot))
     }
 
     private func edit() {

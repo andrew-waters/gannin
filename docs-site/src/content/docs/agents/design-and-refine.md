@@ -31,6 +31,12 @@ Beside the page, **Who's here** lists the meeting: take someone off with ×, or 
 
 Double-click a finding, or use **Edit** in its menu, to change its note; **Delete** removes it. Drag findings to put them in order.
 
+## Screenshots
+
+**Screenshot** takes the part of the page in view and opens it to mark up. Pick **Box**, **Arrow** or **Text** above it: drag to draw a box or an arrow, or type the text and click where it goes. **Undo** (⌘Z) takes the last mark off and **Clear** takes them all. Under **Attach to**, pick a finding already noted, or leave it on **A new finding** and type what the room spotted, then press **Attach** (⌘↩).
+
+A finding's screenshots show under it. Click one to change its marks; its menu also has **Show in Finder** and **Delete Screenshot**. Screenshots are saved in the session's folder on this Mac, made small enough to commit to the harness later, and nothing leaves this Mac until the room agrees the session and ticks each one.
+
 The session is kept with Gannin's others, findings included, so quitting and opening Gannin again brings it back on the page it was last on.
 
-Screenshots, Claude's scouting, transcripts, and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).
+Claude's scouting, transcripts, and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).
