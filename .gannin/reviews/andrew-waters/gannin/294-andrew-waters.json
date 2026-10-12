@@ -11,6 +11,7 @@
       "line" : 47,
       "path" : ".github/workflows/ci.yml",
       "posted_at" : "2026-10-12T13:27:46Z",
+      "resolved_at" : "2026-10-12T13:34:59Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 54,
       "path" : ".github/workflows/ci.yml",
       "posted_at" : "2026-10-12T13:27:46Z",
+      "resolved_at" : "2026-10-12T13:34:59Z",
       "severity" : "major"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 121,
       "path" : ".github/workflows/ci.yml",
       "posted_at" : "2026-10-12T13:27:46Z",
+      "resolved_at" : "2026-10-12T13:34:59Z",
       "severity" : "minor"
     },
     {
@@ -41,6 +44,7 @@
       "line" : 47,
       "path" : ".github/workflows/ci.yml",
       "posted_at" : "2026-10-12T13:27:46Z",
+      "resolved_at" : "2026-10-12T13:34:59Z",
       "severity" : "nit"
     }
   ],
@@ -52,6 +56,6 @@
   "started_at" : "2026-10-12T13:26:42Z",
   "state" : "OPEN",
   "title" : "Skip build and docs CI for CHANGELOG-only and .gannin-only changes",
-  "updated_at" : "2026-10-12T13:27:47Z",
-  "verdict" : "request_changes"
+  "updated_at" : "2026-10-12T13:34:59Z",
+  "verdict" : "approve"
 }
