@@ -14,6 +14,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Harness › Decisions keeps the team's decision records (ADRs) in `decisions/`, with a template, Draft with Claude, links to what superseded them, and Suggest Decisions, where Claude proposes them from the harness's plans for you to review and commit
 - Create Harness adds a `decisions/` folder with a README and template
 - Inbox › Needs your review now says when someone else has already reviewed a PR, such as "Review requested, approved by Sam"
+- The diffs on the pull request review page now colour code by language (Swift, TypeScript, JavaScript, Go, PHP, Python, JSON, YAML, Markdown and shell), with added and removed lines marked by a tinted `+` or `-` gutter and a lighter row tint; other files show as before
 
 ### Changed
 - Ask before recording a session is now set per project in Settings › Harness rather than once per org, so a choice made for one project no longer applies to the others; an org-wide choice made before still applies until a project is set

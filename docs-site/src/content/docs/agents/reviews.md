@@ -23,6 +23,8 @@ When the PR has new commits the review hasn't seen, the Overview says "New commi
 
 The file list has Comments on this PR and the files grouped by the walkthrough's areas. A filter narrows findings by severity or category. Files with learnings are marked (see [Learnings](/docs/agents/learnings/)).
 
+Code in a file's diff is coloured by its language, chosen from the file name: Swift, TypeScript and JavaScript, Go, PHP, Python, JSON, YAML, Markdown and shell (including Dockerfiles). Added and removed lines are marked by the `+` or `-` in a tinted gutter and a lighter tint across the row, so they stay clear in light and dark appearance. Other files, and files too large to colour without slowing the page, show as a plain diff with the whole row tinted.
+
 On each file's diff, findings sit on their lines. For each you can Keep, Edit or Dismiss it. You can also leave comments of your own on any line, and write the summary and verdict. The conversation with the reviewer is beneath.
 
 ## Post Review
