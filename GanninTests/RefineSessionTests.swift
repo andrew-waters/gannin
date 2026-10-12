@@ -73,4 +73,26 @@ struct RefineSessionTests {
         #expect(brief.contains("- Octo Cat (@octocat)\n- Sam from Design"))
         #expect(SessionStore.refinePrompt(session).contains("`projects/app`"))
     }
+
+    @Test func findingsSurviveSaving() throws {
+        let id = UUID()
+        var session = CodeSession(
+            id: id, issue: IssueReference(org: "acme", id: "refine-\(id.uuidString)", number: 0, title: "Sign-up", repo: "acme/harness",
+                                          url: URL(string: "https://github.com/acme/harness")!),
+            repo: "acme/harness", branch: "refine-2026-10-10-sign-up", createdAt: .now,
+            harnessRepo: "acme/harness", harnessPath: "~/Code/acme/harness"
+        )
+        var info = RefineInfo(name: "Sign-up", slug: "2026-10-10-sign-up", url: "https://staging.acme.com/signup", repos: ["acme/app"], attendees: [])
+        info.lastURL = "https://staging.acme.com/signup/done"
+        info.findings = [
+            .init(note: "The Save button sits below the fold", url: "https://staging.acme.com/signup", pageTitle: "Sign up", at: Date(timeIntervalSince1970: 1_000)),
+            .init(note: "No confirmation copy", url: "https://staging.acme.com/signup/done", pageTitle: nil, at: Date(timeIntervalSince1970: 2_000)),
+        ]
+        session.refine = info
+        let decoded = try JSONDecoder().decode(CodeSession.self, from: JSONEncoder().encode(session))
+        #expect(decoded.refine == info)
+        #expect(decoded.refine?.findings.map(\.url) == ["https://staging.acme.com/signup", "https://staging.acme.com/signup/done"])
+        #expect(decoded.refine?.findings.first?.pageTitle == "Sign up")
+        #expect(decoded.refine?.lastURL == "https://staging.acme.com/signup/done")
+    }
 }

@@ -1596,9 +1596,6 @@ private struct SessionPanel: View {
             if session.isQuickChange {
                 QuickChangeSection(session: session)
             }
-            if session.isRefine {
-                RefineSection(session: session)
-            }
             if session.isHelper {
                 HelperParentSection(session: session)
             } else if !session.isPlanning && !session.isAsk && !session.isRefine && !session.hasNoIssue {

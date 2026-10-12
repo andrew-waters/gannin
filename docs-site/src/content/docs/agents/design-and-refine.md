@@ -25,6 +25,12 @@ The session's tab shows the page in a browser inside Gannin, with the findings b
 
 Each project keeps its own logins for these pages, so signing in to staging once lasts from one session to the next, and never reaches another project's sessions. **⋯ › Sign Out of Pages** forgets this project's logins; Settings › Storage signs out of every project's. Plain `http` pages, such as `localhost`, load here too.
 
-The session is kept with Gannin's others, so quitting and opening Gannin again brings it back on the page it was last on.
+## Noting findings
 
-Capturing findings and screenshots, and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).
+Beside the page, **Who's here** lists the meeting: take someone off with ×, or type a name and press **Add**. Below it, type what the room spotted and press **Add Finding** (⌘↩). Each finding keeps the page's address and title as they were then, and the time, shown under its note; the page's link opens it again.
+
+Double-click a finding, or use **Edit** in its menu, to change its note; **Delete** removes it. Drag findings to put them in order.
+
+The session is kept with Gannin's others, findings included, so quitting and opening Gannin again brings it back on the page it was last on.
+
+Screenshots, Claude's scouting, transcripts, and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).

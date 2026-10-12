@@ -186,6 +186,35 @@ extension SessionStore {
         update(id) { $0.refine?.attendees = attendees }
     }
 
+    /// Notes a finding on the page as it is now, last in the list.
+    @discardableResult
+    func addFinding(_ note: String, url: String, pageTitle: String?, to id: UUID) -> RefineInfo.Finding? {
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !note.isEmpty, sessions[id]?.refine != nil else { return nil }
+        let title = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let finding = RefineInfo.Finding(note: note, url: url, pageTitle: title?.isEmpty == false ? title : nil, at: .now)
+        update(id) { $0.refine?.findings.append(finding) }
+        return finding
+    }
+
+    /// A finding's note, edited.
+    func setFindingNote(_ note: String, finding: UUID, in id: UUID) {
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !note.isEmpty else { return }
+        update(id) { session in
+            guard let index = session.refine?.findings.firstIndex(where: { $0.id == finding }) else { return }
+            session.refine?.findings[index].note = note
+        }
+    }
+
+    func removeFinding(_ finding: UUID, from id: UUID) {
+        update(id) { $0.refine?.findings.removeAll { $0.id == finding } }
+    }
+
+    func moveFindings(from offsets: IndexSet, to offset: Int, in id: UUID) {
+        update(id) { $0.refine?.findings.move(fromOffsets: offsets, toOffset: offset) }
+    }
+
     /// Design and Refine sessions, newest first.
     func refineSessions(for org: String) -> [CodeSession] {
         sessions(for: org).filter(\.isRefine).sorted { $0.createdAt > $1.createdAt }
@@ -379,62 +408,5 @@ struct NewRefineView: View {
             return config.repoProjects.map { ($0.name, $0.harness.repo) }
         }
         return config.harnesses.map { ($0.repo, $0.repo) }
-    }
-}
-
-/// A Design and Refine session's page, repos and who's here, in its panel;
-/// attendees can be added or taken off as the session goes.
-struct RefineSection: View {
-    @Environment(SessionStore.self) private var sessions
-    let session: CodeSession
-    @State private var guest = ""
-
-    var body: some View {
-        if let refine = session.refine {
-            Section("Design and Refine") {
-                if let url = URL(string: refine.lastURL ?? refine.url) {
-                    Link(refine.lastURL ?? refine.url, destination: url)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                LabeledContent("Code", value: refine.repos.joined(separator: ", "))
-            }
-            Section("Who's here") {
-                ForEach(refine.attendees) { attendee in
-                    HStack {
-                        Text(attendee.name)
-                        if let login = attendee.login {
-                            Text("@\(login)").foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button {
-                            sessions.setAttendees(refine.attendees.filter { $0.id != attendee.id }, for: session.id)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .help("Not here")
-                        .accessibilityLabel("Remove \(attendee.name)")
-                    }
-                }
-                HStack {
-                    TextField("Add someone", text: $guest)
-                        .onSubmit { add(refine) }
-                    Button("Add") { add(refine) }
-                        .disabled(guest.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-        }
-    }
-
-    private func add(_ refine: RefineInfo) {
-        let name = guest.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let attendee = RefineInfo.Attendee(name: name)
-        if !refine.attendees.contains(attendee) {
-            sessions.setAttendees(refine.attendees + [attendee], for: session.id)
-        }
-        guest = ""
     }
 }
