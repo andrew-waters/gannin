@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Agents › Queue: the org's issues waiting for an agent, in the order
 /// queue windows take them (R6), dragged to reorder and removed, with the
-/// windows that drain it and the issues pinned to a time.
+/// windows that drain it and the issues pinned to a time. Board lays them
+/// over the coming week (`ScheduleBoard`); List is the queue in order.
 struct AgentQueuePage: View {
     @Environment(RoutineStore.self) private var routines
     @Environment(OrgConfigStore.self) private var configs
@@ -11,6 +12,7 @@ struct AgentQueuePage: View {
     @Environment(\.showSidebarItem) private var showSidebarItem
     let org: String
     @State private var editing: EditedRoutine?
+    @AppStorage("agentQueueLayout") private var layout = "board"
 
     var body: some View {
         let queue = routines.queue(for: org)
@@ -21,7 +23,9 @@ struct AgentQueuePage: View {
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
             Divider()
-            if queue.isEmpty && pins.isEmpty {
+            if layout == "board" {
+                ScheduleBoard(org: org)
+            } else if queue.isEmpty && pins.isEmpty {
                 ContentUnavailableView(
                     "Nothing queued",
                     systemImage: "tray",
@@ -102,6 +106,13 @@ struct AgentQueuePage: View {
                 }
             }
             Spacer()
+            Picker("Layout", selection: $layout) {
+                Text("Board").tag("board")
+                Text("List").tag("list")
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .fixedSize()
             Button("Routines") { showSidebarItem?.perform(.tab(.routines)) }
                 .help("Add or change queue windows")
         }

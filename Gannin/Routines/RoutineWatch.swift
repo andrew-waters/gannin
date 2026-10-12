@@ -49,8 +49,10 @@ extension SessionStore {
             let current = self.state(id)
             if current == .working { routineSessionsWorked.insert(id) }
             let cost = ([id] + helpers(of: id).map(\.id)).compactMap { transcripts[$0]?.costUSD }.reduce(0, +)
+            // A resumed session's earlier replies aren't this run's work.
+            let replied = info.resumed != true && transcripts[id]?.lastReply != nil
             let verdict = RoutineVerdict.judge(
-                state: current, isRunning: isRunning(id), hasWorked: routineSessionsWorked.contains(id) || transcripts[id]?.lastReply != nil,
+                state: current, isRunning: isRunning(id), hasWorked: routineSessionsWorked.contains(id) || replied,
                 inPairReview: isQuietForPairReview(id), elapsed: now.timeIntervalSince(run.startedAt ?? now),
                 cost: cost, maxMinutes: info.maxMinutes, maxCost: info.maxCost
             )
@@ -69,6 +71,7 @@ extension SessionStore {
                     run.outcome = .finished
                     run.endedAt = now
                 }
+                handBack(id, info: info)
                 let files = info.kind == .report ? "Its files are in the session's Files." : session.pullRequests.isEmpty ? "Open it to see what it did." : "It opened \(session.pullRequests.count == 1 ? "a pull request" : "\(session.pullRequests.count) pull requests")."
                 notifyRoutine(id, title: info.kind == .report ? "Report ready" : "Scheduled run finished", body: "\(info.name). \(files)")
             case .overTime, .overCost:
@@ -82,6 +85,7 @@ extension SessionStore {
                     run.endedAt = now
                     run.note = "Claude stopped before it got going. Open its session to see why."
                 }
+                handBack(id, info: info)
             }
         }
     }
@@ -101,7 +105,16 @@ extension SessionStore {
                 run.endedAt = .now
                 run.note = why
             }
+            if let info = sessions[id]?.routineRun { handBack(id, info: info) }
             notifyRoutine(id, title: "Scheduled run stopped at its limit", body: "\(name). \(why) What it did is kept.")
         }
+    }
+
+    /// A session a run carried on in is the issue's again once the run ends:
+    /// the run's limits no longer apply when it's next opened.
+    private func handBack(_ id: UUID, info: RoutineRunInfo) {
+        guard info.resumed == true else { return }
+        routineSessionsWorked.remove(id)
+        update(id) { $0.routineRun = nil }
     }
 }

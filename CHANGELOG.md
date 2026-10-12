@@ -12,7 +12,11 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ### Added
 - Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
 - A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
+- A scheduling board under Agents › Queue and on each queue window's page: drag open issues onto the coming week's windows to queue them, onto Pinned to pin them to a time, or back to unschedule them, and see where each queued issue should run
 - Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
+
+### Changed
+- A scheduled run for an issue that already has a session carries on in that session instead of failing
 
 ### Fixed
 - Issues › All no longer crashes when you expand an issue with sub-issues after scheduling one for an agent
