@@ -1,0 +1,27 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`ReviewDraft.posted` is set when a round is posted (here in `postAutomatically`,",
+      "key" : "Gannin/Sessions/AutoReview.swift:361:`ReviewDraft.posted` is set when a round is posted (here in ",
+      "line" : 361,
+      "path" : "Gannin/Sessions/AutoReview.swift",
+      "posted_at" : "2026-10-12T22:53:21Z",
+      "severity" : "minor"
+    }
+  ],
+  "number" : 309,
+  "posted_at" : "2026-10-12T22:53:21Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-12T22:52:23Z",
+  "state" : "OPEN",
+  "title" : "Don't say nothing has changed when the last review was never posted",
+  "updated_at" : "2026-10-12T22:53:22Z",
+  "verdict" : "comment"
+}
