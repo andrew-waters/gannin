@@ -76,6 +76,7 @@ struct RefineWorkspaceView: View {
     @State private var address: String
     @State private var badAddress = false
     @State private var signingOut = false
+    @State private var agreeing = false
     @AppStorage("refineShowsTerminal") private var showsTerminal = false
     @FocusState private var editingAddress: Bool
 
@@ -129,6 +130,9 @@ struct RefineWorkspaceView: View {
             if session.refine?.lastURL != url.absoluteString {
                 sessions.update(session.id) { $0.refine?.lastURL = url.absoluteString }
             }
+        }
+        .sheet(isPresented: $agreeing) {
+            RefineAgreeSheet(session: session)
         }
         .confirmationDialog("Sign out of pages?", isPresented: $signingOut) {
             Button("Sign Out of Pages", role: .destructive) {
@@ -188,7 +192,7 @@ struct RefineWorkspaceView: View {
                     Link("Open Page in Browser", destination: url)
                 }
                 Divider()
-                Button("Sign Out of Pages…") { signingOut = true }
+                Button("Sign Out of Pages") { signingOut = true }
             } label: {
                 Label("More", systemImage: "ellipsis.circle")
             }
@@ -200,6 +204,12 @@ struct RefineWorkspaceView: View {
             }
             .toggleStyle(.button)
             .help(showsTerminal ? "Put the terminal away" : "Show the terminal and its composer")
+            Button(session.refine?.agreed == nil ? "Agree" : "Agreed") { agreeing = true }
+                .buttonStyle(.borderedProminent)
+                .disabled(session.refine?.agreed != nil)
+                .help(session.refine?.agreed == nil
+                      ? "Make the findings into issues and record the session in the harness, confirmed first"
+                      : "The room agreed this session")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

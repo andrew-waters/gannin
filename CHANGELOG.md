@@ -10,7 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
-- Design and Refine under Rituals: start a session on a web page with its project, repos and who's in the meeting, kept across launches, with Claude as co-reviewer (stepping through the page and capturing findings to come)
+- Design and Refine under Rituals: step through a web page with the team inside Gannin, note findings with the page they were on, take screenshots and mark them up, and paste the meeting's transcript; Claude reads the code to say where each finding lives and suggests ones the room missed; Agree makes the findings into issues on the workflow board and records the session, with the screenshots you tick, in the harness's `refines/`. Each project keeps its own logins for these pages, with Sign Out of Pages in the session and Settings › Storage
 - Team › Activity's work log shows issues people opened and comments they left on issues, with a Filter menu for the kinds of activity shown and one repository
 - Harness › Onboarding maps the project's decisions, requirements and plans by area, in reading order, so someone new can find the part they'll work on and read why it is the way it is; what you've opened is marked read on this Mac, and says when it's changed since
 - Harness › Decisions keeps the team's decision records (ADRs) in `decisions/`, with a template, Draft with Claude, links to what superseded them, and Suggest Decisions, where Claude proposes them from the harness's plans for you to review and commit

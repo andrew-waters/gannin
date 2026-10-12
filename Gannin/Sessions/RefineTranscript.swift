@@ -75,7 +75,7 @@ struct RefineTranscriptSheet: View {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
             HStack {
-                Button("Choose File…") { picking = true }
+                Button("Choose File") { picking = true }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }
                     .keyboardShortcut(.cancelAction)

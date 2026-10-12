@@ -83,6 +83,20 @@ struct RefineInfo: Codable, Hashable {
     /// Claude's suggestions the room dismissed, by id. Those kept are
     /// findings with their `suggestion`.
     var dismissed: [String]? = nil
+    /// Issues made at Agree, by finding id, so trying again doesn't make
+    /// them twice.
+    var made: [String: MadeIssue]? = nil
+    /// Screenshots committed to the harness at Agree, by id.
+    var committed: [String]? = nil
+
+    /// An issue Agree made for a finding, and the screenshots it links to,
+    /// which must be committed for the links to work.
+    struct MadeIssue: Codable, Hashable {
+        var id: String
+        var reference: String
+        var url: URL
+        var screenshots: [String]? = nil
+    }
 }
 
 extension CodeSession {

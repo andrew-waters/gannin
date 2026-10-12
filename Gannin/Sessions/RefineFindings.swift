@@ -192,6 +192,13 @@ struct RefineFindingRow: View {
                         ForEach(shots) { shot in thumbnail(shot) }
                     }
                 }
+                if let made = session.refine?.made?[finding.id.uuidString] {
+                    Link(destination: made.url) {
+                        Label(made.reference, systemImage: "checkmark.circle.fill")
+                    }
+                    .font(.caption)
+                    .help("The issue made for it at Agree")
+                }
                 if finding.suggestion != nil {
                     Label("Claude's suggestion, kept", systemImage: "sparkles")
                         .font(.caption)
@@ -238,7 +245,7 @@ struct RefineFindingRow: View {
         .buttonStyle(.plain)
         .help("\(shot.file): click to change its marks")
         .contextMenu {
-            Button("Change Marks…") { open(shot) }
+            Button("Change Marks") { open(shot) }
             if let file {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
             }
