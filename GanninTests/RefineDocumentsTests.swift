@@ -10,7 +10,7 @@ struct RefineDocumentsTests {
 
     private func info() -> RefineInfo {
         var info = RefineInfo(name: "Sign-up page", slug: "2026-10-10-sign-up-page", url: "https://staging.acme.com/signup", repos: ["acme/app", "acme/web"],
-                              attendees: [.init(name: "Octo Cat", login: "octocat"), .init(name: "Sam, from Design")])
+                              attendees: [.init(name: "Octo Cat", login: "octocat"), .init(name: "Sam: from [Design], #2")])
         info.screenshots = [ticked, unticked]
         info.findings = [
             .init(note: "The Save button sits below the fold", url: "https://staging.acme.com/signup", pageTitle: "Sign up", at: .now, screenshots: [ticked.id, unticked.id]),
@@ -33,13 +33,14 @@ struct RefineDocumentsTests {
         #expect(document.followsStandard)
         #expect(document.title == "Sign-up page")
         #expect(document.frontMatter?["issues"] == ["acme/web#12", "acme/app#13"])
-        #expect(document.frontMatter?["attendees"] == ["octocat", "Sam from Design"])
+        #expect(document.frontMatter?["attendees"] == ["octocat", "Sam: from [Design], #2"])
+        #expect(document.frontMatter?["url"] == ["https://staging.acme.com/signup"])
         #expect(document.frontMatter?["touches"] == ["acme/app", "acme/web"])
         #expect(readme.contains("[acme/web#12](https://github.com/acme/web/issues/12) ([screenshot-1](./screenshot-1.png))"))
         #expect(!readme.contains("screenshot-2"))
         #expect(readme.contains("Error text is low contrast (Claude's suggestion): [acme/app#13]"))
         #expect(readme.contains("Left for later (not raised)"))
-        #expect(readme.contains("- Sam, from Design"))
+        #expect(readme.contains("- Sam: from [Design], #2"))
     }
 
     @Test func issueLinksOnlyItsTickedScreenshots() {

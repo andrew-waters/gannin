@@ -28,7 +28,18 @@ struct RefineFindingsPanel: View {
         VStack(spacing: 0) {
             RefineAttendees(session: session)
             Divider()
-            capture
+            if let agreed = session.refine?.agreed {
+                // What's agreed is in the issues and the record; anything
+                // noted now would never reach them.
+                Label("Agreed \(agreed.formatted(date: .abbreviated, time: .shortened)). The findings are issues now, and the session is recorded in the harness.",
+                      systemImage: "checkmark.seal.fill")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(14)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                capture
+            }
             Divider()
             List {
                 Section(header: SectionHeader(title: "Findings", count: findings.count)) {
@@ -41,7 +52,7 @@ struct RefineFindingsPanel: View {
                     }
                     .onMove { sessions.moveFindings(from: $0, to: $1, in: session.id) }
                 }
-                let suggestions = session.refine?.openSuggestions ?? []
+                let suggestions = session.refine?.agreed == nil ? session.refine?.openSuggestions ?? [] : []
                 if !suggestions.isEmpty {
                     Section(header: SectionHeader(title: "Claude suggests", count: suggestions.count)) {
                         ForEach(suggestions) { suggestion in
@@ -70,7 +81,7 @@ struct RefineFindingsPanel: View {
         }
         // A transcript's file dropped on the findings opens it to share.
         .dropDestination(for: URL.self) { urls, _ in
-            guard let url = urls.first(where: \.isFileURL), let text = RefineTranscript.text(from: url) else { return false }
+            guard session.refine?.agreed == nil, let url = urls.first(where: \.isFileURL), let text = RefineTranscript.text(from: url) else { return false }
             transcript = TranscriptSheet(dropped: text)
             return true
         }
@@ -228,8 +239,9 @@ struct RefineFindingRow: View {
 
     private func thumbnail(_ shot: RefineInfo.Screenshot) -> some View {
         let file = RefineScreenshots.url(shot, in: session)
+        let locked = session.refine?.isLocked(shot) ?? false
         return Button {
-            open(shot)
+            if !locked { open(shot) }
         } label: {
             Group {
                 if let file, let image = NSImage(contentsOf: file) {
@@ -243,13 +255,15 @@ struct RefineFindingRow: View {
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.separatorLine))
         }
         .buttonStyle(.plain)
-        .help("\(shot.file): click to change its marks")
+        .help(locked ? "\(shot.file): linked from an issue, so it stays as it is" : "\(shot.file): click to change its marks")
         .contextMenu {
             Button("Change Marks") { open(shot) }
+                .disabled(locked)
             if let file {
                 Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) }
             }
             Button("Delete Screenshot", role: .destructive) { sessions.removeScreenshot(shot, from: session.id) }
+                .disabled(locked)
         }
     }
 

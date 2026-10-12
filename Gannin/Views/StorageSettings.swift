@@ -166,7 +166,12 @@ struct StorageSettings: View {
             case .caches:
                 Button("Clear All Caches", role: .destructive) { clearCaches() }
             case .pages:
-                Button("Sign Out of Pages", role: .destructive) { Task { await RefineWebStore.signOutAll() } }
+                Button("Sign Out of Pages", role: .destructive) {
+                    Task {
+                        await RefineWebStore.signOutAll()
+                        measure()
+                    }
+                }
             case .yourData:
                 Button("Delete Your Data", role: .destructive) { deleteYourData() }
             case .everything:
@@ -182,7 +187,7 @@ struct StorageSettings: View {
             case .yourData:
                 Text("Removes \(peopleSummary.lowercased()), every org's settings, \(hidden.keys.count) hidden items and \(orgs.starred.count) stars, and changes not yet committed to a harness. What's in a harness stays there. This can't be undone.")
             case .everything:
-                Text("Removes every cache and everything you've entered, and signs you out. This can't be undone.")
+                Text("Removes every cache and everything you've entered, signs out of every project's Design and Refine pages, and signs you out. This can't be undone.")
             }
         }
     }
@@ -241,6 +246,10 @@ struct StorageSettings: View {
     }
 
     private func eraseEverything() {
+        Task {
+            await RefineWebStore.signOutAll()
+            measure()
+        }
         clearCaches()
         releases.erase()
         deleteYourData()

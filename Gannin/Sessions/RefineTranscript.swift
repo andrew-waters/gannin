@@ -14,6 +14,10 @@ enum RefineTranscript {
     /// A file's text: plain text as it is, a Word or RTF document through
     /// textutil.
     static func text(from url: URL) -> String? {
+        // Only text or a document: a screenshot or PDF dropped on the
+        // findings isn't a transcript.
+        let type = (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType) ?? UTType(filenameExtension: url.pathExtension)
+        guard let type, types.contains(where: type.conforms(to:)) else { return nil }
         if let converted = SessionStore.plainText(url) { return converted }
         guard let data = try? Data(contentsOf: url) else { return nil }
         let text = String(decoding: data, as: UTF8.self)

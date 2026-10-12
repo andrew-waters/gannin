@@ -74,13 +74,14 @@ enum RefineDocuments {
     /// and its ticked screenshots, which sit beside it.
     static func readme(_ info: RefineInfo, made: [String: RefineInfo.MadeIssue], ticked: Set<UUID>, day: String) -> String {
         let issues = info.findings.compactMap { made[$0.id.uuidString]?.reference }
-        let attendees = info.attendees.map { ($0.login ?? $0.name).replacingOccurrences(of: ",", with: "") }
         var front = [
             "type: refine",
             "status: agreed",
             "summary: \(yaml("Stepped through \(info.name) and raised \(issues.count) \(issues.count == 1 ? "issue" : "issues")."))",
-            "url: \(info.url)",
-            "attendees: [\(attendees.joined(separator: ", "))]",
+            "url: \(yaml(info.url))",
+            // A block list, quoted: names are typed, so they can hold
+            // commas, colons or brackets a flow list would break on.
+            (["attendees:"] + info.attendees.map { "  - \(yaml($0.login ?? $0.name))" }).joined(separator: "\n"),
             "issues: [\(issues.joined(separator: ", "))]",
         ]
         if !info.repos.isEmpty { front.append("touches: [\(info.repos.joined(separator: ", "))]") }

@@ -33,9 +33,14 @@ enum RefineWebStore {
         await clear(WKWebsiteDataStore(forIdentifier: id))
     }
 
-    /// Settings › Storage: signs out of every project's pages.
+    /// Settings › Storage, and Erase Everything: signs out of every
+    /// project's pages and forgets their stores, so each starts afresh. A
+    /// store a page has open can't be removed yet; its data is gone anyway.
     static func signOutAll() async {
+        let ids = identifiers.values.compactMap(UUID.init(uuidString:))
         for repo in projects { await signOut(repo) }
+        identifiers = [:]
+        for id in ids { try? await WKWebsiteDataStore.remove(forIdentifier: id) }
     }
 
     private static func clear(_ store: WKWebsiteDataStore) async {
@@ -87,6 +92,11 @@ struct RefineWorkspaceView: View {
     }
 
     private var project: String { session.harnessRepo ?? session.repo }
+
+    /// Agreed, with issues that couldn't be added to the board.
+    private var needsBoard: Bool {
+        (session.refine?.made ?? [:]).values.contains { $0.onBoard == false }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -206,10 +216,10 @@ struct RefineWorkspaceView: View {
             .help(showsTerminal ? "Put the terminal away" : "Show the terminal and its composer")
             Button(session.refine?.agreed == nil ? "Agree" : "Agreed") { agreeing = true }
                 .buttonStyle(.borderedProminent)
-                .disabled(session.refine?.agreed != nil)
+                .disabled(session.refine?.agreed != nil && !needsBoard)
                 .help(session.refine?.agreed == nil
                       ? "Make the findings into issues and record the session in the harness, confirmed first"
-                      : "The room agreed this session")
+                      : needsBoard ? "Agreed, but some issues aren't on the workflow board yet: open to try again" : "The room agreed this session")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

@@ -46,7 +46,7 @@ Each project keeps its own logins, cookies and storage for the pages its [Design
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Projects signed in | None | Shows how many projects have pages with their own logins. Read only. | This Mac |
+| Projects signed in | None | Shows how many projects keep logins for their pages. Read only. Sign Out of Pages here sets it back to none. | This Mac |
 | Sign Out of Pages | Not applicable | Forgets the logins, cookies and storage of every project's Design and Refine pages, after you confirm. Each session can also sign out of its own project's pages from its **⋯** menu. | This Mac |
 
 ## Erase Everything and Sign Out
@@ -55,4 +55,4 @@ The last section has one button.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Erase Everything and Sign Out | Not applicable | Clears every cache and everything you have entered, deletes the daily download history that Clear keeps, removes your GitHub token from the keychain, and signs you out. It leaves your app settings, your sessions and routines, the sandbox credentials in the keychain, and the sandbox containers and images alone (turning sandboxing off offers to remove those). It asks first with Erase Everything and Cancel, and cannot be undone. | This Mac |
+| Erase Everything and Sign Out | Not applicable | Clears every cache and everything you have entered, deletes the daily download history that Clear keeps, removes your GitHub token from the keychain, signs out of every project's Design and Refine pages, and signs you out. It leaves your app settings, your sessions and routines, the sandbox credentials in the keychain, and the sandbox containers and images alone (turning sandboxing off offers to remove those). It asks first with Erase Everything and Cancel, and cannot be undone. | This Mac |

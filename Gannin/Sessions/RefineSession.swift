@@ -62,8 +62,9 @@ struct RefineInfo: Codable, Hashable {
     /// As its tab and lists name it: what's being looked at.
     var name: String
     /// The day it started and the name (`2026-10-10-sign-up-page`), for its
-    /// folder and its record in the harness.
-    let slug: String
+    /// folder and its record in the harness. Agree moves the record to a
+    /// free slug, before writing anything, if another session's has it.
+    var slug: String
     /// The page it opened on, and the one last shown, to reopen on.
     let url: String
     var lastURL: String? = nil
@@ -96,6 +97,17 @@ struct RefineInfo: Codable, Hashable {
         var reference: String
         var url: URL
         var screenshots: [String]? = nil
+        /// Added to the workflow board; false when that failed, to retry.
+        var onBoard: Bool? = nil
+    }
+}
+
+extension RefineInfo {
+    /// A screenshot a made issue links to, or already committed: its file
+    /// must stay as it is, or the links break.
+    func isLocked(_ screenshot: RefineInfo.Screenshot) -> Bool {
+        (committed ?? []).contains(screenshot.id.uuidString)
+            || (made ?? [:]).values.contains { ($0.screenshots ?? []).contains(screenshot.id.uuidString) }
     }
 }
 

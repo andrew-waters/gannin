@@ -157,6 +157,8 @@ extension SessionStore {
               let folder = RefineScreenshots.folder(for: session), let originals = RefineScreenshots.originals(for: session) else {
             throw CocoaError(.fileNoSuchFile)
         }
+        // Issues and the record link to it by name: it can't change now.
+        if let existing, info.isLocked(existing) { throw CocoaError(.fileWriteNoPermission) }
         guard let flat = RefineScreenshots.flatten(image, marks: marks),
               let encoded = RefineScreenshots.encode(flat) else { throw CocoaError(.fileWriteUnknown) }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -202,7 +204,7 @@ extension SessionStore {
 
     /// Takes a screenshot off its finding, and deletes it with its files.
     func removeScreenshot(_ screenshot: RefineInfo.Screenshot, from id: UUID) {
-        guard let session = sessions[id] else { return }
+        guard let session = sessions[id], session.refine?.isLocked(screenshot) != true else { return }
         if let file = RefineScreenshots.url(screenshot, in: session) { try? FileManager.default.removeItem(at: file) }
         if let original = RefineScreenshots.original(screenshot, in: session) { try? FileManager.default.removeItem(at: original) }
         update(id) { session in

@@ -45,12 +45,19 @@ struct RefineAgreeSheet: View {
     /// Screenshots attached to findings being raised.
     private var screenshots: [RefineInfo.Screenshot] {
         let attached = Set(drafts.filter(\.include).flatMap(\.finding.screenshots))
-        return (info?.screenshots ?? []).filter { attached.contains($0.id) }
+        return (info?.screenshots ?? []).filter { attached.contains($0.id) || linked.contains($0.id) }
     }
 
     /// Screenshots an issue already made links to: they must be committed.
     private var linked: Set<UUID> {
         Set((info?.made ?? [:]).values.flatMap { $0.screenshots ?? [] }.compactMap(UUID.init(uuidString:)))
+    }
+
+    /// What gets committed and listed: ticked screenshots still shown (a
+    /// finding unticked takes its screenshots with it), and every one an
+    /// issue already links to.
+    private var toCommit: Set<UUID> {
+        ticked.intersection(screenshots.map(\.id)).union(linked)
     }
 
     private var repos: [String] {
@@ -252,48 +259,79 @@ struct RefineAgreeSheet: View {
             status = "Your GitHub session has expired. Sign in again."
             return
         }
-        guard let info else { return }
+        guard var info else { return }
         working = true
         defer { working = false }
         status = nil
+        let setup = projectConfig.harness(repo: harnessRepo) ?? HarnessConfig(repo: harnessRepo)
+        // Issues link into the record's folder, so it must be this
+        // session's before anything is made: another session (finished
+        // here, or on another Mac) may have the same slug.
+        if (info.made ?? [:]).isEmpty && (info.committed ?? []).isEmpty {
+            do {
+                let slug = try await freeSlug(info, setup: setup)
+                if slug != info.slug {
+                    sessions.update(session.id) { $0.refine?.slug = slug }
+                    info.slug = slug
+                }
+            } catch {
+                status = "Couldn't check the harness for a record with this name: \(error.localizedDescription)"
+                return
+            }
+        }
         let screenshotsByID = Dictionary(uniqueKeysWithValues: info.screenshots.map { ($0.id, $0) })
-        let boardID = projectConfig.workflow.projectNumber.flatMap { number in projects.boardLists[org]?.first { $0.number == number }?.id }
+        let boardNumber = projectConfig.workflow.projectNumber
+        let boardID = boardNumber.flatMap { number in projects.boardLists[org]?.first { $0.number == number }?.id }
+        var boardProblems: [String] = []
+        if boardNumber != nil && boardID == nil {
+            boardProblems.append("The workflow board isn't loaded, so the issues weren't added to it. Open the project's board, then Agree and Write again.")
+        }
 
         for index in drafts.indices where drafts[index].include && drafts[index].made == nil {
             let draft = drafts[index]
             drafts[index].failed = nil
             drafts[index].boardWarning = nil
-            let shots = draft.finding.screenshots.filter(ticked.contains).compactMap { screenshotsByID[$0] }
+            let shots = draft.finding.screenshots.filter(toCommit.contains).compactMap { screenshotsByID[$0] }
             let body = draft.body + RefineDocuments.issueLinks(screenshots: shots, info: info, harnessRepo: harnessRepo)
             do {
                 let created = try await api.createIssue(repo: draft.repo, title: draft.title, body: body, labels: labels(draft.labels))
                 let issue = RefineInfo.MadeIssue(id: created.id, reference: "\(draft.repo)#\(created.number)", url: created.url,
-                                                 screenshots: shots.map(\.id.uuidString))
+                                                 screenshots: shots.map(\.id.uuidString), onBoard: false)
                 drafts[index].made = issue
-                sessions.update(session.id) { session in
-                    var made = session.refine?.made ?? [:]
-                    made[draft.finding.id.uuidString] = issue
-                    session.refine?.made = made
-                }
-                if let boardID {
-                    do {
-                        try await api.addToProject(projectID: boardID, contentID: issue.id)
-                    } catch {
-                        drafts[index].boardWarning = "Made, but couldn't add it to the board: \(error.localizedDescription)"
-                    }
-                }
+                remember(issue, for: draft.finding.id)
             } catch {
                 drafts[index].failed = error.localizedDescription
+            }
+        }
+        // Made issues not on the board yet, this time or an earlier one.
+        if let boardID {
+            for index in drafts.indices {
+                guard var issue = drafts[index].made, issue.onBoard == false else { continue }
+                do {
+                    try await api.addToProject(projectID: boardID, contentID: issue.id)
+                    issue.onBoard = true
+                    drafts[index].made = issue
+                    drafts[index].boardWarning = nil
+                    remember(issue, for: drafts[index].finding.id)
+                } catch {
+                    drafts[index].boardWarning = "Made, but couldn't add it to the board: \(error.localizedDescription)"
+                    boardProblems.append("\(issue.reference) couldn't be added to the board. Agree and Write again to retry.")
+                }
             }
         }
         if drafts.contains(where: { $0.include && $0.made == nil }) {
             status = "Some issues weren't made. Agree and Write again to try those, or untick them."
             return
         }
+        // Already agreed: this was a second go at the board, nothing more.
+        if info.agreed != nil {
+            if boardProblems.isEmpty { dismiss() } else { status = boardProblems.joined(separator: " ") }
+            return
+        }
 
         // Every screenshot a made issue links to is committed, with any
         // others ticked; the record goes in the last commit.
-        let toCommit = info.screenshots.filter { (ticked.contains($0.id) || linked.contains($0.id)) && !(info.committed ?? []).contains($0.id.uuidString) }
+        let toCommit = info.screenshots.filter { self.toCommit.contains($0.id) && !(info.committed ?? []).contains($0.id.uuidString) }
         var files: [(path: String, data: Data)] = []
         for shot in toCommit {
             guard let url = RefineScreenshots.url(shot, in: session), let data = try? Data(contentsOf: url) else {
@@ -306,10 +344,9 @@ struct RefineAgreeSheet: View {
             }
             files.append(("\(RefineDocuments.folder(info))/\(shot.file)", data))
         }
-        let setup = projectConfig.harness(repo: harnessRepo) ?? HarnessConfig(repo: harnessRepo)
         let batches = RefineDocuments.batches(files)
         let made = sessions.sessions[session.id]?.refine?.made ?? [:]
-        let allTicked = ticked.union(linked).union((info.committed ?? []).compactMap(UUID.init(uuidString:)))
+        let allTicked = self.toCommit.union((info.committed ?? []).compactMap(UUID.init(uuidString:)))
         let readme = RefineDocuments.readme(sessions.sessions[session.id]?.refine ?? info, made: made, ticked: allTicked, day: HarnessAuthoring.today)
         do {
             for (number, batch) in (batches.isEmpty ? [[]] : batches).enumerated() {
@@ -339,7 +376,38 @@ struct RefineAgreeSheet: View {
         message += references.isEmpty ? "." : " and made \(references.joined(separator: ", "))."
         message += " There's nothing more to write; answer questions about the session if we ask."
         sessions.submit(message, to: session.id)
-        dismiss()
+        if boardProblems.isEmpty {
+            dismiss()
+        } else {
+            // Agreed, but the board needs another go: say so rather than
+            // close over it.
+            status = boardProblems.joined(separator: " ")
+        }
+    }
+
+    private func remember(_ issue: RefineInfo.MadeIssue, for finding: UUID) {
+        sessions.update(session.id) { session in
+            var made = session.refine?.made ?? [:]
+            made[finding.uuidString] = issue
+            session.refine?.made = made
+        }
+    }
+
+    /// The session's slug, or the first after it (`-2`, `-3`) with no
+    /// record in the harness yet.
+    private func freeSlug(_ info: RefineInfo, setup: HarnessConfig) async throws -> String {
+        guard let api = auth.api else { throw APIError.unauthorized }
+        let parts = setup.repo.split(separator: "/").map(String.init)
+        guard parts.count == 2 else { throw HarnessWriteError.invalidRepo(setup.repo) }
+        let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
+        var candidate = info
+        for number in 1...20 {
+            candidate.slug = number == 1 ? info.slug : "\(info.slug)-\(number)"
+            let path = RefineDocuments.readmePath(candidate)
+            let existing = try await harness.files(setup: setup, at: head.commit, paths: [path])[path] ?? nil
+            if existing == nil { return candidate.slug }
+        }
+        throw SessionError.message("Every name for this record is taken in the harness.")
     }
 
     private func labels(_ text: String) -> [String] {
