@@ -61,4 +61,41 @@ struct HarnessDecisionsTests {
         #expect(index.resolve("../plans/c.md", from: other) == "acme/other:plans/c.md")
         #expect(index.resolve("../plans/my plan.md", from: other) == "acme/other:plans/my plan.md")
     }
+
+    @Test func newDecisionWritesItsFrontMatter() {
+        var draft = HarnessDocumentDraft(kind: .decisions)
+        draft.title = "Run sessions in the harness"
+        draft.status = "superseded"
+        draft.summary = "Sessions start in the harness root."
+        draft.supersededBy = "decisions/2026-10-12-new.md"
+        draft.plans = ["plans/2026-10-01-x.md"]
+        draft.isKey = true
+        draft.body = HarnessDocumentDraft.decisionTemplate
+        let document = HarnessDocument(path: "decisions/2026-10-12-run.md", sha: "abc", kind: .decisions, text: draft.fileText)
+        #expect(document.kind == .decisions)
+        #expect(document.followsStandard)
+        #expect(document.supersededBy == "decisions/2026-10-12-new.md")
+        #expect(document.citedPlans == ["plans/2026-10-01-x.md"])
+        #expect(document.isKey)
+        #expect(document.body.contains("## Alternatives considered"))
+        #expect(HarnessDocumentDraft.statuses(.decisions) == ["proposed", "accepted", "rejected", "superseded"])
+    }
+
+    @Test func editDetailsSetsAndClearsSupersededBy() {
+        let accepted = "---\ntype: decision\nstatus: accepted\nsummary: x\n---\n\n# X\n"
+        let superseded = HarnessFrontMatter.setting([("status", .text("superseded")), ("superseded_by", .text("decisions/2026-10-12-new.md"))], in: accepted)
+        let document = HarnessDocument(path: "decisions/x.md", sha: "abc", kind: .decisions, text: superseded)
+        #expect(document.supersededBy == "decisions/2026-10-12-new.md")
+        let back = HarnessFrontMatter.setting([("status", .text("accepted")), ("superseded_by", nil)], in: superseded)
+        #expect(HarnessDocument(path: "decisions/x.md", sha: "abc", kind: .decisions, text: back).supersededBy == nil)
+        #expect(!back.contains("superseded_by"))
+    }
+
+    @Test func supersededByIsOnlyWrittenWhenSuperseded() {
+        var draft = HarnessDocumentDraft(kind: .decisions)
+        draft.title = "X"
+        draft.status = "accepted"
+        draft.supersededBy = "decisions/y.md"
+        #expect(!draft.fileText.contains("superseded_by"))
+    }
 }
