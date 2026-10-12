@@ -24,14 +24,15 @@
       "severity" : "major"
     }
   ],
+  "merged_at" : "2026-10-12T17:12:31Z",
   "number" : 304,
   "posted_at" : "2026-10-12T17:03:36Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T17:02:30Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Add `plans` and `requirements` to directories that don't trigger CI",
-  "updated_at" : "2026-10-12T17:03:37Z",
+  "updated_at" : "2026-10-12T17:13:18Z",
   "verdict" : "request_changes"
 }
