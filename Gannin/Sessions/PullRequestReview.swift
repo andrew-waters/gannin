@@ -909,7 +909,7 @@ struct PullRequestReviewView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             }
-            FlowRow(spacing: 10) {
+            FlowRow(spacing: 10, alignment: .center) {
                 status(state: state, transcript: transcript, hasReview: review != nil)
                 let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
                 if session.archivedAt == nil {
