@@ -282,10 +282,10 @@ struct BoardColumnsView: View {
 
 /// Lays children out left to right, wrapping onto new lines.
 struct FlowRow: Layout {
-    enum VerticalAlignment { case top, center }
+    enum LineAlignment { case top, center }
 
     var spacing: CGFloat = 4
-    var alignment: VerticalAlignment = .top
+    var alignment: LineAlignment = .top
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity

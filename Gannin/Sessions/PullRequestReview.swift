@@ -956,14 +956,17 @@ struct PullRequestReviewView: View {
                     }
                     .help("Open the review on GitHub")
                 }
-                if review != nil {
-                    Toggle("Watch for changes", isOn: Binding(
-                        get: { sessions.sessions[session.id]?.watch?.isOn ?? false },
-                        set: { sessions.setWatching(session.id, $0) }
-                    ))
-                    .checkboxToggle()
-                    .help("Review it again by itself when new commits are pushed or someone comments, until it's merged or closed")
-                }
+                // Kept in the row while the first review runs, so it appearing
+                // doesn't reflow the buttons.
+                Toggle("Watch for changes", isOn: Binding(
+                    get: { sessions.sessions[session.id]?.watch?.isOn ?? false },
+                    set: { sessions.setWatching(session.id, $0) }
+                ))
+                .checkboxToggle()
+                .help("Review it again by itself when new commits are pushed or someone comments, until it's merged or closed")
+                .opacity(review == nil ? 0 : 1)
+                .disabled(review == nil)
+                .accessibilityHidden(review == nil)
                 if session.archivedAt != nil {
                     Button("Resume") {
                         sessions.resumeReview(session.id)
