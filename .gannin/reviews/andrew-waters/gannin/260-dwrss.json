@@ -11,6 +11,7 @@
       "line" : 134,
       "path" : "Gannin/Sync/ChangeFeed.swift",
       "posted_at" : "2026-10-12T02:57:36Z",
+      "resolved_at" : "2026-10-12T08:53:24Z",
       "severity" : "minor"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 84,
       "path" : "Gannin/GitHub/Queries.swift",
       "posted_at" : "2026-10-12T02:57:36Z",
+      "resolved_at" : "2026-10-12T08:53:24Z",
       "severity" : "minor"
     },
     {
@@ -31,16 +33,17 @@
       "line" : 129,
       "path" : "Gannin/Sync/ChangeFeed.swift",
       "posted_at" : "2026-10-12T02:57:36Z",
+      "resolved_at" : "2026-10-12T08:53:24Z",
       "severity" : "minor"
     }
   ],
   "number" : 260,
-  "posted_at" : "2026-10-12T02:57:36Z",
+  "posted_at" : "2026-10-12T08:53:20Z",
   "repo" : "andrew-waters/gannin",
   "reviewer" : "dwrss",
   "started_at" : "2026-10-12T00:52:21Z",
   "state" : "OPEN",
   "title" : "Share one change feed per org between the workload, issue history and work log",
-  "updated_at" : "2026-10-12T02:57:37Z",
-  "verdict" : "comment"
+  "updated_at" : "2026-10-12T08:53:24Z",
+  "verdict" : "approve"
 }
