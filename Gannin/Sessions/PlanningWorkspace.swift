@@ -255,7 +255,9 @@ struct PlanningMadeIssue: Codable, Hashable {
     }
 }
 
-private extension KeyedDecodingContainer {
+/// Reading claude's state files leniently: a field or an entry that
+/// doesn't decode is left out rather than losing the file.
+extension KeyedDecodingContainer {
     func lenient<T: Decodable>(_ type: T.Type, _ key: Key) -> T? {
         (try? decodeIfPresent(T.self, forKey: key)) ?? nil
     }

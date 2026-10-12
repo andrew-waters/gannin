@@ -111,6 +111,17 @@ struct RefineWorkspaceView: View {
         }
         // Starts claude with the terminal put away, as opening the tab did.
         .onAppear { _ = sessions.open(session) }
+        // Each change signal reads Claude's file again (a short wait lets a
+        // burst of writes settle), then every few seconds in case one was
+        // missed, while Gannin is the app in front.
+        .task(id: sessions.changeCount(session.id)) {
+            do {
+                try await Task.sleep(for: .milliseconds(300))
+                try await refreshWhileActive(every: .seconds(4)) {
+                    await sessions.refreshRefine(session.id)
+                }
+            } catch {}
+        }
         // The page shown is the one to reopen on.
         .onChange(of: page.url) { _, url in
             guard let url, ["http", "https"].contains(url.scheme?.lowercased() ?? "") else { return }

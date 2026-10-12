@@ -31,6 +31,12 @@ Beside the page, **Who's here** lists the meeting: take someone off with ×, or 
 
 Double-click a finding, or use **Edit** in its menu, to change its note; **Delete** removes it. Drag findings to put them in order.
 
+## Claude as co-reviewer
+
+Claude reads the code of the repos ticked at the start (cloning any not in the harness's `projects/` yet), and never changes it. Each finding is passed to it as it's noted, and soon after, **Where it lives** shows under the finding: the files and components Claude thinks it's in, and why. You can keep noting findings while it looks; it works through them in order, and the panel says while it's busy.
+
+Claude also looks at each screenshot and may suggest findings the room didn't raise. These show under **Claude suggests**, marked as Claude's with where they came from. **Keep** turns one into a finding (marked "Claude's suggestion, kept", with its screenshot attached); **Dismiss** puts it away.
+
 ## Screenshots
 
 **Screenshot** takes the part of the page in view and opens it to mark up. Pick **Box**, **Arrow** or **Text** above it: drag to draw a box or an arrow, or type the text and click where it goes. **Undo** (⌘Z) takes the last mark off and **Clear** takes them all. Under **Attach to**, pick a finding already noted, or leave it on **A new finding** and type what the room spotted, then press **Attach** (⌘↩).
@@ -39,4 +45,4 @@ A finding's screenshots show under it. Click one to change its marks; its menu a
 
 The session is kept with Gannin's others, findings included, so quitting and opening Gannin again brings it back on the page it was last on.
 
-Claude's scouting, transcripts, and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).
+Transcripts and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).

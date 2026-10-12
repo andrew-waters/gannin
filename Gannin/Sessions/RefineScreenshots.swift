@@ -179,6 +179,7 @@ extension SessionStore {
                 guard let index = session.refine?.screenshots.firstIndex(where: { $0.id == saved.id }) else { return }
                 session.refine?.screenshots[index] = saved
             }
+            writeRoomFile(id)
             return saved
         }
         var attached = finding
@@ -191,6 +192,11 @@ extension SessionStore {
                 session.refine?.findings[index].screenshots.append(saved.id)
             }
         }
+        tellReviewer(id, """
+            The room took screenshot \(saved.id.uuidString), `.worktrees/\(session.branch)/screenshots/\(saved.file)`, of \(url)\
+            \(attached.map { ", attached to finding \($0.uuidString)" } ?? ""). Look at it, and add anything the room seems to have \
+            missed to refine.json's suggestions.
+            """)
         return saved
     }
 
@@ -205,6 +211,7 @@ extension SessionStore {
                 session.refine?.findings[index].screenshots.removeAll { $0 == screenshot.id }
             }
         }
+        writeRoomFile(id)
     }
 }
 

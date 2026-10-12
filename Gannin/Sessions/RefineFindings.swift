@@ -34,6 +34,24 @@ struct RefineFindingsPanel: View {
                     }
                     .onMove { sessions.moveFindings(from: $0, to: $1, in: session.id) }
                 }
+                let suggestions = session.refine?.openSuggestions ?? []
+                if !suggestions.isEmpty {
+                    Section(header: SectionHeader(title: "Claude suggests", count: suggestions.count)) {
+                        ForEach(suggestions) { suggestion in
+                            RefineSuggestionRow(session: session, suggestion: suggestion)
+                        }
+                    }
+                }
+            }
+            if [.starting, .working].contains(sessions.state(session.id)) {
+                Divider()
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Claude is looking at the code").font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
             }
         }
         .onAppear { focused = true }
@@ -149,6 +167,14 @@ struct RefineFindingRow: View {
                     HStack(spacing: 6) {
                         ForEach(shots) { shot in thumbnail(shot) }
                     }
+                }
+                if finding.suggestion != nil {
+                    Label("Claude's suggestion, kept", systemImage: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(.purple)
+                }
+                if let scouting = session.refine?.state?.scouting(for: finding.id) {
+                    RefineScoutingView(scouting: scouting)
                 }
             }
             Spacer(minLength: 0)
@@ -274,5 +300,75 @@ struct RefineAttendees: View {
             sessions.setAttendees(attendees + [attendee], for: session.id)
         }
         guest = ""
+    }
+}
+
+/// Where Claude thinks a finding lives: its files and components, and why.
+struct RefineScoutingView: View {
+    let scouting: RefineState.Scouting
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Label("Where it lives", systemImage: "sparkle.magnifyingglass")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            ForEach(scouting.files, id: \.self) { file in
+                Text(file)
+                    .font(.caption.monospaced())
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .textSelection(.enabled)
+            }
+            if !scouting.components.isEmpty {
+                Text(scouting.components.joined(separator: ", "))
+                    .font(.caption)
+            }
+            if let why = scouting.why, !why.isEmpty {
+                Text(why)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.secondary.opacity(0.07), in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+/// A finding Claude suggests, marked as Claude's, to keep or dismiss.
+struct RefineSuggestionRow: View {
+    @Environment(SessionStore.self) private var sessions
+    let session: CodeSession
+    let suggestion: RefineState.Suggestion
+
+    private var source: String {
+        switch suggestion.source {
+        case .screenshot:
+            let shot = session.refine?.screenshots.first { $0.id.uuidString.caseInsensitiveCompare(suggestion.screenshot ?? "") == .orderedSame }
+            return shot.map { "From \(($0.file as NSString).deletingPathExtension)" } ?? "From a screenshot"
+        case .transcript: return "From the transcript"
+        case nil: return "Claude's"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(source, systemImage: "sparkles")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.purple)
+            Text(suggestion.note)
+                .textSelection(.enabled)
+            if let why = suggestion.why, !why.isEmpty {
+                Text(why).font(.caption).foregroundStyle(.secondary)
+            }
+            HStack {
+                Spacer()
+                Button("Dismiss") { sessions.dismissSuggestion(suggestion, in: session.id) }
+                Button("Keep") { sessions.keepSuggestion(suggestion, in: session.id) }
+                    .buttonStyle(.borderedProminent)
+            }
+            .controlSize(.small)
+        }
+        .padding(.vertical, 4)
     }
 }

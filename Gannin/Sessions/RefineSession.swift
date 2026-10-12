@@ -27,6 +27,8 @@ struct RefineInfo: Codable, Hashable {
         let at: Date
         /// Screenshots attached to it, by `Screenshot.id`.
         var screenshots: [UUID] = []
+        /// The suggestion of Claude's it was kept from, if it was.
+        var suggestion: String? = nil
     }
 
     /// A screenshot of the page, its file in the session's `screenshots/`
@@ -75,6 +77,12 @@ struct RefineInfo: Codable, Hashable {
     var transcript: String? = nil
     /// When the room agreed it and its record was written.
     var agreed: Date? = nil
+    /// What Claude wrote in `refine.json`: where each finding lives, and
+    /// findings it suggests.
+    var state: RefineState? = nil
+    /// Claude's suggestions the room dismissed, by id. Those kept are
+    /// findings with their `suggestion`.
+    var dismissed: [String]? = nil
 }
 
 extension CodeSession {
@@ -105,6 +113,7 @@ extension SessionStore {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(Self.refineBrief(session).utf8).write(to: directory.appending(path: "brief.md"))
         add(session)
+        writeRoomFile(id)
         reveal(session.id)
         return session
     }
@@ -161,8 +170,10 @@ extension SessionStore {
         return """
             You're the co-reviewer in a Design and Refine session in the team's harness: the room is stepping through \
             \(session.refine?.url ?? "a web page") together and noting what to improve. Read \(folder)/.gannin/brief.md first. \
-            For now, look through \(repos.isEmpty ? "the code" : repos.map { "`projects/\($0.split(separator: "/").last ?? "")`" }.joined(separator: ", ")) \
-            to learn where that page's code lives, say in a few lines what you found, and wait for the room. Don't change any code.
+            It says how to share what you find in \(folder)/refine.json. For now, look through \
+            \(repos.isEmpty ? "the code" : repos.map { "`projects/\($0.split(separator: "/").last ?? "")`" }.joined(separator: ", ")) \
+            (clone any that isn't there with `gh repo clone <owner>/<name> projects/<name>`) to learn where that page's code lives, \
+            say in a few lines what you found, and wait for the room's findings. Don't change any code.
             """
     }
 
@@ -198,6 +209,8 @@ extension SessionStore {
             - `\(folder)/` is this session's folder, outside the harness's git. Never commit anything from it.
             - `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks).
 
+            \(RefineState.instructions(folder: folder))
+
             """
     }
 
@@ -214,6 +227,7 @@ extension SessionStore {
         let title = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
         let finding = RefineInfo.Finding(note: note, url: url, pageTitle: title?.isEmpty == false ? title : nil, at: .now)
         update(id) { $0.refine?.findings.append(finding) }
+        tellReviewer(id, "The room noted finding \(finding.id.uuidString) on \(url): \"\(note)\". Scout where it lives and update refine.json.")
         return finding
     }
 
@@ -225,14 +239,17 @@ extension SessionStore {
             guard let index = session.refine?.findings.firstIndex(where: { $0.id == finding }) else { return }
             session.refine?.findings[index].note = note
         }
+        tellReviewer(id, "The room changed finding \(finding.uuidString) to: \"\(note)\". Update its scouting in refine.json if that changes where it lives.")
     }
 
     func removeFinding(_ finding: UUID, from id: UUID) {
         update(id) { $0.refine?.findings.removeAll { $0.id == finding } }
+        writeRoomFile(id)
     }
 
     func moveFindings(from offsets: IndexSet, to offset: Int, in id: UUID) {
         update(id) { $0.refine?.findings.move(fromOffsets: offsets, toOffset: offset) }
+        writeRoomFile(id)
     }
 
     /// Design and Refine sessions, newest first.
