@@ -5,7 +5,7 @@ paths:
 
 # Work log, Standup, time off
 
-- Must bump `WorkLogHistory.version` when adding a field to cached work-log models, or old caches keep decoding without it.
+- Must bump `WorkLogHistory.version` when adding a field to cached work-log models, or old caches keep decoding without it. Not for a field whose absence only means "fetch again" (`WorkLogPullRequest.updatedAt`, which the change feed compares): bumping would refetch every week for nothing.
 - Keep newly added fields optional (as `IssueRecord.author`) so older records still load.
 - Fetch only once the People page has been opened for an org.
 - Attribute commits to the GitHub author when the email is linked, else the PR author. GitHub doesn't say who moved or closed an issue, so those count for the assignees.
