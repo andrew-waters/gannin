@@ -57,13 +57,17 @@ extension HarnessStore {
         guard let api = auth.api else { throw APIError.unauthorized }
         let parts = setup.repo.split(separator: "/").map(String.init)
         guard parts.count == 2 else { throw HarnessWriteError.invalidRepo(setup.repo) }
+        // Set once a generic rule-violation refusal guesses a pull request is
+        // needed, so a stale-head retry goes straight to one instead of
+        // repeating the direct commit that was just refused.
+        var guessedPullRequest = false
         for attempt in 0..<2 {
             let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
             guard let planned = try await change(head.commit) else { return nil }
             do {
                 let key = "\(setup.repo)@\(head.branch)"
                 var cacheOnSuccess = false
-                if !(await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch)) {
+                if !guessedPullRequest, !(await requiresPullRequest(api: api, repo: setup.repo, branch: head.branch)) {
                     do {
                         let commit = try await api.createCommit(repo: setup.repo, branch: head.branch, expectedHead: head.commit, change: planned)
                         if refreshing { Task { await load(org: org, setup: setup, force: true, expecting: commit) } }
@@ -75,7 +79,7 @@ extension HarnessStore {
                         // may be for another rule, or a one-off such as a file
                         // size limit, so it's only remembered once a pull
                         // request has worked.
-                        if error.namesPullRequest { pullRequestRequired[key] = true } else { cacheOnSuccess = true }
+                        if error.namesPullRequest { pullRequestRequired[key] = true } else { cacheOnSuccess = true; guessedPullRequest = true }
                     }
                 }
                 let result = try await commitViaPullRequest(api: api, setup: setup, base: head, change: planned)
