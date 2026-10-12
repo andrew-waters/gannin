@@ -11,13 +11,13 @@ enum DecisionSuggestions {
     /// Of each plan, at most, so a long one can't crowd out the rest.
     static let planLimit = 30_000
 
-    /// A plan's areas: its domains, else its module folder, else Other.
+    /// A plan's areas, as the Onboarding map has them, so the area picked
+    /// here is the one it's listed under there.
     static func areas(of document: HarnessDocument) -> [String] {
-        if let domains = document.domains, !domains.isEmpty { return domains }
-        return [document.module ?? other]
+        OnboardingMap.areas(of: document)
     }
 
-    static let other = "Other"
+    static let other = OnboardingMap.other
 
     /// Every area the standard plans fall under, by name, Other last.
     static func areas(_ index: HarnessIndex) -> [String] {
