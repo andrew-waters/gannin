@@ -66,6 +66,57 @@ struct PullRequestStoreTests {
         #expect(store.pullRequests(org: "acme")["a"]?.metrics?.reviews.count == 1)
     }
 
+    private func workLogPR(_ id: String, updatedAt: Date? = nil) -> WorkLogPullRequest {
+        WorkLogPullRequest(
+            id: id, number: 1, title: "Title", url: URL(string: "https://github.com/acme/app/pull/1")!, repo: "acme/app",
+            author: "sam", createdAt: Date(timeIntervalSince1970: 1_000), mergedAt: Date(timeIntervalSince1970: 5_000),
+            closedAt: Date(timeIntervalSince1970: 5_000), mergedBy: "kim",
+            commits: [WorkLogCommit(authoredAt: Date(timeIntervalSince1970: 900), author: "sam", additions: 4, deletions: 1, utcOffset: 0)],
+            reviews: [WorkLogReview(submittedAt: Date(timeIntervalSince1970: 3_000), author: "kim", state: "APPROVED")],
+            isDraft: false, updatedAt: updatedAt, additions: 10, deletions: 2, authorIsBot: false
+        )
+    }
+
+    @Test func aWorkLogPullRequestRoundTripsThroughTheStore() {
+        let pr = workLogPR("a", updatedAt: Date(timeIntervalSince1970: 6_000))
+        #expect(StoredPullRequest(workLog: pr).workLogPullRequest == pr)
+    }
+
+    @Test func theMetricsAndWorkLogFetchesOfAPullRequestAreKeptOnce() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(metrics: metricPR("a", updatedAt: Date(timeIntervalSince1970: 6_000), files: 3))], org: "acme")
+        store.merge([StoredPullRequest(workLog: workLogPR("a", updatedAt: Date(timeIntervalSince1970: 6_000)))], org: "acme")
+        let held = store.pullRequests(org: "acme")
+        #expect(held.count == 1)
+        #expect(held["a"]?.metricPullRequest != nil)
+        #expect(held["a"]?.workLogPullRequest?.commits.count == 1)
+        #expect(held["a"]?.core.changedFiles == 3)
+    }
+
+    @Test func aFetchThatLacksAFieldKeepsWhatAnotherStoreStored() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(metrics: metricPR("a"))], org: "acme")
+        var legacy = StoredPullRequest(workLog: workLogPR("a"))
+        legacy.core.additions = nil
+        legacy.core.authorIsBot = nil
+        store.merge([legacy], org: "acme")
+        #expect(store.pullRequests(org: "acme")["a"]?.core.additions == 10)
+    }
+
+    @Test func clearingOneStoresPartKeepsTheOthers() {
+        let store = makeStore()
+        defer { store.clear() }
+        store.merge([StoredPullRequest(metrics: metricPR("a")), StoredPullRequest(metrics: metricPR("b"))], org: "acme")
+        store.merge([StoredPullRequest(workLog: workLogPR("a"))], org: "acme")
+        store.clear(.metrics)
+        let held = store.pullRequests(org: "acme")
+        #expect(held["a"]?.metrics == nil)
+        #expect(held["a"]?.workLogPullRequest != nil)
+        #expect(held["b"] == nil)
+    }
+
     @Test func updateChangesAHeldPullRequestAndIgnoresAnUnknownOne() {
         let store = makeStore()
         defer { store.clear() }

@@ -185,15 +185,15 @@ final class MetricsStore {
 
     static var cacheDirectory: URL { cache.directory }
 
-    /// Also empties the shared PR store: the metrics history is rebuilt from
-    /// it, so a history kept after its PRs are gone would claim a coverage
-    /// it no longer has.
+    /// Also removes the metrics' part of every stored PR: the history is
+    /// rebuilt from it, so a history kept after its PRs are gone would claim
+    /// a coverage it no longer has.
     func clear() {
         histories = [:]
         errors = [:]
         activity.clear()
         Self.cache.clear()
-        pullRequestStore.clear()
+        pullRequestStore.clear(.metrics)
     }
 
     // MARK: Disk cache

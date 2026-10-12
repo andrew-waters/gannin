@@ -16,10 +16,12 @@ final class WorkLogStore {
 
     private let auth: AuthStore
     private let activity: SyncActivity
+    private let pullRequestStore: PullRequestStore
 
-    init(auth: AuthStore, activity: SyncActivity) {
+    init(auth: AuthStore, activity: SyncActivity, pullRequestStore: PullRequestStore = .shared) {
         self.auth = auth
         self.activity = activity
+        self.pullRequestStore = pullRequestStore
     }
 
     func history(for org: String) -> WorkLogHistory? { histories[org] }
@@ -179,26 +181,49 @@ final class WorkLogStore {
 
     static var cacheDirectory: URL { directory }
 
+    /// Also removes the work log's part of every stored PR: the log is rebuilt
+    /// from it, so a log kept after its PRs are gone would claim a coverage
+    /// it no longer has.
     func clear() {
         histories = [:]
         errors = [:]
         try? FileManager.default.removeItem(at: Self.directory)
+        pullRequestStore.clear(.workLog)
     }
 
     // MARK: Disk cache
 
     private func loadCached(_ org: String) {
-        guard histories[org] == nil,
-              let data = try? Data(contentsOf: Self.fileURL(org)),
-              let history = try? Self.decoder.decode(WorkLogHistory.self, from: data),
+        guard histories[org] == nil, let data = try? Data(contentsOf: Self.fileURL(org)) else { return }
+        // A log from before PRs were kept in the shared store brings its PRs
+        // along, so the upgrade doesn't fetch them again.
+        if let legacy = try? Self.decoder.decode(WorkLogHistory.Legacy.self, from: data), legacy.version == WorkLogHistory.Legacy.version,
+           var history = try? Self.decoder.decode(WorkLogHistory.self, from: data) {
+            pullRequestStore.merge(legacy.pullRequests.values.map { StoredPullRequest(workLog: $0) }, org: org)
+            history.version = WorkLogHistory.currentVersion
+            history.pullRequests = legacy.pullRequests
+            save(history)
+            histories[org] = history
+            return
+        }
+        guard var history = try? Self.decoder.decode(WorkLogHistory.self, from: data),
               history.version == WorkLogHistory.currentVersion else {
             return
         }
+        history.pullRequests = Dictionary(uniqueKeysWithValues: pullRequestStore.pullRequests(org: org).values.compactMap { stored in
+            stored.workLogPullRequest.map { ($0.id, $0) }
+        })
+        guard history.pullRequests.count >= (history.storedCount ?? 0) else { return }
         histories[org] = history
     }
 
+    /// The PRs go to the store first: a log saved without them would claim a
+    /// coverage the store doesn't have.
     private func save(_ history: WorkLogHistory) {
-        if let data = try? Self.encoder.encode(history) {
+        pullRequestStore.merge(history.pullRequests.values.map { StoredPullRequest(workLog: $0) }, org: history.orgLogin)
+        var saved = history
+        saved.storedCount = history.pullRequests.count
+        if let data = try? Self.encoder.encode(saved) {
             try? data.write(to: Self.fileURL(history.orgLogin), options: .atomic)
         }
     }

@@ -15,7 +15,7 @@ Caches are kept so pages open warm. Cleared data is fetched again when a page ne
 | --- | --- | --- | --- |
 | Workload snapshots | Fills as you use the app | Members, teams, open and recently merged PRs, and open issues, per org. | This Mac |
 | Merged PR history | Fills as you use the app | Merged PRs with their review timings, behind the delivery and people stats. | This Mac |
-| Pull requests | Fills as you use the app | Every PR fetched, kept once for the pages that read it. Merged PR history reads its PRs from here, and clearing either one clears both. | This Mac |
+| Pull requests | Fills as you use the app | Every PR fetched, kept once for the pages that read it. Merged PR history and Work log read their PRs from here. Clearing one of those removes only what that page reads; clearing Pull requests removes every PR, so both fetch again. | This Mac |
 | Issue history | Fills as you use the app | Issues with their board history, behind the issue metrics and investments. | This Mac |
 | Issue search index | Fills as you use the app | Issues' descriptions and recent comments, for searching them. | This Mac |
 | Work log | Fills as you use the app | PRs with their commits and reviews, and issues with their comments, behind Activity. | This Mac |

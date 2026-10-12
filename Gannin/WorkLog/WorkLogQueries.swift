@@ -74,6 +74,11 @@ extension GitHubAPI {
 
 private struct RawWorkLogPullRequest: Decodable {
     struct Actor: Decodable { let login: String }
+    struct Author: Decodable {
+        let __typename: String
+        let login: String
+        let avatarUrl: URL?
+    }
     struct Repository: Decodable { let nameWithOwner: String }
     struct CommitNode: Decodable {
         struct Commit: Decodable {
@@ -110,7 +115,9 @@ private struct RawWorkLogPullRequest: Decodable {
     let mergedAt: Date?
     let closedAt: Date?
     let repository: Repository
-    let author: Actor?
+    let additions: Int?
+    let deletions: Int?
+    let author: Author?
     let mergedBy: Actor?
     let commits: Connection<CommitNode>
     let reviews: Connection<Review>?
@@ -119,10 +126,10 @@ private struct RawWorkLogPullRequest: Decodable {
 
     static let fields = """
         ... on PullRequest {
-          id number title url createdAt updatedAt mergedAt closedAt isDraft
+          id number title url createdAt updatedAt mergedAt closedAt isDraft additions deletions
           repository { nameWithOwner }
           closingIssuesReferences(first: 5) { nodes { id number title url state repository { nameWithOwner } } }
-          author { login }
+          author { __typename login avatarUrl }
           mergedBy { login }
           commits(last: 100) { nodes { commit { authoredDate additions deletions messageHeadline url author { user { login } } } } }
           reviews(last: 50) { nodes { submittedAt state author { login } } }
@@ -153,7 +160,11 @@ private struct RawWorkLogPullRequest: Decodable {
             closingIssues: (closingIssuesReferences?.nodes ?? []).map {
                 LinkedItem(id: $0.id, number: $0.number, title: $0.title, url: $0.url, repo: $0.repository.nameWithOwner, state: $0.state)
             },
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            additions: additions,
+            deletions: deletions,
+            authorAvatarUrl: author?.avatarUrl,
+            authorIsBot: author.map { $0.__typename == "Bot" }
         )
     }
 }
