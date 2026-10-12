@@ -232,7 +232,7 @@ extension SessionStore {
     }
 
     /// A Word, RTF or ODT document as text, through macOS's textutil.
-    private static func plainText(_ url: URL) -> String? {
+    static func plainText(_ url: URL) -> String? {
         guard ["docx", "doc", "rtf", "rtfd", "odt", "wordml"].contains(url.pathExtension.lowercased()),
               FileManager.default.fileExists(atPath: url.path) else { return nil }
         let process = Process()

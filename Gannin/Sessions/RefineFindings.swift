@@ -14,6 +14,13 @@ struct RefineFindingsPanel: View {
     @State private var annotating: RefineAnnotating?
     @State private var capturing = false
     @State private var error: String?
+    /// The transcript sheet, with the text of a file dropped on the panel.
+    @State private var transcript: TranscriptSheet?
+
+    struct TranscriptSheet: Identifiable {
+        let id = UUID()
+        var dropped: String? = nil
+    }
 
     private var findings: [RefineInfo.Finding] { session.refine?.findings ?? [] }
 
@@ -58,6 +65,15 @@ struct RefineFindingsPanel: View {
         .sheet(item: $annotating) { annotating in
             RefineAnnotateSheet(session: session, annotating: annotating)
         }
+        .sheet(item: $transcript) { sheet in
+            RefineTranscriptSheet(session: session, dropped: sheet.dropped)
+        }
+        // A transcript's file dropped on the findings opens it to share.
+        .dropDestination(for: URL.self) { urls, _ in
+            guard let url = urls.first(where: \.isFileURL), let text = RefineTranscript.text(from: url) else { return false }
+            transcript = TranscriptSheet(dropped: text)
+            return true
+        }
         .alert("Couldn't take a screenshot", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -82,6 +98,14 @@ struct RefineFindingsPanel: View {
                     .truncationMode(.middle)
                     .help("Noted against the page shown now")
                 Spacer(minLength: 0)
+                Button {
+                    transcript = TranscriptSheet()
+                } label: {
+                    Label("Transcript", systemImage: session.refine?.transcript == nil ? "text.bubble" : "checkmark.bubble")
+                }
+                .help(session.refine?.transcript == nil
+                      ? "Paste or drop the meeting's transcript for Claude to suggest findings from; it stays on this Mac"
+                      : "The transcript is shared with Claude. Open it to replace it")
                 Button {
                     screenshot()
                 } label: {

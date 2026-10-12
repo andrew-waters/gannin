@@ -13,3 +13,4 @@ paths:
 - `refine.json` is snake case and read leniently (`RefineState.read`): never drop the file over one bad entry. Update `RefineState.instructions` whenever its shape changes.
 - Call `writeRoomFile` (or `tellReviewer`) after any change to findings or screenshots: Claude reads `findings.json`, and a pasted note can be lost while claude isn't running.
 - New fields on `RefineInfo` and its nested types must be optional: `CodeSession` decodes `refine` with `try?`, so a missing key drops the whole session's findings.
+- Never commit, upload or quote `transcript.txt` or `originals/` anywhere: the transcript stays on this Mac (R7), and originals are unmarked copies the room never ticked.

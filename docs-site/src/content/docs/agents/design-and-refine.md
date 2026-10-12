@@ -37,6 +37,12 @@ Claude reads the code of the repos ticked at the start (cloning any not in the h
 
 Claude also looks at each screenshot and may suggest findings the room didn't raise. These show under **Claude suggests**, marked as Claude's with where they came from. **Keep** turns one into a finding (marked "Claude's suggestion, kept", with its screenshot attached); **Dismiss** puts it away.
 
+## Meeting transcript
+
+After the session, press **Transcript** and paste the meeting's transcript (Google Meet's, say), or press **Choose File…**, or drop the file on the findings: text, `.vtt`, `.srt`, Word and RTF files are read. **Share with Claude** (⌘↩) passes it on, and Claude suggests findings from it under **Claude suggests**, marked "From the transcript", to keep or dismiss like any other. Open **Transcript** again to replace it.
+
+The transcript stays on this Mac, as `transcript.txt` in the session's folder, for Claude to read. It's never committed to the harness or put in an issue.
+
 ## Screenshots
 
 **Screenshot** takes the part of the page in view and opens it to mark up. Pick **Box**, **Arrow** or **Text** above it: drag to draw a box or an arrow, or type the text and click where it goes. **Undo** (⌘Z) takes the last mark off and **Clear** takes them all. Under **Attach to**, pick a finding already noted, or leave it on **A new finding** and type what the room spotted, then press **Attach** (⌘↩).
@@ -45,4 +51,4 @@ A finding's screenshots show under it. Click one to change its marks; its menu a
 
 The session is kept with Gannin's others, findings included, so quitting and opening Gannin again brings it back on the page it was last on.
 
-Transcripts and agreeing the issues and the harness record are still to come (andrew-waters/gannin#134).
+Agreeing the issues and the harness record is still to come (andrew-waters/gannin#134).
