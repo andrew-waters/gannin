@@ -1,0 +1,15 @@
+{
+  "box" : "Anius",
+  "branch" : "245-add-the-changelog-entry-and-confirm-no",
+  "issue" : "andrew-waters/gannin#245",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-12T12:00:34Z",
+  "startedBy" : "dwrss",
+  "title" : "Add the changelog entry and confirm no docs page needs changing",
+  "url" : "https://github.com/andrew-waters/gannin/issues/245"
+}
