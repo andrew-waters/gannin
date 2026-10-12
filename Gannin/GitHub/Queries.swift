@@ -76,19 +76,26 @@ extension GitHubAPI {
         let newOutsideBatches = Self.outsideRepoBatches(newOutside)
         let knownOutsideBatches = Self.outsideRepoBatches(knownOutside)
 
-        // Changes mode asks the change feed what to fetch; its own searches
-        // are the fallback when the feed failed, was capped or doesn't reach
-        // back as far as `changesSince`.
+        if fetchPeople {
+            run.add("members", title: "Members")
+            run.add("teams", title: "Teams")
+        }
+        async let memberList: [Person]? = fetchPeople ? fetchMembers(org: org, run: run) : nil
+        async let teamResult: [Team]? = fetchPeople ? fetchTeams(org: org, run: run) : nil
+        // With members and teams, so hourly and on Refresh: which outside
+        // repos (if any) can still be read.
+        async let unreadableCheck: [String: String] = fetchPeople && !outsideRepos.isEmpty ? readableRepos(outsideRepos) : [:]
+
+        // Changes mode asks the change feed what to fetch, after the member,
+        // team and readability lookups have started so they run alongside it.
+        // Its own searches are the fallback when the feed failed, was capped
+        // or doesn't reach back as far as `changesSince`.
         var fromFeed: FeedChanges?
         if let changesSince, let previous {
             let feed = await ChangeFeeds.shared.current(org: org, api: self, outside: knownOutside, cursor: changesSince, run: run)
             fromFeed = Self.feedChanges(feed, since: changesSince, previous: previous, knownOutside: knownOutside)
         }
 
-        if fetchPeople {
-            run.add("members", title: "Members")
-            run.add("teams", title: "Teams")
-        }
         if let changesSince {
             let since = changesSince.formatted(date: .omitted, time: .shortened)
             run.add("changed-prs", title: "Pull requests", detail: fromFeed == nil ? "Changed since \(since)" : "From the change feed")
@@ -146,16 +153,11 @@ extension GitHubAPI {
         }
 
         let plannedSearches = searches
-        async let memberList: [Person]? = fetchPeople ? fetchMembers(org: org, run: run) : nil
-        async let teamResult: [Team]? = fetchPeople ? fetchTeams(org: org, run: run) : nil
         async let items = fetchChanges(searches: plannedSearches, run: run, outsideBatchCount: knownOutsideBatches.count, feed: fromFeed)
         async let fullItems = changesSince == nil ? fetchAll(searches: plannedSearches, run: run, outsideBatchCount: outsideBatches.count) : nil
         // Changes mode still gives a newly outside repo its own full
         // search, since it has no baseline for "updated since" to build on.
         async let newOutsideItems: ([PullRequest], [PullRequest], [Issue]) = changesSince == nil ? ([], [], []) : fetchOutsideAll(searches: plannedSearches, run: run, batchCount: newOutsideBatches.count)
-        // With members and teams, so hourly and on Refresh: which outside
-        // repos (if any) can still be read.
-        async let unreadableCheck: [String: String] = fetchPeople && !outsideRepos.isEmpty ? readableRepos(outsideRepos) : [:]
 
         var warnings = previous?.warnings ?? []
         var teamList = previous?.teams ?? []

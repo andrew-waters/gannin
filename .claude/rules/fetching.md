@@ -39,4 +39,4 @@ paths:
 - The app has no entitlements beyond hardened runtime and isn't sandboxed (sessions run git, gh and claude as the user).
 
 ## Testing
-- `ChangeFeedTests` covers the feed's plan, merging and what the workload snapshot takes from it; `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.
+- `ChangeFeedTests` covers the feed's plan, merging, what the workload snapshot takes from it and `ChangeFeeds`' sharing of a run (with a stubbed search); `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.

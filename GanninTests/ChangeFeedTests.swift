@@ -235,4 +235,107 @@ struct ChangeFeedTests {
         #expect(GitHubAPI.feedChanges(nil, since: at(25), previous: previous, knownOutside: []) == nil)
         #expect(GitHubAPI.feedChanges(feed([], from: 40), since: at(25), previous: previous, knownOutside: []) == nil)
     }
+
+    // MARK: sharing a run
+
+    /// Holds a search until the test opens it.
+    private final class Gate {
+        private var waiter: CheckedContinuation<Void, Never>?
+        private var isOpen = false
+        var isWaiting: Bool { waiter != nil }
+
+        func wait() async {
+            if isOpen { return }
+            await withCheckedContinuation { waiter = $0 }
+        }
+
+        func open() {
+            isOpen = true
+            waiter?.resume()
+            waiter = nil
+        }
+    }
+
+    private final class Searches {
+        var batches: [[[String]]] = []
+        var count: Int { batches.count }
+    }
+
+    private let api = GitHubAPI(token: "t")
+
+    private func waitUntil(_ condition: () -> Bool) async {
+        for _ in 0..<1000 where !condition() { await Task.yield() }
+    }
+
+    @Test func callersWhileARunIsUnderWayShareItsSearch() async {
+        let gate = Gate()
+        let searches = Searches()
+        let feeds = ChangeFeeds(search: { _, _, batches, _ in
+            searches.batches.append(batches)
+            await gate.wait()
+            return ([self.entry("a", 20)], false)
+        })
+        let first = Task { await feeds.current(org: "acme", api: api, cursor: at(0)) }
+        await waitUntil { gate.isWaiting }
+        let second = Task { await feeds.current(org: "acme", api: api, cursor: at(0)) }
+        await Task.yield()
+        gate.open()
+        #expect(await first.value?.entries.keys.sorted() == ["a"])
+        #expect(await second.value?.entries.keys.sorted() == ["a"])
+        #expect(searches.count == 1)
+    }
+
+    @Test func aFailedRunIsNotSearchedAgainByItsWaiters() async {
+        let gate = Gate()
+        let searches = Searches()
+        struct Failure: Error {}
+        let feeds = ChangeFeeds(search: { _, _, batches, _ in
+            searches.batches.append(batches)
+            await gate.wait()
+            throw Failure()
+        })
+        let first = Task { await feeds.current(org: "acme", api: api, cursor: at(0)) }
+        await waitUntil { gate.isWaiting }
+        let second = Task { await feeds.current(org: "acme", api: api, cursor: at(0)) }
+        await Task.yield()
+        gate.open()
+        #expect(await first.value == nil)
+        #expect(await second.value == nil)
+        #expect(searches.count == 1)
+    }
+
+    @Test func aCallerNeedingMoreOutsideReposExtendsTheFeed() async {
+        let searches = Searches()
+        let feeds = ChangeFeeds(search: { _, _, batches, _ in
+            searches.batches.append(batches)
+            return ([], false)
+        })
+        let own = await feeds.current(org: "acme", api: api, cursor: at(0))
+        #expect(own?.outsideRepos == [])
+        let wider = await feeds.current(org: "acme", api: api, outside: ["client/app"], cursor: at(0))
+        #expect(wider?.outsideRepos == ["client/app"])
+        #expect(searches.count == 2)
+        #expect(searches.batches[1].flatMap { $0 } == ["client/app"])
+        // The wider feed serves the narrower caller without another search.
+        _ = await feeds.current(org: "acme", api: api, cursor: at(0))
+        #expect(searches.count == 2)
+    }
+
+    @Test func clearingMidRunDiscardsTheResult() async {
+        let gate = Gate()
+        let searches = Searches()
+        let feeds = ChangeFeeds(search: { _, _, batches, _ in
+            searches.batches.append(batches)
+            await gate.wait()
+            return ([self.entry("a", 20)], false)
+        })
+        let run = Task { await feeds.current(org: "acme", api: api, cursor: at(0)) }
+        await waitUntil { gate.isWaiting }
+        feeds.clear()
+        gate.open()
+        #expect(await run.value == nil)
+        let next = await feeds.current(org: "acme", api: api, cursor: at(0))
+        #expect(next != nil)
+        #expect(searches.count == 2)
+    }
 }

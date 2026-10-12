@@ -110,11 +110,21 @@ final class ChangeFeeds {
     /// store's own overlap next time.
     static let freshFor: TimeInterval = 15
 
+    /// What one run searches with; the GitHub search unless a test passes its own.
+    typealias Search = (GitHubAPI, _ org: String, _ outsideBatches: [[String]], _ since: Date) async throws -> (entries: [ChangeEntry], capped: Bool)
+
+    private let search: Search
     private var feeds: [String: ChangeFeed] = [:]
     private var running: [String: Task<ChangeFeed?, Never>] = [:]
     /// Bumped by `clear`, so a run that started before it doesn't store its
     /// feed (the last account's) afterwards.
     private var generation = 0
+
+    init(search: @escaping Search = { api, org, batches, since in
+        try await api.changeEntries(org: org, outsideBatches: batches, since: since)
+    }) {
+        self.search = search
+    }
 
     /// The org's feed, brought up to date unless a run is under way (awaited)
     /// or just finished; nil when the search failed, so a store falls back.
@@ -126,22 +136,27 @@ final class ChangeFeeds {
     /// each other. `run` shows the search as a step of the caller's sync when
     /// this call is the one that starts it.
     func current(org: String, api: GitHubAPI, outside: Set<String> = [], cursor: Date, run: SyncRun? = nil) async -> ChangeFeed? {
-        // A run already under way may cover fewer repos than this caller
-        // needs, so wait for it and then look again.
+        // A run under way may cover fewer repos than this caller needs. A
+        // failed run isn't retried, as the store falls back; a feed that
+        // covers too little is extended by a second run, started once the
+        // first has cleared `running`.
         for _ in 0..<2 {
             if let task = running[org] {
-                if let feed = await task.value, outside.isSubset(of: feed.outsideRepos) { return feed }
+                guard let feed = await task.value else { return nil }
+                if outside.isSubset(of: feed.outsideRepos) { return feed }
                 continue
             }
             if let feed = feeds[org], Date.now.timeIntervalSince(feed.lastRunAt) < Self.freshFor, outside.isSubset(of: feed.outsideRepos) {
                 return feed
             }
-            let task = Task { await self.refresh(org: org, api: api, outside: outside, cursor: cursor, run: run) }
-            running[org] = task
             let started = generation
-            let feed = await task.value
-            if started == generation { running[org] = nil }
-            return feed
+            let task = Task {
+                let feed = await self.refresh(org: org, api: api, outside: outside, cursor: cursor, run: run)
+                if started == self.generation { self.running[org] = nil }
+                return feed
+            }
+            running[org] = task
+            return await task.value
         }
         return nil
     }
@@ -164,7 +179,7 @@ final class ChangeFeeds {
             : max(cursor, now.addingTimeInterval(-ChangeFeed.retention))
         let batches = GitHubAPI.outsideRepoBatches(outsideRepos)
         do {
-            let search = { try await chargingTo(.changeFeed) { try await api.changeEntries(org: org, outsideBatches: batches, since: since) } }
+            let search = { try await chargingTo(.changeFeed) { try await self.search(api, org, batches, since) } }
             let result: (entries: [ChangeEntry], capped: Bool)
             if let run {
                 run.add("change-feed", title: "Change feed", detail: "Updated since \(since.formatted(date: .omitted, time: .shortened))")
