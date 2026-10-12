@@ -60,7 +60,7 @@ The Inbox is your share of the workload, in sections:
 - **Ready for your approval**: reviews Claude has finished that it would approve.
 - **Claude Code**: sessions waiting on you for an answer.
 - **While you were away**: what happened on PRs Claude reviewed while you weren't looking.
-- **Needs your review**: reviews requested of you, longest waiting first.
+- **Needs your review**: reviews requested of you, longest waiting first. A PR a teammate has already reviewed says so in its State, such as "Review requested, approved by Sam".
 - **Changed since your review**: PRs you asked changes of that have new commits or a reply.
 - **Your pull requests** and where each stands.
 - **Your issues**: those assigned to you, in progress first.

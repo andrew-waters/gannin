@@ -330,10 +330,12 @@ struct InboxView: View {
             }))
         }
         if shown.contains(.reviews) { sections.append((InboxSection.reviews.rawValue, inbox.reviews.filter { !approving.contains($0.pr.id) }.map { item in
-            InboxRow(
+            let requested = item.pr.isDraft ? "Draft, review requested" : "Review requested"
+            let others = Inbox.otherReviews(item.pr, excluding: auth.viewer?.login)
+            return InboxRow(
                 id: "review-\(item.pr.id)", title: item.pr.title, reference: Self.number(item.pr.repo, item.pr.number),
                 people: item.pr.author.map { [$0] } ?? [], checks: checks(item.pr),
-                state: item.pr.isDraft ? "Draft, review requested" : "Review requested", stateColor: .secondary,
+                state: others.isEmpty ? requested : "\(requested), \(others)", stateColor: .secondary,
                 tint: ChartPalette.blue, since: item.askedAt, sinceLabel: "Asked", size: (item.pr.additions, item.pr.deletions),
                 page: .pullRequest(item.pr.id)
             )
@@ -610,6 +612,19 @@ struct Inbox {
     /// Reviews waiting on you, and your PRs with changes asked for.
     var count: Int {
         reviews.count + pullRequests.filter { $0.review == .changesRequested }.count
+    }
+
+    /// What others have already done on a PR you're asked to review, in a
+    /// phrase like "approved by Sam, commented by Ana"; empty if nobody has.
+    /// Leaves out you, the author and automation accounts.
+    static func otherReviews(_ pr: PullRequest, excluding login: String?) -> String {
+        let verbs = ["APPROVED": "approved", "CHANGES_REQUESTED": "changes requested", "COMMENTED": "commented"]
+        let names = Dictionary(pr.reviewers.map { ($0.login, $0.displayName) }, uniquingKeysWith: { first, _ in first })
+        let others = pr.humanReviewStates.filter { $0.key != login && $0.key != pr.author?.login }
+        return verbs.keys.sorted().compactMap { state in
+            let who = others.filter { $0.value == state }.keys.sorted().map { names[$0] ?? $0 }
+            return who.isEmpty ? nil : "\(verbs[state]!) by \(who.joined(separator: " and "))"
+        }.joined(separator: ", ")
     }
 
     /// Where a PR of yours stands, in words and a colour.
