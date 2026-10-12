@@ -82,7 +82,7 @@ In full in [requirements/text-above-the-diff-on-the-pull-request.md](../requirem
 
 ## Tasks
 
-1. Split the review header into a title/reference row and a wrapping controls row
+1. [x] Split the review header into a title/reference row and a wrapping controls row
 2. Give the header's status a fixed-size slot so loading and re-review do not move anything
 3. Add the changelog entry and confirm no docs page needs changing
 

@@ -883,33 +883,33 @@ struct PullRequestReviewView: View {
         let state = sessions.state(session.id)
         let draft = sessions.reviewDrafts[session.id] ?? ReviewDraft()
         return VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline, spacing: 10) {
-                VStack(alignment: .leading, spacing: 3) {
-                    Link(destination: reference.url) {
-                        Text(reference.title)
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.primary)
-                            .lineLimit(2)
-                            .multilineTextAlignment(.leading)
-                    }
-                    .help("Open the pull request on GitHub")
-                    HStack(spacing: 8) {
-                        Link(destination: reference.url) {
-                            Label(reference.repo + "#" + String(reference.number), systemImage: "arrow.up.right.square")
-                        }
-                        .help("Open the pull request on GitHub")
-                        if let pullRequest {
-                            if let author = pullRequest.author { Text("by \(author)") }
-                            Text("+\(pullRequest.additions)").foregroundStyle(ChartPalette.good)
-                            Text("-\(pullRequest.deletions)").foregroundStyle(ChartPalette.critical)
-                            Text("\(pullRequest.files.count) files")
-                            if pullRequest.state != "open" { Text(pullRequest.state.capitalized).foregroundStyle(.purple) }
-                        }
-                    }
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 3) {
+                Link(destination: reference.url) {
+                    Text(reference.title)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(.primary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
                 }
-                Spacer()
+                .help("Open the pull request on GitHub")
+                FlowRow(spacing: 8) {
+                    Link(destination: reference.url) {
+                        Label(reference.repo + "#" + String(reference.number), systemImage: "arrow.up.right.square")
+                    }
+                    .fixedSize()
+                    .help("Open the pull request on GitHub")
+                    if let pullRequest {
+                        if let author = pullRequest.author { Text("by \(author)") }
+                        Text("+\(pullRequest.additions)").foregroundStyle(ChartPalette.good)
+                        Text("-\(pullRequest.deletions)").foregroundStyle(ChartPalette.critical)
+                        Text("\(pullRequest.files.count) files")
+                        if pullRequest.state != "open" { Text(pullRequest.state.capitalized).foregroundStyle(.purple) }
+                    }
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            }
+            FlowRow(spacing: 10) {
                 status(state: state, transcript: transcript, hasReview: review != nil)
                 let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
                 if session.archivedAt == nil {
