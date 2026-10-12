@@ -37,6 +37,10 @@ struct IssueRecord: Codable, Hashable, Identifiable {
     /// The issue's field values on each project board it's on. A var so edits
     /// from the issue window show before the next fetch.
     var projectFields: [IssueProjectFields]
+    /// When GitHub last updated it, so the change feed can skip an issue
+    /// already held at that time. Optional so records from before it was
+    /// fetched still load; they're fetched once when next seen changed.
+    var updatedAt: Date? = nil
 
     func fields(onProject number: Int) -> IssueProjectFields? {
         projectFields.first { $0.projectNumber == number }

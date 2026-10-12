@@ -28,7 +28,7 @@ The Spent list shows what each source used, most first. Sources that used nothin
 | --- | --- | --- | --- |
 | Spent | Last hour | Chooses the window for the list: Last hour or Last day. | This Mac |
 
-Some work is charged in the list but has no setting, because it happens when you do something: Items you open, Changes you make, Account and settings, and Other.
+Some work is charged in the list but has no setting. Change feed is the one search per org that says which PRs and issues changed since the last cycle: the workload, issue history and work log read it instead of each searching for changes, and use their own search only when it fails or finds more than GitHub will return. It follows their intervals, so it has no interval of its own. The rest happens when you do something: Items you open, Changes you make, Account and settings, and Other.
 
 ## Workload
 

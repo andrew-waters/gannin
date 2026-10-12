@@ -21,6 +21,12 @@ paths:
 - REST GETs send `If-None-Match` with the ETag of the last answer for the URL (`RESTCache`, in memory, 20 MB); a 304 returns what was kept and costs nothing against the REST budget. That serves jobs, the harness tree and a PR's files, comments and diff. A query whose URL changes every time, as the run lists' `created=` range ending at now does, passes `cached: false` to `rest`, so it isn't stored and doesn't push out entries that can hit. `AuthStore.signOut` empties the cache; it isn't keyed by account.
 - Fetchers serving a user action should set `chargingTo(_:_:)` so `APIUsage` attributes the cost; otherwise it goes to the sync run's kind or Other.
 
+## Change feed
+- `OrgStore`, `IssueStore` and `WorkLogStore` ask `ChangeFeeds` (one in-memory log per org) what changed and fetch those node IDs in their own shape, never running their own "updated since" search while it can answer. Never advance one shared cursor instead of keeping the log: stores sync on different schedules, and one that last ran an hour ago would miss what a cursor had moved past.
+- A store falls back to its own changes search when `ChangeFeed.plan` says so: the feed's search failed, hit GitHub's 1000-result cap (the feed empties and restarts from now), starts after the store's cursor (a fresh launch), or doesn't cover every outside repo the store needs. Keep that search working. The feed's outside repos only grow (callers' needs are unioned), so stores that see different readable repos don't reset each other's feed; `AuthStore.signOut` clears it.
+- A store skips an entry whose `updatedAt` it already holds, so keep `updatedAt` on what it stores. `OrgStore` still refetches open PRs, whose checks change without `updatedAt` moving.
+- Await the feed only after the store's `syncing` flag is set, or a second sync can start while it runs. The feed's cost is charged to `.changeFeed`.
+
 ## Sync settings
 - Read intervals through `SyncSettings.isOn` / `interval` / `isDue`, never fixed ages. Keys `sync.<source>.off` and `sync.<source>.interval` are stored; don't rename them.
 - Off means not fetched at all, Refresh included. Sources that can't be off (workload, harness) only space out. A page whose source is off must show `.syncOffNotice`.
@@ -33,4 +39,4 @@ paths:
 - The app has no entitlements beyond hardened runtime and isn't sandboxed (sessions run git, gh and claude as the user).
 
 ## Testing
-- `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.
+- `ChangeFeedTests` covers the feed's plan, merging, what the workload snapshot takes from it and `ChangeFeeds`' sharing of a run (with a stubbed search); `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.

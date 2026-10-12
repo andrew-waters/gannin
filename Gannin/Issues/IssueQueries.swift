@@ -15,6 +15,13 @@ extension GitHubAPI {
     }
 }
 
+extension GitHubAPI {
+    /// The issues with these node IDs, in the same shape as a search.
+    func issueRecords(ids: [String], onPage: @escaping (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }) async throws -> [IssueRecord] {
+        try await nodes(ids: ids, fields: RawIssueRecord.fields, batchSize: 15, progress: onPage) { (raw: RawIssueRecord) in raw.model }
+    }
+}
+
 private struct RawIssueRecord: Decodable {
     struct Actor: Decodable { let login: String }
     struct Repository: Decodable { let nameWithOwner: String }
@@ -52,6 +59,7 @@ private struct RawIssueRecord: Decodable {
     let title: String
     let url: URL
     let createdAt: Date
+    let updatedAt: Date?
     let closedAt: Date?
     let stateReason: String?
     let repository: Repository
@@ -122,7 +130,7 @@ private struct RawIssueRecord: Decodable {
 
     static let fields = """
         ... on Issue {
-          id number title url createdAt closedAt stateReason
+          id number title url createdAt updatedAt closedAt stateReason
           repository { nameWithOwner }
           author { login }
           assignees(first: 10) { nodes { login } }
@@ -219,7 +227,8 @@ private struct RawIssueRecord: Decodable {
                 )
             },
             mentionedInPullRequests: mentionedPullRequests(issueRepo: repository.nameWithOwner),
-            projectFields: (projectItems?.nodes ?? []).compactMap(\.value).map(\.model)
+            projectFields: (projectItems?.nodes ?? []).compactMap(\.value).map(\.model),
+            updatedAt: updatedAt
         )
     }
 

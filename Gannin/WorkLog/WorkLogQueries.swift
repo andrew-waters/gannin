@@ -24,6 +24,11 @@ extension GitHubAPI {
         return nodes.compactMap { $0.value?.model }
     }
 
+    /// The PRs with these node IDs, in the same shape as a search.
+    func workLogPullRequests(ids: [String], onPage: @escaping (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }) async throws -> [WorkLogPullRequest] {
+        try await nodes(ids: ids, fields: RawWorkLogPullRequest.fields, batchSize: 20, progress: onPage) { (raw: RawWorkLogPullRequest) in raw.model }
+    }
+
     /// Particular PRs by URL, with their commits and reviews, in one query
     /// (an issue's linked PRs, when the work log hasn't got them).
     func workLogPullRequests(urls: [URL]) async throws -> [WorkLogPullRequest] {
@@ -85,6 +90,7 @@ private struct RawWorkLogPullRequest: Decodable {
     let title: String
     let url: URL
     let createdAt: Date
+    let updatedAt: Date?
     let mergedAt: Date?
     let closedAt: Date?
     let repository: Repository
@@ -97,7 +103,7 @@ private struct RawWorkLogPullRequest: Decodable {
 
     static let fields = """
         ... on PullRequest {
-          id number title url createdAt mergedAt closedAt isDraft
+          id number title url createdAt updatedAt mergedAt closedAt isDraft
           repository { nameWithOwner }
           closingIssuesReferences(first: 5) { nodes { id number title url state repository { nameWithOwner } } }
           author { login }
@@ -130,7 +136,8 @@ private struct RawWorkLogPullRequest: Decodable {
             isDraft: isDraft,
             closingIssues: (closingIssuesReferences?.nodes ?? []).map {
                 LinkedItem(id: $0.id, number: $0.number, title: $0.title, url: $0.url, repo: $0.repository.nameWithOwner, state: $0.state)
-            }
+            },
+            updatedAt: updatedAt
         )
     }
 }

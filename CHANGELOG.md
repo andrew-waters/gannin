@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Changed
+- The workload, issue history and work log now share one search per org for what changed, which Settings › Sync › Spent lists as Change feed, instead of each searching for it, so a PR or issue that hasn't changed isn't downloaded again; each still searches for itself when that search fails or finds more than GitHub returns
 - Watching a session's pull requests asks GitHub one cheap question for all sessions and reads one in full only when something changed, while its checks are running, or every 10 minutes, which saves API budget
 - GitHub requests are now limited to 8 in flight across the app, so a Refresh can't trip GitHub's secondary rate limit; opening a PR, issue or review keeps two of those slots free so it doesn't wait behind a sync
 - Refresh no longer fetches every open issue again each time; that happens on its own interval (Settings › Sync › Every open issue) or with Full Refresh, which saves API budget

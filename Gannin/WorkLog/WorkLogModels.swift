@@ -19,6 +19,10 @@ struct WorkLogPullRequest: Codable, Hashable, Identifiable {
     var isDraft: Bool? = nil
     /// Issues the PR closes when merged, for the standup's context.
     var closingIssues: [LinkedItem] = []
+    /// When GitHub last updated it, so the change feed can skip a PR already
+    /// held at that time. Nil in records from before it was fetched, which
+    /// are fetched once when next seen changed.
+    var updatedAt: Date? = nil
 }
 
 struct WorkLogCommit: Codable, Hashable {

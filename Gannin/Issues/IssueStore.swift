@@ -74,6 +74,9 @@ final class IssueStore {
     func sync(_ org: String, windowDays: Int, force: Bool = false, refetchOpen: Bool = false) async {
         loadCached(org)
         guard let api = auth.api, !syncing.contains(org), SyncSettings.isOn(.issues) else { return }
+        // Held from here, since the change feed is awaited before the work.
+        syncing.insert(org)
+        defer { syncing.remove(org) }
         let now = Date.now
         let start = MetricsStore.coverageStart(windowDays: windowDays, now: now)
         let history = histories[org]
@@ -91,24 +94,38 @@ final class IssueStore {
         // Open issues in full every so often (see `openFetchedAt`).
         let openDue = history.map { auth.shouldFetch(.openIssues, since: $0.openFetchedAt, now: now, force: refetchOpen) } ?? true
 
+        // Changes come from the change feed when it can say; its own search
+        // (`changedSince` left set) is the fallback.
+        var searchChangedSince = changedSince
+        var feedIDs: [String]?
+        if let changedSince, let history {
+            let known = Set(knownBatches.joined())
+            let feed = await ChangeFeeds.shared.current(org: org, api: api, outside: known, cursor: changedSince)
+            if case .fetch(let entries) = Self.feedPlan(feed, cursor: changedSince, history: history, knownOutside: known) {
+                feedIDs = entries.map(\.id)
+                searchChangedSince = nil
+            }
+        }
+
         let searches = Self.plannedSearches(
             accountScope: scope, start: start, now: now, history: history,
-            changedSince: changedSince, openDue: openDue, newBatches: newBatches, knownBatches: knownBatches
+            changedSince: searchChangedSince, openDue: openDue, newBatches: newBatches, knownBatches: knownBatches
         )
-        guard !searches.isEmpty else { return }
+        guard !searches.isEmpty || feedIDs != nil else { return }
 
-        syncing.insert(org)
-        defer { syncing.remove(org) }
         let run = activity.begin(.issues, org: org)
-        run.add("issues", title: "Issues", detail: searches.count == 1 ? "1 search" : "\(searches.count) searches")
+        let searchDetail = searches.count == 1 ? "1 search" : "\(searches.count) searches"
+        run.add("issues", title: "Issues", detail: feedIDs.map { "\(searchDetail), \($0.count) from the change feed" } ?? searchDetail)
         let keyed = Dictionary(uniqueKeysWithValues: searches.enumerated().map { ("s\($0.offset)", $0.element.query) })
         let counts = try? await run.overhead({ try await api.counts(searches: keyed) })
-        if let counts { run.setTotal(counts.values.map { min($0, 1000) }.reduce(0, +), for: "issues") }
+        if let counts { run.setTotal(counts.values.map { min($0, 1000) }.reduce(0, +) + (feedIDs?.count ?? 0), for: "issues") }
 
         do {
             let queries = searches.map(\.query)
             let records = try await run.track("issues", count: \.count) { progress in
-                try await Self.fetch(queries, api: api, progress: progress)
+                var found = try await Self.fetch(queries, api: api, progress: progress)
+                if let feedIDs, !feedIDs.isEmpty { found += try await api.issueRecords(ids: feedIDs) }
+                return found
             }
 
             var updated = history ?? IssueHistory(orgLogin: org, coveredFrom: start, syncedAt: now, openFetchedAt: now, issues: [:])
@@ -208,6 +225,16 @@ final class IssueStore {
             searches.append(IssueSearch(kind: .open, query: "\(batchScope(batch)) is:open", repos: Set(batch)))
         }
         return searches
+    }
+
+    /// The issues to fetch from `feed`, or a fallback to this store's own
+    /// changes search. An issue whose `updatedAt` is already held isn't fetched.
+    static func feedPlan(_ feed: ChangeFeed?, cursor: Date, history: IssueHistory, knownOutside: Set<String>) -> ChangeFeed.Plan {
+        ChangeFeed.plan(
+            feed: feed, cursor: cursor, needing: knownOutside,
+            include: { $0.kind == .issue && (!$0.isOutside || knownOutside.contains($0.repo)) },
+            stored: { history.issues[$0]?.updatedAt }
+        )
     }
 
     /// Whether an `is:open` search's result is GitHub's 1000-result cap
