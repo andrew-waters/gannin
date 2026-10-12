@@ -911,6 +911,7 @@ struct PullRequestReviewView: View {
             }
             FlowRow(spacing: 10, alignment: .center) {
                 status(state: state, transcript: transcript, hasReview: review != nil)
+                    .frame(width: Self.statusWidth, alignment: .leading)
                 let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
                 if session.archivedAt == nil {
                     Button {
@@ -999,6 +1000,10 @@ struct PullRequestReviewView: View {
         .background(.bar)
     }
 
+    /// Every status takes this width, so the buttons beside it don't move or
+    /// re-wrap as it changes; the working label is the widest and truncates.
+    private static let statusWidth: CGFloat = 280
+
     @ViewBuilder
     private func status(state: SessionState, transcript: SessionTranscript?, hasReview: Bool) -> some View {
         if let archived = session.archivedAt {
@@ -1014,7 +1019,7 @@ struct PullRequestReviewView: View {
                 Text(transcript?.events.last.map { activity($0) } ?? "Starting")
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .frame(maxWidth: 260, alignment: .leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .foregroundStyle(.secondary)
             .font(.callout)

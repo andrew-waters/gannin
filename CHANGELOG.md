@@ -17,7 +17,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Each metrics sync fetches merged PRs from a day before the last sync to the second, rather than from the start of that day, so it downloads up to a day less
 
 ### Fixed
-- The pull request review tab's header gives the repo and PR reference its natural width, with the status and buttons on their own wrapping row below, instead of squeezing the reference into a thin column that broke mid-word
+- The pull request review tab's header gives the repo and PR reference its natural width, with the status and buttons on their own wrapping row below, instead of squeezing the reference into a thin column that broke mid-word; the status takes a fixed width, so the buttons stay put while the review loads or runs again
 - Expanding a parent issue in Issues › All no longer crashes when it's showing sub-issues; the agent queue pill and Schedule for Agent menu, on each row, didn't reliably get their environment when a row was revealed by expanding its parent, which only `NSOutlineView` builds, outside the view's normal update cycle
 - An org with more than 1000 open issues no longer loses its older open issues from Gannin when every open issue is fetched again; GitHub returns only 1000 of them, so ones it doesn't return are kept until they change
 - A harness repo with too many files for GitHub to list at once now says so, instead of indexing only some of its documents without a word
