@@ -27,6 +27,11 @@ paths:
 - A store skips an entry whose `updatedAt` it already holds, so keep `updatedAt` on what it stores. `OrgStore` still refetches open PRs, whose checks change without `updatedAt` moving.
 - Await the feed only after the store's `syncing` flag is set, or a second sync can start while it runs. The feed's cost is charged to `.changeFeed`.
 
+## Shared PR store
+- PRs live in `PullRequestStore` (core fields plus one extras slot per consumer), written through `merge` and changed through `update`, never kept in a store's own cache file. A copy beside it can drift from the one `updatedAt` is compared against.
+- A store's own file keeps its coverage (what range it has fetched), not the PRs. It must be dropped when the store holds fewer of its PRs than it saved (`MetricsHistory.storedCount`), or it would claim coverage the PRs no longer back.
+- A PR carried over from an old cache has no `updatedAt`; it is fetched again once when the feed reports it changed. Don't invent one.
+
 ## Sync settings
 - Read intervals through `SyncSettings.isOn` / `interval` / `isDue`, never fixed ages. Keys `sync.<source>.off` and `sync.<source>.interval` are stored; don't rename them.
 - Off means not fetched at all, Refresh included. Sources that can't be off (workload, harness) only space out. A page whose source is off must show `.syncOffNotice`.
@@ -39,4 +44,4 @@ paths:
 - The app has no entitlements beyond hardened runtime and isn't sandboxed (sessions run git, gh and claude as the user).
 
 ## Testing
-- `ChangeFeedTests` covers the feed's plan, merging, what the workload snapshot takes from it and `ChangeFeeds`' sharing of a run (with a stubbed search); `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.
+- `ChangeFeedTests` covers the feed's plan, merging, what the workload snapshot takes from it and `ChangeFeeds`' sharing of a run (with a stubbed search); `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests`, `PullRequestStoreTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.

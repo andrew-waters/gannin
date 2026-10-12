@@ -15,10 +15,12 @@ final class MetricsStore {
 
     private let auth: AuthStore
     private let activity: SyncActivity
+    private let pullRequestStore: PullRequestStore
 
-    init(auth: AuthStore, activity: SyncActivity) {
+    init(auth: AuthStore, activity: SyncActivity, pullRequestStore: PullRequestStore = .shared) {
         self.auth = auth
         self.activity = activity
+        self.pullRequestStore = pullRequestStore
     }
 
     func history(for org: String) -> MetricsHistory? { histories[org] }
@@ -183,11 +185,15 @@ final class MetricsStore {
 
     static var cacheDirectory: URL { cache.directory }
 
+    /// Also empties the shared PR store: the metrics history is rebuilt from
+    /// it, so a history kept after its PRs are gone would claim a coverage
+    /// it no longer has.
     func clear() {
         histories = [:]
         errors = [:]
         activity.clear()
         Self.cache.clear()
+        pullRequestStore.clear()
     }
 
     // MARK: Disk cache
@@ -195,15 +201,35 @@ final class MetricsStore {
     private static let cache = OrgJSONCache(folder: "Metrics")
 
     private func loadCached(_ org: String) {
-        guard histories[org] == nil,
-              let history = Self.cache.load(MetricsHistory.self, org: org),
+        guard histories[org] == nil else { return }
+        // A history from before PRs were kept in the shared store brings its
+        // PRs along, so the upgrade doesn't fetch them again.
+        if let legacy = Self.cache.load(MetricsHistory.Legacy.self, org: org), legacy.formatVersion == MetricsHistory.Legacy.format,
+           var history = Self.cache.load(MetricsHistory.self, org: org) {
+            pullRequestStore.merge(legacy.pullRequests.values.map { StoredPullRequest(metrics: $0) }, org: org)
+            history.formatVersion = MetricsHistory.currentFormat
+            history.pullRequests = legacy.pullRequests
+            save(history)
+            histories[org] = history
+            return
+        }
+        guard var history = Self.cache.load(MetricsHistory.self, org: org),
               history.formatVersion == MetricsHistory.currentFormat else {
             return
         }
+        history.pullRequests = Dictionary(uniqueKeysWithValues: pullRequestStore.pullRequests(org: org).values.compactMap { stored in
+            stored.metricPullRequest.map { ($0.id, $0) }
+        })
+        guard history.pullRequests.count >= (history.storedCount ?? 0) else { return }
         histories[org] = history
     }
 
+    /// The PRs go to the store first: a history saved without them would
+    /// claim a coverage the store doesn't have.
     private func save(_ history: MetricsHistory) {
-        Self.cache.save(history, org: history.orgLogin)
+        pullRequestStore.merge(history.pullRequests.values.map { StoredPullRequest(metrics: $0) }, org: history.orgLogin)
+        var saved = history
+        saved.storedCount = history.pullRequests.count
+        Self.cache.save(saved, org: history.orgLogin)
     }
 }

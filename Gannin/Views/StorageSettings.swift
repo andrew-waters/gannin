@@ -29,6 +29,7 @@ struct StorageSettings: View {
     enum Cache: String, CaseIterable, Identifiable {
         case snapshots = "Workload snapshots"
         case metrics = "Merged PR history"
+        case pullRequests = "Pull requests"
         case issues = "Issue history"
         case issueText = "Issue search index"
         case workLog = "Work log"
@@ -44,6 +45,7 @@ struct StorageSettings: View {
             switch self {
             case .snapshots: "Members, teams, open and recently merged PRs, and open issues, per org"
             case .metrics: "Merged PRs with their review timings, behind the delivery and people stats"
+            case .pullRequests: "Every PR fetched, kept once for the pages that read it, starting with the merged PR history"
             case .issues: "Issues with their board history, behind the issue metrics and investments"
             case .issueText: "Issues' descriptions and recent comments, for searching them"
             case .workLog: "PRs with their commits and reviews, behind Activity"
@@ -59,6 +61,7 @@ struct StorageSettings: View {
             switch self {
             case .snapshots: OrgStore.cacheDirectory
             case .metrics: MetricsStore.cacheDirectory
+            case .pullRequests: PullRequestStore.shared.cacheDirectory
             case .issues: IssueStore.cacheDirectory
             case .issueText: IssueTextIndex.file
             case .workLog: WorkLogStore.cacheDirectory
@@ -195,6 +198,7 @@ struct StorageSettings: View {
         switch cache {
         case .snapshots: orgs.clearSnapshots()
         case .metrics: metrics.clear()
+        case .pullRequests: PullRequestStore.shared.clear()
         case .issues: issues.clear()
         case .issueText: Task { await IssueTextIndex.shared.clear() }
         case .workLog: workLog.clear()

@@ -24,6 +24,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Watching a session's pull requests asks GitHub one cheap question for all sessions and reads one in full only when something changed, while its checks are running, or every 10 minutes, which saves API budget
 - GitHub requests are now limited to 8 in flight across the app, so a Refresh can't trip GitHub's secondary rate limit; opening a PR, issue or review keeps two of those slots free so it doesn't wait behind a sync
 - Refresh no longer fetches every open issue again each time; that happens on its own interval (Settings › Sync › Every open issue) or with Full Refresh, which saves API budget
+- Merged PRs are now kept in a shared PR store (Settings › Storage › Pull requests) that the merged PR history reads from, the first step to the workload and work log sharing it, so a PR isn't downloaded and kept once for each page; your existing merged PR history moves into it on upgrade without being fetched again, and clearing Merged PR history or Pull requests in Settings › Storage clears both
 - Each metrics sync fetches merged PRs from a day before the last sync to the second, rather than from the start of that day, so it downloads up to a day less
 
 ### Fixed

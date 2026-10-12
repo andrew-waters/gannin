@@ -149,6 +149,7 @@ private struct RawMetricPullRequest: Decodable {
     let url: URL
     let createdAt: Date
     let mergedAt: Date
+    let updatedAt: Date?
     let additions: Int
     let deletions: Int
     let changedFiles: Int?
@@ -161,7 +162,7 @@ private struct RawMetricPullRequest: Decodable {
 
     static let fields = """
         ... on PullRequest {
-          id number title url createdAt mergedAt additions deletions changedFiles
+          id number title url createdAt mergedAt updatedAt additions deletions changedFiles
           repository { nameWithOwner }
           author { __typename login avatarUrl }
           commits(first: 1) { nodes { commit { authoredDate } } }
@@ -222,7 +223,8 @@ private struct RawMetricPullRequest: Decodable {
             reviewRequests: requests,
             additions: additions,
             deletions: deletions,
-            changedFiles: changedFiles
+            changedFiles: changedFiles,
+            updatedAt: updatedAt
         )
     }
 }
