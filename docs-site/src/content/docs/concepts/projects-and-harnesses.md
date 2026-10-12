@@ -14,7 +14,7 @@ A project is the unit a window works in: a name, the repos it covers, and the bo
 Every project has a **harness**: a GitHub repo beside the code that holds what the team decides and writes down about it.
 
 - **Team settings**, as files under `.gannin/`: the issue workflow, investments, goals, the scorecard and more ([where things are kept](/docs/concepts/where-things-are-kept/) lists them).
-- **Documents**: plans, requirements, findings, research, and the `STANDARDS.md` they follow. They're listed under Harness in the sidebar.
+- **Documents**: plans, requirements, decisions, findings, research, and the `STANDARDS.md` they follow. They're listed under Harness in the sidebar. Decisions, in `decisions/`, record what the team decided and why, and Harness › Onboarding maps the decisions, requirements and plans by area for someone new to the project ([Onboarding and decisions](/docs/guides/onboarding-and-decisions/)).
 - **Instructions for agents**: `skills/`, `prompts/` and `learnings/` (rules and reasons people gave in review).
 - **Records**: what each agent session and review did, under `sessions/` and `.gannin/reviews/`, and each Design and Refine session under `refines/`, with its screenshots, listed under Harness › Refines.
 - **Where sessions run**: Claude Code works in a checkout of the harness, with each repo it touches cloned under `projects/` and each issue's worktrees under `.worktrees/`. Both are kept out of the harness's own git.
