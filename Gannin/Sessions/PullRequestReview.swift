@@ -882,104 +882,118 @@ struct PullRequestReviewView: View {
     private func header(review: SessionTranscript.ReviewResult?, transcript: SessionTranscript?) -> some View {
         let state = sessions.state(session.id)
         let draft = sessions.reviewDrafts[session.id] ?? ReviewDraft()
-        return VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Link(destination: reference.url) {
-                    Text(reference.title)
-                        .font(.title3.weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
-                .help("Open the pull request on GitHub")
-                FlowRow(spacing: 8) {
-                    Link(destination: reference.url) {
-                        Label(reference.repo + "#" + String(reference.number), systemImage: "arrow.up.right.square")
-                    }
-                    .fixedSize()
-                    .help("Open the pull request on GitHub")
-                    if let pullRequest {
-                        if let author = pullRequest.author { Text("by \(author)") }
-                        Text("+\(pullRequest.additions)").foregroundStyle(ChartPalette.good)
-                        Text("-\(pullRequest.deletions)").foregroundStyle(ChartPalette.critical)
-                        Text("\(pullRequest.files.count) files")
-                        if pullRequest.state != "open" { Text(pullRequest.state.capitalized).foregroundStyle(.purple) }
-                    }
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
+        let titleBlock = VStack(alignment: .leading, spacing: 3) {
+            Link(destination: reference.url) {
+                Text(reference.title)
+                    .font(.title3.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
             }
-            FlowRow(spacing: 10, alignment: .center) {
-                status(state: state, transcript: transcript, hasReview: review != nil)
-                    .frame(width: Self.statusWidth, alignment: .leading)
-                let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
-                if session.archivedAt == nil {
-                    Button {
-                        conversation = !showsConversation
-                    } label: {
-                        Label("Conversation", systemImage: showsConversation ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
-                    }
-                    .help(showsConversation ? "Hide the conversation with the reviewer" : "Ask the reviewer more (resumes claude)")
-                }
+            .help("Open the pull request on GitHub")
+            FlowRow(spacing: 8) {
                 Link(destination: reference.url) {
-                    Label("Open on GitHub", systemImage: "arrow.up.right.square")
+                    Label(reference.repo + "#" + String(reference.number), systemImage: "arrow.up.right.square")
                 }
+                .fixedSize()
+                .help("Open the pull request on GitHub")
+                if let pullRequest {
+                    if let author = pullRequest.author { Text("by \(author)") }
+                    Text("+\(pullRequest.additions)").foregroundStyle(ChartPalette.good)
+                    Text("-\(pullRequest.deletions)").foregroundStyle(ChartPalette.critical)
+                    Text("\(pullRequest.files.count) files")
+                    if pullRequest.state != "open" { Text(pullRequest.state.capitalized).foregroundStyle(.purple) }
+                }
+            }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+        }
+        let controls = FlowRow(spacing: 10, alignment: .center) {
+            status(state: state, transcript: transcript, hasReview: review != nil)
+                .frame(width: Self.statusWidth, alignment: .leading)
+            let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
+            if session.archivedAt == nil {
+                Button {
+                    conversation = !showsConversation
+                } label: {
+                    Label("Conversation", systemImage: showsConversation ? "bubble.left.and.bubble.right.fill" : "bubble.left.and.bubble.right")
+                }
+                .help(showsConversation ? "Hide the conversation with the reviewer" : "Ask the reviewer more (resumes claude)")
+            }
+            Link(destination: reference.url) {
+                Label("Open on GitHub", systemImage: "arrow.up.right.square")
+            }
+            .buttonStyle(.bordered)
+            ExplainPullRequestButton(reference: reference, walkthrough: review?.walkthrough ?? [])
                 .buttonStyle(.bordered)
-                ExplainPullRequestButton(reference: reference, walkthrough: review?.walkthrough ?? [])
-                    .buttonStyle(.bordered)
-                Button("Review Again") {
-                    reviewingAgain = true
-                    Task {
-                        defer { reviewingAgain = false }
-                        // The diff may cover more of the repo than it did
-                        // when the review started, so the learnings fixed
-                        // into its first prompt may now fall short.
-                        let learnings = await sessions.reviewLearnings(org: reference.org, harnessRepo: session.harnessRepo, repo: reference.repo, number: reference.number)
-                        let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
-                        sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block, listing in `resolved` the threads now dealt with.\(learned)", to: session.id)
-                        // It's looking at what changed, so the watch needn't.
-                        sessions.update(session.id) { session in
-                            session.watch?.hasNewCommits = false
-                            session.watch?.newComments = 0
-                            session.watch?.changedAt = nil
-                        }
-                        await load()
+            Button("Review Again") {
+                reviewingAgain = true
+                Task {
+                    defer { reviewingAgain = false }
+                    // The diff may cover more of the repo than it did
+                    // when the review started, so the learnings fixed
+                    // into its first prompt may now fall short.
+                    let learnings = await sessions.reviewLearnings(org: reference.org, harnessRepo: session.harnessRepo, repo: reference.repo, number: reference.number)
+                    let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
+                    sessions.submit("The PR may have changed. Fetch it again, review it afresh, and end the same way with the JSON block, listing in `resolved` the threads now dealt with.\(learned)", to: session.id)
+                    // It's looking at what changed, so the watch needn't.
+                    sessions.update(session.id) { session in
+                        session.watch?.hasNewCommits = false
+                        session.watch?.newComments = 0
+                        session.watch?.changedAt = nil
                     }
+                    await load()
                 }
-                .disabled(!sessions.isRunning(session.id) || state == .working || reviewingAgain)
-                .help("Ask claude to review the PR again, as it is now")
-                if let posted = draft.posted {
-                    Link(destination: posted) {
-                        let label = draft.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
-                        Label(draft.postedAt.map { "\(label.text) \($0.formatted(.relative(presentation: .named)))" } ?? label.text, systemImage: label.symbol)
-                            .foregroundStyle(label.color)
-                    }
-                    .help("Open the review on GitHub")
+            }
+            .disabled(!sessions.isRunning(session.id) || state == .working || reviewingAgain)
+            .help("Ask claude to review the PR again, as it is now")
+            if let posted = draft.posted {
+                Link(destination: posted) {
+                    let label = draft.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
+                    Label(draft.postedAt.map { "\(label.text) \($0.formatted(.relative(presentation: .named)))" } ?? label.text, systemImage: label.symbol)
+                        .foregroundStyle(label.color)
                 }
-                // Kept in the row while the first review runs, so it appearing
-                // doesn't reflow the buttons.
-                Toggle("Watch for changes", isOn: Binding(
-                    get: { sessions.sessions[session.id]?.watch?.isOn ?? false },
-                    set: { sessions.setWatching(session.id, $0) }
-                ))
-                .checkboxToggle()
-                .help("Review it again by itself when new commits are pushed or someone comments, until it's merged or closed")
-                .opacity(review == nil ? 0 : 1)
-                .disabled(review == nil)
-                .accessibilityHidden(review == nil)
-                if session.archivedAt != nil {
-                    Button("Resume") {
-                        sessions.resumeReview(session.id)
-                        conversation = true
-                    }
-                    .help("Take it out of the history and pick the conversation back up")
-                } else {
-                    Button("Finish") { confirmingFinish = true }
-                        .help("End the reviewer and keep the review in your history")
+                .help("Open the review on GitHub")
+            }
+            // Kept in the row while the first review runs, so it appearing
+            // doesn't reflow the buttons.
+            Toggle("Watch for changes", isOn: Binding(
+                get: { sessions.sessions[session.id]?.watch?.isOn ?? false },
+                set: { sessions.setWatching(session.id, $0) }
+            ))
+            .checkboxToggle()
+            .help("Review it again by itself when new commits are pushed or someone comments, until it's merged or closed")
+            .opacity(review == nil ? 0 : 1)
+            .disabled(review == nil)
+            .accessibilityHidden(review == nil)
+            if session.archivedAt != nil {
+                Button("Resume") {
+                    sessions.resumeReview(session.id)
+                    conversation = true
                 }
-                Button("Post Review") { posting = true }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(pullRequest == nil || (review == nil && draft.comments.isEmpty))
+                .help("Take it out of the history and pick the conversation back up")
+            } else {
+                Button("Finish") { confirmingFinish = true }
+                    .help("End the reviewer and keep the review in your history")
+            }
+            Button("Post Review") { posting = true }
+                .buttonStyle(.borderedProminent)
+                .disabled(pullRequest == nil || (review == nil && draft.comments.isEmpty))
+        }
+        return VStack(alignment: .leading, spacing: 10) {
+            // Side by side when the controls fit on one line beside the
+            // title, else stacked. The title is capped so a long one doesn't
+            // push the controls below it on every window.
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .top, spacing: 16) {
+                    titleBlock.frame(maxWidth: Self.titleWidth, alignment: .leading)
+                    Spacer(minLength: 0)
+                    controls
+                }
+                VStack(alignment: .leading, spacing: 10) {
+                    titleBlock
+                    controls
+                }
             }
             HStack(spacing: 10) {
                 if let review { verdictPill(review.verdict) }
@@ -1007,6 +1021,8 @@ struct PullRequestReviewView: View {
     /// Every status takes this width, so the buttons beside it don't move or
     /// re-wrap as it changes; the working label is the widest and truncates.
     private static let statusWidth: CGFloat = 280
+
+    private static let titleWidth: CGFloat = 360
 
     @ViewBuilder
     private func status(state: SessionState, transcript: SessionTranscript?, hasReview: Bool) -> some View {
