@@ -322,6 +322,27 @@ extension SessionStore {
         }
     }
 
+    /// What the author has seen decides the wording: a review that was never
+    /// posted isn't one they can be told has "not changed".
+    static func lookAgainPrompt(_ pr: PullRequestReference, because reasons: String, wasPosted: Bool, learned: String) -> String {
+        let earlier = wasPosted
+            ? """
+                Answer what the comments ask of you. Leave out findings from your earlier review that still stand unchanged, and say in the \
+                summary which of them are now dealt with, and list their threads in `resolved`.
+                """
+            : """
+                Your earlier review was never posted, so the author hasn't seen it. Review the PR as it is now as if for the first time: keep \
+                the findings that still stand, answer what the comments ask of you, and write a summary that stands alone. Don't refer to \
+                your earlier review or say that nothing has changed.
+                """
+        return """
+            Since your last review of \(pr.repo)#\(pr.number), \(reasons). Fetch the PR again with its comments and review it as it is now. \
+            \(earlier)\(learned)
+
+            End the same way with the fenced JSON block.
+            """
+    }
+
     /// Asks the reviewer to look again: now if it's waiting, else once
     /// it's started (resumed from the history if it was finished).
     private func reviewAgain(_ id: UUID, because reasons: String) async -> Bool {
@@ -331,13 +352,8 @@ extension SessionStore {
         // what covers it.
         let learnings = await reviewLearnings(org: pr.org, harnessRepo: session.harnessRepo, repo: pr.repo, number: pr.number)
         let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
-        let prompt = """
-            Since your last review of \(pr.repo)#\(pr.number), \(reasons). Fetch the PR again with its comments and review it as it is now. \
-            Answer what the comments ask of you. Leave out findings from your earlier review that still stand unchanged, and say in the \
-            summary which of them are now dealt with, and list their threads in `resolved`.\(learned)
-
-            End the same way with the fenced JSON block.
-            """
+        let wasPosted = (reviewDrafts[id]?.posted ?? session.reviewDraft?.posted) != nil
+        let prompt = SessionStore.lookAgainPrompt(pr, because: reasons, wasPosted: wasPosted, learned: learned)
         if isRunning(id) {
             guard state(id) == .idle else {
                 // Claude has exited and left its shell, where a paste would go to bash.
