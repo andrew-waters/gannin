@@ -282,7 +282,10 @@ struct BoardColumnsView: View {
 
 /// Lays children out left to right, wrapping onto new lines.
 struct FlowRow: Layout {
+    enum LineAlignment { case top, center }
+
     var spacing: CGFloat = 4
+    var alignment: LineAlignment = .top
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? .infinity
@@ -302,17 +305,28 @@ struct FlowRow: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX, y = bounds.minY, lineHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
+        // Centring needs each line's height before its first item is placed.
+        var lines: [[(index: Int, size: CGSize)]] = [[]]
+        var x = bounds.minX
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
             if x > bounds.minX && x + size.width > bounds.maxX {
-                y += lineHeight + spacing
+                lines.append([])
                 x = bounds.minX
-                lineHeight = 0
             }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            lines[lines.count - 1].append((index, size))
             x += size.width + spacing
-            lineHeight = max(lineHeight, size.height)
+        }
+        var y = bounds.minY
+        for line in lines {
+            let lineHeight = line.map(\.size.height).max() ?? 0
+            x = bounds.minX
+            for (index, size) in line {
+                let offset = alignment == .center ? (lineHeight - size.height) / 2 : 0
+                subviews[index].place(at: CGPoint(x: x, y: y + offset), proposal: ProposedViewSize(size))
+                x += size.width + spacing
+            }
+            y += lineHeight + spacing
         }
     }
 }
