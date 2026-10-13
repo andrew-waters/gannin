@@ -162,8 +162,10 @@ final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsD
     /// it asserts we're already on it, and traps if the queue ever stops being `.main`. Kept synchronous so
     /// `reported` is checked and set before the next frame's call.
     nonisolated func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        // The metadata objects aren't Sendable, so only the string leaves this method.
+        guard let text = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
         MainActor.assumeIsolated {
-            guard !reported, let text = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
+            guard !reported else { return }
             reported = true
             onCode?(text)
         }
