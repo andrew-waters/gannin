@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Added
+- The Claude Code window's tab bar shows a divider between your work tabs and your review tabs when both are open
+
 ## [0.0.3] - 2026-10-13
 
 ### Added

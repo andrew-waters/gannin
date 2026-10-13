@@ -160,15 +160,12 @@ private struct SessionTabBar: View {
         HStack(spacing: 0) {
             ScrollView(.horizontal) {
                 HStack(spacing: 0) {
-                    ForEach(sessions.tabs, id: \.self) { id in
-                        if let session = sessions.sessions[id] {
-                            SessionTabItem(session: session, isSelected: sessions.selectedTab.map(sessions.tabOwner) == id && !sessions.showingOverview)
-                            Divider()
-                        } else if let draft = sessions.planningDrafts[id] {
-                            DraftTabItem(id: id, draft: draft, isSelected: sessions.selectedTab == id && !sessions.showingOverview)
-                            Divider()
-                        }
+                    let groups = sessions.tabGroups
+                    tabs(groups.work)
+                    if !groups.work.isEmpty && !groups.reviews.isEmpty {
+                        TabGroupDivider()
                     }
+                    tabs(groups.reviews)
                 }
             }
             .scrollIndicators(.never)
@@ -189,6 +186,19 @@ private struct SessionTabBar: View {
         // Lighter than the window, with the selected tab cut from the page
         // beneath it.
         .background(SessionTabColors.bar)
+    }
+
+    @ViewBuilder
+    private func tabs(_ ids: [UUID]) -> some View {
+        ForEach(ids, id: \.self) { id in
+            if let session = sessions.sessions[id] {
+                SessionTabItem(session: session, isSelected: sessions.selectedTab.map(sessions.tabOwner) == id && !sessions.showingOverview)
+                Divider()
+            } else if let draft = sessions.planningDrafts[id] {
+                DraftTabItem(id: id, draft: draft, isSelected: sessions.selectedTab == id && !sessions.showingOverview)
+                Divider()
+            }
+        }
     }
 
     /// Jumps to the session waiting on you longest.
@@ -222,6 +232,16 @@ private struct SessionTabBar: View {
         .popover(isPresented: $showingAdd, arrowEdge: .bottom) {
             NewSessionPopover { showingAdd = false }
         }
+    }
+}
+
+/// Between the work tabs and the review tabs: a gap and a heavier rule than
+/// the hairline after each tab.
+private struct TabGroupDivider: View {
+    var body: some View {
+        Color.separatorLine
+            .frame(width: 2, height: 32)
+            .padding(.horizontal, 8)
     }
 }
 
