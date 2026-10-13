@@ -1332,16 +1332,17 @@ final class SessionStore {
 
     /// `moreToRead`: the read filled its chunk, so the file goes on. A
     /// review result found part-way through a long transcript can be an
-    /// earlier round's, which mustn't count as a new one.
+    /// earlier round's, so it's left until the last chunk: replacing the
+    /// kept result with it and back would count as two new results.
     private func store(_ reader: TranscriptReader, for id: UUID, moreToRead: Bool) {
         readers[id] = reader
         var summary = reader.summary
         if let limit = contextWindows[id] { summary.contextLimit = limit }
         if transcripts[id] != summary { transcripts[id] = summary }
         // A review's result is kept with it, for the history.
-        if sessions[id]?.isPullRequestReview == true, let review = reader.summary.review, sessions[id]?.reviewResult != review {
+        if sessions[id]?.isPullRequestReview == true, !moreToRead, let review = reader.summary.review, sessions[id]?.reviewResult != review {
             sessions[id]?.reviewResult = review
-            if !moreToRead { reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now }
+            reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
             save()
             reviewFinished(id)
         }
