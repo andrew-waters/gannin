@@ -22,8 +22,8 @@ The one person signed in to Gannin on the Mac, with their own iPhone. No sharing
 
 ## High-level requirements
 
-- **HLR1. Pair once, trust explicitly.** The phone is paired with one Mac by a code shown on the Mac
-  (QR or typed), confirmed on both. A paired phone can be listed and revoked in Settings. An unpaired
+- **HLR1. Pair once, trust explicitly.** The phone is paired with one Mac by a one-time secret shown on the Mac
+  (a QR code, or a 26-character code to type), confirmed on both. A paired phone can be listed and revoked in Settings. An unpaired
   device can read and do nothing.
 - **HLR2. See what's waiting.** The phone lists the Mac's sessions by state, with the ones that
   need a decision first, and shows what is being asked, with the context claude gave.
@@ -52,8 +52,8 @@ The one person signed in to Gannin on the Mac, with their own iPhone. No sharing
 ## Acceptance criteria
 
 - [ ] A phone that has never been paired is refused on every request except the pairing handshake.
-- [ ] Pairing needs a code read from the Mac within a minute and is confirmed on the Mac; a wrong
-      code or a second attempt after one failure is refused.
+- [ ] Pairing needs the secret shown on the Mac, used within two minutes and confirmed on the Mac;
+      a wrong secret spends it, so a second attempt is refused.
 - [ ] Revoking a phone on the Mac closes its open connection and is checked on every request.
 - [ ] The sessions list shows state, kind, reference and title, and updates within about two
       seconds of the Mac's own view while connected.
