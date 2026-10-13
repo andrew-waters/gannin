@@ -26,6 +26,7 @@ struct GanninApp: App {
     @State private var sessions: SessionStore
     @State private var routines: RoutineStore
     @State private var scheduler: RoutineScheduler
+    @State private var remote: RemoteHost
     @NSApplicationDelegateAdaptor private var appDelegate: GanninAppDelegate
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
 
@@ -217,6 +218,10 @@ struct GanninApp: App {
             return await sessions.startQueuedReview(review, configs: orgConfigs, requested: requested)
         }
         if !demo { scheduler.begin() }
+        // iPhones that can see and answer sessions, when Settings › Remote has it on.
+        let remote = RemoteHost(store: sessions)
+        _remote = State(initialValue: remote)
+        if !demo { remote.apply() }
         TabMenuRename.shared.install()
     }
 
@@ -412,6 +417,7 @@ struct GanninApp: App {
                 .environment(hidden)
                 .environment(database)
                 .environment(sessions)
+                .environment(remote)
         }
     }
 }
