@@ -206,23 +206,32 @@ Pairing (after the real handshake exists):
 - [ ] Anything that can change `remote.enabled`, the name or the phones list without the user is a
   local process already able to do worse; confirm nothing reads them from an untrusted place.
 
-### Pinning fingerprint (check before the TLS work)
+### Pinning fingerprint (check as the TLS work lands)
 
-- [ ] `SecKeyCopyExternalRepresentation` of a P-256 public key is 65 bytes starting `04`: the X9.63
-  point, not SPKI. (Apple's documentation says so; confirm on a device.)
-- [ ] `P256.Signing.PublicKey(x963Representation:).derRepresentation` is a 91-byte SPKI with the
-  P-256 algorithm identifier. Only a third-party guide says so; confirm in code.
-- [ ] SHA-256 of that SPKI equals `openssl pkey -pubin -in key.pem -outform DER | openssl dgst -sha256`
-  for the same key, so a fingerprint can be cross-checked from the command line.
-- [ ] A certificate regenerated over the same key gives the same fingerprint; a new key gives a different one.
-- [ ] A software key and a Secure Enclave key both give a fingerprint (the SE private key isn't
-  exportable, its public key is).
-- [ ] Which API reads the peer's key in `sec_protocol_options_set_verify_block`
-  (`sec_protocol_metadata_copy_peer_public_key`, or `sec_trust_copy_ref` then `SecTrustCopyKey`) on
-  iOS 26 and macOS 26, and that neither is deprecated.
-- [ ] A custom verify block replaces system trust evaluation: confirm a wrong key is refused and the
-  right one accepted, on both sides, on TLS 1.3, with the Mac requiring a client certificate.
-- [ ] The verify block's completion is called exactly once, on every path.
+A reviewer researched this (see the plan's pinning decision) and ran `openssl` on a P-256 key. What
+follows is what's still to be proved in this code, on a device.
+
+- [ ] The key read in the verify block via `SecTrustCopyKey(sec_trust_copy_ref(...))` exports as 65
+  bytes starting `04`. A key that doesn't is refused.
+- [ ] `P256.Signing.PublicKey(x963Representation:).derRepresentation` is 91 bytes starting
+  `3059301306072a8648ce3d020106082a8648ce3d030107034200`, **on Apple's CryptoKit** (the reviewer
+  confirmed it in swift-crypto's source, not in CryptoKit's, which is closed).
+- [ ] SHA-256 of it equals `openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256`
+  for the certificate the device presents (`openssl s_client` against the live listener).
+- [ ] A certificate regenerated over the same key gives the same fingerprint; a new key a different one.
+- [ ] A software key and a Secure Enclave key both give a fingerprint (an SE public key is a
+  `P256.Signing.PublicKey`).
+- [ ] The verify block is idempotent: run twice on one connection it gives the same answer, and its
+  completion is called exactly once each time, on every path, including a missing key.
+- [ ] A wrong key is refused and the right one accepted, on both sides, on TLS 1.3. No system trust
+  evaluation runs.
+- [ ] The Mac asks for a client certificate (`sec_protocol_options_set_peer_authentication_required(true)`);
+  without it, an unpaired phone is never asked for one. Both sides set a local identity.
+- [ ] A peer that presents the right certificate but doesn't hold its private key fails the handshake
+  (the reviewer couldn't confirm from Apple's source that this precedes the verify block): try a
+  replayed certificate with another key.
+- [ ] If swift-certificates is used, the fingerprint is not taken from `subjectPublicKeyInfoBytes`.
+- [ ] `sec_protocol_metadata_copy_peer_public_key` and `SecTrustCopyCertificateChain` aren't used in the block.
 
 ## 8. Docs
 
