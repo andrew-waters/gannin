@@ -31,6 +31,7 @@ export default defineConfig({
         { label: 'Claude Code', items: [{ autogenerate: { directory: 'agents' } }] },
         { label: 'Concepts', items: [{ autogenerate: { directory: 'concepts' } }] },
         { label: 'Ways to run sessions', items: [{ autogenerate: { directory: 'sessions' } }] },
+        { label: 'Remote control', items: [{ autogenerate: { directory: 'remote' } }] },
         {
           label: 'Settings reference',
           items: [

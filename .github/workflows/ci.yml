@@ -110,6 +110,18 @@ jobs:
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO
 
+      - name: Build the iPhone app
+        run: |
+          xcodebuild build \
+            -project Gannin.xcodeproj \
+            -scheme GanninPhone \
+            -destination 'generic/platform=iOS Simulator' \
+            -clonedSourcePackagesDirPath .spm-cache \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
       # The unit tests (GanninTests), run in the app as their host.
       - name: Run the tests
         run: |

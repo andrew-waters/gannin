@@ -14,15 +14,17 @@ struct RemoteSessionMirror {
     /// Sessions waiting on you first, then working, then the rest, newest activity first.
     func sessions() -> [RemoteSession] {
         store.sessions.values
-            .map { (session: $0, mirrored: remoteSession($0)) }
+            .map { (session: $0, mirrored: remoteSession($0), active: lastActive($0)) }
             .sorted { lhs, rhs in
                 let (l, r) = (Self.rank(lhs.mirrored.state), Self.rank(rhs.mirrored.state))
-                if l != r { return l < r }
-                return store.transcripts[lhs.session.id]?.lastActivity ?? lhs.session.createdAt
-                    > store.transcripts[rhs.session.id]?.lastActivity ?? rhs.session.createdAt
+                return l == r ? lhs.active > rhs.active : l < r
             }
             .prefix(Self.maxSessions)
             .map(\.mirrored)
+    }
+
+    private func lastActive(_ session: CodeSession) -> Date {
+        store.transcripts[session.id]?.lastActivity ?? session.createdAt
     }
 
     func remoteSession(_ session: CodeSession) -> RemoteSession {

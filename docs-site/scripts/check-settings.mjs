@@ -23,6 +23,7 @@ const panes = [
   ['Gannin/Sessions/SessionOverview.swift', ['SessionPromptSettingsSection'], ['app/general']],
   ['Gannin/Views/SyncSettingsView.swift', null, ['app/sync']],
   ['Gannin/Sandbox/SandboxSettings.swift', ['SandboxSettingsSection', 'RemoteMachinesSection'], ['app/sandbox']],
+  ['Gannin/Remote/RemoteSettingsView.swift', null, ['app/remote']],
   ['Gannin/Views/StorageSettings.swift', null, ['app/storage']],
   ['Gannin/Views/OrgSettingsView.swift', null, ['org/repositories', 'org/people', 'org/hidden']],
   ['Gannin/Workload/RepoProjects.swift', ['ProjectsSettingsSection'], ['org/projects']],

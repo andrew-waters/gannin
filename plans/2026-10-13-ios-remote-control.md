@@ -63,7 +63,7 @@ requirement keeps it that way.
   the wire types (`Codable`, versioned, length-prefixed JSON frames), pairing, and framing, built
   for macOS and iOS. The Mac host (`Gannin/Remote/`) and the iOS app depend on it. The protocol
   has an explicit version so an old phone and a new Mac say so rather than misparse.
-- **iOS app is a second target in `project.yml`**, `GanninRemote` (bundle `dev.andon.gannin.remote`),
+- **iOS app is a second target in `project.yml`**, `GanninPhone` (the shared package's module is already `GanninRemote`; bundle `dev.andon.gannin.remote`, display name Gannin Remote),
   SwiftUI, iOS 26 to match the Mac's floor. Same team, separate scheme, built by `ci.yml`
   (compile only; no TestFlight pipeline in v1).
 - **Alerts without push.** A foreground phone shows a banner and haptic on a new Needs you; a
@@ -137,25 +137,28 @@ requirement keeps it that way.
 - [ ] T1. Create the issue in the project and link it here and in the requirement. Satisfies: all.
 - [x] T2. `Packages/GanninRemote`: wire types, framing, version negotiation, unit tests for
       encode/decode, oversize frames and unknown versions. Satisfies: HLR5, HLR6.
-- [ ] T3. Pairing and keys: secret, proofs and window (done, in the package, with tests); keychain
-      identities, pinned mutual TLS, the handshake itself, tests with an in-process loopback for
+- [ ] T3. Pairing and keys: secret, proofs and window (done, in the package, with tests). Left:
+      keychain identities, pinned mutual TLS (the `RemoteTransportSecurity` and
+      `ClientTransportSecurity` seams), the pairing handshake (`PairingHandshake`), the Mac's
+      "Pair Alex's iPhone?" confirmation, tests with an in-process loopback for
       success, wrong code, expired code, second attempt, revoked phone.
       Satisfies: HLR1.
-- [ ] T4. `RemoteSessionMirror` and diff stream over `SessionStore`, tested against fixture
-      sessions in each `SessionState`. Satisfies: HLR2.
+- [x] T4. `RemoteSessionMirror` and the diff stream over `SessionStore` (written; the diff and
+      connection are tested, the mirror itself has no test yet: it needs a real `SessionStore`
+      with fixtures for each `SessionState`). Satisfies: HLR2.
 - [x] T5. `RemoteIntentHandler`: answer, choose, deny, prompt, interrupt, setMode, with
       `promptGone` and the typed refusals; tests with a fake store boundary. Satisfies: HLR3,
       HLR4, HLR5.
-- [ ] T6. `RemoteHost` and Bonjour advertising, started from `GanninApp`; Settings › Remote with
+- [x] T6. `RemoteHost` and Bonjour advertising, started from `GanninApp`; Settings › Remote with
       Pair a Phone and Revoke; `check-settings.mjs` pane map. Satisfies: HLR1, HLR6.
-- [ ] T7. iOS target in `project.yml`, `ci.yml` build step, pairing, a list of paired Macs with a
+- [x] T7. iOS target in `project.yml`, `ci.yml` build step, pairing, a list of paired Macs with a
       switcher, and the sessions screens. Satisfies:
       HLR1, HLR2.
-- [ ] T8. Session screen: question and permission cards, prompt box, interrupt, mode, Face ID gate,
+- [x] T8. Session screen: question and permission cards, prompt box, interrupt, mode, Face ID gate,
       reconnection. Satisfies: HLR3, HLR4.
-- [ ] T9. Docs page `remote/ios.md`, Settings reference entry, CHANGELOG line, the app's
+- [x] T9. Docs page `remote/iphone.md`, Settings reference entry, CHANGELOG line, the app's
       background limitation stated. Satisfies: docs criterion.
-- [ ] T10. Manual pass on a real phone and Mac: pair, approve, deny, answer, stale prompt, revoke,
+- [ ] T10. Manual pass (`docs/ios-remote-control-testing.md` is its checklist), on a real phone and Mac: pair, approve, deny, answer, stale prompt, revoke,
       Mac sleep, Wi-Fi change.
 
 ## Verification
@@ -175,6 +178,14 @@ requirement keeps it that way.
   only, and Later lifts it.
 - **Protocol drift** between a Mac and a stale phone build is handled by the version field and the
   app saying which side to update.
+
+## Not built yet
+
+- TLS, key pinning and the pairing handshake (T3), so the host refuses to start and the phone can't
+  pair. Everything else is written against their seams.
+- **Add by address** for a Mac Bonjour can't see (a VPN). The listener's port is dynamic and isn't
+  shown anywhere, so it needs the port in Settings › Remote and a host and port form on the phone.
+- A test for `RemoteSessionMirror`, and a unit-test target for `GanninPhone`.
 
 ## Later
 

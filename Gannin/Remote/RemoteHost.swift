@@ -191,7 +191,7 @@ final class RemoteHost {
 
     private func scheduleRefresh() {
         guard refreshTask == nil else { return }
-        refreshTask = Task {
+        refreshTask = Task { [self] in
             try? await Task.sleep(for: .milliseconds(Self.refreshMilliseconds))
             guard !Task.isCancelled else { return }
             refreshTask = nil
@@ -200,7 +200,7 @@ final class RemoteHost {
     }
 
     private func startHeartbeat() {
-        heartbeatTask = Task {
+        heartbeatTask = Task { [self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(Self.heartbeatSeconds))
                 for connection in connections { connection.heartbeat() }
