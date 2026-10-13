@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 1,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -11,17 +11,28 @@
       "line" : 361,
       "path" : "Gannin/Sessions/AutoReview.swift",
       "posted_at" : "2026-10-12T22:53:21Z",
+      "resolved_at" : "2026-10-13T08:16:18Z",
       "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "After a relaunch, `readers[id]` is empty, so the transcript is read again from o",
+      "key" : "Gannin/Sessions/SessionStore.swift:1337:After a relaunch, `readers[id]` is empty, so the transcript ",
+      "line" : 1337,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-13T08:16:16Z",
+      "severity" : "nit"
     }
   ],
   "number" : 309,
-  "posted_at" : "2026-10-12T22:53:21Z",
+  "posted_at" : "2026-10-13T08:16:16Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T22:52:23Z",
   "state" : "OPEN",
   "title" : "Don't say nothing has changed when the last review was never posted",
-  "updated_at" : "2026-10-12T22:53:22Z",
-  "verdict" : "comment"
+  "updated_at" : "2026-10-13T08:16:18Z",
+  "verdict" : "approve"
 }
