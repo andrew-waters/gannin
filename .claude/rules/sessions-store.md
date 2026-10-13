@@ -21,6 +21,9 @@ paths:
 - Keep team prompts, if picked, in `CodeSession.instructions` appended to the first prompt (`SessionScript.firstPrompt`). A review keeps its JSON ending.
 - Goals in the brief are guidance claude may set aside if it says why in the PR's Why (`SessionBrief.goalsSection`).
 
+## Tabs
+- Insert a tab only through `insertionIndex` and walk them through `displayedTabs`, never `tabs` directly: `tabs` is the one stored order, and the groups (work, then reviews) are derived from it by `tabGroups`, so a writer that skips the helper leaves reviews among work.
+
 ## Wrap-up on close (`WrapUp.swift`)
 - Measure unpushed commits against the upstream, else `origin/<branch>`: a sandbox records no upstream. Read it with its own `SessionChanges`, whatever mode the pane is in (`WorktreeChanges.notPushed`).
 - Ask only for an issue's own session or a quick change's, and only while `isClaudeRunning` (claude or a helper, not its leftover shell). Never ask on Close Other Tabs.
@@ -37,4 +40,4 @@ paths:
 - `ClaudeRunner` runs `claude -p` locally if installed, else on the Connect with server with only the tools given; follow-ups use `--resume` in the same folder.
 
 ## Testing
-- `WrapUpTests.swift`, `SessionBriefGoalsTests.swift`, `SessionModeTests.swift`, `SessionRulesTests.swift`. `SandboxLaunchTests.swift` covers script generation for sandboxes. Nothing covers `SessionStore.record` or the quit guard.
+- `SessionTabGroupsTests.swift`, `WrapUpTests.swift`, `SessionBriefGoalsTests.swift`, `SessionModeTests.swift`, `SessionRulesTests.swift`. `SandboxLaunchTests.swift` covers script generation for sandboxes. Nothing covers `SessionStore.record` or the quit guard.
