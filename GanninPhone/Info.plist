@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_gannin._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Gannin Remote finds your Mac on this network so you can answer its Claude Code sessions.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>The camera scans the code your Mac shows when you pair it. Nothing is recorded.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Face ID keeps other people from answering your Mac's sessions on this phone.</string>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+	</array>
+</dict>
+</plist>

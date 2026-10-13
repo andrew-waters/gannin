@@ -96,3 +96,4 @@ xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=
 | `sandbox` | Apple container sandboxes and their trust boundaries (`Sandbox/`) |
 | `harness` | Harness indexing, team data, projects, documents, prompts (`Harness/`) |
 | `demo` | The demo build and screenshot capture (`Demo/`, `scripts/capture-screenshots.sh`) |
+| `remote-control` | The iPhone remote control: wire package, Mac host, phone app (`Remote/`, `GanninPhone/`, `Packages/GanninRemote/`) |

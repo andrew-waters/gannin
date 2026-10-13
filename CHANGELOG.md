@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Gannin Remote, an iPhone app that pairs with your Mac over the local network to answer Claude's questions and permission prompts, send a prompt, stop a session and switch it between Attended and Unattended, with Settings › Remote to turn it on and revoke phones
 - A view with two or more filters can match Any filter instead of All, so it can say "assigned to me or labelled urgent"
 - PR reviews rate their merge risk (Low, Medium or High), shown on the Overview beside Effort and kept in the review record
 - ⇧⌘F finishes a PR review, asking first as the Finish button does
