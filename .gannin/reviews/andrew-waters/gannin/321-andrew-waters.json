@@ -11,6 +11,7 @@
       "line" : 13,
       "path" : "CHANGELOG.md",
       "posted_at" : "2026-10-13T12:56:05Z",
+      "resolved_at" : "2026-10-13T13:12:36Z",
       "severity" : "nit"
     }
   ],
@@ -22,6 +23,6 @@
   "started_at" : "2026-10-13T12:55:02Z",
   "state" : "OPEN",
   "title" : "Show a divider between the tab groups in the tab bar",
-  "updated_at" : "2026-10-13T12:56:06Z",
+  "updated_at" : "2026-10-13T13:12:36Z",
   "verdict" : "approve"
 }
