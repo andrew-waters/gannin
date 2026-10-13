@@ -23,7 +23,7 @@ extension Data {
 
 /// What the Mac's QR code carries: the pairing secret, the Mac's key fingerprint (so the
 /// phone knows which key to expect before it has met the Mac) and its name.
-public struct PairingInvite: Equatable, Sendable {
+public struct PairingInvite: Equatable, Sendable, Identifiable {
     public static let scheme = "gannin-remote"
 
     public var secret: PairingSecret
@@ -35,6 +35,9 @@ public struct PairingInvite: Equatable, Sendable {
         self.macFingerprint = macFingerprint
         self.macName = macName
     }
+
+    /// One invite per secret, which is what a sheet showing it needs to tell invites apart.
+    public var id: String { secret.code }
 
     public var url: URL {
         var components = URLComponents()
