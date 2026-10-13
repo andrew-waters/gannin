@@ -4,7 +4,7 @@ import Testing
 @testable import Gannin
 
 @MainActor
-private final class FakeControl: RemoteSessionControl {
+final class FakeControl: RemoteSessionControl {
     var exists = true
     var running = true
     var prompt: RemotePrompt?
