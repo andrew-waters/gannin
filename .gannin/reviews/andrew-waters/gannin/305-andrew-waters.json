@@ -1,7 +1,7 @@
 {
   "author" : "dwrss",
   "effort" : 1,
-  "event" : "COMMENT",
+  "event" : "APPROVE",
   "findings" : [
     {
       "category" : "data",
@@ -38,13 +38,13 @@
     }
   ],
   "number" : 305,
-  "posted_at" : "2026-10-12T17:40:25Z",
+  "posted_at" : "2026-10-13T08:21:51Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T17:38:21Z",
   "state" : "OPEN",
   "title" : "Share one PullRequestStore between the metrics and the work log",
-  "updated_at" : "2026-10-12T21:00:44Z",
+  "updated_at" : "2026-10-13T08:21:53Z",
   "verdict" : "approve"
 }
