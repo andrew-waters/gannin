@@ -206,6 +206,24 @@ Pairing (after the real handshake exists):
 - [ ] Anything that can change `remote.enabled`, the name or the phones list without the user is a
   local process already able to do worse; confirm nothing reads them from an untrusted place.
 
+### Pinning fingerprint (check before the TLS work)
+
+- [ ] `SecKeyCopyExternalRepresentation` of a P-256 public key is 65 bytes starting `04`: the X9.63
+  point, not SPKI. (Apple's documentation says so; confirm on a device.)
+- [ ] `P256.Signing.PublicKey(x963Representation:).derRepresentation` is a 91-byte SPKI with the
+  P-256 algorithm identifier. Only a third-party guide says so; confirm in code.
+- [ ] SHA-256 of that SPKI equals `openssl pkey -pubin -in key.pem -outform DER | openssl dgst -sha256`
+  for the same key, so a fingerprint can be cross-checked from the command line.
+- [ ] A certificate regenerated over the same key gives the same fingerprint; a new key gives a different one.
+- [ ] A software key and a Secure Enclave key both give a fingerprint (the SE private key isn't
+  exportable, its public key is).
+- [ ] Which API reads the peer's key in `sec_protocol_options_set_verify_block`
+  (`sec_protocol_metadata_copy_peer_public_key`, or `sec_trust_copy_ref` then `SecTrustCopyKey`) on
+  iOS 26 and macOS 26, and that neither is deprecated.
+- [ ] A custom verify block replaces system trust evaluation: confirm a wrong key is refused and the
+  right one accepted, on both sides, on TLS 1.3, with the Mac requiring a client certificate.
+- [ ] The verify block's completion is called exactly once, on every path.
+
 ## 8. Docs
 
 - [ ] `cd docs-site && node scripts/check-settings.mjs` prints "Every Settings control is in the Settings
