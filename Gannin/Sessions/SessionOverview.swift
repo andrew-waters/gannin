@@ -15,15 +15,14 @@ struct SessionOverview: View {
                     .padding(.top, 80)
             }
             VStack(alignment: .leading, spacing: 20) {
-                let groups = [("Work", all.filter { !sessions.isReviewTab($0.id) }), ("Reviews", all.filter { sessions.isReviewTab($0.id) })]
-                    .filter { !$0.1.isEmpty }
-                ForEach(groups, id: \.0) { title, group in
+                let groups = sections(of: all)
+                ForEach(groups, id: \.title) { group in
                     VStack(alignment: .leading, spacing: 8) {
                         if groups.count > 1 {
-                            Text(title).font(.headline)
+                            SectionHeader(title: group.title, count: group.sessions.count).font(.headline)
                         }
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12)], spacing: 12) {
-                            ForEach(group) { session in
+                            ForEach(group.sessions) { session in
                                 SessionCard(session: session)
                             }
                         }
@@ -32,6 +31,12 @@ struct SessionOverview: View {
             }
             .padding(16)
         }
+    }
+
+    /// Work, then reviews, each in order; a group with no sessions is left out.
+    private func sections(of all: [CodeSession]) -> [(title: String, sessions: [CodeSession])] {
+        [("Work", all.filter { !sessions.isReviewTab($0.id) }), ("Reviews", all.filter { sessions.isReviewTab($0.id) })]
+            .filter { !$0.sessions.isEmpty }
     }
 
     /// Waiting on you, then running, then the rest; newest first within.
