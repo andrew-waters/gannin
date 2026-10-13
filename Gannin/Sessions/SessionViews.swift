@@ -270,8 +270,8 @@ private struct WheelScrollsSideways: NSViewRepresentable {
             guard event.window === window, !event.hasPreciseScrollingDeltas, event.scrollingDeltaY != 0,
                   event.scrollingDeltaX == 0,
                   bounds.contains(convert(event.locationInWindow, from: nil)),
-                  let content = window?.contentView,
-                  let scrollView = content.hitTest(content.convert(event.locationInWindow, from: nil))?.enclosingScrollView,
+                  let content = window?.contentView, let frame = content.superview,
+                  let scrollView = content.hitTest(frame.convert(event.locationInWindow, from: nil))?.enclosingScrollView,
                   let document = scrollView.documentView
             else { return false }
             let clip = scrollView.contentView
