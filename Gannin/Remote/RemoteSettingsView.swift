@@ -76,10 +76,6 @@ struct RemoteSettingsView: View {
     }
 }
 
-nonisolated extension PairingInvite: @retroactive Identifiable {
-    var id: String { secret.code }
-}
-
 /// The QR code and typed code for the phone, until the pairing window ends.
 private struct PairPhoneSheet: View {
     @Environment(\.dismiss) private var dismiss
