@@ -21,7 +21,8 @@ Every session opens as a tab in the one Claude Code window. Tabs are remembered 
 
 - Each tab shows an icon for its kind, and the issue or PR above its title.
 - **+** opens a popover with New Ask, Quick Change and Plan buttons over a list of sessions you've started that have no tab open.
-- Drag tabs into order. Rename Tab (or double-click) names one; clearing the name goes back to the title.
+- Review tabs sit together after the work tabs (issue work, plans, Asks, Quick Changes and new drafts), with a divider between the groups when both are open.
+- Drag tabs into order within their group; dropping one across the divider leaves it in its own group. Rename Tab (or double-click) names one; clearing the name goes back to the title.
 - Close Tab (or ⌘W) closes the tab and leaves Claude running. For an issue's own session or a quick change that's running, Gannin first shows a wrap-up sheet with Claude's state, its PRs, and uncommitted or unpushed work. It offers Keep Running (the default), Stop Claude, or, once every PR is merged, Finish and Clean Up. Turn the question off in Settings › General › Agent with Ask to wrap up when closing a session's tab.
 - Show Beside puts two tabs side by side, and the grid in the tab bar shows every session.
 

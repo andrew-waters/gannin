@@ -22,7 +22,7 @@ paths:
 - Goals in the brief are guidance claude may set aside if it says why in the PR's Why (`SessionBrief.goalsSection`).
 
 ## Tabs
-- Insert a tab only through `insertionIndex` and walk them through `displayedTabs`, never `tabs` directly: `tabs` is the one stored order, and the groups (work, then reviews) are derived from it by `tabGroups`, so a writer that skips the helper leaves reviews among work.
+- Insert a tab only through `insertionIndex` and walk them through `displayedTabs`, never `tabs` directly: `tabs` is the one stored order, and the groups (work, then reviews) are derived from it by `tabGroups`, so a writer that skips the helper leaves reviews among work. `SessionTabBar` likewise renders from `tabGroups`, with the group divider only when both groups are non-empty.
 
 ## Wrap-up on close (`WrapUp.swift`)
 - Measure unpushed commits against the upstream, else `origin/<branch>`: a sandbox records no upstream. Read it with its own `SessionChanges`, whatever mode the pane is in (`WorktreeChanges.notPushed`).
