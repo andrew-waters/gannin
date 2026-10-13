@@ -245,16 +245,24 @@ private struct WheelScrollsSideways: NSViewRepresentable {
     func updateNSView(_ view: NSView, context: Context) {}
 
     private final class WheelView: NSView {
-        private var monitor: Any?
+        /// Removes the event monitor when released, so a view that goes away
+        /// can't leave one running.
+        private final class Monitor: @unchecked Sendable {
+            nonisolated(unsafe) let token: Any
+            init(_ token: Any) { self.token = token }
+            deinit { NSEvent.removeMonitor(token) }
+        }
+
+        private var monitor: Monitor?
 
         override func viewDidMoveToWindow() {
-            if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
             guard window != nil else { return }
-            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            let token = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
                 let consumed = MainActor.assumeIsolated { self?.scroll(event) ?? false }
                 return consumed ? nil : event
             }
+            monitor = token.map(Monitor.init)
         }
 
         /// Whether it scrolled the bar, so the event is consumed.
@@ -262,7 +270,8 @@ private struct WheelScrollsSideways: NSViewRepresentable {
             guard event.window === window, !event.hasPreciseScrollingDeltas, event.scrollingDeltaY != 0,
                   event.scrollingDeltaX == 0,
                   bounds.contains(convert(event.locationInWindow, from: nil)),
-                  let scrollView = window?.contentView?.hitTest(event.locationInWindow)?.enclosingScrollView,
+                  let content = window?.contentView,
+                  let scrollView = content.hitTest(content.convert(event.locationInWindow, from: nil))?.enclosingScrollView,
                   let document = scrollView.documentView
             else { return false }
             let clip = scrollView.contentView
