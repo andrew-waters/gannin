@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 1,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -23,16 +23,26 @@
       "path" : "Gannin/Sessions/SessionStore.swift",
       "posted_at" : "2026-10-13T08:16:16Z",
       "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "This still stamps `resultAt` in the relaunch case it was meant to stop. On a ful",
+      "key" : "Gannin/Sessions/SessionStore.swift:1344:This still stamps `resultAt` in the relaunch case it was mea",
+      "line" : 1344,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-13T08:29:19Z",
+      "severity" : "minor"
     }
   ],
   "number" : 309,
-  "posted_at" : "2026-10-13T08:16:16Z",
+  "posted_at" : "2026-10-13T08:29:19Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T22:52:23Z",
   "state" : "OPEN",
   "title" : "Don't say nothing has changed when the last review was never posted",
-  "updated_at" : "2026-10-13T08:20:15Z",
-  "verdict" : "approve"
+  "updated_at" : "2026-10-13T08:29:20Z",
+  "verdict" : "comment"
 }
