@@ -109,7 +109,7 @@ struct QRScannerView: UIViewControllerRepresentable {
 
 /// AVCaptureSession isn't Sendable, and starting it blocks, so it's started off the main
 /// thread from inside this box, the only thing that touches it there.
-private final class CaptureBox: @unchecked Sendable {
+private nonisolated final class CaptureBox: @unchecked Sendable {
     let session = AVCaptureSession()
 
     func start() { session.startRunning() }
