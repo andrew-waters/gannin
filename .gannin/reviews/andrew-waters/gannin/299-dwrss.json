@@ -11,6 +11,7 @@
       "line" : 74,
       "path" : "Gannin/Sessions/RefineWorkspace.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 229,
       "path" : "Gannin/Sessions/RefineFindings.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "minor"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 272,
       "path" : "Gannin/Sessions/RefineSession.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "minor"
     },
     {
@@ -41,6 +44,7 @@
       "line" : 48,
       "path" : "Gannin/Sessions/RefineDocuments.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "minor"
     },
     {
@@ -51,6 +55,7 @@
       "line" : 134,
       "path" : "Gannin/Sessions/RefineCoReview.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "minor"
     },
     {
@@ -61,6 +66,7 @@
       "line" : 170,
       "path" : "Gannin/Sessions/RefineScreenshots.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "minor"
     },
     {
@@ -71,6 +77,7 @@
       "line" : 189,
       "path" : "Gannin/Sessions/RefineScreenshots.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "nit"
     },
     {
@@ -81,6 +88,7 @@
       "line" : 21,
       "path" : "Gannin/Sessions/RefineTranscript.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "nit"
     },
     {
@@ -91,16 +99,18 @@
       "line" : 12,
       "path" : "Gannin/Sessions/RefineTranscript.swift",
       "posted_at" : "2026-10-13T08:27:39Z",
+      "resolved_at" : "2026-10-13T17:54:35Z",
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-13T17:54:17Z",
   "number" : 299,
   "posted_at" : "2026-10-13T08:27:39Z",
   "repo" : "andrew-waters/gannin",
   "reviewer" : "dwrss",
   "started_at" : "2026-10-13T08:23:45Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Design and Refine: web view, findings, screenshots, co-reviewer, transcript and Agree",
-  "updated_at" : "2026-10-13T08:27:41Z",
+  "updated_at" : "2026-10-13T17:54:35Z",
   "verdict" : "comment"
 }
