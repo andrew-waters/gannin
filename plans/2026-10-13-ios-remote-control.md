@@ -48,6 +48,14 @@ requirement keeps it that way.
   TLS is mutual (the Mac accepts only pinned phone keys, the phone only the pinned Mac key) and the
   secret is never needed again. The secret works for one attempt within two minutes
   (`PairingWindow`), a wrong guess spends it, and the Mac asks "Pair Alex's iPhone?" before saving.
+- **Pin the public key, not the certificate.** The fingerprint is the SHA-256 of the device's public
+  key (SPKI), so renewing or regenerating a self-signed certificate over the same key doesn't break any
+  pairing. A new key does: a Mac with a new key needs every phone to pair again, and a reinstalled phone
+  pairs again with each Mac.
+- **Unpaired connections can only pair.** The Mac accepts any phone key at the TLS layer, then holds an
+  unpaired connection in a pairing-only state: the one message it accepts is the pairing proof, it gets
+  one attempt, and it closes on a wrong proof or a timeout. Sessions are reachable only once the key is
+  in `PairedPhones`.
 - **Intents, not keys.** The wire carries `answer(question, option or text)`,
   `choose(number)`, `deny`, `prompt(text)`, `interrupt` and `setMode(attended|unattended)`. The
   Mac maps them onto the store, which owns how a choice reaches claude's terminal, so a change in
