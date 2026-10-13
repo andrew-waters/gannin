@@ -166,6 +166,14 @@ extension SessionStore {
         }
         // Issues and the record link to it by name: it can't change now.
         if let existing, info.isLocked(existing) { throw CocoaError(.fileWriteNoPermission) }
+        // A new one would never reach an agreed session's record, nor a
+        // made issue's links.
+        if existing == nil {
+            if info.agreed != nil { throw CocoaError(.fileWriteNoPermission) }
+            if let finding, let target = info.findings.first(where: { $0.id == finding }), info.isLocked(target) {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+        }
         guard let flat = RefineScreenshots.flatten(image, marks: marks),
               let encoded = RefineScreenshots.encode(flat) else { throw CocoaError(.fileWriteUnknown) }
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -290,7 +298,8 @@ struct RefineAnnotateSheet: View {
                 Form {
                     Picker("Attach to", selection: $finding) {
                         Text("A new finding").tag(UUID?.none)
-                        ForEach(findings.reversed()) { finding in
+                        // Not one whose issue is made: it wouldn't link the image.
+                        ForEach(findings.reversed().filter { !(session.refine?.isLocked($0) ?? false) }) { finding in
                             Text(finding.note).lineLimit(1).tag(UUID?.some(finding.id))
                         }
                     }

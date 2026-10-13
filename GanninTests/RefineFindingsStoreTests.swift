@@ -38,6 +38,14 @@ struct RefineFindingsStoreTests {
         return (store, session)
     }
 
+    private func image() -> NSImage {
+        NSImage(size: NSSize(width: 64, height: 40), flipped: false) { rect in
+            NSColor.systemTeal.setFill()
+            rect.fill()
+            return true
+        }
+    }
+
     private func refine(_ store: SessionStore, _ session: CodeSession) throws -> RefineInfo {
         try #require(store.sessions[session.id]?.refine)
     }
@@ -86,12 +94,7 @@ struct RefineFindingsStoreTests {
     @Test func aScreenshotOnANewFindingMakesOneFinding() throws {
         defer { clean() }
         let (store, session) = store { $0.findings = []; $0.screenshots = [] }
-        let image = NSImage(size: NSSize(width: 64, height: 40), flipped: false) { rect in
-            NSColor.systemTeal.setFill()
-            rect.fill()
-            return true
-        }
-        let saved = try store.saveScreenshot(image, marks: [], replacing: nil, url: "https://staging.acme.com/signup",
+        let saved = try store.saveScreenshot(image(), marks: [], replacing: nil, url: "https://staging.acme.com/signup",
                                              pageTitle: "Sign up\n  [beta]", attachTo: nil, note: "Header overlaps the logo", in: session.id)
         let info = try refine(store, session)
         #expect(info.findings.map(\.note) == ["Header overlaps the logo"])
@@ -100,6 +103,27 @@ struct RefineFindingsStoreTests {
         #expect(info.screenshots.map(\.id) == [saved.id])
         let file = try #require(RefineScreenshots.url(saved, in: session))
         #expect(FileManager.default.fileExists(atPath: file.path))
+    }
+
+    @Test func noNewScreenshotsOrSuggestionsOnceLocked() throws {
+        defer { clean() }
+        let (store, session) = store()
+        let first = try refine(store, session).findings[0]
+        store.update(session.id) {
+            $0.refine?.made = [first.id.uuidString: .init(id: "I_1", reference: "acme/app#12", url: URL(string: "https://github.com/acme/app/issues/12")!)]
+        }
+        #expect(throws: (any Error).self) {
+            try store.saveScreenshot(image(), marks: [], replacing: nil, url: "https://staging.acme.com/signup",
+                                     pageTitle: nil, attachTo: first.id, note: "", in: session.id)
+        }
+        store.update(session.id) { $0.refine?.agreed = .now }
+        let before = try refine(store, session)
+        #expect(throws: (any Error).self) {
+            try store.saveScreenshot(image(), marks: [], replacing: nil, url: "https://staging.acme.com/signup",
+                                     pageTitle: nil, attachTo: nil, note: "Too late", in: session.id)
+        }
+        store.keepSuggestion(RefineState.Suggestion(id: "s1", note: "Low contrast"), in: session.id)
+        #expect(try refine(store, session) == before)
     }
 
     @Test func pageTitlesAreOneShortLine() {

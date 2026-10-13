@@ -163,7 +163,7 @@ extension SessionStore {
     /// Keeps a suggestion of Claude's: it becomes a finding, marked as
     /// Claude's, with the screenshot it came from.
     func keepSuggestion(_ suggestion: RefineState.Suggestion, in id: UUID) {
-        guard let info = sessions[id]?.refine, !info.findings.contains(where: { $0.suggestion == suggestion.id }) else { return }
+        guard let info = sessions[id]?.refine, info.agreed == nil, !info.findings.contains(where: { $0.suggestion == suggestion.id }) else { return }
         let shot = suggestion.screenshot.flatMap { id in info.screenshots.first { $0.id.uuidString.caseInsensitiveCompare(id) == .orderedSame } }
         let finding = RefineInfo.Finding(note: suggestion.note, url: shot?.url ?? info.lastURL ?? info.url, pageTitle: shot?.pageTitle,
                                          at: .now, screenshots: shot.map { [$0.id] } ?? [], suggestion: suggestion.id)
