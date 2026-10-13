@@ -236,50 +236,42 @@ private struct SessionTabBar: View {
     }
 }
 
-/// Makes a mouse wheel over the view behind the scroll view it's the
-/// background of scroll that view sideways: a wheel sends only vertical
-/// deltas, which a horizontal scroll view ignores. Trackpads send their own
-/// horizontal deltas, so are left alone.
+/// Makes a vertical-only scroll over the view behind the scroll view it's the
+/// background of move that view sideways: a mouse wheel sends only vertical
+/// deltas, which a horizontal scroll view ignores. A swipe with any
+/// horizontal part, as a trackpad's sideways one has, is left to the scroll
+/// view; a trackpad's purely vertical swipe over the bar scrolls it too.
 private struct WheelScrollsSideways: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { WheelView() }
     func updateNSView(_ view: NSView, context: Context) {}
 
     private final class WheelView: NSView {
-        /// Removes the event monitor when released, so a view that goes away
-        /// can't leave one running.
-        private final class Monitor: @unchecked Sendable {
-            nonisolated(unsafe) let token: Any
-            init(_ token: Any) { self.token = token }
-            deinit { NSEvent.removeMonitor(token) }
-        }
-
-        private var monitor: Monitor?
+        private var monitor: Any?
 
         override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let monitor { NSEvent.removeMonitor(monitor) }
             monitor = nil
             guard window != nil else { return }
-            let token = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
                 let consumed = MainActor.assumeIsolated { self?.scroll(event) ?? false }
                 return consumed ? nil : event
             }
-            monitor = token.map(Monitor.init)
         }
 
         /// Whether it scrolled the bar, so the event is consumed.
         private func scroll(_ event: NSEvent) -> Bool {
-            guard event.window === window, !event.hasPreciseScrollingDeltas, event.scrollingDeltaY != 0,
-                  event.scrollingDeltaX == 0,
+            guard event.window === window, event.scrollingDeltaY != 0, event.scrollingDeltaX == 0,
                   bounds.contains(convert(event.locationInWindow, from: nil)),
                   let content = window?.contentView, let frame = content.superview,
-                  let scrollView = content.hitTest(frame.convert(event.locationInWindow, from: nil))?.enclosingScrollView,
-                  let document = scrollView.documentView
+                  let scrollView = content.hitTest(frame.convert(event.locationInWindow, from: nil))?.enclosingScrollView
             else { return false }
             let clip = scrollView.contentView
-            let overflow = document.frame.width - clip.bounds.width
-            guard overflow > 0 else { return false }
-            var origin = clip.bounds.origin
-            origin.x = min(max(origin.x - event.scrollingDeltaY * 10, 0), overflow)
-            clip.scroll(to: origin)
+            // Points when precise, else notches of the scroll view's line step.
+            let step = event.hasPreciseScrollingDeltas ? 1 : scrollView.horizontalLineScroll * 5
+            var bounds = clip.bounds
+            bounds.origin.x -= event.scrollingDeltaY * step
+            clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
             scrollView.reflectScrolledClipView(clip)
             return true
         }
