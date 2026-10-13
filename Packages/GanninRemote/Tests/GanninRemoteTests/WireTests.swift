@@ -131,3 +131,34 @@ private func roundTrip<M: Codable & Equatable>(_ message: M) throws -> M {
     #expect(permission.id == "tool-1")
     #expect(RemotePrompt.question(id: "q", items: []).id == "q")
 }
+
+@Test func diffNamesChangedAndRemovedSessions() {
+    var changed = session
+    changed.state = .working
+    changed.prompt = nil
+    var other = session
+    other.id = "B"
+    let diff = RemoteSessionDiff.between(old: [session, other], new: [changed])
+    #expect(diff.changed == [changed])
+    #expect(diff.removed == ["B"])
+    #expect(RemoteSessionDiff.between(old: [session], new: [session]).changed.isEmpty)
+}
+
+@Test func newSessionsAreChanged() {
+    #expect(RemoteSessionDiff.between(old: [], new: [session]).changed == [session])
+}
+
+@Test func rateLimiterAllowsALimitPerWindow() {
+    var limiter = IntentRateLimiter(limit: 2, window: 10)
+    let start = Date(timeIntervalSince1970: 1_000)
+    #expect(limiter.allow(at: start))
+    #expect(limiter.allow(at: start.addingTimeInterval(1)))
+    #expect(!limiter.allow(at: start.addingTimeInterval(2)))
+    #expect(limiter.allow(at: start.addingTimeInterval(10.5)))
+}
+
+@Test func refusalsRoundTrip() throws {
+    for reason in [RemoteRefusal.busy, .modeNotChanged, .promptGone] {
+        #expect(try roundTrip(RemoteResult.refused(reason: reason)) == .refused(reason: reason))
+    }
+}

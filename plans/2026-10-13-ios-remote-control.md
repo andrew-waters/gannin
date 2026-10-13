@@ -138,7 +138,7 @@ requirement keeps it that way.
       Satisfies: HLR1.
 - [ ] T4. `RemoteSessionMirror` and diff stream over `SessionStore`, tested against fixture
       sessions in each `SessionState`. Satisfies: HLR2.
-- [ ] T5. `RemoteIntentHandler`: answer, choose, deny, prompt, interrupt, setMode, with
+- [x] T5. `RemoteIntentHandler`: answer, choose, deny, prompt, interrupt, setMode, with
       `promptGone` and the typed refusals; tests with a fake store boundary. Satisfies: HLR3,
       HLR4, HLR5.
 - [ ] T6. `RemoteHost` and Bonjour advertising, started from `GanninApp`; Settings › Remote with
