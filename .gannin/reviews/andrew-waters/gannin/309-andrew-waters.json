@@ -35,14 +35,15 @@
       "severity" : "minor"
     }
   ],
+  "merged_at" : "2026-10-13T08:34:36Z",
   "number" : 309,
   "posted_at" : "2026-10-13T08:29:19Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T22:52:23Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Don't say nothing has changed when the last review was never posted",
-  "updated_at" : "2026-10-13T08:29:20Z",
+  "updated_at" : "2026-10-13T08:35:20Z",
   "verdict" : "comment"
 }
