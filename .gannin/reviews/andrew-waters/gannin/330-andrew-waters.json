@@ -1,0 +1,56 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "APPROVE",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`!event.hasPreciseScrollingDeltas` uses 'precise' to mean 'trackpad', but some m",
+      "key" : "Gannin/Sessions/SessionViews.swift:270:`!event.hasPreciseScrollingDeltas` uses 'precise' to mean 't",
+      "line" : 270,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-13T17:13:37Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The clamp assumes the clip view's horizontal origin runs from 0 to `document.wid",
+      "key" : "Gannin/Sessions/SessionViews.swift:281:The clamp assumes the clip view's horizontal origin runs fro",
+      "line" : 281,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-13T17:13:37Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The `Monitor` wrapper (`@unchecked Sendable`, `nonisolated(unsafe)`, removal in ",
+      "key" : "Gannin/Sessions/SessionViews.swift:250:The `Monitor` wrapper (`@unchecked Sendable`, `nonisolated(u",
+      "line" : 250,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-13T17:13:37Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`viewDidMoveToWindow` is overridden without calling `super`, unlike the other ov",
+      "key" : "Gannin/Sessions/SessionViews.swift:259:`viewDidMoveToWindow` is overridden without calling `super`,",
+      "line" : 259,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-13T17:13:37Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 330,
+  "posted_at" : "2026-10-13T17:13:37Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-13T17:11:43Z",
+  "state" : "OPEN",
+  "title" : "Scroll the session tab bar sideways with a mouse wheel",
+  "updated_at" : "2026-10-13T17:13:38Z",
+  "verdict" : "approve"
+}
