@@ -8,13 +8,21 @@ import Testing
 struct SessionTabGroupsTests {
     private let folder = FileManager.default.temporaryDirectory.appending(path: "SessionTabGroupsTests-\(UUID().uuidString)", directoryHint: .isDirectory)
 
+    private let suite = "SessionTabGroupsTests-\(UUID().uuidString)"
+    private var defaults: UserDefaults { UserDefaults(suiteName: suite)! }
+
     private func store() -> SessionStore {
-        SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60))
+        SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60), defaults: defaults)
     }
 
     private func clean() {
         try? FileManager.default.removeItem(at: folder)
-        UserDefaults.standard.removeObject(forKey: SessionStore.tabsKey)
+        defaults.removePersistentDomain(forName: suite)
+    }
+
+    private func pullRequest(_ number: Int) -> PullRequestReference {
+        PullRequestReference(org: "acme", id: "PR_\(number)", number: number, title: "PR \(number)", repo: "acme/app",
+                             url: URL(string: "https://github.com/acme/app/pull/\(number)")!)
     }
 
     private func issue(_ number: Int) -> IssueReference {
@@ -31,8 +39,7 @@ struct SessionTabGroupsTests {
 
     private func review(_ number: Int, parent: UUID? = nil) -> CodeSession {
         var session = work(number, parent: parent)
-        session.reviewOf = PullRequestReference(org: "acme", id: "PR_\(number)", number: number, title: "PR \(number)", repo: "acme/app",
-                                                url: URL(string: "https://github.com/acme/app/pull/\(number)")!)
+        session.reviewOf = pullRequest(number)
         return session
     }
 
@@ -43,14 +50,28 @@ struct SessionTabGroupsTests {
         }
     }
 
-    @Test func partitionKeepsRelativeOrder() {
+    @Test func partitionKeepsRelativeOrderOnAMixedList() {
         defer { clean() }
         let live = store()
-        let (w1, r1, w2, r2) = (work(1), review(2), work(3), review(4))
-        for session in [w1, r1, w2, r2] { live.add(session); live.addTab(session.id, after: nil) }
-        #expect(live.tabGroups.work == [w1.id, w2.id])
-        #expect(live.tabGroups.reviews == [r1.id, r2.id])
-        #expect(live.displayedTabs == [w1.id, w2.id, r1.id, r2.id])
+        let sessions = (1...6).map { work($0) }
+        for session in sessions { live.add(session); live.addTab(session.id, after: nil) }
+        // Reviews 2, 4 and 6 are work tabs that became reviews in place, so
+        // the stored list is mixed.
+        for index in [1, 3, 5] { live.update(sessions[index].id) { $0.reviewOf = pullRequest(index) } }
+        #expect(live.tabs == sessions.map(\.id))
+        #expect(live.tabGroups.work == [0, 2, 4].map { sessions[$0].id })
+        #expect(live.tabGroups.reviews == [1, 3, 5].map { sessions[$0].id })
+        #expect(live.displayedTabs == [0, 2, 4, 1, 3, 5].map { sessions[$0].id })
+    }
+
+    @Test func workReplacingAMissingDraftWhileReviewSelectedStaysInWork() {
+        defer { clean() }
+        let live = store()
+        let (w1, r1, w2) = (work(1), review(2), work(3))
+        open([w1, r1], in: live)
+        live.add(w2)
+        live.replaceDraft(UUID(), with: w2.id)
+        #expect(live.tabs == [w1.id, w2.id, r1.id])
     }
 
     @Test func reviewHelperStaysInItsOwnersGroup() {
@@ -131,7 +152,7 @@ struct SessionTabGroupsTests {
         let first = store()
         let (w1, r1, w2, r2) = (work(1), review(2), work(3), review(4))
         for session in [w1, r1, w2, r2] { first.add(session) }
-        UserDefaults.standard.set([r1, w1, r2, w2].map(\.id.uuidString), forKey: SessionStore.tabsKey)
+        defaults.set([r1, w1, r2, w2].map(\.id.uuidString), forKey: SessionStore.tabsKey)
         #expect(store().tabs == [w1.id, w2.id, r1.id, r2.id])
     }
 }

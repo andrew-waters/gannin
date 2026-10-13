@@ -489,11 +489,13 @@ final class SessionStore {
 
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private let saveDelay: Duration
+    @ObservationIgnored private let defaults: UserDefaults
 
-    init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory, saveDelay: Duration = .milliseconds(500)) {
+    init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory, saveDelay: Duration = .milliseconds(500), defaults: UserDefaults = .standard) {
         self.harness = harness
         self.directory = directory
         self.saveDelay = saveDelay
+        self.defaults = defaults
         if let data = try? Data(contentsOf: directory.appending(path: "Sessions.json")),
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
@@ -511,7 +513,7 @@ final class SessionStore {
         // A helper's tab, saved before helpers were shown in their
         // session's, is its session's.
         var saved: [UUID] = []
-        for id in (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? []).compactMap(UUID.init(uuidString:)) {
+        for id in (defaults.stringArray(forKey: Self.tabsKey) ?? []).compactMap(UUID.init(uuidString:)) {
             guard sessions[id] != nil else { continue }
             let tab = tabOwner(id)
             if !saved.contains(tab) { saved.append(tab) }
@@ -601,7 +603,7 @@ final class SessionStore {
         if let index = tabs.firstIndex(of: draftID) {
             tabs[index] = id
         } else {
-            tabs.append(id)
+            tabs.insert(id, at: insertionIndex(for: id, after: selectedTab.map(tabOwner)))
         }
         selectedTab = id
         saveTabs()
@@ -652,7 +654,7 @@ final class SessionStore {
 
     private func saveTabs() {
         // Drafts aren't kept: they're gone at the next launch.
-        UserDefaults.standard.set(tabs.filter { planningDrafts[$0] == nil }.map(\.uuidString), forKey: Self.tabsKey)
+        defaults.set(tabs.filter { planningDrafts[$0] == nil }.map(\.uuidString), forKey: Self.tabsKey)
     }
 
     func sessions(for org: String) -> [CodeSession] {
