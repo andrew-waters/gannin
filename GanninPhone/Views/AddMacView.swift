@@ -157,7 +157,10 @@ final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsD
         Task.detached { box.stop() }
     }
 
-    /// Called by AVFoundation on the main queue it was given, which the protocol can't say.
+    /// AVFoundation calls this on the main queue given to `setMetadataObjectsDelegate`, which is the main
+    /// actor's executor, but the protocol can't say so. `assumeIsolated` doesn't switch to the main actor:
+    /// it asserts we're already on it, and traps if the queue ever stops being `.main`. Kept synchronous so
+    /// `reported` is checked and set before the next frame's call.
     nonisolated func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
         MainActor.assumeIsolated {
             guard !reported, let text = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
