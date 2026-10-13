@@ -8,9 +8,9 @@ import Network
 final class NetworkLink: RemoteLink {
     private let connection: NWConnection
     private var receiving = false
-    var onReady: (() -> Void)?
-    var onData: ((Data) -> Void)?
-    var onClose: (() -> Void)?
+    var onReady: (@MainActor () -> Void)?
+    var onData: (@MainActor (Data) -> Void)?
+    var onClose: (@MainActor () -> Void)?
 
     init(_ connection: NWConnection) {
         self.connection = connection

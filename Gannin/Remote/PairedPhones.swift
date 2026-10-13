@@ -3,7 +3,7 @@ import GanninRemote
 import Observation
 
 /// A phone this Mac has paired with, known by the fingerprint of its key.
-struct RemotePhone: Codable, Identifiable, Hashable {
+nonisolated struct RemotePhone: Codable, Identifiable, Hashable {
     var fingerprint: String
     var name: String
     var pairedAt: Date

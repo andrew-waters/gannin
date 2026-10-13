@@ -19,7 +19,7 @@ final class RemoteConnection {
     private let handler: RemoteIntentHandler
     private let phones: PairedPhones
     private let macName: String
-    private let snapshot: () -> [RemoteSession]
+    private let snapshot: @MainActor () -> [RemoteSession]
     private var decoder = FrameDecoder()
     private var limiter: IntentRateLimiter
     private var subscribed = false
@@ -35,7 +35,7 @@ final class RemoteConnection {
         phones: PairedPhones,
         macName: String,
         limiter: IntentRateLimiter = IntentRateLimiter(),
-        snapshot: @escaping () -> [RemoteSession]
+        snapshot: @escaping @MainActor () -> [RemoteSession]
     ) {
         self.phone = phone
         self.fingerprint = fingerprint

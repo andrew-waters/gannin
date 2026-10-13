@@ -76,7 +76,7 @@ struct RemoteSettingsView: View {
     }
 }
 
-extension PairingInvite: @retroactive Identifiable {
+nonisolated extension PairingInvite: @retroactive Identifiable {
     var id: String { secret.code }
 }
 

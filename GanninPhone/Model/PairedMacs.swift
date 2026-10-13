@@ -3,7 +3,7 @@ import Observation
 
 /// A Mac this phone has paired with, known by the fingerprint of its key. `name` is the
 /// name it advertises on the network, which is how it's found again.
-struct PairedMac: Codable, Identifiable, Hashable {
+nonisolated struct PairedMac: Codable, Identifiable, Hashable {
     var fingerprint: String
     var name: String
     var pairedAt: Date
