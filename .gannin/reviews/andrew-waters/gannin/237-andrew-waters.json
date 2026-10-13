@@ -1,0 +1,56 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The PR is CONFLICTING with main. Main's `CLAUDE.md` has been restructured, and t",
+      "key" : "CLAUDE.md:28:The PR is CONFLICTING with main. Main's `CLAUDE.md` has been",
+      "line" : 28,
+      "path" : "CLAUDE.md",
+      "posted_at" : "2026-10-13T17:08:37Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "`XCUIApplication().launch()` terminates any running instance of the target app b",
+      "key" : "GanninUITests/NewAskSpacesUITests.swift:15:`XCUIApplication().launch()` terminates any running instance",
+      "line" : 15,
+      "path" : "GanninUITests/NewAskSpacesUITests.swift",
+      "posted_at" : "2026-10-13T17:08:37Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "When you edit an existing skill, `summary` is already filled in, so the placehol",
+      "key" : "Gannin/Harness/HarnessEditors.swift:92:When you edit an existing skill, `summary` is already filled",
+      "line" : 92,
+      "path" : "Gannin/Harness/HarnessEditors.swift",
+      "posted_at" : "2026-10-13T17:08:37Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "Asserting `value == \"a   b \"` can't fail for this bug, since the PR says the sto",
+      "key" : "GanninUITests/NewAskSpacesUITests.swift:30:Asserting `value == \"a   b \"` can't fail for this bug, since",
+      "line" : 30,
+      "path" : "GanninUITests/NewAskSpacesUITests.swift",
+      "posted_at" : "2026-10-13T17:08:37Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 237,
+  "posted_at" : "2026-10-13T17:08:37Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-12T15:44:10Z",
+  "state" : "OPEN",
+  "title" : "Show a space typed at the end of a free-text box",
+  "updated_at" : "2026-10-13T17:08:39Z",
+  "verdict" : "comment"
+}
