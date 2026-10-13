@@ -25,6 +25,16 @@ struct ReviewDraft: Hashable, Codable {
     var posted: URL?
     var postedAt: Date?
     var postedEvent: String?
+    /// When the latest review result arrived. `posted` stays set across
+    /// rounds, so only a post at or after this is of the latest result.
+    var resultAt: Date?
+
+    /// Whether the author has seen the latest result.
+    var postedLatest: Bool {
+        guard posted != nil else { return false }
+        guard let resultAt else { return true }
+        return (postedAt ?? .distantPast) >= resultAt
+    }
 
     /// What was posted, as a list shows it: nil before it's posted.
     var postedLabel: (text: String, symbol: String, color: Color)? {
