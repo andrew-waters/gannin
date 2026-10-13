@@ -151,10 +151,15 @@ private func roundTrip<M: Codable & Equatable>(_ message: M) throws -> M {
 @Test func rateLimiterAllowsALimitPerWindow() {
     var limiter = IntentRateLimiter(limit: 2, window: 10)
     let start = Date(timeIntervalSince1970: 1_000)
-    #expect(limiter.allow(at: start))
-    #expect(limiter.allow(at: start.addingTimeInterval(1)))
-    #expect(!limiter.allow(at: start.addingTimeInterval(2)))
-    #expect(limiter.allow(at: start.addingTimeInterval(10.5)))
+    // #expect can't call a mutating method as its whole expression, so each result is bound first.
+    let first = limiter.allow(at: start)
+    let second = limiter.allow(at: start.addingTimeInterval(1))
+    let third = limiter.allow(at: start.addingTimeInterval(2))
+    let afterWindow = limiter.allow(at: start.addingTimeInterval(10.5))
+    #expect(first)
+    #expect(second)
+    #expect(!third)
+    #expect(afterWindow)
 }
 
 @Test func refusalsRoundTrip() throws {
