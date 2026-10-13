@@ -38,12 +38,16 @@ requirement keeps it that way.
   code, since the phone then reaches the Mac's address by name; a Bonjour-less "Add by address" is
   offered for it.
 - **Trust: pair once, pin keys.** The Mac makes a self-signed identity at first enabling and keeps
-  it in the keychain (`dev.andon.gannin.remote`). The phone makes its own. Pairing shows a six-digit
-  code on the Mac (and as a QR carrying the Mac's certificate fingerprint); the phone enters or
-  scans it, and both sides confirm over a PAKE-style exchange, then each pins the other's key. After
-  that TLS is mutual: the Mac accepts only pinned phone keys, the phone only the pinned Mac key, and
-  no code is needed again. The code lives a minute, one failed attempt burns it, and the Mac asks
-  "Pair Alex's iPhone?" before saving.
+  it in the keychain (`dev.andon.gannin.remote`). The phone makes its own. Pairing shows a 128-bit
+  one-time secret on the Mac, as a QR code (carrying the Mac's key fingerprint too) and as a typed
+  code of 26 characters (`ABCD-EFGH-...`). It is not a short numeric code: a device on the same
+  network that relays the exchange could capture a short code's proof and guess it offline in
+  moments, then pair itself. Each side then proves it knows the secret with an HMAC over both key
+  fingerprints and a nonce from each (`PairingProof`), so a relayed or replayed proof is useless and
+  a Mac that isn't the one displaying the code can't answer. Both pin the other's key after that,
+  TLS is mutual (the Mac accepts only pinned phone keys, the phone only the pinned Mac key) and the
+  secret is never needed again. The secret works for one attempt within two minutes
+  (`PairingWindow`), a wrong guess spends it, and the Mac asks "Pair Alex's iPhone?" before saving.
 - **Intents, not keys.** The wire carries `answer(question, option or text)`,
   `choose(number)`, `deny`, `prompt(text)`, `interrupt` and `setMode(attended|unattended)`. The
   Mac maps them onto the store, which owns how a choice reaches claude's terminal, so a change in
@@ -125,7 +129,7 @@ requirement keeps it that way.
 - Nothing about a session leaves the phone's memory, and the Mac logs intents (session, kind,
   phone name) to its own log and the session's activity, never prompts' text.
 - Open threats to review before shipping: a hostile device on the same Wi-Fi attempting to pair
-  during the one-minute window (mitigated by the confirmation on the Mac and the single attempt),
+  during the pairing window (mitigated by the 128-bit secret, the single attempt and the confirmation on the Mac),
   and a phone left unlocked (mitigated by the Face ID gate and Revoke).
 
 ## Tasks
@@ -133,8 +137,9 @@ requirement keeps it that way.
 - [ ] T1. Create the issue in the project and link it here and in the requirement. Satisfies: all.
 - [x] T2. `Packages/GanninRemote`: wire types, framing, version negotiation, unit tests for
       encode/decode, oversize frames and unknown versions. Satisfies: HLR5, HLR6.
-- [ ] T3. Pairing and keys: PAKE exchange, keychain identities, pinned mutual TLS, tests with an
-      in-process loopback for success, wrong code, expired code, second attempt, revoked phone.
+- [ ] T3. Pairing and keys: secret, proofs and window (done, in the package, with tests); keychain
+      identities, pinned mutual TLS, the handshake itself, tests with an in-process loopback for
+      success, wrong code, expired code, second attempt, revoked phone.
       Satisfies: HLR1.
 - [ ] T4. `RemoteSessionMirror` and diff stream over `SessionStore`, tested against fixture
       sessions in each `SessionState`. Satisfies: HLR2.
