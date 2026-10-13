@@ -54,7 +54,7 @@ requirement keeps it that way.
   Mac meanwhile and the 250 ms optimistic-approval window.
 - **State is pushed over the open connection.** The Mac sends a snapshot on connect and then
   small diffs, driven by the store's observable state (not a poll), plus a heartbeat. The phone
-  keeps nothing but pairing keys: no session data persists on it.
+  keeps nothing but its list of paired Macs and their keys: no session data persists on it.
 - **Shared code is a Swift package.** `GanninRemote` (new, at `Packages/GanninRemote`, local) holds
   the wire types (`Codable`, versioned, length-prefixed JSON frames), pairing, and framing, built
   for macOS and iOS. The Mac host (`Gannin/Remote/`) and the iOS app depend on it. The protocol
@@ -69,6 +69,7 @@ requirement keeps it that way.
 - **Off by default.** Settings › Remote (`RemoteSettingsView`): on or off, this Mac's name on the
   network, paired phones with Revoke, and Pair a Phone. Off stops the listener and drops every
   connection.
+- **Several Macs.** See the decisions below.
 - **Sleeping Mac and Do Not Disturb are the user's.** A sleeping Mac is unreachable. Gannin doesn't
   hold it awake for this.
 
@@ -142,7 +143,8 @@ requirement keeps it that way.
       HLR4, HLR5.
 - [ ] T6. `RemoteHost` and Bonjour advertising, started from `GanninApp`; Settings › Remote with
       Pair a Phone and Revoke; `check-settings.mjs` pane map. Satisfies: HLR1, HLR6.
-- [ ] T7. iOS target in `project.yml`, `ci.yml` build step, pairing and sessions screens. Satisfies:
+- [ ] T7. iOS target in `project.yml`, `ci.yml` build step, pairing, a list of paired Macs with a
+      switcher, and the sessions screens. Satisfies:
       HLR1, HLR2.
 - [ ] T8. Session screen: question and permission cards, prompt box, interrupt, mode, Face ID gate,
       reconnection. Satisfies: HLR3, HLR4.
@@ -177,9 +179,14 @@ requirement keeps it that way.
 - Approve PRs and plans from the phone (`ApprovalQueue`, `postReview`, the plan buttons), start
   Work on This and Run Now, read the activity summary, Live Activities.
 
-## Open questions
+## Decisions on the open questions
 
-1. Is Face ID gating every intent right, or only the first after the app opens?
-2. Should the Mac refuse Unattended from the phone, since turning off prompts remotely is the
-   riskiest switch here, or is it the very thing someone leaving a desk wants?
-3. One Mac per phone in v1, or a list?
+1. **Face ID on first open only.** The app asks for Face ID or the passcode when it opens, then
+   not again until it has been in the background past a short grace period. Individual intents
+   aren't gated.
+2. **Unattended can be switched from the phone**, with the same refusals as on the Mac
+   (`autoUnavailable`). It is the switch someone leaving their desk wants.
+3. **The phone keeps a list of Macs.** Each is its own pairing (name, pinned key, last address),
+   found over Bonjour or added by address; the phone shows one Mac's sessions at a time with a
+   switcher, and a Mac that's unreachable shows as offline rather than disappearing. The Mac side
+   already supports many phones, so only the iOS app and T3's storage change.
