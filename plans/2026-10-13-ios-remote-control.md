@@ -1,0 +1,185 @@
+---
+type: plan
+status: In review
+summary: An iPhone app talks directly to Gannin on the Mac over the local network, paired once with a code and a pinned key, to list sessions, answer questions and permission prompts, send prompts, interrupt, and switch Attended or Unattended, by calling the store's existing methods.
+issues: []
+domains: [sessions, remote]
+touches: [andrew-waters/gannin]
+owner: andrew-waters
+requirements: [requirements/ios-remote-control.md]
+---
+
+# iOS remote control
+
+## Context
+
+Every decision v1 needs already has one entry point in `SessionStore`, because notification
+quick replies drive them:
+
+| Phone action | Existing path |
+| --- | --- |
+| Answer a question | `answer(_:to:)` (closes the dialog, sends one message) |
+| Permission prompt choice or Deny | `approvePermission(_:for:)`, `selectChoice`, `sendKeys("\u{1B}")` |
+| What to offer | `quickReplies(for:)`, `permissionChoices(for:)`, `transcripts[id].question` |
+| Send a prompt | `submit(_:to:)` |
+| Stop | `interrupt(_:)` |
+| Attended or Unattended | `switchMode(_:to:)`, `leaveUnattended(_:)`, `autoUnavailableBoxes` |
+| State | `states[id]`, `SessionState`, `attention` |
+
+The Mac app isn't sandboxed and nothing in it listens on a network, so a listener is new but
+needs no entitlement beyond the local network permission on the phone. Gannin has no server and the
+requirement keeps it that way.
+
+## Decisions
+
+- **Transport: direct, local network only.** The Mac advertises over Bonjour (`_gannin._tcp`) and
+  listens with `Network.framework` (`NWListener`) on a TLS port. The phone browses with
+  `NWBrowser`. No relay, no APNs. An away-from-home path (Tailscale or another VPN) works with no
+  code, since the phone then reaches the Mac's address by name; a Bonjour-less "Add by address" is
+  offered for it.
+- **Trust: pair once, pin keys.** The Mac makes a self-signed identity at first enabling and keeps
+  it in the keychain (`dev.andon.gannin.remote`). The phone makes its own. Pairing shows a six-digit
+  code on the Mac (and as a QR carrying the Mac's certificate fingerprint); the phone enters or
+  scans it, and both sides confirm over a PAKE-style exchange, then each pins the other's key. After
+  that TLS is mutual: the Mac accepts only pinned phone keys, the phone only the pinned Mac key, and
+  no code is needed again. The code lives a minute, one failed attempt burns it, and the Mac asks
+  "Pair Alex's iPhone?" before saving.
+- **Intents, not keys.** The wire carries `answer(question, option or text)`,
+  `choose(number)`, `deny`, `prompt(text)`, `interrupt` and `setMode(attended|unattended)`. The
+  Mac maps them onto the store, which owns how a choice reaches claude's terminal, so a change in
+  claude's prompt rendering is fixed in one place and the phone never sends escape sequences.
+- **Every decision names its prompt.** A pending prompt has an id (the `pendingTool.id` or
+  `question.id`). The phone's reply carries it; `RemoteHost` compares it with the session's
+  current prompt and refuses with `promptGone` when they differ, covering a prompt answered on the
+  Mac meanwhile and the 250 ms optimistic-approval window.
+- **State is pushed over the open connection.** The Mac sends a snapshot on connect and then
+  small diffs, driven by the store's observable state (not a poll), plus a heartbeat. The phone
+  keeps nothing but pairing keys: no session data persists on it.
+- **Shared code is a Swift package.** `GanninRemote` (new, at `Packages/GanninRemote`, local) holds
+  the wire types (`Codable`, versioned, length-prefixed JSON frames), pairing, and framing, built
+  for macOS and iOS. The Mac host (`Gannin/Remote/`) and the iOS app depend on it. The protocol
+  has an explicit version so an old phone and a new Mac say so rather than misparse.
+- **iOS app is a second target in `project.yml`**, `GanninRemote` (bundle `dev.andon.gannin.remote`),
+  SwiftUI, iOS 26 to match the Mac's floor. Same team, separate scheme, built by `ci.yml`
+  (compile only; no TestFlight pipeline in v1).
+- **Alerts without push.** A foreground phone shows a banner and haptic on a new Needs you; a
+  backgrounded one is suspended by iOS within about thirty seconds and the connection drops. v1
+  says so in the app and docs rather than papering over it. This is the product limit of choosing
+  local-only and is the first thing Later removes.
+- **Off by default.** Settings › Remote (`RemoteSettingsView`): on or off, this Mac's name on the
+  network, paired phones with Revoke, and Pair a Phone. Off stops the listener and drops every
+  connection.
+- **Sleeping Mac and Do Not Disturb are the user's.** A sleeping Mac is unreachable. Gannin doesn't
+  hold it awake for this.
+
+## Design
+
+**Mac (`Gannin/Remote/`)**
+
+- `RemoteHost`: owns the `NWListener`, mutual-TLS options, the accepted `RemoteConnection`s and the
+  pairing state. Started from `GanninApp` beside `EngineerWatch` when the setting is on.
+- `RemoteSessionMirror`: turns `SessionStore` into `RemoteSession` values (id, reference, title,
+  kind, state, mode, `needsYou` prompt as `RemotePrompt`: `.question(items)` or
+  `.permission(tool, command, choices)`, last claude message) and a diff stream. Reads only; the
+  one place that knows `SessionStore`'s internals for display.
+- `RemoteIntentHandler`: validates the intent against the current prompt id and calls the store
+  methods in the table above, returning `ok` or a typed refusal (`promptGone`, `notRunning`,
+  `autoUnavailable`, `unknownSession`). Runs on the main actor, as the store does.
+- `RemotePairing` and `RemoteKeys`: the code, the exchange and the keychain items, plus the paired
+  phones list (`RemotePhone`: id, name, key fingerprint, paired at, last seen), kept in the
+  keychain and `UserDefaults`, never in the harness.
+
+**Protocol (`GanninRemote`)**
+
+- Frames: 4-byte length, then JSON `{v, id, type, body}`. Server to phone: `hello`, `snapshot`,
+  `sessionChanged`, `sessionRemoved`, `result(id)`. Phone to server: `hello`, `subscribe`,
+  `intent(id, session, promptID?, ...)`.
+- Limits: frames up to 256 KB, text prompts up to 8 KB, a command's text in a permission prompt
+  truncated at 4 KB with a flag so the phone can say it's cut off, and intents rate limited per
+  connection.
+
+**iOS (`GanninRemote` target)**
+
+- `PairingView` (scan or type the code, Add by Address), `SessionsView` (Needs you first, then
+  Working, Your turn, others; state dot and label from `SessionState.label`), `SessionView`
+  (the prompt as large tappable choices; Deny always last and not the default; a prompt box;
+  Interrupt behind a confirm; Attended or Unattended with the Mac's refusal text).
+- A permission prompt shows the tool and the full command or file the Mac read from its
+  transcript, since approving blind from a phone is the failure to avoid. When the Mac can't read
+  the choices off the terminal yet, the phone shows "Waiting for the prompt" instead of a bare
+  Allow, rather than guessing as the notification's fallback does.
+- Local network permission explained before the system asks (`NSLocalNetworkUsageDescription`,
+  `NSBonjourServices`), and a plain screen for when it's been refused.
+
+## Security
+
+- The listener is off by default and, when on, answers only mutual-TLS clients with a pinned key.
+  An unpaired client can only run the pairing handshake, which is rate limited and closed after one
+  failure.
+- Approving a permission prompt runs commands as the user, so this is remote code execution for
+  anyone holding a paired phone. Treat a paired phone as a logged-in Mac: Revoke is immediate, the
+  phone's key lives in its keychain with `kSecAttrAccessibleWhenUnlockedThisDeviceOnly`, and the
+  app requires Face ID or the passcode (`LocalAuthentication`) before it sends any intent, with a
+  short grace period.
+- Nothing about a session leaves the phone's memory, and the Mac logs intents (session, kind,
+  phone name) to its own log and the session's activity, never prompts' text.
+- Open threats to review before shipping: a hostile device on the same Wi-Fi attempting to pair
+  during the one-minute window (mitigated by the confirmation on the Mac and the single attempt),
+  and a phone left unlocked (mitigated by the Face ID gate and Revoke).
+
+## Tasks
+
+- [ ] T1. Create the issue in the project and link it here and in the requirement. Satisfies: all.
+- [ ] T2. `Packages/GanninRemote`: wire types, framing, version negotiation, unit tests for
+      encode/decode, oversize frames and unknown versions. Satisfies: HLR5, HLR6.
+- [ ] T3. Pairing and keys: PAKE exchange, keychain identities, pinned mutual TLS, tests with an
+      in-process loopback for success, wrong code, expired code, second attempt, revoked phone.
+      Satisfies: HLR1.
+- [ ] T4. `RemoteSessionMirror` and diff stream over `SessionStore`, tested against fixture
+      sessions in each `SessionState`. Satisfies: HLR2.
+- [ ] T5. `RemoteIntentHandler`: answer, choose, deny, prompt, interrupt, setMode, with
+      `promptGone` and the typed refusals; tests with a fake store boundary. Satisfies: HLR3,
+      HLR4, HLR5.
+- [ ] T6. `RemoteHost` and Bonjour advertising, started from `GanninApp`; Settings › Remote with
+      Pair a Phone and Revoke; `check-settings.mjs` pane map. Satisfies: HLR1, HLR6.
+- [ ] T7. iOS target in `project.yml`, `ci.yml` build step, pairing and sessions screens. Satisfies:
+      HLR1, HLR2.
+- [ ] T8. Session screen: question and permission cards, prompt box, interrupt, mode, Face ID gate,
+      reconnection. Satisfies: HLR3, HLR4.
+- [ ] T9. Docs page `remote/ios.md`, Settings reference entry, CHANGELOG line, the app's
+      background limitation stated. Satisfies: docs criterion.
+- [ ] T10. Manual pass on a real phone and Mac: pair, approve, deny, answer, stale prompt, revoke,
+      Mac sleep, Wi-Fi change.
+
+## Verification
+
+- Package and Mac tests run with `xcodebuild test` as `ci.yml` does; the iOS target builds in CI.
+- The end-to-end pass (T10) is manual because it needs Bonjour, the local network permission and a
+  device; the plan's acceptance criteria are its checklist.
+
+## Risks
+
+- **Prompt reading is the weak link.** `permissionChoices` reads the terminal screen. If claude's
+  wording changes, the phone shows "Waiting for the prompt" and the Mac's own card has the same
+  problem, so it fails visibly together instead of sending a wrong key.
+- **Local Network permission on iOS** is a common support issue (refused once, never asked again);
+  the app detects it and links to Settings.
+- **No push** will feel like a missing feature on day one; the docs and the app say it's local
+  only, and Later lifts it.
+- **Protocol drift** between a Mac and a stale phone build is handled by the version field and the
+  app saying which side to update.
+
+## Later
+
+- Relay plus APNs for Needs you alerts and reach from anywhere, with end-to-end encrypted payloads
+  (the relay sees only that a session needs attention). The `GanninRemote` frames stay the same;
+  only the carrier changes.
+- Approve PRs and plans from the phone (`ApprovalQueue`, `postReview`, the plan buttons), start
+  Work on This and Run Now, read the activity summary, Live Activities.
+
+## Open questions
+
+1. Is Face ID gating every intent right, or only the first after the app opens?
+2. Should the Mac refuse Unattended from the phone, since turning off prompts remotely is the
+   riskiest switch here, or is it the very thing someone leaving a desk wants?
+3. One Mac per phone in v1, or a list?
