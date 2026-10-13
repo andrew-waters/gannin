@@ -533,7 +533,7 @@ final class SessionStore {
 
     /// Whether the tab is a PR review's, not a helper's: a helper shows in
     /// its owner's tab, so it is in the owner's group. Drafts are work.
-    private func isReviewTab(_ tab: UUID) -> Bool {
+    func isReviewTab(_ tab: UUID) -> Bool {
         guard let session = sessions[tabOwner(tab)] else { return false }
         return session.isPullRequestReview && !session.isHelper
     }
