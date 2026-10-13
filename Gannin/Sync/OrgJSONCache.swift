@@ -27,6 +27,14 @@ struct OrgJSONCache {
         try? FileManager.default.removeItem(at: directory)
     }
 
+    /// The orgs with a saved file.
+    func orgs() -> [String] {
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "json" }.compactMap {
+            $0.deletingPathExtension().lastPathComponent.removingPercentEncoding
+        }
+    }
+
     private func fileURL(_ org: String) -> URL {
         let safeOrg = org.addingPercentEncoding(withAllowedCharacters: Self.safeOrgCharacters) ?? org
         return directory.appending(path: "\(safeOrg).json")

@@ -25,6 +25,8 @@ struct MetricPullRequest: Codable, Hashable, Identifiable {
     /// Files the PR changed; nil for PRs stored before it was fetched (the
     /// history isn't fetched again for it).
     var changedFiles: Int? = nil
+    /// When GitHub last updated it; nil for PRs stored before it was fetched.
+    var updatedAt: Date? = nil
     /// When the PR started waiting for review.
     var reviewableAt: Date { readyAt ?? createdAt }
 
@@ -63,19 +65,34 @@ struct MetricReview: Codable, Hashable {
 struct MetricsHistory: Codable {
     /// Bumped when the stored PR shape gains fields, so older histories are
     /// dropped and fetched again rather than half-filled.
-    static let currentFormat = 4
+    static let currentFormat = 5
 
     var formatVersion: Int?
     let orgLogin: String
     /// Merged PRs are complete from this date to `syncedAt`.
     var coveredFrom: Date
     var syncedAt: Date
-    var pullRequests: [String: MetricPullRequest]
+    /// Kept in `PullRequestStore`, not in the history's own file.
+    var pullRequests: [String: MetricPullRequest] = [:]
     /// PRs opened per week, keyed by the week's start.
     var openedPerWeek: [Date: Int]
     /// Set once the PRs stored before `changedFiles` was fetched have been
     /// looked up for it, so those GitHub can't find aren't asked for again.
     var filledChangedFiles: Bool?
+    /// How many PRs the store held for this history when it was saved, so a
+    /// store that has since been cleared isn't taken as covering them.
+    var storedCount: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case formatVersion, orgLogin, coveredFrom, syncedAt, openedPerWeek, filledChangedFiles, storedCount
+    }
+
+    /// The format before PRs moved to `PullRequestStore`, read to carry them over.
+    struct Legacy: Decodable {
+        static let format = 4
+        var formatVersion: Int?
+        var pullRequests: [String: MetricPullRequest]
+    }
 
     /// Stored PRs still without a file count.
     var lackingChangedFiles: [String] {

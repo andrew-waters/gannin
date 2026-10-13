@@ -15,10 +15,14 @@ final class MetricsStore {
 
     private let auth: AuthStore
     private let activity: SyncActivity
+    private let pullRequestStore: PullRequestStore
+    private let cache: OrgJSONCache
 
-    init(auth: AuthStore, activity: SyncActivity) {
+    init(auth: AuthStore, activity: SyncActivity, pullRequestStore: PullRequestStore = .shared, cache: OrgJSONCache = MetricsStore.defaultCache) {
         self.auth = auth
         self.activity = activity
+        self.pullRequestStore = pullRequestStore
+        self.cache = cache
     }
 
     func history(for org: String) -> MetricsHistory? { histories[org] }
@@ -92,6 +96,12 @@ final class MetricsStore {
             run.setTotal(counts.values.reduce(0, +), for: "merged")
         }
 
+        // PRs fetched since the last save, so a save writes only those to the store.
+        var unsaved: [String: MetricPullRequest] = [:]
+        func saveHistory() {
+            save(history, merging: Array(unsaved.values))
+            unsaved = [:]
+        }
         do {
             if !chunks.isEmpty {
                 // Newest first, the history reaching back a week at a time
@@ -108,12 +118,15 @@ final class MetricsStore {
                             progress(before + page, nil)
                         }
                         fetched += prs.count
-                        for pr in prs { history.pullRequests[pr.id] = pr }
+                        for pr in prs {
+                            history.pullRequests[pr.id] = pr
+                            unsaved[pr.id] = pr
+                        }
                         if index >= topUp.count {
                             history.coveredFrom = min(history.coveredFrom, from)
                             if (index - topUp.count) % 8 == 7 {
                                 histories[org] = history
-                                save(history)
+                                saveHistory()
                             }
                         }
                     }
@@ -133,12 +146,15 @@ final class MetricsStore {
                 var batches = 0
                 _ = try await run.track("files", count: { $0 }) { progress in
                     try await api.changedFiles(ids: lackingFiles) { files, done in
-                        for (id, count) in files { history.pullRequests[id]?.changedFiles = count }
+                        for (id, count) in files {
+                            history.pullRequests[id]?.changedFiles = count
+                            unsaved[id] = history.pullRequests[id]
+                        }
                         progress(done, lackingFiles.count)
                         batches += 1
                         if batches % 20 == 0 {
                             histories[org] = history
-                            save(history)
+                            saveHistory()
                         }
                     }
                     return lackingFiles.count
@@ -149,7 +165,7 @@ final class MetricsStore {
             history.syncedAt = now
             histories[org] = history
             errors[org] = nil
-            save(history)
+            saveHistory()
             run.finish()
         } catch is CancellationError {
             run.finish()
@@ -181,29 +197,53 @@ final class MetricsStore {
         return weeks
     }
 
-    static var cacheDirectory: URL { cache.directory }
+    static var cacheDirectory: URL { defaultCache.directory }
 
+    /// Also removes the metrics' part of every stored PR: the history is
+    /// rebuilt from it, so a history kept after its PRs are gone would claim
+    /// a coverage it no longer has.
     func clear() {
         histories = [:]
         errors = [:]
         activity.clear()
-        Self.cache.clear()
+        cache.clear()
+        pullRequestStore.clear(.metrics)
     }
 
     // MARK: Disk cache
 
-    private static let cache = OrgJSONCache(folder: "Metrics")
+    static let defaultCache = OrgJSONCache(folder: "Metrics")
 
-    private func loadCached(_ org: String) {
-        guard histories[org] == nil,
-              let history = Self.cache.load(MetricsHistory.self, org: org),
+    func loadCached(_ org: String) {
+        guard histories[org] == nil else { return }
+        // A history from before PRs were kept in the shared store brings its
+        // PRs along, so the upgrade doesn't fetch them again.
+        if let legacy = cache.load(MetricsHistory.Legacy.self, org: org), legacy.formatVersion == MetricsHistory.Legacy.format,
+           var history = cache.load(MetricsHistory.self, org: org) {
+            pullRequestStore.merge(legacy.pullRequests.values.map { StoredPullRequest(metrics: $0) }, org: org)
+            history.formatVersion = MetricsHistory.currentFormat
+            history.pullRequests = legacy.pullRequests
+            save(history, merging: [])
+            histories[org] = history
+            return
+        }
+        guard var history = cache.load(MetricsHistory.self, org: org),
               history.formatVersion == MetricsHistory.currentFormat else {
             return
         }
+        history.pullRequests = Dictionary(uniqueKeysWithValues: pullRequestStore.pullRequests(org: org).values.compactMap { stored in
+            stored.metricPullRequest.map { ($0.id, $0) }
+        })
+        guard history.pullRequests.count >= (history.storedCount ?? 0) else { return }
         histories[org] = history
     }
 
-    private func save(_ history: MetricsHistory) {
-        Self.cache.save(history, org: history.orgLogin)
+    /// The PRs go to the store first: a history saved without them would
+    /// claim a coverage the store doesn't have.
+    private func save(_ history: MetricsHistory, merging fetched: [MetricPullRequest]) {
+        pullRequestStore.merge(fetched.map { StoredPullRequest(metrics: $0) }, org: history.orgLogin)
+        var saved = history
+        saved.storedCount = history.pullRequests.count
+        cache.save(saved, org: history.orgLogin)
     }
 }

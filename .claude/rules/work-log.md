@@ -5,6 +5,7 @@ paths:
 
 # Work log, Standup, time off
 
+- The work log's PRs are kept in `PullRequestStore` (see fetching), so a field added to `WorkLogPullRequest` must also go in `WorkLogExtras` or the core, or it's lost on reload.
 - Must bump `WorkLogHistory.version` when adding a field to cached work-log models, or old caches keep decoding without it. Not for a field whose absence only means "fetch again" (`WorkLogPullRequest.updatedAt`, which the change feed compares): bumping would refetch every week for nothing.
 - Keep the work log's issues step failing on its own: a failed issue search must still save the PRs and leave `coveredFrom` and `fetchedAt` where they were (a new log covers nothing), or those weeks never get their issues.
 - Issues don't go through the change feed: `WorkLogIssue` has no `updatedAt` to compare and there's no fetch by ID for it yet. Add both before routing them through `feedPlan`.
