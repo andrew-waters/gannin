@@ -23,6 +23,13 @@ struct WorkLogPullRequest: Codable, Hashable, Identifiable {
     /// held at that time. Nil in records from before it was fetched, which
     /// are fetched once when next seen changed.
     var updatedAt: Date? = nil
+    /// The PR's own fields, which the shared store keeps once for every store
+    /// that fetches the PR; nil on a PR read from a cache before the work
+    /// log fetched them.
+    var additions: Int? = nil
+    var deletions: Int? = nil
+    var authorAvatarUrl: URL? = nil
+    var authorIsBot: Bool? = nil
 }
 
 struct WorkLogCommit: Codable, Hashable {
@@ -69,16 +76,31 @@ struct WorkLogIssueComment: Codable, Hashable {
 struct WorkLogHistory: Codable {
     /// Bumped when the stored shape gains fields old caches can't fill in,
     /// so they're fetched again.
-    static let currentVersion = 4
+    static let currentVersion = 5
 
     var version: Int? = Self.currentVersion
     let orgLogin: String
     /// PRs updated since this date are all here.
     var coveredFrom: Date
     var fetchedAt: Date
-    var pullRequests: [String: WorkLogPullRequest]
+    /// Kept in `PullRequestStore`, not in the log's own file.
+    var pullRequests: [String: WorkLogPullRequest] = [:]
+    /// How many PRs the store held for this log when it was saved, so a
+    /// store that has since been cleared isn't taken as covering them.
+    var storedCount: Int?
     /// Issues updated in the same range, for issues opened and comments.
     var issues: [String: WorkLogIssue] = [:]
+
+    enum CodingKeys: String, CodingKey {
+        case version, orgLogin, coveredFrom, fetchedAt, storedCount, issues
+    }
+
+    /// The version before PRs moved to `PullRequestStore`, read to carry them over.
+    struct Legacy: Decodable {
+        static let version = 4
+        var version: Int?
+        var pullRequests: [String: WorkLogPullRequest]
+    }
 }
 
 /// One dot in the log.

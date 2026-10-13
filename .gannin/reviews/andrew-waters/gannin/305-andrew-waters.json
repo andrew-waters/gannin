@@ -1,0 +1,51 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "APPROVE",
+  "findings" : [
+    {
+      "category" : "data",
+      "decision" : "kept",
+      "excerpt" : "When the held core has an `updatedAt` and the incoming one doesn't, the incoming",
+      "key" : "Gannin/Sync/PullRequestStore.swift:32:When the held core has an `updatedAt` and the incoming one d",
+      "line" : 32,
+      "path" : "Gannin/Sync/PullRequestStore.swift",
+      "posted_at" : "2026-10-12T17:40:25Z",
+      "resolved_at" : "2026-10-12T21:00:44Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The work log reads from the store too, and the docs row says Merged PR history a",
+      "key" : "Gannin/Views/StorageSettings.swift:48:The work log reads from the store too, and the docs row says",
+      "line" : 48,
+      "path" : "Gannin/Views/StorageSettings.swift",
+      "posted_at" : "2026-10-12T17:40:25Z",
+      "resolved_at" : "2026-10-12T21:00:44Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "This doc comment describes `merged(with:)`, but it sits above the private `Perso",
+      "key" : "Gannin/Sync/PullRequestStore.swift:22:This doc comment describes `merged(with:)`, but it sits abov",
+      "line" : 22,
+      "path" : "Gannin/Sync/PullRequestStore.swift",
+      "posted_at" : "2026-10-12T17:40:25Z",
+      "resolved_at" : "2026-10-12T21:00:44Z",
+      "severity" : "nit"
+    }
+  ],
+  "merged_at" : "2026-10-13T08:23:31Z",
+  "number" : 305,
+  "posted_at" : "2026-10-13T08:21:51Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-12T17:38:21Z",
+  "state" : "MERGED",
+  "title" : "Share one PullRequestStore between the metrics and the work log",
+  "updated_at" : "2026-10-13T08:24:13Z",
+  "verdict" : "approve"
+}

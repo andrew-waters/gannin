@@ -1,9 +1,11 @@
 {
   "box" : "Anius",
   "branch" : "232-sync-share-one-pr-store-between-the",
+  "finishedAt" : "2026-10-13T09:47:31Z",
   "issue" : "andrew-waters/gannin#232",
   "pullRequests" : [
-
+    "https://github.com/andrew-waters/gannin/pull/305",
+    "https://github.com/andrew-waters/gannin/pull/314"
   ],
   "repos" : [
 

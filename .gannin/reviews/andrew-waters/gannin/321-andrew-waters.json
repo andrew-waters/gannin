@@ -1,0 +1,29 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "#320 moved review tabs after work tabs without a changelog entry, and [Unrelease",
+      "key" : "CHANGELOG.md:13:#320 moved review tabs after work tabs without a changelog e",
+      "line" : 13,
+      "path" : "CHANGELOG.md",
+      "posted_at" : "2026-10-13T12:56:05Z",
+      "resolved_at" : "2026-10-13T13:12:36Z",
+      "severity" : "nit"
+    }
+  ],
+  "merged_at" : "2026-10-13T14:07:56Z",
+  "number" : 321,
+  "posted_at" : "2026-10-13T12:56:05Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-13T12:55:02Z",
+  "state" : "MERGED",
+  "title" : "Show a divider between the tab groups in the tab bar",
+  "updated_at" : "2026-10-13T14:08:42Z",
+  "verdict" : "approve"
+}

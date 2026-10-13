@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Every session at once: what each is doing, what it last said, the
 /// files it's touched, its PRs' checks and what it's cost. Waiting ones
-/// first; clicking one opens its tab.
+/// first; clicking one opens its tab. Reviews are a section of their own,
+/// as in the tab bar.
 struct SessionOverview: View {
     @Environment(SessionStore.self) private var sessions
 
@@ -13,13 +14,29 @@ struct SessionOverview: View {
                 ContentUnavailableView("No sessions", systemImage: "terminal", description: Text("Work on This on an issue starts one."))
                     .padding(.top, 80)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12)], spacing: 12) {
-                ForEach(all) { session in
-                    SessionCard(session: session)
+            VStack(alignment: .leading, spacing: 20) {
+                let groups = sections(of: all)
+                ForEach(groups, id: \.title) { group in
+                    VStack(alignment: .leading, spacing: 8) {
+                        if groups.count > 1 {
+                            SectionHeader(title: group.title, count: group.sessions.count).font(.headline)
+                        }
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 12)], spacing: 12) {
+                            ForEach(group.sessions) { session in
+                                SessionCard(session: session)
+                            }
+                        }
+                    }
                 }
             }
             .padding(16)
         }
+    }
+
+    /// Work, then reviews, each in order; a group with no sessions is left out.
+    private func sections(of all: [CodeSession]) -> [(title: String, sessions: [CodeSession])] {
+        [("Work", all.filter { !sessions.isReviewTab($0.id) }), ("Reviews", all.filter { sessions.isReviewTab($0.id) })]
+            .filter { !$0.sessions.isEmpty }
     }
 
     /// Waiting on you, then running, then the rest; newest first within.

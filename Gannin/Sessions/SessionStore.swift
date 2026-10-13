@@ -489,11 +489,13 @@ final class SessionStore {
 
     @ObservationIgnored private let directory: URL
     @ObservationIgnored private let saveDelay: Duration
+    @ObservationIgnored private let defaults: UserDefaults
 
-    init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory, saveDelay: Duration = .milliseconds(500)) {
+    init(harness: HarnessStore, directory: URL = SessionStore.baseDirectory, saveDelay: Duration = .milliseconds(500), defaults: UserDefaults = .standard) {
         self.harness = harness
         self.directory = directory
         self.saveDelay = saveDelay
+        self.defaults = defaults
         if let data = try? Data(contentsOf: directory.appending(path: "Sessions.json")),
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
@@ -511,12 +513,12 @@ final class SessionStore {
         // A helper's tab, saved before helpers were shown in their
         // session's, is its session's.
         var saved: [UUID] = []
-        for id in (UserDefaults.standard.stringArray(forKey: Self.tabsKey) ?? []).compactMap(UUID.init(uuidString:)) {
+        for id in (defaults.stringArray(forKey: Self.tabsKey) ?? []).compactMap(UUID.init(uuidString:)) {
             guard sessions[id] != nil else { continue }
             let tab = tabOwner(id)
             if !saved.contains(tab) { saved.append(tab) }
         }
-        tabs = saved
+        tabs = saved.filter { !isReviewTab($0) } + saved.filter { isReviewTab($0) }
         selectedTab = tabs.first
     }
 
@@ -529,28 +531,54 @@ final class SessionStore {
         return parent
     }
 
+    /// Whether the tab is a PR review's, not a helper's: a helper shows in
+    /// its owner's tab, so it is in the owner's group. Drafts are work.
+    func isReviewTab(_ tab: UUID) -> Bool {
+        guard let session = sessions[tabOwner(tab)] else { return false }
+        return session.isPullRequestReview && !session.isHelper
+    }
+
+    /// The tabs as two groups, each in `tabs` order: everything that isn't a
+    /// review, then reviews.
+    var tabGroups: (work: [UUID], reviews: [UUID]) {
+        (tabs.filter { !isReviewTab($0) }, tabs.filter { isReviewTab($0) })
+    }
+
+    /// The tabs in the order they are shown.
+    var displayedTabs: [UUID] {
+        let groups = tabGroups
+        return groups.work + groups.reviews
+    }
+
+    /// Where a new tab goes: after `anchor` if that tab is in the new tab's
+    /// group, else at the end of the group.
+    private func insertionIndex(for tab: UUID, after anchor: UUID?) -> Int {
+        let review = isReviewTab(tab)
+        if let anchor, let index = tabs.firstIndex(of: anchor), isReviewTab(anchor) == review { return index + 1 }
+        if let last = tabs.lastIndex(where: { isReviewTab($0) == review }) { return last + 1 }
+        return review ? tabs.endIndex : 0
+    }
+
     /// Shows the session, adding its tab after the one showing if it isn't
     /// open. A helper shows in its session's tab.
     func reveal(_ id: UUID) {
         guard sessions[id] != nil else { return }
         let tab = tabOwner(id)
         if !tabs.contains(tab) {
-            let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) }.map { $0 + 1 } ?? tabs.endIndex
-            tabs.insert(tab, at: index)
+            tabs.insert(tab, at: insertionIndex(for: tab, after: selectedTab.map(tabOwner)))
             saveTabs()
         }
         selectedTab = id
     }
 
-    /// Adds the session's tab after `neighbour`'s (else at the end) without
-    /// showing it: a helper started in the background, whose tab is its
-    /// session's.
+    /// Adds the session's tab after `neighbour`'s (else at the end of its
+    /// group) without showing it: a helper started in the background, whose
+    /// tab is its session's.
     func addTab(_ id: UUID, after neighbour: UUID?) {
         guard sessions[id] != nil else { return }
         let tab = tabOwner(id)
         guard !tabs.contains(tab) else { return }
-        let index = neighbour.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
-        tabs.insert(tab, at: index)
+        tabs.insert(tab, at: insertionIndex(for: tab, after: neighbour))
         saveTabs()
     }
 
@@ -560,8 +588,7 @@ final class SessionStore {
     func openDraft(_ draft: PlanningDraft) -> UUID {
         let id = UUID()
         planningDrafts[id] = draft
-        let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) }.map { $0 + 1 } ?? tabs.endIndex
-        tabs.insert(id, at: index)
+        tabs.insert(id, at: insertionIndex(for: id, after: selectedTab.map(tabOwner)))
         showingOverview = false
         selectedTab = id
         return id
@@ -576,7 +603,7 @@ final class SessionStore {
         if let index = tabs.firstIndex(of: draftID) {
             tabs[index] = id
         } else {
-            tabs.append(id)
+            tabs.insert(id, at: insertionIndex(for: id, after: selectedTab.map(tabOwner)))
         }
         selectedTab = id
         saveTabs()
@@ -610,21 +637,24 @@ final class SessionStore {
     }
 
     func moveTab(_ id: UUID, to target: UUID) {
-        guard id != target, let from = tabs.firstIndex(of: id), let to = tabs.firstIndex(of: target) else { return }
+        guard id != target, isReviewTab(id) == isReviewTab(target),
+              let from = tabs.firstIndex(of: id), let to = tabs.firstIndex(of: target) else { return }
         tabs.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
         saveTabs()
     }
 
-    /// The tab `offset` along from the one showing, wrapping round.
+    /// The tab `offset` along from the one showing, in the order shown,
+    /// wrapping round.
     func selectTab(offset: Int) {
-        guard !tabs.isEmpty else { return }
-        let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) } ?? 0
-        selectedTab = tabs[((index + offset) % tabs.count + tabs.count) % tabs.count]
+        let shown = displayedTabs
+        guard !shown.isEmpty else { return }
+        let index = selectedTab.flatMap { shown.firstIndex(of: tabOwner($0)) } ?? 0
+        selectedTab = shown[((index + offset) % shown.count + shown.count) % shown.count]
     }
 
     private func saveTabs() {
         // Drafts aren't kept: they're gone at the next launch.
-        UserDefaults.standard.set(tabs.filter { planningDrafts[$0] == nil }.map(\.uuidString), forKey: Self.tabsKey)
+        defaults.set(tabs.filter { planningDrafts[$0] == nil }.map(\.uuidString), forKey: Self.tabsKey)
     }
 
     func sessions(for org: String) -> [CodeSession] {
@@ -1250,6 +1280,10 @@ final class SessionStore {
         }
     }
 
+    /// The most of a transcript read at once; a read that fills it may have
+    /// more behind it.
+    nonisolated private static let transcriptChunk = 4_000_000
+
     /// The server session's state, PR, last change, statusline and review
     /// request, one line each, then
     /// its transcript's size and whatever's been added to it since the last
@@ -1266,10 +1300,10 @@ final class SessionStore {
             + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)" "$(head -n 1 "$d/review-request" 2>/dev/null)" "$(cat "$d/sandbox" 2>/dev/null)""# + "\n"
             + "f=$(ls " + homes + #" 2>/dev/null | head -n 1)"# + "\n"
             + #"if [ -n "$f" ]; then s=$(wc -c < "$f" | tr -d ' '); echo "$s"; [ "$s" -gt "# + "\(reader.offset)"
-            + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c 4000000; else echo -1; fi; exit 0"#
+            + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c "# + "\(Self.transcriptChunk)" + #"; else echo -1; fi; exit 0"#
         let id = session.id
         Task {
-            let result = await Task.detached { () -> (Shell.Result, TranscriptReader?) in
+            let result = await Task.detached { () -> (Shell.Result, TranscriptReader?, Bool) in
                 let result = Shell.run(script, .ssh(arguments))
                 // After seven lines (state, PR, change, statusline, review
                 // request, sandbox, size), the new bytes.
@@ -1279,15 +1313,15 @@ final class SessionStore {
                     newlines += 1
                     index = result.data.index(after: next)
                 }
-                guard newlines == 7, result.data.count > index else { return (result, nil) }
+                guard newlines == 7, result.data.count > index else { return (result, nil, false) }
                 var reader = reader
                 reader.consume(result.data[index...])
-                return (result, reader)
+                return (result, reader, result.data[index...].count >= Self.transcriptChunk)
             }.value
             readingRemote.remove(id)
             // Ended while it was read: the terminal's end is the truth.
             guard result.0.ok, terminals[id]?.isRunning == true, sessions[id] != nil else { return }
-            if let reader = result.1 { store(reader, for: id) }
+            if let reader = result.1 { store(reader, for: id, moreToRead: result.2) }
             let lines = result.0.data.prefix(8192).split(separator: 10, maxSplits: 7, omittingEmptySubsequences: false)
                 .prefix(6).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
             func line(_ index: Int) -> String? { index < lines.count && !lines[index].isEmpty ? lines[index] : nil }
@@ -1313,29 +1347,34 @@ final class SessionStore {
         readingTranscript.insert(id)
         let reader = readers[id] ?? TranscriptReader()
         Task {
-            let updated = await Task.detached { () -> TranscriptReader? in
+            let read = await Task.detached { () -> (TranscriptReader, Bool)? in
                 guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
                 defer { try? handle.close() }
                 try? handle.seek(toOffset: UInt64(reader.offset))
-                guard let data = try? handle.read(upToCount: 4_000_000), !data.isEmpty else { return nil }
+                guard let data = try? handle.read(upToCount: Self.transcriptChunk), !data.isEmpty else { return nil }
                 var reader = reader
                 reader.consume(data)
-                return reader
+                return (reader, data.count >= Self.transcriptChunk)
             }.value
             readingTranscript.remove(id)
-            if let updated, sessions[id] != nil { store(updated, for: id) }
+            if let (updated, moreToRead) = read, sessions[id] != nil { store(updated, for: id, moreToRead: moreToRead) }
             done?()
         }
     }
 
-    private func store(_ reader: TranscriptReader, for id: UUID) {
+    /// `moreToRead`: the read filled its chunk, so the file goes on. A
+    /// review result found part-way through a long transcript can be an
+    /// earlier round's, so it's left until the last chunk: replacing the
+    /// kept result with it and back would count as two new results.
+    private func store(_ reader: TranscriptReader, for id: UUID, moreToRead: Bool) {
         readers[id] = reader
         var summary = reader.summary
         if let limit = contextWindows[id] { summary.contextLimit = limit }
         if transcripts[id] != summary { transcripts[id] = summary }
         // A review's result is kept with it, for the history.
-        if sessions[id]?.isPullRequestReview == true, let review = reader.summary.review, sessions[id]?.reviewResult != review {
+        if sessions[id]?.isPullRequestReview == true, !moreToRead, let review = reader.summary.review, sessions[id]?.reviewResult != review {
             sessions[id]?.reviewResult = review
+            reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
             save()
             reviewFinished(id)
         }

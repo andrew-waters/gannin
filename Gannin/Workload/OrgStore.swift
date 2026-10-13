@@ -19,16 +19,18 @@ final class OrgStore {
     private let auth: AuthStore
     private let activity: SyncActivity
     @ObservationIgnored private let database: UserDatabase
+    @ObservationIgnored private let cache: OrgSnapshotCache
     /// The account's outside repos (set by `GanninApp`, from
     /// `OrgConfigStore`'s root store, so the cache is the same whichever
     /// project a window has).
     @ObservationIgnored var outsideRepos: (_ org: String) -> Set<String> = { _ in [] }
 
     /// Stars are kept in the synced `UserDatabase`.
-    init(auth: AuthStore, activity: SyncActivity, database: UserDatabase) {
+    init(auth: AuthStore, activity: SyncActivity, database: UserDatabase, cache: OrgSnapshotCache = OrgSnapshotCache()) {
         self.auth = auth
         self.activity = activity
         self.database = database
+        self.cache = cache
         starred = database.loadStars()
         database.onRemoteChange { [weak self] in
             guard let self else { return }
@@ -73,11 +75,10 @@ final class OrgStore {
     func clearSnapshots() {
         snapshots = [:]
         errors = [:]
-        snapshotSaves.values.forEach { $0.cancel() }
-        try? FileManager.default.removeItem(at: Self.snapshotsDirectory)
+        cache.clear()
     }
 
-    static var cacheDirectory: URL { snapshotsDirectory }
+    static var cacheDirectory: URL { OrgSnapshotCache.defaultDirectory }
 
     // MARK: Loading
 
@@ -109,11 +110,7 @@ final class OrgStore {
 
     /// Pulls the snapshot saved by a previous launch into memory.
     func loadCached(_ login: String) {
-        guard snapshots[login] == nil,
-              let data = try? Data(contentsOf: Self.snapshotURL(login)),
-              let snapshot = try? Self.decoder.decode(OrgSnapshot.self, from: data) else {
-            return
-        }
+        guard snapshots[login] == nil, let snapshot = cache.load(login) else { return }
         snapshots[login] = snapshot
     }
 
@@ -162,9 +159,7 @@ final class OrgStore {
             )
             snapshots[login] = snapshot
             errors[login] = nil
-            if let data = try? Self.encoder.encode(snapshot) {
-                try? data.write(to: Self.snapshotURL(login), options: .atomic)
-            }
+            cache.save(snapshot)
             run.finish()
         } catch is CancellationError {
             run.finish()
@@ -175,26 +170,14 @@ final class OrgStore {
     }
 
     /// Changes an open PR in the snapshot after a write to GitHub, so it
-    /// shows before the next refresh.
+    /// shows before the next refresh, and in the shared PR store, which saves
+    /// once a burst of changes ends (a review request, then another).
     func updatePullRequest(_ id: String, org login: String, _ change: (inout PullRequest) -> Void) {
         guard var snapshot = snapshots[login],
               let index = snapshot.openPullRequests.firstIndex(where: { $0.id == id }) else { return }
         change(&snapshot.openPullRequests[index])
         snapshots[login] = snapshot
-        // Several PRs can be changed in a row (a review request, then another).
-        saves(for: login).request()
-    }
-
-    @ObservationIgnored private var snapshotSaves: [String: SaveCoalescer] = [:]
-
-    private func saves(for login: String) -> SaveCoalescer {
-        if let saver = snapshotSaves[login] { return saver }
-        let saver = SaveCoalescer { [weak self] in
-            guard let self, let snapshot = snapshots[login], let data = try? Self.encoder.encode(snapshot) else { return }
-            try? data.write(to: Self.snapshotURL(login), options: .atomic)
-        }
-        snapshotSaves[login] = saver
-        return saver
+        cache.update(snapshot.openPullRequests[index], org: login)
     }
 
     /// Shows the cached snapshot straight away, then refreshes when there is
@@ -213,10 +196,9 @@ final class OrgStore {
         snapshots = [:]
         orgs = []
         errors = [:]
-        snapshotSaves.values.forEach { $0.cancel() }
         activity.clear()
         UserDefaults.standard.removeObject(forKey: Self.orgsKey)
-        try? FileManager.default.removeItem(at: Self.snapshotsDirectory)
+        cache.clear()
     }
 
     private func handle(_ error: Error, key: String) {
@@ -226,28 +208,5 @@ final class OrgStore {
             return
         }
         errors[key] = error.localizedDescription
-    }
-
-    // MARK: Disk cache
-
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
-
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
-
-    private static var snapshotsDirectory: URL {
-        URL.applicationSupportDirectory.appending(path: "Snapshots", directoryHint: .isDirectory)
-    }
-
-    private static func snapshotURL(_ login: String) -> URL {
-        try? FileManager.default.createDirectory(at: snapshotsDirectory, withIntermediateDirectories: true)
-        return snapshotsDirectory.appending(path: "\(login).json")
     }
 }

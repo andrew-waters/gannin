@@ -31,6 +31,7 @@ struct StorageSettings: View {
     enum Cache: String, CaseIterable, Identifiable {
         case snapshots = "Workload snapshots"
         case metrics = "Merged PR history"
+        case pullRequests = "Pull requests"
         case issues = "Issue history"
         case issueText = "Issue search index"
         case workLog = "Work log"
@@ -44,11 +45,12 @@ struct StorageSettings: View {
 
         var help: String {
             switch self {
-            case .snapshots: "Members, teams, open and recently merged PRs, and open issues, per org"
-            case .metrics: "Merged PRs with their review timings, behind the delivery and people stats"
+            case .snapshots: "Members, teams, which PRs are open or recently merged, and open issues, per org (the PRs are under Pull requests)"
+            case .metrics: "Which weeks of merged PRs are covered, and PRs opened per week, behind the delivery and people stats (the PRs are under Pull requests)"
+            case .pullRequests: "Every PR fetched, kept once for the workload snapshots, the merged PR history and the work log"
             case .issues: "Issues with their board history, behind the issue metrics and investments"
             case .issueText: "Issues' descriptions and recent comments, for searching them"
-            case .workLog: "PRs with their commits and reviews, behind Activity"
+            case .workLog: "Issues with their comments and which weeks are covered, behind Activity (the PRs are under Pull requests)"
             case .projects: "Project board definitions and items"
             case .actions: "Workflow runs and the jobs of those opened, behind Actions"
             case .releases: "Milestones, every GitHub Release and stars per repository, behind Releases (the daily download totals are kept)"
@@ -61,6 +63,7 @@ struct StorageSettings: View {
             switch self {
             case .snapshots: OrgStore.cacheDirectory
             case .metrics: MetricsStore.cacheDirectory
+            case .pullRequests: PullRequestStore.shared.cacheDirectory
             case .issues: IssueStore.cacheDirectory
             case .issueText: IssueTextIndex.file
             case .workLog: WorkLogStore.cacheDirectory
@@ -221,6 +224,12 @@ struct StorageSettings: View {
         switch cache {
         case .snapshots: orgs.clearSnapshots()
         case .metrics: metrics.clear()
+        case .pullRequests:
+            // The histories hold coverage of PRs that are going, so they go too.
+            orgs.clearSnapshots()
+            metrics.clear()
+            workLog.clear()
+            PullRequestStore.shared.clear()
         case .issues: issues.clear()
         case .issueText: Task { await IssueTextIndex.shared.clear() }
         case .workLog: workLog.clear()

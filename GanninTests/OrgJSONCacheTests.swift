@@ -27,6 +27,14 @@ struct OrgJSONCacheTests {
         #expect(cache.load(Sample.self, org: "two") == nil)
     }
 
+    @Test func listsTheOrgsWithAFile() {
+        let cache = makeCache()
+        defer { cache.clear() }
+        cache.save(Sample(name: "one", at: .distantPast), org: "one")
+        cache.save(Sample(name: "two", at: .distantPast), org: "two words")
+        #expect(cache.orgs().sorted() == ["one", "two words"])
+    }
+
     @Test func clearRemovesEveryFile() {
         let cache = makeCache()
         cache.save(Sample(name: "one", at: .distantPast), org: "one")

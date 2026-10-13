@@ -1,0 +1,49 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`ReviewDraft.posted` is set when a round is posted (here in `postAutomatically`,",
+      "key" : "Gannin/Sessions/AutoReview.swift:361:`ReviewDraft.posted` is set when a round is posted (here in ",
+      "line" : 361,
+      "path" : "Gannin/Sessions/AutoReview.swift",
+      "posted_at" : "2026-10-12T22:53:21Z",
+      "resolved_at" : "2026-10-13T08:16:18Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "After a relaunch, `readers[id]` is empty, so the transcript is read again from o",
+      "key" : "Gannin/Sessions/SessionStore.swift:1337:After a relaunch, `readers[id]` is empty, so the transcript ",
+      "line" : 1337,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-13T08:16:16Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "This still stamps `resultAt` in the relaunch case it was meant to stop. On a ful",
+      "key" : "Gannin/Sessions/SessionStore.swift:1344:This still stamps `resultAt` in the relaunch case it was mea",
+      "line" : 1344,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-13T08:29:19Z",
+      "severity" : "minor"
+    }
+  ],
+  "merged_at" : "2026-10-13T08:34:36Z",
+  "number" : 309,
+  "posted_at" : "2026-10-13T08:29:19Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-12T22:52:23Z",
+  "state" : "MERGED",
+  "title" : "Don't say nothing has changed when the last review was never posted",
+  "updated_at" : "2026-10-13T08:35:20Z",
+  "verdict" : "comment"
+}
