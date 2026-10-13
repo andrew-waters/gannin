@@ -16,7 +16,7 @@ import Testing
     let fixed = try #require(PairingSecret(bytes: Data(repeating: 0xFF, count: 16)))
     #expect(PairingSecret(code: fixed.code) == fixed)
     let zero = try #require(PairingSecret(bytes: Data(count: 16)))
-    #expect(zero.code == "AAAA-AAAA-AAAA-AAAA-AAAA-AA")
+    #expect(zero.code == "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA")
 }
 
 @Test func typedCodesIgnoreCaseDashesAndSpaces() throws {
@@ -28,10 +28,12 @@ import Testing
 @Test func badCodesAreRefused() {
     #expect(PairingSecret(code: "") == nil)
     #expect(PairingSecret(code: "ABCD-EFGH") == nil)
+    // The right length and alphabet, so the zero padding passes: this one is valid.
+    #expect(PairingSecret(code: "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AA") != nil)
     // 1, 0, I and O are not in the alphabet.
-    #expect(PairingSecret(code: "AAAA-AAAA-AAAA-AAAA-AAAA-A1") == nil)
+    #expect(PairingSecret(code: "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-A1") == nil)
     // The last character carries two padding bits that must be zero.
-    #expect(PairingSecret(code: "AAAA-AAAA-AAAA-AAAA-AAAA-AB") == nil)
+    #expect(PairingSecret(code: "AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AB") == nil)
 }
 
 @Test func aWindowWorksOnceAndOnlyBeforeItExpires() {
