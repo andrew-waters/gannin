@@ -192,6 +192,10 @@ public enum RemoteRefusal: String, Codable, Sendable, Equatable {
     case tooLarge
     case invalid
     case rateLimited
+    /// The session is waiting on a prompt, so its mode can't be switched now.
+    case busy
+    /// claude didn't land in the mode asked for.
+    case modeNotChanged
 }
 
 public enum RemoteResult: Codable, Sendable, Equatable {

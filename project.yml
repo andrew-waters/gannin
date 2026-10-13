@@ -19,6 +19,9 @@ packages:
   HighlighterSwift:
     url: https://github.com/smittytone/HighlighterSwift
     from: 3.1.0
+  # The wire protocol the Mac and the iPhone remote control share.
+  GanninRemote:
+    path: Packages/GanninRemote
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -40,6 +43,7 @@ targets:
       - package: Sparkle
       - package: HighlighterSwift
         product: Highlighter
+      - package: GanninRemote
     scheme:
       testTargets:
         - GanninTests
