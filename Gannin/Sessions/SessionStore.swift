@@ -828,6 +828,8 @@ final class SessionStore {
         contextWindows[id] = nil
         transcriptFiles[id] = nil
         pullRequestInfo[id] = nil
+        // A Design and Refine page and its web content process.
+        RefinePages.forget(id)
         if besideTab == id { besideTab = nil }
         closeTab(id)
         saveNow()

@@ -68,7 +68,6 @@ struct RefinePage: View {
         ) { failed in
             Button("Delete Anyway", role: .destructive) {
                 sessions.remove(failed.session.id)
-                RefinePages.forget(failed.session.id)
             }
             Button("Cancel", role: .cancel) {}
         } message: { failed in
@@ -161,7 +160,6 @@ struct RefinePage: View {
         Task {
             do {
                 try await sessions.finish(session.id)
-                RefinePages.forget(session.id)
             } catch {
                 failed = (session, error.localizedDescription)
             }

@@ -110,6 +110,20 @@ extension RefineInfo {
         (committed ?? []).contains(screenshot.id.uuidString)
             || (made ?? [:]).values.contains { ($0.screenshots ?? []).contains(screenshot.id.uuidString) }
     }
+
+    /// A finding can't change once the session is agreed or its issue is
+    /// made: the issue and the record are written from it.
+    func isLocked(_ finding: RefineInfo.Finding) -> Bool {
+        agreed != nil || made?[finding.id.uuidString] != nil
+    }
+
+    /// A page's title as the page set it, on one line and cut short: any
+    /// site can set it, and it goes to Claude, the issues and the record.
+    static func pageTitle(_ title: String?) -> String? {
+        let line = (title ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !line.isEmpty else { return nil }
+        return line.count > 200 ? String(line.prefix(199)) + "..." : line
+    }
 }
 
 extension CodeSession {
@@ -246,22 +260,26 @@ extension SessionStore {
         update(id) { $0.refine?.attendees = attendees }
     }
 
-    /// Notes a finding on the page as it is now, last in the list.
+    /// Notes a finding on the page as it is now, last in the list. Claude
+    /// is told unless `notify` is false, when the caller tells it along
+    /// with whatever comes with the finding.
     @discardableResult
-    func addFinding(_ note: String, url: String, pageTitle: String?, to id: UUID) -> RefineInfo.Finding? {
+    func addFinding(_ note: String, url: String, pageTitle: String?, to id: UUID, notify: Bool = true) -> RefineInfo.Finding? {
         let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !note.isEmpty, sessions[id]?.refine != nil else { return nil }
-        let title = pageTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let finding = RefineInfo.Finding(note: note, url: url, pageTitle: title?.isEmpty == false ? title : nil, at: .now)
+        guard !note.isEmpty, let info = sessions[id]?.refine, info.agreed == nil else { return nil }
+        let finding = RefineInfo.Finding(note: note, url: url, pageTitle: RefineInfo.pageTitle(pageTitle), at: .now)
         update(id) { $0.refine?.findings.append(finding) }
-        tellReviewer(id, "The room noted finding \(finding.id.uuidString) on \(url): \"\(note)\". Scout where it lives and update refine.json.")
+        if notify {
+            tellReviewer(id, "The room noted finding \(finding.id.uuidString) on \(url): \"\(note)\". Scout where it lives and update refine.json.")
+        }
         return finding
     }
 
     /// A finding's note, edited.
     func setFindingNote(_ note: String, finding: UUID, in id: UUID) {
         let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !note.isEmpty else { return }
+        guard !note.isEmpty, let current = sessions[id]?.refine?.findings.first(where: { $0.id == finding }),
+              sessions[id]?.refine?.isLocked(current) == false else { return }
         update(id) { session in
             guard let index = session.refine?.findings.firstIndex(where: { $0.id == finding }) else { return }
             session.refine?.findings[index].note = note
@@ -269,12 +287,23 @@ extension SessionStore {
         tellReviewer(id, "The room changed finding \(finding.uuidString) to: \"\(note)\". Update its scouting in refine.json if that changes where it lives.")
     }
 
+    /// Deletes a finding, with its screenshots no other finding has.
     func removeFinding(_ finding: UUID, from id: UUID) {
-        update(id) { $0.refine?.findings.removeAll { $0.id == finding } }
+        guard let session = sessions[id], let info = session.refine,
+              let removed = info.findings.first(where: { $0.id == finding }), !info.isLocked(removed) else { return }
+        let others = Set(info.findings.filter { $0.id != finding }.flatMap(\.screenshots))
+        let orphans = info.screenshots.filter { removed.screenshots.contains($0.id) && !others.contains($0.id) && !info.isLocked($0) }
+        for shot in orphans { RefineScreenshots.deleteFiles(shot, in: session) }
+        let gone = Set(orphans.map(\.id))
+        update(id) { session in
+            session.refine?.findings.removeAll { $0.id == finding }
+            session.refine?.screenshots.removeAll { gone.contains($0.id) }
+        }
         writeRoomFile(id)
     }
 
     func moveFindings(from offsets: IndexSet, to offset: Int, in id: UUID) {
+        guard sessions[id]?.refine?.agreed == nil else { return }
         update(id) { $0.refine?.findings.move(fromOffsets: offsets, toOffset: offset) }
         writeRoomFile(id)
     }

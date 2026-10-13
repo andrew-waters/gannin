@@ -29,7 +29,7 @@ Each project keeps its own logins for these pages, so signing in to staging once
 
 Beside the page, **Who's here** lists the meeting: take someone off with ×, or type a name and press **Add**. Below it, type what the room spotted and press **Add Finding** (⌘↩). Each finding keeps the page's address and title as they were then, and the time, shown under its note; the page's link opens it again.
 
-Double-click a finding, or use **Edit** in its menu, to change its note; **Delete** removes it. Drag findings to put them in order.
+Double-click a finding, or use **Edit** in its menu, to change its note; **Delete** removes it, with any screenshot no other finding has. Drag findings to put them in order.
 
 ## Screenshots
 
@@ -61,4 +61,4 @@ Screenshots in issues show only to people who can read the harness; anyone else 
 
 ## Coming back to it
 
-The session is kept with Gannin's others, findings, screenshots and Claude's suggestions included, so quitting Gannin or closing the tab and opening it again brings it back on the page it was last on. Once agreed, each finding links to its issue, and **Rituals › Design and Refine** shows the session as agreed. Noting findings, screenshots and the transcript stop then, since nothing new would reach the issues or the record. A screenshot an issue links to can't have its marks changed or be deleted, so the links keep working.
+The session is kept with Gannin's others, findings, screenshots and Claude's suggestions included, so quitting Gannin or closing the tab and opening it again brings it back on the page it was last on. Once agreed, each finding links to its issue, and **Rituals › Design and Refine** shows the session as agreed. Noting findings, screenshots and the transcript stop then, and findings can no longer be edited, deleted or dragged, since nothing new would reach the issues or the record. A finding whose issue is already made is fixed in the same way, even before the session is agreed. A screenshot an issue links to can't have its marks changed or be deleted, so the links keep working.

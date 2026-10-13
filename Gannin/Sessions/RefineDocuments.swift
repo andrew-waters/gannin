@@ -45,7 +45,7 @@ enum RefineDocuments {
     /// where Claude thinks it lives.
     static func issueDescription(_ finding: RefineInfo.Finding, info: RefineInfo) -> String {
         var parts = [finding.note]
-        parts.append("Seen on [\(finding.pageTitle ?? finding.url)](\(finding.url)).")
+        parts.append("Seen on \(link(finding.pageTitle ?? finding.url, to: finding.url)).")
         if let scouting = info.state?.scouting(for: finding.id), !scouting.files.isEmpty || !scouting.components.isEmpty {
             var lines = ["**Where it likely lives:**", ""]
             lines += scouting.files.map { "- `\($0)`" }
@@ -87,7 +87,7 @@ enum RefineDocuments {
         if !info.repos.isEmpty { front.append("touches: [\(info.repos.joined(separator: ", "))]") }
         front.append("agreed_at: \(day)")
 
-        var body = ["# \(info.name)", "Stepped through [\(info.url)](\(info.url)) on \(day)."]
+        var body = ["# \(info.name)", "Stepped through \(link(info.url, to: info.url)) on \(day)."]
         if !info.attendees.isEmpty {
             body.append("## Who was here\n\n" + info.attendees.map { attendee in
                 attendee.login.map { "- \(attendee.name) (@\($0))" } ?? "- \(attendee.name)"
@@ -107,7 +107,7 @@ enum RefineDocuments {
             if !shots.isEmpty {
                 line += " " + shots.map { "([\(($0.file as NSString).deletingPathExtension)](./\($0.file)))" }.joined(separator: " ")
             }
-            line += "\n  On [\(finding.pageTitle ?? finding.url)](\(finding.url))."
+            line += "\n  On \(link(finding.pageTitle ?? finding.url, to: finding.url))."
             findings.append(line)
         }
         body.append("## Findings\n\n" + (findings.isEmpty ? "None." : findings.joined(separator: "\n")))
@@ -131,6 +131,22 @@ enum RefineDocuments {
         }
         if !current.isEmpty { batches.append(current) }
         return batches
+    }
+
+    /// A markdown link to a page. The page sets its own title and address,
+    /// so the text is put on one line with markdown's characters escaped,
+    /// and brackets and spaces in the address are encoded, so neither can
+    /// end the link early or add markdown of its own.
+    static func link(_ text: String, to url: String) -> String {
+        let line = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let escaped = line.reduce(into: "") { result, character in
+            if "\\`*_{}[]()<>#+!|~".contains(character) { result.append("\\") }
+            result.append(character)
+        }
+        let address = url.split(whereSeparator: \.isWhitespace).joined(separator: "%20")
+            .replacingOccurrences(of: "(", with: "%28").replacingOccurrences(of: ")", with: "%29")
+            .replacingOccurrences(of: "<", with: "%3C").replacingOccurrences(of: ">", with: "%3E")
+        return "[\(escaped)](\(address))"
     }
 
     /// A double-quoted YAML string.

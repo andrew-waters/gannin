@@ -20,6 +20,7 @@ struct RefineFindingsPanel: View {
     struct TranscriptSheet: Identifiable {
         let id = UUID()
         var dropped: String? = nil
+        var failed: String? = nil
     }
 
     private var findings: [RefineInfo.Finding] { session.refine?.findings ?? [] }
@@ -49,6 +50,7 @@ struct RefineFindingsPanel: View {
                     }
                     ForEach(findings) { finding in
                         RefineFindingRow(session: session, finding: finding) { annotating = $0 }
+                            .moveDisabled(session.refine?.agreed != nil)
                     }
                     .onMove { sessions.moveFindings(from: $0, to: $1, in: session.id) }
                 }
@@ -77,12 +79,15 @@ struct RefineFindingsPanel: View {
             RefineAnnotateSheet(session: session, annotating: annotating)
         }
         .sheet(item: $transcript) { sheet in
-            RefineTranscriptSheet(session: session, dropped: sheet.dropped)
+            RefineTranscriptSheet(session: session, dropped: sheet.dropped, failed: sheet.failed)
         }
         // A transcript's file dropped on the findings opens it to share.
         .dropDestination(for: URL.self) { urls, _ in
-            guard session.refine?.agreed == nil, let url = urls.first(where: \.isFileURL), let text = RefineTranscript.text(from: url) else { return false }
-            transcript = TranscriptSheet(dropped: text)
+            guard session.refine?.agreed == nil, let url = urls.first(where: \.isFileURL), RefineTranscript.accepts(url) else { return false }
+            Task {
+                let text = await RefineTranscript.text(from: url)
+                transcript = TranscriptSheet(dropped: text, failed: text == nil ? RefineTranscript.unreadable(url) : nil)
+            }
             return true
         }
         .alert("Couldn't take a screenshot", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
@@ -227,10 +232,15 @@ struct RefineFindingRow: View {
         }
         .padding(.vertical, 2)
         .contextMenu {
+            // Its issue and the record are written from it by now.
             Button("Edit", action: edit)
+                .disabled(locked)
             Button("Delete", role: .destructive) { sessions.removeFinding(finding.id, from: session.id) }
+                .disabled(locked)
         }
     }
+
+    private var locked: Bool { session.refine?.isLocked(finding) ?? false }
 
     private var shots: [RefineInfo.Screenshot] {
         let all = session.refine?.screenshots ?? []
@@ -275,6 +285,7 @@ struct RefineFindingRow: View {
     }
 
     private func edit() {
+        guard !locked else { return }
         draft = finding.note
         editing = true
         focused = true

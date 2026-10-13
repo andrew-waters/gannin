@@ -55,6 +55,17 @@ struct RefineDocumentsTests {
         #expect(!bare.contains("Screenshots"))
     }
 
+    @Test func pageTitlesCantBreakTheirLinks() {
+        var info = info()
+        info.findings[0] = .init(note: "Odd title", url: "https://staging.acme.com/signup?(a)",
+                                 pageTitle: "Sign up](https://evil.example) **now**\n# Heading", at: .now)
+        let body = RefineDocuments.issueDescription(info.findings[0], info: info)
+        #expect(body.contains(##"Seen on [Sign up\]\(https://evil.example\) \*\*now\*\* \# Heading](https://staging.acme.com/signup?%28a%29)."##))
+        let readme = RefineDocuments.readme(info, made: [:], ticked: [], day: "2026-10-10")
+        #expect(readme.contains(##"On [Sign up\]\(https://evil.example\) \*\*now\*\* \# Heading](https://staging.acme.com/signup?%28a%29)."##))
+        #expect(!readme.contains("\n# Heading"))
+    }
+
     @Test func repoComesFromScouting() {
         let info = info()
         #expect(RefineDocuments.repo(for: info.findings[0], info: info) == "acme/web")

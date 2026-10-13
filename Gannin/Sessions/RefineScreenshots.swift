@@ -74,6 +74,13 @@ enum RefineScreenshots {
         originals(for: session)?.appending(path: "\(screenshot.id.uuidString).png")
     }
 
+    /// Deletes a screenshot's file and its unmarked original.
+    static func deleteFiles(_ screenshot: RefineInfo.Screenshot, in session: CodeSession) {
+        for file in [url(screenshot, in: session), original(screenshot, in: session)].compactMap({ $0 }) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
     /// The image with its marks drawn on, at its own size.
     static func flatten(_ image: NSImage, marks: [RefineInfo.Mark]) -> CGImage? {
         guard let source = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
@@ -165,13 +172,14 @@ extension SessionStore {
         try FileManager.default.createDirectory(at: originals, withIntermediateDirectories: true)
         let name = existing.map { ($0.file as NSString).deletingPathExtension }
             ?? RefineScreenshots.nextName(taken: info.screenshots.map(\.file))
-        var screenshot = existing ?? RefineInfo.Screenshot(file: "", url: url, at: .now, pageTitle: pageTitle)
-        if let existing, existing.file != "\(name).\(encoded.ext)" {
-            try? FileManager.default.removeItem(at: folder.appending(path: existing.file))
-        }
+        var screenshot = existing ?? RefineInfo.Screenshot(file: "", url: url, at: .now, pageTitle: RefineInfo.pageTitle(pageTitle))
         screenshot.file = "\(name).\(encoded.ext)"
         screenshot.marks = marks
         try encoded.data.write(to: folder.appending(path: screenshot.file), options: .atomic)
+        // Only once the new one is written, so a failed write keeps the old.
+        if let existing, existing.file != screenshot.file {
+            try? FileManager.default.removeItem(at: folder.appending(path: existing.file))
+        }
         if existing == nil, let tiff = image.tiffRepresentation, let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) {
             try png.write(to: originals.appending(path: "\(screenshot.id.uuidString).png"), options: .atomic)
         }
@@ -184,29 +192,34 @@ extension SessionStore {
             writeRoomFile(id)
             return saved
         }
-        var attached = finding
-        if attached == nil {
-            attached = addFinding(note, url: url, pageTitle: pageTitle, to: id)?.id
-        }
+        // A new finding is told to Claude with its screenshot, in one note.
+        let noted = finding == nil ? addFinding(note, url: url, pageTitle: pageTitle, to: id, notify: false) : nil
+        let attached = finding ?? noted?.id
         update(id) { session in
             session.refine?.screenshots.append(saved)
             if let attached, let index = session.refine?.findings.firstIndex(where: { $0.id == attached }) {
                 session.refine?.findings[index].screenshots.append(saved.id)
             }
         }
-        tellReviewer(id, """
-            The room took screenshot \(saved.id.uuidString), `.worktrees/\(session.branch)/screenshots/\(saved.file)`, of \(url)\
-            \(attached.map { ", attached to finding \($0.uuidString)" } ?? ""). Look at it, and add anything the room seems to have \
-            missed to refine.json's suggestions.
-            """)
+        let shot = "screenshot \(saved.id.uuidString), `.worktrees/\(session.branch)/screenshots/\(saved.file)`, of \(url)"
+        if let noted {
+            tellReviewer(id, """
+                The room noted finding \(noted.id.uuidString) on \(url): "\(noted.note)", with \(shot). Scout where it lives, look at \
+                the screenshot, and update refine.json, adding anything the room seems to have missed to its suggestions.
+                """)
+        } else {
+            tellReviewer(id, """
+                The room took \(shot)\(attached.map { ", attached to finding \($0.uuidString)" } ?? ""). Look at it, and add anything \
+                the room seems to have missed to refine.json's suggestions.
+                """)
+        }
         return saved
     }
 
     /// Takes a screenshot off its finding, and deletes it with its files.
     func removeScreenshot(_ screenshot: RefineInfo.Screenshot, from id: UUID) {
         guard let session = sessions[id], session.refine?.isLocked(screenshot) != true else { return }
-        if let file = RefineScreenshots.url(screenshot, in: session) { try? FileManager.default.removeItem(at: file) }
-        if let original = RefineScreenshots.original(screenshot, in: session) { try? FileManager.default.removeItem(at: original) }
+        RefineScreenshots.deleteFiles(screenshot, in: session)
         update(id) { session in
             session.refine?.screenshots.removeAll { $0.id == screenshot.id }
             for index in session.refine?.findings.indices ?? 0..<0 {
