@@ -15,14 +15,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-13T14:07:56Z",
   "number" : 321,
   "posted_at" : "2026-10-13T12:56:05Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-13T12:55:02Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Show a divider between the tab groups in the tab bar",
-  "updated_at" : "2026-10-13T13:12:36Z",
+  "updated_at" : "2026-10-13T14:08:42Z",
   "verdict" : "approve"
 }
