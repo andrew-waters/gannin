@@ -116,6 +116,9 @@ struct SessionsWindow: View {
         } else if session.isPlanning {
             PlanningWorkspaceView(session: session)
                 .id(session.id)
+        } else if session.isRefine {
+            RefineWorkspaceView(session: session)
+                .id(session.id)
         } else {
             SessionTab(session: session, compact: compact)
                 .id(session.id)
@@ -1612,9 +1615,6 @@ private struct SessionPanel: View {
             }
             if session.isQuickChange {
                 QuickChangeSection(session: session)
-            }
-            if session.isRefine {
-                RefineSection(session: session)
             }
             if session.isHelper {
                 HelperParentSection(session: session)

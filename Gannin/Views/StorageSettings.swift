@@ -25,6 +25,8 @@ struct StorageSettings: View {
     /// Bytes on disk per cache, measured when the pane opens and after a clear.
     @State private var sizes: [Cache: Int] = [:]
     @State private var confirming: Confirmation?
+    /// Projects whose Design and Refine pages have their own sign-ins.
+    @State private var pageProjects: [String] = []
 
     enum Cache: String, CaseIterable, Identifiable {
         case snapshots = "Workload snapshots"
@@ -76,6 +78,7 @@ struct StorageSettings: View {
 
     enum Confirmation: Identifiable {
         case caches
+        case pages
         case yourData
         case everything
 
@@ -140,6 +143,19 @@ struct StorageSettings: View {
             }
 
             Section {
+                LabeledContent("Projects signed in") {
+                    Text(pageProjects.isEmpty ? "None" : "\(pageProjects.count)").monospacedDigit().foregroundStyle(.secondary)
+                }
+                Button("Sign Out of Pages", role: .destructive) { confirming = .pages }
+                    .disabled(pageProjects.isEmpty)
+            } header: {
+                Text("Design and Refine pages")
+            } footer: {
+                Text("Each project keeps its own logins, cookies and storage for the pages its Design and Refine sessions open, so a staging login lasts between sessions. Signing out forgets them for every project.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 Button("Erase Everything and Sign Out", role: .destructive) { confirming = .everything }
             } footer: {
                 Text("Clears every cache and everything you've entered, removes your GitHub token from the keychain, and signs you out.")
@@ -152,6 +168,13 @@ struct StorageSettings: View {
             switch confirmation {
             case .caches:
                 Button("Clear All Caches", role: .destructive) { clearCaches() }
+            case .pages:
+                Button("Sign Out of Pages", role: .destructive) {
+                    Task {
+                        await RefineWebStore.signOutAll()
+                        measure()
+                    }
+                }
             case .yourData:
                 Button("Delete Your Data", role: .destructive) { deleteYourData() }
             case .everything:
@@ -162,10 +185,12 @@ struct StorageSettings: View {
             switch confirmation {
             case .caches:
                 Text("Everything fetched from GitHub is fetched again as it's needed.")
+            case .pages:
+                Text("Every project's Design and Refine pages forget their logins, cookies and storage.")
             case .yourData:
                 Text("Removes \(peopleSummary.lowercased()), every org's settings, \(hidden.keys.count) hidden items and \(orgs.starred.count) stars, and changes not yet committed to a harness. What's in a harness stays there. This can't be undone.")
             case .everything:
-                Text("Removes every cache and everything you've entered, and signs you out. This can't be undone.")
+                Text("Removes every cache and everything you've entered, signs out of every project's Design and Refine pages, and signs you out. This can't be undone.")
             }
         }
     }
@@ -186,6 +211,7 @@ struct StorageSettings: View {
     private func title(_ confirmation: Confirmation?) -> String {
         switch confirmation {
         case .caches: "Clear all caches?"
+        case .pages: "Sign out of every project's pages?"
         case .yourData: "Delete everything you've entered?"
         case .everything: "Erase everything and sign out?"
         case nil: ""
@@ -229,6 +255,10 @@ struct StorageSettings: View {
     }
 
     private func eraseEverything() {
+        Task {
+            await RefineWebStore.signOutAll()
+            measure()
+        }
         clearCaches()
         releases.erase()
         deleteYourData()
@@ -241,6 +271,7 @@ struct StorageSettings: View {
 
     private func measure() {
         sizes = Dictionary(uniqueKeysWithValues: Cache.allCases.map { ($0, Self.bytes(at: $0.location)) })
+        pageProjects = RefineWebStore.projects
     }
 
     /// A file's size, or everything under a directory.

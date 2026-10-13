@@ -66,7 +66,9 @@ struct RefinePage: View {
             isPresented: Binding(get: { failed != nil }, set: { if !$0 { failed = nil } }),
             presenting: failed
         ) { failed in
-            Button("Delete Anyway", role: .destructive) { sessions.remove(failed.session.id) }
+            Button("Delete Anyway", role: .destructive) {
+                sessions.remove(failed.session.id)
+            }
             Button("Cancel", role: .cancel) {}
         } message: { failed in
             Text("\(failed.message) Delete Anyway forgets the session and leaves its folder where it is.")

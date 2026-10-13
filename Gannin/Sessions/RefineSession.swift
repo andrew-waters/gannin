@@ -27,21 +27,44 @@ struct RefineInfo: Codable, Hashable {
         let at: Date
         /// Screenshots attached to it, by `Screenshot.id`.
         var screenshots: [UUID] = []
+        /// The suggestion of Claude's it was kept from, if it was.
+        var suggestion: String? = nil
     }
 
-    /// A screenshot of the page, its file in the session's `screenshots/`.
+    /// A screenshot of the page, its file in the session's `screenshots/`
+    /// with the marks drawn on; the page as it was, without them, is kept
+    /// in `originals/` so the marks can be changed.
     struct Screenshot: Codable, Hashable, Identifiable {
         var id = UUID()
-        let file: String
+        var file: String
         let url: String
         let at: Date
+        var pageTitle: String? = nil
+        var marks: [Mark]? = nil
+    }
+
+    /// A box, an arrow or some text drawn on a screenshot, in fractions of
+    /// its width and height so it doesn't depend on the image's size.
+    struct Mark: Codable, Hashable, Identifiable {
+        enum Kind: String, Codable, CaseIterable {
+            case box = "Box"
+            case arrow = "Arrow"
+            case text = "Text"
+        }
+
+        var id = UUID()
+        var kind: Kind
+        var from: CGPoint
+        var to: CGPoint
+        var text: String? = nil
     }
 
     /// As its tab and lists name it: what's being looked at.
     var name: String
     /// The day it started and the name (`2026-10-10-sign-up-page`), for its
-    /// folder and its record in the harness.
-    let slug: String
+    /// folder and its record in the harness. Agree moves the record to a
+    /// free slug, before writing anything, if another session's has it.
+    var slug: String
     /// The page it opened on, and the one last shown, to reopen on.
     let url: String
     var lastURL: String? = nil
@@ -55,6 +78,52 @@ struct RefineInfo: Codable, Hashable {
     var transcript: String? = nil
     /// When the room agreed it and its record was written.
     var agreed: Date? = nil
+    /// What Claude wrote in `refine.json`: where each finding lives, and
+    /// findings it suggests.
+    var state: RefineState? = nil
+    /// Claude's suggestions the room dismissed, by id. Those kept are
+    /// findings with their `suggestion`.
+    var dismissed: [String]? = nil
+    /// Issues made at Agree, by finding id, so trying again doesn't make
+    /// them twice.
+    var made: [String: MadeIssue]? = nil
+    /// Screenshots committed to the harness at Agree, by id.
+    var committed: [String]? = nil
+
+    /// An issue Agree made for a finding, and the screenshots it links to,
+    /// which must be committed for the links to work.
+    struct MadeIssue: Codable, Hashable {
+        var id: String
+        var reference: String
+        var url: URL
+        var screenshots: [String]? = nil
+        /// Added to the workflow board; false when that failed, to retry,
+        /// and nil when the project has no workflow board.
+        var onBoard: Bool? = nil
+    }
+}
+
+extension RefineInfo {
+    /// A screenshot a made issue links to, or already committed: its file
+    /// must stay as it is, or the links break.
+    func isLocked(_ screenshot: RefineInfo.Screenshot) -> Bool {
+        (committed ?? []).contains(screenshot.id.uuidString)
+            || (made ?? [:]).values.contains { ($0.screenshots ?? []).contains(screenshot.id.uuidString) }
+    }
+
+    /// A finding can't change once the session is agreed or its issue is
+    /// made: the issue and the record are written from it.
+    func isLocked(_ finding: RefineInfo.Finding) -> Bool {
+        agreed != nil || made?[finding.id.uuidString] != nil
+    }
+
+    /// A page's title as the page set it, on one line and cut short: any
+    /// site can set it, and it goes to Claude, the issues and the record.
+    static func pageTitle(_ title: String?) -> String? {
+        let line = (title ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        guard !line.isEmpty else { return nil }
+        return line.count > 200 ? String(line.prefix(199)) + "..." : line
+    }
 }
 
 extension CodeSession {
@@ -85,6 +154,7 @@ extension SessionStore {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(Self.refineBrief(session).utf8).write(to: directory.appending(path: "brief.md"))
         add(session)
+        writeRoomFile(id)
         reveal(session.id)
         return session
     }
@@ -141,8 +211,10 @@ extension SessionStore {
         return """
             You're the co-reviewer in a Design and Refine session in the team's harness: the room is stepping through \
             \(session.refine?.url ?? "a web page") together and noting what to improve. Read \(folder)/.gannin/brief.md first. \
-            For now, look through \(repos.isEmpty ? "the code" : repos.map { "`projects/\($0.split(separator: "/").last ?? "")`" }.joined(separator: ", ")) \
-            to learn where that page's code lives, say in a few lines what you found, and wait for the room. Don't change any code.
+            It says how to share what you find in \(folder)/refine.json. For now, look through \
+            \(repos.isEmpty ? "the code" : repos.map { "`projects/\($0.split(separator: "/").last ?? "")`" }.joined(separator: ", ")) \
+            (clone any that isn't there with `gh repo clone <owner>/<name> projects/<name>`) to learn where that page's code lives, \
+            say in a few lines what you found, and wait for the room's findings. Don't change any code.
             """
     }
 
@@ -178,12 +250,62 @@ extension SessionStore {
             - `\(folder)/` is this session's folder, outside the harness's git. Never commit anything from it.
             - `\(folder)/.gannin/` is Gannin's (this brief and the session's hooks).
 
+            \(RefineState.instructions(folder: folder))
+
             """
     }
 
     /// Who's in the meeting, changed during the session.
     func setAttendees(_ attendees: [RefineInfo.Attendee], for id: UUID) {
         update(id) { $0.refine?.attendees = attendees }
+    }
+
+    /// Notes a finding on the page as it is now, last in the list. Claude
+    /// is told unless `notify` is false, when the caller tells it along
+    /// with whatever comes with the finding.
+    @discardableResult
+    func addFinding(_ note: String, url: String, pageTitle: String?, to id: UUID, notify: Bool = true) -> RefineInfo.Finding? {
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !note.isEmpty, let info = sessions[id]?.refine, info.agreed == nil else { return nil }
+        let finding = RefineInfo.Finding(note: note, url: url, pageTitle: RefineInfo.pageTitle(pageTitle), at: .now)
+        update(id) { $0.refine?.findings.append(finding) }
+        if notify {
+            tellReviewer(id, "The room noted finding \(finding.id.uuidString) on \(url): \"\(note)\". Scout where it lives and update refine.json.")
+        }
+        return finding
+    }
+
+    /// A finding's note, edited.
+    func setFindingNote(_ note: String, finding: UUID, in id: UUID) {
+        let note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !note.isEmpty, let current = sessions[id]?.refine?.findings.first(where: { $0.id == finding }),
+              sessions[id]?.refine?.isLocked(current) == false else { return }
+        update(id) { session in
+            guard let index = session.refine?.findings.firstIndex(where: { $0.id == finding }) else { return }
+            session.refine?.findings[index].note = note
+        }
+        tellReviewer(id, "The room changed finding \(finding.uuidString) to: \"\(note)\". Update its scouting in refine.json if that changes where it lives.")
+    }
+
+    /// Deletes a finding, with its screenshots no other finding has.
+    func removeFinding(_ finding: UUID, from id: UUID) {
+        guard let session = sessions[id], let info = session.refine,
+              let removed = info.findings.first(where: { $0.id == finding }), !info.isLocked(removed) else { return }
+        let others = Set(info.findings.filter { $0.id != finding }.flatMap(\.screenshots))
+        let orphans = info.screenshots.filter { removed.screenshots.contains($0.id) && !others.contains($0.id) && !info.isLocked($0) }
+        for shot in orphans { RefineScreenshots.deleteFiles(shot, in: session) }
+        let gone = Set(orphans.map(\.id))
+        update(id) { session in
+            session.refine?.findings.removeAll { $0.id == finding }
+            session.refine?.screenshots.removeAll { gone.contains($0.id) }
+        }
+        writeRoomFile(id)
+    }
+
+    func moveFindings(from offsets: IndexSet, to offset: Int, in id: UUID) {
+        guard sessions[id]?.refine?.agreed == nil else { return }
+        update(id) { $0.refine?.findings.move(fromOffsets: offsets, toOffset: offset) }
+        writeRoomFile(id)
     }
 
     /// Design and Refine sessions, newest first.
@@ -379,62 +501,5 @@ struct NewRefineView: View {
             return config.repoProjects.map { ($0.name, $0.harness.repo) }
         }
         return config.harnesses.map { ($0.repo, $0.repo) }
-    }
-}
-
-/// A Design and Refine session's page, repos and who's here, in its panel;
-/// attendees can be added or taken off as the session goes.
-struct RefineSection: View {
-    @Environment(SessionStore.self) private var sessions
-    let session: CodeSession
-    @State private var guest = ""
-
-    var body: some View {
-        if let refine = session.refine {
-            Section("Design and Refine") {
-                if let url = URL(string: refine.lastURL ?? refine.url) {
-                    Link(refine.lastURL ?? refine.url, destination: url)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                LabeledContent("Code", value: refine.repos.joined(separator: ", "))
-            }
-            Section("Who's here") {
-                ForEach(refine.attendees) { attendee in
-                    HStack {
-                        Text(attendee.name)
-                        if let login = attendee.login {
-                            Text("@\(login)").foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        Button {
-                            sessions.setAttendees(refine.attendees.filter { $0.id != attendee.id }, for: session.id)
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                        }
-                        .buttonStyle(.borderless)
-                        .foregroundStyle(.secondary)
-                        .help("Not here")
-                        .accessibilityLabel("Remove \(attendee.name)")
-                    }
-                }
-                HStack {
-                    TextField("Add someone", text: $guest)
-                        .onSubmit { add(refine) }
-                    Button("Add") { add(refine) }
-                        .disabled(guest.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-        }
-    }
-
-    private func add(_ refine: RefineInfo) {
-        let name = guest.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        let attendee = RefineInfo.Attendee(name: name)
-        if !refine.attendees.contains(attendee) {
-            sessions.setAttendees(refine.attendees + [attendee], for: session.id)
-        }
-        guest = ""
     }
 }
