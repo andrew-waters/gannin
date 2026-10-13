@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-13T08:23:31Z",
   "number" : 305,
   "posted_at" : "2026-10-13T08:21:51Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T17:38:21Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Share one PullRequestStore between the metrics and the work log",
-  "updated_at" : "2026-10-13T08:21:53Z",
+  "updated_at" : "2026-10-13T08:24:13Z",
   "verdict" : "approve"
 }
