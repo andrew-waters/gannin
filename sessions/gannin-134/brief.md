@@ -2,9 +2,6 @@
 
 https://github.com/andrew-waters/gannin/issues/134
 
-- State: open
-- Opened by: @andrew-waters, 10 Oct 2026
-
 ## Description
 
 A ceremony for a team to step through a running app or web page together, capture improvement notes, screenshots and annotations, and scout the code, ending in issues.
@@ -219,7 +216,7 @@ Planned in [plans/2026-10-10-design-and-refine.md](../plans/2026-10-10-design-an
   git -C projects/<name> worktree add "$PWD/.worktrees/134-design-and-refine/<name>" -b 134-design-and-refine origin/HEAD
   ```
 
-  If the branch already exists, leave out `-b` and `origin/HEAD`. If a repo isn't under `projects/` yet, clone it there first with `gh repo clone <owner>/<name> projects/<name>`.
+  If the branch already exists, leave out `-b` and `origin/HEAD`. You're in a sandbox: only the repos already under `projects/` are here (andrew-waters/gannin), and a clone made in it would vanish when it stops. If the issue needs another repo, stop and ask the user to clone it into `projects/` on their Mac and restart the session. Commits are signed for you. The repos' git dirs are read-only apart from what commits, fetches and worktrees write, so git config and hooks can't be changed, no upstream is recorded (push with `git push origin HEAD:134-design-and-refine` and open the PR with `gh pr create --head <branch>`), branches can't be deleted, and an error about packed-refs.lock after a rebase or pull is expected and harmless.
 - If the harness has no `projects/` folder, it's the code repo too: the code is andrew-waters/gannin itself. Don't work in its checkout; give it one worktree in the issue's folder the same way, with `git -C . fetch origin` and `git -C . worktree add "$PWD/.worktrees/134-design-and-refine/gannin" -b 134-design-and-refine origin/HEAD`, and do everything there, the plan included.
 - When the change is ready for review (committed, built and checked; before a pull request is opened as ready for review, though a draft is fine), run `.worktrees/134-design-and-refine/.gannin/ready-for-review "<what changed and where to look>"` and end your turn. Gannin may have a second agent review it; it can't edit, and its findings come back to you as a message. Fix those you agree with, say why not for the rest, commit, and run the script again. Gannin says when the review has settled, or to carry on without one.
 - Commit in each worktree, and open a pull request per repo with `gh pr create`, putting "Closes andrew-waters/gannin#134" in its body so it links to the issue.
