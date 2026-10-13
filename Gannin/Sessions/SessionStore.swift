@@ -1248,6 +1248,10 @@ final class SessionStore {
         }
     }
 
+    /// The most of a transcript read at once; a read that fills it may have
+    /// more behind it.
+    nonisolated private static let transcriptChunk = 4_000_000
+
     /// The server session's state, PR, last change, statusline and review
     /// request, one line each, then
     /// its transcript's size and whatever's been added to it since the last
@@ -1264,10 +1268,10 @@ final class SessionStore {
             + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)" "$(head -n 1 "$d/review-request" 2>/dev/null)" "$(cat "$d/sandbox" 2>/dev/null)""# + "\n"
             + "f=$(ls " + homes + #" 2>/dev/null | head -n 1)"# + "\n"
             + #"if [ -n "$f" ]; then s=$(wc -c < "$f" | tr -d ' '); echo "$s"; [ "$s" -gt "# + "\(reader.offset)"
-            + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c 4000000; else echo -1; fi; exit 0"#
+            + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c "# + "\(Self.transcriptChunk)" + #"; else echo -1; fi; exit 0"#
         let id = session.id
         Task {
-            let result = await Task.detached { () -> (Shell.Result, TranscriptReader?) in
+            let result = await Task.detached { () -> (Shell.Result, TranscriptReader?, Bool) in
                 let result = Shell.run(script, .ssh(arguments))
                 // After seven lines (state, PR, change, statusline, review
                 // request, sandbox, size), the new bytes.
@@ -1277,15 +1281,15 @@ final class SessionStore {
                     newlines += 1
                     index = result.data.index(after: next)
                 }
-                guard newlines == 7, result.data.count > index else { return (result, nil) }
+                guard newlines == 7, result.data.count > index else { return (result, nil, false) }
                 var reader = reader
                 reader.consume(result.data[index...])
-                return (result, reader)
+                return (result, reader, result.data[index...].count >= Self.transcriptChunk)
             }.value
             readingRemote.remove(id)
             // Ended while it was read: the terminal's end is the truth.
             guard result.0.ok, terminals[id]?.isRunning == true, sessions[id] != nil else { return }
-            if let reader = result.1 { store(reader, for: id) }
+            if let reader = result.1 { store(reader, for: id, moreToRead: result.2) }
             let lines = result.0.data.prefix(8192).split(separator: 10, maxSplits: 7, omittingEmptySubsequences: false)
                 .prefix(6).map { String(decoding: $0, as: UTF8.self).trimmingCharacters(in: .whitespaces) }
             func line(_ index: Int) -> String? { index < lines.count && !lines[index].isEmpty ? lines[index] : nil }
@@ -1311,22 +1315,25 @@ final class SessionStore {
         readingTranscript.insert(id)
         let reader = readers[id] ?? TranscriptReader()
         Task {
-            let updated = await Task.detached { () -> TranscriptReader? in
+            let read = await Task.detached { () -> (TranscriptReader, Bool)? in
                 guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
                 defer { try? handle.close() }
                 try? handle.seek(toOffset: UInt64(reader.offset))
-                guard let data = try? handle.read(upToCount: 4_000_000), !data.isEmpty else { return nil }
+                guard let data = try? handle.read(upToCount: Self.transcriptChunk), !data.isEmpty else { return nil }
                 var reader = reader
                 reader.consume(data)
-                return reader
+                return (reader, data.count >= Self.transcriptChunk)
             }.value
             readingTranscript.remove(id)
-            if let updated, sessions[id] != nil { store(updated, for: id) }
+            if let (updated, moreToRead) = read, sessions[id] != nil { store(updated, for: id, moreToRead: moreToRead) }
             done?()
         }
     }
 
-    private func store(_ reader: TranscriptReader, for id: UUID) {
+    /// `moreToRead`: the read filled its chunk, so the file goes on. A
+    /// review result found part-way through a long transcript can be an
+    /// earlier round's, which mustn't count as a new one.
+    private func store(_ reader: TranscriptReader, for id: UUID, moreToRead: Bool) {
         readers[id] = reader
         var summary = reader.summary
         if let limit = contextWindows[id] { summary.contextLimit = limit }
@@ -1334,7 +1341,7 @@ final class SessionStore {
         // A review's result is kept with it, for the history.
         if sessions[id]?.isPullRequestReview == true, let review = reader.summary.review, sessions[id]?.reviewResult != review {
             sessions[id]?.reviewResult = review
-            reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
+            if !moreToRead { reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now }
             save()
             reviewFinished(id)
         }
