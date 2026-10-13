@@ -52,6 +52,14 @@ requirement keeps it that way.
   key (SPKI), so renewing or regenerating a self-signed certificate over the same key doesn't break any
   pairing. A new key does: a Mac with a new key needs every phone to pair again, and a reinstalled phone
   pairs again with each Mac.
+  **To check before the TLS work starts:** the fingerprint is the SHA-256 of the key's SPKI DER,
+  taken in the verify block as `SecKey` to `SecKeyCopyExternalRepresentation` (an X9.63 point, not SPKI)
+  to `P256.Signing.PublicKey(x963Representation:)` to `.derRepresentation`. The first step is
+  confirmed in Apple's documentation. That `.derRepresentation` is a full SPKI (91 bytes for P-256) is
+  only from a third-party guide, so verify it in code and against
+  `openssl pkey -pubin -outform DER | openssl dgst -sha256`. Also unconfirmed: which of
+  `sec_protocol_metadata_copy_peer_public_key` or the trust object to read the key from, and how the
+  verify block behaves with a custom check on TLS 1.3 client certificates.
 - **Unpaired connections can only pair.** The Mac accepts any phone key at the TLS layer, then holds an
   unpaired connection in a pairing-only state: the one message it accepts is the pairing proof, it gets
   one attempt, and it closes on a wrong proof or a timeout. Sessions are reachable only once the key is
