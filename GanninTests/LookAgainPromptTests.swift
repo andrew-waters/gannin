@@ -23,3 +23,34 @@ struct LookAgainPromptTests {
         #expect(!prompt.contains("Leave out findings"))
     }
 }
+
+/// Whether the author has seen the latest review result.
+struct ReviewDraftPostedLatestTests {
+    private func draft(posted: Date?, resultAt: Date?) -> ReviewDraft {
+        var draft = ReviewDraft()
+        if let posted {
+            draft.posted = URL(string: "https://github.com/acme/app/pull/7#pullrequestreview-1")
+            draft.postedAt = posted
+        }
+        draft.resultAt = resultAt
+        return draft
+    }
+
+    @Test func neverPostedIsNotPosted() {
+        #expect(!draft(posted: nil, resultAt: .now).postedLatest)
+    }
+
+    @Test func postedAfterTheResultIsPosted() {
+        let result = Date.now
+        #expect(draft(posted: result.addingTimeInterval(1), resultAt: result).postedLatest)
+    }
+
+    @Test func postedThenANewUnpostedRoundIsNotPosted() {
+        let posted = Date.now
+        #expect(!draft(posted: posted, resultAt: posted.addingTimeInterval(60)).postedLatest)
+    }
+
+    @Test func postedBeforeResultsWereTimedIsPosted() {
+        #expect(draft(posted: .now, resultAt: nil).postedLatest)
+    }
+}

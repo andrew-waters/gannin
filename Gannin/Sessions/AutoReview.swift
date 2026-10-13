@@ -358,7 +358,7 @@ extension SessionStore {
         // what covers it.
         let learnings = await reviewLearnings(org: pr.org, harnessRepo: session.harnessRepo, repo: pr.repo, number: pr.number)
         let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
-        let wasPosted = (reviewDrafts[id]?.posted ?? session.reviewDraft?.posted) != nil
+        let wasPosted = (reviewDrafts[id] ?? session.reviewDraft)?.postedLatest ?? false
         let prompt = SessionStore.lookAgainPrompt(pr, because: reasons, wasPosted: wasPosted, learned: learned)
         if isRunning(id) {
             guard state(id) == .idle else {
