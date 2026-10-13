@@ -1,0 +1,106 @@
+{
+  "author" : "andrew-waters",
+  "effort" : 4,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "`RefinePages.forget` is only called from the two Refine page buttons. `SessionSt",
+      "key" : "Gannin/Sessions/RefineWorkspace.swift:74:`RefinePages.forget` is only called from the two Refine page",
+      "line" : 74,
+      "path" : "Gannin/Sessions/RefineWorkspace.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "After Agree the panel hides the note box and suggestions, and the docs say notin",
+      "key" : "Gannin/Sessions/RefineFindings.swift:229:After Agree the panel hides the note box and suggestions, an",
+      "line" : 229,
+      "path" : "Gannin/Sessions/RefineFindings.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "data",
+      "decision" : "kept",
+      "excerpt" : "`removeFinding` leaves the finding's screenshots in `refine.screenshots` and on ",
+      "key" : "Gannin/Sessions/RefineSession.swift:272:`removeFinding` leaves the finding's screenshots in `refine.",
+      "line" : 272,
+      "path" : "Gannin/Sessions/RefineSession.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`finding.pageTitle` comes from the web page and goes unescaped into `[title](url",
+      "key" : "Gannin/Sessions/RefineDocuments.swift:48:`finding.pageTitle` comes from the web page and goes unescap",
+      "line" : 48,
+      "path" : "Gannin/Sessions/RefineDocuments.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "security",
+      "decision" : "kept",
+      "excerpt" : "`pageTitle` and URLs come from whatever page the room loaded (including `http` s",
+      "key" : "Gannin/Sessions/RefineCoReview.swift:134:`pageTitle` and URLs come from whatever page the room loaded",
+      "line" : 134,
+      "path" : "Gannin/Sessions/RefineCoReview.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "When re-saving marks changes the extension (png to jpg), the old file is deleted",
+      "key" : "Gannin/Sessions/RefineScreenshots.swift:170:When re-saving marks changes the extension (png to jpg), the",
+      "line" : 170,
+      "path" : "Gannin/Sessions/RefineScreenshots.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "For a new screenshot on a new finding, `addFinding` pastes a note to Claude and ",
+      "key" : "Gannin/Sessions/RefineScreenshots.swift:189:For a new screenshot on a new finding, `addFinding` pastes a",
+      "line" : 189,
+      "path" : "Gannin/Sessions/RefineScreenshots.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "performance",
+      "decision" : "kept",
+      "excerpt" : "`text(from:)` runs synchronously on the main actor from both drop handlers and t",
+      "key" : "Gannin/Sessions/RefineTranscript.swift:21:`text(from:)` runs synchronously on the main actor from both",
+      "line" : 21,
+      "path" : "Gannin/Sessions/RefineTranscript.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The `?? .data` fallback for docx makes the type guard accept any file if the doc",
+      "key" : "Gannin/Sessions/RefineTranscript.swift:12:The `?? .data` fallback for docx makes the type guard accept",
+      "line" : 12,
+      "path" : "Gannin/Sessions/RefineTranscript.swift",
+      "posted_at" : "2026-10-13T08:27:39Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 299,
+  "posted_at" : "2026-10-13T08:27:39Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-13T08:23:45Z",
+  "state" : "OPEN",
+  "title" : "Design and Refine: web view, findings, screenshots, co-reviewer, transcript and Agree",
+  "updated_at" : "2026-10-13T08:27:41Z",
+  "verdict" : "comment"
+}
