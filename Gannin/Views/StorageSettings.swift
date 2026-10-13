@@ -43,9 +43,9 @@ struct StorageSettings: View {
 
         var help: String {
             switch self {
-            case .snapshots: "Members, teams, open and recently merged PRs, and open issues, per org"
+            case .snapshots: "Members, teams, which PRs are open or recently merged, and open issues, per org (the PRs are under Pull requests)"
             case .metrics: "Which weeks of merged PRs are covered, and PRs opened per week, behind the delivery and people stats (the PRs are under Pull requests)"
-            case .pullRequests: "Every PR fetched, kept once for the merged PR history and the work log"
+            case .pullRequests: "Every PR fetched, kept once for the workload snapshots, the merged PR history and the work log"
             case .issues: "Issues with their board history, behind the issue metrics and investments"
             case .issueText: "Issues' descriptions and recent comments, for searching them"
             case .workLog: "Issues with their comments and which weeks are covered, behind Activity (the PRs are under Pull requests)"
@@ -200,6 +200,7 @@ struct StorageSettings: View {
         case .metrics: metrics.clear()
         case .pullRequests:
             // The histories hold coverage of PRs that are going, so they go too.
+            orgs.clearSnapshots()
             metrics.clear()
             workLog.clear()
             PullRequestStore.shared.clear()

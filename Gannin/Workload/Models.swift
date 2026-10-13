@@ -157,8 +157,10 @@ struct OrgSnapshot: Codable {
     let lookbackDays: Int
     let members: [Person]
     let teams: [Team]
-    var openPullRequests: [PullRequest]
-    let mergedPullRequests: [PullRequest]
+    /// Kept in `PullRequestStore`, not in the snapshot's own file, which lists
+    /// their IDs (`storedOpenIDs`, `storedMergedIDs`) in order instead.
+    var openPullRequests: [PullRequest] = []
+    var mergedPullRequests: [PullRequest] = []
     let issues: [Issue]
     /// Outside repos (`OrgConfig.outsideRepos`) that have stopped being
     /// readable, by `owner/name`: GitHub's reason, or that it's been
@@ -175,6 +177,21 @@ struct OrgSnapshot: Codable {
     var outsideReposFetched: Set<String>?
     /// Non-fatal problems (e.g. teams hidden from this token).
     let warnings: [String]
+    /// The PRs' IDs as saved, set only on the copy that's written to disk.
+    var storedOpenIDs: [String]?
+    var storedMergedIDs: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case orgLogin, fetchedAt, peopleFetchedAt, fullFetchedAt, lookbackDays, members, teams, issues
+        case unreadableRepos, outsideReposFetched, warnings, storedOpenIDs, storedMergedIDs
+    }
+
+    /// The snapshot before PRs moved to `PullRequestStore`, whose file still
+    /// holds them; a file without them isn't one.
+    struct Legacy: Decodable {
+        var openPullRequests: [PullRequest]
+        var mergedPullRequests: [PullRequest]
+    }
 
     /// Cached before PRs' files changed were fetched: a changes search
     /// would leave the PRs it doesn't touch without them, so the next

@@ -1,7 +1,7 @@
 ---
 type: plan
-status: in-progress
-summary: "One PullRequestStore keeps each PR once per org, as core fields plus a slot per store, so MetricsStore, WorkLogStore and later OrgStore stop each saving their own copy."
+status: done
+summary: "One PullRequestStore keeps each PR once per org, as core fields plus a slot per store, so MetricsStore, WorkLogStore and OrgStore stop each saving their own copy."
 issues: [andrew-waters/gannin#232]
 touches: [andrew-waters/gannin]
 owner: dwrss
@@ -34,8 +34,13 @@ in the lookback was saved by `MetricsStore`, `WorkLogStore` and `OrgStore`, each
 - [x] `MetricsStore` reads and writes through it, migrating format 4
 - [x] `WorkLogStore` reads and writes through it, migrating version 4
 - [x] Tests: `PullRequestStoreTests`, `OrgJSONCacheTests.orgs`
-- [ ] `OrgStore`: an `OrgExtras` slot, snapshot membership kept in the snapshot, `updatePullRequest` through `update` (follow-up)
-- [ ] Compare Spent per source before and after in the running app, once `OrgStore` shares it
+- [x] `OrgStore`: a workload slot, the snapshot file listing PR IDs, `updatePullRequest` writing through the store (`OrgSnapshotCache`)
+- [ ] Lower Spent for the PR sources: moved to andrew-waters/gannin#312, which fetches a PR once for every store that reads it
+
+## Why it doesn't lower Spent
+
+Each store still fetches a changed PR in its own shape and trusts only its own slot, so one store's fetch
+never spares another's. Fetching once for every store is andrew-waters/gannin#312.
 
 ## Not in this plan
 

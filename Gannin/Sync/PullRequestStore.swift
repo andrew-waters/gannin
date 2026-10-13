@@ -66,15 +66,38 @@ struct WorkLogExtras: Codable, Hashable {
     var closingIssues: [LinkedItem]
 }
 
+/// What only the workload fetch reads, kept beside the core.
+struct WorkloadExtras: Codable, Hashable {
+    /// The PR's `updatedAt` when this was fetched. Open PRs are fetched again
+    /// at the same `updatedAt` (their checks change without it moving), and
+    /// the newer fetch wins.
+    var updatedAt: Date?
+    let state: String
+    let isDraft: Bool
+    let reviewDecision: PullRequest.ReviewState?
+    let assignees: [Person]
+    var requestedReviewers: [Person]
+    var reviewRequestedAt: [String: Date]
+    let reviewers: [Person]
+    let linkedIssues: [LinkedItem]
+    var checks: ItemDetail.CheckState?
+    var reviewStates: [String: String]?
+    var reviewedAt: [String: Date]?
+    var lastCommitAt: Date?
+    var authorRepliedAt: Date?
+}
+
 struct StoredPullRequest: Codable, Hashable, Identifiable {
     /// The part of a stored PR one store owns.
-    enum Slot { case metrics, workLog }
+    enum Slot { case metrics, workLog, workload }
 
     var core: PullRequestCore
     /// Nil until a metrics sync has fetched the PR.
     var metrics: MetricsExtras?
     /// Nil until a work log sync has fetched the PR.
     var workLog: WorkLogExtras?
+    /// Nil until a workload refresh has fetched the PR.
+    var workload: WorkloadExtras?
 
     var id: String { core.id }
 }
@@ -95,6 +118,8 @@ final class PullRequestStore {
 
     private let cache: OrgJSONCache
     private var loaded: [String: [String: StoredPullRequest]] = [:]
+    /// Saves waiting for a burst of writes to end, by org.
+    private var delayedSaves: [String: SaveCoalescer] = [:]
 
     init(folder: String = "PullRequests") {
         cache = OrgJSONCache(folder: folder)
@@ -107,8 +132,9 @@ final class PullRequestStore {
     }
 
     /// Adds or updates PRs. A PR held at a newer `updatedAt` than the one
-    /// given keeps its core; extras are replaced only by extras.
-    func merge(_ incoming: [StoredPullRequest], org: String) {
+    /// given keeps its core; extras are replaced only by extras. `delayed`
+    /// saves once a burst of writes ends, for edits made one after another.
+    func merge(_ incoming: [StoredPullRequest], org: String, delayed: Bool = false) {
         var held = load(org)
         var changed = false
         for pr in incoming {
@@ -122,7 +148,28 @@ final class PullRequestStore {
         }
         guard changed else { return }
         loaded[org] = held
+        if delayed { saveSoon(org) } else { save(org) }
+    }
+
+    /// Removes one store's part from the PRs it no longer needs, and any PR
+    /// left with nothing from a store, so the file doesn't grow with PRs
+    /// that have closed or aged out.
+    func prune(_ slot: StoredPullRequest.Slot, org: String, keeping ids: Set<String>) {
+        var held = load(org)
+        var changed = false
+        for (id, var pr) in held where !ids.contains(id) {
+            pr.remove(slot)
+            held[id] = pr.isEmpty ? nil : pr
+            changed = true
+        }
+        guard changed else { return }
+        loaded[org] = held
         save(org)
+    }
+
+    /// Writes any save still waiting.
+    func flush() {
+        delayedSaves.values.forEach { $0.flush() }
     }
 
     /// Changes a held PR, as after a write to GitHub, so it shows before the
@@ -133,11 +180,12 @@ final class PullRequestStore {
         change(&pr)
         held[id] = pr
         loaded[org] = held
-        save(org)
+        saveSoon(org)
     }
 
     func clear() {
         loaded = [:]
+        delayedSaves.values.forEach { $0.cancel() }
         cache.clear()
     }
 
@@ -147,11 +195,8 @@ final class PullRequestStore {
         for org in cache.orgs() {
             var held = load(org)
             for (id, var pr) in held {
-                switch slot {
-                case .metrics: pr.metrics = nil
-                case .workLog: pr.workLog = nil
-                }
-                held[id] = pr.metrics == nil && pr.workLog == nil ? nil : pr
+                pr.remove(slot)
+                held[id] = pr.isEmpty ? nil : pr
             }
             loaded[org] = held
             save(org)
@@ -169,9 +214,26 @@ final class PullRequestStore {
     private func save(_ org: String) {
         cache.save(File(formatVersion: Self.currentFormat, pullRequests: loaded[org] ?? [:]), org: org)
     }
+
+    private func saveSoon(_ org: String) {
+        let saver = delayedSaves[org] ?? SaveCoalescer { [weak self] in self?.save(org) }
+        delayedSaves[org] = saver
+        saver.request()
+    }
 }
 
 extension StoredPullRequest {
+    mutating func remove(_ slot: Slot) {
+        switch slot {
+        case .metrics: metrics = nil
+        case .workLog: workLog = nil
+        case .workload: workload = nil
+        }
+    }
+
+    /// Whether no store has a part of it.
+    var isEmpty: Bool { metrics == nil && workLog == nil && workload == nil }
+
     /// This PR with `incoming` laid over it: core field by field, and each
     /// store's part replaced only by a part fetched at least as recently.
     func merged(with incoming: StoredPullRequest) -> StoredPullRequest {
@@ -179,6 +241,7 @@ extension StoredPullRequest {
         next.core = core.merged(with: incoming.core)
         next.metrics = Self.newer(metrics, incoming.metrics) { $0.updatedAt }
         next.workLog = Self.newer(workLog, incoming.workLog) { $0.updatedAt }
+        next.workload = Self.newer(workload, incoming.workload) { $0.updatedAt }
         return next
     }
 
@@ -237,6 +300,36 @@ extension StoredPullRequest {
             reviews: metrics.reviews, reviewRequests: metrics.reviewRequests,
             additions: core.additions ?? 0, deletions: core.deletions ?? 0, changedFiles: core.changedFiles,
             updatedAt: metrics.updatedAt
+        )
+    }
+
+    /// A PR as the workload fetch has it.
+    init(workload pr: PullRequest) {
+        core = PullRequestCore(
+            id: pr.id, number: pr.number, title: pr.title, url: pr.url, repo: pr.repo,
+            author: pr.author, authorIsBot: nil, createdAt: pr.createdAt, mergedAt: pr.mergedAt, updatedAt: pr.updatedAt,
+            additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changedFiles
+        )
+        workload = WorkloadExtras(
+            updatedAt: pr.updatedAt, state: pr.state, isDraft: pr.isDraft, reviewDecision: pr.reviewDecision,
+            assignees: pr.assignees, requestedReviewers: pr.requestedReviewers, reviewRequestedAt: pr.reviewRequestedAt,
+            reviewers: pr.reviewers, linkedIssues: pr.linkedIssues, checks: pr.checks, reviewStates: pr.reviewStates,
+            reviewedAt: pr.reviewedAt, lastCommitAt: pr.lastCommitAt, authorRepliedAt: pr.authorRepliedAt
+        )
+    }
+
+    /// Nil until a workload refresh has fetched it.
+    var workloadPullRequest: PullRequest? {
+        guard let workload else { return nil }
+        return PullRequest(
+            id: core.id, number: core.number, title: core.title, url: core.url, repo: core.repo, author: core.author,
+            isDraft: workload.isDraft, state: workload.state, createdAt: core.createdAt,
+            updatedAt: workload.updatedAt ?? core.updatedAt ?? core.createdAt, mergedAt: core.mergedAt,
+            reviewDecision: workload.reviewDecision, additions: core.additions ?? 0, deletions: core.deletions ?? 0,
+            changedFiles: core.changedFiles, assignees: workload.assignees, requestedReviewers: workload.requestedReviewers,
+            reviewRequestedAt: workload.reviewRequestedAt, reviewers: workload.reviewers, linkedIssues: workload.linkedIssues,
+            checks: workload.checks, reviewStates: workload.reviewStates, reviewedAt: workload.reviewedAt,
+            lastCommitAt: workload.lastCommitAt, authorRepliedAt: workload.authorRepliedAt
         )
     }
 }
