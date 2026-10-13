@@ -95,6 +95,9 @@ jobs:
           key: ${{ runner.os }}-spm-${{ hashFiles('project.yml') }}
           restore-keys: ${{ runner.os }}-spm-
 
+      - name: Test the remote control package
+        run: swift test --package-path Packages/GanninRemote
+
       - name: Build the Mac app
         run: |
           xcodebuild build \

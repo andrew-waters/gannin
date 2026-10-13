@@ -131,7 +131,7 @@ requirement keeps it that way.
 ## Tasks
 
 - [ ] T1. Create the issue in the project and link it here and in the requirement. Satisfies: all.
-- [ ] T2. `Packages/GanninRemote`: wire types, framing, version negotiation, unit tests for
+- [x] T2. `Packages/GanninRemote`: wire types, framing, version negotiation, unit tests for
       encode/decode, oversize frames and unknown versions. Satisfies: HLR5, HLR6.
 - [ ] T3. Pairing and keys: PAKE exchange, keychain identities, pinned mutual TLS, tests with an
       in-process loopback for success, wrong code, expired code, second attempt, revoked phone.
