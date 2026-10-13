@@ -3,7 +3,8 @@
   "branch" : "232-sync-share-one-pr-store-between-the",
   "issue" : "andrew-waters/gannin#232",
   "pullRequests" : [
-    "https://github.com/andrew-waters/gannin/pull/305"
+    "https://github.com/andrew-waters/gannin/pull/305",
+    "https://github.com/acme/api/pull/7"
   ],
   "repos" : [
 
