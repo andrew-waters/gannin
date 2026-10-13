@@ -35,7 +35,7 @@ private struct Fixture {
     let connection: RemoteConnection
     let defaults: UserDefaults
 
-    init(limit: Int = 20, sessions: @escaping () -> [RemoteSession] = { [session("A")] }) {
+    init(limit: Int = 20, sessions: @escaping @MainActor () -> [RemoteSession] = { [session("A")] }) {
         defaults = UserDefaults(suiteName: "remote-connection-tests-\(UUID().uuidString)")!
         phones = PairedPhones(defaults: defaults)
         let phone = phones.add(name: "Alex's iPhone", fingerprint: phoneKey)

@@ -107,14 +107,24 @@ struct QRScannerView: UIViewControllerRepresentable {
     func updateUIViewController(_ controller: ScannerController, context: Context) {}
 }
 
+/// AVCaptureSession isn't Sendable, and starting it blocks, so it's started off the main
+/// thread from inside this box, the only thing that touches it there.
+private final class CaptureBox: @unchecked Sendable {
+    let session = AVCaptureSession()
+
+    func start() { session.startRunning() }
+    func stop() { session.stopRunning() }
+}
+
 final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
     var onCode: ((String) -> Void)?
-    private let session = AVCaptureSession()
+    private let box = CaptureBox()
     private var preview: AVCaptureVideoPreviewLayer?
     private var reported = false
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        let session = box.session
         guard let device = AVCaptureDevice.default(for: .video),
               let input = try? AVCaptureDeviceInput(device: device),
               session.canAddInput(input) else { return }
@@ -137,19 +147,22 @@ final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsD
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        let session = session
-        DispatchQueue.global(qos: .userInitiated).async { session.startRunning() }
+        let box = box
+        Task.detached { box.start() }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        let session = session
-        DispatchQueue.global(qos: .userInitiated).async { session.stopRunning() }
+        let box = box
+        Task.detached { box.stop() }
     }
 
-    func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
-        guard !reported, let text = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
-        reported = true
-        onCode?(text)
+    /// Called by AVFoundation on the main queue it was given, which the protocol can't say.
+    nonisolated func metadataOutput(_ output: AVCaptureMetadataOutput, didOutput objects: [AVMetadataObject], from connection: AVCaptureConnection) {
+        MainActor.assumeIsolated {
+            guard !reported, let text = (objects.first as? AVMetadataMachineReadableCodeObject)?.stringValue else { return }
+            reported = true
+            onCode?(text)
+        }
     }
 }

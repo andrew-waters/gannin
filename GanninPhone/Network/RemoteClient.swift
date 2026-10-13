@@ -25,7 +25,7 @@ final class RemoteClient {
     private(set) var state = RemoteSessionsState()
 
     @ObservationIgnored private let security: any ClientTransportSecurity
-    @ObservationIgnored private let endpoint: () -> NWEndpoint?
+    @ObservationIgnored private let endpoint: @MainActor () -> NWEndpoint?
     @ObservationIgnored private var connection: NWConnection?
     @ObservationIgnored private var decoder = FrameDecoder()
     @ObservationIgnored private var waiting: [String: CheckedContinuation<RemoteResult, Error>] = [:]
@@ -35,7 +35,7 @@ final class RemoteClient {
     @ObservationIgnored private var lastHeard = Date()
     @ObservationIgnored private var attempts = 0
 
-    init(mac: PairedMac, security: any ClientTransportSecurity, endpoint: @escaping () -> NWEndpoint?) {
+    init(mac: PairedMac, security: any ClientTransportSecurity, endpoint: @escaping @MainActor () -> NWEndpoint?) {
         self.mac = mac
         self.security = security
         self.endpoint = endpoint

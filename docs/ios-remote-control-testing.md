@@ -92,16 +92,17 @@ Most likely compile problems, in order of suspicion:
 
 ## 4. iPhone app compiles
 
-The target is built in Swift 5 language mode with default (nonisolated) isolation on purpose.
+The target builds in Swift 6 language mode with main-actor default isolation, like the Mac app, so
+concurrency errors will show on the first compile.
 
 - [ ] `xcodebuild build -scheme GanninPhone -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO` succeeds.
 - [ ] Watch for: `@Observable` classes marked `@MainActor`; `NWBrowser.Result` handling in
-  `MacBrowser`; `withCheckedContinuation` bodies touching `closeSignal`; `AVCaptureSession`
-  captured in a `DispatchQueue` closure; `ContentUnavailableView` inside a `List`.
+  `MacBrowser`; `withCheckedContinuation` bodies touching `closeSignal`; the QR scanner's
+  `nonisolated` AVFoundation delegate method using `MainActor.assumeIsolated` and its `CaptureBox`;
+  the `nonisolated` seam protocols and `PhoneServices` used as an `EnvironmentKey` default; `ContentUnavailableView` inside a `List`.
 - [ ] The merged Info.plist (look inside the built app) has `NSBonjourServices` = `_gannin._tcp`,
   `NSLocalNetworkUsageDescription`, `NSCameraUsageDescription`, `NSFaceIDUsageDescription`.
 - [ ] No app icon is set (there is no asset catalog for the phone yet). Decide whether that blocks.
-- [ ] Once it builds, try moving the target to Swift 6 mode and fix what it reports.
 - [ ] Run it in the simulator. Expect: the lock screen, Face ID prompt (Features › Face ID in the
   simulator), then "No Macs paired". Add a Mac shows the scanner (no camera in the simulator: it
   stays blank), the Mac picker (empty) and typed code field. Pair stays disabled until a Mac is
