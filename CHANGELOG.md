@@ -9,6 +9,8 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+## [0.0.3] - 2026-10-13
+
 ### Added
 - Design and Refine under Rituals: start a session on a web page with its project, repos and who's in the meeting, kept across launches, with Claude as co-reviewer (stepping through the page and capturing findings to come)
 - Team › Activity's work log shows issues people opened and comments they left on issues, with a Filter menu for the kinds of activity shown and one repository
@@ -17,6 +19,12 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Create Harness adds a `decisions/` folder with a README and template
 - Inbox › Needs your review now says when someone else has already reviewed a PR, such as "Review requested, approved by Sam"
 - The diffs on the pull request review page now colour code by language (Swift, TypeScript, JavaScript, Go, PHP, Python, JSON, YAML, Markdown and shell), with added and removed lines marked by a tinted `+` or `-` gutter and a lighter row tint; other files show as before
+- Post automatic reviews in Settings › Harness: each project can say on, off or as in Settings, instead of every project following the one Mac-wide choice
+- Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
+- A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
+- A scheduling board under Agents › Queue and on each queue window's page: drag open issues onto the coming week's windows to queue them, onto Pinned to pin them to a time, or back to unschedule them, and see where each queued issue should run
+- Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
+- A harness commit to a repo whose rules require a pull request now goes through a new branch and a pull request, merged right away when GitHub will have it (which includes anyone who can bypass the rule); otherwise the pull request is left open and a notification says why
 
 ### Changed
 - Ask before recording a session is now set per project in Settings › Harness rather than once per org, so a choice made for one project no longer applies to the others; an org-wide choice made before still applies until a project is set
@@ -26,6 +34,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Refresh no longer fetches every open issue again each time; that happens on its own interval (Settings › Sync › Every open issue) or with Full Refresh, which saves API budget
 - A PR is now kept once in a shared store (Settings › Storage › Pull requests) that the merged PR history and the work log read from, instead of each keeping its own copy, the first step to the workload using it too; your existing merged PR history and work log move into it on upgrade without being fetched again, and clearing one of them in Settings › Storage removes only what that page reads
 - Each metrics sync fetches merged PRs from a day before the last sync to the second, rather than from the start of that day, so it downloads up to a day less
+- A scheduled run for an issue that already has a session carries on in that session instead of failing
 
 ### Fixed
 - A review asked to look again no longer tells you "nothing has changed since my last review" when that review was never posted to GitHub; it reviews the pull request afresh, with a summary that stands alone
@@ -37,22 +46,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Agree and Write's error when a plan can't be committed is now shown clearly (it was easy to miss, styled as an ordinary caption at the bottom of a scrolled form) and names GitHub's real reason instead of a generic "GitHub didn't make the commit."; a sub-issue made but not added to the workflow board, or an expired GitHub session, now says so instead of failing silently
 - Agree and Write no longer makes duplicate GitHub issues if its sheet is dismissed and reopened after a partial failure
 - A harness commit refused by a repository ruleset now opens a pull request as a classic branch protection refusal already did; GitHub's ruleset refusal just says "repository rule violations" rather than naming the rule, so it wasn't recognised as needing one
-
-### Added
-- Post automatic reviews in Settings › Harness: each project can say on, off or as in Settings, instead of every project following the one Mac-wide choice
-- Refines under Harness: a `refines/` folder for Design and Refine session records, in new harnesses too
-- A sandbox's activity (Claude starting, prompts, the tools it uses, failures and when it's waiting on you) now shows in `container logs` and Orchard, with nothing from inside the commands or files and tokens redacted
-- A scheduling board under Agents › Queue and on each queue window's page: drag open issues onto the coming week's windows to queue them, onto Pinned to pin them to a time, or back to unschedule them, and see where each queued issue should run
-- Session rules in Settings › General: block force pushes, pushes to other branches, branch and tag deletes, release writes, too many PR comments an hour, or commands of your own (or ask you first), checked outside Claude in every session
-- A harness commit to a repo whose rules require a pull request now goes through a new branch and a pull request, merged right away when GitHub will have it (which includes anyone who can bypass the rule); otherwise the pull request is left open and a notification says why
-
-### Fixed
 - The Docs links in gannin.ai's header and footer now open the documentation at gannin.ai/docs; they went nowhere before
-
-### Changed
-- A scheduled run for an issue that already has a session carries on in that session instead of failing
-
-### Fixed
 - Issues › All no longer crashes when you expand an issue with sub-issues after scheduling one for an agent
 - An issue's Queued for Agent mark no longer vanishes when its queue window starts it: it shows Agent Working (or Agent Needs You) while the session runs
 
