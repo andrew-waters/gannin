@@ -516,7 +516,7 @@ final class SessionStore {
             let tab = tabOwner(id)
             if !saved.contains(tab) { saved.append(tab) }
         }
-        tabs = saved
+        tabs = saved.filter { !isReviewTab($0) } + saved.filter { isReviewTab($0) }
         selectedTab = tabs.first
     }
 
@@ -529,28 +529,54 @@ final class SessionStore {
         return parent
     }
 
+    /// Whether the tab is a PR review's, not a helper's: a helper shows in
+    /// its owner's tab, so it is in the owner's group. Drafts are work.
+    private func isReviewTab(_ tab: UUID) -> Bool {
+        guard let session = sessions[tabOwner(tab)] else { return false }
+        return session.isPullRequestReview && !session.isHelper
+    }
+
+    /// The tabs as two groups, each in `tabs` order: everything that isn't a
+    /// review, then reviews.
+    var tabGroups: (work: [UUID], reviews: [UUID]) {
+        (tabs.filter { !isReviewTab($0) }, tabs.filter { isReviewTab($0) })
+    }
+
+    /// The tabs in the order they are shown.
+    var displayedTabs: [UUID] {
+        let groups = tabGroups
+        return groups.work + groups.reviews
+    }
+
+    /// Where a new tab goes: after `anchor` if that tab is in the new tab's
+    /// group, else at the end of the group.
+    private func insertionIndex(for tab: UUID, after anchor: UUID?) -> Int {
+        let review = isReviewTab(tab)
+        if let anchor, let index = tabs.firstIndex(of: anchor), isReviewTab(anchor) == review { return index + 1 }
+        if let last = tabs.lastIndex(where: { isReviewTab($0) == review }) { return last + 1 }
+        return review ? tabs.endIndex : 0
+    }
+
     /// Shows the session, adding its tab after the one showing if it isn't
     /// open. A helper shows in its session's tab.
     func reveal(_ id: UUID) {
         guard sessions[id] != nil else { return }
         let tab = tabOwner(id)
         if !tabs.contains(tab) {
-            let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) }.map { $0 + 1 } ?? tabs.endIndex
-            tabs.insert(tab, at: index)
+            tabs.insert(tab, at: insertionIndex(for: tab, after: selectedTab.map(tabOwner)))
             saveTabs()
         }
         selectedTab = id
     }
 
-    /// Adds the session's tab after `neighbour`'s (else at the end) without
-    /// showing it: a helper started in the background, whose tab is its
-    /// session's.
+    /// Adds the session's tab after `neighbour`'s (else at the end of its
+    /// group) without showing it: a helper started in the background, whose
+    /// tab is its session's.
     func addTab(_ id: UUID, after neighbour: UUID?) {
         guard sessions[id] != nil else { return }
         let tab = tabOwner(id)
         guard !tabs.contains(tab) else { return }
-        let index = neighbour.flatMap { tabs.firstIndex(of: $0) }.map { $0 + 1 } ?? tabs.endIndex
-        tabs.insert(tab, at: index)
+        tabs.insert(tab, at: insertionIndex(for: tab, after: neighbour))
         saveTabs()
     }
 
@@ -560,8 +586,7 @@ final class SessionStore {
     func openDraft(_ draft: PlanningDraft) -> UUID {
         let id = UUID()
         planningDrafts[id] = draft
-        let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) }.map { $0 + 1 } ?? tabs.endIndex
-        tabs.insert(id, at: index)
+        tabs.insert(id, at: insertionIndex(for: id, after: selectedTab.map(tabOwner)))
         showingOverview = false
         selectedTab = id
         return id
@@ -610,16 +635,19 @@ final class SessionStore {
     }
 
     func moveTab(_ id: UUID, to target: UUID) {
-        guard id != target, let from = tabs.firstIndex(of: id), let to = tabs.firstIndex(of: target) else { return }
+        guard id != target, isReviewTab(id) == isReviewTab(target),
+              let from = tabs.firstIndex(of: id), let to = tabs.firstIndex(of: target) else { return }
         tabs.move(fromOffsets: [from], toOffset: to > from ? to + 1 : to)
         saveTabs()
     }
 
-    /// The tab `offset` along from the one showing, wrapping round.
+    /// The tab `offset` along from the one showing, in the order shown,
+    /// wrapping round.
     func selectTab(offset: Int) {
-        guard !tabs.isEmpty else { return }
-        let index = selectedTab.flatMap { tabs.firstIndex(of: tabOwner($0)) } ?? 0
-        selectedTab = tabs[((index + offset) % tabs.count + tabs.count) % tabs.count]
+        let shown = displayedTabs
+        guard !shown.isEmpty else { return }
+        let index = selectedTab.flatMap { shown.firstIndex(of: tabOwner($0)) } ?? 0
+        selectedTab = shown[((index + offset) % shown.count + shown.count) % shown.count]
     }
 
     private func saveTabs() {
