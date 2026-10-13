@@ -169,6 +169,7 @@ private struct SessionTabBar: View {
                 }
             }
             .scrollIndicators(.never)
+            .background(WheelScrollsSideways())
             waiting
             Button {
                 sessions.showingOverview.toggle()
@@ -231,6 +232,47 @@ private struct SessionTabBar: View {
         .help("Start an Ask, Quick Change or Plan, or open a session that has no tab")
         .popover(isPresented: $showingAdd, arrowEdge: .bottom) {
             NewSessionPopover { showingAdd = false }
+        }
+    }
+}
+
+/// Makes a mouse wheel over the view behind the scroll view it's the
+/// background of scroll that view sideways: a wheel sends only vertical
+/// deltas, which a horizontal scroll view ignores. Trackpads send their own
+/// horizontal deltas, so are left alone.
+private struct WheelScrollsSideways: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { WheelView() }
+    func updateNSView(_ view: NSView, context: Context) {}
+
+    private final class WheelView: NSView {
+        private var monitor: Any?
+
+        override func viewDidMoveToWindow() {
+            if let monitor { NSEvent.removeMonitor(monitor) }
+            monitor = nil
+            guard window != nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+                let consumed = MainActor.assumeIsolated { self?.scroll(event) ?? false }
+                return consumed ? nil : event
+            }
+        }
+
+        /// Whether it scrolled the bar, so the event is consumed.
+        private func scroll(_ event: NSEvent) -> Bool {
+            guard event.window === window, !event.hasPreciseScrollingDeltas, event.scrollingDeltaY != 0,
+                  event.scrollingDeltaX == 0,
+                  bounds.contains(convert(event.locationInWindow, from: nil)),
+                  let scrollView = window?.contentView?.hitTest(event.locationInWindow)?.enclosingScrollView,
+                  let document = scrollView.documentView
+            else { return false }
+            let clip = scrollView.contentView
+            let overflow = document.frame.width - clip.bounds.width
+            guard overflow > 0 else { return false }
+            var origin = clip.bounds.origin
+            origin.x = min(max(origin.x - event.scrollingDeltaY * 10, 0), overflow)
+            clip.scroll(to: origin)
+            scrollView.reflectScrolledClipView(clip)
+            return true
         }
     }
 }
