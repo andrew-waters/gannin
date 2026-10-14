@@ -108,13 +108,19 @@ struct PlanningPage: View {
 
     /// Under way, then agreed, then finished.
     static func rank(_ session: CodeSession) -> Int {
-        session.archivedAt != nil ? 2 : session.planning?.agreed == nil ? 0 : 1
+        if session.archivedAt != nil { return 2 }
+        return session.planning?.agreed == nil ? 0 : 1
+    }
+
+    private func dotColor(_ session: CodeSession) -> Color {
+        if session.archivedAt != nil { return .secondary.opacity(0.5) }
+        return session.planning?.agreed == nil ? sessions.state(session.id).color : ChartPalette.good
     }
 
     private func statusCell(_ session: CodeSession) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(session.archivedAt != nil ? Color.secondary.opacity(0.5) : session.planning?.agreed == nil ? sessions.state(session.id).color : ChartPalette.good)
+                .fill(dotColor(session))
                 .frame(width: 8, height: 8)
             Text(status(session)).lineLimit(1)
         }
