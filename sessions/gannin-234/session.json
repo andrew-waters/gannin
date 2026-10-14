@@ -3,7 +3,7 @@
   "branch" : "234-sync-keep-one-copy-of-open-issues-on",
   "issue" : "andrew-waters/gannin#234",
   "pullRequests" : [
-
+    "https://github.com/acme/api/pull/7"
   ],
   "repos" : [
 
