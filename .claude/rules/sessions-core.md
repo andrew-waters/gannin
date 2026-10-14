@@ -11,6 +11,7 @@ paths:
 - Read the mode from the terminal footer (`ClaudeMode.fromFooter`) even for server sessions; that terminal is local.
 
 ## Trust boundaries
+- Gannin's own writes to GitHub are confirmed first; a session's claude runs `gh` as the user and isn't. `SessionPrompts.feedback` asks it to reply on review threads it fixed (Settings › General › Agent, on by default), so keep that prompt to short replies on addressed threads, and the hourly comment limit in session rules counting `*/replies` writes.
 - Never fall back to accept-edits or bypass mode when auto mode is unavailable. Disable Unattended and say why.
 - Never read, store or pass on claude's login. It runs signed in as the user.
 - Session rules match by split command words, not parsed commands, so encoded or scripted commands get round them. Never describe them as a security boundary.

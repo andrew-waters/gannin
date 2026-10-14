@@ -2162,6 +2162,7 @@ struct SessionSettingsSection: View {
     @AppStorage(SessionStore.modelKey) private var model = ""
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
     @AppStorage(SessionStore.sendsFeedbackKey) private var sendsFeedback = false
+    @AppStorage(SessionStore.repliesToThreadsKey) private var repliesToThreads = SessionStore.repliesToThreadsDefault
     @AppStorage(SessionStore.pairReviewKey) private var pairReview = true
     @AppStorage(SessionStore.wrapUpKey) private var wrapsUp = true
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
@@ -2220,6 +2221,10 @@ struct SessionSettingsSection: View {
                 .foregroundStyle(.secondary)
             Toggle("Send new PR feedback to Claude", isOn: $sendsFeedback)
             Text("When checks fail or a reviewer says something new on a session's PR, it's pasted into the session for Claude to address: now if it's waiting for you, else when it finishes its turn. Each session can say otherwise in its PRs pane.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Toggle("Ask Claude to reply to review threads", isOn: $repliesToThreads)
+            Text("The PR feedback sent to Claude also asks it to post a short reply on each review thread it changed code for, saying what it changed and in which commit. Threads it disagrees with are left for you. Replies are posted to GitHub as you.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Review a session's work with a second agent", isOn: $pairReview)

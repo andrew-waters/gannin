@@ -30,6 +30,9 @@ struct SessionPullRequest: Identifiable, Hashable {
         /// "changes requested", for a review.
         let verdict: String?
         let comments: [Comment]
+        /// The REST ID of the thread's first comment, which GitHub's
+        /// `/replies` endpoint needs: it rejects a reply's own ID. Nil for a review.
+        var replyID: Int? = nil
 
         /// Seen at its latest comment, so a reply makes it new again.
         var key: String { keyPrefix + (comments.last?.url.absoluteString ?? "") }
@@ -102,12 +105,13 @@ enum SessionPrompts {
         return lines.joined(separator: "\n")
     }
 
-    static func feedback(_ items: [SessionPullRequest.Feedback], on pr: SessionPullRequest, in session: CodeSession) -> String {
+    static func feedback(_ items: [SessionPullRequest.Feedback], on pr: SessionPullRequest, in session: CodeSession, asksForReplies: Bool = SessionStore.repliesToThreads) -> String {
         var lines = ["Review feedback on \(pr.repo)#\(pr.number) (\(pr.url.absoluteString)):", ""]
         for item in items {
             var heading = "@\(item.author)"
             if let location = item.location { heading += " on `\(location)`" }
             if let verdict = item.verdict { heading += " (\(verdict))" }
+            if asksForReplies, let replyID = item.replyID { heading += " (reply ID \(replyID))" }
             lines.append(heading + ":")
             for comment in item.comments {
                 if comment.author != item.author { lines.append("@\(comment.author) replied:") }
@@ -115,7 +119,11 @@ enum SessionPrompts {
             }
             lines.append("")
         }
-        lines.append("Address each in \(worktree(for: pr.repo, in: session)), then commit and push. Tell me what you changed, and anything you'd push back on rather than change.")
+        lines.append("Address each in \(worktree(for: pr.repo, in: session)), then commit and push.")
+        if asksForReplies, items.contains(where: { $0.replyID != nil }) {
+            lines.append("Then, on each thread headed with a reply ID that you changed code for, post a short reply (a sentence or two: what you changed, and the commit) with `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments/<reply ID>/replies -f body=...`. Don't reply to threads you left unchanged or disagree with, nor to reviews with no reply ID; tell me about those instead.")
+        }
+        lines.append("Tell me what you changed, and anything you'd push back on rather than change.")
         return lines.joined(separator: "\n")
     }
 
@@ -422,6 +430,7 @@ extension GitHubAPI {
               } } } } } }
               reviews(last: 30) { nodes { id author { login } state body url } }
               reviewThreads(first: 50) { nodes { id isResolved isOutdated path line originalLine
+                root: comments(first: 1) { nodes { databaseId } }
                 comments(last: 20) { nodes { author { login } body url } } } }
             }
             """
@@ -562,21 +571,21 @@ struct ProbeResponse: Decodable {
 
 /// The search's nodes and each looked-up URL, keyed `u0`, `u1` and so on.
 private struct SessionPRResponse: Decodable {
-    let pullRequests: [RawPullRequest]
+    let pullRequests: [SessionRawPullRequest]
     /// The search's alone.
-    let searched: [RawPullRequest]
+    let searched: [SessionRawPullRequest]
 
-    private struct Search: Decodable { let nodes: [RawPullRequest] }
+    private struct Search: Decodable { let nodes: [SessionRawPullRequest] }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: DynamicKey.self)
-        var found: [RawPullRequest] = []
-        var searched: [RawPullRequest] = []
+        var found: [SessionRawPullRequest] = []
+        var searched: [SessionRawPullRequest] = []
         for key in container.allKeys {
             if key.stringValue == "search" {
                 searched = (try? container.decode(Search.self, forKey: key).nodes) ?? []
                 found += searched
-            } else if key.stringValue.hasPrefix("u"), let pr = try? container.decode(RawPullRequest.self, forKey: key) {
+            } else if key.stringValue.hasPrefix("u"), let pr = try? container.decode(SessionRawPullRequest.self, forKey: key) {
                 found.append(pr)
             }
         }
@@ -587,7 +596,7 @@ private struct SessionPRResponse: Decodable {
 
 /// Every field optional: a search node or URL that isn't a PR comes back
 /// as an empty object.
-private struct RawPullRequest: Decodable {
+struct SessionRawPullRequest: Decodable {
     struct Login: Decodable { let login: String }
     struct Repository: Decodable { let nameWithOwner: String }
     struct Context: Decodable {
@@ -628,7 +637,9 @@ private struct RawPullRequest: Decodable {
         let line: Int?
         let originalLine: Int?
         let comments: Connection<Comment>
+        let root: Connection<Root>?
     }
+    struct Root: Decodable { let databaseId: Int? }
 
     let id: String?
     let number: Int?
@@ -675,7 +686,7 @@ private struct RawPullRequest: Decodable {
             .map { thread in
                 let comments = thread.comments.nodes.map { SessionPullRequest.Comment(author: $0.author?.login ?? "someone", body: $0.body, url: $0.url) }
                 let line = thread.line ?? thread.originalLine
-                return .init(id: thread.id, author: comments[0].author, location: line.map { "\(thread.path):\($0)" } ?? thread.path, verdict: nil, comments: comments)
+                return .init(id: thread.id, author: comments[0].author, location: line.map { "\(thread.path):\($0)" } ?? thread.path, verdict: nil, comments: comments, replyID: thread.root?.nodes.first?.databaseId)
             }
         for review in reviews?.nodes ?? [] where review.author?.login != prAuthor
             && !review.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
