@@ -19,5 +19,21 @@ enum DemoLaunch {
         defaults.set(true, forKey: "ApplePersistenceIgnoreState")
         // No second Gannin icon in the menu bar beside the real one.
         defaults.set(false, forKey: EngineerWatch.menuBarKey)
+        seed(defaults)
+    }
+
+    /// The fixture, laid down through each store's own cache, so the stores
+    /// load it as they would a previous launch's.
+    private static func seed(_ defaults: UserDefaults) {
+        let org = DemoFixture.org
+        if let data = try? JSONEncoder().encode([DemoFixture.personal, DemoFixture.organisation]) {
+            defaults.set(data, forKey: "orgs")
+        }
+        defaults.set(org, forKey: "lastOrg")
+        OrgSnapshotCache().save(DemoFixture.snapshot)
+        let history = DemoFixture.metricsHistory
+        PullRequestStore.shared.merge(history.pullRequests.values.map { StoredPullRequest(metrics: $0) }, org: org)
+        MetricsStore.defaultCache.save(history, org: org)
+        DetailStore.writeCache(DemoFixture.details)
     }
 }

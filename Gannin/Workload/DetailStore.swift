@@ -98,6 +98,13 @@ final class DetailStore {
         }
     }
 
+    /// Writes `details` as the cache a launch loads, for the demo build's
+    /// fixture (`DemoLaunch`).
+    static func writeCache(_ details: [String: ItemDetail], fetchedAt: Date = .now) {
+        let cached = details.mapValues { Cached(detail: $0, fetchedAt: fetchedAt) }
+        if let data = try? encoder.encode(cached) { try? data.write(to: fileURL, options: .atomic) }
+    }
+
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
