@@ -17,6 +17,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - The Claude Code window's tab bar keeps review tabs together after your work tabs, with a divider between the groups when both are open
 
 ### Fixed
+- A PR you've just reviewed from a review tab (Approve, Request Changes or Comment) leaves the Inbox's Ready for your approval and Needs your review sections straight away, instead of waiting for the next refresh
 - A mouse wheel over the Claude Code window's tab bar scrolls the tabs sideways
 
 ## [0.0.3] - 2026-10-13
