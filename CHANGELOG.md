@@ -18,6 +18,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Changed
 - A plan can be ended from its own tab with End: Claude stops and the tab closes, and the plan stays on Rituals › Planning as Finished to read, but leaves the sidebar. An Ask's tab has a Delete button, with the same confirmation as the list's
+- A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ### Fixed
 - A mouse wheel over the Claude Code window's tab bar scrolls the tabs sideways
