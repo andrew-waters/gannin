@@ -1676,6 +1676,7 @@ private struct SessionPanel: View {
     @Environment(\.openWindow) private var openWindow
     let session: CodeSession
     @State private var confirmingRemove = false
+    @State private var deletingAsk: CodeSession?
     @State private var reading: HarnessReading?
     /// An Ask's file picked for Commit to Harness, and Save a Copy's error.
     @State private var committing: SessionFile?
@@ -1779,8 +1780,10 @@ private struct SessionPanel: View {
                         Button("Resume") { _ = sessions.open(session) }
                             .help("Start the terminal again, carrying on claude's conversation")
                     }
-                    // An Ask goes with its folder, from its list's Delete.
-                    if !session.isAsk {
+                    if session.isAsk {
+                        Button("Delete…", role: .destructive) { deletingAsk = session }
+                            .help("End claude and remove the Ask's folder and every file in it")
+                    } else {
                         Button("Forget…", role: .destructive) { confirmingRemove = true }
                             .help("End claude and its helpers and take the session out of Gannin; its files stay")
                     }
@@ -1788,7 +1791,9 @@ private struct SessionPanel: View {
                 Text((sessions.isRunning(session.id)
                       ? "Stop Claude ends it and keeps the worktree, to resume later."
                       : "Resume starts claude again where the conversation left off.")
-                     + (session.isAsk ? "" : " Forget ends claude and its helpers and takes the session out of Gannin; its files stay."))
+                     + (session.isAsk
+                         ? " Delete ends claude and removes the Ask's folder and its files."
+                         : " Forget ends claude and its helpers and takes the session out of Gannin; its files stay."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1822,6 +1827,7 @@ private struct SessionPanel: View {
                 await harness.load(org: session.org, setup: setup)
             }
         }
+        .deletesAsk($deletingAsk)
         .confirmationDialog("Forget this session?", isPresented: $confirmingRemove) {
             Button("Forget Session", role: .destructive) { sessions.remove(session.id) }
         } message: {
@@ -2091,7 +2097,7 @@ struct SessionSidebarRows: View {
         let active = reviews.filter { $0.archivedAt == nil }
         let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
         group("Reviews", symbol: "eye", sessions: active + finished, expanded: $reviewsExpanded)
-        group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter(\.isPlanning), expanded: $planningExpanded)
+        group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter { $0.isPlanning && $0.archivedAt == nil }, expanded: $planningExpanded)
         group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
         group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
     }

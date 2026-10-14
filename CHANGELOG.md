@@ -16,6 +16,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Every session at once in the Claude Code window divides into Work and Reviews sections when both are open
 - The Claude Code window's tab bar keeps review tabs together after your work tabs, with a divider between the groups when both are open
 
+### Changed
+- A plan can be ended from its own tab with End: Claude stops and the tab closes, and the plan stays on Rituals › Planning as Finished to read, but leaves the sidebar. An Ask's tab has a Delete button, with the same confirmation as the list's
+
 ### Fixed
 - A mouse wheel over the Claude Code window's tab bar scrolls the tabs sideways
 

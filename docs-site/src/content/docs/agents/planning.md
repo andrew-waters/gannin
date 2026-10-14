@@ -36,3 +36,7 @@ Documents dropped on the terminal or picked are each confirmed, as to whether to
 ## Agree
 
 Agree shows what isn't approved or covered, lets you tick who was here, and lets you edit the tasks. It then makes the parent issue (the planned one, or a new one) and a sub-issue per task on the workflow board, and commits the plan and the requirement in one commit.
+
+## Ending a plan
+
+End, beside Agree in the workspace, stops Claude, closes the tab and takes the plan out of the sidebar's Planning group. It's there whether or not the plan is agreed. After ending, the plan stays on Rituals › Planning with the status Finished, and opening it shows its stages, tasks and decisions to read; Claude isn't started again. Delete, from that list, removes a plan altogether.

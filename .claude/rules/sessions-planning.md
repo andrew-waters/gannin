@@ -13,6 +13,7 @@ paths:
 - Agree must commit the plan and requirement in one commit, with `agreed_by` front matter, and create the parent and sub-issues first.
 - A dropped or picked document is shared with claude only after confirmation, and may go in `plans/assets/<slug>/` only if the user separately allowed committing it.
 - Saving the editable prompt commits it as a planning prompt before the session starts.
+- An ended plan (`archivedAt` set, `SessionStore.endPlan`) keeps its session and worktree, since `planning.json` is re-read from it. Never start claude when its workspace opens (`.onAppear`).
 
 ## Testing
-- No tests cover planning (`PlanningState`, stages, Agree). Add tests for lenient decoding if you change it.
+- `EndPlanTests` covers ending a plan. No tests cover `PlanningState`, stages or Agree. Add tests for lenient decoding if you change it.
