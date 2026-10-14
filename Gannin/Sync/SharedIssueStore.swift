@@ -108,6 +108,8 @@ final class SharedIssueStore {
 
     private let cache: OrgJSONCache
     private var loaded: [String: [String: StoredIssue]] = [:]
+    /// Saves waiting for a burst of edits to end, by org.
+    private var delayedSaves: [String: SaveCoalescer] = [:]
 
     init(folder: String = "StoredIssues") {
         cache = OrgJSONCache(folder: folder)
@@ -144,7 +146,7 @@ final class SharedIssueStore {
     func prune(_ slot: StoredIssue.Slot, org: String, keeping ids: Set<String>) {
         var held = load(org)
         var changed = false
-        for (id, var issue) in held where !ids.contains(id) {
+        for (id, var issue) in held where !ids.contains(id) && issue.has(slot) {
             issue.remove(slot)
             held[id] = issue.isEmpty ? nil : issue
             changed = true
@@ -154,8 +156,28 @@ final class SharedIssueStore {
         save(org)
     }
 
+    /// Changes a held issue from an edit made in the app, so it shows before
+    /// the next fetch. The edit is the person's, not a fetch, so it isn't
+    /// weighed against the held `updatedAt`. Saves once a burst of edits ends.
+    func update(_ id: String, org: String, _ change: (inout StoredIssue) -> Void) {
+        var held = load(org)
+        guard var issue = held[id] else { return }
+        let before = issue
+        change(&issue)
+        guard issue != before else { return }
+        held[id] = issue
+        loaded[org] = held
+        saveSoon(org)
+    }
+
+    /// Writes any save still waiting.
+    func flush() {
+        delayedSaves.values.forEach { $0.flush() }
+    }
+
     func clear() {
         loaded = [:]
+        delayedSaves.values.forEach { $0.cancel() }
         cache.clear()
     }
 
@@ -164,10 +186,13 @@ final class SharedIssueStore {
     func clear(_ slot: StoredIssue.Slot) {
         for org in cache.orgs() {
             var held = load(org)
-            for (id, var issue) in held {
+            var changed = false
+            for (id, var issue) in held where issue.has(slot) {
                 issue.remove(slot)
                 held[id] = issue.isEmpty ? nil : issue
+                changed = true
             }
+            guard changed else { continue }
             loaded[org] = held
             save(org)
         }
@@ -184,6 +209,12 @@ final class SharedIssueStore {
     private func save(_ org: String) {
         cache.save(File(formatVersion: Self.currentFormat, issues: loaded[org] ?? [:]), org: org)
     }
+
+    private func saveSoon(_ org: String) {
+        let saver = delayedSaves[org] ?? SaveCoalescer { [weak self] in self?.save(org) }
+        delayedSaves[org] = saver
+        saver.request()
+    }
 }
 
 extension StoredIssue {
@@ -191,6 +222,13 @@ extension StoredIssue {
         switch slot {
         case .workload: workload = nil
         case .history: history = nil
+        }
+    }
+
+    func has(_ slot: Slot) -> Bool {
+        switch slot {
+        case .workload: workload != nil
+        case .history: history != nil
         }
     }
 
@@ -239,6 +277,17 @@ extension StoredIssue {
 
     /// GitHub's grey, for a label only a names-only fetch has seen.
     static let unknownLabelColor = "ededed"
+
+    /// What the app edits locally on an issue (its labels, status changes and
+    /// board field values), taken from `record`; nothing else changes, and a
+    /// label keeps the colour already held for its name.
+    mutating func applyEdits(of record: IssueRecord) {
+        core.labels = record.labels.map { name in
+            StoredLabel(name: name, color: core.labels.first { $0.name == name }?.color)
+        }
+        history?.statusChanges = record.statusChanges
+        history?.projectFields = record.projectFields
+    }
 
     /// An issue as the issue history fetch has it.
     init(history record: IssueRecord) {

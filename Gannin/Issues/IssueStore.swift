@@ -322,7 +322,7 @@ final class IssueStore {
             changed.append(record)
         }
         histories[org] = history
-        issueStore.merge(changed.map { StoredIssue(history: $0) }, org: org)
+        for record in changed { issueStore.update(record.id, org: org) { $0.applyEdits(of: record) } }
     }
 
     /// Applies an edit to one record and writes it to the shared issue store,
@@ -332,7 +332,7 @@ final class IssueStore {
         edit(&record)
         history.issues[issueID] = record
         histories[org] = history
-        issueStore.merge([StoredIssue(history: record)], org: org)
+        issueStore.update(issueID, org: org) { $0.applyEdits(of: record) }
     }
 
     static var cacheDirectory: URL { defaultDirectory }

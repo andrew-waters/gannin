@@ -110,6 +110,35 @@ struct SharedIssueStoreTests {
         #expect(store.issues(org: "acme")["a"]?.issueRecord?.labels == ["bug", "edited"])
     }
 
+    @Test func aLocalEditSticksWhenTheCoreIsNewerThanTheHistoryPart() {
+        let store = SharedIssueStore(folder: folder)
+        defer { store.clear() }
+        store.merge([StoredIssue(history: record(updated: 10))], org: "acme")
+        store.merge([StoredIssue(workload: workload(updated: 30))], org: "acme")
+
+        var edited = record(updated: 10, labels: ["bug", "edited"])
+        edited.projectFields = [IssueProjectFields(projectNumber: 1, projectTitle: "Board", values: ["Status": .option(name: "Done", position: 2)])]
+        store.update("a", org: "acme") { $0.applyEdits(of: edited) }
+
+        let held = store.issues(org: "acme")["a"]!
+        #expect(held.core.labels == [StoredLabel(name: "bug", color: "d73a4a"), StoredLabel(name: "edited", color: nil)])
+        #expect(held.issueRecord?.projectFields == edited.projectFields)
+        #expect(held.core.updatedAt == at(30))
+        store.flush()
+        #expect(SharedIssueStore(folder: folder).issues(org: "acme")["a"]?.issueRecord?.labels == ["bug", "edited"])
+    }
+
+    @Test func pruningAPartThatIsAlreadyGoneWritesNothing() throws {
+        let store = SharedIssueStore(folder: folder)
+        defer { store.clear() }
+        store.merge([StoredIssue(history: record("a"))], org: "acme")
+        let file = store.cacheDirectory.appending(path: "acme.json")
+        try FileManager.default.removeItem(at: file)
+
+        store.prune(.workload, org: "acme", keeping: [])
+        #expect(!FileManager.default.fileExists(atPath: file.path))
+    }
+
     @Test func pruningAPartKeepsTheOtherAndDropsAnIssueLeftWithNone() {
         let store = SharedIssueStore(folder: folder)
         defer { store.clear() }
@@ -231,6 +260,7 @@ struct SharedIssueStoreTests {
         store.recordLabels(org: "acme", issueID: "a", labels: ["bug", "edited"])
         store.recordFieldValue(org: "acme", issueID: "a", projectNumber: 1, projectTitle: "Board", field: "Status", value: .option(name: "Done", position: 2))
 
+        shared.flush()
         let again = issueStore(SharedIssueStore(folder: folder), directory)
         again.loadCached("acme")
         let reloaded = again.history(for: "acme")?.issues["a"]
