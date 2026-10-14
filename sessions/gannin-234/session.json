@@ -1,0 +1,15 @@
+{
+  "box" : "Anius",
+  "branch" : "234-sync-keep-one-copy-of-open-issues-on",
+  "issue" : "andrew-waters/gannin#234",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-14T21:17:11Z",
+  "startedBy" : "dwrss",
+  "title" : "Sync: keep one copy of open issues on disk",
+  "url" : "https://github.com/andrew-waters/gannin/issues/234"
+}
