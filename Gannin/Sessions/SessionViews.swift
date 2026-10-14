@@ -284,7 +284,9 @@ private struct WheelScrollsSideways: NSViewRepresentable {
                 decided = true
                 owned = target(of: event)
             }
-            guard let owned else { return false }
+            // Only events that move the bar are taken, so the scroll view sees
+            // a gesture's zero-delta start and end events alike.
+            guard let owned, event.scrollingDeltaY != 0 else { return false }
             move(owned, by: event)
             return true
         }
