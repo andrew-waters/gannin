@@ -1665,11 +1665,7 @@ private struct ReviewDiff: View {
 
     private func computeHighlights() async {
         let key = HighlightKey(lines: file.lines, dark: colorScheme == .dark)
-        guard let language = DiffLanguage.name(forPath: file.path) else {
-            highlights = nil
-            return
-        }
-        let result = await DiffHighlighter.shared.highlight(key.lines, language: language, dark: key.dark)
+        let result = await DiffHighlighter.shared.colours(for: key.lines, path: file.path, dark: key.dark)
         guard !Task.isCancelled else { return }
         highlights = result.map { Highlights(lines: key.lines, colours: $0) }
     }

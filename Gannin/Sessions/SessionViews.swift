@@ -1347,10 +1347,22 @@ private struct DiffPane: View {
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
     @Environment(\.colorScheme) private var colorScheme
-    /// Syntax colours with the `diffVersion` they were made from; nil for a
-    /// file that isn't highlighted, which shows plain. Used only while the
-    /// diff is unchanged.
-    @State private var highlights: (version: Int, colours: [DiffLine.ID: AttributedString])?
+    /// Syntax colours with the file and line texts they were made from; nil
+    /// for a file that isn't highlighted, which shows plain. A line keeps its
+    /// colour through a re-read only while its id and text are unchanged, so
+    /// the pane doesn't flash plain as claude edits and a shifted line is
+    /// never given another's colours.
+    @State private var highlights: Highlights?
+
+    private struct Highlights {
+        let path: String
+        let texts: [DiffLine.ID: String]
+        let colours: [DiffLine.ID: AttributedString]
+
+        func colour(of line: DiffLine, in path: String) -> AttributedString? {
+            self.path == path && texts[line.id] == line.text ? colours[line.id] : nil
+        }
+    }
 
     private struct HighlightKey: Equatable {
         let path: String
@@ -1360,7 +1372,6 @@ private struct DiffPane: View {
 
     var body: some View {
         if let file = changes.selectedFile {
-            let colours = highlights.flatMap { $0.version == changes.diffVersion ? $0.colours : nil }
             let worktreeName = changes.worktrees.first { $0.path == file.worktree }?.name ?? ""
             let drafts = (sessions.drafts[session.id] ?? []).filter { $0.worktree == file.worktree && $0.path == file.path }
             VStack(spacing: 0) {
@@ -1385,7 +1396,7 @@ private struct DiffPane: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(changes.diff) { line in
-                            DiffPaneRow(session: session, changes: changes, file: file, worktreeName: worktreeName, line: line, highlight: colours?[line.id], hovered: $hovered, commenting: $commenting)
+                            DiffPaneRow(session: session, changes: changes, file: file, worktreeName: worktreeName, line: line, highlight: highlights?.colour(of: line, in: file.path), hovered: $hovered, commenting: $commenting)
                             ForEach(drafts.filter { $0.matches(file, line) }) { comment in
                                 DraftCommentView(comment: comment) {
                                     sessions.removeDraft(comment.id, from: session.id)
@@ -1406,14 +1417,9 @@ private struct DiffPane: View {
 
     private func computeHighlights(path: String) async {
         let lines = changes.diff
-        let version = changes.diffVersion
-        guard let language = DiffLanguage.name(forPath: path) else {
-            highlights = nil
-            return
-        }
-        let result = await DiffHighlighter.shared.highlight(lines, language: language, dark: colorScheme == .dark)
+        let result = await DiffHighlighter.shared.colours(for: lines, path: path, dark: colorScheme == .dark)
         guard !Task.isCancelled else { return }
-        highlights = result.map { (version, $0) }
+        highlights = result.map { Highlights(path: path, texts: Dictionary(lines.map { ($0.id, $0.text) }) { first, _ in first }, colours: $0) }
     }
 }
 

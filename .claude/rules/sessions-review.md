@@ -23,7 +23,7 @@ paths:
 - Reviews run in the harness with edits disallowed (`--disallowedTools`). Keep that when changing `startReview`.
 
 ## Diff highlighting
-- Never hand `DiffHighlighter` a line's `+`, `-` or space marker, and never change `DiffLine` ids: it would read the marker as code, and comments anchor to lines by id. `DiffRow` draws the marker itself.
+- Never hand `DiffHighlighter` a line's `+`, `-` or space marker, and never change `DiffLine` ids: it would read the marker as code, and comments anchor to lines by id. `DiffRow` and `DiffPaneRow` draw the marker themselves.
 - Keep the tints and marker colours for a highlighted row in the shared `DiffStyle`: the review's `DiffRow` and the session Changes pane's `DiffPaneRow` both use them. Repositories diffs aren't highlighted.
 
 ## Automatic review

@@ -35,6 +35,13 @@ actor DiffHighlighter {
         return result
     }
 
+    /// `highlight` in the language the file's name says; nil when it isn't
+    /// one that's coloured.
+    func colours(for lines: [DiffLine], path: String, dark: Bool) -> [DiffLine.ID: AttributedString]? {
+        guard let language = DiffLanguage.name(forPath: path) else { return nil }
+        return highlight(lines, language: language, dark: dark)
+    }
+
     private func highlighter(dark: Bool) -> Highlighter? {
         let name = dark ? "github-dark" : "github"
         if highlighter == nil { highlighter = Highlighter() }

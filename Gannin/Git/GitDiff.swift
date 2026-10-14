@@ -108,7 +108,9 @@ nonisolated enum GitDiff {
     }
 }
 
-/// How diff lines are drawn, the same in a session's pane and a repo's page.
+/// How diff lines are drawn: the tints and marker colours shared by the
+/// session pane, the review and a repo's page. Only the session pane and the
+/// review colour the code itself (`DiffHighlighter`).
 enum DiffStyle {
     static func foreground(_ kind: DiffLine.Kind) -> Color {
         switch kind {
