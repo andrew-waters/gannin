@@ -1,0 +1,47 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Every diff change shows plain text until highlighting finishes. While Claude is ",
+      "key" : "Gannin/Sessions/SessionViews.swift:1363:Every diff change shows plain text until highlighting finish",
+      "line" : 1363,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-14T12:50:27Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`computeHighlights` is now a near copy of the one in `PullRequestReview.swift` (",
+      "key" : "Gannin/Sessions/SessionViews.swift:1416:`computeHighlights` is now a near copy of the one in `PullRe",
+      "line" : 1416,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-14T12:50:27Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "This bullet still says only `DiffRow` draws the marker itself, but `DiffPaneRow`",
+      "key" : ".claude/rules/sessions-review.md:26:This bullet still says only `DiffRow` draws the marker itsel",
+      "line" : 26,
+      "path" : ".claude/rules/sessions-review.md",
+      "posted_at" : "2026-10-14T12:50:27Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 346,
+  "posted_at" : "2026-10-14T12:50:27Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-14T12:48:55Z",
+  "state" : "OPEN",
+  "title" : "Colour the code in the session Changes pane's diff by language",
+  "updated_at" : "2026-10-14T12:50:29Z",
+  "verdict" : "approve"
+}
