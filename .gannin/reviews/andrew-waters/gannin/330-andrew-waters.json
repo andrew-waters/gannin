@@ -81,14 +81,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-14T10:16:01Z",
   "number" : 330,
   "posted_at" : "2026-10-14T09:40:50Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-13T17:11:43Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Scroll the session tab bar sideways with a mouse wheel",
-  "updated_at" : "2026-10-14T09:56:53Z",
+  "updated_at" : "2026-10-14T10:16:41Z",
   "verdict" : "approve"
 }
