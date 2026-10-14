@@ -70,14 +70,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-14T11:29:39Z",
   "number" : 341,
   "posted_at" : "2026-10-14T10:35:42Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-14T09:41:27Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Ask Claude to reply on review threads after addressing feedback",
-  "updated_at" : "2026-10-14T10:57:31Z",
+  "updated_at" : "2026-10-14T11:30:06Z",
   "verdict" : "approve"
 }
