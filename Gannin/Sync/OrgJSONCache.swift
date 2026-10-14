@@ -7,7 +7,7 @@ struct OrgJSONCache {
     let folder: String
 
     var directory: URL {
-        URL.applicationSupportDirectory.appending(path: folder, directoryHint: .isDirectory)
+        AppPaths.support.appending(path: folder, directoryHint: .isDirectory)
     }
 
     /// What was saved for `org`, or nil when there's nothing or it can't be read.

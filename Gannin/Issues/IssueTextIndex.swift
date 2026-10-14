@@ -35,8 +35,7 @@ actor IssueTextIndex {
     private var db: OpaquePointer?
 
     static var file: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
+        AppPaths.own
             .appending(path: "IssueText.sqlite")
     }
 

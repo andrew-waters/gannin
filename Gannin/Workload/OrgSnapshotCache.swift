@@ -3,7 +3,7 @@ import Foundation
 /// An org's snapshot on disk: its own file, which lists the PRs' IDs, with
 /// the PRs themselves in `PullRequestStore`.
 struct OrgSnapshotCache {
-    static let defaultDirectory = URL.applicationSupportDirectory.appending(path: "Snapshots", directoryHint: .isDirectory)
+    static let defaultDirectory = AppPaths.support.appending(path: "Snapshots", directoryHint: .isDirectory)
 
     let directory: URL
     let pullRequests: PullRequestStore

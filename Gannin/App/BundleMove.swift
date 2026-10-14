@@ -20,7 +20,7 @@ enum BundleMove {
             defaults.setPersistentDomain(old.merging(mine) { _, new in new }, forName: current)
         }
         // Sessions, pending harness changes and the issue text index.
-        let support = URL.applicationSupportDirectory
+        let support = AppPaths.support
         if let current = Bundle.main.bundleIdentifier {
             let from = support.appending(path: oldIdentifier, directoryHint: .isDirectory)
             let to = support.appending(path: current, directoryHint: .isDirectory)

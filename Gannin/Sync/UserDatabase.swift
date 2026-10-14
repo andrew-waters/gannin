@@ -128,7 +128,7 @@ final class UserDatabase {
     /// The same file it was while it synced through CloudKit, so nothing
     /// moves.
     static var storeURL: URL {
-        URL.applicationSupportDirectory.appending(path: "UserData", directoryHint: .isDirectory).appending(path: "Gannin.store")
+        AppPaths.support.appending(path: "UserData", directoryHint: .isDirectory).appending(path: "Gannin.store")
     }
 
     /// Bytes on disk, the store and its journal files together.

@@ -220,7 +220,7 @@ final class HarnessStore {
     // MARK: Disk cache
 
     static var directory: URL {
-        URL.applicationSupportDirectory.appending(path: "Harness", directoryHint: .isDirectory)
+        AppPaths.support.appending(path: "Harness", directoryHint: .isDirectory)
     }
 
     private static func fileURL(_ org: String, repo: String) -> URL {

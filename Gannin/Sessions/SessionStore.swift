@@ -1484,8 +1484,7 @@ final class SessionStore {
     /// Gannin's own folder, so the unsandboxed app doesn't write loose into
     /// the shared Application Support.
     private static var baseDirectory: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
+        AppPaths.own
             .appending(path: "Sessions", directoryHint: .isDirectory)
     }
 

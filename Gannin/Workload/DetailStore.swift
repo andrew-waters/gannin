@@ -111,7 +111,7 @@ final class DetailStore {
     }()
 
     private static var fileURL: URL {
-        try? FileManager.default.createDirectory(at: .applicationSupportDirectory, withIntermediateDirectories: true)
-        return URL.applicationSupportDirectory.appending(path: "Details.json")
+        try? FileManager.default.createDirectory(at: AppPaths.support, withIntermediateDirectories: true)
+        return AppPaths.support.appending(path: "Details.json")
     }
 }

@@ -149,7 +149,7 @@ final class BankHolidayStore {
     // MARK: Disk cache
 
     private static var directory: URL {
-        URL.applicationSupportDirectory.appending(path: "BankHolidays", directoryHint: .isDirectory)
+        AppPaths.support.appending(path: "BankHolidays", directoryHint: .isDirectory)
     }
 
     private static func read<Value: Decodable>(_ type: Value.Type, _ name: String) throws -> Value {

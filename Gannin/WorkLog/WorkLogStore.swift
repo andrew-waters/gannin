@@ -243,7 +243,7 @@ final class WorkLogStore {
     }()
 
     static var defaultDirectory: URL {
-        URL.applicationSupportDirectory.appending(path: "WorkLog", directoryHint: .isDirectory)
+        AppPaths.support.appending(path: "WorkLog", directoryHint: .isDirectory)
     }
 
     private func fileURL(_ org: String) -> URL {

@@ -594,8 +594,7 @@ final class HarnessTeamStore {
     // MARK: Disk
 
     private static var directory: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
+        AppPaths.own
             .appending(path: "HarnessPending", directoryHint: .isDirectory)
     }
 
