@@ -48,14 +48,15 @@
       "severity" : "minor"
     }
   ],
+  "merged_at" : "2026-10-14T14:15:05Z",
   "number" : 346,
   "posted_at" : "2026-10-14T12:55:11Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-14T12:48:55Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Colour the code in the session Changes pane's diff by language",
-  "updated_at" : "2026-10-14T13:00:00Z",
+  "updated_at" : "2026-10-14T14:22:04Z",
   "verdict" : "approve"
 }
