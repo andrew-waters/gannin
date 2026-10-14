@@ -24,7 +24,7 @@ paths:
 
 ## Diff highlighting
 - Never hand `DiffHighlighter` a line's `+`, `-` or space marker, and never change `DiffLine` ids: it would read the marker as code, and comments anchor to lines by id. `DiffRow` draws the marker itself.
-- Keep the review diff's styling in `DiffRow`, apart from the shared `DiffStyle`: session changes and Repositories diffs use that, and aren't highlighted.
+- Keep the tints and marker colours for a highlighted row in the shared `DiffStyle`: the review's `DiffRow` and the session Changes pane's `DiffPaneRow` both use them. Repositories diffs aren't highlighted.
 
 ## Automatic review
 - Gate on: not draft, not dismissed, not already started (`autoReviewedRequests`). Cap concurrent runs at `AutoReview.maxRunning`.

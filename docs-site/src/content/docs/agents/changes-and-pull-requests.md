@@ -14,6 +14,8 @@ Changes diffs every worktree in the issue's folder, new files included. A switch
 - **Branch**: everything since the branch left the default branch, committed or not.
 - **Uncommitted**: what isn't committed yet. Here you can Stage and Unstage files, Discard a file or a single hunk, Commit, and Push. Each worktree says what isn't pushed.
 
+A file's diff colours its code by language, as a review's does (see [Reviews](/docs/agents/reviews/)). Other files, and files too large to colour without slowing the pane, show as a plain diff.
+
 Commit opens a sheet with a message, or Ask Claude to Commit. Files and lines open in your chosen editor (Open in …, and Copy Path).
 
 The pane updates when Claude edits files or runs commands, and otherwise every 10 seconds (30 over ssh).

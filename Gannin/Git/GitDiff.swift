@@ -125,6 +125,33 @@ enum DiffStyle {
         case .context, .note: .clear
         }
     }
+
+    /// The row's tint when the code is syntax coloured: lighter, as the
+    /// marker's gutter carries the strong one.
+    static func background(_ kind: DiffLine.Kind, highlighted: Bool) -> Color {
+        guard highlighted else { return background(kind) }
+        switch kind {
+        case .added: return ChartPalette.good.opacity(0.07)
+        case .removed: return ChartPalette.critical.opacity(0.07)
+        default: return background(kind)
+        }
+    }
+
+    static func gutterTint(_ kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: ChartPalette.good.opacity(0.3)
+        case .removed: ChartPalette.critical.opacity(0.3)
+        default: .clear
+        }
+    }
+
+    static func markerColor(_ kind: DiffLine.Kind) -> Color {
+        switch kind {
+        case .added: ChartPalette.good
+        case .removed: ChartPalette.critical
+        default: Color.secondary
+        }
+    }
 }
 
 /// Two panes side by side, one (the leading, unless `fixing` says the

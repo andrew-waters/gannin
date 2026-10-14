@@ -1752,9 +1752,9 @@ private struct DiffRow: View {
             if let highlight {
                 // The marker stays in the gutter, tinted harder than the row.
                 Text(String(line.text.prefix(1)))
-                    .foregroundStyle(Self.markerColor(line.kind))
+                    .foregroundStyle(DiffStyle.markerColor(line.kind))
                     .frame(width: 14)
-                    .background(Self.gutterTint(line.kind))
+                    .background(DiffStyle.gutterTint(line.kind))
                 Text(highlight.characters.isEmpty ? AttributedString(" ") : highlight)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .textSelection(.enabled)
@@ -1767,7 +1767,7 @@ private struct DiffRow: View {
         }
         .font(Font(EditorFontStore.shared.font))
         .padding(.trailing, 6)
-        .background(Self.background(line.kind, highlighted: highlight != nil))
+        .background(DiffStyle.background(line.kind, highlighted: highlight != nil))
         .overlay(alignment: .leading) {
             if isLearned {
                 Rectangle().fill(Color.yellow.opacity(0.7)).frame(width: 3)
@@ -1788,32 +1788,6 @@ private struct DiffRow: View {
                     commenting = nil
                 }
             }
-        }
-    }
-
-    /// The row's tint: lighter when the marker's gutter carries the strong one.
-    private static func background(_ kind: DiffLine.Kind, highlighted: Bool) -> Color {
-        switch kind {
-        case .added: ChartPalette.good.opacity(highlighted ? 0.07 : 0.14)
-        case .removed: ChartPalette.critical.opacity(highlighted ? 0.07 : 0.14)
-        case .hunk: Color.secondary.opacity(0.1)
-        case .context, .note: .clear
-        }
-    }
-
-    private static func gutterTint(_ kind: DiffLine.Kind) -> Color {
-        switch kind {
-        case .added: ChartPalette.good.opacity(0.3)
-        case .removed: ChartPalette.critical.opacity(0.3)
-        default: .clear
-        }
-    }
-
-    private static func markerColor(_ kind: DiffLine.Kind) -> Color {
-        switch kind {
-        case .added: ChartPalette.good
-        case .removed: ChartPalette.critical
-        default: Color.secondary
         }
     }
 }

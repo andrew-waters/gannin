@@ -1346,9 +1346,21 @@ private struct DiffPane: View {
     let changes: SessionChanges
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
+    @Environment(\.colorScheme) private var colorScheme
+    /// Syntax colours with the lines they were made from; nil for a file
+    /// that isn't highlighted, which shows plain. Used only while the lines
+    /// are unchanged.
+    @State private var highlights: (lines: [DiffLine], colours: [DiffLine.ID: AttributedString])?
+
+    private struct HighlightKey: Equatable {
+        let path: String?
+        let lines: [DiffLine]
+        let dark: Bool
+    }
 
     var body: some View {
         if let file = changes.selectedFile {
+            let colours = highlights.flatMap { $0.lines == changes.diff ? $0.colours : nil }
             let worktreeName = changes.worktrees.first { $0.path == file.worktree }?.name ?? ""
             let drafts = (sessions.drafts[session.id] ?? []).filter { $0.worktree == file.worktree && $0.path == file.path }
             VStack(spacing: 0) {
@@ -1373,7 +1385,7 @@ private struct DiffPane: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(changes.diff) { line in
-                            DiffPaneRow(session: session, changes: changes, file: file, worktreeName: worktreeName, line: line, hovered: $hovered, commenting: $commenting)
+                            DiffPaneRow(session: session, changes: changes, file: file, worktreeName: worktreeName, line: line, highlight: colours?[line.id], hovered: $hovered, commenting: $commenting)
                             ForEach(drafts.filter { $0.matches(file, line) }) { comment in
                                 DraftCommentView(comment: comment) {
                                     sessions.removeDraft(comment.id, from: session.id)
@@ -1383,10 +1395,24 @@ private struct DiffPane: View {
                     }
                 }
             }
+            .task(id: HighlightKey(path: file.path, lines: changes.diff, dark: colorScheme == .dark)) {
+                await computeHighlights(path: file.path)
+            }
         } else {
             ContentUnavailableView("No file selected", systemImage: "doc.text.magnifyingglass", description: Text("Pick a file to see its diff."))
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+    }
+
+    private func computeHighlights(path: String) async {
+        let lines = changes.diff
+        guard let language = DiffLanguage.name(forPath: path) else {
+            highlights = nil
+            return
+        }
+        let result = await DiffHighlighter.shared.highlight(lines, language: language, dark: colorScheme == .dark)
+        guard !Task.isCancelled else { return }
+        highlights = result.map { (lines, $0) }
     }
 }
 
@@ -1402,6 +1428,9 @@ private struct DiffPaneRow: View {
     let file: ChangedFile
     let worktreeName: String
     let line: DiffLine
+    /// The line's code coloured by its language, without its marker; nil
+    /// draws the plain line.
+    var highlight: AttributedString?
     @Binding var hovered: DiffLine.ID?
     @Binding var commenting: DiffLine.ID?
 
@@ -1422,10 +1451,21 @@ private struct DiffPaneRow: View {
             .contentShape(Rectangle())
             .onTapGesture { if anchor != nil { commenting = line.id } }
             .help(anchor != nil ? "Comment on this line for claude" : "")
-            Text(line.text.isEmpty ? " " : line.text)
-                .foregroundStyle(DiffStyle.foreground(line.kind))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .textSelection(.enabled)
+            if let highlight {
+                // The marker stays in the gutter, tinted harder than the row.
+                Text(String(line.text.prefix(1)))
+                    .foregroundStyle(DiffStyle.markerColor(line.kind))
+                    .frame(width: 14)
+                    .background(DiffStyle.gutterTint(line.kind))
+                Text(highlight.characters.isEmpty ? AttributedString(" ") : highlight)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            } else {
+                Text(line.text.isEmpty ? " " : line.text)
+                    .foregroundStyle(DiffStyle.foreground(line.kind))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
             if line.kind == .hunk, changes.mode == .uncommitted, file.status != .untracked {
                 Button("Discard") {
                     Task { _ = await changes.discardHunk(at: line.id, session: session) }
@@ -1437,7 +1477,7 @@ private struct DiffPaneRow: View {
         }
         .font(Font(EditorFontStore.shared.font))
         .padding(.trailing, 6)
-        .background(DiffStyle.background(line.kind))
+        .background(DiffStyle.background(line.kind, highlighted: highlight != nil))
         .onHover { inside in
             if inside { hovered = line.id } else if hovered == line.id { hovered = nil }
         }
