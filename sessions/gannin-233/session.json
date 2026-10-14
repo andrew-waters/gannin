@@ -1,0 +1,15 @@
+{
+  "box" : "Anius",
+  "branch" : "233-sync-pollers-read-the-shared-pr-store",
+  "issue" : "andrew-waters/gannin#233",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-14T14:25:38Z",
+  "startedBy" : "dwrss",
+  "title" : "Sync: pollers read the shared PR store",
+  "url" : "https://github.com/andrew-waters/gannin/issues/233"
+}
