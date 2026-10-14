@@ -1347,20 +1347,20 @@ private struct DiffPane: View {
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
     @Environment(\.colorScheme) private var colorScheme
-    /// Syntax colours with the lines they were made from; nil for a file
-    /// that isn't highlighted, which shows plain. Used only while the lines
-    /// are unchanged.
-    @State private var highlights: (lines: [DiffLine], colours: [DiffLine.ID: AttributedString])?
+    /// Syntax colours with the `diffVersion` they were made from; nil for a
+    /// file that isn't highlighted, which shows plain. Used only while the
+    /// diff is unchanged.
+    @State private var highlights: (version: Int, colours: [DiffLine.ID: AttributedString])?
 
     private struct HighlightKey: Equatable {
-        let path: String?
-        let lines: [DiffLine]
+        let path: String
+        let version: Int
         let dark: Bool
     }
 
     var body: some View {
         if let file = changes.selectedFile {
-            let colours = highlights.flatMap { $0.lines == changes.diff ? $0.colours : nil }
+            let colours = highlights.flatMap { $0.version == changes.diffVersion ? $0.colours : nil }
             let worktreeName = changes.worktrees.first { $0.path == file.worktree }?.name ?? ""
             let drafts = (sessions.drafts[session.id] ?? []).filter { $0.worktree == file.worktree && $0.path == file.path }
             VStack(spacing: 0) {
@@ -1395,7 +1395,7 @@ private struct DiffPane: View {
                     }
                 }
             }
-            .task(id: HighlightKey(path: file.path, lines: changes.diff, dark: colorScheme == .dark)) {
+            .task(id: HighlightKey(path: file.path, version: changes.diffVersion, dark: colorScheme == .dark)) {
                 await computeHighlights(path: file.path)
             }
         } else {
@@ -1406,13 +1406,14 @@ private struct DiffPane: View {
 
     private func computeHighlights(path: String) async {
         let lines = changes.diff
+        let version = changes.diffVersion
         guard let language = DiffLanguage.name(forPath: path) else {
             highlights = nil
             return
         }
         let result = await DiffHighlighter.shared.highlight(lines, language: language, dark: colorScheme == .dark)
         guard !Task.isCancelled else { return }
-        highlights = result.map { (lines, $0) }
+        highlights = result.map { (version, $0) }
     }
 }
 

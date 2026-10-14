@@ -97,7 +97,12 @@ final class SessionChanges {
     var selected: ChangedFile.ID? {
         didSet { if selected != oldValue { diff = [] } }
     }
-    private(set) var diff: [DiffLine] = []
+    private(set) var diff: [DiffLine] = [] {
+        didSet { diffVersion &+= 1 }
+    }
+    /// Counts each assignment of `diff`, so a view can tell it changed
+    /// without comparing the lines.
+    private(set) var diffVersion = 0
     @ObservationIgnored private var refreshing = false
     @ObservationIgnored private var again = false
 
