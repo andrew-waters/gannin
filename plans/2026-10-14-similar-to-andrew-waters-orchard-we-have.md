@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: done
 summary: "A script that captures Gannin on key screens for the site, docs and README, running against a fake GitHub so the screenshots show invented data rather than real people's."
 issues: [andrew-waters/gannin#334, andrew-waters/gannin#335, andrew-waters/gannin#336, andrew-waters/gannin#337, andrew-waters/gannin#338, andrew-waters/gannin#339, andrew-waters/gannin#340]
 touches: [andrew-waters/gannin, andrew-waters/orchard]

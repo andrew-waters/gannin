@@ -1,6 +1,6 @@
 ---
 type: requirement
-status: in-progress
+status: done
 summary: "One script refreshes a set of screenshots of key screens, from invented data, into the repo where the site and README use them."
 issues: [andrew-waters/gannin#334]
 plans: [plans/2026-10-14-similar-to-andrew-waters-orchard-we-have.md]
