@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 1,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -89,6 +89,6 @@
   "started_at" : "2026-10-13T17:11:43Z",
   "state" : "OPEN",
   "title" : "Scroll the session tab bar sideways with a mouse wheel",
-  "updated_at" : "2026-10-14T09:50:20Z",
+  "updated_at" : "2026-10-14T09:56:53Z",
   "verdict" : "approve"
 }
