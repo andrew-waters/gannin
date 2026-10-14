@@ -1,7 +1,7 @@
 {
   "author" : "dwrss",
   "effort" : 2,
-  "event" : "APPROVE",
+  "event" : "COMMENT",
   "findings" : [
     {
       "category" : "correctness",
@@ -11,6 +11,7 @@
       "line" : 270,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-13T17:13:37Z",
+      "resolved_at" : "2026-10-14T07:02:43Z",
       "severity" : "minor"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 281,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-13T17:13:37Z",
+      "resolved_at" : "2026-10-14T07:02:43Z",
       "severity" : "nit"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 250,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-13T17:13:37Z",
+      "resolved_at" : "2026-10-14T07:02:43Z",
       "severity" : "nit"
     },
     {
@@ -41,16 +44,28 @@
       "line" : 259,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-13T17:13:37Z",
+      "resolved_at" : "2026-10-14T07:02:43Z",
       "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Now that precise deltas are handled, `scrollingDeltaX == 0` is checked one event",
+      "key" : "Gannin/Sessions/SessionViews.swift:264:Now that precise deltas are handled, `scrollingDeltaX == 0` ",
+      "line" : 264,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-14T07:02:39Z",
+      "severity" : "minor"
     }
   ],
   "number" : 330,
-  "posted_at" : "2026-10-13T17:13:37Z",
+  "posted_at" : "2026-10-14T07:02:39Z",
+  "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-13T17:11:43Z",
   "state" : "OPEN",
   "title" : "Scroll the session tab bar sideways with a mouse wheel",
-  "updated_at" : "2026-10-13T17:13:38Z",
+  "updated_at" : "2026-10-14T07:02:43Z",
   "verdict" : "approve"
 }
