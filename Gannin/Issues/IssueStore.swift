@@ -30,11 +30,13 @@ final class IssueStore {
     @ObservationIgnored var unreadableOutsideRepos: (_ org: String) -> [String: String]? = { _ in [:] }
 
     private let issueStore: SharedIssueStore
+    private let directory: URL
 
-    init(auth: AuthStore, activity: SyncActivity, issueStore: SharedIssueStore = .shared) {
+    init(auth: AuthStore, activity: SyncActivity, issueStore: SharedIssueStore = .shared, directory: URL = IssueStore.defaultDirectory) {
         self.auth = auth
         self.activity = activity
         self.issueStore = issueStore
+        self.directory = directory
     }
 
     func history(for org: String) -> IssueHistory? { histories[org] }
@@ -333,12 +335,12 @@ final class IssueStore {
         issueStore.merge([StoredIssue(history: record)], org: org)
     }
 
-    static var cacheDirectory: URL { directory }
+    static var cacheDirectory: URL { defaultDirectory }
 
     func clear() {
         histories = [:]
         errors = [:]
-        try? FileManager.default.removeItem(at: Self.directory)
+        try? FileManager.default.removeItem(at: directory)
         issueStore.clear(.history)
     }
 
@@ -350,7 +352,7 @@ final class IssueStore {
     /// dropped, and fetched again.
     func loadCached(_ org: String) {
         guard histories[org] == nil,
-              let data = try? Data(contentsOf: Self.fileURL(org)),
+              let data = try? Data(contentsOf: fileURL(org)),
               var history = try? Self.decoder.decode(IssueHistory.self, from: data),
               history.version == IssueHistory.currentVersion else {
             return
@@ -390,7 +392,7 @@ final class IssueStore {
         var saved = history
         saved.storedIDs = Array(history.issues.keys)
         if let data = try? Self.encoder.encode(saved) {
-            try? data.write(to: Self.fileURL(history.orgLogin), options: .atomic)
+            try? data.write(to: fileURL(history.orgLogin), options: .atomic)
         }
     }
 
@@ -406,11 +408,11 @@ final class IssueStore {
         return decoder
     }()
 
-    private static var directory: URL {
+    static var defaultDirectory: URL {
         AppPaths.support.appending(path: "Issues", directoryHint: .isDirectory)
     }
 
-    private static func fileURL(_ org: String) -> URL {
+    private func fileURL(_ org: String) -> URL {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "\(org).json")
     }

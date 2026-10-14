@@ -1,7 +1,7 @@
 ---
 type: plan
 status: in-progress
-summary: "One IssueStore-shared record per open issue (core fields plus a workload slot and a history slot) replaces OrgSnapshot.issues and IssueHistory's open records, and board field edits go through one write path; old caches migrate in place."
+summary: "One SharedIssueStore keeps each issue once per org (core fields plus a workload slot and a history slot), so OrgSnapshot and IssueHistory stop saving their own copies, board field and label edits go through IssueEdits, and old caches migrate in place."
 issues: [andrew-waters/gannin#234]
 touches: [andrew-waters/gannin]
 owner: dwrss
@@ -28,31 +28,41 @@ This stage is built for disk and for one write path, as the acceptance criteria 
 
 ## Design
 
-- `IssueStore`-shared `StoredIssue` keyed by node ID per org: core (repo, number, title, url, state, dates,
-  author, assignees with avatars, labels with colours, `updatedAt`), a `workload` slot (linked PRs as `LinkedItem`)
-  and a `history` slot (`IssueRecord`'s extras: status changes, assigned and reopened dates, sub-issues, mentions,
-  project fields, type, milestone, parent, stateReason).
-- Core fields are optional and merge one by one; each slot records the `updatedAt` it was fetched at and the change
-  feed's skip check reads that, never the core's.
-- `OrgSnapshot`'s file lists open issue IDs, hydrated on load through `OrgSnapshotCache` (a `Legacy` decode moves old
-  issues across). `IssueHistory`'s file keeps coverage and issue IDs, closed issues included (they sit in the same store, as
-  merged PRs do), and is dropped when the store no longer holds an ID it lists.
-- Per-slot clear, so clearing the workload doesn't drop the history.
-- One write path: a single `apply` on the shared store changes core, labels, status and board field values;
-  `IssueStore.record*`, `rewriteFieldValues` and `ProjectStore.recordFieldValue/recordLabels/recordClosed` call it
-  or are replaced by it. Callers: `FieldWrites.swift`, `ProjectFieldsSections.swift`, `BoardFields.swift`,
-  `InvestmentWrites.swift`, `OffBoardIssuesView.swift`, `BoardHygieneView.swift`.
-- Readers to check: `Workload.swift`, `PaletteItems.swift` (its dedupe may simplify), `OrgSettingsView`,
-  `PlanningAgree`, `HiddenStore`, `DemoFixture`.
+- `SharedIssueStore` keeps one `StoredIssue` per issue per org, keyed by node ID, in `StoredIssues/<org>.json`:
+  core (repo, number, title, url, author, dates, `closedAt`, `updatedAt`, assignees with avatars, labels with
+  colours), a `workload` slot (linked PRs as `LinkedItem`) and a `history` slot (`IssueRecord`'s extras: status
+  changes, assigned and reopened dates, sub-issues, mentions, project fields, type, milestone, parent,
+  `stateReason`). Closed issues are in it too, as merged PRs are in `PullRequestStore`.
+- Core scalars merge newer-over-older; people merge by login and labels by name, so a history fetch (names only)
+  keeps the avatars and colours the workload fetch saved. When the held `updatedAt` is newer than an incoming
+  fetch's, the held core wins.
+- Each slot records the `updatedAt` it was fetched at and is replaced only by a slot fetched at least as recently.
+  The change feed's skip check reads the history slot's, as `IssueStore.feedPlan` already did through
+  `IssueRecord.updatedAt`.
+- `OrgSnapshot`'s file lists `storedIssueIDs`; `OrgSnapshotCache.load` fills `issues` from the store. An issue the
+  history has since seen closed is left out of the workload, not treated as missing. `IssueHistory`'s file keeps
+  coverage and `storedIDs`, and `IssueStore.loadCached` drops it when the store no longer holds an ID it lists.
+  The in-memory `OrgSnapshot.issues` and `IssueHistory.issues` stay full values, as the PR snapshot does, so no
+  reader changes.
+- Old `Snapshots/` and `Issues/` files are read once (`OrgSnapshot.LegacyIssues`, `IssueHistory.Legacy`), their
+  issues moved into the store and the files rewritten without them.
+- Per-slot clear, so clearing the workload doesn't drop the history. Settings › Storage gains an Issues row.
+- One write path: `IssueEdits.setField` and `setLabels` change `IssueStore` (the stored issue) and `ProjectStore`
+  (each cached board's item) together; `FieldWrites`, `ProjectFieldsSections` and `InvestmentWrites` call it
+  instead of both stores. `IssueStore.record*` write the issue through to the shared store.
 
-## Open points to confirm while building
+## Decisions made while building
 
-- Whether `ProjectStore`'s `BoardItem.values` is read from the shared store or stays a view of its own fetch; the
-  criterion is that an edit reaches every view through one path, which it can do with the board cache still saved.
-- Open-set coverage: `OrgStore` and `IssueStore` scope outside repos differently (`repoExclusion` vs
-  `excludesForIssueHistoryPages`), and `IssueStore` prunes open issues after a full fetch. The slots must keep
-  their own membership so one store's prune doesn't remove the other's issues.
-- `WorkLogStore` also keeps issues (`WorkLogHistory.issues`); out of scope here, moved to andrew-waters/gannin#359.
+- `ProjectStore`'s board cache stays its own file: its items cover drafts, PRs and per-filter lists the issue
+  store doesn't hold. The edit reaches both through `IssueEdits`.
+- Each store keeps its own membership by slot: `IssueStore`'s prune removes only the history slot, and the
+  workload's save removes only the workload slot.
+- `recordClosed` (Board Hygiene), `recordRemoved` and `recordAddedToBoard` still update one store each, as before;
+  they aren't field or label edits.
+- Writing the shared file rewrites every issue's JSON, closed history included, where the snapshot file alone was
+  rewritten before. `PullRequestStore` already behaves this way.
+- Going back to a build from before this one needs a full backfill: it requires `issues` in the old files.
+- `WorkLogStore` also keeps issues (`WorkLogHistory.issues`); andrew-waters/gannin#359.
 
 ## Tasks
 

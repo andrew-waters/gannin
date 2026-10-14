@@ -60,6 +60,7 @@ struct SharedIssueStoreTests {
         store.merge([StoredIssue(history: record(updated: 20))], org: "acme")
 
         let held = store.issues(org: "acme")["a"]!
+        #expect(held.core.author == original.author)
         #expect(held.core.assignees == original.assignees)
         #expect(held.core.labels == [StoredLabel(name: "bug", color: "d73a4a")])
         // The workload's own part is as it was fetched.
@@ -162,5 +163,78 @@ struct SharedIssueStoreTests {
         let old = try encoder.encode(OldFile(coveredFrom: at(0), syncedAt: at(1), openFetchedAt: at(1), issues: ["a": record()]))
         #expect(try decoder.decode(IssueHistory.Legacy.self, from: old).issues["a"] == record())
         #expect(try decoder.decode(IssueHistory.self, from: old).storedIDs == nil)
+    }
+
+    // MARK: IssueStore.loadCached
+
+    private func issueStore(_ shared: SharedIssueStore, _ directory: URL) -> IssueStore {
+        IssueStore(auth: AuthStore(), activity: SyncActivity(), issueStore: shared, directory: directory)
+    }
+
+    private func writeOldHistory(_ records: [IssueRecord], to directory: URL) throws {
+        struct OldFile: Encodable {
+            var version = 1
+            var orgLogin = "acme"
+            var coveredFrom: Date
+            var syncedAt: Date
+            var openFetchedAt: Date
+            var issues: [String: IssueRecord]
+        }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let file = OldFile(coveredFrom: at(0), syncedAt: at(1), openFetchedAt: at(1), issues: Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) }))
+        try encoder.encode(file).write(to: directory.appending(path: "acme.json"))
+    }
+
+    @Test func aHistoryFromBeforeTheStoreMovesItsIssuesIntoItAndIsRewrittenWithoutThem() throws {
+        let directory = URL.applicationSupportDirectory.appending(path: "SharedIssueStoreTests-dir-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let shared = SharedIssueStore(folder: folder)
+        defer { try? FileManager.default.removeItem(at: directory); shared.clear() }
+        let records = [record("a"), record("b", closedAt: at(9))]
+        try writeOldHistory(records, to: directory)
+
+        let store = issueStore(shared, directory)
+        store.loadCached("acme")
+        #expect(store.history(for: "acme")?.issues == Dictionary(uniqueKeysWithValues: records.map { ($0.id, $0) }))
+        #expect(shared.issues(org: "acme")["a"]?.history != nil)
+        let rewritten = try JSONSerialization.jsonObject(with: Data(contentsOf: directory.appending(path: "acme.json"))) as? [String: Any]
+        #expect(rewritten?["issues"] == nil)
+
+        // A fresh launch reads the rewritten file and the store.
+        let again = issueStore(SharedIssueStore(folder: folder), directory)
+        again.loadCached("acme")
+        #expect(again.history(for: "acme")?.issues.count == 2)
+        #expect(again.history(for: "acme")?.issues["a"] == records[0])
+    }
+
+    @Test func aHistoryWhoseIssueStoreWasClearedIsDroppedSoItFetchesAgain() throws {
+        let directory = URL.applicationSupportDirectory.appending(path: "SharedIssueStoreTests-dir-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let shared = SharedIssueStore(folder: folder)
+        defer { try? FileManager.default.removeItem(at: directory); shared.clear() }
+        try writeOldHistory([record("a")], to: directory)
+        issueStore(shared, directory).loadCached("acme")
+        shared.clear()
+
+        let store = issueStore(SharedIssueStore(folder: folder), directory)
+        store.loadCached("acme")
+        #expect(store.history(for: "acme") == nil)
+    }
+
+    @Test func anEditIsKeptInTheStoreAndShownByTheNextLoad() throws {
+        let directory = URL.applicationSupportDirectory.appending(path: "SharedIssueStoreTests-dir-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let shared = SharedIssueStore(folder: folder)
+        defer { try? FileManager.default.removeItem(at: directory); shared.clear() }
+        try writeOldHistory([record("a")], to: directory)
+        let store = issueStore(shared, directory)
+        store.loadCached("acme")
+        store.recordLabels(org: "acme", issueID: "a", labels: ["bug", "edited"])
+        store.recordFieldValue(org: "acme", issueID: "a", projectNumber: 1, projectTitle: "Board", field: "Status", value: .option(name: "Done", position: 2))
+
+        let again = issueStore(SharedIssueStore(folder: folder), directory)
+        again.loadCached("acme")
+        let reloaded = again.history(for: "acme")?.issues["a"]
+        #expect(reloaded?.labels == ["bug", "edited"])
+        #expect(reloaded?.fields(onProject: 1)?.values["Status"] == .option(name: "Done", position: 2))
     }
 }

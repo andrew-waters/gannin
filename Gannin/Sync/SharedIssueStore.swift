@@ -30,6 +30,11 @@ struct IssueCore: Codable, Hashable, Identifiable {
         }
     }
 
+    private static func merged(_ newer: Person?, _ older: Person?) -> Person? {
+        guard let newer, let older, newer.login == older.login else { return newer ?? older }
+        return Person(login: newer.login, name: newer.name ?? older.name, avatarUrl: newer.avatarUrl ?? older.avatarUrl)
+    }
+
     private static func merged(_ newer: [StoredLabel], _ older: [StoredLabel]) -> [StoredLabel] {
         newer.map { label in
             StoredLabel(name: label.name, color: label.color ?? older.first { $0.name == label.name }?.color)
@@ -43,7 +48,7 @@ struct IssueCore: Codable, Hashable, Identifiable {
         let (newer, older) = incomingIsStale ? (self, incoming) : (incoming, self)
         return IssueCore(
             id: id, number: newer.number, title: newer.title, url: newer.url, repo: newer.repo,
-            author: newer.author ?? older.author, createdAt: newer.createdAt, closedAt: newer.closedAt,
+            author: Self.merged(newer.author, older.author), createdAt: newer.createdAt, closedAt: newer.closedAt,
             updatedAt: newer.updatedAt ?? older.updatedAt,
             assignees: Self.merged(newer.assignees, older.assignees), labels: Self.merged(newer.labels, older.labels)
         )
