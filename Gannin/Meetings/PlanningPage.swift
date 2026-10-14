@@ -108,12 +108,12 @@ struct PlanningPage: View {
 
     /// Under way, then agreed, then finished.
     static func rank(_ session: CodeSession) -> Int {
-        if session.archivedAt != nil { return 2 }
+        guard session.archivedAt == nil else { return 2 }
         return session.planning?.agreed == nil ? 0 : 1
     }
 
     private func dotColor(_ session: CodeSession) -> Color {
-        if session.archivedAt != nil { return .secondary.opacity(0.5) }
+        guard session.archivedAt == nil else { return .secondary.opacity(0.5) }
         return session.planning?.agreed == nil ? sessions.state(session.id).color : ChartPalette.good
     }
 
@@ -177,7 +177,7 @@ struct PlanningPage: View {
     }
 
     private func status(_ session: CodeSession) -> String {
-        if session.archivedAt != nil { return "Finished" }
+        guard session.archivedAt == nil else { return "Finished" }
         guard let agreed = session.planning?.agreed else { return sessions.state(session.id).label }
         return "Agreed \(agreed.at.formatted(date: .abbreviated, time: .omitted))"
     }
