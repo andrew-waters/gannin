@@ -24,16 +24,56 @@
       "posted_at" : "2026-10-14T09:42:37Z",
       "resolved_at" : "2026-10-14T09:52:31Z",
       "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The caption says Claude replies \"with what it changed or why not\", but the promp",
+      "key" : "Gannin/Sessions/SessionViews.swift:2149:The caption says Claude replies \"with what it changed or why",
+      "line" : 2149,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-14T10:35:42Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "Same mismatch as the caption: Claude no longer replies with why it didn't change",
+      "key" : "docs-site/src/content/docs/settings/app/general.md:49:Same mismatch as the caption: Claude no longer replies with ",
+      "line" : 49,
+      "path" : "docs-site/src/content/docs/settings/app/general.md",
+      "posted_at" : "2026-10-14T10:35:42Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "\"with what it changed, or why not\" no longer matches the prompt, which only repl",
+      "key" : "docs-site/src/content/docs/agents/changes-and-pull-requests.md:36:\"with what it changed, or why not\" no longer matches the pro",
+      "line" : 36,
+      "path" : "docs-site/src/content/docs/agents/changes-and-pull-requests.md",
+      "posted_at" : "2026-10-14T10:35:42Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The entry still says \"with what it changed or why not\". Replies now go only on t",
+      "key" : "CHANGELOG.md:13:The entry still says \"with what it changed or why not\". Repl",
+      "line" : 13,
+      "path" : "CHANGELOG.md",
+      "posted_at" : "2026-10-14T10:35:42Z",
+      "severity" : "nit"
     }
   ],
   "number" : 341,
-  "posted_at" : "2026-10-14T09:42:37Z",
+  "posted_at" : "2026-10-14T10:35:42Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-14T09:41:27Z",
   "state" : "OPEN",
   "title" : "Ask Claude to reply on review threads after addressing feedback",
-  "updated_at" : "2026-10-14T09:58:02Z",
-  "verdict" : "approve"
+  "updated_at" : "2026-10-14T10:35:43Z",
+  "verdict" : "comment"
 }
