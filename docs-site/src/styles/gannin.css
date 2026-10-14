@@ -31,3 +31,11 @@
   --sl-color-gray-7: #f9fafb;
   --sl-color-black: #ffffff;
 }
+
+/* Screenshots (site/assets/screens, from scripts/capture-screenshots.sh):
+   the dark shot, or the light one in the light theme. */
+.screenshot { margin: 1.5rem 0; }
+.screenshot img { display: block; width: 100%; height: auto; border-radius: 8px; border: 1px solid var(--sl-color-gray-5); }
+.screenshot .light { display: none; }
+:root[data-theme='light'] .screenshot .dark { display: none; }
+:root[data-theme='light'] .screenshot .light { display: block; }

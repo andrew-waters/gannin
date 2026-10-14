@@ -40,3 +40,8 @@ On Not on a board, select issues and choose Add to Board, then pick the board. T
 ## Open an issue or PR
 
 Click a row to open it in a drawer over the page. Right-click for Open in New Tab or Open in New Window. To write a new issue, see [New Issue](/docs/guides/new-issue/).
+
+<figure class="screenshot">
+  <img class="dark" src="/assets/screens/pull-request-dark.png" alt="A pull request in a drawer over the Dashboard: its status, checks, reviewers, linked issue and description" />
+  <img class="light" src="/assets/screens/pull-request-light.png" alt="A pull request in a drawer over the Dashboard: its status, checks, reviewers, linked issue and description" />
+</figure>

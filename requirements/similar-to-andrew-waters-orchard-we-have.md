@@ -26,7 +26,7 @@ People evaluating Gannin on gannin.ai, the docs and the README; maintainers who 
 2. A way to run the app against invented GitHub data, with no calls to GitHub
 3. Three example shots: Workload, one PR or issue detail, Delivery metrics
 4. Adding a screen is one new entry, without changing the machinery
-5. Each pose captured dark then light, into site/assets/screens/<name>.png and site/assets/screens/light/<name>.png, used by the site, README and docs
+5. Each pose captured dark then light, into site/assets/screens/<name>-dark.png and site/assets/screens/<name>-light.png, used by the site, README and docs
 6. A sealed demo mode: no GitHub calls, no keychain token, its own Application Support and SwiftData store, and it runs beside the user's real Gannin without quitting it
 7. Docs: README and site/index.html show the shots (switching with the reader's theme), three docs-site guide pages embed them, and a contributor doc explains running the capture and adding a screen
 8. Simulated Claude Code sessions in demo mode: invented sessions (tabs, working and needs-you states, a fixture transcript, overview and changes) shown from a fixture with no process run
@@ -42,7 +42,7 @@ People evaluating Gannin on gannin.ai, the docs and the README; maintainers who 
 
 ## Acceptance criteria
 
-- **R1** When a maintainer runs the capture script, the system shall launch Gannin in demo mode, pose each listed screen and write site/assets/screens/<name>.png (dark) and site/assets/screens/light/<name>.png (light) for each.
+- **R1** When a maintainer runs the capture script, the system shall launch Gannin in demo mode, pose each listed screen and write site/assets/screens/<name>-dark.png and site/assets/screens/<name>-light.png for each.
 - **R2** When Gannin runs in demo mode, the system shall make no requests to GitHub and shall not read the keychain token.
 - **R3** When Gannin runs in demo mode, the system shall use its own Application Support folder and SwiftData store, so nothing from the user's real caches, settings, stars or hidden items is shown or changed.
 - **R4** When the user's real Gannin is running, the capture shall run beside it without quitting it or ending its Claude Code sessions.

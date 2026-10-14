@@ -7,6 +7,11 @@ sidebar:
 
 Dashboard is the page a window opens on. PR flow, under Delivery, is the same delivery numbers in full. How each number is worked out is in the [Metrics glossary](/docs/concepts/metrics-glossary/).
 
+<figure class="screenshot">
+  <img class="dark" src="/assets/screens/workload-dark.png" alt="The Dashboard: what needs attention, the team with each person’s work in flight, and open PRs by stage" />
+  <img class="light" src="/assets/screens/workload-light.png" alt="The Dashboard: what needs attention, the team with each person’s work in flight, and open PRs by stage" />
+</figure>
+
 ## The window
 
 Both pages follow the **Window** menu in the toolbar: Last 7, 14, 30 or 90 days, or this or last month, quarter or year. Changes are shown against the period before, and a page says "No history for ... yet" when Gannin hasn't fetched that far back. See [Metrics glossary](/docs/concepts/metrics-glossary/) for what the period before means.
@@ -21,6 +26,11 @@ Four sections, each with a header that links to the page it summarises.
 - **Flow.** Open PRs by stage (draft, waiting for review, in review, changes asked, approved) with a count, the median time there and the oldest, then what merged in the window.
 
 ## PR flow
+
+<figure class="screenshot">
+  <img class="dark" src="/assets/screens/delivery-dark.png" alt="PR flow: tiles for PRs opened and merged, cycle time and reviews, with what changed since the period before" />
+  <img class="light" src="/assets/screens/delivery-light.png" alt="PR flow: tiles for PRs opened and merged, cycle time and reviews, with what changed since the period before" />
+</figure>
 
 PR flow opens with tiles for PRs opened, PRs merged, cycle time, time to first review, review requests answered and merged without review, each with the change on the period before. Below them:
 

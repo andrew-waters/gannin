@@ -30,7 +30,7 @@ In full in [requirements/similar-to-andrew-waters-orchard-we-have.md](../require
 2. A way to run the app against invented GitHub data, with no calls to GitHub
 3. Three example shots: Workload, one PR or issue detail, Delivery metrics
 4. Adding a screen is one new entry, without changing the machinery
-5. Each pose captured dark then light, into site/assets/screens/<name>.png and site/assets/screens/light/<name>.png, used by the site, README and docs
+5. Each pose captured dark then light, into site/assets/screens/<name>-dark.png and site/assets/screens/<name>-light.png, used by the site, README and docs
 6. A sealed demo mode: no GitHub calls, no keychain token, its own Application Support and SwiftData store, and it runs beside the user's real Gannin without quitting it
 7. Docs: README and site/index.html show the shots (switching with the reader's theme), three docs-site guide pages embed them, and a contributor doc explains running the capture and adding a screen
 8. Simulated Claude Code sessions in demo mode: invented sessions (tabs, working and needs-you states, a fixture transcript, overview and changes) shown from a fixture with no process run
@@ -46,7 +46,7 @@ In full in [requirements/similar-to-andrew-waters-orchard-we-have.md](../require
 
 **Acceptance criteria:**
 
-- **R1** When a maintainer runs the capture script, the system shall launch Gannin in demo mode, pose each listed screen and write site/assets/screens/<name>.png (dark) and site/assets/screens/light/<name>.png (light) for each.
+- **R1** When a maintainer runs the capture script, the system shall launch Gannin in demo mode, pose each listed screen and write site/assets/screens/<name>-dark.png and site/assets/screens/<name>-light.png for each.
 - **R2** When Gannin runs in demo mode, the system shall make no requests to GitHub and shall not read the keychain token.
 - **R3** When Gannin runs in demo mode, the system shall use its own Application Support folder and SwiftData store, so nothing from the user's real caches, settings, stars or hidden items is shown or changed.
 - **R4** When the user's real Gannin is running, the capture shall run beside it without quitting it or ending its Claude Code sessions.
@@ -62,7 +62,7 @@ In full in [requirements/similar-to-andrew-waters-orchard-we-have.md](../require
 
 - What does the lack of screenshots cost today, and who feels it? **The site and README look bare: people can't see what Gannin does before installing. Maintainers are the ones who'd refresh the shots.**
 - Which screens does the first pass capture? **Three core screens: Workload, one PR or issue detail, Delivery metrics. The rest are added later, one entry each.**
-- Where do screenshots land, in which themes? **One folder, dark and light: site/assets/screens/<name>.png and site/assets/screens/light/<name>.png, each pose captured in both themes back to back.**
+- Where do screenshots land, in which themes? **One folder, dark and light: site/assets/screens/<name>-dark.png and site/assets/screens/<name>-light.png, each pose captured in both themes back to back.**
 - What must the demo environment guarantee? **Sealed and runs beside the real app: no GitHub calls, no keychain token, its own Application Support and SwiftData, never showing or touching the user's real data, and it runs as a separate instance so capturing doesn't quit the user's Gannin or its sessions. Revisited by the room and kept.**
 - Which pages and docs change? **README, site/index.html (switching with the reader's theme), three docs-site guide pages for the shots, and a contributor doc on running the capture and adding a screen.**
 - Are the requirements right? **Yes, but demo mode must also simulate Claude Code sessions.**
@@ -79,7 +79,7 @@ In full in [requirements/similar-to-andrew-waters-orchard-we-have.md](../require
 4. **Fixtures in Swift.** `Gannin/Demo/DemoFixture.swift` builds invented orgs, people (generated avatars, no real logins), repos, PRs, issues, delivery metrics and sessions as model values. They're seeded into `OrgStore`, `PullRequestStore`, `MetricsStore`, `DetailStore` and `SessionStore` at launch, with sync off. Swift rather than JSON so a model change breaks the build, not the screenshots (R5, R6).
 5. **Static sessions.** Fixture sessions are put into `SessionStore` with a state and a transcript; their terminal is a SwiftTerm `TerminalView` fed the transcript bytes, with no process (R10).
 6. **Shots as data.** A `DemoShot` enum, one case per shot: file name, window size and a `pose()` that sets the `SidebarItem`, opens a detail or selects a session. The demo build takes `--shot <name> --appearance dark|light`, or a distributed notification so a run doesn't relaunch, and poses itself. It sets `NSApp.appearance` itself, so the system appearance is never flipped and needs no restoring (R8). When settled it writes its window number to a status file. Adding a screen is one case (R7).
-7. **`scripts/capture-screenshots.sh`.** Builds Gannin Demo, launches it, and for each shot poses dark, captures with `screencapture -l <window> -o`, poses light and captures, into `site/assets/screens/` and `site/assets/screens/light/` (R1, R6, R11). A trap quits the demo instance on exit or failure (R8). It needs Screen Recording only, not Accessibility or Automation.
+7. **`scripts/capture-screenshots.sh`.** Builds Gannin Demo, launches it, and for each shot poses dark, captures with `screencapture -l <window> -o`, poses light and captures, into `site/assets/screens/<name>-dark.png` and `<name>-light.png` (R1, R6, R11). A trap quits the demo instance on exit or failure (R8). It needs Screen Recording only, not Accessibility or Automation.
 8. **Docs.** README, `site/index.html` (light or dark image by `prefers-color-scheme`), three guide pages and `docs/SCREENSHOTS.md` (R9).
 
 **Why not orchard's way exactly:** Gannin has no accessibility identifiers and gets its data from GitHub rather than local services. Posing from inside the app and seeding fixtures avoids both adding identifiers everywhere and a fake GraphQL server that would have to answer every query shape.

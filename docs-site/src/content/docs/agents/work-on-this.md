@@ -17,6 +17,11 @@ An issue that already has a session shows Open Session instead.
 
 ## The Claude Code window
 
+<figure class="screenshot">
+  <img class="dark" src="/assets/screens/session-dark.png" alt="The Claude Code window: a session working on an issue, with its tabs, terminal and side panel" />
+  <img class="light" src="/assets/screens/session-light.png" alt="The Claude Code window: a session working on an issue, with its tabs, terminal and side panel" />
+</figure>
+
 Every session opens as a tab in the one Claude Code window. Tabs are remembered across launches.
 
 - Each tab shows an icon for its kind, and the issue or PR above its title.

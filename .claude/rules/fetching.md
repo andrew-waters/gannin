@@ -42,6 +42,7 @@ paths:
 - Drive progress through `SyncRun.track`, one `SyncStep` per GitHub query.
 
 ## Storage
+- Never root a file at `URL.applicationSupportDirectory`; use `AppPaths.support` (or `AppPaths.own`). The demo build points `AppPaths` at its own folder, and a store that bypassed it would show or overwrite the real app's data (`AppPathsTests` fails on it).
 - User-entered data is SwiftData on this device (`UserDatabase.swift`), no iCloud. Records have no unique constraints (the store once synced via CloudKit), so keep merging duplicates on load: newest wins, time off by UUID.
 - Team data belongs in the harness, not here; stars, hidden items and app settings stay local.
 - The app has no entitlements beyond hardened runtime and isn't sandboxed (sessions run git, gh and claude as the user).

@@ -90,3 +90,4 @@ xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=
 | `routines` | Scheduled runs and the agent queue (`Routines/`) |
 | `sandbox` | Apple container sandboxes and their trust boundaries (`Sandbox/`) |
 | `harness` | Harness indexing, team data, projects, documents, prompts (`Harness/`) |
+| `demo` | The demo build and screenshot capture (`Demo/`, `scripts/capture-screenshots.sh`) |
