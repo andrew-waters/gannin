@@ -115,7 +115,7 @@ enum SessionPrompts {
             }
             lines.append("")
         }
-        lines.append("Address each in \(worktree(for: pr.repo, in: session)), then commit and push. Tell me what you changed, and anything you'd push back on rather than change.")
+        lines.append("Address each in \(worktree(for: pr.repo, in: session)), then commit and push. Then reply on each review thread (ids from `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments`) with `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments/<id>/replies -f body=...`, saying what you changed (or why you didn't) and the commit. Tell me what you changed, and anything you'd push back on rather than change.")
         return lines.joined(separator: "\n")
     }
 
