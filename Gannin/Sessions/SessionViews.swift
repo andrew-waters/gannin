@@ -2084,7 +2084,7 @@ struct SessionSettingsSection: View {
     @AppStorage(SessionStore.modelKey) private var model = ""
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
     @AppStorage(SessionStore.sendsFeedbackKey) private var sendsFeedback = false
-    @AppStorage(SessionStore.repliesToThreadsKey) private var repliesToThreads = true
+    @AppStorage(SessionStore.repliesToThreadsKey) private var repliesToThreads = SessionStore.repliesToThreadsDefault
     @AppStorage(SessionStore.pairReviewKey) private var pairReview = true
     @AppStorage(SessionStore.wrapUpKey) private var wrapsUp = true
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true

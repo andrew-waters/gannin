@@ -29,6 +29,22 @@ struct SessionPromptsTests {
         #expect(prompt.components(separatedBy: "(reply ID ").count == 2)
     }
 
+    @Test func aThreadsFirstCommentIDDecodesIntoItsFeedback() throws {
+        let json = #"""
+        {"id": "PR_1", "number": 7, "title": "T", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+         "repository": {"nameWithOwner": "acme/app"},
+         "reviewThreads": {"nodes": [
+           {"id": "T1", "isResolved": false, "isOutdated": false, "path": "a.swift", "line": 3, "originalLine": 3,
+            "root": {"nodes": [{"databaseId": 99}]},
+            "comments": {"nodes": [{"author": {"login": "rev"}, "body": "rename", "url": "https://github.com/acme/app/pull/7#discussion_r99"}]}},
+           {"id": "T2", "isResolved": false, "isOutdated": false, "path": "b.swift", "line": 4, "originalLine": 4,
+            "comments": {"nodes": [{"author": {"login": "rev"}, "body": "nit", "url": "https://github.com/acme/app/pull/7#discussion_r5"}]}}
+         ]}}
+        """#
+        let raw = try JSONDecoder().decode(SessionRawPullRequest.self, from: Data(json.utf8))
+        #expect(raw.model?.feedback.map(\.replyID) == [99, nil])
+    }
+
     @Test func noReplyInstructionWhenTurnedOff() {
         let thread = SessionPullRequest.Feedback(id: "T1", author: "rev", location: "a.swift:3", verdict: nil, comments: [comment("rename")], replyID: 99)
         let prompt = SessionPrompts.feedback([thread], on: pullRequest([thread]), in: session, asksForReplies: false)

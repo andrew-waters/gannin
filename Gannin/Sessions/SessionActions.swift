@@ -328,7 +328,8 @@ extension SessionStore {
     /// Whether the feedback prompt asks claude to reply on each review
     /// thread it addresses; on unless turned off.
     static let repliesToThreadsKey = "sessionsReplyToThreads"
-    static var repliesToThreads: Bool { UserDefaults.standard.object(forKey: repliesToThreadsKey) as? Bool ?? true }
+    static let repliesToThreadsDefault = true
+    static var repliesToThreads: Bool { UserDefaults.standard.object(forKey: repliesToThreadsKey) as? Bool ?? repliesToThreadsDefault }
 
     /// Whether new failures and feedback on the session's PRs go to its
     /// claude: its own choice, else the user's default.
