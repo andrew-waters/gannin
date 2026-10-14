@@ -459,7 +459,7 @@ private struct SessionPickerRow: View {
 
 /// What a tab says it is: a plan, a review or code, with the issue or PR
 /// it's about and its title without the kind in front.
-private struct TabKind {
+struct TabKind {
     let name: String
     let symbol: String
     let reference: String?

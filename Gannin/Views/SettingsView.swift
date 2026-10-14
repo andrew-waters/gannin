@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The app's settings: General (account and activity), Sync (what's fetched
 /// from GitHub and how often), Sandbox (where Claude Code sessions can run
-/// contained) and Storage, as panes.
+/// contained), Remote (iPhones that can control sessions) and Storage, as panes.
 struct SettingsView: View {
     var body: some View {
         TabView {
@@ -23,6 +23,11 @@ struct SettingsView: View {
                 .formStyle(.grouped)
                 .frame(width: 520)
                 .frame(minHeight: 560)
+            }
+            Tab("Remote", systemImage: "iphone.radiowaves.left.and.right") {
+                RemoteSettingsView()
+                    .frame(width: 520)
+                    .frame(minHeight: 460)
             }
             Tab("Storage", systemImage: "internaldrive") {
                 StorageSettings()

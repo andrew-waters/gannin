@@ -2,7 +2,7 @@
 title: Storage settings
 description: Every option in Settings › Storage, covering caches, what you have entered, and erasing everything.
 sidebar:
-  order: 4
+  order: 5
 ---
 
 Settings › Storage shows what Gannin keeps on this Mac, in two kinds. Caches are copies of what was fetched from GitHub, and can be cleared and fetched again. What you have entered in Gannin exists only here, so deleting it asks first. Everything on this page is kept on this Mac only.

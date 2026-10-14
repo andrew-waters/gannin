@@ -5,7 +5,7 @@ description: Every option in Gannin's Settings, its default, what it changes and
 
 Gannin has two kinds of settings.
 
-- **App settings** are yours, on this Mac. Open them with Gannin › Settings (⌘,). They have four panes: [General](/docs/settings/app/general/), [Sync](/docs/settings/app/sync/), [Sandbox](/docs/settings/app/sandbox/) and [Storage](/docs/settings/app/storage/).
+- **App settings** are yours, on this Mac. Open them with Gannin › Settings (⌘,). They have five panes: [General](/docs/settings/app/general/), [Sync](/docs/settings/app/sync/), [Sandbox](/docs/settings/app/sandbox/), [Remote](/docs/settings/app/remote/) and [Storage](/docs/settings/app/storage/).
 - **Org settings** belong to the org (or your personal account) picked in the window. Open them with the cog beside the account menu at the foot of the sidebar, and pick a pane from the bar at the top: [Repositories](/docs/settings/org/repositories/), [Projects](/docs/settings/org/projects/), [People](/docs/settings/org/people/), [Working Time](/docs/settings/org/working-time/), [Issues](/docs/settings/org/issues/), [Investments](/docs/settings/org/investments/), [Goals](/docs/settings/org/goals/), [Harness](/docs/settings/org/harness/) and [Hidden](/docs/settings/org/hidden/).
 
 Each page has a table per section of the pane: the option as the app labels it, its default, what it changes, and where it's kept.

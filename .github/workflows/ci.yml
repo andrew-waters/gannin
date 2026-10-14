@@ -95,12 +95,27 @@ jobs:
           key: ${{ runner.os }}-spm-${{ hashFiles('project.yml') }}
           restore-keys: ${{ runner.os }}-spm-
 
+      - name: Test the remote control package
+        run: swift test --package-path Packages/GanninRemote
+
       - name: Build the Mac app
         run: |
           xcodebuild build \
             -project Gannin.xcodeproj \
             -scheme Gannin \
             -destination 'generic/platform=macOS' \
+            -clonedSourcePackagesDirPath .spm-cache \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Build the iPhone app
+        run: |
+          xcodebuild build \
+            -project Gannin.xcodeproj \
+            -scheme GanninPhone \
+            -destination 'generic/platform=iOS Simulator' \
             -clonedSourcePackagesDirPath .spm-cache \
             -skipPackagePluginValidation \
             -skipMacroValidation \
