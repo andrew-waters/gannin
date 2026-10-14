@@ -1,0 +1,47 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Only this toolbar Agree checks `isEnded`. The Agree button in the Tasks stage (`",
+      "key" : "Gannin/Sessions/PlanningWorkspace.swift:585:Only this toolbar Agree checks `isEnded`. The Agree button i",
+      "line" : 585,
+      "path" : "Gannin/Sessions/PlanningWorkspace.swift",
+      "posted_at" : "2026-10-14T12:58:04Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "For an Ask, the caption below these buttons (`+ (session.isAsk ? \"\" : \" Forget e",
+      "key" : "Gannin/Sessions/SessionViews.swift:1784:For an Ask, the caption below these buttons (`+ (session.isA",
+      "line" : 1784,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-14T12:58:04Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`underWay.archivedAt = nil` sets the value it already has; it only seems to be t",
+      "key" : "GanninTests/EndPlanTests.swift:60:`underWay.archivedAt = nil` sets the value it already has; i",
+      "line" : 60,
+      "path" : "GanninTests/EndPlanTests.swift",
+      "posted_at" : "2026-10-14T12:58:04Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 345,
+  "posted_at" : "2026-10-14T12:58:04Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-14T12:56:24Z",
+  "state" : "OPEN",
+  "title" : "End a plan and delete an Ask from the session's own tab",
+  "updated_at" : "2026-10-14T12:58:05Z",
+  "verdict" : "comment"
+}
