@@ -52,7 +52,7 @@ This stage is built for disk and for one write path, as the acceptance criteria 
 - Open-set coverage: `OrgStore` and `IssueStore` scope outside repos differently (`repoExclusion` vs
   `excludesForIssueHistoryPages`), and `IssueStore` prunes open issues after a full fetch. The slots must keep
   their own membership so one store's prune doesn't remove the other's issues.
-- `WorkLogStore` also keeps issues (`WorkLogHistory.issues`); out of scope here.
+- `WorkLogStore` also keeps issues (`WorkLogHistory.issues`); out of scope here, moved to andrew-waters/gannin#359.
 
 ## Tasks
 
