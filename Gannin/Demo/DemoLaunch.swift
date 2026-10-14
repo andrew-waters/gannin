@@ -23,9 +23,10 @@ enum DemoLaunch {
     }
 
     /// Once the app is up (the sessions' terminals and the Dock badge need
-    /// it): the fixture's sessions.
+    /// it): the fixture's sessions, and posing for a capture if asked.
     static func didFinishLaunching() {
         if let sessions = GanninAppDelegate.sessions { DemoSessions.show(in: sessions) }
+        DemoDirector.startIfCapturing()
     }
 
     /// The fixture, laid down through each store's own cache, so the stores
