@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
+  "effort" : 1,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -66,17 +66,28 @@
       "line" : 287,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-14T08:48:33Z",
+      "resolved_at" : "2026-10-14T09:40:52Z",
       "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`event.scrollingDeltaY != 0` lets through more than the zero-delta start and end",
+      "key" : "Gannin/Sessions/SessionViews.swift:289:`event.scrollingDeltaY != 0` lets through more than the zero",
+      "line" : 289,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-14T09:40:50Z",
+      "severity" : "nit"
     }
   ],
   "number" : 330,
-  "posted_at" : "2026-10-14T08:48:33Z",
+  "posted_at" : "2026-10-14T09:40:50Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-13T17:11:43Z",
   "state" : "OPEN",
   "title" : "Scroll the session tab bar sideways with a mouse wheel",
-  "updated_at" : "2026-10-14T08:48:36Z",
+  "updated_at" : "2026-10-14T09:40:52Z",
   "verdict" : "approve"
 }
