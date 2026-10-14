@@ -223,11 +223,11 @@ final class ReleaseStore {
     }()
 
     private static var directory: URL {
-        URL.applicationSupportDirectory.appending(path: "Releases", directoryHint: .isDirectory)
+        AppPaths.support.appending(path: "Releases", directoryHint: .isDirectory)
     }
 
     private static var downloadsDirectory: URL {
-        URL.applicationSupportDirectory.appending(path: "ReleaseDownloads", directoryHint: .isDirectory)
+        AppPaths.support.appending(path: "ReleaseDownloads", directoryHint: .isDirectory)
     }
 
     private static func fileURL(_ org: String, in directory: URL = directory) -> URL {

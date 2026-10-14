@@ -97,8 +97,7 @@ final class ReviewActivity {
     private(set) var events: [ReviewEvent] = []
 
     private static var fileURL: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
+        AppPaths.own
             .appending(path: "Sessions", directoryHint: .isDirectory)
             .appending(path: "ReviewActivity.json")
     }

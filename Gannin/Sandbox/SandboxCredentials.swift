@@ -87,8 +87,7 @@ nonisolated enum SandboxCredentials {
     /// transcripts are mounted over its `projects/`. Claude writes it, and
     /// Gannin never reads the login in it.
     static var claudeFolder: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
+        AppPaths.own
             .appending(path: "Sandbox/claude", directoryHint: .isDirectory)
     }
 

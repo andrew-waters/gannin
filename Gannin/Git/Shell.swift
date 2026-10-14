@@ -57,6 +57,9 @@ nonisolated enum Shell {
     /// kept off every command line), and git is told not to ask for
     /// credentials.
     static func run(_ script: String, _ runner: Runner, input: Data? = nil) -> Result {
+        if NetworkGate.isSealed {
+            return Result(ok: false, data: Data(), error: NetworkGate.Sealed.process, errors: NetworkGate.Sealed.process)
+        }
         let process = Process()
         switch runner {
         case .local:

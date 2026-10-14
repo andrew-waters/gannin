@@ -105,7 +105,7 @@ final class APIUsage {
     }
 
     static var fileURL: URL {
-        URL.applicationSupportDirectory.appending(path: "APIUsage.json")
+        AppPaths.support.appending(path: "APIUsage.json")
     }
 
     private static let encoder: JSONEncoder = {

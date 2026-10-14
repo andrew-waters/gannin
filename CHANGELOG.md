@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Screenshots of Gannin on gannin.ai, in the docs (Dashboard and PR flow, Issues and Pull Requests, Work on This) and in the README, in light and dark, taken from a demo build on invented data
 - Feedback sent to a session's Claude, automatically or from the PRs pane, now asks it to post a short reply on each review thread it fixed, saying what it changed, unless Settings › General › Agent › Ask Claude to reply to review threads is off
 - Design and Refine sessions now open the page in a web view inside Gannin: step through it with the team, note findings with the page they were on, take screenshots and mark them up, and paste the meeting's transcript; Claude reads the code to say where each finding lives and suggests ones the room missed; Agree makes the findings into issues on the workflow board and records the session, with the screenshots you tick, in the harness's `refines/`. Each project keeps its own logins for these pages, with Sign Out of Pages in the session and Settings › Storage
 - Every session at once in the Claude Code window divides into Work and Reviews sections when both are open

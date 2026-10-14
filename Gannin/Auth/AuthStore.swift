@@ -25,8 +25,11 @@ final class AuthStore {
 
     var isSignedIn: Bool { token != nil && viewer != nil }
 
+    /// Nil in the demo build, so every fetch stops at its `guard let api`
+    /// rather than failing at the `NetworkGate`.
     var api: GitHubAPI? {
-        token.map { token in
+        if NetworkGate.isSealed { return nil }
+        return token.map { token in
             GitHubAPI(
                 token: token,
                 onRateLimit: { [weak self] in self?.rateLimit = $0 },
@@ -64,10 +67,16 @@ final class AuthStore {
     }
 
     init() {
+        // Signed in as the fixture's invented viewer, with no token to read.
+        #if DEMO
+        token = "demo"
+        viewer = DemoFixture.viewer
+        #else
         token = Keychain.token()
         if token != nil, let data = UserDefaults.standard.data(forKey: Self.viewerKey) {
             viewer = try? JSONDecoder().decode(Viewer.self, from: data)
         }
+        #endif
     }
 
     func completeSignIn(token: String) async throws {

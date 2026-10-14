@@ -331,7 +331,7 @@ final class ProjectStore {
     }()
 
     private static var directory: URL {
-        URL.applicationSupportDirectory.appending(path: "Projects", directoryHint: .isDirectory)
+        AppPaths.support.appending(path: "Projects", directoryHint: .isDirectory)
     }
 
     private static func boardListURL(_ org: String) -> URL {

@@ -56,6 +56,7 @@ actor RequestLimiter {
 
     /// Runs `request` as soon as its lane has a free slot.
     func data(for request: URLRequest, lane: Lane = RequestLimiter.lane) async throws -> (Data, URLResponse) {
+        try NetworkGate.check(request.url)
         try await acquire(lane)
         defer { release(lane) }
         // A slot handed over as the task was cancelled still has to be given back, above.

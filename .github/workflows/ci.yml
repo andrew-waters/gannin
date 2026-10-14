@@ -120,6 +120,20 @@ jobs:
             -derivedDataPath DerivedData \
             CODE_SIGNING_ALLOWED=NO
 
+      # The demo build for screenshots, so its fixtures can't rot unnoticed,
+      # and its tests (DemoSealTests: no GitHub, no keychain, its own files).
+      - name: Test the demo build
+        run: |
+          xcodebuild test \
+            -project Gannin.xcodeproj \
+            -scheme 'Gannin Demo' \
+            -destination 'platform=macOS' \
+            -clonedSourcePackagesDirPath .spm-cache \
+            -skipPackagePluginValidation \
+            -skipMacroValidation \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO
+
   # The user docs (docs-site/): they must build, and every control in the
   # Settings views must be named on its Settings reference page.
   docs:

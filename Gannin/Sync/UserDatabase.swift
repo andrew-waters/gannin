@@ -117,10 +117,15 @@ final class UserDatabase {
 
     init() {
         let schema = Schema([PersonRecord.self, AbsenceRecord.self, OrgConfigRecord.self, HiddenRecord.self, StarRecord.self])
-        let url = Self.storeURL
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        container = (try? ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none)))
-            ?? (try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)))
+        let memory = { try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)) }
+        if NetworkGate.isSealed {
+            // The demo build keeps nothing it's given between launches.
+            container = memory()
+        } else {
+            let url = Self.storeURL
+            try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            container = (try? ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, url: url, cloudKitDatabase: .none))) ?? memory()
+        }
         migrateFromUserDefaults()
         observeRemoteChanges()
     }
@@ -128,7 +133,7 @@ final class UserDatabase {
     /// The same file it was while it synced through CloudKit, so nothing
     /// moves.
     static var storeURL: URL {
-        URL.applicationSupportDirectory.appending(path: "UserData", directoryHint: .isDirectory).appending(path: "Gannin.store")
+        AppPaths.support.appending(path: "UserData", directoryHint: .isDirectory).appending(path: "Gannin.store")
     }
 
     /// Bytes on disk, the store and its journal files together.

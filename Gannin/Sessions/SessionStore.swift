@@ -1484,8 +1484,7 @@ final class SessionStore {
     /// Gannin's own folder, so the unsandboxed app doesn't write loose into
     /// the shared Application Support.
     private static var baseDirectory: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
+        AppPaths.own
             .appending(path: "Sessions", directoryHint: .isDirectory)
     }
 
@@ -1576,6 +1575,51 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     }
 
     func launch(executable: String, args: [String], environment: [String], directory: String) {
+        let view = makeView()
+        if NetworkGate.isSealed {
+            view.feed(text: NetworkGate.Sealed.process + "\r\n")
+            return
+        }
+        isRunning = true
+        view.startProcess(executable: executable, args: args, environment: environment, execName: "zsh", currentDirectory: directory)
+        focus()
+    }
+
+    #if DEMO
+    private var draw: ((Int) -> String)?
+    private var drawnColumns = 0
+    private var resized: NSObjectProtocol?
+
+    /// The demo build's terminal (`DemoSessions`): the screen claude would
+    /// have drawn at this width, fed in with no process behind it and drawn
+    /// again when the width changes, since SwiftTerm reports no resize
+    /// without a process. Counts as running, so opening its tab doesn't
+    /// launch one.
+    func replay(_ draw: @escaping (Int) -> String) {
+        let view = makeView()
+        isRunning = true
+        self.draw = draw
+        drawnColumns = 0
+        redraw()
+        view.postsFrameChangedNotifications = true
+        resized = NotificationCenter.default.addObserver(forName: NSView.frameDidChangeNotification, object: view, queue: .main) { [weak self] _ in
+            // After SwiftTerm has taken the new size.
+            Task { @MainActor in self?.redraw() }
+        }
+    }
+
+    private func redraw() {
+        guard let view, let draw else { return }
+        let columns = view.getTerminal().cols
+        guard columns != drawnColumns else { return }
+        drawnColumns = columns
+        // Clear, home, hide the cursor (the screen draws claude's own).
+        view.feed(text: "\u{1B}[2J\u{1B}[3J\u{1B}[H\u{1B}[?25l" + draw(columns))
+    }
+    #endif
+
+    /// A new terminal view in the container, replacing the last.
+    private func makeView() -> LocalProcessTerminalView {
         view?.removeFromSuperview()
         // Launched with no tab showing it (an automatic review): a usual
         // size, so claude doesn't lay out for a terminal of no columns.
@@ -1595,9 +1639,7 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
         }
         container.addSubview(view)
         self.view = view
-        isRunning = true
-        view.startProcess(executable: executable, args: args, environment: environment, execName: "zsh", currentDirectory: directory)
-        focus()
+        return view
     }
 
     func terminate() {
@@ -1668,3 +1710,22 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
     nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
 }
+
+#if DEMO
+extension SessionStore {
+    /// A fixture session (`DemoSessions`), shown as if its claude ran: its
+    /// tab, state, transcript and screen, with nothing started and nothing
+    /// polled.
+    func showFixture(_ session: CodeSession, state: SessionState, waitingSince: Date?, transcript: SessionTranscript, screen: @escaping (Int) -> String) {
+        sessions[session.id] = session
+        if !tabs.contains(session.id) { tabs.insert(session.id, at: insertionIndex(for: session.id, after: tabs.last)) }
+        states[session.id] = state
+        if let waitingSince { attention[session.id] = waitingSince }
+        transcripts[session.id] = transcript
+        let terminal = SessionTerminal(onTerminate: {}, onSignal: { _ in })
+        terminal.replay(screen)
+        terminals[session.id] = terminal
+        updateBadge()
+    }
+}
+#endif

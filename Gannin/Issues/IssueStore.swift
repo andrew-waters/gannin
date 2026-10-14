@@ -366,7 +366,7 @@ final class IssueStore {
     }()
 
     private static var directory: URL {
-        URL.applicationSupportDirectory.appending(path: "Issues", directoryHint: .isDirectory)
+        AppPaths.support.appending(path: "Issues", directoryHint: .isDirectory)
     }
 
     private static func fileURL(_ org: String) -> URL {

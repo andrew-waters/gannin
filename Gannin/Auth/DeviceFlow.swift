@@ -124,6 +124,7 @@ enum DeviceFlow {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
         request.httpBody = components.percentEncodedQuery?.data(using: .utf8)
+        try NetworkGate.check(url)
 
         let (data, response): (Data, URLResponse)
         do {

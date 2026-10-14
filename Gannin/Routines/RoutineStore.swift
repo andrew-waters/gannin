@@ -208,8 +208,7 @@ final class RoutineStore {
     @ObservationIgnored private let directory: URL
 
     static var defaultDirectory: URL {
-        URL.applicationSupportDirectory
-            .appending(path: Bundle.main.bundleIdentifier ?? "dev.andon.gannin", directoryHint: .isDirectory)
+        AppPaths.own
             .appending(path: "Routines", directoryHint: .isDirectory)
     }
 

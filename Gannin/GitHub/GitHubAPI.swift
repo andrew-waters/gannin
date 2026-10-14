@@ -161,6 +161,7 @@ struct GitHubAPI {
 
     private func send<T: Decodable>(_ query: String, variables: [String: Any]) async throws -> (T, [Message]) {
         if let until = pausedUntil?(false), until > .now { throw APIError.rateLimited(until: until) }
+        try NetworkGate.check(Self.endpoint)
         let isMutation = query.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("mutation")
         let source = isMutation ? .writes : APIUsage.currentSource
         var request = URLRequest(url: Self.endpoint)
