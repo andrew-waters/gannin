@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
+  "effort" : 1,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -33,6 +33,7 @@
       "line" : 2149,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-14T10:35:42Z",
+      "resolved_at" : "2026-10-14T10:57:31Z",
       "severity" : "minor"
     },
     {
@@ -43,6 +44,7 @@
       "line" : 49,
       "path" : "docs-site/src/content/docs/settings/app/general.md",
       "posted_at" : "2026-10-14T10:35:42Z",
+      "resolved_at" : "2026-10-14T10:57:31Z",
       "severity" : "minor"
     },
     {
@@ -53,6 +55,7 @@
       "line" : 36,
       "path" : "docs-site/src/content/docs/agents/changes-and-pull-requests.md",
       "posted_at" : "2026-10-14T10:35:42Z",
+      "resolved_at" : "2026-10-14T10:57:31Z",
       "severity" : "minor"
     },
     {
@@ -63,6 +66,7 @@
       "line" : 13,
       "path" : "CHANGELOG.md",
       "posted_at" : "2026-10-14T10:35:42Z",
+      "resolved_at" : "2026-10-14T10:57:31Z",
       "severity" : "nit"
     }
   ],
@@ -74,6 +78,6 @@
   "started_at" : "2026-10-14T09:41:27Z",
   "state" : "OPEN",
   "title" : "Ask Claude to reply on review threads after addressing feedback",
-  "updated_at" : "2026-10-14T10:35:43Z",
-  "verdict" : "comment"
+  "updated_at" : "2026-10-14T10:57:31Z",
+  "verdict" : "approve"
 }
