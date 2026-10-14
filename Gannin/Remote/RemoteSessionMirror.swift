@@ -5,7 +5,7 @@ import GanninRemote
 @MainActor
 struct RemoteSessionMirror {
     /// A snapshot has to fit in one frame.
-    static let maxSessions = 60
+    static let maxSessions = RemoteSnapshot.maxSessions
     static let maxTitle = 200
     static let maxMessage = 280
 
@@ -13,7 +13,7 @@ struct RemoteSessionMirror {
 
     /// Sessions waiting on you first, then working, then the rest, newest activity first.
     func sessions() -> [RemoteSession] {
-        store.sessions.values
+        let ordered = store.sessions.values
             .map { (session: $0, mirrored: remoteSession($0), active: lastActive($0)) }
             .sorted { lhs, rhs in
                 let (l, r) = (Self.rank(lhs.mirrored.state), Self.rank(rhs.mirrored.state))
@@ -21,6 +21,7 @@ struct RemoteSessionMirror {
             }
             .prefix(Self.maxSessions)
             .map(\.mirrored)
+        return RemoteSnapshot.fitting(ordered)
     }
 
     private func lastActive(_ session: CodeSession) -> Date {

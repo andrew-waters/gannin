@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Fixed
+- Gannin Remote stays connected when opening a session, fits session snapshots within the frame limit, refreshes permission choices as they draw, and prevents queued actions after a phone is revoked or disconnected
+
 ### Added
 - Gannin Remote, an iPhone app that pairs with your Mac over the local network to answer Claude's questions and permission prompts, send a prompt, stop a session and switch it between Attended and Unattended, with Settings › Remote to turn it on and revoke phones
 - Design and Refine sessions now open the page in a web view inside Gannin: step through it with the team, note findings with the page they were on, take screenshots and mark them up, and paste the meeting's transcript; Claude reads the code to say where each finding lives and suggests ones the room missed; Agree makes the findings into issues on the workflow board and records the session, with the screenshots you tick, in the harness's `refines/`. Each project keeps its own logins for these pages, with Sign Out of Pages in the session and Settings › Storage

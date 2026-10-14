@@ -84,6 +84,38 @@ private func roundTrip<M: Codable & Equatable>(_ message: M) throws -> M {
     #expect(throws: FrameError.self) { try FrameCodec.encode(ServerMessage.sessionChanged(session: big)) }
 }
 
+@Test func snapshotsFitTheEncodedBudgetWithLongCommandsAndEscapedUnicode() throws {
+    let sessions = (0..<60).map { index in
+        var item = session
+        item.id = String(index)
+        item.title = String(repeating: "😀", count: 200)
+        item.lastMessage = String(repeating: "\"\n", count: 140)
+        item.prompt = .permission(id: "tool-\(index)", tool: "Bash", command: String(repeating: "x", count: 4096), commandTruncated: false, choices: [RemoteChoice(number: 1, label: "Yes")])
+        return item
+    }
+    #expect(throws: FrameError.self) { try FrameCodec.encode(ServerMessage.snapshot(sessions: sessions)) }
+    let fitted = RemoteSnapshot.fitting(sessions)
+    #expect(!fitted.isEmpty)
+    #expect(fitted.count < sessions.count)
+    #expect(fitted == Array(sessions.prefix(fitted.count)))
+    #expect(try FrameCodec.encode(ServerMessage.snapshot(sessions: fitted)).count <= RemoteProtocol.maxFrameBytes + 4)
+    #expect(throws: FrameError.self) { try FrameCodec.encode(ServerMessage.snapshot(sessions: fitted + [sessions[fitted.count]])) }
+}
+
+@Test func oversizedQuestionsAndOptionsDoNotPreventOtherSessionsFromBeingSent() throws {
+    for oversizedOptions in [false, true] {
+        var asking = session
+        let huge = String(repeating: "😀\"\n", count: RemoteProtocol.maxFrameBytes)
+        asking.prompt = .question(id: "question", items: [RemoteQuestionItem(
+            header: "Pick", question: oversizedOptions ? "Which?" : huge,
+            options: [RemoteOption(label: "A", description: oversizedOptions ? huge : "first")], multiSelect: false
+        )])
+        let fitted = RemoteSnapshot.fitting([asking, session])
+        #expect(fitted == [session])
+        #expect(try roundTrip(ServerMessage.snapshot(sessions: fitted)) == .snapshot(sessions: [session]))
+    }
+}
+
 @Test func otherVersionIsReportedAsSuch() throws {
     let payload = Data(#"{"v":99,"m":{"somethingNew":{}}}"#.utf8)
     #expect(throws: FrameError.unsupportedVersion(99)) { try FrameCodec.decode(payload, as: ServerMessage.self) }

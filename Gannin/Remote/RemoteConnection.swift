@@ -68,10 +68,11 @@ final class RemoteConnection {
     /// Sends what differs from the last thing this phone was sent.
     func push(_ sessions: [RemoteSession]) {
         guard subscribed, !isClosed else { return }
+        let sessions = RemoteSnapshot.fitting(sessions)
         let diff = RemoteSessionDiff.between(old: sent, new: sessions)
-        sent = sessions
         for session in diff.changed { send(.sessionChanged(session: session)) }
         for id in diff.removed { send(.sessionRemoved(id: id)) }
+        if !isClosed { sent = sessions }
     }
 
     func heartbeat() {
@@ -99,14 +100,17 @@ final class RemoteConnection {
             phones.noteSeen(fingerprint)
         case .subscribe:
             subscribed = true
-            sent = snapshot()
-            send(.snapshot(sessions: sent))
+            let sessions = RemoteSnapshot.fitting(snapshot())
+            send(.snapshot(sessions: sessions))
+            if !isClosed { sent = sessions }
         case .intent(let id, let session, let promptID, let intent):
             guard limiter.allow() else {
                 send(.result(id: id, result: .refused(reason: .rateLimited)))
                 return
             }
             Task { [handler] in
+                guard !self.isClosed else { return }
+                guard self.phones.isPaired(self.fingerprint) else { return self.close() }
                 let result = await handler.handle(session: session, promptID: promptID, intent: intent)
                 self.send(.result(id: id, result: result))
             }
@@ -114,7 +118,11 @@ final class RemoteConnection {
     }
 
     private func send(_ message: ServerMessage) {
-        guard !isClosed, let data = try? FrameCodec.encode(message) else { return }
-        link.send(data)
+        guard !isClosed else { return }
+        do {
+            link.send(try FrameCodec.encode(message))
+        } catch {
+            close()
+        }
     }
 }

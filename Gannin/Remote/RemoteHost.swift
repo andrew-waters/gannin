@@ -186,6 +186,14 @@ final class RemoteHost {
             Task { @MainActor in self?.scheduleRefresh() }
         }
         for connection in connections { connection.push(sessions) }
+        // The terminal screen isn't observable. Keep reading until a pending prompt's
+        // choices have drawn, even if the transcript and session state stay unchanged.
+        if sessions.contains(where: { session in
+            if case .permission(_, _, _, _, let choices) = session.prompt { return choices.isEmpty }
+            return false
+        }) {
+            scheduleRefresh()
+        }
         if let window = pairing, window.expiresAt < .now { pairing = nil }
     }
 

@@ -8,7 +8,7 @@ struct RootView: View {
         if lock.locked {
             LockView()
         } else {
-            NavigationStack { MacsView() }
+            MacsView()
         }
     }
 }
