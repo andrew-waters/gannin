@@ -26,6 +26,9 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         }
         source.resume()
         termSource = source
+        #if DEMO
+        DemoLaunch.didFinishLaunching()
+        #endif
     }
 
     private var termSource: DispatchSourceSignal?
@@ -79,7 +82,8 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
         // minutes: save it so the next launch dates ended runs and missed
         // times from this quit.
         Self.sessions?.routines?.saveState()
-        guard let sessions = Self.sessions else { return .terminateNow }
+        // The demo build's sessions only look as if they run.
+        guard let sessions = Self.sessions, !NetworkGate.isSealed else { return .terminateNow }
         let running = sessions.running
         guard !running.isEmpty else { return .terminateNow }
 

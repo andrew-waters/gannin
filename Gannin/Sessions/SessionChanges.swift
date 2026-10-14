@@ -138,6 +138,9 @@ final class SessionChanges {
     }
 
     private func read(_ session: CodeSession) async {
+        #if DEMO
+        if let fixture = DemoSessions.changes[session.id] { return show(fixture, folder: SessionStore.worktreePath(for: session)) }
+        #endif
         guard let runner = Self.runner(for: session) else {
             error = "Changes on a server are read over ssh, and this session connects with \(session.connect ?? "")."
             loaded = true
@@ -176,10 +179,29 @@ final class SessionChanges {
         }
     }
 
+    #if DEMO
+    /// The demo build's changes, from the fixture's `git` output rather than
+    /// git, through the same parsing.
+    private func show(_ fixture: DemoSessions.Changes, folder: String) {
+        loaded = true
+        error = nil
+        let found = Self.parse(fixture.list, folder: folder, inHarness: false)
+        if found != worktrees { worktrees = found }
+        if selected == nil, let first = worktrees.first?.files.first { selected = first.id }
+        guard let file = selectedFile else { return }
+        let (lines, header) = GitDiff.lines(of: fixture.diffs[file.path] ?? "")
+        if lines != diff {
+            diff = lines
+            diffHeader = header
+        }
+    }
+    #endif
+
     // MARK: Changing them
 
     /// Runs git in the file's worktree, then reads everything again.
     private func git(_ command: String, in worktree: String, session: CodeSession) async -> String? {
+        if NetworkGate.isSealed { return "The demo build runs no git." }
         guard let runner = runner ?? Self.runner(for: session) else { return "Not reachable from here." }
         let script = Self.guarded(session) + """
             cd \(SessionScript.shellPath(worktree)) || exit 1

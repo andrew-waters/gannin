@@ -22,6 +22,12 @@ enum DemoLaunch {
         seed(defaults)
     }
 
+    /// Once the app is up (the sessions' terminals and the Dock badge need
+    /// it): the fixture's sessions.
+    static func didFinishLaunching() {
+        if let sessions = GanninAppDelegate.sessions { DemoSessions.show(in: sessions) }
+    }
+
     /// The fixture, laid down through each store's own cache, so the stores
     /// load it as they would a previous launch's.
     private static func seed(_ defaults: UserDefaults) {
