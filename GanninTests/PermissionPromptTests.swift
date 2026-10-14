@@ -40,4 +40,19 @@ struct PermissionPromptTests {
         let lines = ["  1. Yes", "  2. No", " Do you want to proceed?", "", rule]
         #expect(!PermissionChoice.promptShown(in: lines))
     }
+
+    @Test func listInAnIndentedParagraphIsNotAPrompt() {
+        let lines = ["⏺ Here is the plan.", "", "  Do you want to keep the old API?", "  1. Keep", "  2. Drop", "", rule, "❯ ", rule]
+        #expect(!PermissionChoice.promptShown(in: lines))
+    }
+
+    @Test func readsAQuestionThatWrapsOnANarrowPane() {
+        let prompt = [" Do you want to make this edit to", " Gannin/Sessions/SessionActions.swift?", " ❯ 1. Yes", "   2. No"]
+        #expect(PermissionChoice.promptShown(in: prompt))
+    }
+
+    @Test func selectionCanSitOnALaterChoice() {
+        let prompt = [" Do you want to proceed?", "   1. Yes", " ❯ 2. No"]
+        #expect(PermissionChoice.promptShown(in: prompt))
+    }
 }

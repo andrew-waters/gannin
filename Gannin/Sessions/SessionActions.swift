@@ -44,16 +44,23 @@ extension PermissionChoice {
     }
 
     /// Whether the rows show a permission prompt: a line that starts "Do
-    /// you want to" and ends in a question mark, with the first choice on
-    /// a row below it. Words quoted in claude's own text start with its
-    /// bullet or sit mid-line, so they aren't taken for one.
+    /// you want to" (a long one wraps, so it needn't end in a question
+    /// mark), with numbered choices below it, one of them marked ❯ as
+    /// selected. Claude's own text can quote that question or list
+    /// numbered options, but only a prompt has the marker on a choice.
     static func promptShown(in lines: [String]) -> Bool {
         let stripped = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
         guard let question = lines.lastIndex(where: {
-            let text = $0.trimmingCharacters(in: stripped)
-            return text.hasPrefix("Do you want to") && text.hasSuffix("?")
+            $0.trimmingCharacters(in: stripped).hasPrefix("Do you want to")
         }) else { return false }
-        return !read(from: Array(lines[(question + 1)...])).isEmpty
+        let below = Array(lines[(question + 1)...])
+        guard !read(from: below).isEmpty else { return false }
+        return below.contains { line in
+            let text = line.trimmingCharacters(in: stripped)
+            guard text.hasPrefix("❯") else { return false }
+            let rest = text.dropFirst().trimmingCharacters(in: .whitespaces)
+            return rest.firstIndex(of: ".").flatMap { Int(rest[..<$0]) } != nil
+        }
     }
 }
 
