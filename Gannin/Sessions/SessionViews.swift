@@ -238,15 +238,21 @@ private struct SessionTabBar: View {
 
 /// Makes a vertical-only scroll over the view behind the scroll view it's the
 /// background of move that view sideways: a mouse wheel sends only vertical
-/// deltas, which a horizontal scroll view ignores. A swipe with any
-/// horizontal part, as a trackpad's sideways one has, is left to the scroll
-/// view; a trackpad's purely vertical swipe over the bar scrolls it too.
+/// deltas, which a horizontal scroll view ignores. A trackpad's gesture is
+/// taken or left alone as a whole, decided by its first event with a delta
+/// (its momentum included), so one swipe isn't split between this and the
+/// scroll view. A swipe that's purely vertical over the bar scrolls it; one
+/// with any horizontal part goes to the scroll view.
 private struct WheelScrollsSideways: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView { WheelView() }
     func updateNSView(_ view: NSView, context: Context) {}
 
     private final class WheelView: NSView {
         private var monitor: Any?
+        /// The scroll view the gesture in progress is moving; nil when it
+        /// isn't ours or isn't decided yet.
+        private weak var owned: NSScrollView?
+        private var decided = false
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -261,11 +267,38 @@ private struct WheelScrollsSideways: NSViewRepresentable {
 
         /// Whether it scrolled the bar, so the event is consumed.
         private func scroll(_ event: NSEvent) -> Bool {
-            guard event.window === window, event.scrollingDeltaY != 0, event.scrollingDeltaX == 0,
+            guard event.window === window else { return false }
+            // A wheel's events have no phase, so each is decided alone.
+            guard !event.phase.isEmpty || !event.momentumPhase.isEmpty else {
+                guard let scrollView = target(of: event) else { return false }
+                move(scrollView, by: event)
+                return true
+            }
+            if event.phase.contains(.began) {
+                owned = nil
+                decided = false
+            }
+            if !decided {
+                // A gesture's first event can have no delta yet.
+                guard event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 else { return false }
+                decided = true
+                owned = target(of: event)
+            }
+            guard let owned else { return false }
+            move(owned, by: event)
+            return true
+        }
+
+        /// The scroll view under a vertical-only scroll that's over the bar.
+        private func target(of event: NSEvent) -> NSScrollView? {
+            guard event.scrollingDeltaY != 0, event.scrollingDeltaX == 0,
                   bounds.contains(convert(event.locationInWindow, from: nil)),
-                  let content = window?.contentView, let frame = content.superview,
-                  let scrollView = content.hitTest(frame.convert(event.locationInWindow, from: nil))?.enclosingScrollView
-            else { return false }
+                  let content = window?.contentView, let frame = content.superview
+            else { return nil }
+            return content.hitTest(frame.convert(event.locationInWindow, from: nil))?.enclosingScrollView
+        }
+
+        private func move(_ scrollView: NSScrollView, by event: NSEvent) {
             let clip = scrollView.contentView
             // Points when precise, else notches of the scroll view's line step.
             let step = event.hasPreciseScrollingDeltas ? 1 : scrollView.horizontalLineScroll * 5
@@ -273,7 +306,6 @@ private struct WheelScrollsSideways: NSViewRepresentable {
             bounds.origin.x -= event.scrollingDeltaY * step
             clip.scroll(to: clip.constrainBoundsRect(bounds).origin)
             scrollView.reflectScrolledClipView(clip)
-            return true
         }
     }
 }
