@@ -23,7 +23,7 @@ struct PlanningPage: View {
     var body: some View {
         let all = sessions.sessions(for: org)
             .filter(\.isPlanning)
-            .sorted { (rank($0), $1.createdAt) < (rank($1), $0.createdAt) }
+            .sorted { (Self.rank($0), $1.createdAt) < (Self.rank($1), $0.createdAt) }
         Group {
             if all.isEmpty {
                 ContentUnavailableView {
@@ -107,7 +107,7 @@ struct PlanningPage: View {
     }
 
     /// Under way, then agreed, then finished.
-    private func rank(_ session: CodeSession) -> Int {
+    static func rank(_ session: CodeSession) -> Int {
         session.archivedAt != nil ? 2 : session.planning?.agreed == nil ? 0 : 1
     }
 

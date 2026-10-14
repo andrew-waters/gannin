@@ -1676,9 +1676,7 @@ private struct SessionPanel: View {
     @Environment(\.openWindow) private var openWindow
     let session: CodeSession
     @State private var confirmingRemove = false
-    @State private var confirmingDelete = false
-    /// Its folder couldn't be removed: why, to delete it anyway.
-    @State private var deleteError: String?
+    @State private var deletingAsk: CodeSession?
     @State private var reading: HarnessReading?
     /// An Ask's file picked for Commit to Harness, and Save a Copy's error.
     @State private var committing: SessionFile?
@@ -1783,7 +1781,7 @@ private struct SessionPanel: View {
                             .help("Start the terminal again, carrying on claude's conversation")
                     }
                     if session.isAsk {
-                        Button("Delete…", role: .destructive) { confirmingDelete = true }
+                        Button("Delete…", role: .destructive) { deletingAsk = session }
                             .help("End claude and remove the Ask's folder and every file in it")
                     } else {
                         Button("Forget…", role: .destructive) { confirmingRemove = true }
@@ -1827,26 +1825,7 @@ private struct SessionPanel: View {
                 await harness.load(org: session.org, setup: setup)
             }
         }
-        .confirmationDialog("Delete \(session.title)?", isPresented: $confirmingDelete) {
-            Button("Delete", role: .destructive) {
-                let id = session.id
-                Task {
-                    do {
-                        try await sessions.finish(id)
-                    } catch {
-                        deleteError = error.localizedDescription
-                    }
-                }
-            }
-        } message: {
-            Text(AskSessionsList.deleteMessage)
-        }
-        .alert("Couldn't remove its folder", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
-            Button("Delete Anyway", role: .destructive) { sessions.remove(session.id) }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("\(deleteError ?? "") Delete Anyway forgets the session and leaves its folder where it is.")
-        }
+        .deletesAsk($deletingAsk)
         .confirmationDialog("Forget this session?", isPresented: $confirmingRemove) {
             Button("Forget Session", role: .destructive) { sessions.remove(session.id) }
         } message: {

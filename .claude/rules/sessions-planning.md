@@ -16,4 +16,4 @@ paths:
 - An ended plan (`archivedAt` set, `SessionStore.endPlan`) keeps its session and worktree, since `planning.json` is re-read from it. Never start claude when its workspace opens (`.onAppear`).
 
 ## Testing
-- No tests cover planning (`PlanningState`, stages, Agree). Add tests for lenient decoding if you change it.
+- `EndPlanTests` covers ending a plan. No tests cover `PlanningState`, stages or Agree. Add tests for lenient decoding if you change it.

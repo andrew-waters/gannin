@@ -770,8 +770,14 @@ struct PlanningWorkspaceView: View {
                 }
             }
         case .exited, .stopped:
-            statusLine("Not running", symbol: "pause.circle", color: .secondary) {
-                Text("Open the terminal below to start it again; it picks up the conversation.")
+            if isEnded {
+                statusLine("Finished", symbol: "checkmark.circle", color: .secondary) {
+                    Text("Ended. Read the plan, tasks and decisions here.")
+                }
+            } else {
+                statusLine("Not running", symbol: "pause.circle", color: .secondary) {
+                    Text("Open the terminal below to start it again; it picks up the conversation.")
+                }
             }
         }
     }

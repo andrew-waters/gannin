@@ -291,12 +291,9 @@ struct AskSessionsList: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
     let org: String
-    static let deleteMessage = "This ends Claude and removes the session's folder and every file in it, on this Mac. It can't be undone. Anything you committed to the harness stays there."
     @State private var renaming: CodeSession?
     @State private var newTitle = ""
     @State private var deleting: CodeSession?
-    /// Its folder couldn't be removed: why, to delete it anyway.
-    @State private var failed: (session: CodeSession, message: String)?
 
     var body: some View {
         let all = sessions.askSessions(for: org)
@@ -314,25 +311,7 @@ struct AskSessionsList: View {
             Button("Rename") { sessions.renameAsk(session.id, to: newTitle) }
             Button("Cancel", role: .cancel) {}
         }
-        .confirmationDialog(
-            "Delete \(deleting?.title ?? "this Ask")?",
-            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-            presenting: deleting
-        ) { session in
-            Button("Delete", role: .destructive) { delete(session) }
-        } message: { _ in
-            Text(AskSessionsList.deleteMessage)
-        }
-        .alert(
-            "Couldn't remove its folder",
-            isPresented: Binding(get: { failed != nil }, set: { if !$0 { failed = nil } }),
-            presenting: failed
-        ) { failed in
-            Button("Delete Anyway", role: .destructive) { sessions.remove(failed.session.id) }
-            Button("Cancel", role: .cancel) {}
-        } message: { failed in
-            Text("\(failed.message) Delete Anyway forgets the session and leaves its folder where it is.")
-        }
+        .deletesAsk($deleting)
     }
 
     @ViewBuilder
@@ -349,6 +328,38 @@ struct AskSessionsList: View {
         Divider()
         Button("Delete", role: .destructive) { deleting = session }
     }
+}
+
+/// Confirms deleting the Ask in `session` (the folder and its files go),
+/// offering Delete Anyway when the folder can't be removed.
+private struct DeleteAskModifier: ViewModifier {
+    @Environment(SessionStore.self) private var sessions
+    @Binding var session: CodeSession?
+    /// Its folder couldn't be removed: why, to delete it anyway.
+    @State private var failed: (session: CodeSession, message: String)?
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Delete \(session?.title ?? "this Ask")?",
+                isPresented: Binding(get: { session != nil }, set: { if !$0 { session = nil } }),
+                presenting: session
+            ) { session in
+                Button("Delete", role: .destructive) { delete(session) }
+            } message: { _ in
+                Text("This ends Claude and removes the session's folder and every file in it, on this Mac. It can't be undone. Anything you committed to the harness stays there.")
+            }
+            .alert(
+                "Couldn't remove its folder",
+                isPresented: Binding(get: { failed != nil }, set: { if !$0 { failed = nil } }),
+                presenting: failed
+            ) { failed in
+                Button("Delete Anyway", role: .destructive) { sessions.remove(failed.session.id) }
+                Button("Cancel", role: .cancel) {}
+            } message: { failed in
+                Text("\(failed.message) Delete Anyway forgets the session and leaves its folder where it is.")
+            }
+    }
 
     private func delete(_ session: CodeSession) {
         Task {
@@ -358,6 +369,12 @@ struct AskSessionsList: View {
                 failed = (session, error.localizedDescription)
             }
         }
+    }
+}
+
+extension View {
+    func deletesAsk(_ session: Binding<CodeSession?>) -> some View {
+        modifier(DeleteAskModifier(session: session))
     }
 }
 
