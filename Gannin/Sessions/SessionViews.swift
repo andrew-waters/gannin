@@ -1791,7 +1791,9 @@ private struct SessionPanel: View {
                 Text((sessions.isRunning(session.id)
                       ? "Stop Claude ends it and keeps the worktree, to resume later."
                       : "Resume starts claude again where the conversation left off.")
-                     + (session.isAsk ? "" : " Forget ends claude and its helpers and takes the session out of Gannin; its files stay."))
+                     + (session.isAsk
+                         ? " Delete ends claude and removes the Ask's folder and its files."
+                         : " Forget ends claude and its helpers and takes the session out of Gannin; its files stay."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

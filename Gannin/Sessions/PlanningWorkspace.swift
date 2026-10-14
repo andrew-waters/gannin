@@ -1102,7 +1102,8 @@ struct PlanningWorkspaceView: View {
             buttons()
         }
         .controlSize(.large)
-        .disabled(!running)
+        // Agree, Back and the approvals act on a plan under way, never an ended one.
+        .disabled(!running || isEnded)
     }
 
     private func sectionTitle(_ text: String) -> some View {

@@ -53,12 +53,11 @@ struct EndPlanTests {
     }
 
     @Test func planningPageRanksUnderWayThenAgreedThenFinished() {
-        var underWay = session(planning: info)
+        let underWay = session(planning: info)
         var agreed = session(planning: info)
         agreed.planning?.agreed = PlanningAgreement(at: .now, by: [], planPath: nil, requirementPath: nil, parent: nil, parentURL: nil, issues: [])
         var finished = agreed
         finished.archivedAt = .now
-        underWay.archivedAt = nil
 
         #expect(PlanningPage.rank(underWay) == 0)
         #expect(PlanningPage.rank(agreed) == 1)
