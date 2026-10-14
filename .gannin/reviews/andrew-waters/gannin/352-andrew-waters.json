@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Only the first paragraph of Claude's text starts with its ⏺ bullet; later paragr",
+      "key" : "Gannin/Sessions/SessionActions.swift:54:Only the first paragraph of Claude's text starts with its ⏺ ",
+      "line" : 54,
+      "path" : "Gannin/Sessions/SessionActions.swift",
+      "posted_at" : "2026-10-14T23:12:06Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "A long question wraps on a narrow terminal pane, for example \"Do you want to mak",
+      "key" : "Gannin/Sessions/SessionActions.swift:52:A long question wraps on a narrow terminal pane, for example",
+      "line" : 52,
+      "path" : "Gannin/Sessions/SessionActions.swift",
+      "posted_at" : "2026-10-14T23:12:06Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 352,
+  "posted_at" : "2026-10-14T23:12:06Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-14T23:10:38Z",
+  "state" : "OPEN",
+  "title" : "Treat a session as needing you when claude's permission prompt is on screen",
+  "updated_at" : "2026-10-14T23:12:07Z",
+  "verdict" : "approve"
+}
