@@ -1,6 +1,6 @@
 ---
 type: plan
-status: proposed
+status: in-progress
 summary: "One IssueStore-shared record per open issue (core fields plus a workload slot and a history slot) replaces OrgSnapshot.issues and IssueHistory's open records, and board field edits go through one write path; old caches migrate in place."
 issues: [andrew-waters/gannin#234]
 touches: [andrew-waters/gannin]
@@ -35,8 +35,8 @@ This stage is built for disk and for one write path, as the acceptance criteria 
 - Core fields are optional and merge one by one; each slot records the `updatedAt` it was fetched at and the change
   feed's skip check reads that, never the core's.
 - `OrgSnapshot`'s file lists open issue IDs, hydrated on load through `OrgSnapshotCache` (a `Legacy` decode moves old
-  issues across). `IssueHistory`'s file keeps closed records and coverage, with a stored count so a cleared store
-  can't leave a history claiming a range it no longer has.
+  issues across). `IssueHistory`'s file keeps coverage and issue IDs, closed issues included (they sit in the same store, as
+  merged PRs do), and is dropped when the store no longer holds an ID it lists.
 - Per-slot clear, so clearing the workload doesn't drop the history.
 - One write path: a single `apply` on the shared store changes core, labels, status and board field values;
   `IssueStore.record*`, `rewriteFieldValues` and `ProjectStore.recordFieldValue/recordLabels/recordClosed` call it
@@ -56,9 +56,9 @@ This stage is built for disk and for one write path, as the acceptance criteria 
 
 ## Tasks
 
-- [ ] Shared issue store: core, slots, merge, per-slot clear, tests
-- [ ] `OrgSnapshotCache`: issue IDs in the file, hydrate, `Legacy` migration, tests
-- [ ] `IssueStore`: history reads and writes open records through the store, migrating the old file
-- [ ] One write path for board field, label, status and added-to-board edits; move callers
-- [ ] Test: the workload built from the store equals the workload built from the old snapshot
-- [ ] `.claude/rules/fetching.md` rule for issues, CHANGELOG `[Unreleased]` line, docs: none
+- [x] Shared issue store: core, slots, merge, per-slot clear, tests
+- [x] `OrgSnapshotCache`: issue IDs in the file, hydrate, `Legacy` migration, tests
+- [x] `IssueStore`: history reads and writes open records through the store, migrating the old file
+- [x] One write path for board field, label, status and added-to-board edits; move callers
+- [x] Test: the workload built from the store equals the workload built from the old snapshot
+- [x] `.claude/rules/fetching.md` rule for issues, CHANGELOG `[Unreleased]` line, docs: none

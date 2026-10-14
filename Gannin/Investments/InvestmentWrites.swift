@@ -125,8 +125,7 @@ enum InvestmentWriter {
             try await api.addLabel(id, to: change.issue.id)
             labels.append(name)
         }
-        issues.recordLabels(org: org, issueID: change.issue.id, labels: labels)
-        projects.recordLabels(org: org, contentID: change.issue.id, labels: labels)
+        IssueEdits.setLabels(org: org, issueID: change.issue.id, labels: labels, issues: issues, projects: projects)
     }
 
     /// A label's ID in the repo, created (grey) when asked and missing.

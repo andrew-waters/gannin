@@ -283,8 +283,7 @@ struct ProjectFieldsSections: View {
                     try await api.setProjectField(projectID: snapshot.projectID, itemID: snapshot.id, field: field, value: field.value)
                     saved[snapshot.id, default: [:]][field.id] = field.value
                     recordIfStatus(field, item: snapshot)
-                    issueStore.recordFieldValue(org: org, issueID: issueID, projectNumber: snapshot.projectNumber, projectTitle: snapshot.projectTitle, field: field.name, value: Self.issueValue(field))
-                    projectStore.recordFieldValue(org: org, number: snapshot.projectNumber, itemID: snapshot.id, field: field.name, value: Self.issueValue(field))
+                    IssueEdits.setField(org: org, issueID: issueID, itemID: snapshot.id, projectNumber: snapshot.projectNumber, projectTitle: snapshot.projectTitle, field: field.name, value: Self.issueValue(field), issues: issueStore, projects: projectStore)
                 } catch {
                     saveErrors[snapshot.id] = "Couldn't save \(field.name): \(Self.message(for: error))"
                     return

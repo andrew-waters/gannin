@@ -29,9 +29,12 @@ final class IssueStore {
     /// the same as "none are unreadable").
     @ObservationIgnored var unreadableOutsideRepos: (_ org: String) -> [String: String]? = { _ in [:] }
 
-    init(auth: AuthStore, activity: SyncActivity) {
+    private let issueStore: SharedIssueStore
+
+    init(auth: AuthStore, activity: SyncActivity, issueStore: SharedIssueStore = .shared) {
         self.auth = auth
         self.activity = activity
+        self.issueStore = issueStore
     }
 
     func history(for org: String) -> IssueHistory? { histories[org] }
@@ -144,6 +147,7 @@ final class IssueStore {
                 updated.openFetchedAt = now
             }
             for record in records { updated.issues[record.id] = record }
+            persist(records, in: &updated)
             updated.coveredFrom = min(updated.coveredFrom, start)
             updated.syncedAt = now
             // Every readable outside repo now has a full baseline: new ones
@@ -152,7 +156,7 @@ final class IssueStore {
             updated.outsideReposFetched = searchableOutside
             histories[org] = updated
             errors[org] = nil
-            save(updated)
+            writeFile(updated)
             run.finish()
             // Then, in the background, their descriptions and comments.
             Task { await self.deepSync(org) }
@@ -274,56 +278,59 @@ final class IssueStore {
     /// Records a status change saved from the app, so metrics move at once
     /// rather than at the next open-issue fetch, which confirms it.
     func recordStatusChange(org: String, issueID: String, status: String, projectNumber: Int?, projectTitle: String?) {
-        guard var history = histories[org], var record = history.issues[issueID] else { return }
-        record.statusChanges.append(IssueStatusChange(at: .now, status: status, projectNumber: projectNumber, projectTitle: projectTitle))
-        history.issues[issueID] = record
-        histories[org] = history
-        save(history)
+        change(org: org, issueID: issueID) { record in
+            record.statusChanges.append(IssueStatusChange(at: .now, status: status, projectNumber: projectNumber, projectTitle: projectTitle))
+        }
     }
 
     /// Labels written from the app, shown before the next fetch.
     func recordLabels(org: String, issueID: String, labels: [String]) {
-        guard var history = histories[org], history.issues[issueID] != nil else { return }
-        history.issues[issueID]?.labels = labels
-        histories[org] = history
-        save(history)
+        change(org: org, issueID: issueID) { $0.labels = labels }
     }
 
     /// An issue added to a board from the app, shown before the next fetch.
     func recordAddedToBoard(org: String, issueID: String, projectNumber: Int, projectTitle: String) {
-        guard var history = histories[org], var record = history.issues[issueID],
-              record.fields(onProject: projectNumber) == nil else { return }
-        record.projectFields.append(IssueProjectFields(projectNumber: projectNumber, projectTitle: projectTitle, values: [:]))
-        history.issues[issueID] = record
-        histories[org] = history
-        save(history)
+        change(org: org, issueID: issueID) { record in
+            guard record.fields(onProject: projectNumber) == nil else { return }
+            record.projectFields.append(IssueProjectFields(projectNumber: projectNumber, projectTitle: projectTitle, values: [:]))
+        }
     }
 
     /// Records a board field saved from the app (nil clears it), so ordering
     /// by that field updates at once.
     func recordFieldValue(org: String, issueID: String, projectNumber: Int, projectTitle: String, field: String, value: IssueFieldValue?) {
-        guard var history = histories[org], var record = history.issues[issueID] else { return }
-        if let index = record.projectFields.firstIndex(where: { $0.projectNumber == projectNumber }) {
-            record.projectFields[index].values[field] = value
-        } else {
-            record.projectFields.append(IssueProjectFields(projectNumber: projectNumber, projectTitle: projectTitle, values: value.map { [field: $0] } ?? [:]))
+        change(org: org, issueID: issueID) { record in
+            if let index = record.projectFields.firstIndex(where: { $0.projectNumber == projectNumber }) {
+                record.projectFields[index].values[field] = value
+            } else {
+                record.projectFields.append(IssueProjectFields(projectNumber: projectNumber, projectTitle: projectTitle, values: value.map { [field: $0] } ?? [:]))
+            }
         }
-        history.issues[issueID] = record
-        histories[org] = history
-        save(history)
     }
 
     /// Changes every stored issue's values on one board at once, after the
     /// board's fields change (a rename, an option renamed or removed).
     func rewriteFieldValues(org: String, projectNumber: Int, _ change: (inout [String: IssueFieldValue]) -> Void) {
         guard var history = histories[org] else { return }
+        var changed: [IssueRecord] = []
         for (id, var record) in history.issues {
             guard let index = record.projectFields.firstIndex(where: { $0.projectNumber == projectNumber }) else { continue }
             change(&record.projectFields[index].values)
             history.issues[id] = record
+            changed.append(record)
         }
         histories[org] = history
-        save(history)
+        issueStore.merge(changed.map { StoredIssue(history: $0) }, org: org)
+    }
+
+    /// Applies an edit to one record and writes it to the shared issue store,
+    /// where the history file's IDs already point.
+    private func change(org: String, issueID: String, _ edit: (inout IssueRecord) -> Void) {
+        guard var history = histories[org], var record = history.issues[issueID] else { return }
+        edit(&record)
+        history.issues[issueID] = record
+        histories[org] = history
+        issueStore.merge([StoredIssue(history: record)], org: org)
     }
 
     static var cacheDirectory: URL { directory }
@@ -332,23 +339,57 @@ final class IssueStore {
         histories = [:]
         errors = [:]
         try? FileManager.default.removeItem(at: Self.directory)
+        issueStore.clear(.history)
     }
 
     // MARK: Disk cache
 
-    /// Pulls the history saved by a previous launch into memory.
+    /// Pulls the history saved by a previous launch into memory, with its
+    /// issues from the shared store. A history saved before issues moved there
+    /// brings its issues along; one whose issues the store no longer holds is
+    /// dropped, and fetched again.
     func loadCached(_ org: String) {
         guard histories[org] == nil,
               let data = try? Data(contentsOf: Self.fileURL(org)),
-              let history = try? Self.decoder.decode(IssueHistory.self, from: data),
+              var history = try? Self.decoder.decode(IssueHistory.self, from: data),
               history.version == IssueHistory.currentVersion else {
             return
         }
+        var migrated = false
+        if let legacy = try? Self.decoder.decode(IssueHistory.Legacy.self, from: data) {
+            issueStore.merge(legacy.issues.values.map { StoredIssue(history: $0) }, org: org)
+            history.storedIDs = Array(legacy.issues.keys)
+            migrated = true
+        }
+        guard let ids = history.storedIDs else { return }
+        let held = issueStore.issues(org: org)
+        var records: [String: IssueRecord] = [:]
+        for id in ids {
+            guard let record = held[id]?.issueRecord else { return }
+            records[id] = record
+        }
+        history.issues = records
         histories[org] = history
+        if migrated { writeFile(history) }
     }
 
-    private func save(_ history: IssueHistory) {
-        if let data = try? Self.encoder.encode(history) {
+    /// Saves what a sync fetched into the shared store and takes back what it
+    /// holds, which can be newer than the fetch where the workload saw the
+    /// issue change since. Issues the history no longer has lose its part.
+    private func persist(_ records: [IssueRecord], in history: inout IssueHistory) {
+        issueStore.merge(records.map { StoredIssue(history: $0) }, org: history.orgLogin)
+        issueStore.prune(.history, org: history.orgLogin, keeping: Set(history.issues.keys))
+        let held = issueStore.issues(org: history.orgLogin)
+        for record in records {
+            if let merged = held[record.id]?.issueRecord { history.issues[record.id] = merged }
+        }
+    }
+
+    /// The history's own file: coverage and the IDs of its issues.
+    private func writeFile(_ history: IssueHistory) {
+        var saved = history
+        saved.storedIDs = Array(history.issues.keys)
+        if let data = try? Self.encoder.encode(saved) {
             try? data.write(to: Self.fileURL(history.orgLogin), options: .atomic)
         }
     }
