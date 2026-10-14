@@ -105,6 +105,15 @@ extension SessionStore {
         return choices
     }
 
+    /// Whether the terminal is showing claude's "Do you want to proceed?"
+    /// with its numbered choices, wherever it sits above them.
+    func showsPermissionPrompt(_ id: UUID) -> Bool {
+        guard let terminal = terminals[id],
+              terminal.screenLines(last: 20).contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("Do you want to proceed") })
+        else { return false }
+        return !permissionChoices(for: id).isEmpty
+    }
+
     /// Picks one of the prompt's own choices: Return for the first, else
     /// down arrows to it first, as a person reading the same menu would.
     func selectChoice(_ number: Int, to id: UUID) {

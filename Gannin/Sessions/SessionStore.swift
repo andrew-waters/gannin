@@ -1418,7 +1418,12 @@ final class SessionStore {
             func read(_ name: String) -> String? {
                 (try? String(contentsOf: directory.appending(path: name), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            let state = read("state"), pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
+            var state = read("state")
+            let pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
+            // Not every prompt fires the Notification hook (a command that
+            // also trips a working-directory block, say), so a session
+            // that reads as working while the terminal asks is waiting.
+            if state == SessionState.working.rawValue, showsPermissionPrompt(id) { state = SessionState.needsYou.rawValue }
             if session.isSandboxed, let sandbox = read("sandbox"), sandboxStatus[id] != sandbox { sandboxStatus[id] = sandbox }
             let reviewRequest = read("review-request")
             if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
