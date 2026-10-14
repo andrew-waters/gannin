@@ -11,6 +11,7 @@
       "line" : 54,
       "path" : "Gannin/Sessions/SessionActions.swift",
       "posted_at" : "2026-10-14T23:12:06Z",
+      "resolved_at" : "2026-10-14T23:45:38Z",
       "severity" : "minor"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 52,
       "path" : "Gannin/Sessions/SessionActions.swift",
       "posted_at" : "2026-10-14T23:12:06Z",
+      "resolved_at" : "2026-10-14T23:45:38Z",
       "severity" : "nit"
     }
   ],
@@ -32,6 +34,6 @@
   "started_at" : "2026-10-14T23:10:38Z",
   "state" : "OPEN",
   "title" : "Treat a session as needing you when claude's permission prompt is on screen",
-  "updated_at" : "2026-10-14T23:12:07Z",
+  "updated_at" : "2026-10-14T23:45:38Z",
   "verdict" : "approve"
 }
