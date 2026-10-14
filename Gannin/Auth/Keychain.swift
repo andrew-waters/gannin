@@ -3,7 +3,8 @@ import Security
 
 /// Generic passwords in the login keychain: the GitHub access token, and the
 /// sandbox's credentials (`SandboxCredentials`), each under its own service
-/// and account.
+/// and account. The demo build never touches it: it reads nothing and
+/// writes nothing.
 enum Keychain {
     private static let service = "dev.andon.gannin.github"
     private static let account = "access_token"
@@ -31,6 +32,7 @@ enum Keychain {
     // MARK: Any item
 
     nonisolated static func value(service: String, account: String) -> String? {
+        if NetworkGate.isSealed { return nil }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -49,6 +51,7 @@ enum Keychain {
     }
 
     nonisolated static func setValue(_ value: String, service: String, account: String) {
+        if NetworkGate.isSealed { return }
         clear(service: service, account: account)
         let item: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -60,6 +63,7 @@ enum Keychain {
     }
 
     nonisolated static func clear(service: String, account: String) {
+        if NetworkGate.isSealed { return }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,

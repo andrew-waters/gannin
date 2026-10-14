@@ -17,7 +17,7 @@ final class Updater: ObservableObject {
 
     private init() {
         let isRelease = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) != "0.0.0"
-        controller = SPUStandardUpdaterController(startingUpdater: isRelease, updaterDelegate: nil, userDriverDelegate: nil)
+        controller = SPUStandardUpdaterController(startingUpdater: isRelease && !NetworkGate.isSealed, updaterDelegate: nil, userDriverDelegate: nil)
         controller.updater.publisher(for: \.canCheckForUpdates)
             .assign(to: &$canCheckForUpdates)
     }

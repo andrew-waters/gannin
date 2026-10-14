@@ -111,7 +111,7 @@ final class BankHolidayStore {
         guard countries.isEmpty, !loading.contains("countries") else { return }
         loading.insert("countries")
         defer { loading.remove("countries") }
-        guard let url = URL(string: "https://date.nager.at/api/v3/AvailableCountries"),
+        guard !NetworkGate.isSealed, let url = URL(string: "https://date.nager.at/api/v3/AvailableCountries"),
               let (data, _) = try? await URLSession.shared.data(from: url),
               let list = try? JSONDecoder().decode([Country].self, from: data) else { return }
         countries = list.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -127,7 +127,7 @@ final class BankHolidayStore {
         }
         loading.insert(key)
         defer { loading.remove(key) }
-        guard let url = URL(string: "https://date.nager.at/api/v3/PublicHolidays/\(year)/\(country)"),
+        guard !NetworkGate.isSealed, let url = URL(string: "https://date.nager.at/api/v3/PublicHolidays/\(year)/\(country)"),
               let (data, response) = try? await URLSession.shared.data(from: url),
               (response as? HTTPURLResponse)?.statusCode == 200,
               let list = try? JSONDecoder().decode([BankHoliday].self, from: data) else { return }

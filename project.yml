@@ -34,7 +34,10 @@ targets:
     type: application
     platform: macOS
     sources:
-      - Gannin
+      # Gannin/Demo is the demo build's alone, so none of it ships.
+      - path: Gannin
+        excludes:
+          - "Demo/**"
     dependencies:
       - package: SwiftTerm
       - package: Sparkle
@@ -69,3 +72,46 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.andon.gannin.tests
         GENERATE_INFOPLIST_FILE: YES
+  # The demo build for screenshots (docs/SCREENSHOTS.md): the same app on
+  # invented data, sealed from GitHub, the keychain and the real app's
+  # files, under its own bundle ID so it runs beside the real Gannin. CI
+  # builds and tests it; the release workflow never does.
+  Gannin Demo:
+    type: application
+    platform: macOS
+    sources:
+      - Gannin
+    dependencies:
+      - package: SwiftTerm
+      - package: Sparkle
+      - package: HighlighterSwift
+        product: Highlighter
+    scheme:
+      testTargets:
+        - GanninDemoTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.andon.gannin.demo
+        PRODUCT_NAME: Gannin Demo
+        INFOPLIST_KEY_CFBundleDisplayName: Gannin Demo
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) DEMO
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        INFOPLIST_FILE: Gannin/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+  # The demo build's tests (its seal and fixtures), hosted in it.
+  GanninDemoTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - GanninDemoTests
+    dependencies:
+      - target: Gannin Demo
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.andon.gannin.demo.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_ACTIVE_COMPILATION_CONDITIONS: $(inherited) DEMO

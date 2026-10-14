@@ -40,6 +40,7 @@ enum ClaudeRunner {
         session: (id: String, resume: Bool)? = nil,
         onChunk: (@MainActor (String) -> Void)? = nil
     ) async throws -> String {
+        try NetworkGate.checkProcess()
         let place = try await resolvePlace()
         var options: [String] = ["-p"]
         options += onChunk == nil
@@ -128,6 +129,7 @@ enum ClaudeRunner {
     /// given (so `ask`'s stream-json output can be parsed as it arrives)
     /// rather than waiting for it to finish.
     nonisolated static func run(_ script: String, place: Place, onLine: ((String) -> Void)? = nil) -> (status: Int32, output: String, error: String) {
+        if NetworkGate.isSealed { return (-1, "", NetworkGate.Sealed.process) }
         let process = Process()
         var environment = ProcessInfo.processInfo.environment
         for key in environment.keys where key == "CLAUDECODE" || key.hasPrefix("CLAUDE_CODE_") {

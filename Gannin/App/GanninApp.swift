@@ -28,8 +28,14 @@ struct GanninApp: App {
     @AppStorage(EngineerWatch.menuBarKey) private var showsMenuBar = true
 
     init() {
-        // Before anything reads preferences, the keychain or the store.
+        // Before anything reads preferences, the keychain or the store. The
+        // demo build starts from its own empty folder and preferences, and
+        // takes nothing from an older bundle ID.
+        #if DEMO
+        DemoLaunch.prepare()
+        #else
         BundleMove.run()
+        #endif
         SyncSettings.migrate()
         let auth = AuthStore()
         let activity = SyncActivity()
@@ -104,9 +110,12 @@ struct GanninApp: App {
             return OrgContext.files(org: org, harnessRepo: repo, orgs: orgs, metrics: metrics, issues: issues, configs: orgConfigs,
                                     harness: harness, peopleDates: peopleDates, hidden: hidden)
         }
-        sessions.watchPullRequests()
+        // The demo build runs nothing in the background: no PR watching,
+        // update checks, review requests or routines.
+        let demo = NetworkGate.isSealed
+        if !demo { sessions.watchPullRequests() }
         // Sparkle starts checking now, not when a menu is first built.
-        _ = Updater.shared
+        if !demo { _ = Updater.shared }
         let watch = EngineerWatch.shared
         watch.api = { [weak auth] in auth?.api }
         // Review with Claude from the menu bar or a notification: in the
@@ -134,7 +143,7 @@ struct GanninApp: App {
         }
         watch.checkWatched = { [weak sessions] in await sessions?.checkWatchedReviews() }
         watch.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
-        watch.start()
+        if !demo { watch.start() }
         // Routines: sessions started by themselves on a schedule, and the
         // agent queue drained in its windows.
         let routines = RoutineStore()
@@ -160,7 +169,7 @@ struct GanninApp: App {
             return await sessions.startRoutine(routine, issue: issue, run: run, configs: orgConfigs, issues: issues, details: details, login: auth?.viewer?.login)
         }
         scheduler.watch = { [weak sessions] in sessions?.watchRoutineRuns() }
-        scheduler.begin()
+        if !demo { scheduler.begin() }
         TabMenuRename.shared.install()
     }
 
