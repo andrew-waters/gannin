@@ -23,10 +23,16 @@ struct SessionPromptsTests {
     @Test func repliesAreAskedForOnlyOnLineThreads() {
         let thread = SessionPullRequest.Feedback(id: "T1", author: "rev", location: "a.swift:3", verdict: nil, comments: [comment("rename")], replyID: 99)
         let review = SessionPullRequest.Feedback(id: "R1", author: "rev", location: nil, verdict: "changes requested", comments: [comment("overall")])
-        let prompt = SessionPrompts.feedback([thread, review], on: pullRequest([thread, review]), in: session)
+        let prompt = SessionPrompts.feedback([thread, review], on: pullRequest([thread, review]), in: session, asksForReplies: true)
         #expect(prompt.contains("repos/acme/app/pulls/7/comments/<reply ID>/replies"))
         #expect(prompt.contains("@rev on `a.swift:3` (reply ID 99):"))
         #expect(prompt.components(separatedBy: "(reply ID ").count == 2)
+    }
+
+    @Test func noReplyInstructionWhenTurnedOff() {
+        let thread = SessionPullRequest.Feedback(id: "T1", author: "rev", location: "a.swift:3", verdict: nil, comments: [comment("rename")], replyID: 99)
+        let prompt = SessionPrompts.feedback([thread], on: pullRequest([thread]), in: session, asksForReplies: false)
+        #expect(!prompt.contains("reply ID"))
     }
 
     @Test func noReplyInstructionWithoutAThread() {

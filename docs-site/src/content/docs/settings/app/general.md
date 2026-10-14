@@ -46,6 +46,7 @@ Settings › General is where you set how Gannin looks, who you are signed in as
 | Post automatic reviews to GitHub | Off | Posts reviews that Gannin starts by itself as comments. They never approve or request changes. Off, they wait for you to Post Review. | This Mac |
 | Record reviews in the harness | On | Commits a review's findings and outcome to its harness when it is posted, finished, merged or closed. Agents › Metrics reads them. | This Mac |
 | Send new PR feedback to Claude | Off | Pastes failing checks and new reviewer comments on a session's PR into the session. Each session can say otherwise in its PRs pane. | This Mac |
+| Ask Claude to reply to review threads | On | The feedback sent to Claude (automatically or with Send to Claude) also asks it to reply on each review thread it addresses, with what it changed or why not. The replies are posted to GitHub as you. | This Mac |
 | Review a session's work with a second agent | On | When a session says its change is ready, another agent that cannot edit reviews it, and the findings go back, round after round. Each session can say otherwise in its Activity pane. | This Mac |
 | Ask to wrap up when closing a session's tab | On | Closing a running session's tab first shows its pull requests, what is not pushed, and its plans and requirements. | This Mac |
 | Show in the menu bar | On | Shows Gannin in the macOS menu bar. | This Mac |

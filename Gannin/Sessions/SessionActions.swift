@@ -325,6 +325,11 @@ extension SessionStore {
     /// Send new PR feedback to the session's claude by default.
     static let sendsFeedbackKey = "sessionsSendFeedback"
 
+    /// Whether the feedback prompt asks claude to reply on each review
+    /// thread it addresses; on unless turned off.
+    static let repliesToThreadsKey = "sessionsReplyToThreads"
+    static var repliesToThreads: Bool { UserDefaults.standard.object(forKey: repliesToThreadsKey) as? Bool ?? true }
+
     /// Whether new failures and feedback on the session's PRs go to its
     /// claude: its own choice, else the user's default.
     func sendsFeedback(_ id: UUID) -> Bool {

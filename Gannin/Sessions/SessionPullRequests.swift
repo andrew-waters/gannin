@@ -105,13 +105,13 @@ enum SessionPrompts {
         return lines.joined(separator: "\n")
     }
 
-    static func feedback(_ items: [SessionPullRequest.Feedback], on pr: SessionPullRequest, in session: CodeSession) -> String {
+    static func feedback(_ items: [SessionPullRequest.Feedback], on pr: SessionPullRequest, in session: CodeSession, asksForReplies: Bool = SessionStore.repliesToThreads) -> String {
         var lines = ["Review feedback on \(pr.repo)#\(pr.number) (\(pr.url.absoluteString)):", ""]
         for item in items {
             var heading = "@\(item.author)"
             if let location = item.location { heading += " on `\(location)`" }
             if let verdict = item.verdict { heading += " (\(verdict))" }
-            if let replyID = item.replyID { heading += " (reply ID \(replyID))" }
+            if asksForReplies, let replyID = item.replyID { heading += " (reply ID \(replyID))" }
             lines.append(heading + ":")
             for comment in item.comments {
                 if comment.author != item.author { lines.append("@\(comment.author) replied:") }
@@ -120,7 +120,7 @@ enum SessionPrompts {
             lines.append("")
         }
         lines.append("Address each in \(worktree(for: pr.repo, in: session)), then commit and push.")
-        if items.contains(where: { $0.replyID != nil }) {
+        if asksForReplies, items.contains(where: { $0.replyID != nil }) {
             lines.append("Then reply on each thread headed with a reply ID, saying what you changed and in which commit, or why you didn't: `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments/<reply ID>/replies -f body=...`. Reviews with no reply ID need no reply.")
         }
         lines.append("Tell me what you changed, and anything you'd push back on rather than change.")
