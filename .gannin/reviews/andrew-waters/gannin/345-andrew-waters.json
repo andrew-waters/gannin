@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-14T13:29:10Z",
   "number" : 345,
   "posted_at" : "2026-10-14T12:58:04Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-14T12:56:24Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "End a plan and delete an Ask from the session's own tab",
-  "updated_at" : "2026-10-14T13:03:30Z",
+  "updated_at" : "2026-10-14T13:29:58Z",
   "verdict" : "approve"
 }
