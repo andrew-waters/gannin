@@ -77,6 +77,7 @@
       "line" : 289,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-14T09:40:50Z",
+      "resolved_at" : "2026-10-14T09:50:20Z",
       "severity" : "nit"
     }
   ],
@@ -88,6 +89,6 @@
   "started_at" : "2026-10-13T17:11:43Z",
   "state" : "OPEN",
   "title" : "Scroll the session tab bar sideways with a mouse wheel",
-  "updated_at" : "2026-10-14T09:40:52Z",
+  "updated_at" : "2026-10-14T09:50:20Z",
   "verdict" : "approve"
 }
