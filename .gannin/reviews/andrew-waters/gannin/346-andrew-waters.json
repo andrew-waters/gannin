@@ -11,6 +11,7 @@
       "line" : 1363,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-14T12:50:27Z",
+      "resolved_at" : "2026-10-14T12:55:15Z",
       "severity" : "minor"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 1416,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-14T12:50:27Z",
+      "resolved_at" : "2026-10-14T12:55:15Z",
       "severity" : "minor"
     },
     {
@@ -31,17 +33,28 @@
       "line" : 26,
       "path" : ".claude/rules/sessions-review.md",
       "posted_at" : "2026-10-14T12:50:27Z",
+      "resolved_at" : "2026-10-14T12:55:15Z",
       "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`Highlights` is matched only on `file.path` and the line text, and `DiffLine.id`",
+      "key" : "Gannin/Sessions/SessionViews.swift:1422:`Highlights` is matched only on `file.path` and the line tex",
+      "line" : 1422,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-14T12:55:11Z",
+      "severity" : "minor"
     }
   ],
   "number" : 346,
-  "posted_at" : "2026-10-14T12:50:27Z",
+  "posted_at" : "2026-10-14T12:55:11Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-14T12:48:55Z",
   "state" : "OPEN",
   "title" : "Colour the code in the session Changes pane's diff by language",
-  "updated_at" : "2026-10-14T12:50:29Z",
+  "updated_at" : "2026-10-14T12:55:15Z",
   "verdict" : "approve"
 }
