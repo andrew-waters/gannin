@@ -44,6 +44,7 @@
       "line" : 1422,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-14T12:55:11Z",
+      "resolved_at" : "2026-10-14T13:00:00Z",
       "severity" : "minor"
     }
   ],
@@ -55,6 +56,6 @@
   "started_at" : "2026-10-14T12:48:55Z",
   "state" : "OPEN",
   "title" : "Colour the code in the session Changes pane's diff by language",
-  "updated_at" : "2026-10-14T12:55:15Z",
+  "updated_at" : "2026-10-14T13:00:00Z",
   "verdict" : "approve"
 }
