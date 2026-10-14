@@ -2146,7 +2146,7 @@ struct SessionSettingsSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Ask Claude to reply to review threads", isOn: $repliesToThreads)
-            Text("The PR feedback sent to Claude also asks it to reply on each review thread it addresses, with what it changed or why not. Replies are posted to GitHub as you.")
+            Text("The PR feedback sent to Claude also asks it to post a short reply on each review thread it changed code for, saying what it changed and in which commit. Threads it disagrees with are left for you. Replies are posted to GitHub as you.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Review a session's work with a second agent", isOn: $pairReview)

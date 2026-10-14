@@ -10,7 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
-- Feedback sent to a session's Claude, automatically or from the PRs pane, now asks it to reply on each review thread with what it changed or why not, unless Settings › General › Agent › Ask Claude to reply to review threads is off
+- Feedback sent to a session's Claude, automatically or from the PRs pane, now asks it to post a short reply on each review thread it fixed, saying what it changed, unless Settings › General › Agent › Ask Claude to reply to review threads is off
 - Design and Refine sessions now open the page in a web view inside Gannin: step through it with the team, note findings with the page they were on, take screenshots and mark them up, and paste the meeting's transcript; Claude reads the code to say where each finding lives and suggests ones the room missed; Agree makes the findings into issues on the workflow board and records the session, with the screenshots you tick, in the harness's `refines/`. Each project keeps its own logins for these pages, with Sign Out of Pages in the session and Settings › Storage
 - Every session at once in the Claude Code window divides into Work and Reviews sections when both are open
 - The Claude Code window's tab bar keeps review tabs together after your work tabs, with a divider between the groups when both are open
