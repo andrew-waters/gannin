@@ -28,6 +28,7 @@ struct SessionsView: View {
     @Environment(\.phoneServices) private var services
     @Environment(MacBrowser.self) private var browser
     let mac: PairedMac
+    var onClientCreated: (RemoteClient) -> Void
     @State private var client: RemoteClient?
 
     var body: some View {
@@ -43,10 +44,10 @@ struct SessionsView: View {
             browser.start()
             if client == nil {
                 client = RemoteClient(mac: mac, security: services.security, endpoint: { [browser] in browser.endpoint(for: mac.name) })
+                if let client { onClientCreated(client) }
             }
             client?.start()
         }
-        .onDisappear { client?.stop() }
     }
 }
 

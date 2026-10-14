@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Fixed
+- Gannin Remote stays connected when opening a session, fits session snapshots within the frame limit, refreshes permission choices as they draw, and prevents queued actions after a phone is revoked or disconnected
+
 ### Added
 - Gannin Remote, an iPhone app that pairs with your Mac over the local network to answer Claude's questions and permission prompts, send a prompt, stop a session and switch it between Attended and Unattended, with Settings › Remote to turn it on and revoke phones
 - A view with two or more filters can match Any filter instead of All, so it can say "assigned to me or labelled urgent"

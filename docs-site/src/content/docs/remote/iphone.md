@@ -42,6 +42,7 @@ A paired phone can approve commands that run as you, so treat it like your logge
 - **Your Mac has to be awake** and on the network. Gannin does not keep it awake.
 - A prompt you answer on the Mac first is refused on the phone with a message, so a late tap never lands on a different prompt.
 - Switching to Unattended is refused when Claude Code's auto mode isn't available for the session, as on the Mac.
+- The phone shows up to 60 sessions, with those needing you first, within a 256 KB update budget. Large prompts can reduce that number; a session whose question or options cannot fit is available on the Mac.
 
 ## Troubleshooting
 

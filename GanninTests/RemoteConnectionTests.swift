@@ -120,6 +120,39 @@ private struct Fixture {
     #expect(try f.link.messages().isEmpty)
 }
 
+@Test @MainActor func revocationPreventsAnAlreadyQueuedIntent() async throws {
+    let f = Fixture()
+    try f.receive(.intent(id: "1", session: UUID().uuidString, promptID: nil, intent: .interrupt))
+    f.phones.revoke(try #require(f.phones.phone(for: phoneKey)))
+    await f.settle()
+    #expect(f.control.calls.isEmpty)
+    #expect(f.connection.isClosed)
+    #expect(try f.link.messages().isEmpty)
+}
+
+@Test @MainActor func closingPreventsAnAlreadyQueuedIntent() async throws {
+    let f = Fixture()
+    try f.receive(.intent(id: "1", session: UUID().uuidString, promptID: nil, intent: .interrupt))
+    f.connection.close()
+    await f.settle()
+    #expect(f.control.calls.isEmpty)
+    #expect(try f.link.messages().isEmpty)
+}
+
+@Test @MainActor func oversizedSessionsAreOmittedAndLaterUpdatesAreDelivered() throws {
+    var huge = session("A")
+    huge.lastMessage = String(repeating: "x", count: RemoteProtocol.maxFrameBytes)
+    let f = Fixture(sessions: { [huge, session("B")] })
+    try f.receive(.subscribe)
+    f.connection.push([session("A"), session("B")])
+    f.connection.push([huge, session("B")])
+    #expect(try f.link.messages() == [
+        .snapshot(sessions: [session("B")]),
+        .sessionChanged(session: session("A")),
+        .sessionRemoved(id: "A"),
+    ])
+}
+
 @Test @MainActor func garbageClosesTheConnection() {
     let f = Fixture()
     f.connection.receive(Data([0, 0, 0, 3, 0x6e, 0x6f, 0x70]))
