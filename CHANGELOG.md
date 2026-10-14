@@ -14,6 +14,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Every session at once in the Claude Code window divides into Work and Reviews sections when both are open
 - The Claude Code window's tab bar keeps review tabs together after your work tabs, with a divider between the groups when both are open
 
+### Fixed
+- A mouse wheel over the Claude Code window's tab bar scrolls the tabs sideways
+
 ## [0.0.3] - 2026-10-13
 
 ### Added
