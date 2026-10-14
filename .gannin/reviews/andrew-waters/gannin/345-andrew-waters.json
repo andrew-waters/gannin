@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
+  "effort" : 1,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -11,6 +11,7 @@
       "line" : 585,
       "path" : "Gannin/Sessions/PlanningWorkspace.swift",
       "posted_at" : "2026-10-14T12:58:04Z",
+      "resolved_at" : "2026-10-14T13:03:30Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 1784,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-14T12:58:04Z",
+      "resolved_at" : "2026-10-14T13:03:30Z",
       "severity" : "nit"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 60,
       "path" : "GanninTests/EndPlanTests.swift",
       "posted_at" : "2026-10-14T12:58:04Z",
+      "resolved_at" : "2026-10-14T13:03:30Z",
       "severity" : "nit"
     }
   ],
@@ -42,6 +45,6 @@
   "started_at" : "2026-10-14T12:56:24Z",
   "state" : "OPEN",
   "title" : "End a plan and delete an Ask from the session's own tab",
-  "updated_at" : "2026-10-14T12:58:05Z",
-  "verdict" : "comment"
+  "updated_at" : "2026-10-14T13:03:30Z",
+  "verdict" : "approve"
 }
