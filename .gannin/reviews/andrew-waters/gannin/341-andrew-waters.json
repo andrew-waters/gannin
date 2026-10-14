@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Reply IDs are labelled by `location`, which is not unique. Two open threads on t",
+      "key" : "Gannin/Sessions/SessionPullRequests.swift:125:Reply IDs are labelled by `location`, which is not unique. T",
+      "line" : 125,
+      "path" : "Gannin/Sessions/SessionPullRequests.swift",
+      "posted_at" : "2026-10-14T09:42:37Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`#expect(!prompt.contains(\"R1\"))` always passes, because the prompt never prints",
+      "key" : "GanninTests/SessionPromptsTests.swift:30:`#expect(!prompt.contains(\"R1\"))` always passes, because the",
+      "line" : 30,
+      "path" : "GanninTests/SessionPromptsTests.swift",
+      "posted_at" : "2026-10-14T09:42:37Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 341,
+  "posted_at" : "2026-10-14T09:42:37Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-14T09:41:27Z",
+  "state" : "OPEN",
+  "title" : "Ask Claude to reply on review threads after addressing feedback",
+  "updated_at" : "2026-10-14T09:42:38Z",
+  "verdict" : "approve"
+}
