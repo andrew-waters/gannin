@@ -20,6 +20,43 @@ struct PermissionChoice: Identifiable, Equatable {
     var id: Int { number }
 }
 
+extension PermissionChoice {
+    /// The numbered choices among a screen's rows.
+    static func read(from lines: [String]) -> [PermissionChoice] {
+        // Box drawing (─│┌┐└┘├┤┬┴┼ and their heavy or double forms): when
+        // the box redraws shorter than its last frame, the terminal can
+        // leave a stale row's border un-erased past the real text, which
+        // would otherwise stick to the label with nothing to trim it on.
+        let boxDrawing = CharacterSet(charactersIn: UnicodeScalar(0x2500)!...UnicodeScalar(0x257F)!)
+        var choices: [PermissionChoice] = []
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: CharacterSet(charactersIn: "❯>").union(.whitespaces))
+            guard let dot = trimmed.firstIndex(of: "."), let number = Int(trimmed[..<dot]), number == choices.count + 1 else { continue }
+            var label = String(trimmed[trimmed.index(after: dot)...])
+            if let stray = label.unicodeScalars.firstIndex(where: boxDrawing.contains) {
+                label = String(label.unicodeScalars[..<stray])
+            }
+            label = label.trimmingCharacters(in: .whitespaces)
+            guard !label.isEmpty else { continue }
+            choices.append(PermissionChoice(number: number, label: label))
+        }
+        return choices
+    }
+
+    /// Whether the rows show a permission prompt: a line that starts "Do
+    /// you want to" and ends in a question mark, with the first choice on
+    /// a row below it. Words quoted in claude's own text start with its
+    /// bullet or sit mid-line, so they aren't taken for one.
+    static func promptShown(in lines: [String]) -> Bool {
+        let stripped = CharacterSet.whitespaces.union(CharacterSet(charactersIn: "│"))
+        guard let question = lines.lastIndex(where: {
+            let text = $0.trimmingCharacters(in: stripped)
+            return text.hasPrefix("Do you want to") && text.hasSuffix("?")
+        }) else { return false }
+        return !read(from: Array(lines[(question + 1)...])).isEmpty
+    }
+}
+
 /// A prompt kept for sending to any session: "run the tests".
 struct PromptSnippet: Codable, Identifiable, Hashable {
     var id = UUID()
@@ -85,33 +122,14 @@ extension SessionStore {
     /// wording ever changes enough that this can't find it.
     func permissionChoices(for id: UUID) -> [PermissionChoice] {
         guard let terminal = terminals[id] else { return [] }
-        // Box drawing (─│┌┐└┘├┤┬┴┼ and their heavy or double forms): when
-        // the box redraws shorter than its last frame, the terminal can
-        // leave a stale row's border un-erased past the real text, which
-        // would otherwise stick to the label with nothing to trim it on.
-        let boxDrawing = CharacterSet(charactersIn: UnicodeScalar(0x2500)!...UnicodeScalar(0x257F)!)
-        var choices: [PermissionChoice] = []
-        for line in terminal.screenLines(last: 20) {
-            let trimmed = line.trimmingCharacters(in: CharacterSet(charactersIn: "❯>").union(.whitespaces))
-            guard let dot = trimmed.firstIndex(of: "."), let number = Int(trimmed[..<dot]), number == choices.count + 1 else { continue }
-            var label = String(trimmed[trimmed.index(after: dot)...])
-            if let stray = label.unicodeScalars.firstIndex(where: boxDrawing.contains) {
-                label = String(label.unicodeScalars[..<stray])
-            }
-            label = label.trimmingCharacters(in: .whitespaces)
-            guard !label.isEmpty else { continue }
-            choices.append(PermissionChoice(number: number, label: label))
-        }
-        return choices
+        return PermissionChoice.read(from: terminal.screenLines(last: 20))
     }
 
-    /// Whether the terminal is showing claude's "Do you want to proceed?"
-    /// with its numbered choices, wherever it sits above them.
+    /// Whether the terminal is showing a permission prompt: "Do you want
+    /// to ...?" with its numbered choices below.
     func showsPermissionPrompt(_ id: UUID) -> Bool {
-        guard let terminal = terminals[id],
-              terminal.screenLines(last: 20).contains(where: { $0.trimmingCharacters(in: .whitespaces).hasPrefix("Do you want to proceed") })
-        else { return false }
-        return !permissionChoices(for: id).isEmpty
+        guard let terminal = terminals[id] else { return false }
+        return PermissionChoice.promptShown(in: terminal.screenLines(last: 20))
     }
 
     /// Picks one of the prompt's own choices: Return for the first, else
