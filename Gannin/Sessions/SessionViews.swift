@@ -1676,6 +1676,9 @@ private struct SessionPanel: View {
     @Environment(\.openWindow) private var openWindow
     let session: CodeSession
     @State private var confirmingRemove = false
+    @State private var confirmingDelete = false
+    /// Its folder couldn't be removed: why, to delete it anyway.
+    @State private var deleteError: String?
     @State private var reading: HarnessReading?
     /// An Ask's file picked for Commit to Harness, and Save a Copy's error.
     @State private var committing: SessionFile?
@@ -1779,8 +1782,10 @@ private struct SessionPanel: View {
                         Button("Resume") { _ = sessions.open(session) }
                             .help("Start the terminal again, carrying on claude's conversation")
                     }
-                    // An Ask goes with its folder, from its list's Delete.
-                    if !session.isAsk {
+                    if session.isAsk {
+                        Button("Delete…", role: .destructive) { confirmingDelete = true }
+                            .help("End claude and remove the Ask's folder and every file in it")
+                    } else {
                         Button("Forget…", role: .destructive) { confirmingRemove = true }
                             .help("End claude and its helpers and take the session out of Gannin; its files stay")
                     }
@@ -1821,6 +1826,26 @@ private struct SessionPanel: View {
             if let setup = session.harnessRepo.flatMap(config.harness(repo:)) ?? config.harness {
                 await harness.load(org: session.org, setup: setup)
             }
+        }
+        .confirmationDialog("Delete \(session.title)?", isPresented: $confirmingDelete) {
+            Button("Delete", role: .destructive) {
+                let id = session.id
+                Task {
+                    do {
+                        try await sessions.finish(id)
+                    } catch {
+                        deleteError = error.localizedDescription
+                    }
+                }
+            }
+        } message: {
+            Text(AskSessionsList.deleteMessage)
+        }
+        .alert("Couldn't remove its folder", isPresented: Binding(get: { deleteError != nil }, set: { if !$0 { deleteError = nil } })) {
+            Button("Delete Anyway", role: .destructive) { sessions.remove(session.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(deleteError ?? "") Delete Anyway forgets the session and leaves its folder where it is.")
         }
         .confirmationDialog("Forget this session?", isPresented: $confirmingRemove) {
             Button("Forget Session", role: .destructive) { sessions.remove(session.id) }
@@ -2091,7 +2116,7 @@ struct SessionSidebarRows: View {
         let active = reviews.filter { $0.archivedAt == nil }
         let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
         group("Reviews", symbol: "eye", sessions: active + finished, expanded: $reviewsExpanded)
-        group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter(\.isPlanning), expanded: $planningExpanded)
+        group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter { $0.isPlanning && $0.archivedAt == nil }, expanded: $planningExpanded)
         group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
         group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
     }

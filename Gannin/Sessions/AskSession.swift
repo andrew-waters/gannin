@@ -291,6 +291,7 @@ struct AskSessionsList: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
     let org: String
+    static let deleteMessage = "This ends Claude and removes the session's folder and every file in it, on this Mac. It can't be undone. Anything you committed to the harness stays there."
     @State private var renaming: CodeSession?
     @State private var newTitle = ""
     @State private var deleting: CodeSession?
@@ -320,7 +321,7 @@ struct AskSessionsList: View {
         ) { session in
             Button("Delete", role: .destructive) { delete(session) }
         } message: { _ in
-            Text("This ends Claude and removes the session's folder and every file in it, on this Mac. It can't be undone. Anything you committed to the harness stays there.")
+            Text(AskSessionsList.deleteMessage)
         }
         .alert(
             "Couldn't remove its folder",

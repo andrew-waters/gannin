@@ -22,8 +22,8 @@ struct PlanningPage: View {
 
     var body: some View {
         let all = sessions.sessions(for: org)
-            .filter { $0.isPlanning && $0.archivedAt == nil }
-            .sorted { ($0.planning?.agreed == nil ? 0 : 1, $1.createdAt) < ($1.planning?.agreed == nil ? 0 : 1, $0.createdAt) }
+            .filter(\.isPlanning)
+            .sorted { (rank($0), $1.createdAt) < (rank($1), $0.createdAt) }
         Group {
             if all.isEmpty {
                 ContentUnavailableView {
@@ -78,7 +78,7 @@ struct PlanningPage: View {
 
     private var columns: [StatsColumn<CodeSession>] {
         [
-            StatsColumn(id: "status", title: "Status", help: "Under way, with what Claude is doing, or agreed", width: 150,
+            StatsColumn(id: "status", title: "Status", help: "Under way, with what Claude is doing, agreed, or finished", width: 150,
                         sortKey: { .text(status($0)) }, cell: { session in AnyView(statusCell(session)) }),
             StatsColumn(id: "topic", title: "Topic", help: "What's being planned, and the issue it's about", minWidth: 260,
                         sortKey: { .text(title($0)) }, cell: { session in AnyView(topicCell(session)) }),
@@ -106,10 +106,15 @@ struct PlanningPage: View {
                     })
     }
 
+    /// Under way, then agreed, then finished.
+    private func rank(_ session: CodeSession) -> Int {
+        session.archivedAt != nil ? 2 : session.planning?.agreed == nil ? 0 : 1
+    }
+
     private func statusCell(_ session: CodeSession) -> some View {
         HStack(spacing: 6) {
             Circle()
-                .fill(session.planning?.agreed == nil ? sessions.state(session.id).color : ChartPalette.good)
+                .fill(session.archivedAt != nil ? Color.secondary.opacity(0.5) : session.planning?.agreed == nil ? sessions.state(session.id).color : ChartPalette.good)
                 .frame(width: 8, height: 8)
             Text(status(session)).lineLimit(1)
         }
@@ -166,6 +171,7 @@ struct PlanningPage: View {
     }
 
     private func status(_ session: CodeSession) -> String {
+        if session.archivedAt != nil { return "Finished" }
         guard let agreed = session.planning?.agreed else { return sessions.state(session.id).label }
         return "Agreed \(agreed.at.formatted(date: .abbreviated, time: .omitted))"
     }

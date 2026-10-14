@@ -419,6 +419,7 @@ struct PlanningWorkspaceView: View {
     /// A step picked to look back at; nil follows the one under way.
     @State private var viewing: PlanningStep?
     @State private var agreeing = false
+    @State private var ending = false
     /// Documents picked or dropped, being confirmed.
     @State private var sharing: [URL]?
     @State private var comment = ""
@@ -444,6 +445,7 @@ struct PlanningWorkspaceView: View {
     private var planning: PlanningInfo? { session.planning }
     private var state: PlanningState? { planning?.state }
     private var running: Bool { sessions.isRunning(session.id) }
+    private var isEnded: Bool { session.archivedAt != nil }
     private var busy: Bool { [.starting, .working].contains(sessions.state(session.id)) }
 
     /// The step under way.
@@ -507,7 +509,7 @@ struct PlanningWorkspaceView: View {
                 }
                 .font(.title3)
                 .frame(minHeight: 320, maxHeight: .infinity)
-                if showsTerminal {
+                if showsTerminal && !isEnded {
                     VStack(spacing: 0) {
                         TerminalHost(session: session)
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -519,7 +521,8 @@ struct PlanningWorkspaceView: View {
             }
         }
         // Starts claude with the terminal put away, as opening the tab did.
-        .onAppear { _ = sessions.open(session) }
+        // An ended plan stays as it was left: no claude to start.
+        .onAppear { if !isEnded { _ = sessions.open(session) } }
         .onChange(of: current) { viewing = nil }
         .dropDestination(for: URL.self) { urls, _ in
             let files = urls.filter(\.isFileURL)
@@ -529,6 +532,11 @@ struct PlanningWorkspaceView: View {
         }
         .sheet(isPresented: Binding(get: { sharing != nil }, set: { if !$0 { sharing = nil } })) {
             ShareDocumentsSheet(session: session, files: sharing ?? [])
+        }
+        .confirmationDialog("End this plan?", isPresented: $ending) {
+            Button("End Plan") { sessions.endPlan(session.id) }
+        } message: {
+            Text("Claude is stopped and the session closes. The plan stays on Rituals › Planning as Finished, with its tasks and decisions, to read. Delete it there to remove it altogether.")
         }
         .sheet(isPresented: $agreeing) {
             PlanningAgreeSheet(session: session)
@@ -565,15 +573,23 @@ struct PlanningWorkspaceView: View {
             }
             .help("Pick documents to read while planning; each is confirmed first. You can also drop them on the workspace.")
             .disabled(!running)
-            Toggle(isOn: $showsTerminal.animation()) {
-                Label("Terminal", systemImage: "terminal")
+            if !isEnded {
+                Toggle(isOn: $showsTerminal.animation()) {
+                    Label("Terminal", systemImage: "terminal")
+                }
+                .toggleStyle(.button)
+                .help(showsTerminal ? "Put the terminal away" : "Show the terminal and its composer")
             }
-            .toggleStyle(.button)
-            .help(showsTerminal ? "Put the terminal away" : "Show the terminal and its composer")
             Button(planning?.agreed == nil ? "Agree" : "Agreed") { agreeing = true }
                 .buttonStyle(.borderedProminent)
-                .disabled(state == nil || planning?.agreed != nil)
+                .disabled(state == nil || planning?.agreed != nil || isEnded)
                 .help(planning?.agreed == nil ? "Write the plan and requirement to the harness and make the issues, confirmed first" : "The room agreed this plan")
+            if isEnded {
+                Text("Finished").foregroundStyle(.secondary)
+            } else {
+                Button("End…") { ending = true }
+                    .help("Stop Claude and close this session, keeping the plan on Rituals › Planning")
+            }
         }
         .padding(.bottom, 16)
     }

@@ -576,6 +576,18 @@ extension SessionStore {
         closeTab(id)
     }
 
+    /// Ends a planning session but keeps it: claude and its helpers are
+    /// ended and the tab closes. The worktree stays, as `planning.json` is
+    /// read from it, and the plan, tasks and decisions stay to read from
+    /// Rituals › Planning.
+    func endPlan(_ id: UUID) {
+        guard sessions[id]?.isPlanning == true else { return }
+        for helper in helpers(of: id) { end(helper.id) }
+        end(id)
+        update(id) { $0.archivedAt = .now }
+        closeTab(id)
+    }
+
     /// Back from the history: claude resumes when its tab next shows.
     func resumeReview(_ id: UUID) {
         update(id) { $0.archivedAt = nil }

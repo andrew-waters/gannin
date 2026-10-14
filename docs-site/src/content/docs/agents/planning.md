@@ -11,6 +11,10 @@ A planning session is Claude working with a room of people to turn a topic into 
 
 Open a New Plan tab in the Claude Code window, or use Plan This on an issue. Rituals › Planning lists the sessions you have, with Delete. You can also start from the Agents page, the + menu or a harness document.
 
+## Ending a plan
+
+End, beside Agree in the workspace, stops Claude, closes the tab and takes the plan out of the sidebar's Planning group. It's there whether or not the plan is agreed. After ending, the plan stays on Rituals › Planning with the status Finished, and opening it shows its stages, tasks and decisions to read; Claude isn't started again. Delete, from that list, removes a plan altogether.
+
 The tab has an editable prompt. Start from fills it with one of the team's planning prompts (and its skills), a suggested one, or nothing. What's in the box is what Claude is told. Saving commits it as a planning prompt for next time.
 
 ## Stages
