@@ -25,8 +25,8 @@ struct SessionPromptsTests {
         let review = SessionPullRequest.Feedback(id: "R1", author: "rev", location: nil, verdict: "changes requested", comments: [comment("overall")])
         let prompt = SessionPrompts.feedback([thread, review], on: pullRequest([thread, review]), in: session)
         #expect(prompt.contains("repos/acme/app/pulls/7/comments/<reply ID>/replies"))
-        #expect(prompt.contains("`a.swift:3` is 99"))
-        #expect(!prompt.contains("R1"))
+        #expect(prompt.contains("@rev on `a.swift:3` (reply ID 99):"))
+        #expect(prompt.components(separatedBy: "(reply ID ").count == 2)
     }
 
     @Test func noReplyInstructionWithoutAThread() {

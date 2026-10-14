@@ -111,6 +111,7 @@ enum SessionPrompts {
             var heading = "@\(item.author)"
             if let location = item.location { heading += " on `\(location)`" }
             if let verdict = item.verdict { heading += " (\(verdict))" }
+            if let replyID = item.replyID { heading += " (reply ID \(replyID))" }
             lines.append(heading + ":")
             for comment in item.comments {
                 if comment.author != item.author { lines.append("@\(comment.author) replied:") }
@@ -119,10 +120,8 @@ enum SessionPrompts {
             lines.append("")
         }
         lines.append("Address each in \(worktree(for: pr.repo, in: session)), then commit and push.")
-        let replies = items.compactMap { item in item.replyID.map { (item, $0) } }
-        if !replies.isEmpty {
-            lines.append("Then reply on each thread that has a reply ID, saying what you changed and in which commit, or why you didn't: `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments/<reply ID>/replies -f body=...`. Reply IDs: "
-                + replies.map { "`\($0.0.location ?? $0.0.id)` is \($0.1)" }.joined(separator: "; ") + ". Reviews with no location need no reply.")
+        if items.contains(where: { $0.replyID != nil }) {
+            lines.append("Then reply on each thread headed with a reply ID, saying what you changed and in which commit, or why you didn't: `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments/<reply ID>/replies -f body=...`. Reviews with no reply ID need no reply.")
         }
         lines.append("Tell me what you changed, and anything you'd push back on rather than change.")
         return lines.joined(separator: "\n")
