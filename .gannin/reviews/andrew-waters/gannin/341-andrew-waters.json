@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 1,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -34,6 +34,6 @@
   "started_at" : "2026-10-14T09:41:27Z",
   "state" : "OPEN",
   "title" : "Ask Claude to reply on review threads after addressing feedback",
-  "updated_at" : "2026-10-14T09:52:31Z",
+  "updated_at" : "2026-10-14T09:58:02Z",
   "verdict" : "approve"
 }
