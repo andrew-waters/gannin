@@ -4,12 +4,13 @@
   "findings" : [
 
   ],
+  "merged_at" : "2026-10-14T22:04:37Z",
   "number" : 358,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-14T21:54:30Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Name the harness's STANDARDS.md by path in a session's brief",
-  "updated_at" : "2026-10-14T21:55:12Z",
+  "updated_at" : "2026-10-14T22:05:31Z",
   "verdict" : "approve"
 }
