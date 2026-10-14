@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "334-screenshot-capture-with-a-demo",
+  "finishedAt" : "2026-10-14T12:05:18Z",
   "issue" : "andrew-waters/gannin#334",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/342"
