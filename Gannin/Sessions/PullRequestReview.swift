@@ -1975,6 +1975,7 @@ private struct ReviewCommentEditor: View {
 private struct PostReviewSheet: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(AuthStore.self) private var auth
+    @Environment(OrgStore.self) private var orgs
     @Environment(\.dismiss) private var dismiss
     let session: CodeSession
     let pullRequest: ReviewedPullRequest
@@ -2117,6 +2118,23 @@ private struct PostReviewSheet: View {
         resolving = Set(threads.map(\.id))
     }
 
+    /// GitHub drops you from the PR's requested reviewers once you review it.
+    /// The workload's copy says so now, and the review requests are fetched
+    /// again, so the Inbox doesn't keep the PR as waiting on you until the
+    /// next refresh.
+    private func markReviewed(event: String) {
+        if let me = auth.viewer?.login {
+            let state = ["APPROVE": "APPROVED", "REQUEST_CHANGES": "CHANGES_REQUESTED"][event] ?? "COMMENTED"
+            orgs.updatePullRequest(reference.id, org: reference.org) { pr in
+                pr.requestedReviewers.removeAll { $0.login == me }
+                pr.reviewRequestedAt[me] = nil
+                pr.reviewStates = (pr.reviewStates ?? [:]).merging([me: state]) { _, new in new }
+                pr.reviewedAt = (pr.reviewedAt ?? [:]).merging([me: .now]) { _, new in new }
+            }
+        }
+        Task { await EngineerWatch.shared.check() }
+    }
+
     private func post(_ inline: [[String: Any]]) {
         guard let api = auth.api else { return }
         sending = true
@@ -2132,6 +2150,7 @@ private struct PostReviewSheet: View {
                     sessions.reviewDrafts[session.id, default: ReviewDraft()].postedAt = .now
                     sessions.reviewDrafts[session.id, default: ReviewDraft()].postedEvent = event
                     isPosted = true
+                    markReviewed(event: event)
                 } catch {
                     self.error = "GitHub didn't take it: \(error.localizedDescription)"
                     sending = false

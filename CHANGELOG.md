@@ -21,6 +21,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ### Fixed
+- A PR you've just reviewed from a review tab (Approve, Request Changes or Comment) leaves the Inbox's Ready for your approval and Needs your review sections straight away, instead of waiting for the next refresh
 - A mouse wheel over the Claude Code window's tab bar scrolls the tabs sideways
 
 ## [0.0.3] - 2026-10-13
