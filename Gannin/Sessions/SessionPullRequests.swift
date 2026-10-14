@@ -30,6 +30,9 @@ struct SessionPullRequest: Identifiable, Hashable {
         /// "changes requested", for a review.
         let verdict: String?
         let comments: [Comment]
+        /// The REST ID of the thread's first comment, which GitHub's
+        /// `/replies` endpoint needs: it rejects a reply's own ID. Nil for a review.
+        var replyID: Int? = nil
 
         /// Seen at its latest comment, so a reply makes it new again.
         var key: String { keyPrefix + (comments.last?.url.absoluteString ?? "") }
@@ -115,7 +118,13 @@ enum SessionPrompts {
             }
             lines.append("")
         }
-        lines.append("Address each in \(worktree(for: pr.repo, in: session)), then commit and push. Then reply on each review thread (ids from `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments`) with `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments/<id>/replies -f body=...`, saying what you changed (or why you didn't) and the commit. Tell me what you changed, and anything you'd push back on rather than change.")
+        lines.append("Address each in \(worktree(for: pr.repo, in: session)), then commit and push.")
+        let replies = items.compactMap { item in item.replyID.map { (item, $0) } }
+        if !replies.isEmpty {
+            lines.append("Then reply on each thread that has a reply ID, saying what you changed and in which commit, or why you didn't: `gh api repos/\(pr.repo)/pulls/\(pr.number)/comments/<reply ID>/replies -f body=...`. Reply IDs: "
+                + replies.map { "`\($0.0.location ?? $0.0.id)` is \($0.1)" }.joined(separator: "; ") + ". Reviews with no location need no reply.")
+        }
+        lines.append("Tell me what you changed, and anything you'd push back on rather than change.")
         return lines.joined(separator: "\n")
     }
 
@@ -422,6 +431,7 @@ extension GitHubAPI {
               } } } } } }
               reviews(last: 30) { nodes { id author { login } state body url } }
               reviewThreads(first: 50) { nodes { id isResolved isOutdated path line originalLine
+                root: comments(first: 1) { nodes { databaseId } }
                 comments(last: 20) { nodes { author { login } body url } } } }
             }
             """
@@ -628,7 +638,9 @@ private struct RawPullRequest: Decodable {
         let line: Int?
         let originalLine: Int?
         let comments: Connection<Comment>
+        let root: Connection<Root>?
     }
+    struct Root: Decodable { let databaseId: Int? }
 
     let id: String?
     let number: Int?
@@ -675,7 +687,7 @@ private struct RawPullRequest: Decodable {
             .map { thread in
                 let comments = thread.comments.nodes.map { SessionPullRequest.Comment(author: $0.author?.login ?? "someone", body: $0.body, url: $0.url) }
                 let line = thread.line ?? thread.originalLine
-                return .init(id: thread.id, author: comments[0].author, location: line.map { "\(thread.path):\($0)" } ?? thread.path, verdict: nil, comments: comments)
+                return .init(id: thread.id, author: comments[0].author, location: line.map { "\(thread.path):\($0)" } ?? thread.path, verdict: nil, comments: comments, replyID: thread.root?.nodes.first?.databaseId)
             }
         for review in reviews?.nodes ?? [] where review.author?.login != prAuthor
             && !review.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
