@@ -84,7 +84,33 @@ struct ReviewDuplicateCommentTests {
     }
 
     @Test func shortCommentsOnlyMatchWhenTheyShareMostWords() {
-        #expect(!ReviewedPullRequest.isSameComment("nit", "nit: rename this variable to something clearer"))
-        #expect(ReviewedPullRequest.isSameComment("Rename this variable.", "rename this variable"))
+        #expect(!ReviewedPullRequest.isSameComment(existing: "nit", finding: "nit: rename this variable to something clearer"))
+        #expect(ReviewedPullRequest.isSameComment(existing: "Rename this variable.", finding: "rename this variable"))
+    }
+
+    @Test func aFindingThatAddsToTheCommentIsKept() {
+        let comment = "This force unwrap crashes"
+        let finding = "This force unwrap crashes when the token is missing, and the retry below never stops"
+        #expect(!ReviewedPullRequest.isSameComment(existing: comment, finding: finding))
+        #expect(ReviewedPullRequest.isSameComment(existing: finding, finding: comment))
+    }
+
+    @Test func containmentMatchesWholeWordsOnly() {
+        #expect(!ReviewedPullRequest.isSameComment(existing: "this force unwrapped crashes now", finding: "this force unwrap crashes"))
+    }
+
+    @Test func anOutdatedCommentDoesNotCount() {
+        let text = "This force unwrap crashes when the token is missing."
+        var old = existing(line: 5, body: text)
+        old.isOutdated = true
+        let (inline, _, omitted) = pull(existing: [old]).comments(for: review(line: 5, comment: text), draft: ReviewDraft())
+        #expect(inline.count == 1)
+        #expect(omitted.isEmpty)
+    }
+
+    @Test func anOmittedFindingKeepsItsOwnText() {
+        let text = "This force unwrap crashes when the token is missing."
+        let (_, _, omitted) = pull(existing: [existing(line: 5, body: text)]).comments(for: review(line: 5, comment: text), draft: ReviewDraft())
+        #expect(omitted.first?.comment == text)
     }
 }

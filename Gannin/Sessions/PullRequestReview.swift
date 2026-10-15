@@ -215,6 +215,9 @@ struct ReviewedPullRequest: Equatable {
         let avatarURL: URL?
         let createdAt: Date
         let url: URL?
+        /// A later push changed the line: `line` is where it was, in an older
+        /// commit, and GitHub hides the comment by default.
+        var isOutdated = false
     }
 
     let title: String
@@ -235,6 +238,8 @@ struct ReviewedPullRequest: Equatable {
     struct Omitted {
         let path: String
         let line: Int
+        /// What the finding said, as it would have been posted.
+        let comment: String
         let existing: ExistingComment
     }
 
@@ -254,8 +259,8 @@ struct ReviewedPullRequest: Equatable {
                 general.append(.init(path: finding.path, line: finding.line, comment: text, severity: finding.severity))
                 continue
             }
-            if let existing = existingComments.first(where: { !$0.isOld && $0.path == finding.path && $0.line == line && Self.isSameComment($0.body, text) }) {
-                omitted.append(.init(path: finding.path, line: line, existing: existing))
+            if let existing = existingComments.first(where: { !$0.isOld && !$0.isOutdated && $0.path == finding.path && $0.line == line && Self.isSameComment(existing: $0.body, finding: text) }) {
+                omitted.append(.init(path: finding.path, line: line, comment: text, existing: existing))
                 continue
             }
             if let suggestion = finding.suggestion, decision == nil {
@@ -269,16 +274,18 @@ struct ReviewedPullRequest: Equatable {
         return (inline, general, omitted)
     }
 
-    /// Whether two comments say the same thing: one contains the other, or
-    /// they share most of their words. Case, punctuation and suggestion
-    /// blocks are ignored, since people reword and Gannin adds the latter.
-    static func isSameComment(_ a: String, _ b: String) -> Bool {
-        let x = words(a), y = words(b)
+    /// Whether an existing comment already says what a finding says: the
+    /// comment contains the whole finding, or they share most of their words.
+    /// Case, punctuation and suggestion blocks are ignored, since people
+    /// reword and Gannin adds the latter. A finding that adds to the comment
+    /// isn't covered by it, so containment only works one way.
+    static func isSameComment(existing: String, finding: String) -> Bool {
+        let x = words(existing), y = words(finding)
         guard !x.isEmpty, !y.isEmpty else { return false }
-        let (short, long) = x.count <= y.count ? (x, y) : (y, x)
-        if short.joined(separator: " ").count >= 20, long.joined(separator: " ").contains(short.joined(separator: " ")) { return true }
+        let said = " " + x.joined(separator: " ") + " ", asked = y.joined(separator: " ")
+        if asked.count >= 20, said.contains(" " + asked + " ") { return true }
         // Sharing a prefix isn't enough: "crashes" and "leaks memory" are different points.
-        guard short.count >= 4 else { return false }
+        guard min(x.count, y.count) >= 4 else { return false }
         let shared = Set(x).intersection(y).count
         return Double(shared) / Double(Set(x).union(y).count) >= 0.8
     }
@@ -428,7 +435,7 @@ extension GitHubAPI {
                 return .init(
                     id: comment.id, path: comment.path, line: line, isOld: (comment.side ?? comment.originalSide) == "LEFT",
                     body: comment.body, author: comment.user?.login ?? "ghost", avatarURL: comment.user?.avatarUrl,
-                    createdAt: comment.createdAt, url: comment.htmlUrl
+                    createdAt: comment.createdAt, url: comment.htmlUrl, isOutdated: comment.line == nil
                 )
             }
             if batch.count < 100 { break }
@@ -2118,8 +2125,12 @@ private struct PostReviewSheet: View {
                             Text("\(item.path):\(item.line)")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
-                            Text("\(item.existing.author): \(item.existing.body)")
+                            Text(item.comment)
                                 .font(.callout)
+                                .lineLimit(3)
+                            Text("\(item.existing.author): \(item.existing.body)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                                 .lineLimit(2)
                         }
                     }
