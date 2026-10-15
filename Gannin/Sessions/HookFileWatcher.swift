@@ -35,9 +35,7 @@ final class HookFileWatcher {
     // A source that's resumed and never cancelled stays alive with its
     // descriptor open, whatever releases the watcher.
     isolated deinit {
-        pending?.cancel()
-        folder?.cancel()
-        for source in files.values { source.cancel() }
+        cancel()
     }
 
     /// Watches whatever isn't watched yet: the folder and files that didn't
