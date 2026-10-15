@@ -1,7 +1,7 @@
 {
   "author" : "dwrss",
   "effort" : 2,
-  "event" : "COMMENT",
+  "event" : "APPROVE",
   "findings" : [
     {
       "category" : "correctness",
@@ -27,13 +27,13 @@
     }
   ],
   "number" : 361,
-  "posted_at" : "2026-10-15T00:10:42Z",
+  "posted_at" : "2026-10-15T08:18:38Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T00:07:48Z",
   "state" : "OPEN",
   "title" : "Keep one copy of open issues on disk",
-  "updated_at" : "2026-10-15T00:17:39Z",
+  "updated_at" : "2026-10-15T08:18:39Z",
   "verdict" : "approve"
 }
