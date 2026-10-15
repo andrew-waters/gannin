@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 3,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -11,6 +11,7 @@
       "line" : 122,
       "path" : "Gannin/Sandbox/SandboxLaunch.swift",
       "posted_at" : "2026-10-15T15:11:36Z",
+      "resolved_at" : "2026-10-15T15:18:13Z",
       "severity" : "minor"
     },
     {
@@ -21,17 +22,28 @@
       "line" : 27,
       "path" : ".claude/rules/sandbox.md",
       "posted_at" : "2026-10-15T15:11:36Z",
+      "resolved_at" : "2026-10-15T15:18:13Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "`ps -o lstart=` formats the start time with the shell's locale, so two starts on",
+      "key" : "Gannin/Sandbox/SandboxLaunch.swift:121:`ps -o lstart=` formats the start time with the shell's loca",
+      "line" : 121,
+      "path" : "Gannin/Sandbox/SandboxLaunch.swift",
+      "posted_at" : "2026-10-15T15:18:10Z",
       "severity" : "nit"
     }
   ],
   "number" : 383,
-  "posted_at" : "2026-10-15T15:11:36Z",
+  "posted_at" : "2026-10-15T15:18:10Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T15:09:06Z",
   "state" : "OPEN",
   "title" : "Serialise sandbox starts and replace a reviewer whose sandbox failed",
-  "updated_at" : "2026-10-15T15:11:38Z",
+  "updated_at" : "2026-10-15T15:18:13Z",
   "verdict" : "approve"
 }
