@@ -1,0 +1,15 @@
+{
+  "box" : "Anius",
+  "branch" : "182-x-sub-issues-text-on-a-completed-plan",
+  "issue" : "andrew-waters/gannin#182",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-15T00:42:35Z",
+  "startedBy" : "dwrss",
+  "title" : "X sub-issues text on a completed plan doesn't update if a new one is added after completion",
+  "url" : "https://github.com/andrew-waters/gannin/issues/182"
+}
