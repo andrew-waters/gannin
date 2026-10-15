@@ -1,0 +1,47 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Every comment `existingComments` returns counts here, including outdated ones (G",
+      "key" : "Gannin/Sessions/PullRequestReview.swift:257:Every comment `existingComments` returns counts here, includ",
+      "line" : 257,
+      "path" : "Gannin/Sessions/PullRequestReview.swift",
+      "posted_at" : "2026-10-15T14:30:35Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The containment check treats any finding that contains an existing comment of 20",
+      "key" : "Gannin/Sessions/PullRequestReview.swift:279:The containment check treats any finding that contains an ex",
+      "line" : 279,
+      "path" : "Gannin/Sessions/PullRequestReview.swift",
+      "posted_at" : "2026-10-15T14:30:35Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`Omitted` keeps the existing comment but not the finding it replaced, so the she",
+      "key" : "Gannin/Sessions/PullRequestReview.swift:238:`Omitted` keeps the existing comment but not the finding it ",
+      "line" : 238,
+      "path" : "Gannin/Sessions/PullRequestReview.swift",
+      "posted_at" : "2026-10-15T14:30:35Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 381,
+  "posted_at" : "2026-10-15T14:30:35Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-15T14:28:48Z",
+  "state" : "OPEN",
+  "title" : "Leave out review findings already commented on the same line",
+  "updated_at" : "2026-10-15T14:30:36Z",
+  "verdict" : "comment"
+}
