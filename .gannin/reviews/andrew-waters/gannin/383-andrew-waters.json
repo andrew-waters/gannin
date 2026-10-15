@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 3,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "A dead owner is detected only by `kill -0` on a bare PID. A lock left by a start",
+      "key" : "Gannin/Sandbox/SandboxLaunch.swift:122:A dead owner is detected only by `kill -0` on a bare PID. A ",
+      "line" : 122,
+      "path" : "Gannin/Sandbox/SandboxLaunch.swift",
+      "posted_at" : "2026-10-15T15:11:36Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "\"Never delete or run a container outside `sandbox.lock`\" reads as repo-wide, but",
+      "key" : ".claude/rules/sandbox.md:27:\"Never delete or run a container outside `sandbox.lock`\" rea",
+      "line" : 27,
+      "path" : ".claude/rules/sandbox.md",
+      "posted_at" : "2026-10-15T15:11:36Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 383,
+  "posted_at" : "2026-10-15T15:11:36Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-15T15:09:06Z",
+  "state" : "OPEN",
+  "title" : "Serialise sandbox starts and replace a reviewer whose sandbox failed",
+  "updated_at" : "2026-10-15T15:11:38Z",
+  "verdict" : "approve"
+}
