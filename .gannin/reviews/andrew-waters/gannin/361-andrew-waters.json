@@ -26,14 +26,15 @@
       "severity" : "minor"
     }
   ],
+  "merged_at" : "2026-10-15T08:18:52Z",
   "number" : 361,
   "posted_at" : "2026-10-15T08:18:38Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T00:07:48Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Keep one copy of open issues on disk",
-  "updated_at" : "2026-10-15T08:18:39Z",
+  "updated_at" : "2026-10-15T08:19:01Z",
   "verdict" : "approve"
 }
