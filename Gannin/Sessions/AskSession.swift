@@ -291,9 +291,6 @@ struct AskSessionsList: View {
     @Environment(SessionStore.self) private var sessions
     @Environment(\.openWindow) private var openWindow
     let org: String
-    @State private var renaming: CodeSession?
-    @State private var newTitle = ""
-    @State private var deleting: CodeSession?
 
     var body: some View {
         let all = sessions.askSessions(for: org)
@@ -302,31 +299,50 @@ struct AskSessionsList: View {
                 AskSessionRow(session: session)
                     .contentShape(Rectangle())
                     .onTapGesture { sessions.show(session.id, with: openWindow) }
-                    .contextMenu { menu(session) }
+                    .askContextMenu(session)
                 Divider()
             }
         }
-        .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { session in
-            TextField("Title", text: $newTitle)
-            Button("Rename") { sessions.renameAsk(session.id, to: newTitle) }
-            Button("Cancel", role: .cancel) {}
-        }
-        .deletesAsk($deleting)
     }
+}
 
-    @ViewBuilder
-    private func menu(_ session: CodeSession) -> some View {
-        Button("Open") { sessions.show(session.id, with: openWindow) }
-        Button("Rename") {
-            newTitle = session.title
-            renaming = session
-        }
-        if let folder = SessionStore.worktree(for: session) {
-            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
-                .disabled(!FileManager.default.fileExists(atPath: folder.path))
-        }
-        Divider()
-        Button("Delete", role: .destructive) { deleting = session }
+/// An Ask's context menu (Open, Rename, Show in Finder, Delete), with the
+/// rename prompt and delete confirmation it needs.
+private struct AskContextMenuModifier: ViewModifier {
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
+    let session: CodeSession
+    @State private var renaming: CodeSession?
+    @State private var newTitle = ""
+    @State private var deleting: CodeSession?
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu {
+                Button("Open") { sessions.show(session.id, with: openWindow) }
+                Button("Rename") {
+                    newTitle = session.title
+                    renaming = session
+                }
+                if let folder = SessionStore.worktree(for: session) {
+                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([folder]) }
+                        .disabled(!FileManager.default.fileExists(atPath: folder.path))
+                }
+                Divider()
+                Button("Delete", role: .destructive) { deleting = session }
+            }
+            .alert("Rename", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } }), presenting: renaming) { session in
+                TextField("Title", text: $newTitle)
+                Button("Rename") { sessions.renameAsk(session.id, to: newTitle) }
+                Button("Cancel", role: .cancel) {}
+            }
+            .deletesAsk($deleting)
+    }
+}
+
+extension View {
+    func askContextMenu(_ session: CodeSession) -> some View {
+        modifier(AskContextMenuModifier(session: session))
     }
 }
 

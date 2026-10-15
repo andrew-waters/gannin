@@ -17,8 +17,6 @@ struct PlanningPage: View {
     @State private var sort: StatsSort?
     /// Asking before a session is deleted.
     @State private var deleting: CodeSession?
-    /// Its folder couldn't be removed: why, to delete it anyway.
-    @State private var failed: (session: CodeSession, message: String)?
 
     var body: some View {
         let all = sessions.sessions(for: org)
@@ -53,25 +51,7 @@ struct PlanningPage: View {
                 .help("Plan a topic with the team")
             }
         }
-        .confirmationDialog(
-            "Delete \(deleting.map(title) ?? "this planning session")?",
-            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-            presenting: deleting
-        ) { session in
-            Button("Delete", role: .destructive) { delete(session) }
-        } message: { session in
-            Text(deleteMessage(session))
-        }
-        .alert(
-            "Couldn't remove its folder",
-            isPresented: Binding(get: { failed != nil }, set: { if !$0 { failed = nil } }),
-            presenting: failed
-        ) { failed in
-            Button("Delete Anyway", role: .destructive) { sessions.remove(failed.session.id) }
-            Button("Cancel", role: .cancel) {}
-        } message: { failed in
-            Text("\(failed.message) Delete Anyway forgets the session and leaves its folder where it is.")
-        }
+        .deletesPlanning($deleting)
     }
 
     // MARK: Columns
@@ -172,17 +152,51 @@ struct PlanningPage: View {
 
     // MARK: Text
 
-    private func title(_ session: CodeSession) -> String {
+    static func title(_ session: CodeSession) -> String {
         session.planning?.state?.title ?? session.planning?.topic ?? session.title
     }
+
+    private func title(_ session: CodeSession) -> String { Self.title(session) }
 
     private func status(_ session: CodeSession) -> String {
         guard session.archivedAt == nil else { return "Finished" }
         guard let agreed = session.planning?.agreed else { return sessions.state(session.id).label }
         return "Agreed \(agreed.at.formatted(date: .abbreviated, time: .omitted))"
     }
+}
 
-    private func deleteMessage(_ session: CodeSession) -> String {
+/// Confirms deleting the planning session in `session` (its folder goes),
+/// offering Delete Anyway when the folder can't be removed.
+private struct DeletePlanningModifier: ViewModifier {
+    @Environment(SessionStore.self) private var sessions
+    @Binding var session: CodeSession?
+    /// Its folder couldn't be removed: why, to delete it anyway.
+    @State private var failed: (session: CodeSession, message: String)?
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Delete \(session.map(PlanningPage.title) ?? "this planning session")?",
+                isPresented: Binding(get: { session != nil }, set: { if !$0 { session = nil } }),
+                presenting: session
+            ) { session in
+                Button("Delete", role: .destructive) { delete(session) }
+            } message: { session in
+                Text(message(session))
+            }
+            .alert(
+                "Couldn't remove its folder",
+                isPresented: Binding(get: { failed != nil }, set: { if !$0 { failed = nil } }),
+                presenting: failed
+            ) { failed in
+                Button("Delete Anyway", role: .destructive) { sessions.remove(failed.session.id) }
+                Button("Cancel", role: .cancel) {}
+            } message: { failed in
+                Text("\(failed.message) Delete Anyway forgets the session and leaves its folder where it is.")
+            }
+    }
+
+    private func message(_ session: CodeSession) -> String {
         var text = "This stops the session and removes its folder, with any documents shared into it\(session.isRemote ? ", on your server" : ""). It can't be undone."
         let madeCount = (session.planning?.madeParent != nil ? 1 : 0) + (session.planning?.madeIssues?.count ?? 0)
         if session.planning?.agreed != nil {
@@ -203,5 +217,36 @@ struct PlanningPage: View {
                 failed = (session, error.localizedDescription)
             }
         }
+    }
+}
+
+extension View {
+    func deletesPlanning(_ session: Binding<CodeSession?>) -> some View {
+        modifier(DeletePlanningModifier(session: session))
+    }
+}
+
+/// A planning session's context menu in the sidebar (Open, Delete), with
+/// the delete confirmation.
+private struct PlanningContextMenuModifier: ViewModifier {
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
+    let session: CodeSession
+    @State private var deleting: CodeSession?
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu {
+                Button("Open") { sessions.show(session.id, with: openWindow) }
+                Divider()
+                Button("Delete", role: .destructive) { deleting = session }
+            }
+            .deletesPlanning($deleting)
+    }
+}
+
+extension View {
+    func planningContextMenu(_ session: CodeSession) -> some View {
+        modifier(PlanningContextMenuModifier(session: session))
     }
 }

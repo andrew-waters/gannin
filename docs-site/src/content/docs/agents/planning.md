@@ -9,7 +9,7 @@ A planning session is Claude working with a room of people to turn a topic into 
 
 ## Starting one
 
-Open a New Plan tab in the Claude Code window, or use Plan This on an issue. Rituals › Planning lists the sessions you have, with Delete. You can also start from the Agents page, the + menu or a harness document.
+Open a New Plan tab in the Claude Code window, or use Plan This on an issue. Rituals › Planning lists the sessions you have, with Delete. Right-clicking a plan there, or in the sidebar's Planning group, offers Open and Delete. You can also start from the Agents page, the + menu or a harness document.
 
 The tab has an editable prompt. Start from fills it with one of the team's planning prompts (and its skills), a suggested one, or nothing. What's in the box is what Claude is told. Saving commits it as a planning prompt for next time.
 
