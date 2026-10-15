@@ -24,7 +24,7 @@ final class HookFileWatcher {
     private let onChange: () -> Void
     private var folder: DispatchSourceFileSystemObject?
     private var files: [String: DispatchSourceFileSystemObject] = [:]
-    private var pending: DispatchWorkItem?
+    private var pending: Task<Void, Never>?
 
     init(directory: URL, onChange: @escaping () -> Void) {
         self.directory = directory
@@ -76,10 +76,10 @@ final class HookFileWatcher {
         attach()
         // A hook can write several files in a burst.
         pending?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            MainActor.assumeIsolated { self?.onChange() }
+        pending = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(50))
+            guard !Task.isCancelled else { return }
+            self?.onChange()
         }
-        pending = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(50), execute: work)
     }
 }
