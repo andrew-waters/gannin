@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-15T17:04:29Z",
   "number" : 383,
   "posted_at" : "2026-10-15T15:18:10Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T15:09:06Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Serialise sandbox starts and replace a reviewer whose sandbox failed",
-  "updated_at" : "2026-10-15T16:05:42Z",
+  "updated_at" : "2026-10-15T17:14:20Z",
   "verdict" : "approve"
 }
