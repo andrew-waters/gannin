@@ -317,6 +317,97 @@ struct SandboxLaunchTests {
         #expect(!onTheMac.contains("gannin-activity"))
     }
 
+    /// The start script's lock and release, cut out so they can run on their own.
+    private func lockScript() throws -> (release: String, acquire: String) {
+        let steps = SandboxLaunch.hostSteps(session(), folder: ".worktrees/x")
+        let release = try #require(steps.range(of: "sandbox_unlock() {")).lowerBound
+        let releaseEnd = try #require(steps.range(of: "\n}\n", range: release..<steps.endIndex)).upperBound
+        let acquire = try #require(steps.range(of: #"lock="$si/"#)).lowerBound
+        let acquireEnd = try #require(steps.range(of: "\nlocked=1\n")).upperBound
+        return (String(steps[release..<releaseEnd]), String(steps[acquire..<acquireEnd]))
+    }
+
+    private func runLocked(_ copies: Int, in dir: URL) throws -> [String] {
+        let (release, acquire) = try lockScript()
+        let script = """
+            note() { :; }; warn() { :; }
+            sandbox_failed() { echo failed >> "$si/trace"; exit 1; }
+            si=\(SessionScript.quoted(dir.path))
+            \(release)
+            \(acquire)
+            echo in >> "$si/trace"; sleep 0.3; echo out >> "$si/trace"
+            sandbox_unlock
+            """
+        let file = dir.appending(path: "locked.sh")
+        try Data(script.utf8).write(to: file)
+        let result = Shell.run("for i in \((1...copies).map(String.init).joined(separator: " ")); do bash \(SessionScript.quoted(file.path)) & done; wait", .local)
+        #expect(result.ok, "\(result.failure)")
+        let trace = (try? String(contentsOf: dir.appending(path: "trace"), encoding: .utf8)) ?? ""
+        return trace.split(separator: "\n").map(String.init)
+    }
+
+    @Test func startsOfOneContainerTakeTurns() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let trace = try runLocked(3, in: dir)
+        // One at a time: every entry is left before the next is made.
+        #expect(trace == Array(repeating: ["in", "out"], count: 3).flatMap { $0 })
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: dir.appending(path: SandboxLaunch.lockName).path)) == nil)
+    }
+
+    @Test func aDeadStartsLockIsTakenOverByOneWaiter() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // No process has this ID.
+        try FileManager.default.createSymbolicLink(atPath: dir.appending(path: SandboxLaunch.lockName).path, withDestinationPath: "99999999")
+        // Each waiter finds it dead; if two both cleared it, two would be in at once.
+        #expect(try runLocked(6, in: dir) == Array(repeating: ["in", "out"], count: 6).flatMap { $0 })
+        let left = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.contains("clearing") }
+        #expect(left.isEmpty)
+    }
+
+    @Test func aLockWhoseProcessIDWasReusedIsTakenOver() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Process 1 is alive, but didn't start at the time the lock records.
+        try FileManager.default.createSymbolicLink(atPath: dir.appending(path: SandboxLaunch.lockName).path, withDestinationPath: "1:Mon_Jan__1_00:00:00_1990")
+        #expect(try runLocked(2, in: dir) == ["in", "out", "in", "out"])
+    }
+
+    @Test func releasingLeavesAnotherStartsLockAlone() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let lock = dir.appending(path: SandboxLaunch.lockName).path
+        // This start thinks it holds the lock, but it names another's.
+        try FileManager.default.createSymbolicLink(atPath: lock, withDestinationPath: "12345")
+        let script = "\(try lockScript().release)\nlock=\(SessionScript.quoted(lock)); me=mine; locked=1; sandbox_unlock"
+        #expect(Shell.run(script, .local).ok)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: lock) == "12345")
+    }
+
+    @Test func theRunningCheckIsMadeOnceItsYourTurn() {
+        let steps = SandboxLaunch.hostSteps(session(), folder: ".worktrees/x")
+        let lock = steps.range(of: #"until ln -s "$me" "$lock""#)
+        let check = steps.range(of: #""$c" list --format json"#)
+        let delete = steps.range(of: #""$c" delete --force"#)
+        let release = steps.range(of: "\nsandbox_unlock\nprintf running")
+        let exec = steps.range(of: #"exec "$c" exec -it"#)
+        #expect(lock != nil && check != nil && delete != nil && release != nil && exec != nil)
+        if let lock, let check, let delete, let release, let exec {
+            #expect(lock.upperBound < check.lowerBound)
+            #expect(check.upperBound < delete.lowerBound)
+            #expect(delete.upperBound < release.lowerBound)
+            #expect(release.upperBound < exec.lowerBound)
+        }
+        // A failed start lets go too, as fail replaces the shell.
+        #expect(steps.contains("sandbox_failed() {\n  sandbox_unlock"))
+        #expect(parses(steps).ok)
+    }
+
     /// Events and tool names only, never what's in them, and tokens redacted.
     @Test func theActivityLogShowsEventsNotWhatsInThem() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)

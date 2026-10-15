@@ -10,6 +10,7 @@ paths:
 - Keep the last round's findings sent when `maxRounds` is hit.
 - Do not flag the session when turns end during the loop (`isQuietForPairReview`); flag only on Stop or settling.
 - After a limit or Stop, or with the setting off, answer a request "carry on"; after Settled start a fresh loop.
+- Replace a reviewer whose sandbox failed to start rather than message it: its prompt would wait for a claude that never started, and its `reviewing` phase would hide the request.
 - Never post anything to GitHub from this loop.
 
 ## Testing

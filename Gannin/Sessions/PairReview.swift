@@ -149,6 +149,7 @@ extension SessionStore {
             return
         }
         var pairing = session.pairing ?? PairReview()
+        replaceFailedReviewer(of: id, in: &pairing)
         if pairing.isOver {
             if !byYou, pairing.phase != .settled {
                 deliver("The review by a second agent has ended (\(pairing.status.lowercased())), so no reviewer will look again. Carry on, and leave anything outstanding for the pull request's description.", to: id)
@@ -189,6 +190,23 @@ extension SessionStore {
             update(id) { $0.pairing = pairing }
             _ = open(reviewer)
         }
+    }
+
+    /// Forgets the pairing's reviewer when its sandbox failed to start: a
+    /// prompt sent to it would wait for a claude that never started, and a
+    /// reviewer still `reviewing` would hide the request. The cleared
+    /// pairing is kept before a new reviewer is made, so a failure to make
+    /// one doesn't repeat this. Returns whether it did.
+    @discardableResult
+    func replaceFailedReviewer(of id: UUID, in pairing: inout PairReview) -> Bool {
+        guard let reviewerID = pairing.reviewerID, sessions[reviewerID]?.isSandboxed == true,
+              SandboxStatus(sandboxStatus[reviewerID]).state == .failed else { return false }
+        pendingPrompts[reviewerID] = nil
+        remove(reviewerID)
+        pairing.reviewerID = nil
+        pairing.lastReply = nil
+        update(id) { $0.pairing = pairing }
+        return true
     }
 
     /// Pasted now if the reviewer's waiting, else once it is, resuming it

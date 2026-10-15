@@ -24,6 +24,9 @@ enum SandboxLaunch {
     /// sessions are doing, a line an event, which the container's own process
     /// follows so `container logs` (and Orchard) show it (andrew-waters/gannin#152).
     static let activityLogName = "sandbox.log"
+    /// The link in the issue's folder that starts of its container take
+    /// turns holding.
+    static let lockName = "sandbox.lock"
     /// The script hooks and `inner.sh` write the log through, outside every mount.
     static let activityScriptPath = "/run/gannin-activity"
 
@@ -50,7 +53,15 @@ enum SandboxLaunch {
         let labelArguments = labels.map { "--label \(SandboxRuntime.quoted($0))" }.joined(separator: " ")
         let tag = #"$(sed -n 's/^image=//p' "$images" | tail -n1)"#
         return """
+            # fail and the final exec replace this shell, so no EXIT trap would
+            # run to release the lock.
+            sandbox_unlock() {
+              # Only a lock that's still this start's.
+              [ -z "${locked:-}" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$me" ] || rm -f "$lock"
+              locked=
+            }
             sandbox_failed() {
+              sandbox_unlock
               # Its credentials go with it, not left for the next start.
               rm -f "$session/secrets.env"
               printf 'failed: %s' "$1" > "$session/sandbox" 2>/dev/null
@@ -97,6 +108,38 @@ enum SandboxLaunch {
             log="$si/\(activityLogName)"
             touch "$log"
             name=\(SandboxRuntime.quoted(name))
+            # Starts of this container take turns: a session and its helper
+            # starting together would both see it missing, and the loser's
+            # delete could remove the winner's container. The lock is a
+            # symlink to its owner's process ID and start time, so it's taken
+            # and named in one step (no flock, here or over ssh). A start that
+            # was killed leaves one whose owner is gone, or, after a reboot,
+            # whose process ID names another process: the start time tells
+            # them apart. A live owner is waited for however long its image
+            # build takes.
+            lock="$si/\(lockName)"
+            owner_token() { printf '%s:%s' "$1" "$(LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | tr ' ' _)"; }
+            me=$(owner_token "$$")
+            waited=
+            until ln -s "$me" "$lock" 2>/dev/null; do
+              owner=$(readlink "$lock" 2>/dev/null || true)
+              if [ -n "$owner" ] && [ "$(owner_token "${owner%%:*}")" != "$owner" ]; then
+                # Clearing it is taken in turns too, and the owner read again
+                # once it's this start's turn: nothing else removes a live
+                # lock, so what still names the dead owner is safe to remove.
+                if ln -s "$me" "$lock.clearing" 2>/dev/null; then
+                  [ "$(readlink "$lock" 2>/dev/null)" != "$owner" ] || rm -f "$lock"
+                  rm -f "$lock.clearing"
+                  continue
+                fi
+                clearer=$(readlink "$lock.clearing" 2>/dev/null || true)
+                if [ -n "$clearer" ] && [ "$(owner_token "${clearer%%:*}")" != "$clearer" ]; then rm -f "$lock.clearing"; continue; fi
+              fi
+              [ -n "$waited" ] || note "Waiting for another start of this sandbox (if none is, remove $lock)"
+              waited=1
+              sleep 1
+            done
+            locked=1
             if "$c" list --format json 2>/dev/null | grep -q "\\"id\\":\\"$name\\""; then
               note "The sandbox is running; claude starts in it"
             else
@@ -154,6 +197,7 @@ enum SandboxLaunch {
               # says what's going on in here (the last 200 lines, then more).
               "$c" "${args[@]}" "$image" sh -c 'trap "exit 0" TERM; tail -n 200 -F "$0" & wait' "$log" >/dev/null || sandbox_failed "The sandbox didn't start. Run container logs $name to see why."
             fi
+            sandbox_unlock
             printf running > "$session/sandbox"
             exec "$c" exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e CLAUDE_CONFIG_DIR=\(claudeHome) "$name" bash "$s/inner.sh" "$s" "$h" "$log"
             """
