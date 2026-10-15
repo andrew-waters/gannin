@@ -48,14 +48,15 @@
       "severity" : "minor"
     }
   ],
+  "merged_at" : "2026-10-15T08:53:56Z",
   "number" : 367,
   "posted_at" : "2026-10-15T08:30:54Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T08:22:07Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Resume button over a session's terminal once claude has quit",
-  "updated_at" : "2026-10-15T08:42:12Z",
+  "updated_at" : "2026-10-15T08:54:56Z",
   "verdict" : "approve"
 }
