@@ -11,6 +11,7 @@
       "line" : 426,
       "path" : "Gannin/Sessions/SessionActions.swift",
       "posted_at" : "2026-10-15T09:37:44Z",
+      "resolved_at" : "2026-10-15T09:49:25Z",
       "severity" : "minor"
     },
     {
@@ -31,6 +32,7 @@
       "line" : 115,
       "path" : "Gannin/Sessions/SessionPullRequests.swift",
       "posted_at" : "2026-10-15T09:37:44Z",
+      "resolved_at" : "2026-10-15T09:49:25Z",
       "severity" : "minor"
     },
     {
@@ -41,6 +43,7 @@
       "line" : 13,
       "path" : "CHANGELOG.md",
       "posted_at" : "2026-10-15T09:37:44Z",
+      "resolved_at" : "2026-10-15T09:49:25Z",
       "severity" : "nit"
     },
     {
@@ -51,17 +54,28 @@
       "line" : 75,
       "path" : "GanninTests/SessionPromptsTests.swift",
       "posted_at" : "2026-10-15T09:37:44Z",
+      "resolved_at" : "2026-10-15T09:49:25Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "This builds a `SessionStore` on `UserDefaults.standard`. Tests are hosted in the",
+      "key" : "GanninTests/SessionConflictTests.swift:45:This builds a `SessionStore` on `UserDefaults.standard`. Tes",
+      "line" : 45,
+      "path" : "GanninTests/SessionConflictTests.swift",
+      "posted_at" : "2026-10-15T09:49:21Z",
       "severity" : "nit"
     }
   ],
   "number" : 372,
-  "posted_at" : "2026-10-15T09:37:44Z",
+  "posted_at" : "2026-10-15T09:49:21Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T09:36:13Z",
   "state" : "OPEN",
   "title" : "Send a session's PR conflicts to its Claude when idle",
-  "updated_at" : "2026-10-15T09:37:45Z",
+  "updated_at" : "2026-10-15T09:49:25Z",
   "verdict" : "approve"
 }
