@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
+  "effort" : 1,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -33,6 +33,7 @@
       "line" : 121,
       "path" : "Gannin/Sandbox/SandboxLaunch.swift",
       "posted_at" : "2026-10-15T15:18:10Z",
+      "resolved_at" : "2026-10-15T15:23:02Z",
       "severity" : "nit"
     }
   ],
@@ -44,6 +45,6 @@
   "started_at" : "2026-10-15T15:09:06Z",
   "state" : "OPEN",
   "title" : "Serialise sandbox starts and replace a reviewer whose sandbox failed",
-  "updated_at" : "2026-10-15T15:18:13Z",
+  "updated_at" : "2026-10-15T15:23:02Z",
   "verdict" : "approve"
 }
