@@ -388,6 +388,7 @@ extension SessionStore {
         var keys: Set<String> = []
         var failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])] = []
         var said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])] = []
+        var conflicted: [SessionPullRequest] = []
         // What to show for a new item: the latest comment on it from
         // someone other than the author or you, keyed by the item's ID.
         var highlights: [String: SessionPullRequest.Comment] = [:]
@@ -417,6 +418,11 @@ extension SessionStore {
                 highlights[item.id] = theirs
                 newItems.append(item)
             }
+            let conflictKey = "conflicts:\(pr.id)"
+            if pr.mergeable == "CONFLICTING" {
+                keys.insert(conflictKey)
+                if seen?.contains(conflictKey) == false { conflicted.append(pr) }
+            }
             if !newChecks.isEmpty { failed.append((pr, newChecks)) }
             if !newItems.isEmpty { said.append((pr, newItems)) }
         }
@@ -426,10 +432,11 @@ extension SessionStore {
             current.contains { key.hasPrefix(SessionPullRequest.Feedback.keyPrefix($0.key)) && key != $0.value }
         }
         update(id) { $0.pullRequestsSeen = (seen ?? []).subtracting(outdated).union(keys) }
-        guard seen != nil, !failed.isEmpty || !said.isEmpty else { return }
+        guard seen != nil, !failed.isEmpty || !said.isEmpty || !conflicted.isEmpty else { return }
 
         // Each as a title and what was said, one notification for them all.
         var news = failed.map { ("Checks failed on \($0.pr.repo)#\($0.pr.number)", $0.checks.map(\.name).joined(separator: ", ")) }
+        news += conflicted.map { ("\($0.repo)#\($0.number) has conflicts", "It no longer merges cleanly into its base branch") }
         for (pr, items) in said {
             for item in items {
                 guard let comment = highlights[item.id] else { continue }
@@ -437,8 +444,8 @@ extension SessionStore {
                 news.append(("@\(comment.author) \(what) on \(pr.repo)#\(pr.number)", comment.body))
             }
         }
-        let sent = sendNews(failed: failed, said: said, to: id)
-        let pullRequestCount = Set(failed.map(\.pr.id) + said.map(\.pr.id)).count
+        let sent = sendNews(failed: failed, said: said, conflicted: conflicted, to: id)
+        let pullRequestCount = Set(failed.map(\.pr.id) + said.map(\.pr.id) + conflicted.map(\.id)).count
         let title = news.count == 1 ? news[0].0 : "\(news.count) new on \(pullRequestCount == 1 ? "a pull request" : "\(pullRequestCount) pull requests")"
         var body = news.count == 1
             ? String(news[0].1.prefix(180))
@@ -468,14 +475,16 @@ extension SessionStore {
     private func sendNews(
         failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])],
         said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])],
+        conflicted: [SessionPullRequest],
         to id: UUID
     ) -> FeedbackDelivery? {
         guard let session = sessions[id], session.reviewOf == nil, !session.isReviewer,
               sendsFeedback(id), isRunning(id) else { return nil }
         let prompt = (failed.map { SessionPrompts.failures($0.pr, in: session) }
-            + said.map { SessionPrompts.feedback($0.items, on: $0.pr, in: session) })
+            + said.map { SessionPrompts.feedback($0.items, on: $0.pr, in: session) }
+            + conflicted.map { SessionPrompts.conflicts($0, in: session) })
             .joined(separator: "\n\n")
-        let keys = said.flatMap { $0.items.map(\.key) } + failed.map { "checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",") }
+        let keys = said.flatMap { $0.items.map(\.key) } + failed.map { "checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",") } + conflicted.map { "conflicts:\($0.id)" }
         switch state(id) {
         case .idle:
             guard submit(prompt, to: id) else { return nil }

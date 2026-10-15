@@ -105,6 +105,14 @@ enum SessionPrompts {
         return lines.joined(separator: "\n")
     }
 
+    static func conflicts(_ pr: SessionPullRequest, in session: CodeSession) -> String {
+        """
+        \(pr.repo)#\(pr.number) (\(pr.url.absoluteString)) has conflicts with its base branch.
+
+        Fetch origin and bring the base branch into \(worktree(for: pr.repo, in: session)) (rebase, or merge if the branch is shared), resolve the conflicts, run what you can locally, then push, and tell me what you resolved.
+        """
+    }
+
     static func feedback(_ items: [SessionPullRequest.Feedback], on pr: SessionPullRequest, in session: CodeSession, asksForReplies: Bool = SessionStore.repliesToThreads) -> String {
         var lines = ["Review feedback on \(pr.repo)#\(pr.number) (\(pr.url.absoluteString)):", ""]
         for item in items {
