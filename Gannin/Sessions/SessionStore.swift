@@ -382,6 +382,8 @@ final class SessionStore {
     /// waiting on the hook, and comes back if the state never leaves
     /// `needsYou` (`confirmApproval`).
     var optimisticApprovals: [UUID: String] = [:]
+    /// Sessions whose terminal showed a permission prompt on the last poll.
+    @ObservationIgnored private var promptSeen: Set<UUID> = []
     /// claude's permission mode in each session, as its terminal's footer
     /// (else its transcript) last showed it (`SessionMode.swift`).
     var modes: [UUID: ClaudeMode] = [:]
@@ -1418,7 +1420,16 @@ final class SessionStore {
             func read(_ name: String) -> String? {
                 (try? String(contentsOf: directory.appending(path: name), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
             }
-            let state = read("state"), pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
+            var state = read("state")
+            let pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
+            // Not every prompt fires the Notification hook (a command that
+            // also trips a working-directory block, say), so a session
+            // that reads as working while the terminal asks is waiting.
+            // Seen on two polls running, since the state file can still read
+            // working for a moment after an answer while the old prompt clears.
+            let prompting = state == SessionState.working.rawValue && optimisticApprovals[id] == nil && showsPermissionPrompt(id)
+            if prompting, promptSeen.contains(id) { state = SessionState.needsYou.rawValue }
+            if prompting { promptSeen.insert(id) } else { promptSeen.remove(id) }
             if session.isSandboxed, let sandbox = read("sandbox"), sandboxStatus[id] != sandbox { sandboxStatus[id] = sandbox }
             let reviewRequest = read("review-request")
             if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
