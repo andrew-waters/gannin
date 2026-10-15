@@ -44,6 +44,7 @@
       "line" : 1670,
       "path" : "Gannin/Sessions/SessionStore.swift",
       "posted_at" : "2026-10-15T08:30:54Z",
+      "resolved_at" : "2026-10-15T08:42:12Z",
       "severity" : "minor"
     }
   ],
@@ -55,6 +56,6 @@
   "started_at" : "2026-10-15T08:22:07Z",
   "state" : "OPEN",
   "title" : "Resume button over a session's terminal once claude has quit",
-  "updated_at" : "2026-10-15T08:30:57Z",
+  "updated_at" : "2026-10-15T08:42:12Z",
   "verdict" : "approve"
 }
