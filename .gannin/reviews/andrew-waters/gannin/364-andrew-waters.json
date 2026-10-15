@@ -5,13 +5,14 @@
   "findings" : [
 
   ],
+  "merged_at" : "2026-10-15T08:21:15Z",
   "number" : 364,
   "posted_at" : "2026-10-15T08:20:20Z",
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T08:18:28Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Right-clicking an Ask or Planning row in the sidebar offers its menu",
-  "updated_at" : "2026-10-15T08:20:21Z",
+  "updated_at" : "2026-10-15T08:22:15Z",
   "verdict" : "approve"
 }
