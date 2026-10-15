@@ -226,12 +226,25 @@ struct ReviewedPullRequest: Equatable {
     let state: String
     let files: [File]
     var existingComments: [ExistingComment] = []
+    /// Set when the comments were fetched leniently and that failed, so
+    /// `existingComments` may be missing some.
+    var existingCommentsError: String?
+
+    /// A finding left out of a review because a comment saying much the same
+    /// is already on its line.
+    struct Omitted {
+        let path: String
+        let line: Int
+        let existing: ExistingComment
+    }
 
     /// The inline comments GitHub will take (findings kept or edited on
-    /// lines the diff shows, and your own), and the findings it won't.
-    func comments(for review: SessionTranscript.ReviewResult?, draft: ReviewDraft) -> ([[String: Any]], [SessionTranscript.Finding]) {
+    /// lines the diff shows, and your own), the findings it won't, and the
+    /// findings left out because their line already carries the same comment.
+    func comments(for review: SessionTranscript.ReviewResult?, draft: ReviewDraft) -> ([[String: Any]], [SessionTranscript.Finding], [Omitted]) {
         var inline: [[String: Any]] = []
         var general: [SessionTranscript.Finding] = []
+        var omitted: [Omitted] = []
         for finding in review?.findings ?? [] {
             let decision = draft.decisions[finding.key]
             if decision == .dismissed { continue }
@@ -239,6 +252,10 @@ struct ReviewedPullRequest: Equatable {
             if case .edited(let edited) = decision { text = edited }
             guard let line = finding.line, let file = files.first(where: { $0.path == finding.path }), file.hasLine(line, isOld: false) else {
                 general.append(.init(path: finding.path, line: finding.line, comment: text, severity: finding.severity))
+                continue
+            }
+            if let existing = existingComments.first(where: { !$0.isOld && $0.path == finding.path && $0.line == line && Self.isSameComment($0.body, text) }) {
+                omitted.append(.init(path: finding.path, line: line, existing: existing))
                 continue
             }
             if let suggestion = finding.suggestion, decision == nil {
@@ -249,7 +266,26 @@ struct ReviewedPullRequest: Equatable {
         for comment in draft.comments {
             inline.append(["path": comment.path, "line": comment.line, "side": comment.isOld ? "LEFT" : "RIGHT", "body": comment.body])
         }
-        return (inline, general)
+        return (inline, general, omitted)
+    }
+
+    /// Whether two comments say the same thing: one contains the other, or
+    /// they share most of their words. Case, punctuation and suggestion
+    /// blocks are ignored, since people reword and Gannin adds the latter.
+    static func isSameComment(_ a: String, _ b: String) -> Bool {
+        let x = words(a), y = words(b)
+        guard !x.isEmpty, !y.isEmpty else { return false }
+        let (short, long) = x.count <= y.count ? (x, y) : (y, x)
+        if short.joined(separator: " ").count >= 20, long.joined(separator: " ").contains(short.joined(separator: " ")) { return true }
+        let shared = Set(x).intersection(y).count
+        return Double(shared) / Double(Set(x).union(y).count) >= 0.5
+    }
+
+    private static func words(_ text: String) -> [String] {
+        text.replacing(/```suggestion.*?```/.dotMatchesNewlines(), with: "")
+            .lowercased()
+            .split { !$0.isLetter && !$0.isNumber }
+            .map(String.init)
     }
 
     /// A review's body: the summary, then findings that can't go on a line.
@@ -310,7 +346,9 @@ extension GitHubAPI {
         return sections
     }
 
-    func reviewedPullRequest(repo: String, number: Int) async throws -> ReviewedPullRequest {
+    /// With `lenientComments`, failing to fetch the PR's existing review
+    /// comments doesn't fail the fetch: `existingCommentsError` says so instead.
+    func reviewedPullRequest(repo: String, number: Int, lenientComments: Bool = false) async throws -> ReviewedPullRequest {
         struct Pull: Decodable {
             struct User: Decodable { let login: String }
             struct Ref: Decodable { let sha: String }
@@ -347,18 +385,26 @@ extension GitHubAPI {
             let diff = file.patch ?? sections[file.filename] ?? ""
             return ReviewedPullRequest.File(path: file.filename, status: file.status, additions: file.additions, deletions: file.deletions, lines: GitDiff.lines(of: diff).0)
         }
+        var existing: [ReviewedPullRequest.ExistingComment] = []
+        var existingError: String?
+        do {
+            existing = try await existingComments(repo: repo, number: number)
+        } catch {
+            if !lenientComments { throw error }
+            existingError = error.localizedDescription
+        }
         return ReviewedPullRequest(
             title: pull.title, body: pull.body ?? "", author: pull.user?.login, headSHA: pull.head.sha,
             additions: pull.additions, deletions: pull.deletions,
             state: pull.merged == true ? "merged" : pull.state, files: files,
-            existingComments: try await existingComments(repo: repo, number: number)
+            existingComments: existing, existingCommentsError: existingError
         )
     }
 
     /// Review comments already on GitHub, on the lines they're anchored to.
     /// One left on a line a later push made outdated keeps its original
     /// line and side, since GitHub drops `line`/`side` once that happens.
-    private func existingComments(repo: String, number: Int) async throws -> [ReviewedPullRequest.ExistingComment] {
+    func existingComments(repo: String, number: Int) async throws -> [ReviewedPullRequest.ExistingComment] {
         struct Comment: Decodable {
             struct User: Decodable { let login: String; let avatarUrl: URL? }
             let id: Int
@@ -1991,8 +2037,24 @@ private struct PostReviewSheet: View {
     /// tries those again.
     @State private var isPosted = false
     @AppStorage(SessionStore.recordReviewsKey) private var recordsReview = true
+    /// The PR's review comments as of pressing Post, fetched once before the
+    /// review goes, since the sheet's own copy dates from when it opened.
+    @State private var latestComments: [ReviewedPullRequest.ExistingComment]?
+    /// Whether Post has already checked for new comments, or tried to, so
+    /// pressing it again after a failed check posts without one.
+    @State private var checkedComments = false
+    @State private var notice: String?
 
     private var reference: PullRequestReference { session.reviewOf! }
+
+    /// The PR with the latest comments in place of the ones it was opened with.
+    /// Only its comments change: the review is posted against the commit it saw.
+    private var current: ReviewedPullRequest {
+        guard let latestComments else { return pullRequest }
+        var pull = pullRequest
+        pull.existingComments = latestComments
+        return pull
+    }
 
     /// GitHub won't take an approval or a change request on your own PR.
     private var isOwn: Bool {
@@ -2001,7 +2063,7 @@ private struct PostReviewSheet: View {
     }
 
     var body: some View {
-        let (inline, general) = comments()
+        let (inline, general, omitted) = comments()
         Form {
             Section {
                 Picker("Review", selection: $event) {
@@ -2047,6 +2109,26 @@ private struct PostReviewSheet: View {
                     }
                 }
             }
+            if !omitted.isEmpty {
+                Section {
+                    ForEach(Array(omitted.enumerated()), id: \.offset) { _, item in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(item.path):\(item.line)")
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                            Text("\(item.existing.author): \(item.existing.body)")
+                                .font(.callout)
+                                .lineLimit(2)
+                        }
+                    }
+                } header: {
+                    Text("\(omitted.count) finding\(omitted.count == 1 ? "" : "s") left out")
+                } footer: {
+                    Text("\(omitted.count == 1 ? "It has" : "They have") a comment on the same line saying much the same, so \(omitted.count == 1 ? "it isn't" : "they aren't") posted again.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
             if !threads.isEmpty {
                 Section {
                     ForEach(threads) { thread in
@@ -2081,6 +2163,9 @@ private struct PostReviewSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let notice {
+                Text(notice).foregroundStyle(.orange).font(.callout)
+            }
             if let error {
                 Text(error).foregroundStyle(.red).font(.callout)
             }
@@ -2091,7 +2176,7 @@ private struct PostReviewSheet: View {
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button(sending ? "Posting" : isPosted ? "Resolve Threads" : "Post to GitHub") { post(inline) }
+                Button(sending ? "Posting" : isPosted ? "Resolve Threads" : "Post to GitHub") { post() }
                     .disabled(sending || isPosted && resolving.isEmpty || !isPosted && (bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && inline.isEmpty && event != "APPROVE"))
             }
         }
@@ -2107,9 +2192,10 @@ private struct PostReviewSheet: View {
         }
     }
 
-    /// The inline comments GitHub will take, and the findings it won't.
-    private func comments() -> ([[String: Any]], [SessionTranscript.Finding]) {
-        pullRequest.comments(for: review, draft: sessions.reviewDrafts[session.id] ?? ReviewDraft())
+    /// The inline comments GitHub will take, the findings it won't, and the
+    /// findings left out because their line already has the same comment.
+    private func comments() -> ([[String: Any]], [SessionTranscript.Finding], [ReviewedPullRequest.Omitted]) {
+        current.comments(for: review, draft: sessions.reviewDrafts[session.id] ?? ReviewDraft())
     }
 
     private func loadThreads() async {
@@ -2135,15 +2221,36 @@ private struct PostReviewSheet: View {
         Task { await EngineerWatch.shared.check() }
     }
 
-    private func post(_ inline: [[String: Any]]) {
+    private func post() {
         guard let api = auth.api else { return }
         sending = true
         error = nil
+        notice = nil
         let body = bodyText
         let event = event
         let toResolve = threads.filter { resolving.contains($0.id) }
         Task {
             if !isPosted {
+                if !checkedComments {
+                    // Comments left since the sheet opened. Findings they
+                    // duplicate drop out, and the user sees that before it goes.
+                    let shown = comments().2.count
+                    checkedComments = true
+                    do {
+                        latestComments = try await api.existingComments(repo: reference.repo, number: reference.number)
+                    } catch {
+                        self.error = "Couldn't check the pull request for comments added since this review was drafted: \(error.localizedDescription). Post again to send it without that check."
+                        sending = false
+                        return
+                    }
+                    let left = comments().2.count - shown
+                    if left > 0 {
+                        notice = "\(left) finding\(left == 1 ? " was" : "s were") left out: someone has commented on \(left == 1 ? "its line" : "their lines") since this review was drafted. Check the list, then post again."
+                        sending = false
+                        return
+                    }
+                }
+                let inline = comments().0
                 do {
                     let url = try await api.postReview(repo: reference.repo, number: reference.number, commit: pullRequest.headSHA, event: event, body: body, comments: inline)
                     sessions.reviewDrafts[session.id, default: ReviewDraft()].posted = url ?? reference.url

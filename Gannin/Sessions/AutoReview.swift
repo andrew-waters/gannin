@@ -221,14 +221,21 @@ extension SessionStore {
                 await recordReview(id)
                 return
             }
-            let pull = try await api.reviewedPullRequest(repo: pr.repo, number: pr.number)
-            let (inline, general) = pull.comments(for: review, draft: draft)
+            let pull = try await api.reviewedPullRequest(repo: pr.repo, number: pr.number, lenientComments: true)
+            let (inline, general, omitted) = pull.comments(for: review, draft: draft)
             let body = ReviewedPullRequest.body(summary: review.summary, general: general)
             let url = try await api.postReview(repo: pr.repo, number: pr.number, commit: pull.headSHA, event: "COMMENT", body: body, comments: inline)
             reviewDrafts[id, default: ReviewDraft()].posted = url ?? pr.url
             reviewDrafts[id, default: ReviewDraft()].postedAt = .now
             reviewDrafts[id, default: ReviewDraft()].postedEvent = "COMMENT"
-            note(id, .posted, text: "Posted to GitHub as a comment", url: url)
+            var text = "Posted to GitHub as a comment"
+            if !omitted.isEmpty {
+                text += ", leaving out \(omitted.count) finding\(omitted.count == 1 ? "" : "s") already on the PR"
+            }
+            if let failure = pull.existingCommentsError {
+                text += ". It couldn't check the PR for existing comments (\(failure)), so some may repeat"
+            }
+            note(id, .posted, text: text, url: url)
         } catch {
             note(id, .failed, text: "GitHub didn't take it: \(error.localizedDescription)")
             return

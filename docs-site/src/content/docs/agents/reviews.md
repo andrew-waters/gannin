@@ -34,6 +34,7 @@ Post Review sends one review to GitHub as you:
 - **Approve**, **Comment** or **Request Changes**. On your own PR only Comment is offered, as GitHub allows nothing else.
 - Kept findings and your comments go inline on lines the diff shows. A suggestion becomes a GitHub suggestion block. Anything else goes in the body.
 - If the reviewer says threads of yours are now dealt with, Post Review offers them ticked and resolves them after posting. Only unresolved threads you started are resolved.
+- When you press Post to GitHub, Gannin first checks the PR for comments added since the review was drafted. A finding is left out, and listed under "left out", when someone has already commented on its line, on the new side of the diff, saying much the same (case, punctuation and suggestion blocks are ignored). If any finding drops out at that point, nothing is posted yet: look over the list and post again. Your own comments are never left out. If the check fails, the error is shown and pressing Post again sends the review without it.
 - Record it in the harness saves a record of the review (see [Automatic reviews](/docs/agents/auto-review/)).
 
 Nothing is posted until you press it, unless you've turned on Post automatic reviews. Gannin never approves a PR by itself.

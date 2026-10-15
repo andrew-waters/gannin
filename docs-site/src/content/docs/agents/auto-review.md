@@ -19,7 +19,7 @@ With Watch for changes on the review (on by default), Gannin keeps checking the 
 
 ## What gets posted
 
-By default nothing. An automatic review waits for you to open it and press Post Review. If you turn on Post automatic reviews, Gannin posts them itself, always as a plain comment, never approving or requesting changes, and resolves the threads it says are dealt with.
+By default nothing. An automatic review waits for you to open it and press Post Review. If you turn on Post automatic reviews, Gannin posts them itself, always as a plain comment, never approving or requesting changes, and resolves the threads it says are dealt with. Just before posting it fetches the PR's comments and leaves out findings that someone has already raised on the same line, as [Post Review](/docs/agents/reviews/#post-review) does; the review's log entry says how many. If it can't fetch them it posts anyway and the entry says that some comments may repeat.
 
 ## Ready for your approval
 
