@@ -31,7 +31,7 @@ struct ReviewDuplicateCommentTests {
     }
 
     @Test func rewordedCommentOnTheSameLineIsLeftOut() {
-        let reworded = "this force-unwrap will crash if the token is missing"
+        let reworded = "this force-unwrap crashes when the token is MISSING!"
         let (inline, _, omitted) = pull(existing: [existing(line: 5, body: reworded)])
             .comments(for: review(line: 5, comment: "This force unwrap crashes when the token is missing."), draft: ReviewDraft())
         #expect(inline.isEmpty)
@@ -40,6 +40,13 @@ struct ReviewDuplicateCommentTests {
 
     @Test func differentPointOnTheSameLineIsKept() {
         let (inline, _, omitted) = pull(existing: [existing(line: 5, body: "Rename this to match the other handlers.")])
+            .comments(for: review(line: 5, comment: "This force unwrap crashes when the token is missing."), draft: ReviewDraft())
+        #expect(inline.count == 1)
+        #expect(omitted.isEmpty)
+    }
+
+    @Test func differentPointSharingMostWordsIsKept() {
+        let (inline, _, omitted) = pull(existing: [existing(line: 5, body: "This force unwrap leaks memory when the token is missing.")])
             .comments(for: review(line: 5, comment: "This force unwrap crashes when the token is missing."), draft: ReviewDraft())
         #expect(inline.count == 1)
         #expect(omitted.isEmpty)

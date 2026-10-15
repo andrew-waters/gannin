@@ -277,8 +277,10 @@ struct ReviewedPullRequest: Equatable {
         guard !x.isEmpty, !y.isEmpty else { return false }
         let (short, long) = x.count <= y.count ? (x, y) : (y, x)
         if short.joined(separator: " ").count >= 20, long.joined(separator: " ").contains(short.joined(separator: " ")) { return true }
+        // Sharing a prefix isn't enough: "crashes" and "leaks memory" are different points.
+        guard short.count >= 4 else { return false }
         let shared = Set(x).intersection(y).count
-        return Double(shared) / Double(Set(x).union(y).count) >= 0.5
+        return Double(shared) / Double(Set(x).union(y).count) >= 0.8
     }
 
     private static func words(_ text: String) -> [String] {
@@ -2234,7 +2236,7 @@ private struct PostReviewSheet: View {
                 if !checkedComments {
                     // Comments left since the sheet opened. Findings they
                     // duplicate drop out, and the user sees that before it goes.
-                    let shown = comments().2.count
+                    let shown = Set(comments().2.map { "\($0.path):\($0.line)" })
                     checkedComments = true
                     do {
                         latestComments = try await api.existingComments(repo: reference.repo, number: reference.number)
@@ -2243,9 +2245,8 @@ private struct PostReviewSheet: View {
                         sending = false
                         return
                     }
-                    let left = comments().2.count - shown
-                    if left > 0 {
-                        notice = "\(left) finding\(left == 1 ? " was" : "s were") left out: someone has commented on \(left == 1 ? "its line" : "their lines") since this review was drafted. Check the list, then post again."
+                    if shown != Set(comments().2.map { "\($0.path):\($0.line)" }) {
+                        notice = "The findings left out changed: someone has commented since this review was drafted. Check the list, then post again. To send one that's wrongly left out, add it as a comment of your own."
                         sending = false
                         return
                     }
