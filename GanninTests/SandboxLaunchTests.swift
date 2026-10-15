@@ -368,6 +368,15 @@ struct SandboxLaunchTests {
         #expect(left.isEmpty)
     }
 
+    @Test func aLockWhoseProcessIDWasReusedIsTakenOver() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        // Process 1 is alive, but didn't start at the time the lock records.
+        try FileManager.default.createSymbolicLink(atPath: dir.appending(path: SandboxLaunch.lockName).path, withDestinationPath: "1:Mon_Jan__1_00:00:00_1990")
+        #expect(try runLocked(2, in: dir) == ["in", "out", "in", "out"])
+    }
+
     @Test func releasingLeavesAnotherStartsLockAlone() throws {
         let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -375,14 +384,14 @@ struct SandboxLaunchTests {
         let lock = dir.appending(path: SandboxLaunch.lockName).path
         // This start thinks it holds the lock, but it names another's.
         try FileManager.default.createSymbolicLink(atPath: lock, withDestinationPath: "12345")
-        let script = "\(try lockScript().release)\nlock=\(SessionScript.quoted(lock)); locked=1; sandbox_unlock"
+        let script = "\(try lockScript().release)\nlock=\(SessionScript.quoted(lock)); me=mine; locked=1; sandbox_unlock"
         #expect(Shell.run(script, .local).ok)
         #expect(try FileManager.default.destinationOfSymbolicLink(atPath: lock) == "12345")
     }
 
     @Test func theRunningCheckIsMadeOnceItsYourTurn() {
         let steps = SandboxLaunch.hostSteps(session(), folder: ".worktrees/x")
-        let lock = steps.range(of: #"until ln -s "$$" "$lock""#)
+        let lock = steps.range(of: #"until ln -s "$me" "$lock""#)
         let check = steps.range(of: #""$c" list --format json"#)
         let delete = steps.range(of: #""$c" delete --force"#)
         let release = steps.range(of: "\nsandbox_unlock\nprintf running")

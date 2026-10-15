@@ -57,7 +57,7 @@ enum SandboxLaunch {
             # run to release the lock.
             sandbox_unlock() {
               # Only a lock that's still this start's.
-              [ -z "${locked:-}" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$$" ] || rm -f "$lock"
+              [ -z "${locked:-}" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$me" ] || rm -f "$lock"
               locked=
             }
             sandbox_failed() {
@@ -111,27 +111,31 @@ enum SandboxLaunch {
             # Starts of this container take turns: a session and its helper
             # starting together would both see it missing, and the loser's
             # delete could remove the winner's container. The lock is a
-            # symlink to its owner's process ID, so it's taken and named in one
-            # step (no flock, here or over ssh), and a start that was killed
-            # leaves one whose owner is gone. A live owner is waited for
-            # however long its image build takes.
+            # symlink to its owner's process ID and start time, so it's taken
+            # and named in one step (no flock, here or over ssh). A start that
+            # was killed leaves one whose owner is gone, or, after a reboot,
+            # whose process ID names another process: the start time tells
+            # them apart. A live owner is waited for however long its image
+            # build takes.
             lock="$si/\(lockName)"
+            owner_token() { printf '%s:%s' "$1" "$(ps -o lstart= -p "$1" 2>/dev/null | tr ' ' _)"; }
+            me=$(owner_token "$$")
             waited=
-            until ln -s "$$" "$lock" 2>/dev/null; do
+            until ln -s "$me" "$lock" 2>/dev/null; do
               owner=$(readlink "$lock" 2>/dev/null || true)
-              if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+              if [ -n "$owner" ] && [ "$(owner_token "${owner%%:*}")" != "$owner" ]; then
                 # Clearing it is taken in turns too, and the owner read again
                 # once it's this start's turn: nothing else removes a live
                 # lock, so what still names the dead owner is safe to remove.
-                if ln -s "$$" "$lock.clearing" 2>/dev/null; then
+                if ln -s "$me" "$lock.clearing" 2>/dev/null; then
                   [ "$(readlink "$lock" 2>/dev/null)" != "$owner" ] || rm -f "$lock"
                   rm -f "$lock.clearing"
                   continue
                 fi
                 clearer=$(readlink "$lock.clearing" 2>/dev/null || true)
-                if [ -n "$clearer" ] && ! kill -0 "$clearer" 2>/dev/null; then rm -f "$lock.clearing"; continue; fi
+                if [ -n "$clearer" ] && [ "$(owner_token "${clearer%%:*}")" != "$clearer" ]; then rm -f "$lock.clearing"; continue; fi
               fi
-              [ -n "$waited" ] || note "Waiting for another start of this sandbox"
+              [ -n "$waited" ] || note "Waiting for another start of this sandbox (if none is, remove $lock)"
               waited=1
               sleep 1
             done
