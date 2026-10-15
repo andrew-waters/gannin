@@ -22,11 +22,9 @@ nonisolated struct HookFiles: Sendable {
 final class HookFileWatcher {
     private let directory: URL
     private let onChange: () -> Void
-    // `nonisolated(unsafe)` so `deinit` can cancel them; everything else
-    // touches them on the main actor.
-    nonisolated(unsafe) private var folder: DispatchSourceFileSystemObject?
-    nonisolated(unsafe) private var files: [String: DispatchSourceFileSystemObject] = [:]
-    nonisolated(unsafe) private var pending: DispatchWorkItem?
+    private var folder: DispatchSourceFileSystemObject?
+    private var files: [String: DispatchSourceFileSystemObject] = [:]
+    private var pending: DispatchWorkItem?
 
     init(directory: URL, onChange: @escaping () -> Void) {
         self.directory = directory
@@ -36,7 +34,7 @@ final class HookFileWatcher {
 
     // A source that's resumed and never cancelled stays alive with its
     // descriptor open, whatever releases the watcher.
-    deinit {
+    isolated deinit {
         pending?.cancel()
         folder?.cancel()
         for source in files.values { source.cancel() }
