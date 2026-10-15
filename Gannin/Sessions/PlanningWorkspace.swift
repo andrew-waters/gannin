@@ -429,8 +429,15 @@ struct PlanningWorkspaceView: View {
     @State private var viewing: PlanningStep?
     @State private var agreeing = false
     /// The agreed plan's sub-issue count, worked out when the issue history
-    /// syncs rather than on every render; nil until then.
+    /// syncs or the agreement changes rather than on every render; nil until then.
     @State private var subIssueCount: Int?
+
+    /// What `subIssueCount` depends on: a sync, or an agreement that changed
+    /// the parent or the issues it recorded.
+    private struct SubIssueCountKey: Hashable {
+        let syncedAt: Date?
+        let agreed: PlanningAgreement
+    }
     @State private var ending = false
     /// Documents picked or dropped, being confirmed.
     @State private var sharing: [URL]?
@@ -809,13 +816,13 @@ struct PlanningWorkspaceView: View {
                 if let parent = agreed.parent, let url = agreed.parentURL {
                     Link(parent, destination: url)
                 }
-                let count = subIssueCount ?? agreed.issues.count
+                let count = max(subIssueCount ?? 0, agreed.issues.count)
                 if count > 0 {
                     Text(count == 1 ? "1 sub-issue" : "\(count) sub-issues")
                 }
             }
         }
-        .task(id: issueStore.history(for: session.issue.org)?.syncedAt) {
+        .task(id: SubIssueCountKey(syncedAt: issueStore.history(for: session.issue.org)?.syncedAt, agreed: agreed)) {
             subIssueCount = agreed.subIssueCount(in: issueStore.history(for: session.issue.org))
         }
     }
