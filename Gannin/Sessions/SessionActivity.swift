@@ -151,7 +151,7 @@ struct SessionActivityPane: View {
         return Section("Agents on \(session.shortReference)") {
             ForEach(others) { other in
                 Button {
-                    sessions.reveal(other.id)
+                    sessions.selectedTab = other.id
                 } label: {
                     HStack(spacing: 6) {
                         Circle().fill(sessions.state(other.id).color).frame(width: 7, height: 7)

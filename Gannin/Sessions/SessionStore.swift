@@ -655,14 +655,16 @@ final class SessionStore {
         selectedTab = opening(shown[((index + offset) % shown.count + shown.count) % shown.count])
     }
 
-    /// What opening the tab shows: its reviewer when that is waiting on a
-    /// question or permission prompt, else the tab's own session.
+    /// What opening the tab shows: the tab's own session when it is waiting
+    /// on a question or permission prompt, else its reviewer when that is,
+    /// else the tab's own session.
     func opening(_ tab: UUID) -> UUID {
         opening(tab) { SessionQuestionCard.isAsking($0, in: self) }
     }
 
     func opening(_ tab: UUID, asking: (CodeSession) -> Bool) -> UUID {
-        helpers(of: tab).first { $0.isReviewer && asking($0) }?.id ?? tab
+        if let own = sessions[tab], asking(own) { return tab }
+        return helpers(of: tab).first { $0.isReviewer && asking($0) }?.id ?? tab
     }
 
     private func saveTabs() {

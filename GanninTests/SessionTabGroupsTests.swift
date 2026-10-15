@@ -171,6 +171,7 @@ struct SessionTabGroupsTests {
         live.add(reviewer)
         #expect(live.opening(owner.id) { _ in false } == owner.id)
         #expect(live.opening(owner.id) { $0.id == reviewer.id } == reviewer.id)
+        #expect(live.opening(owner.id) { $0.id == reviewer.id || $0.id == owner.id } == owner.id)
     }
 
     @Test func revealingTheOwnerShowsItsAskingReviewerButAHelperIdIsKept() {
