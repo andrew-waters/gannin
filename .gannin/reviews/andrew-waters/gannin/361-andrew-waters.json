@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 4,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -11,6 +11,7 @@
       "line" : 285,
       "path" : "Gannin/Sync/SharedIssueStore.swift",
       "posted_at" : "2026-10-15T00:10:42Z",
+      "resolved_at" : "2026-10-15T00:17:39Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 52,
       "path" : "Gannin/Workload/OrgSnapshotCache.swift",
       "posted_at" : "2026-10-15T00:10:42Z",
+      "resolved_at" : "2026-10-15T00:17:39Z",
       "severity" : "minor"
     }
   ],
@@ -32,6 +34,6 @@
   "started_at" : "2026-10-15T00:07:48Z",
   "state" : "OPEN",
   "title" : "Keep one copy of open issues on disk",
-  "updated_at" : "2026-10-15T00:10:43Z",
-  "verdict" : "request_changes"
+  "updated_at" : "2026-10-15T00:17:39Z",
+  "verdict" : "approve"
 }
