@@ -42,7 +42,7 @@ struct SessionConflictTests {
     @Test func aConflictThatClearsWhileQueuedIsNotSentButOtherFeedbackIs() {
         let folder = FileManager.default.temporaryDirectory.appending(path: "SessionConflictTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let store = SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60))
+        let store = SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60), defaults: UserDefaults(suiteName: "SessionConflictTests-\(UUID().uuidString)")!)
         let id = UUID()
         store.pendingFeedback[id] = [("checks prompt", ["checks:PR_1:a"]), ("conflict prompt", ["conflicts:PR_1"])]
         store.markSent(["conflicts:PR_1"], for: id)
