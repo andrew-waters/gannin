@@ -118,7 +118,7 @@ enum SandboxLaunch {
             # them apart. A live owner is waited for however long its image
             # build takes.
             lock="$si/\(lockName)"
-            owner_token() { printf '%s:%s' "$1" "$(ps -o lstart= -p "$1" 2>/dev/null | tr ' ' _)"; }
+            owner_token() { printf '%s:%s' "$1" "$(LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | tr ' ' _)"; }
             me=$(owner_token "$$")
             waited=
             until ln -s "$me" "$lock" 2>/dev/null; do
