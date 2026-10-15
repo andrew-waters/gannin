@@ -7,7 +7,7 @@ paths:
 Scheduled Claude Code sessions, run only while Gannin is open and awake. All user-local (`RoutineStore`, Application Support/<bundle ID>/Routines: `routines.json`, `queue.json`, `runs.json`, `state.json`).
 
 ## Harness and storage
-- Never write to a harness except an issue run's session record (scheduling is the consent) and what the user commits.
+- Never write to a harness except an issue run's session record (scheduling is the consent) and what the user commits. Skip the record when Record queued sessions is off for that harness (`SessionStore.recordsQueuedSessions`): the brief then travels with the start script, as for any unrecorded session.
 - Never drop a run that is going when trimming `runs.json` (`RoutineStore.maxRuns`). Deleting a routine must keep its going runs so their limits stay watched.
 - At launch, fail every run still marked going: terminals don't outlive Gannin.
 

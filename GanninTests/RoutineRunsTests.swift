@@ -22,6 +22,15 @@ struct RoutineRunsTests {
         return session
     }
 
+    @Test func queuedSessionsRecordUnlessSwitchedOffForTheirHarness() {
+        let repo = "acme/record-queued-test"
+        defer { UserDefaults.standard.removeObject(forKey: SessionStore.recordsQueuedSessionsKey(repo: repo)) }
+        #expect(SessionStore.recordsQueuedSessions(repo: repo))
+        SessionStore.setRecordsQueuedSessions(false, repo: repo)
+        #expect(!SessionStore.recordsQueuedSessions(repo: repo))
+        #expect(SessionStore.recordsQueuedSessions(repo: "acme/other"))
+    }
+
     @Test func limitsDisallowWhatTheyDontAllow() {
         let local = RoutineRunInfo(routine: routine(.code, limit: .localOnly), run: UUID()).disallowedTools
         #expect(local.contains("Bash(git push:*)"))

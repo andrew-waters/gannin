@@ -210,8 +210,8 @@ struct RoutineEditor: View {
         switch routine.kind {
         case .report: "An Ask session on this Mac with no code worktree. What it writes stays with the run, to open or Commit to Harness; nothing is committed by itself."
         case .code: "A session with no issue, a new branch each run, worktrees of the repos named, laid out as Work on This lays them out."
-        case .issueQueue: "While the window is open, the next issue in the org's agent queue starts as Work on This would, in the project covering its repos, up to the number at once below. Its session record is committed to the harness."
-        case .pinned: "The issue starts as Work on This would at the time below. Its session record is committed to the harness."
+        case .issueQueue: "While the window is open, the next issue in the org's agent queue starts as Work on This would, in the project covering its repos, up to the number at once below. Its session record is committed to the harness, unless Record queued sessions is off for that project in Settings › Harness."
+        case .pinned: "The issue starts as Work on This would at the time below. Its session record is committed to the harness, unless Record queued sessions is off for that project in Settings › Harness."
         }
     }
 

@@ -42,7 +42,7 @@ Where each kind of setting is kept:
 | Saved views and the drafting guidance below | Home's harness, `.gannin/views.json` and `authoring.json` |
 | The team's prompts | The project's harness, `prompts/<name>.md` |
 | Which harnesses are your projects, and each one's branch | This Mac |
-| Checkout folders, Ask before recording a session, Review requests automatically, Post automatic reviews, the sandbox token | This Mac |
+| Checkout folders, Ask before recording a session, Record queued sessions, Review requests automatically, Post automatic reviews, the sandbox token | This Mac |
 | Hidden items ([Hidden](/docs/settings/org/hidden/)) and stars | This Mac |
 
 ### Changes to commit
@@ -112,6 +112,7 @@ A disclosure group, open by default, with one "Claude Code" section for each pro
 | Default | Not applied | Shown once you have chosen a folder. Goes back to the default folder. | This Mac |
 | On the server | Empty (prompt `~/<org>-harness`) | Shown only when Connect with is set in [Settings › General](/docs/settings/app/general/). Where the harness is checked out on that server, as a path on that box. | This Mac |
 | Ask before recording a session | On | Work on This commits the session's brief and a `session.json` to the harness's sessions folder, and adds its pull request later. Switch this off and it does so without asking. Your own choice for this project. Shown on every project. | This Mac |
+| Record queued sessions | On | Whether a session started from the [agent queue](/docs/agents/routines/#the-queue) or a pinned time commits its brief and a `session.json` to the harness, as Ask before recording a session describes. Switch this off and such a session starts without committing its brief or `session.json` to the harness; a session on a server still gets its brief. Your own choice for this project. Shown on every project. | This Mac |
 | Review requests automatically | As in Settings (on or off, following [Settings › General](/docs/settings/app/general/)) | Your own choice for this org: whether a review request here starts Claude's review by itself. Choose As in Settings, On or Off. Shown on the first project only. | This Mac |
 | Post automatic reviews | As in Settings (on or off, following [Settings › General](/docs/settings/app/general/)) | Your own choice for this project: whether a review Claude finished by itself is posted to GitHub as a comment, or waits for you to Post Review. Choose As in Settings, On or Off. Shown on every project. | This Mac |
 

@@ -271,7 +271,8 @@ extension SessionStore {
 
     /// An issue from the queue or a pin: its Work on This session (R7, R8),
     /// briefed from what Gannin has cached, its session record committed to
-    /// the harness without asking, since scheduling it was the consent (R16).
+    /// the harness without asking, since scheduling it was the consent (R16),
+    /// unless Record queued sessions is off for that harness.
     func startIssueRun(_ routine: Routine, issue: IssueReference, run: UUID, setup: HarnessConfig, goals: [Measurable], configs: OrgConfigStore,
                        issues: IssueStore, details: DetailStore, login: String?) async -> RoutineStart {
         if let existing = session(forIssue: issue.id) {
@@ -299,7 +300,9 @@ extension SessionStore {
             session.prompt = Self.scheduledIssuePrompt(session, note: routine.prompt)
         }
         // Committed before the terminal starts, so its pull brings the brief.
-        await record(made.id, startedBy: login)
+        if Self.recordsQueuedSessions(repo: setup.repo) {
+            await record(made.id, startedBy: login)
+        }
         return await startUnattended(made.id)
     }
 

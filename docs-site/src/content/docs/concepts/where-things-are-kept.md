@@ -30,7 +30,7 @@ These are yours alone and never leave this Mac:
 
 - All app settings (Gannin › Settings).
 - Stars, hidden pull requests and issues, and which harnesses are your projects.
-- Where each harness is checked out, automatic review per org, and whether to record sessions without asking.
+- Where each harness is checked out, automatic review per org, whether to record sessions without asking, and whether to record queued sessions.
 - Your GitHub token, and sandbox credentials, in the keychain.
 - Caches of what was fetched from GitHub (Settings › Storage shows their size, with Clear).
 - Agent sessions, routines and their runs.

@@ -16,7 +16,7 @@ They're under Agents › Routines.
 - **Queue window**: while it's open, starts the next issue in the [queue](#the-queue), up to a number at once.
 - **Pinned issue**: starts one issue at a set time, then turns itself off.
 
-Issues from a queue window or pin run as [Work on This](/docs/agents/work-on-this/) would. Their session record is committed to the harness without asking, since scheduling the routine is the consent.
+Issues from a queue window or pin run as [Work on This](/docs/agents/work-on-this/) would. Their session record is committed to the harness without asking, since scheduling the routine is the consent. To stop that, switch off Record queued sessions for the project in Settings › Harness: the run then starts without committing its brief or `session.json`.
 
 ## Making one
 
