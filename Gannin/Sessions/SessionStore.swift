@@ -1254,7 +1254,7 @@ final class SessionStore {
     /// What each sandboxed session's start script last said of its sandbox
     /// (`starting`, `running`, `failed: <why>`), or `stopped` once Gannin
     /// stopped it (R14).
-    private(set) var sandboxStatus: [UUID: String] = [:]
+    var sandboxStatus: [UUID: String] = [:]
 
     /// Stops the session's sandbox once no session using it is running: the
     /// issue's own and its helpers share one (R12). Its folders stay, and

@@ -24,11 +24,9 @@ enum SandboxLaunch {
     /// sessions are doing, a line an event, which the container's own process
     /// follows so `container logs` (and Orchard) show it (andrew-waters/gannin#152).
     static let activityLogName = "sandbox.log"
-    /// The directory in the issue's folder that starts of its container take
-    /// turns holding, and the seconds a start waits before taking over a lock
-    /// whose owner never wrote its process ID (an image build can take minutes).
+    /// The link in the issue's folder that starts of its container take
+    /// turns holding.
     static let lockName = "sandbox.lock"
-    static let lockTimeout = 600
     /// The script hooks and `inner.sh` write the log through, outside every mount.
     static let activityScriptPath = "/run/gannin-activity"
 
@@ -58,7 +56,7 @@ enum SandboxLaunch {
             # fail and the final exec replace this shell, so no EXIT trap would
             # run to release the lock.
             sandbox_unlock() {
-              [ -z "${locked:-}" ] || rm -rf "$lock"
+              [ -z "${locked:-}" ] || rm -f "$lock"
               locked=
             }
             sandbox_failed() {
@@ -111,25 +109,30 @@ enum SandboxLaunch {
             name=\(SandboxRuntime.quoted(name))
             # Starts of this container take turns: a session and its helper
             # starting together would both see it missing, and the loser's
-            # delete could remove the winner's container. mkdir is atomic
-            # without flock, here or over ssh.
+            # delete could remove the winner's container. The lock is a
+            # symlink to its owner's process ID, so it's taken and named in one
+            # step (no flock, here or over ssh), and a start that was killed
+            # leaves one whose owner is gone. A live owner is waited for
+            # however long its image build takes.
             lock="$si/\(lockName)"
-            waited=0
-            until mkdir "$lock" 2>/dev/null; do
-              owner=$(cat "$lock/pid" 2>/dev/null || true)
-              if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$lock"; continue; fi
-              waited=$((waited + 1))
-              if [ "$waited" -gt \(lockTimeout) ]; then
-                warn "Another start of this sandbox has held its lock for \(lockTimeout) seconds; taking it over."
-                rm -rf "$lock"
-                waited=0
+            waited=
+            until ln -s "$$" "$lock" 2>/dev/null; do
+              owner=$(readlink "$lock" 2>/dev/null || true)
+              if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
+                # Only one waiter can rename it away. If what it moved is
+                # another's new lock rather than the dead one, put that back.
+                if mv "$lock" "$lock.stale.$$" 2>/dev/null; then
+                  moved=$(readlink "$lock.stale.$$" 2>/dev/null || true)
+                  [ "$moved" = "$owner" ] || ln -s "$moved" "$lock" 2>/dev/null || true
+                  rm -f "$lock.stale.$$"
+                fi
                 continue
               fi
-              [ "$waited" -ne 1 ] || note "Waiting for another start of this sandbox"
+              [ -n "$waited" ] || note "Waiting for another start of this sandbox"
+              waited=1
               sleep 1
             done
             locked=1
-            printf '%s' "$$" > "$lock/pid"
             if "$c" list --format json 2>/dev/null | grep -q "\\"id\\":\\"$name\\""; then
               note "The sandbox is running; claude starts in it"
             else

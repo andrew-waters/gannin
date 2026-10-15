@@ -90,4 +90,60 @@ struct PairReviewTests {
         let last = SessionStore.findingsPrompt(findings, round: 3, script: ".gannin/ready-for-review", last: true)
         #expect(last.contains("last round"))
     }
+
+    // MARK: A reviewer whose sandbox failed
+
+    /// A store with a working session and its reviewer helper in a sandbox, the
+    /// pairing saved as `phase`.
+    private func paired(_ phase: PairReview.Phase, in folder: URL) -> (store: SessionStore, parent: UUID, reviewer: UUID) {
+        let store = SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60), defaults: UserDefaults(suiteName: "PairReviewTests-\(UUID().uuidString)")!)
+        var parent = session()
+        parent.sandbox = SandboxPlacement.containerName(for: parent.id)
+        let reviewer = CodeSession(
+            id: UUID(), issue: parent.issue, repo: parent.repo, branch: parent.branch, createdAt: .now,
+            harnessRepo: parent.harnessRepo, harnessPath: parent.harnessPath,
+            parentID: parent.id, role: "Review", prompt: "Review it", isReviewer: true, sandbox: parent.sandbox
+        )
+        parent.pairing = PairReview(reviewerID: reviewer.id, round: 1, phase: phase, lastReply: "reply")
+        store.add(parent)
+        store.add(reviewer)
+        return (store, parent.id, reviewer.id)
+    }
+
+    @Test(arguments: [PairReview.Phase.reviewing, .fixing, .settled, .limit, .stopped])
+    func aReviewerWhoseSandboxFailedIsReplaced(phase: PairReview.Phase) {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "PairReviewTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (store, parent, reviewer) = paired(phase, in: folder)
+        store.sandboxStatus[reviewer] = "failed: The sandbox didn't start."
+        store.pendingPrompts[reviewer] = "Look again"
+        var pairing = store.sessions[parent]!.pairing!
+
+        #expect(store.replaceFailedReviewer(of: parent, in: &pairing))
+
+        // Nothing is left for a new request to find and wait on, whichever
+        // branch of reviewRequested it would have taken.
+        #expect(pairing.reviewerID == nil)
+        #expect(pairing.lastReply == nil)
+        #expect(pairing.phase == phase)
+        #expect(store.sessions[parent]?.pairing?.reviewerID == nil)
+        #expect(store.sessions[reviewer] == nil)
+        #expect(store.helpers(of: parent).isEmpty)
+        #expect(store.pendingPrompts[reviewer] == nil)
+        // The issue's own session, and so its sandbox, stays.
+        #expect(store.sessions[parent] != nil)
+    }
+
+    @Test func aReviewerWhoseSandboxStartedIsKept() {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "PairReviewTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (store, parent, reviewer) = paired(.reviewing, in: folder)
+        var pairing = store.sessions[parent]!.pairing!
+        for status in [nil, "starting", "running"] {
+            store.sandboxStatus[reviewer] = status
+            #expect(!store.replaceFailedReviewer(of: parent, in: &pairing))
+        }
+        #expect(pairing.reviewerID == reviewer)
+        #expect(store.sessions[reviewer] != nil)
+    }
 }

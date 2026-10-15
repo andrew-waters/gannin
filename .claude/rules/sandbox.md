@@ -23,7 +23,9 @@ Work on This sessions and their helpers run claude in an Apple `container` VM, o
 - Turn sandboxing on only when the service, kernel and base image are ready and the Claude credential and signing key exist.
 - Helpers share their issue's container, with their folders under the issue's (`SessionStore.sandboxHelperParents`); every start must mount them.
 
-- Starts of one container take turns on `sandbox.lock` in the issue's folder, and the running check comes after taking it: a session and its helper starting together would otherwise both see it missing, and the loser's `delete --force` removes the winner's container. Never delete or run the container outside the lock. `fail` and the final `exec` replace the shell, so release explicitly, not by a trap.
+## Starting
+- Never delete or run a container outside `sandbox.lock` (in the issue's folder), and check that it's running only after taking it: a session and its helper starting together both see it missing, and the loser's `delete --force` removes the winner's container.
+- Release the lock explicitly (`sandbox_unlock`), not with a trap: `fail` and the final `exec` replace the shell.
 
 ## Activity log
 - Log events and tool names only, never a command, prompt, file, output or error text, and redact tokens by shape and value.
