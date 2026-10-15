@@ -852,12 +852,14 @@ final class SessionStore {
             if besideTab == id { besideTab = parent }
         }
         if let session = sessions[id] { deleteSandbox(of: session) }
-        terminals[id]?.terminate()
-        terminals[id] = nil
         changesPanes[id] = nil
         filesPanes[id] = nil
         unflag(id)
         sessions[id] = nil
+        // After the session is gone, so ending the terminal doesn't stop the
+        // sandbox `deleteSandbox` is deleting (`stopSandboxIfIdle` needs it).
+        terminals[id]?.terminate()
+        terminals[id] = nil
         noteSandboxedHarnesses()
         states[id] = nil
         drafts[id] = nil
