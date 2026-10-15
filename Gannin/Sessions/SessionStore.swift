@@ -340,6 +340,18 @@ final class SessionStore {
         UserDefaults.standard.set(value, forKey: asksBeforeRecordingKey(repo: repo))
     }
 
+    /// Whether a run from the agent queue or a pin commits its session's
+    /// brief and record to a harness (`owner/name`). On unless switched off.
+    static func recordsQueuedSessionsKey(repo: String) -> String { "sessionsRecordQueued.\(repo)" }
+
+    static func recordsQueuedSessions(repo: String) -> Bool {
+        UserDefaults.standard.object(forKey: recordsQueuedSessionsKey(repo: repo)) as? Bool ?? true
+    }
+
+    static func setRecordsQueuedSessions(_ value: Bool, repo: String) {
+        UserDefaults.standard.set(value, forKey: recordsQueuedSessionsKey(repo: repo))
+    }
+
     /// The one window sessions open in, each a tab.
     static let windowID = "sessions"
     /// The open tabs, in order, kept across launches.

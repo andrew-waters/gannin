@@ -2422,6 +2422,10 @@ struct HarnessCheckoutSection: View {
             Text("Work on This commits the session's brief and a session.json to its harness's sessions folder, and adds its pull request later. Off, it does so without asking.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Toggle("Record queued sessions", isOn: Binding(get: { SessionStore.recordsQueuedSessions(repo: repo) }, set: { SessionStore.setRecordsQueuedSessions($0, repo: repo) }))
+            Text("Whether a session started from the agent queue or a pin commits its brief and session.json to the harness. Off, it starts without committing anything.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
             if showsReviewRequests {
                 Picker("Review requests automatically", selection: $autoReview) {
                     Text("As in Settings (\(AutoReview.isOnByDefault ? "on" : "off"))").tag("")
