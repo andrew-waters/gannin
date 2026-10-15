@@ -938,6 +938,7 @@ struct SessionTab: View {
             TerminalHost(session: session)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) { askOverlay }
+                .overlay { resumeOverlay }
                 // A planning session takes documents dropped on it,
                 // each confirmed before claude sees it.
                 .dropDestination(for: URL.self) { urls, _ in
@@ -1008,6 +1009,18 @@ struct SessionTab: View {
                     .padding(16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+        }
+    }
+
+    /// Over a terminal that has ended, so a quit claude can be started again
+    /// from the pane. A finished review resumes from the Reviews list.
+    @ViewBuilder
+    private var resumeOverlay: some View {
+        if sessions.state(session.id) == .stopped, session.archivedAt == nil {
+            Button("Resume") { _ = sessions.open(session) }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .help("Start the terminal again, carrying on claude's conversation")
         }
     }
 
