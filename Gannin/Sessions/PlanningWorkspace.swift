@@ -228,6 +228,14 @@ struct PlanningAgreement: Codable, Hashable {
     var parent: String?
     var parentURL: URL?
     var issues: [URL]
+
+    /// The parent's sub-issues now, so one added after Agree counts; the
+    /// ones Agree recorded when the history doesn't hold the parent.
+    func subIssueCount(in history: IssueHistory?) -> Int {
+        guard let parent, let history,
+              let record = history.issues.values.first(where: { "\($0.repo)#\($0.number)" == parent }) else { return issues.count }
+        return history.issues.values.filter { $0.parentID == record.id }.count
+    }
 }
 
 /// An issue Agree and Write already made: its node ID (for `addSubIssue`),
@@ -415,6 +423,7 @@ enum PlanningStep: String, CaseIterable, Identifiable {
 /// is a drawer. It is laid out large, for the screen in the room.
 struct PlanningWorkspaceView: View {
     @Environment(SessionStore.self) private var sessions
+    @Environment(IssueStore.self) private var issueStore
     let session: CodeSession
     /// A step picked to look back at; nil follows the one under way.
     @State private var viewing: PlanningStep?
@@ -797,8 +806,9 @@ struct PlanningWorkspaceView: View {
                 if let parent = agreed.parent, let url = agreed.parentURL {
                     Link(parent, destination: url)
                 }
-                if !agreed.issues.isEmpty {
-                    Text("\(agreed.issues.count) sub-issues")
+                let count = agreed.subIssueCount(in: issueStore.history(for: session.issue.org))
+                if count > 0 {
+                    Text(count == 1 ? "1 sub-issue" : "\(count) sub-issues")
                 }
             }
         }
