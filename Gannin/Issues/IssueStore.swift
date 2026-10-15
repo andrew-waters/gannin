@@ -287,7 +287,7 @@ final class IssueStore {
 
     /// Labels written from the app, shown before the next fetch.
     func recordLabels(org: String, issueID: String, labels: [String]) {
-        change(org: org, issueID: issueID) { $0.labels = labels }
+        change(org: org, issueID: issueID, labels: labels) { $0.labels = labels }
     }
 
     /// An issue added to a board from the app, shown before the next fetch.
@@ -322,17 +322,23 @@ final class IssueStore {
             changed.append(record)
         }
         histories[org] = history
-        for record in changed { issueStore.update(record.id, org: org) { $0.applyEdits(of: record) } }
+        for record in changed { issueStore.update(record.id, org: org) { $0.applyHistoryEdits(of: record) } }
     }
 
     /// Applies an edit to one record and writes it to the shared issue store,
-    /// where the history file's IDs already point.
-    private func change(org: String, issueID: String, _ edit: (inout IssueRecord) -> Void) {
+    /// where the history file's IDs already point. Only a label edit (`labels`)
+    /// writes the shared core's labels: this record can be older than the core,
+    /// which the workload refreshes more often, so any other edit would put the
+    /// record's labels back over newer ones.
+    private func change(org: String, issueID: String, labels: [String]? = nil, _ edit: (inout IssueRecord) -> Void) {
         guard var history = histories[org], var record = history.issues[issueID] else { return }
         edit(&record)
         history.issues[issueID] = record
         histories[org] = history
-        issueStore.update(issueID, org: org) { $0.applyEdits(of: record) }
+        issueStore.update(issueID, org: org) { stored in
+            stored.applyHistoryEdits(of: record)
+            if let labels { stored.setLabels(labels) }
+        }
     }
 
     static var cacheDirectory: URL { defaultDirectory }

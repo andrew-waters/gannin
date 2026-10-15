@@ -49,7 +49,15 @@ struct OrgSnapshotCache {
         let all = snapshot.openPullRequests + snapshot.mergedPullRequests
         pullRequests.merge(all.map { StoredPullRequest(workload: $0) }, org: snapshot.orgLogin)
         pullRequests.prune(.workload, org: snapshot.orgLogin, keeping: Set(all.map(\.id)))
-        issues.merge(snapshot.issues.map { StoredIssue(workload: $0) }, org: snapshot.orgLogin)
+        // A changes-only refresh carries the issues it didn't fetch over as they
+        // were. Merging one back would put its older labels over a label edit
+        // made since, at the same `updatedAt`, so only issues whose workload
+        // part differs from the held one are merged.
+        let heldIssues = issues.issues(org: snapshot.orgLogin)
+        issues.merge(
+            snapshot.issues.map { StoredIssue(workload: $0) }.filter { heldIssues[$0.id]?.workload != $0.workload },
+            org: snapshot.orgLogin
+        )
         issues.prune(.workload, org: snapshot.orgLogin, keeping: Set(snapshot.issues.map(\.id)))
         write(snapshot)
     }

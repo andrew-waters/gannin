@@ -278,15 +278,20 @@ extension StoredIssue {
     /// GitHub's grey, for a label only a names-only fetch has seen.
     static let unknownLabelColor = "ededed"
 
-    /// What the app edits locally on an issue (its labels, status changes and
-    /// board field values), taken from `record`; nothing else changes, and a
-    /// label keeps the colour already held for its name.
-    mutating func applyEdits(of record: IssueRecord) {
-        core.labels = record.labels.map { name in
-            StoredLabel(name: name, color: core.labels.first { $0.name == name }?.color)
-        }
+    /// The status changes and board field values `record` has after a local
+    /// edit. Everything else in the record may be older than what the core
+    /// holds from a newer workload fetch, so none of it is written back.
+    mutating func applyHistoryEdits(of record: IssueRecord) {
         history?.statusChanges = record.statusChanges
         history?.projectFields = record.projectFields
+    }
+
+    /// The labels a label edit left on the issue; each keeps the colour
+    /// already held for its name.
+    mutating func setLabels(_ names: [String]) {
+        core.labels = names.map { name in
+            StoredLabel(name: name, color: core.labels.first { $0.name == name }?.color)
+        }
     }
 
     /// An issue as the issue history fetch has it.

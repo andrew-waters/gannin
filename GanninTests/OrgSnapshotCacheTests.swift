@@ -269,4 +269,23 @@ struct OrgSnapshotCacheTests {
         #expect(held["a"]?.history != nil)
         #expect(held["b"] == nil)
     }
+
+    @Test func anIssueCarriedOverUnchangedDoesNotUndoALabelEditMadeSinceTheLastFetch() {
+        let dir = directory()
+        let store = PullRequestStore(folder: uniqueFolder())
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let issues = SharedIssueStore(folder: issueFolder)
+        let c = OrgSnapshotCache(directory: dir, pullRequests: store, issues: issues)
+        let carried = snapshot(issues: [issue("a")])
+        c.save(carried)
+        issues.update("a", org: "acme") { $0.setLabels(["bug", "edited"]) }
+
+        // A changes-only refresh that didn't fetch the issue saves it as it was.
+        c.save(carried)
+        #expect(issues.issues(org: "acme")["a"]?.core.labels.map(\.name) == ["bug", "edited"])
+
+        // One that fetched it at a new updatedAt replaces the edit.
+        c.save(snapshot(issues: [issue("a", updated: 20)]))
+        #expect(issues.issues(org: "acme")["a"]?.core.labels.map(\.name) == ["bug"])
+    }
 }

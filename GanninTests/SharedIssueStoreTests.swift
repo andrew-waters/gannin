@@ -118,7 +118,10 @@ struct SharedIssueStoreTests {
 
         var edited = record(updated: 10, labels: ["bug", "edited"])
         edited.projectFields = [IssueProjectFields(projectNumber: 1, projectTitle: "Board", values: ["Status": .option(name: "Done", position: 2)])]
-        store.update("a", org: "acme") { $0.applyEdits(of: edited) }
+        store.update("a", org: "acme") {
+            $0.applyHistoryEdits(of: edited)
+            $0.setLabels(edited.labels)
+        }
 
         let held = store.issues(org: "acme")["a"]!
         #expect(held.core.labels == [StoredLabel(name: "bug", color: "d73a4a"), StoredLabel(name: "edited", color: nil)])
@@ -266,5 +269,35 @@ struct SharedIssueStoreTests {
         let reloaded = again.history(for: "acme")?.issues["a"]
         #expect(reloaded?.labels == ["bug", "edited"])
         #expect(reloaded?.fields(onProject: 1)?.values["Status"] == .option(name: "Done", position: 2))
+    }
+
+    @Test func aStatusEditDoesNotWriteTheHistorysOlderLabelsOverTheCores() throws {
+        let directory = URL.applicationSupportDirectory.appending(path: "SharedIssueStoreTests-dir-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let shared = SharedIssueStore(folder: folder)
+        defer { try? FileManager.default.removeItem(at: directory); shared.clear() }
+        try writeOldHistory([record("a", updated: 10, labels: ["bug"])], to: directory)
+        let store = issueStore(shared, directory)
+        store.loadCached("acme")
+        // The workload has since fetched the issue with another label.
+        shared.merge([StoredIssue(workload: workload(updated: 30, labels: [IssueLabel(name: "bug", color: "d73a4a"), IssueLabel(name: "p1", color: "ff0000")]))], org: "acme")
+
+        store.recordFieldValue(org: "acme", issueID: "a", projectNumber: 1, projectTitle: "Board", field: "Status", value: .option(name: "Done", position: 2))
+        store.recordStatusChange(org: "acme", issueID: "a", status: "Done", projectNumber: 1, projectTitle: "Board")
+
+        let held = shared.issues(org: "acme")["a"]!
+        #expect(held.core.labels.map(\.name) == ["bug", "p1"])
+        #expect(held.issueRecord?.statusChanges.last?.status == "Done")
+        #expect(held.issueRecord?.fields(onProject: 1)?.values["Status"] == .option(name: "Done", position: 2))
+    }
+
+    @Test func aLabelEditIsWrittenToTheCore() throws {
+        let directory = URL.applicationSupportDirectory.appending(path: "SharedIssueStoreTests-dir-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let shared = SharedIssueStore(folder: folder)
+        defer { try? FileManager.default.removeItem(at: directory); shared.clear() }
+        try writeOldHistory([record("a", updated: 10, labels: ["bug"])], to: directory)
+        let store = issueStore(shared, directory)
+        store.loadCached("acme")
+        store.recordLabels(org: "acme", issueID: "a", labels: ["bug", "p1"])
+        #expect(shared.issues(org: "acme")["a"]?.core.labels.map(\.name) == ["bug", "p1"])
     }
 }
