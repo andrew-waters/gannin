@@ -69,14 +69,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-15T12:38:10Z",
   "number" : 372,
   "posted_at" : "2026-10-15T09:49:21Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T09:36:13Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Send a session's PR conflicts to its Claude when idle",
-  "updated_at" : "2026-10-15T10:04:58Z",
+  "updated_at" : "2026-10-15T12:38:28Z",
   "verdict" : "approve"
 }
