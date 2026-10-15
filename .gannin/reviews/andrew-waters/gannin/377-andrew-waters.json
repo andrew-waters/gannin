@@ -1,0 +1,27 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The caption says the same thing twice: \"Whether ... commits\" and then \"Off, it s",
+      "key" : "Gannin/Sessions/SessionViews.swift:2426:The caption says the same thing twice: \"Whether ... commits\"",
+      "line" : 2426,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-15T13:30:02Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 377,
+  "posted_at" : "2026-10-15T13:30:02Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-15T13:28:47Z",
+  "state" : "OPEN",
+  "title" : "Add a setting for recording queued sessions in the harness",
+  "updated_at" : "2026-10-15T13:30:04Z",
+  "verdict" : "approve"
+}
