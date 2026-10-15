@@ -3,7 +3,8 @@
   "branch" : "295-sandbox-starts-race-when-a-session-and",
   "issue" : "andrew-waters/gannin#295",
   "pullRequests" : [
-    "https://github.com/andrew-waters/gannin/pull/374"
+    "https://github.com/andrew-waters/gannin/pull/374",
+    "https://github.com/andrew-waters/gannin/pull/383"
   ],
   "repos" : [
 
