@@ -1,0 +1,15 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "findings" : [
+
+  ],
+  "number" : 364,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-15T08:18:28Z",
+  "state" : "OPEN",
+  "title" : "Right-clicking an Ask or Planning row in the sidebar offers its menu",
+  "updated_at" : "2026-10-15T08:19:58Z",
+  "verdict" : "approve"
+}
