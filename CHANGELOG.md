@@ -26,6 +26,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ### Fixed
+- A session and its helper starting together in one sandbox no longer race to create it, which could leave one failed or take the other's sandbox down; and asking for review again after a reviewer's sandbox failed to start now starts a new reviewer instead of talking to the one that never started
 - Posting a review, by hand or automatically, no longer repeats a finding that someone has already commented on the same line: Post to GitHub checks the PR for new comments first and lists the findings it left out, and an automatic review's log entry says how many it skipped
 - The sub-issue count on an agreed plan includes sub-issues added to its parent after Agree
 - A session whose Claude has quit shows a Resume button over its terminal, so the Work agent can be restarted from the pane

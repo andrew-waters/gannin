@@ -24,6 +24,11 @@ enum SandboxLaunch {
     /// sessions are doing, a line an event, which the container's own process
     /// follows so `container logs` (and Orchard) show it (andrew-waters/gannin#152).
     static let activityLogName = "sandbox.log"
+    /// The directory in the issue's folder that starts of its container take
+    /// turns holding, and the seconds a start waits before taking over a lock
+    /// whose owner never wrote its process ID (an image build can take minutes).
+    static let lockName = "sandbox.lock"
+    static let lockTimeout = 600
     /// The script hooks and `inner.sh` write the log through, outside every mount.
     static let activityScriptPath = "/run/gannin-activity"
 
@@ -50,7 +55,14 @@ enum SandboxLaunch {
         let labelArguments = labels.map { "--label \(SandboxRuntime.quoted($0))" }.joined(separator: " ")
         let tag = #"$(sed -n 's/^image=//p' "$images" | tail -n1)"#
         return """
+            # fail and the final exec replace this shell, so no EXIT trap would
+            # run to release the lock.
+            sandbox_unlock() {
+              [ -z "${locked:-}" ] || rm -rf "$lock"
+              locked=
+            }
             sandbox_failed() {
+              sandbox_unlock
               # Its credentials go with it, not left for the next start.
               rm -f "$session/secrets.env"
               printf 'failed: %s' "$1" > "$session/sandbox" 2>/dev/null
@@ -97,6 +109,27 @@ enum SandboxLaunch {
             log="$si/\(activityLogName)"
             touch "$log"
             name=\(SandboxRuntime.quoted(name))
+            # Starts of this container take turns: a session and its helper
+            # starting together would both see it missing, and the loser's
+            # delete could remove the winner's container. mkdir is atomic
+            # without flock, here or over ssh.
+            lock="$si/\(lockName)"
+            waited=0
+            until mkdir "$lock" 2>/dev/null; do
+              owner=$(cat "$lock/pid" 2>/dev/null || true)
+              if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then rm -rf "$lock"; continue; fi
+              waited=$((waited + 1))
+              if [ "$waited" -gt \(lockTimeout) ]; then
+                warn "Another start of this sandbox has held its lock for \(lockTimeout) seconds; taking it over."
+                rm -rf "$lock"
+                waited=0
+                continue
+              fi
+              [ "$waited" -ne 1 ] || note "Waiting for another start of this sandbox"
+              sleep 1
+            done
+            locked=1
+            printf '%s' "$$" > "$lock/pid"
             if "$c" list --format json 2>/dev/null | grep -q "\\"id\\":\\"$name\\""; then
               note "The sandbox is running; claude starts in it"
             else
@@ -154,6 +187,7 @@ enum SandboxLaunch {
               # says what's going on in here (the last 200 lines, then more).
               "$c" "${args[@]}" "$image" sh -c 'trap "exit 0" TERM; tail -n 200 -F "$0" & wait' "$log" >/dev/null || sandbox_failed "The sandbox didn't start. Run container logs $name to see why."
             fi
+            sandbox_unlock
             printf running > "$session/sandbox"
             exec "$c" exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e CLAUDE_CONFIG_DIR=\(claudeHome) "$name" bash "$s/inner.sh" "$s" "$h" "$log"
             """
