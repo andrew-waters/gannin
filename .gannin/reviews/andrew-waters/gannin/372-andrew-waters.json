@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 1,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -65,6 +65,7 @@
       "line" : 45,
       "path" : "GanninTests/SessionConflictTests.swift",
       "posted_at" : "2026-10-15T09:49:21Z",
+      "resolved_at" : "2026-10-15T10:04:58Z",
       "severity" : "nit"
     }
   ],
@@ -76,6 +77,6 @@
   "started_at" : "2026-10-15T09:36:13Z",
   "state" : "OPEN",
   "title" : "Send a session's PR conflicts to its Claude when idle",
-  "updated_at" : "2026-10-15T09:58:30Z",
+  "updated_at" : "2026-10-15T10:04:58Z",
   "verdict" : "approve"
 }
