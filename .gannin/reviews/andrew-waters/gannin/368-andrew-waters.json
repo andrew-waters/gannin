@@ -11,6 +11,7 @@
       "line" : 574,
       "path" : "Gannin/Sessions/SessionStore.swift",
       "posted_at" : "2026-10-15T08:27:24Z",
+      "resolved_at" : "2026-10-15T08:42:28Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 664,
       "path" : "Gannin/Sessions/SessionStore.swift",
       "posted_at" : "2026-10-15T08:27:24Z",
+      "resolved_at" : "2026-10-15T08:42:28Z",
       "severity" : "minor"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 13,
       "path" : "docs-site/src/content/docs/agents/pair-review.md",
       "posted_at" : "2026-10-15T08:27:24Z",
+      "resolved_at" : "2026-10-15T08:42:28Z",
       "severity" : "nit"
     }
   ],
@@ -41,6 +44,6 @@
   "started_at" : "2026-10-15T08:25:44Z",
   "state" : "OPEN",
   "title" : "Open a tab on its reviewer when the reviewer is waiting for input",
-  "updated_at" : "2026-10-15T08:27:26Z",
-  "verdict" : "request_changes"
+  "updated_at" : "2026-10-15T08:42:28Z",
+  "verdict" : "approve"
 }
