@@ -1726,7 +1726,7 @@ private struct HelperParentSection: View {
                         Button("Open Issue") { openWindow(value: session.issue) }
                     }
                     if let parent {
-                        Button("Show Session") { sessions.reveal(parent.id) }
+                        Button("Show Session") { sessions.selectedTab = parent.id }
                             .help("The working session, with the issue, its plans and its PRs")
                     }
                 }

@@ -562,7 +562,8 @@ final class SessionStore {
     }
 
     /// Shows the session, adding its tab after the one showing if it isn't
-    /// open. A helper shows in its session's tab.
+    /// open. A helper shows in its session's tab; a session's own id shows
+    /// its reviewer instead when that is waiting for input (`opening`).
     func reveal(_ id: UUID) {
         guard sessions[id] != nil else { return }
         let tab = tabOwner(id)
@@ -570,7 +571,7 @@ final class SessionStore {
             tabs.insert(tab, at: insertionIndex(for: tab, after: selectedTab.map(tabOwner)))
             saveTabs()
         }
-        selectedTab = id
+        selectedTab = id == tab ? opening(tab) : id
     }
 
     /// Adds the session's tab after `neighbour`'s (else at the end of its
@@ -657,7 +658,11 @@ final class SessionStore {
     /// What opening the tab shows: its reviewer when that is waiting on a
     /// question or permission prompt, else the tab's own session.
     func opening(_ tab: UUID) -> UUID {
-        helpers(of: tab).first { $0.isReviewer && SessionQuestionCard.isAsking($0, in: self) }?.id ?? tab
+        opening(tab) { SessionQuestionCard.isAsking($0, in: self) }
+    }
+
+    func opening(_ tab: UUID, asking: (CodeSession) -> Bool) -> UUID {
+        helpers(of: tab).first { $0.isReviewer && asking($0) }?.id ?? tab
     }
 
     private func saveTabs() {
