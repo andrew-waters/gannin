@@ -835,6 +835,21 @@ final class SessionStore {
         terminals[id]?.terminate()
     }
 
+    /// Ends the shell left after claude exited and starts claude again,
+    /// resuming its conversation. The terminal reports its end later, so the
+    /// launch waits for it, as `open` does nothing while one is running.
+    func restart(_ session: CodeSession) {
+        guard let terminal = terminals[session.id], terminal.isRunning else {
+            _ = open(session)
+            return
+        }
+        terminal.terminate()
+        Task {
+            for _ in 0..<50 where terminal.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
+            _ = open(session)
+        }
+    }
+
     /// Ends the session and forgets it. The clone and worktree stay on disk.
     func remove(_ id: UUID) {
         // Helpers work in its folder, so they go with it.

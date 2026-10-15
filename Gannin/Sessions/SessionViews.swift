@@ -1012,12 +1012,15 @@ struct SessionTab: View {
         }
     }
 
-    /// Over a terminal that has ended, so a quit claude can be started again
-    /// from the pane. A finished review resumes from the Reviews list.
+    /// Over a terminal whose claude has quit (leaving its shell, or ended
+    /// too), so it can be started again from the pane. A finished review
+    /// resumes from the Reviews list. A terminal not opened yet is on its way
+    /// to launching, so it has none.
     @ViewBuilder
     private var resumeOverlay: some View {
-        if sessions.state(session.id) == .stopped, session.archivedAt == nil {
-            Button("Resume") { _ = sessions.open(session) }
+        let state = sessions.state(session.id)
+        if state == .exited || (state == .stopped && sessions.terminal(session.id) != nil), session.archivedAt == nil {
+            Button("Resume") { sessions.restart(session) }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .help("Start the terminal again, carrying on claude's conversation")
