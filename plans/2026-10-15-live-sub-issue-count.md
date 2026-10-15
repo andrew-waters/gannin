@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Progress
+status: In Review
 summary: The sub-issue count on an agreed plan reads the parent's current sub-issues from the issue history, so one added after Agree is counted.
 issues: [andrew-waters/gannin#182]
 domains: [planning]
@@ -19,8 +19,10 @@ the plan. A sub-issue added to the parent afterwards never appeared in "N sub-is
 
 - Count the parent's children in `IssueStore`'s history (`IssueRecord.parentID` equal to the parent's
   node ID), the same source as Planning › Epics.
-- Fall back to the recorded `agreed.issues.count` when the history isn't loaded or doesn't hold the
-  parent, so the text never shows less than it did before.
+- Never show fewer than the recorded `agreed.issues.count`: the history may not be loaded, may not
+  hold the parent, or may not yet hold the children Agree just made.
+- Hold the count in `@State` and recompute it when the history's `syncedAt` changes, not in the
+  view body, which would scan every issue on each render.
 
 ## Tasks
 
