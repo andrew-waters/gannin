@@ -1507,7 +1507,8 @@ final class SessionStore {
     /// Reads a local session's hook files off the main actor, then applies
     /// them.
     private func refreshLocal(_ id: UUID) {
-        guard terminals[id]?.isRunning == true else { return }
+        // A server session's files are on the server (`readRemote`).
+        guard terminals[id]?.isRunning == true, sessions[id]?.isRemote == false else { return }
         guard !readingHooks.contains(id) else {
             rereadHooks.insert(id)
             return
