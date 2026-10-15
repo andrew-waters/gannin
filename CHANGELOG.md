@@ -26,6 +26,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ### Fixed
+- Posting a review, by hand or automatically, no longer repeats a finding that someone has already commented on the same line: Post to GitHub checks the PR for new comments first and lists the findings it left out, and an automatic review's log entry says how many it skipped
 - The sub-issue count on an agreed plan includes sub-issues added to its parent after Agree
 - A session whose Claude has quit shows a Resume button over its terminal, so the Work agent can be restarted from the pane
 - A session's brief names the harness's own `STANDARDS.md` by path, so Claude no longer goes looking for it in other harnesses' folders
