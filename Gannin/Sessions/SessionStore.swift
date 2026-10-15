@@ -835,6 +835,13 @@ final class SessionStore {
         terminals[id]?.terminate()
     }
 
+    /// Ends the shell left after claude exited and starts claude again,
+    /// resuming its conversation.
+    func restart(_ session: CodeSession) {
+        terminals[session.id]?.terminate()
+        _ = open(session)
+    }
+
     /// Ends the session and forgets it. The clone and worktree stay on disk.
     func remove(_ id: UUID) {
         // Helpers work in its folder, so they go with it.
@@ -845,12 +852,14 @@ final class SessionStore {
             if besideTab == id { besideTab = parent }
         }
         if let session = sessions[id] { deleteSandbox(of: session) }
-        terminals[id]?.terminate()
-        terminals[id] = nil
         changesPanes[id] = nil
         filesPanes[id] = nil
         unflag(id)
         sessions[id] = nil
+        // After the session is gone, so ending the terminal doesn't stop the
+        // sandbox `deleteSandbox` is deleting (`stopSandboxIfIdle` needs it).
+        terminals[id]?.terminate()
+        terminals[id] = nil
         noteSandboxedHarnesses()
         states[id] = nil
         drafts[id] = nil
@@ -1656,6 +1665,11 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     func terminate() {
         guard isRunning else { return }
         view?.terminate()
+        // SwiftTerm doesn't report the end of a process it was told to
+        // terminate, so the end is recorded here. `processTerminated` ignores
+        // a late report from this view.
+        isRunning = false
+        onTerminate()
     }
 
     /// A font picked after this terminal was launched (Settings > General).

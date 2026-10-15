@@ -23,6 +23,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ### Fixed
+- A session whose Claude has quit shows a Resume button over its terminal, so the Work agent can be restarted from the pane
 - A session's brief names the harness's own `STANDARDS.md` by path, so Claude no longer goes looking for it in other harnesses' folders
 - A PR you've just reviewed from a review tab (Approve, Request Changes or Comment) leaves the Inbox's Ready for your approval and Needs your review sections straight away, instead of waiting for the next refresh
 - A mouse wheel over the Claude Code window's tab bar scrolls the tabs sideways

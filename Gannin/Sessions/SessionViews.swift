@@ -938,6 +938,7 @@ struct SessionTab: View {
             TerminalHost(session: session)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) { askOverlay }
+                .overlay(alignment: .topTrailing) { resumeOverlay }
                 // A planning session takes documents dropped on it,
                 // each confirmed before claude sees it.
                 .dropDestination(for: URL.self) { urls, _ in
@@ -1008,6 +1009,21 @@ struct SessionTab: View {
                     .padding(16)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+        }
+    }
+
+    /// Over a terminal whose claude has quit (leaving its shell, or ended
+    /// too), so it can be started again from the pane. A finished review
+    /// resumes from the Reviews list. A terminal not opened yet is on its way
+    /// to launching, so it has none.
+    @ViewBuilder
+    private var resumeOverlay: some View {
+        let state = sessions.state(session.id)
+        if state == .exited || (state == .stopped && sessions.terminal(session.id) != nil), session.archivedAt == nil {
+            Button("Resume") { sessions.restart(session) }
+                .buttonStyle(.borderedProminent)
+                .padding(12)
+                .help("Start the terminal again, carrying on claude's conversation")
         }
     }
 
