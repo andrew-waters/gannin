@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 1,
+  "effort" : 3,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -45,6 +45,6 @@
   "started_at" : "2026-10-15T15:09:06Z",
   "state" : "OPEN",
   "title" : "Serialise sandbox starts and replace a reviewer whose sandbox failed",
-  "updated_at" : "2026-10-15T15:23:02Z",
+  "updated_at" : "2026-10-15T16:05:42Z",
   "verdict" : "approve"
 }
