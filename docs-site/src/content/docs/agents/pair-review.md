@@ -10,7 +10,7 @@ With pair review, Claude's change is looked at by a second agent before you see 
 ## How it works
 
 1. Claude is told to run a ready-for-review command, with a note, once the change is committed and built and before it marks a PR ready.
-2. Gannin starts a reviewer in the background, inside the session's tab. You can open it with Show Reviewer.
+2. Gannin starts a reviewer in the background, inside the session's tab. You can open it with Show Reviewer. Opening the session's tab from the tab bar, or cycling to it, shows the reviewer instead when it is waiting for an answer.
 3. The reviewer's findings are pasted into Claude's prompt (when it's waiting, else when its turn ends). Claude fixes what it agrees with, says why not for the rest, commits, and runs the command again.
 4. This repeats for up to three rounds. It ends **Settled** when a round finds nothing. At the limit, the last round's findings are still sent.
 

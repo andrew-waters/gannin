@@ -651,7 +651,13 @@ final class SessionStore {
         let shown = displayedTabs
         guard !shown.isEmpty else { return }
         let index = selectedTab.flatMap { shown.firstIndex(of: tabOwner($0)) } ?? 0
-        selectedTab = shown[((index + offset) % shown.count + shown.count) % shown.count]
+        selectedTab = opening(shown[((index + offset) % shown.count + shown.count) % shown.count])
+    }
+
+    /// What opening the tab shows: its reviewer when that is waiting on a
+    /// question or permission prompt, else the tab's own session.
+    func opening(_ tab: UUID) -> UUID {
+        helpers(of: tab).first { $0.isReviewer && SessionQuestionCard.isAsking($0, in: self) }?.id ?? tab
     }
 
     private func saveTabs() {

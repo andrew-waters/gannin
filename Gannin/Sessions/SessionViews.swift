@@ -725,7 +725,7 @@ private struct SessionTabItem: View {
         .onTapGesture {
             sessions.showingOverview = false
             // A helper showing in it stays showing.
-            if !isSelected { sessions.selectedTab = session.id }
+            if !isSelected { sessions.selectedTab = sessions.opening(session.id) }
         }
         .onHover { hovering = $0 }
         .alert("Rename Tab", isPresented: $renaming) {
