@@ -1179,6 +1179,12 @@ final class SessionStore {
         sent[id, default: []].formUnion(keys)
     }
 
+    /// Lets a key be sent again, as when a conflict comes back after being resolved.
+    func forgetSent(_ keys: Set<String>, for id: UUID) {
+        guard !keys.isEmpty else { return }
+        sent[id]?.subtract(keys)
+    }
+
     /// What a hook sent through the terminal: `state:working`, `pr:<url>`,
     /// `changed`.
     private func received(_ signal: String, for id: UUID) {

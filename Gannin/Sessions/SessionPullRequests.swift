@@ -59,6 +59,8 @@ struct SessionPullRequest: Identifiable, Hashable {
     let mergeable: String?
     let checks: [Check]
     let feedback: [Feedback]
+    /// The branch it merges into.
+    var baseRef: String? = nil
 
     var failed: [Check] { checks.filter { $0.state == .failed } }
     var pending: [Check] { checks.filter { $0.state == .pending } }
@@ -106,10 +108,11 @@ enum SessionPrompts {
     }
 
     static func conflicts(_ pr: SessionPullRequest, in session: CodeSession) -> String {
-        """
-        \(pr.repo)#\(pr.number) (\(pr.url.absoluteString)) has conflicts with its base branch.
+        let base = pr.baseRef ?? "its base branch"
+        return """
+        \(pr.repo)#\(pr.number) (\(pr.url.absoluteString)) has conflicts with \(base).
 
-        Fetch origin and bring the base branch into \(worktree(for: pr.repo, in: session)) (rebase, or merge if the branch is shared), resolve the conflicts, run what you can locally, then push, and tell me what you resolved.
+        Fetch origin and bring \(pr.baseRef.map { "`origin/\($0)`" } ?? "the base branch") into \(worktree(for: pr.repo, in: session)): rebase onto it, or merge it in if others share the branch. Resolve the conflicts and run what you can locally. If you rebased, push with `git push --force-with-lease` to this PR's branch only, never to \(base); a merge needs no force. Then tell me what you resolved.
         """
     }
 
@@ -428,7 +431,7 @@ extension GitHubAPI {
               \(lookups)
             }
             fragment SessionPR on PullRequest {
-              id number title url state isDraft reviewDecision mergeable
+              id number title url state isDraft reviewDecision mergeable baseRefName
               author { login }
               repository { nameWithOwner }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 80) { nodes {
@@ -657,6 +660,7 @@ struct SessionRawPullRequest: Decodable {
     let isDraft: Bool?
     let reviewDecision: String?
     let mergeable: String?
+    let baseRefName: String?
     let author: Login?
     let repository: Repository?
     let commits: Connection<CommitNode>?
@@ -709,7 +713,7 @@ struct SessionRawPullRequest: Decodable {
         return SessionPullRequest(
             id: id, number: number, title: title, url: url, repo: repository.nameWithOwner, author: prAuthor, state: state,
             isDraft: isDraft ?? false, reviewDecision: reviewDecision, mergeable: mergeable,
-            checks: checks.sorted { order($0.state) < order($1.state) }, feedback: feedback
+            checks: checks.sorted { order($0.state) < order($1.state) }, feedback: feedback, baseRef: baseRefName
         )
     }
 

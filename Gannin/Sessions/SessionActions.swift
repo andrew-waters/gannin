@@ -388,7 +388,6 @@ extension SessionStore {
         var keys: Set<String> = []
         var failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])] = []
         var said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])] = []
-        var conflicted: [SessionPullRequest] = []
         // What to show for a new item: the latest comment on it from
         // someone other than the author or you, keyed by the item's ID.
         var highlights: [String: SessionPullRequest.Comment] = [:]
@@ -418,20 +417,19 @@ extension SessionStore {
                 highlights[item.id] = theirs
                 newItems.append(item)
             }
-            let conflictKey = "conflicts:\(pr.id)"
-            if pr.mergeable == "CONFLICTING" {
-                keys.insert(conflictKey)
-                if seen?.contains(conflictKey) == false { conflicted.append(pr) }
-            }
             if !newChecks.isEmpty { failed.append((pr, newChecks)) }
             if !newItems.isEmpty { said.append((pr, newItems)) }
         }
+        let conflicts = Self.conflictChanges(in: pullRequests, seen: seen)
+        let conflicted = conflicts.new
+        keys.formUnion(conflicts.keys)
+        forgetSent(conflicts.cleared, for: id)
         // Keys of PRs no longer open are kept: a reopened PR's are still seen.
-        if let seen, keys.isSubset(of: seen) { return }
+        if let seen, keys.isSubset(of: seen), conflicts.cleared.isEmpty { return }
         let outdated = (seen ?? []).filter { key in
             current.contains { key.hasPrefix(SessionPullRequest.Feedback.keyPrefix($0.key)) && key != $0.value }
         }
-        update(id) { $0.pullRequestsSeen = (seen ?? []).subtracting(outdated).union(keys) }
+        update(id) { $0.pullRequestsSeen = (seen ?? []).subtracting(outdated).subtracting(conflicts.cleared).union(keys) }
         guard seen != nil, !failed.isEmpty || !said.isEmpty || !conflicted.isEmpty else { return }
 
         // Each as a title and what was said, one notification for them all.
@@ -456,6 +454,28 @@ extension SessionStore {
         case nil: break
         }
         flag(id, title: title, body: body, replies: false)
+    }
+
+    /// Which open PRs have started to conflict since `seen`, the keys of those
+    /// conflicting now, and the keys of those that merge cleanly again, so a
+    /// conflict that comes back is new. A PR GitHub hasn't worked out yet
+    /// (`UNKNOWN`) changes nothing.
+    nonisolated static func conflictChanges(in pullRequests: [SessionPullRequest], seen: Set<String>?) -> (new: [SessionPullRequest], keys: Set<String>, cleared: Set<String>) {
+        var new: [SessionPullRequest] = []
+        var keys: Set<String> = []
+        var cleared: Set<String> = []
+        for pr in pullRequests where pr.state == "OPEN" {
+            let key = "conflicts:\(pr.id)"
+            switch pr.mergeable {
+            case "CONFLICTING":
+                keys.insert(key)
+                if seen?.contains(key) == false { new.append(pr) }
+            case "MERGEABLE":
+                if seen?.contains(key) == true { cleared.insert(key) }
+            default: break
+            }
+        }
+        return (new, keys, cleared)
     }
 
     /// Whether a login is the PR's own author or the signed-in viewer,

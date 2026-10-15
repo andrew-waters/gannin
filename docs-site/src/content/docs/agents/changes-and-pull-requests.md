@@ -33,6 +33,6 @@ The PRs pane lists the session's pull requests: those Claude opened from the ses
 
 ### New feedback
 
-Gannin notifies you of new failing checks, new review comments from other people, and a PR that starts to conflict with its base branch. It doesn't flag conversation comments or approvals. A conflict is flagged once per PR; GitHub can take a few minutes to report one on a PR just opened.
+Gannin notifies you of new failing checks, new review comments from other people, and a PR that starts to conflict with its base branch. It doesn't flag conversation comments or approvals. A conflict is flagged once each time it starts, and again if it comes back after being resolved; GitHub can take a few minutes to report one on a PR just opened.
 
 Turn on **Send new feedback to Claude** on the pane to paste new failures, feedback and conflicts into the session automatically: straight away if Claude is waiting for you, otherwise when its turn ends. If Claude exits first, it's dropped. The prompt also asks Claude to post a short reply on each review thread it fixed, saying what it changed; threads it disagrees with are left for you. Settings › General › Agent › Ask Claude to reply to review threads turns that off. The default for new sessions is Settings › General › Agent › Send new PR feedback to Claude (off).
