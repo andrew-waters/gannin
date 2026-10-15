@@ -1,0 +1,46 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "REQUEST_CHANGES",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`reveal` now redirects every caller that passes the owner's id, including caller",
+      "key" : "Gannin/Sessions/SessionStore.swift:574:`reveal` now redirects every caller that passes the owner's ",
+      "line" : 574,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-15T08:27:24Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "When the owner and its reviewer are both waiting, this prefers the reviewer and ",
+      "key" : "Gannin/Sessions/SessionStore.swift:664:When the owner and its reviewer are both waiting, this prefe",
+      "line" : 664,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-15T08:27:24Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "This lists the tab bar, cycling and the Agents page, while the CHANGELOG line al",
+      "key" : "docs-site/src/content/docs/agents/pair-review.md:13:This lists the tab bar, cycling and the Agents page, while t",
+      "line" : 13,
+      "path" : "docs-site/src/content/docs/agents/pair-review.md",
+      "posted_at" : "2026-10-15T08:27:24Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 368,
+  "posted_at" : "2026-10-15T08:27:24Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-15T08:25:44Z",
+  "state" : "OPEN",
+  "title" : "Open a tab on its reviewer when the reviewer is waiting for input",
+  "updated_at" : "2026-10-15T08:27:26Z",
+  "verdict" : "request_changes"
+}
