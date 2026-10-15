@@ -14,11 +14,11 @@ files (option 1), not just move the reads off the main actor.
 
 ## Tasks
 
-- [ ] Spike: do a sandboxed session's hook files (mounted from the Mac) raise file events on the Mac? Until checked on a real sandbox, sandboxed sessions keep the two-second poll.
+- [ ] Spike: do a sandboxed session's hook files (mounted from the Mac) raise file events on the Mac? Until checked on a real sandbox, sandboxed sessions keep the one-second poll they had.
 - [x] Spike: SwiftTerm's `LocalProcessTerminalView.rangeChanged` is `open`, so a subclass reports screen changes.
 - [x] `HookFileWatcher`: a watcher on the folder and on each hook file (hooks write with `>`, in place), debounced, with the files read on a detached task and applied on the main actor.
 - [x] `SessionStore`: watchers start with the terminal and stop when it ends or the session is removed.
-- [x] Safety-net poll for local sessions (ten seconds); two seconds for ssh and sandboxed sessions.
+- [x] Safety-net poll for local sessions (ten seconds); two seconds for ssh sessions, one while a sandboxed session runs.
 - [x] Footer mode and permission-prompt scans run only after the screen changes, once a second at most, keeping the two-sightings rule.
 - [x] Tests (Swift Testing): in-place rewrite, file created later, replaced by rename, burst, cancel.
 - [x] Update `.claude/rules/sessions-core.md` and `sessions-store.md`. No `CHANGELOG.md` entry: nothing changes for the person using the app.

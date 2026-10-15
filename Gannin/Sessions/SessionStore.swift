@@ -445,6 +445,7 @@ final class SessionStore {
     @ObservationIgnored var readers: [UUID: TranscriptReader] = [:]
     @ObservationIgnored var transcriptFiles: [UUID: URL] = [:]
     @ObservationIgnored var readingTranscript: Set<UUID> = []
+    @ObservationIgnored private var transcriptWaiters: [UUID: [() -> Void]] = [:]
     /// Each session's PRs, watched in the background so failing checks and
     /// new reviews flag it like a question would.
     var pullRequestInfo: [UUID: [SessionPullRequest]] = [:]
@@ -1001,6 +1002,8 @@ final class SessionStore {
                 directory: session.isRemote || session.harnessPath != nil ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
             )
             self?.watchHooks(id)
+            // Files already on disk raise no event, and the poll may be asleep.
+            self?.refreshLocal(id)
             self?.startPolling()
         }
         // A stop of its sandbox still on its way would land after the start
@@ -1391,7 +1394,12 @@ final class SessionStore {
     /// Reads what's been added to a local session's transcript, off the
     /// main thread.
     private func readLocalTranscript(_ id: UUID, then done: (() -> Void)? = nil) {
-        guard !readingTranscript.contains(id), let session = sessions[id] else { return }
+        guard let session = sessions[id] else { return }
+        guard !readingTranscript.contains(id) else {
+            // Run once the read in flight lands, so a state change waiting on it isn't dropped.
+            if let done { transcriptWaiters[id, default: []].append(done) }
+            return
+        }
         if transcriptFiles[id] == nil {
             // A sandbox's claude keeps its transcripts in the session's claude-home.
             // Helpers share their issue's.
@@ -1417,6 +1425,7 @@ final class SessionStore {
             readingTranscript.remove(id)
             if let (updated, moreToRead) = read, sessions[id] != nil { store(updated, for: id, moreToRead: moreToRead) }
             done?()
+            for waiter in transcriptWaiters.removeValue(forKey: id) ?? [] { waiter() }
         }
     }
 
@@ -1462,22 +1471,22 @@ final class SessionStore {
     /// next time; nil once nothing runs. A server's hook files are read over
     /// the shared ssh connection every two seconds. A sandbox's folder is
     /// mounted from the Mac but isn't known to raise file events, so those
-    /// are read every two seconds too. Other local sessions are read when
+    /// are read every second, as they were. Other local sessions are read when
     /// their files change (`HookFileWatcher`), with this as the safety net.
     private func poll() -> Duration? {
         let running = terminals.filter(\.value.isRunning).compactMap { sessions[$0.key] }
         guard !running.isEmpty else { return nil }
         pollTick += 1
-        let fast = running.contains { $0.isRemote || $0.isSandboxed }
+        let interval = running.contains { $0.isSandboxed } ? 1 : running.contains { $0.isRemote } ? 2 : 10
         for session in running {
             if session.isRemote {
-                readRemote(session)
-            } else if session.isSandboxed || !fast || pollTick % 5 == 0 {
+                if interval > 1 || pollTick % 2 == 0 { readRemote(session) }
+            } else if session.isSandboxed || pollTick % (10 / interval) == 0 {
                 hookWatchers[session.id]?.attach()
                 refreshLocal(session.id)
             }
         }
-        return .seconds(fast ? 2 : 10)
+        return .seconds(interval)
     }
 
     private func watchHooks(_ id: UUID) {
@@ -1561,7 +1570,9 @@ final class SessionStore {
     private func scanScreen(_ id: UUID) {
         guard terminals[id]?.isRunning == true, let session = sessions[id] else { return }
         refreshMode(id)
-        guard !session.isRemote, states[id] == .working, optimisticApprovals[id] == nil, showsPermissionPrompt(id) else {
+        // Also while needsYou: the state file can still read working, and
+        // `apply` keeps it needsYou only while the prompt is seen.
+        guard !session.isRemote, states[id] == .working || states[id] == .needsYou, optimisticApprovals[id] == nil, showsPermissionPrompt(id) else {
             promptSeen.remove(id)
             return
         }
@@ -1706,8 +1717,10 @@ final class OutputReportingTerminalView: LocalProcessTerminalView {
 
     // SwiftTerm calls this on the main queue.
     nonisolated override func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
-        super.rangeChanged(source: source, startY: startY, endY: endY)
-        MainActor.assumeIsolated { onOutput?() }
+        MainActor.assumeIsolated {
+            super.rangeChanged(source: source, startY: startY, endY: endY)
+            onOutput?()
+        }
     }
 }
 
