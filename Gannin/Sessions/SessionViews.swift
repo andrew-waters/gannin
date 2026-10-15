@@ -938,7 +938,7 @@ struct SessionTab: View {
             TerminalHost(session: session)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .overlay(alignment: .bottom) { askOverlay }
-                .overlay { resumeOverlay }
+                .overlay(alignment: .topTrailing) { resumeOverlay }
                 // A planning session takes documents dropped on it,
                 // each confirmed before claude sees it.
                 .dropDestination(for: URL.self) { urls, _ in
@@ -1022,7 +1022,7 @@ struct SessionTab: View {
         if state == .exited || (state == .stopped && sessions.terminal(session.id) != nil), session.archivedAt == nil {
             Button("Resume") { sessions.restart(session) }
                 .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+                .padding(12)
                 .help("Start the terminal again, carrying on claude's conversation")
         }
     }

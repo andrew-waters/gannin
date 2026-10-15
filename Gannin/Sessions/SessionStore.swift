@@ -836,18 +836,10 @@ final class SessionStore {
     }
 
     /// Ends the shell left after claude exited and starts claude again,
-    /// resuming its conversation. The terminal reports its end later, so the
-    /// launch waits for it, as `open` does nothing while one is running.
+    /// resuming its conversation.
     func restart(_ session: CodeSession) {
-        guard let terminal = terminals[session.id], terminal.isRunning else {
-            _ = open(session)
-            return
-        }
-        terminal.terminate()
-        Task {
-            for _ in 0..<50 where terminal.isRunning { try? await Task.sleep(for: .milliseconds(100)) }
-            _ = open(session)
-        }
+        terminals[session.id]?.terminate()
+        _ = open(session)
     }
 
     /// Ends the session and forgets it. The clone and worktree stay on disk.
@@ -1671,6 +1663,11 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     func terminate() {
         guard isRunning else { return }
         view?.terminate()
+        // SwiftTerm doesn't report the end of a process it was told to
+        // terminate, so the end is recorded here. `processTerminated` ignores
+        // a late report from this view.
+        isRunning = false
+        onTerminate()
     }
 
     /// A font picked after this terminal was launched (Settings > General).
