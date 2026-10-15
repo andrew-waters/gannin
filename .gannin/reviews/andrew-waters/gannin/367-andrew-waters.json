@@ -1,7 +1,7 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
-  "event" : "REQUEST_CHANGES",
+  "effort" : 1,
+  "event" : "COMMENT",
   "findings" : [
     {
       "category" : "correctness",
@@ -11,6 +11,7 @@
       "line" : 846,
       "path" : "Gannin/Sessions/SessionStore.swift",
       "posted_at" : "2026-10-15T08:24:12Z",
+      "resolved_at" : "2026-10-15T08:30:57Z",
       "severity" : "blocker"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 848,
       "path" : "Gannin/Sessions/SessionStore.swift",
       "posted_at" : "2026-10-15T08:24:12Z",
+      "resolved_at" : "2026-10-15T08:30:57Z",
       "severity" : "minor"
     },
     {
@@ -31,16 +33,28 @@
       "line" : 1022,
       "path" : "Gannin/Sessions/SessionViews.swift",
       "posted_at" : "2026-10-15T08:24:12Z",
+      "resolved_at" : "2026-10-15T08:30:57Z",
       "severity" : "nit"
+    },
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "Calling `onTerminate()` here also changes `remove(_:)`, which calls `deleteSandb",
+      "key" : "Gannin/Sessions/SessionStore.swift:1670:Calling `onTerminate()` here also changes `remove(_:)`, whic",
+      "line" : 1670,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-15T08:30:54Z",
+      "severity" : "minor"
     }
   ],
   "number" : 367,
-  "posted_at" : "2026-10-15T08:24:12Z",
+  "posted_at" : "2026-10-15T08:30:54Z",
+  "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T08:22:07Z",
   "state" : "OPEN",
   "title" : "Resume button over a session's terminal once claude has quit",
-  "updated_at" : "2026-10-15T08:24:14Z",
-  "verdict" : "request_changes"
+  "updated_at" : "2026-10-15T08:30:57Z",
+  "verdict" : "approve"
 }
