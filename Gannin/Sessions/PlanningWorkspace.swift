@@ -229,12 +229,12 @@ struct PlanningAgreement: Codable, Hashable {
     var parentURL: URL?
     var issues: [URL]
 
-    /// The parent's sub-issues now, so one added after Agree counts; the
-    /// ones Agree recorded when the history doesn't hold the parent.
+    /// The parent's sub-issues now, so one added after Agree counts. Never
+    /// fewer than Agree recorded: the history may not hold every child yet.
     func subIssueCount(in history: IssueHistory?) -> Int {
         guard let parent, let history,
               let record = history.issues.values.first(where: { "\($0.repo)#\($0.number)" == parent }) else { return issues.count }
-        return history.issues.values.filter { $0.parentID == record.id }.count
+        return max(issues.count, history.issues.values.filter { $0.parentID == record.id }.count)
     }
 }
 

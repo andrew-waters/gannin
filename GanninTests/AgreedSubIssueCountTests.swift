@@ -28,6 +28,11 @@ struct AgreedSubIssueCountTests {
         #expect(agreement(issues: 2).subIssueCount(in: live) == 3)
     }
 
+    @Test func neverCountsFewerThanAgreeRecorded() {
+        let live = history([issue(id: "p", number: 1), issue(id: "a", number: 2, parentID: "p")])
+        #expect(agreement(issues: 3).subIssueCount(in: live) == 3)
+    }
+
     @Test func fallsBackToTheRecordedIssuesWithoutHistory() {
         #expect(agreement(issues: 2).subIssueCount(in: nil) == 2)
     }
