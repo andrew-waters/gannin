@@ -26,14 +26,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-15T07:50:28Z",
   "number" : 352,
   "posted_at" : "2026-10-14T23:12:06Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-14T23:10:38Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Treat a session as needing you when claude's permission prompt is on screen",
-  "updated_at" : "2026-10-14T23:45:38Z",
+  "updated_at" : "2026-10-15T07:50:39Z",
   "verdict" : "approve"
 }
