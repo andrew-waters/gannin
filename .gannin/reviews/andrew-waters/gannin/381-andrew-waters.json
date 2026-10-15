@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-15T15:22:28Z",
   "number" : 381,
   "posted_at" : "2026-10-15T14:30:35Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T14:28:48Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Leave out review findings already commented on the same line",
-  "updated_at" : "2026-10-15T14:45:09Z",
+  "updated_at" : "2026-10-15T15:22:47Z",
   "verdict" : "approve"
 }
