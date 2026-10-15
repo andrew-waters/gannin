@@ -1,6 +1,7 @@
 {
   "box" : "Anius",
   "branch" : "295-sandbox-starts-race-when-a-session-and",
+  "finishedAt" : "2026-10-15T17:33:03Z",
   "issue" : "andrew-waters/gannin#295",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/374",
