@@ -51,6 +51,23 @@ struct SessionPromptsTests {
         #expect(!prompt.contains("reply ID"))
     }
 
+    @Test func conflictsPromptNamesThePullRequestAndAsksForAPush() {
+        let prompt = SessionPrompts.conflicts(pullRequest([]), in: session)
+        #expect(prompt.contains("acme/app#7"))
+        #expect(prompt.contains("https://github.com/acme/app/pull/7"))
+        #expect(prompt.contains("push"))
+    }
+
+    @Test func conflictsPromptNamesTheBaseAndLimitsForcePushing() {
+        var pr = pullRequest([])
+        pr.baseRef = "main"
+        let prompt = SessionPrompts.conflicts(pr, in: session)
+        #expect(prompt.contains("remote that points at acme/app"))
+        #expect(prompt.contains("its `main`"))
+        #expect(prompt.contains("--force-with-lease"))
+        #expect(prompt.contains("never to main"))
+    }
+
     @Test func noReplyInstructionWithoutAThread() {
         let review = SessionPullRequest.Feedback(id: "R1", author: "rev", location: nil, verdict: nil, comments: [comment("overall")])
         let prompt = SessionPrompts.feedback([review], on: pullRequest([review]), in: session)

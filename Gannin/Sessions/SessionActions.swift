@@ -420,16 +420,21 @@ extension SessionStore {
             if !newChecks.isEmpty { failed.append((pr, newChecks)) }
             if !newItems.isEmpty { said.append((pr, newItems)) }
         }
+        let conflicts = Self.conflictChanges(in: pullRequests, seen: seen)
+        let conflicted = conflicts.new
+        keys.formUnion(conflicts.keys)
+        forgetSent(conflicts.cleared, for: id)
         // Keys of PRs no longer open are kept: a reopened PR's are still seen.
-        if let seen, keys.isSubset(of: seen) { return }
+        if let seen, keys.isSubset(of: seen), conflicts.cleared.isEmpty { return }
         let outdated = (seen ?? []).filter { key in
             current.contains { key.hasPrefix(SessionPullRequest.Feedback.keyPrefix($0.key)) && key != $0.value }
         }
-        update(id) { $0.pullRequestsSeen = (seen ?? []).subtracting(outdated).union(keys) }
-        guard seen != nil, !failed.isEmpty || !said.isEmpty else { return }
+        update(id) { $0.pullRequestsSeen = (seen ?? []).subtracting(outdated).subtracting(conflicts.cleared).union(keys) }
+        guard seen != nil, !failed.isEmpty || !said.isEmpty || !conflicted.isEmpty else { return }
 
         // Each as a title and what was said, one notification for them all.
         var news = failed.map { ("Checks failed on \($0.pr.repo)#\($0.pr.number)", $0.checks.map(\.name).joined(separator: ", ")) }
+        news += conflicted.map { ("\($0.repo)#\($0.number) has conflicts", "It no longer merges cleanly into its base branch") }
         for (pr, items) in said {
             for item in items {
                 guard let comment = highlights[item.id] else { continue }
@@ -437,8 +442,8 @@ extension SessionStore {
                 news.append(("@\(comment.author) \(what) on \(pr.repo)#\(pr.number)", comment.body))
             }
         }
-        let sent = sendNews(failed: failed, said: said, to: id)
-        let pullRequestCount = Set(failed.map(\.pr.id) + said.map(\.pr.id)).count
+        let sent = sendNews(failed: failed, said: said, conflicted: conflicted, to: id)
+        let pullRequestCount = Set(failed.map(\.pr.id) + said.map(\.pr.id) + conflicted.map(\.id)).count
         let title = news.count == 1 ? news[0].0 : "\(news.count) new on \(pullRequestCount == 1 ? "a pull request" : "\(pullRequestCount) pull requests")"
         var body = news.count == 1
             ? String(news[0].1.prefix(180))
@@ -449,6 +454,28 @@ extension SessionStore {
         case nil: break
         }
         flag(id, title: title, body: body, replies: false)
+    }
+
+    /// Which open PRs have started to conflict since `seen`, the keys of those
+    /// conflicting now, and the keys of those that merge cleanly again, so a
+    /// conflict that comes back is new. A PR GitHub hasn't worked out yet
+    /// (`UNKNOWN`) changes nothing.
+    nonisolated static func conflictChanges(in pullRequests: [SessionPullRequest], seen: Set<String>?) -> (new: [SessionPullRequest], keys: Set<String>, cleared: Set<String>) {
+        var new: [SessionPullRequest] = []
+        var keys: Set<String> = []
+        var cleared: Set<String> = []
+        for pr in pullRequests where pr.state == "OPEN" {
+            let key = "conflicts:\(pr.id)"
+            switch pr.mergeable {
+            case "CONFLICTING":
+                keys.insert(key)
+                if seen?.contains(key) == false { new.append(pr) }
+            case "MERGEABLE":
+                if seen?.contains(key) == true { cleared.insert(key) }
+            default: break
+            }
+        }
+        return (new, keys, cleared)
     }
 
     /// Whether a login is the PR's own author or the signed-in viewer,
@@ -468,25 +495,26 @@ extension SessionStore {
     private func sendNews(
         failed: [(pr: SessionPullRequest, checks: [SessionPullRequest.Check])],
         said: [(pr: SessionPullRequest, items: [SessionPullRequest.Feedback])],
+        conflicted: [SessionPullRequest],
         to id: UUID
     ) -> FeedbackDelivery? {
         guard let session = sessions[id], session.reviewOf == nil, !session.isReviewer,
               sendsFeedback(id), isRunning(id) else { return nil }
-        let prompt = (failed.map { SessionPrompts.failures($0.pr, in: session) }
-            + said.map { SessionPrompts.feedback($0.items, on: $0.pr, in: session) })
-            .joined(separator: "\n\n")
-        let keys = said.flatMap { $0.items.map(\.key) } + failed.map { "checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",") }
+        let parts: [(prompt: String, keys: [String])] = failed.map { (SessionPrompts.failures($0.pr, in: session), ["checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",")]) }
+            + said.map { (SessionPrompts.feedback($0.items, on: $0.pr, in: session), $0.items.map(\.key)) }
+            + conflicted.map { (SessionPrompts.conflicts($0, in: session), ["conflicts:\($0.id)"]) }
+        let prompt = parts.map(\.prompt).joined(separator: "\n\n")
+        let keys = parts.flatMap(\.keys)
         switch state(id) {
         case .idle:
             guard submit(prompt, to: id) else { return nil }
             markSent(keys, for: id)
             return .pasted
         case .starting, .working, .needsYou:
-            let queued = pendingFeedback[id]
-            pendingFeedback[id] = (
-                [queued?.prompt, prompt].compactMap { $0 }.joined(separator: "\n\n"),
-                (queued?.keys ?? []) + keys
-            )
+            // A conflict that cleared and came back while queued is one part, not two.
+            let queued = pendingFeedback[id] ?? []
+            let queuedKeys = Set(queued.flatMap(\.keys))
+            pendingFeedback[id] = queued + parts.filter { $0.keys.allSatisfy { !queuedKeys.contains($0) } }
             return .queued
         default:
             // Claude has exited and left its shell, where a paste would go to bash.
@@ -497,10 +525,11 @@ extension SessionStore {
     /// Feedback queued while claude was busy, now its turn has ended;
     /// left out if it was all sent from the PRs pane meanwhile.
     func sendPendingFeedback(_ id: UUID) {
-        guard let pending = pendingFeedback.removeValue(forKey: id) else { return }
+        guard let queued = pendingFeedback.removeValue(forKey: id) else { return }
         let sent = self.sent[id] ?? []
-        guard !pending.keys.allSatisfy(sent.contains), submit(pending.prompt, to: id) else { return }
-        markSent(pending.keys, for: id)
+        let pending = queued.filter { !$0.keys.allSatisfy(sent.contains) }
+        guard !pending.isEmpty, submit(pending.map(\.prompt).joined(separator: "\n\n"), to: id) else { return }
+        markSent(pending.flatMap(\.keys), for: id)
     }
 
     // MARK: Helpers
