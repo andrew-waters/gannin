@@ -2174,7 +2174,29 @@ struct SessionSidebarRows: View {
         (sessions.reviewDrafts[session.id] ?? session.reviewDraft)?.postedLabel?.text ?? "Posted"
     }
 
+    @ViewBuilder
     private func row(_ session: CodeSession) -> some View {
+        if session.isAsk {
+            rowButton(session).askContextMenu(session)
+        } else if session.isPlanning {
+            rowButton(session).planningContextMenu(session)
+        } else {
+            rowButton(session).contextMenu {
+                if session.archivedAt != nil {
+                    Button("Resume Review") {
+                        sessions.resumeReview(session.id)
+                        sessions.show(session.id, with: openWindow)
+                    }
+                    Button("Remove from History", role: .destructive) { sessions.remove(session.id) }
+                }
+                if let url = session.reviewOf?.url {
+                    Link("Open on GitHub", destination: url)
+                }
+            }
+        }
+    }
+
+    private func rowButton(_ session: CodeSession) -> some View {
         let state = sessions.state(session.id)
         let finished = session.archivedAt != nil
         let posted = (sessions.reviewDrafts[session.id]?.posted ?? session.reviewDraft?.posted) != nil
@@ -2193,18 +2215,6 @@ struct SessionSidebarRows: View {
         }
         .buttonStyle(.plain)
         .badge(Text(finished ? (posted ? postedText(session) : "Done") : posted && !working ? postedText(session) : state.label))
-        .contextMenu {
-            if finished {
-                Button("Resume Review") {
-                    sessions.resumeReview(session.id)
-                    sessions.show(session.id, with: openWindow)
-                }
-                Button("Remove from History", role: .destructive) { sessions.remove(session.id) }
-            }
-            if let url = session.reviewOf?.url {
-                Link("Open on GitHub", destination: url)
-            }
-        }
         .help("\(session.issue.number > 0 ? session.issue.reference + ": " : "")\(state.label)")
     }
 }

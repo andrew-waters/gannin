@@ -17,8 +17,6 @@ struct PlanningPage: View {
     @State private var sort: StatsSort?
     /// Asking before a session is deleted.
     @State private var deleting: CodeSession?
-    /// Its folder couldn't be removed: why, to delete it anyway.
-    @State private var failed: (session: CodeSession, message: String)?
 
     var body: some View {
         let all = sessions.sessions(for: org)
@@ -38,7 +36,7 @@ struct PlanningPage: View {
                     StatsTable(
                         rows: all, columns: columns, sort: $sort, selectedID: nil,
                         onSelect: { sessions.show($0.id, with: openWindow) },
-                        contextMenu: { session in AnyView(menu(session)) }
+                        contextMenu: { session in AnyView(PlanningMenu(session: session) { deleting = session }) }
                     )
                 }
             }
@@ -53,25 +51,7 @@ struct PlanningPage: View {
                 .help("Plan a topic with the team")
             }
         }
-        .confirmationDialog(
-            "Delete \(deleting.map(title) ?? "this planning session")?",
-            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-            presenting: deleting
-        ) { session in
-            Button("Delete", role: .destructive) { delete(session) }
-        } message: { session in
-            Text(deleteMessage(session))
-        }
-        .alert(
-            "Couldn't remove its folder",
-            isPresented: Binding(get: { failed != nil }, set: { if !$0 { failed = nil } }),
-            presenting: failed
-        ) { failed in
-            Button("Delete Anyway", role: .destructive) { sessions.remove(failed.session.id) }
-            Button("Cancel", role: .cancel) {}
-        } message: { failed in
-            Text("\(failed.message) Delete Anyway forgets the session and leaves its folder where it is.")
-        }
+        .deletesPlanning($deleting)
     }
 
     // MARK: Columns
@@ -81,7 +61,7 @@ struct PlanningPage: View {
             StatsColumn(id: "status", title: "Status", help: "Under way, with what Claude is doing, agreed, or finished", width: 150,
                         sortKey: { .text(status($0)) }, cell: { session in AnyView(statusCell(session)) }),
             StatsColumn(id: "topic", title: "Topic", help: "What's being planned, and the issue it's about", minWidth: 260,
-                        sortKey: { .text(title($0)) }, cell: { session in AnyView(topicCell(session)) }),
+                        sortKey: { .text(Self.title($0)) }, cell: { session in AnyView(topicCell(session)) }),
             count("tasks", "Tasks", "Sub-issues proposed, made when the room agrees") { $0.tasks.count },
             count("findings", "Findings", "What was found in the code") { $0.scouting.count },
             count("decisions", "Decisions", "Answers the room settled") { $0.decisions.count },
@@ -128,7 +108,7 @@ struct PlanningPage: View {
 
     private func topicCell(_ session: CodeSession) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title(session)).fontWeight(.medium).lineLimit(1)
+            Text(Self.title(session)).fontWeight(.medium).lineLimit(1)
             if let issue = session.planning?.issue {
                 Text("\(issue.reference): \(issue.title)")
                     .font(.caption)
@@ -152,27 +132,12 @@ struct PlanningPage: View {
         .buttonStyle(.borderless)
         .foregroundStyle(.secondary)
         .help("Delete this planning session")
-        .accessibilityLabel("Delete \(title(session))")
-    }
-
-    @ViewBuilder
-    private func menu(_ session: CodeSession) -> some View {
-        Button("Open") { sessions.show(session.id, with: openWindow) }
-        if let agreed = session.planning?.agreed, let repo = session.harnessRepo {
-            if let path = agreed.planPath, let url = URL(string: "https://github.com/\(repo)/blob/HEAD/\(path)") {
-                Link("Open Plan on GitHub", destination: url)
-            }
-            if let parent = agreed.parentURL {
-                Link("Open \(agreed.parent ?? "Parent Issue")", destination: parent)
-            }
-        }
-        Divider()
-        Button("Delete", role: .destructive) { deleting = session }
+        .accessibilityLabel("Delete \(Self.title(session))")
     }
 
     // MARK: Text
 
-    private func title(_ session: CodeSession) -> String {
+    static func title(_ session: CodeSession) -> String {
         session.planning?.state?.title ?? session.planning?.topic ?? session.title
     }
 
@@ -181,8 +146,40 @@ struct PlanningPage: View {
         guard let agreed = session.planning?.agreed else { return sessions.state(session.id).label }
         return "Agreed \(agreed.at.formatted(date: .abbreviated, time: .omitted))"
     }
+}
 
-    private func deleteMessage(_ session: CodeSession) -> String {
+/// Confirms deleting the planning session in `session` (its folder goes),
+/// offering Delete Anyway when the folder can't be removed.
+private struct DeletePlanningModifier: ViewModifier {
+    @Environment(SessionStore.self) private var sessions
+    @Binding var session: CodeSession?
+    /// Its folder couldn't be removed: why, to delete it anyway.
+    @State private var failed: (session: CodeSession, message: String)?
+
+    func body(content: Content) -> some View {
+        content
+            .confirmationDialog(
+                "Delete \(session.map(PlanningPage.title) ?? "this planning session")?",
+                isPresented: Binding(get: { session != nil }, set: { if !$0 { session = nil } }),
+                presenting: session
+            ) { session in
+                Button("Delete", role: .destructive) { delete(session) }
+            } message: { session in
+                Text(message(session))
+            }
+            .alert(
+                "Couldn't remove its folder",
+                isPresented: Binding(get: { failed != nil }, set: { if !$0 { failed = nil } }),
+                presenting: failed
+            ) { failed in
+                Button("Delete Anyway", role: .destructive) { sessions.remove(failed.session.id) }
+                Button("Cancel", role: .cancel) {}
+            } message: { failed in
+                Text("\(failed.message) Delete Anyway forgets the session and leaves its folder where it is.")
+            }
+    }
+
+    private func message(_ session: CodeSession) -> String {
         var text = "This stops the session and removes its folder, with any documents shared into it\(session.isRemote ? ", on your server" : ""). It can't be undone."
         let madeCount = (session.planning?.madeParent != nil ? 1 : 0) + (session.planning?.madeIssues?.count ?? 0)
         if session.planning?.agreed != nil {
@@ -203,5 +200,51 @@ struct PlanningPage: View {
                 failed = (session, error.localizedDescription)
             }
         }
+    }
+}
+
+extension View {
+    func deletesPlanning(_ session: Binding<CodeSession?>) -> some View {
+        modifier(DeletePlanningModifier(session: session))
+    }
+}
+
+/// A planning session's menu, in Rituals › Planning and the sidebar:
+/// Open, its plan and parent issue on GitHub once agreed, and Delete.
+private struct PlanningMenu: View {
+    @Environment(SessionStore.self) private var sessions
+    @Environment(\.openWindow) private var openWindow
+    let session: CodeSession
+    let delete: () -> Void
+
+    var body: some View {
+        Button("Open") { sessions.show(session.id, with: openWindow) }
+        if let agreed = session.planning?.agreed, let repo = session.harnessRepo {
+            if let path = agreed.planPath, let url = URL(string: "https://github.com/\(repo)/blob/HEAD/\(path)") {
+                Link("Open Plan on GitHub", destination: url)
+            }
+            if let parent = agreed.parentURL {
+                Link("Open \(agreed.parent ?? "Parent Issue")", destination: parent)
+            }
+        }
+        Divider()
+        Button("Delete", role: .destructive, action: delete)
+    }
+}
+
+private struct PlanningContextMenuModifier: ViewModifier {
+    let session: CodeSession
+    @State private var deleting: CodeSession?
+
+    func body(content: Content) -> some View {
+        content
+            .contextMenu { PlanningMenu(session: session) { deleting = session } }
+            .deletesPlanning($deleting)
+    }
+}
+
+extension View {
+    func planningContextMenu(_ session: CodeSession) -> some View {
+        modifier(PlanningContextMenuModifier(session: session))
     }
 }
