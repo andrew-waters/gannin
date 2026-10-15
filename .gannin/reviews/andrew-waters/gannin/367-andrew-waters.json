@@ -1,0 +1,46 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "REQUEST_CHANGES",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "In SwiftTerm 1.20.0, `LocalProcess.terminate()` closes the I/O, sends SIGTERM an",
+      "key" : "Gannin/Sessions/SessionStore.swift:846:In SwiftTerm 1.20.0, `LocalProcess.terminate()` closes the I",
+      "line" : 846,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-15T08:24:12Z",
+      "severity" : "blocker"
+    },
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "If the terminal still reports running after 5 seconds, `open` returns without la",
+      "key" : "Gannin/Sessions/SessionStore.swift:848:If the terminal still reports running after 5 seconds, `open",
+      "line" : 848,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-15T08:24:12Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "A large button centred over the terminal covers the \"Claude Code has exited ... ",
+      "key" : "Gannin/Sessions/SessionViews.swift:1022:A large button centred over the terminal covers the \"Claude ",
+      "line" : 1022,
+      "path" : "Gannin/Sessions/SessionViews.swift",
+      "posted_at" : "2026-10-15T08:24:12Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 367,
+  "posted_at" : "2026-10-15T08:24:12Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-15T08:22:07Z",
+  "state" : "OPEN",
+  "title" : "Resume button over a session's terminal once claude has quit",
+  "updated_at" : "2026-10-15T08:24:14Z",
+  "verdict" : "request_changes"
+}
