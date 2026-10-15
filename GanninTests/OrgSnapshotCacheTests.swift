@@ -7,6 +7,30 @@ struct OrgSnapshotCacheTests {
 
     private func uniqueFolder() -> String { "OrgSnapshotCacheTests-\(UUID().uuidString)" }
 
+    /// This test's own issue store, so none touches the app's.
+    private let issueFolder = "OrgSnapshotCacheTests-issues-\(UUID().uuidString)"
+
+    private func cache(_ directory: URL, _ pullRequests: PullRequestStore) -> OrgSnapshotCache {
+        OrgSnapshotCache(directory: directory, pullRequests: pullRequests, issues: SharedIssueStore(folder: issueFolder))
+    }
+
+    private func issue(_ id: String, updated: Double = 10) -> Gannin.Issue {
+        Gannin.Issue(
+            id: id, number: 3, title: "Issue \(id)", url: URL(string: "https://github.com/acme/api/issues/3")!, repo: "acme/api",
+            author: Person(login: "sam", name: "Sam Jones", avatarUrl: URL(string: "https://example.com/sam.png")),
+            state: "OPEN", createdAt: at(0), updatedAt: at(updated), closedAt: nil,
+            assignees: [Person(login: "kim", name: "Kim", avatarUrl: URL(string: "https://example.com/kim.png"))],
+            labels: [IssueLabel(name: "bug", color: "d73a4a")],
+            linkedPullRequests: [LinkedItem(id: "p1", number: 7, title: "PR", url: URL(string: "https://github.com/acme/api/pull/7")!, repo: "acme/api", state: "OPEN")]
+        )
+    }
+
+    private func snapshot(issues: [Gannin.Issue]) -> OrgSnapshot {
+        var snapshot = snapshot(open: [])
+        snapshot.issues = issues
+        return snapshot
+    }
+
     private func directory() -> URL {
         URL.applicationSupportDirectory.appending(path: uniqueFolder(), directoryHint: .isDirectory)
     }
@@ -56,11 +80,11 @@ struct OrgSnapshotCacheTests {
     @Test func aSavedSnapshotLoadsWithItsPullRequestsInOrderAndHoldsNoneInItsFile() {
         let dir = directory()
         let store = PullRequestStore(folder: uniqueFolder())
-        defer { try? FileManager.default.removeItem(at: dir); store.clear() }
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
         let saved = snapshot(open: [pr("b"), pr("a")], merged: [pr("m", state: "MERGED")])
-        OrgSnapshotCache(directory: dir, pullRequests: store).save(saved)
+        cache(dir, store).save(saved)
 
-        let loaded = OrgSnapshotCache(directory: dir, pullRequests: store).load("acme")
+        let loaded = cache(dir, store).load("acme")
         #expect(loaded?.openPullRequests.map(\.id) == ["b", "a"])
         #expect(loaded?.mergedPullRequests.map(\.id) == ["m"])
         #expect(loaded?.openPullRequests == saved.openPullRequests)
@@ -73,7 +97,7 @@ struct OrgSnapshotCacheTests {
     @Test func aSnapshotFromBeforeTheStoreMovesItsPullRequestsIntoIt() throws {
         let dir = directory()
         let store = PullRequestStore(folder: uniqueFolder())
-        defer { try? FileManager.default.removeItem(at: dir); store.clear() }
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         let open = [pr("a")], merged = [pr("m", state: "MERGED")]
@@ -81,30 +105,30 @@ struct OrgSnapshotCacheTests {
         try encoder.encode(LegacySnapshotFile(fetchedAt: at(30), openPullRequests: open, mergedPullRequests: merged))
             .write(to: dir.appending(path: "acme.json"))
 
-        let loaded = OrgSnapshotCache(directory: dir, pullRequests: store).load("acme")
+        let loaded = cache(dir, store).load("acme")
         #expect(loaded?.openPullRequests == open)
         #expect(loaded?.mergedPullRequests == merged)
         #expect(store.pullRequests(org: "acme")["a"]?.workload != nil)
         #expect(json(dir.appending(path: "acme.json"))["openPullRequests"] == nil)
         // Read again from the rewritten file.
-        #expect(OrgSnapshotCache(directory: dir, pullRequests: store).load("acme")?.openPullRequests == open)
+        #expect(cache(dir, store).load("acme")?.openPullRequests == open)
     }
 
     @Test func aSnapshotWhoseStoreWasClearedIsDropped() {
         let dir = directory()
         let folder = uniqueFolder()
         let store = PullRequestStore(folder: folder)
-        defer { try? FileManager.default.removeItem(at: dir); store.clear() }
-        OrgSnapshotCache(directory: dir, pullRequests: store).save(snapshot(open: [pr("a")]))
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        cache(dir, store).save(snapshot(open: [pr("a")]))
         store.clear()
-        #expect(OrgSnapshotCache(directory: dir, pullRequests: PullRequestStore(folder: folder)).load("acme") == nil)
+        #expect(cache(dir, PullRequestStore(folder: folder)).load("acme") == nil)
     }
 
     @Test func aPullRequestThatLeavesTheSnapshotLosesOnlyTheWorkloadsPart() {
         let dir = directory()
         let store = PullRequestStore(folder: uniqueFolder())
-        defer { try? FileManager.default.removeItem(at: dir); store.clear() }
-        let cache = OrgSnapshotCache(directory: dir, pullRequests: store)
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let cache = cache(dir, store)
         cache.save(snapshot(open: [pr("a"), pr("b")]))
         var withMetrics = store.pullRequests(org: "acme")["a"]!
         withMetrics.metrics = MetricsExtras(updatedAt: nil, firstCommitAt: nil, readyAt: nil, reviews: [], reviewRequests: [])
@@ -120,8 +144,8 @@ struct OrgSnapshotCacheTests {
     @Test func aFetchAtTheSameUpdatedAtReplacesTheHeldChecks() {
         let dir = directory()
         let store = PullRequestStore(folder: uniqueFolder())
-        defer { try? FileManager.default.removeItem(at: dir); store.clear() }
-        let cache = OrgSnapshotCache(directory: dir, pullRequests: store)
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let cache = cache(dir, store)
         cache.save(snapshot(open: [pr("a", checks: .pending)]))
         cache.save(snapshot(open: [pr("a", checks: .success)]))
         #expect(store.pullRequests(org: "acme")["a"]?.workloadPullRequest?.checks == .success)
@@ -131,8 +155,8 @@ struct OrgSnapshotCacheTests {
         let dir = directory()
         let folder = uniqueFolder()
         let store = PullRequestStore(folder: folder)
-        defer { try? FileManager.default.removeItem(at: dir); store.clear() }
-        let cache = OrgSnapshotCache(directory: dir, pullRequests: store)
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let cache = cache(dir, store)
         var changed = pr("a")
         cache.save(snapshot(open: [changed]))
         changed.requestedReviewers.append(Person(login: "new", name: nil, avatarUrl: nil))
@@ -148,8 +172,8 @@ struct OrgSnapshotCacheTests {
     @Test func clearingTheSnapshotsKeepsWhatTheOtherStoresFetched() {
         let dir = directory()
         let store = PullRequestStore(folder: uniqueFolder())
-        defer { try? FileManager.default.removeItem(at: dir); store.clear() }
-        let cache = OrgSnapshotCache(directory: dir, pullRequests: store)
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let cache = cache(dir, store)
         cache.save(snapshot(open: [pr("a")]))
         var shared = store.pullRequests(org: "acme")["a"]!
         shared.workLog = WorkLogExtras(updatedAt: nil, closedAt: nil, mergedBy: nil, commits: [], reviews: [], isDraft: nil, closingIssues: [])
@@ -159,5 +183,109 @@ struct OrgSnapshotCacheTests {
         #expect(cache.load("acme") == nil)
         #expect(store.pullRequests(org: "acme")["a"]?.workLog != nil)
         #expect(store.pullRequests(org: "acme")["a"]?.workload == nil)
+    }
+
+    // MARK: Issues
+
+    @Test func everyWorkloadFieldOfAnIssueRoundTripsThroughTheStore() {
+        let original = issue("a")
+        #expect(StoredIssue(workload: original).workloadIssue == original)
+    }
+
+    @Test func aSavedSnapshotLoadsItsIssuesInOrderAndHoldsNoneInItsFile() {
+        let dir = directory()
+        let store = PullRequestStore(folder: uniqueFolder())
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let saved = snapshot(issues: [issue("b"), issue("a")])
+        cache(dir, store).save(saved)
+
+        let loaded = cache(dir, store).load("acme")
+        #expect(loaded?.issues == saved.issues)
+        #expect(json(dir.appending(path: "acme.json"))["issues"] == nil)
+        #expect(json(dir.appending(path: "acme.json"))["storedIssueIDs"] as? [String] == ["b", "a"])
+    }
+
+    @Test func aSnapshotFromBeforeTheStoreMovesItsIssuesIntoIt() throws {
+        let dir = directory()
+        let store = PullRequestStore(folder: uniqueFolder())
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let issues = [issue("a"), issue("b")]
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try encoder.encode(LegacySnapshotFile(fetchedAt: at(30), openPullRequests: [], mergedPullRequests: [], issues: issues))
+            .write(to: dir.appending(path: "acme.json"))
+
+        let issueStore = SharedIssueStore(folder: issueFolder)
+        #expect(cache(dir, store).load("acme")?.issues == issues)
+        #expect(issueStore.issues(org: "acme")["a"]?.workload != nil)
+        #expect(json(dir.appending(path: "acme.json"))["issues"] == nil)
+        #expect(cache(dir, store).load("acme")?.issues == issues)
+    }
+
+    @Test func aSnapshotWhoseIssueStoreWasClearedIsDropped() {
+        let dir = directory()
+        let store = PullRequestStore(folder: uniqueFolder())
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        cache(dir, store).save(snapshot(issues: [issue("a")]))
+        SharedIssueStore(folder: issueFolder).clear()
+        #expect(cache(dir, store).load("acme") == nil)
+    }
+
+    @Test func anIssueTheHistorySawClosedIsLeftOutOfTheWorkloadNotTreatedAsMissing() {
+        let dir = directory()
+        let store = PullRequestStore(folder: uniqueFolder())
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        cache(dir, store).save(snapshot(issues: [issue("a"), issue("b")]))
+
+        let issues = SharedIssueStore(folder: issueFolder)
+        var closed = issues.issues(org: "acme")["a"]!
+        closed.core = IssueCore(
+            id: "a", number: 3, title: "Issue a", url: closed.core.url, repo: "acme/api", author: closed.core.author,
+            createdAt: at(0), closedAt: at(50), updatedAt: at(60), assignees: closed.core.assignees, labels: closed.core.labels
+        )
+        issues.merge([closed], org: "acme")
+
+        #expect(cache(dir, store).load("acme")?.issues.map(\.id) == ["b"])
+    }
+
+    @Test func anIssueThatLeavesTheSnapshotLosesOnlyTheWorkloadsPart() {
+        let dir = directory()
+        let store = PullRequestStore(folder: uniqueFolder())
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let issues = SharedIssueStore(folder: issueFolder)
+        let c = OrgSnapshotCache(directory: dir, pullRequests: store, issues: issues)
+        c.save(snapshot(issues: [issue("a"), issue("b")]))
+        var withHistory = issues.issues(org: "acme")["a"]!
+        withHistory.history = HistoryIssueExtras(
+            updatedAt: at(10), issueType: nil, milestone: nil, parentID: nil, stateReason: nil, statusChanges: [], assignedAt: [],
+            reopenedAt: [], subIssuesAddedAt: [], linkedPullRequests: [], mentionedInPullRequests: nil, projectFields: []
+        )
+        issues.merge([withHistory], org: "acme")
+
+        c.save(snapshot(issues: []))
+        let held = issues.issues(org: "acme")
+        #expect(held["a"]?.workload == nil)
+        #expect(held["a"]?.history != nil)
+        #expect(held["b"] == nil)
+    }
+
+    @Test func anIssueCarriedOverUnchangedDoesNotUndoALabelEditMadeSinceTheLastFetch() {
+        let dir = directory()
+        let store = PullRequestStore(folder: uniqueFolder())
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let issues = SharedIssueStore(folder: issueFolder)
+        let c = OrgSnapshotCache(directory: dir, pullRequests: store, issues: issues)
+        let carried = snapshot(issues: [issue("a")])
+        c.save(carried)
+        issues.update("a", org: "acme") { $0.setLabels(["bug", "edited"]) }
+
+        // A changes-only refresh that didn't fetch the issue saves it as it was.
+        c.save(carried)
+        #expect(issues.issues(org: "acme")["a"]?.core.labels.map(\.name) == ["bug", "edited"])
+
+        // One that fetched it at a new updatedAt replaces the edit.
+        c.save(snapshot(issues: [issue("a", updated: 20)]))
+        #expect(issues.issues(org: "acme")["a"]?.core.labels.map(\.name) == ["bug"])
     }
 }

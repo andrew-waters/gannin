@@ -161,7 +161,9 @@ struct OrgSnapshot: Codable {
     /// their IDs (`storedOpenIDs`, `storedMergedIDs`) in order instead.
     var openPullRequests: [PullRequest] = []
     var mergedPullRequests: [PullRequest] = []
-    let issues: [Issue]
+    /// Kept in `SharedIssueStore`, not in the snapshot's own file, which lists
+    /// their IDs (`storedIssueIDs`) in order instead.
+    var issues: [Issue] = []
     /// Outside repos (`OrgConfig.outsideRepos`) that have stopped being
     /// readable, by `owner/name`: GitHub's reason, or that it's been
     /// renamed and where to. Left out of searches; their last items stay,
@@ -180,10 +182,17 @@ struct OrgSnapshot: Codable {
     /// The PRs' IDs as saved, set only on the copy that's written to disk.
     var storedOpenIDs: [String]?
     var storedMergedIDs: [String]?
+    var storedIssueIDs: [String]?
 
     enum CodingKeys: String, CodingKey {
-        case orgLogin, fetchedAt, peopleFetchedAt, fullFetchedAt, lookbackDays, members, teams, issues
-        case unreadableRepos, outsideReposFetched, warnings, storedOpenIDs, storedMergedIDs
+        case orgLogin, fetchedAt, peopleFetchedAt, fullFetchedAt, lookbackDays, members, teams
+        case unreadableRepos, outsideReposFetched, warnings, storedOpenIDs, storedMergedIDs, storedIssueIDs
+    }
+
+    /// The snapshot before open issues moved to `SharedIssueStore`, whose
+    /// file still holds them; a file without them isn't one.
+    struct LegacyIssues: Decodable {
+        var issues: [Issue]
     }
 
     /// The snapshot before PRs moved to `PullRequestStore`, whose file still

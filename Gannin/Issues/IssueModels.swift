@@ -127,11 +127,25 @@ struct IssueHistory: Codable {
     /// changes don't touch an issue's `updatedAt`, so a changes search misses
     /// them; open issues are refetched in full now and then instead.
     var openFetchedAt: Date
-    var issues: [String: IssueRecord]
+    /// Kept in `SharedIssueStore`, not in the history's own file, which lists
+    /// their IDs (`storedIDs`) instead.
+    var issues: [String: IssueRecord] = [:]
     /// Outside repos (`OrgConfig.outsideRepos`) with a full backfill to
     /// build a changes search on; nil for none, or for a cache from before
     /// outside repos were covered (andrew-waters/gannin#205).
     var outsideReposFetched: Set<String>?
+    /// The issues' IDs as saved, set only on the copy that's written to disk.
+    var storedIDs: [String]?
+
+    enum CodingKeys: String, CodingKey {
+        case version, orgLogin, coveredFrom, syncedAt, openFetchedAt, outsideReposFetched, storedIDs
+    }
+
+    /// The history before issues moved to `SharedIssueStore`, whose file
+    /// still holds them; a file without them isn't one.
+    struct Legacy: Decodable {
+        var issues: [String: IssueRecord]
+    }
 }
 
 /// How an org's issues move through its board, for cycle time.

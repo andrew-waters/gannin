@@ -35,6 +35,13 @@ paths:
 - Each slot records the `updatedAt` it was fetched at (`MetricsExtras.updatedAt`); a store's skip check reads that, never `core.updatedAt`, which is the newest any store saw and would hide a stale slot from the store that holds it.
 - A PR carried over from an old cache has no `updatedAt`; it is fetched again once when the feed reports it changed. Don't invent one.
 
+## Shared issue store
+- Issues live in `SharedIssueStore` (core fields plus a workload slot and a history slot), written through `merge` and changed through `IssueStore`'s `record*` methods, never kept in `OrgSnapshot`'s or `IssueHistory`'s own file: a copy beside it can drift from the one `updatedAt` is compared against. Both files list issue IDs (`storedIssueIDs`, `storedIDs`); load them through `OrgSnapshotCache` and `IssueStore.loadCached`, never by decoding them, or their issues come back empty.
+- Write a board field or label edit through `IssueEdits`, which changes the issue and every cached board together. Calling `IssueStore` and `ProjectStore` separately lets one miss the other.
+- Each slot records the `updatedAt` it was fetched at; a store's skip check reads that, never `core.updatedAt`. The core merges field by field, and a label or person from a fetch that reads names only keeps the colour or avatar another fetch saved.
+- Only a label edit writes `core.labels`; other local edits write the history slot alone, because the history's in-memory record can be older than a core the workload has refreshed. `OrgSnapshotCache.save` merges only issues whose workload part differs from the held one, so an issue a changes-only refresh carried over can't undo a label edit.
+- Clear a store's own part with `clear(_ slot:)`, never the whole store. The workload leaves out an issue the history has since seen closed, so a closed issue is not a missing one.
+
 ## Sync settings
 - Read intervals through `SyncSettings.isOn` / `interval` / `isDue`, never fixed ages. Keys `sync.<source>.off` and `sync.<source>.interval` are stored; don't rename them.
 - Off means not fetched at all, Refresh included. Sources that can't be off (workload, harness) only space out. A page whose source is off must show `.syncOffNotice`.
@@ -48,4 +55,4 @@ paths:
 - The app has no entitlements beyond hardened runtime and isn't sandboxed (sessions run git, gh and claude as the user).
 
 ## Testing
-- `ChangeFeedTests` covers the feed's plan, merging, what the workload snapshot takes from it and `ChangeFeeds`' sharing of a run (with a stubbed search); `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests`, `PullRequestStoreTests`, `PullRequestMigrationTests`, `OrgSnapshotCacheTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.
+- `ChangeFeedTests` covers the feed's plan, merging, what the workload snapshot takes from it and `ChangeFeeds`' sharing of a run (with a stubbed search); `RequestLimiterTests`, `BudgetGateTests`, `ParallelSearchesTests`, `MergedSearchTests`, `OrgJSONCacheTests`, `PullRequestStoreTests`, `PullRequestMigrationTests`, `OrgSnapshotCacheTests`, `SharedIssueStoreTests` cover limiting, budget gating and search/cache handling. Auth and sync settings have none; check by hand.
