@@ -24,7 +24,7 @@ The exceptions, each one you turn on yourself:
 
 - **Post automatic reviews** (Settings › General) posts the reviews Gannin starts by itself as comments, and resolves the threads they say are dealt with. They never approve or request changes.
 - **Don't ask again** on recording a session commits its record to the harness without asking, for that project. Org settings › Harness undoes it.
-- **Routines** that work on an issue commit its session record without asking: scheduling it is the consent.
+- **Routines** that work on an issue commit its session record without asking: scheduling it is the consent. Switch off Record queued sessions in Settings › Harness to stop it, for that project.
 
 Agent sessions run Claude Code as you, so what a session does on GitHub (pushing a branch, opening a pull request) is done with your own git and gh login. Routines' limits say how far an unattended session may go.
 

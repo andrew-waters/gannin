@@ -2423,7 +2423,7 @@ struct HarnessCheckoutSection: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Toggle("Record queued sessions", isOn: Binding(get: { SessionStore.recordsQueuedSessions(repo: repo) }, set: { SessionStore.setRecordsQueuedSessions($0, repo: repo) }))
-            Text("Whether a session started from the agent queue or a pin commits its brief and session.json to the harness. Off, it starts without committing anything.")
+            Text("Whether a session started from the agent queue or a pin commits its brief and session.json to the harness. Off, it starts without committing its brief or session.json to the harness.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if showsReviewRequests {
