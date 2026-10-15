@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 4,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`applyEdits` copies `record.labels` into `core.labels` on every edit, including ",
+      "key" : "Gannin/Sync/SharedIssueStore.swift:285:`applyEdits` copies `record.labels` into `core.labels` on ev",
+      "line" : 285,
+      "path" : "Gannin/Sync/SharedIssueStore.swift",
+      "posted_at" : "2026-10-15T00:10:42Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "A changes-only refresh carries `previous.issues` over unchanged, and `save` merg",
+      "key" : "Gannin/Workload/OrgSnapshotCache.swift:52:A changes-only refresh carries `previous.issues` over unchan",
+      "line" : 52,
+      "path" : "Gannin/Workload/OrgSnapshotCache.swift",
+      "posted_at" : "2026-10-15T00:10:42Z",
+      "severity" : "minor"
+    }
+  ],
+  "number" : 361,
+  "posted_at" : "2026-10-15T00:10:42Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-15T00:07:48Z",
+  "state" : "OPEN",
+  "title" : "Keep one copy of open issues on disk",
+  "updated_at" : "2026-10-15T00:10:43Z",
+  "verdict" : "request_changes"
+}
