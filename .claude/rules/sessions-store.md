@@ -15,7 +15,7 @@ paths:
 - `start.sh` pulls the harness with `git pull --ff-only` and must warn, not fail, when that can't happen. It keeps `projects/` and `.worktrees/` in `info/exclude`, copies brief and settings to `.worktrees/<branch>/.gannin/`, then runs `claude --session-id` (`--resume` once it has had a prompt) in the harness root.
 - Strip inherited `CLAUDE_CODE_*` variables when starting claude.
 - Find a harness checkout by its origin's whole repo name, so `gannin` never matches a clone of `gannin-legacy`. The setting is `sessionsHarnessPath.<org>`, keyed per harness by `SessionStore.harnessPathKey`.
-- Hooks run with no terminal, so `SessionStore.poll` (and `readRemote` over ssh) reads the files they write; don't depend on OSC 7777 arriving.
+- Hooks run with no terminal, so `HookFileWatcher` (with `SessionStore.poll` as its safety net) and `readRemote` over ssh read the files they write; don't depend on OSC 7777 arriving.
 - A server session packs script, brief and settings into one command (`SessionScript.remoteCommand`).
 - Never handle claude's login; it runs as the user.
 - Keep team prompts, if picked, in `CodeSession.instructions` appended to the first prompt (`SessionScript.firstPrompt`). A review keeps its JSON ending.
