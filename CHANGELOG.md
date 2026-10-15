@@ -10,7 +10,6 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
-
 - Right-clicking an Ask or Planning session in the sidebar offers the same menu as its list: Open, Rename, Show in Finder and Delete for an Ask; Open and Delete for a plan.
 - Screenshots of Gannin on gannin.ai, in the docs (Dashboard and PR flow, Issues and Pull Requests, Work on This) and in the README, in light and dark, taken from a demo build on invented data
 - Feedback sent to a session's Claude, automatically or from the PRs pane, now asks it to post a short reply on each review thread it fixed, saying what it changed, unless Settings › General › Agent › Ask Claude to reply to review threads is off
