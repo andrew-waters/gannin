@@ -155,4 +155,37 @@ struct SessionTabGroupsTests {
         defaults.set([r1, w1, r2, w2].map(\.id.uuidString), forKey: SessionStore.tabsKey)
         #expect(store().tabs == [w1.id, w2.id, r1.id, r2.id])
     }
+
+    @Test func openingShowsTheReviewerOnlyWhileItIsAsking() {
+        defer { clean() }
+        let live = store()
+        let owner = work(1)
+        var reviewer = work(1, parent: owner.id)
+        reviewer.isReviewer = true
+        var tester = work(1, parent: owner.id)
+        tester.role = "Tests"
+        live.add(owner)
+        #expect(live.opening(owner.id) { _ in true } == owner.id)
+        live.add(tester)
+        #expect(live.opening(owner.id) { _ in true } == owner.id)
+        live.add(reviewer)
+        #expect(live.opening(owner.id) { _ in false } == owner.id)
+        #expect(live.opening(owner.id) { $0.id == reviewer.id } == reviewer.id)
+        #expect(live.opening(owner.id) { $0.id == reviewer.id || $0.id == owner.id } == owner.id)
+    }
+
+    @Test func revealingTheOwnerShowsItsAskingReviewerButAHelperIdIsKept() {
+        defer { clean() }
+        let live = store()
+        let owner = work(1)
+        var reviewer = work(1, parent: owner.id)
+        reviewer.isReviewer = true
+        live.add(owner)
+        live.add(reviewer)
+        // Nothing is running, so nothing is asking: the owner shows.
+        live.reveal(owner.id)
+        #expect(live.selectedTab == owner.id)
+        live.reveal(reviewer.id)
+        #expect(live.selectedTab == reviewer.id)
+    }
 }

@@ -725,7 +725,7 @@ private struct SessionTabItem: View {
         .onTapGesture {
             sessions.showingOverview = false
             // A helper showing in it stays showing.
-            if !isSelected { sessions.selectedTab = session.id }
+            if !isSelected { sessions.selectedTab = sessions.opening(session.id) }
         }
         .onHover { hovering = $0 }
         .alert("Rename Tab", isPresented: $renaming) {
@@ -1726,7 +1726,7 @@ private struct HelperParentSection: View {
                         Button("Open Issue") { openWindow(value: session.issue) }
                     }
                     if let parent {
-                        Button("Show Session") { sessions.reveal(parent.id) }
+                        Button("Show Session") { sessions.selectedTab = parent.id }
                             .help("The working session, with the issue, its plans and its PRs")
                     }
                 }
