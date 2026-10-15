@@ -454,9 +454,9 @@ final class SessionStore {
     /// What to tell claude once it has started (a review asked to look
     /// again while it wasn't running).
     @ObservationIgnored var pendingPrompts: [UUID: String] = [:]
-    /// New PR feedback waiting for claude's turn to end, with the keys to
-    /// mark sent once it's pasted. Dropped if claude exits first.
-    @ObservationIgnored var pendingFeedback: [UUID: (prompt: String, keys: [String])] = [:]
+    /// New PR feedback waiting for claude's turn to end, each part with the keys
+    /// to mark sent once it's pasted. Dropped if claude exits first.
+    @ObservationIgnored var pendingFeedback: [UUID: [(prompt: String, keys: [String])]] = [:]
     /// What happened on reviewed PRs, for the Inbox's catch-up.
     let activity = ReviewActivity()
     /// Routines and their runs, for naming and watching scheduled runs
@@ -1179,10 +1179,14 @@ final class SessionStore {
         sent[id, default: []].formUnion(keys)
     }
 
-    /// Lets a key be sent again, as when a conflict comes back after being resolved.
+    /// Lets a key be sent again, as when a conflict comes back after being resolved, and drops it from what's queued.
     func forgetSent(_ keys: Set<String>, for id: UUID) {
         guard !keys.isEmpty else { return }
         sent[id]?.subtract(keys)
+        // Nor is it still to be said if it was queued behind claude's turn.
+        guard let queued = pendingFeedback[id] else { return }
+        let kept = queued.filter { part in !part.keys.contains(where: keys.contains) }
+        pendingFeedback[id] = kept.isEmpty ? nil : kept
     }
 
     /// What a hook sent through the terminal: `state:working`, `pr:<url>`,

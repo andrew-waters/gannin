@@ -500,22 +500,21 @@ extension SessionStore {
     ) -> FeedbackDelivery? {
         guard let session = sessions[id], session.reviewOf == nil, !session.isReviewer,
               sendsFeedback(id), isRunning(id) else { return nil }
-        let prompt = (failed.map { SessionPrompts.failures($0.pr, in: session) }
-            + said.map { SessionPrompts.feedback($0.items, on: $0.pr, in: session) }
-            + conflicted.map { SessionPrompts.conflicts($0, in: session) })
-            .joined(separator: "\n\n")
-        let keys = said.flatMap { $0.items.map(\.key) } + failed.map { "checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",") } + conflicted.map { "conflicts:\($0.id)" }
+        let parts: [(prompt: String, keys: [String])] = failed.map { (SessionPrompts.failures($0.pr, in: session), ["checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",")]) }
+            + said.map { (SessionPrompts.feedback($0.items, on: $0.pr, in: session), $0.items.map(\.key)) }
+            + conflicted.map { (SessionPrompts.conflicts($0, in: session), ["conflicts:\($0.id)"]) }
+        let prompt = parts.map(\.prompt).joined(separator: "\n\n")
+        let keys = parts.flatMap(\.keys)
         switch state(id) {
         case .idle:
             guard submit(prompt, to: id) else { return nil }
             markSent(keys, for: id)
             return .pasted
         case .starting, .working, .needsYou:
-            let queued = pendingFeedback[id]
-            pendingFeedback[id] = (
-                [queued?.prompt, prompt].compactMap { $0 }.joined(separator: "\n\n"),
-                (queued?.keys ?? []) + keys
-            )
+            // A conflict that cleared and came back while queued is one part, not two.
+            let queued = pendingFeedback[id] ?? []
+            let queuedKeys = Set(queued.flatMap(\.keys))
+            pendingFeedback[id] = queued + parts.filter { $0.keys.allSatisfy { !queuedKeys.contains($0) } }
             return .queued
         default:
             // Claude has exited and left its shell, where a paste would go to bash.
@@ -526,10 +525,11 @@ extension SessionStore {
     /// Feedback queued while claude was busy, now its turn has ended;
     /// left out if it was all sent from the PRs pane meanwhile.
     func sendPendingFeedback(_ id: UUID) {
-        guard let pending = pendingFeedback.removeValue(forKey: id) else { return }
+        guard let queued = pendingFeedback.removeValue(forKey: id) else { return }
         let sent = self.sent[id] ?? []
-        guard !pending.keys.allSatisfy(sent.contains), submit(pending.prompt, to: id) else { return }
-        markSent(pending.keys, for: id)
+        let pending = queued.filter { !$0.keys.allSatisfy(sent.contains) }
+        guard !pending.isEmpty, submit(pending.map(\.prompt).joined(separator: "\n\n"), to: id) else { return }
+        markSent(pending.flatMap(\.keys), for: id)
     }
 
     // MARK: Helpers

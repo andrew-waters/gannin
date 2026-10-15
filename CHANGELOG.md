@@ -10,7 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
-- A session's PR that starts to conflict with its base branch is now flagged, and with Send new feedback to Claude on, sent to the session's Claude when it is idle, asking it to rebase and push
+- A session's PR that starts to conflict with its base branch is now flagged, and with Send new feedback to Claude on, sent to the session's Claude, asking it to bring in the base branch and push.
 - Right-clicking an Ask or Planning session in the sidebar offers the same menu as its list: Open, Rename, Show in Finder and Delete for an Ask; Open and Delete for a plan, plus links to its plan and parent issue once agreed.
 - Screenshots of Gannin on gannin.ai, in the docs (Dashboard and PR flow, Issues and Pull Requests, Work on This) and in the README, in light and dark, taken from a demo build on invented data
 - Feedback sent to a session's Claude, automatically or from the PRs pane, now asks it to post a short reply on each review thread it fixed, saying what it changed, unless Settings › General › Agent › Ask Claude to reply to review threads is off

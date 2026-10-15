@@ -112,7 +112,7 @@ enum SessionPrompts {
         return """
         \(pr.repo)#\(pr.number) (\(pr.url.absoluteString)) has conflicts with \(base).
 
-        Fetch origin and bring \(pr.baseRef.map { "`origin/\($0)`" } ?? "the base branch") into \(worktree(for: pr.repo, in: session)): rebase onto it, or merge it in if others share the branch. Resolve the conflicts and run what you can locally. If you rebased, push with `git push --force-with-lease` to this PR's branch only, never to \(base); a merge needs no force. Then tell me what you resolved.
+        Fetch the remote that points at \(pr.repo) (origin, or upstream if the branch is from a fork; check `git remote -v`) and bring \(pr.baseRef.map { "its `\($0)`" } ?? "the base branch") into \(worktree(for: pr.repo, in: session)): rebase onto it, or merge it in if others share the branch. Resolve the conflicts and run what you can locally. If you rebased, push with `git push --force-with-lease` to this PR's branch only, never to \(base); a merge needs no force. Then tell me what you resolved.
         """
     }
 
