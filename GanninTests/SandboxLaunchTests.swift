@@ -364,8 +364,20 @@ struct SandboxLaunchTests {
         try FileManager.default.createSymbolicLink(atPath: dir.appending(path: SandboxLaunch.lockName).path, withDestinationPath: "99999999")
         // Each waiter finds it dead; if two both cleared it, two would be in at once.
         #expect(try runLocked(6, in: dir) == Array(repeating: ["in", "out"], count: 6).flatMap { $0 })
-        let left = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.contains("stale") }
+        let left = try FileManager.default.contentsOfDirectory(atPath: dir.path).filter { $0.contains("clearing") }
         #expect(left.isEmpty)
+    }
+
+    @Test func releasingLeavesAnotherStartsLockAlone() throws {
+        let dir = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let lock = dir.appending(path: SandboxLaunch.lockName).path
+        // This start thinks it holds the lock, but it names another's.
+        try FileManager.default.createSymbolicLink(atPath: lock, withDestinationPath: "12345")
+        let script = "\(try lockScript().release)\nlock=\(SessionScript.quoted(lock)); locked=1; sandbox_unlock"
+        #expect(Shell.run(script, .local).ok)
+        #expect(try FileManager.default.destinationOfSymbolicLink(atPath: lock) == "12345")
     }
 
     @Test func theRunningCheckIsMadeOnceItsYourTurn() {

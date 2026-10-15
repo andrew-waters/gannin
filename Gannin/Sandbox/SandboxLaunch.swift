@@ -56,7 +56,8 @@ enum SandboxLaunch {
             # fail and the final exec replace this shell, so no EXIT trap would
             # run to release the lock.
             sandbox_unlock() {
-              [ -z "${locked:-}" ] || rm -f "$lock"
+              # Only a lock that's still this start's.
+              [ -z "${locked:-}" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$$" ] || rm -f "$lock"
               locked=
             }
             sandbox_failed() {
@@ -119,14 +120,16 @@ enum SandboxLaunch {
             until ln -s "$$" "$lock" 2>/dev/null; do
               owner=$(readlink "$lock" 2>/dev/null || true)
               if [ -n "$owner" ] && ! kill -0 "$owner" 2>/dev/null; then
-                # Only one waiter can rename it away. If what it moved is
-                # another's new lock rather than the dead one, put that back.
-                if mv "$lock" "$lock.stale.$$" 2>/dev/null; then
-                  moved=$(readlink "$lock.stale.$$" 2>/dev/null || true)
-                  [ "$moved" = "$owner" ] || ln -s "$moved" "$lock" 2>/dev/null || true
-                  rm -f "$lock.stale.$$"
+                # Clearing it is taken in turns too, and the owner read again
+                # once it's this start's turn: nothing else removes a live
+                # lock, so what still names the dead owner is safe to remove.
+                if ln -s "$$" "$lock.clearing" 2>/dev/null; then
+                  [ "$(readlink "$lock" 2>/dev/null)" != "$owner" ] || rm -f "$lock"
+                  rm -f "$lock.clearing"
+                  continue
                 fi
-                continue
+                clearer=$(readlink "$lock.clearing" 2>/dev/null || true)
+                if [ -n "$clearer" ] && ! kill -0 "$clearer" 2>/dev/null; then rm -f "$lock.clearing"; continue; fi
               fi
               [ -n "$waited" ] || note "Waiting for another start of this sandbox"
               waited=1
