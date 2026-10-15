@@ -37,13 +37,14 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-15T10:24:53Z",
   "number" : 368,
   "posted_at" : "2026-10-15T08:27:24Z",
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-15T08:25:44Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Open a tab on its reviewer when the reviewer is waiting for input",
-  "updated_at" : "2026-10-15T08:42:28Z",
+  "updated_at" : "2026-10-15T10:25:53Z",
   "verdict" : "approve"
 }
