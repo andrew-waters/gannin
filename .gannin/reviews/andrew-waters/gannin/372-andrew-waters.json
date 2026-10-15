@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
+  "effort" : 1,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -76,6 +76,6 @@
   "started_at" : "2026-10-15T09:36:13Z",
   "state" : "OPEN",
   "title" : "Send a session's PR conflicts to its Claude when idle",
-  "updated_at" : "2026-10-15T09:49:25Z",
+  "updated_at" : "2026-10-15T09:58:30Z",
   "verdict" : "approve"
 }
