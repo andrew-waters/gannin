@@ -65,7 +65,7 @@ struct IssueProjectFields: Codable, Hashable {
     var values: [String: IssueFieldValue]
 }
 
-enum IssueFieldValue: Codable, Hashable {
+nonisolated enum IssueFieldValue: Codable, Hashable {
     case text(String)
     case number(Double)
     case date(Date)

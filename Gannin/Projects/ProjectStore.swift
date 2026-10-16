@@ -1,5 +1,7 @@
+import AppKit
 import Foundation
 import Observation
+import os
 
 /// Project boards per org: the list of boards, each board's fields and views,
 /// and each view's items (fetched with the view's own filter), on disk.
@@ -27,9 +29,29 @@ final class ProjectStore {
     private let auth: AuthStore
     private let activity: SyncActivity
 
+    // State for `save`, touched on the main actor only and not observed, since
+    // no view reads it.
+
+    /// The newest cache snapshot per board key that hasn't been handed to the
+    /// writer yet. A later save for the same key replaces it, so only the
+    /// latest state is ever written.
+    @ObservationIgnored private var pendingSaves: [String: BoardCache] = [:]
+    /// The snapshot being written now for each key, kept until its write
+    /// returns so a quit mid-write can write it again (`flushPendingSaves`).
+    @ObservationIgnored private var inFlight: [String: BoardCache] = [:]
+    /// Board keys with a write loop running. While a key is in here, `save`
+    /// only updates `pendingSaves`, so one board never has two writes at once.
+    @ObservationIgnored private var writingKeys: Set<String> = []
+    /// Encodes, decodes and writes the cache files off the main actor, and
+    /// stops a write landing after `clear` has deleted the folder.
+    @ObservationIgnored private let files = BoardCacheFiles()
+
     init(auth: AuthStore, activity: SyncActivity) {
         self.auth = auth
         self.activity = activity
+        NotificationCenter.default.addObserver(forName: NSApplication.willTerminateNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.flushPendingSaves() }
+        }
     }
 
     static func key(_ org: String, _ number: Int) -> String { "\(org)#\(number)" }
@@ -183,7 +205,7 @@ final class ProjectStore {
             }
             for number in tracked {
                 let key = Self.key(org, number)
-                loadCached(key)
+                await loadCached(key)
                 let board = try await run.track("fields", count: { $0?.fields.count }) { _ in try await api.board(org: org, number: number) }
                 guard let board else { continue }
                 var cache = caches[key] ?? BoardCache(board: board, fetchedAt: .now)
@@ -204,7 +226,7 @@ final class ProjectStore {
     /// board field; from cache when fresh enough.
     func loadDefinition(org: String, number: Int, force: Bool = false) async {
         let key = Self.key(org, number)
-        loadCached(key)
+        await loadCached(key)
         guard let api = auth.api else { return }
         if !force, let cached = caches[key], Date.now.timeIntervalSince(cached.fetchedAt) < Self.maxAge { return }
         guard SyncSettings.isOn(.boards) else { return }
@@ -230,7 +252,7 @@ final class ProjectStore {
     func sync(org: String, number: Int, filter: String, force: Bool = false) async {
         let key = Self.key(org, number)
         let loadKey = "\(key)|\(filter)"
-        loadCached(key)
+        await loadCached(key)
         guard let api = auth.api, !loading.contains(loadKey), SyncSettings.isOn(.boards) else { return }
         let now = Date.now
         let cached = caches[key]
@@ -298,37 +320,61 @@ final class ProjectStore {
         allRepoBoardLists = [:]
         caches = [:]
         errors = [:]
-        try? FileManager.default.removeItem(at: Self.directory)
+        // Writes still waiting or in flight belong to the folder removed here.
+        pendingSaves = [:]
+        inFlight = [:]
+        writingKeys = []
+        files.reset(removing: Self.directory)
     }
 
     // MARK: Disk cache
 
-    private func loadCached(_ key: String) {
-        guard caches[key] == nil,
-              let data = try? Data(contentsOf: Self.fileURL(key)),
-              let cache = try? Self.decoder.decode(BoardCache.self, from: data) else {
-            return
-        }
+    /// Reads and decodes the saved cache off the main actor. What it read is
+    /// dropped if a cache arrived in memory meanwhile, or `clear` ran.
+    private func loadCached(_ key: String) async {
+        guard caches[key] == nil else { return }
+        let url = Self.fileURL(key)
+        let generation = files.generation
+        let cache = await Task.detached { BoardCacheFiles.read(url) }.value
+        guard let cache, caches[key] == nil, files.generation == generation else { return }
         caches[key] = cache
     }
 
+    /// Writes the cache off the main actor, newest snapshot last. A save made
+    /// while one for the same board is still writing replaces the waiting
+    /// snapshot, so a board never has two writes racing and bursts of saves
+    /// cost one more write, not one each.
     private func save(_ cache: BoardCache, key: String) {
-        if let data = try? Self.encoder.encode(cache) {
-            try? data.write(to: Self.fileURL(key), options: .atomic)
+        pendingSaves[key] = cache
+        guard writingKeys.insert(key).inserted else { return }
+        let generation = files.generation
+        let url = Self.fileURL(key)
+        Task {
+            while files.generation == generation, let snapshot = pendingSaves.removeValue(forKey: key) {
+                inFlight[key] = snapshot
+                let files = files
+                await Task.detached { files.write(snapshot, to: url, generation: generation) }.value
+                if files.generation == generation { inFlight[key] = nil }
+            }
+            // After a `clear`, `writingKeys` is already empty and may hold a
+            // newer loop for this key, which isn't this one's to remove.
+            if files.generation == generation { writingKeys.remove(key) }
         }
     }
 
-    private static let encoder: JSONEncoder = {
-        let encoder = JSONEncoder()
-        encoder.dateEncodingStrategy = .iso8601
-        return encoder
-    }()
+    /// Writes what's still waiting or mid-write, on the main actor, so a quit
+    /// right after a sync doesn't lose it. A waiting snapshot is newer than
+    /// the one mid-write for its board, so it's the one written.
+    private func flushPendingSaves() {
+        for (key, cache) in inFlight.merging(pendingSaves, uniquingKeysWith: { _, pending in pending }) {
+            files.write(cache, to: Self.fileURL(key), generation: files.generation)
+        }
+        pendingSaves = [:]
+        inFlight = [:]
+    }
 
-    private static let decoder: JSONDecoder = {
-        let decoder = JSONDecoder()
-        decoder.dateDecodingStrategy = .iso8601
-        return decoder
-    }()
+    private static let encoder = BoardCacheFiles.makeEncoder()
+    private static let decoder = BoardCacheFiles.makeDecoder()
 
     private static var directory: URL {
         AppPaths.support.appending(path: "Projects", directoryHint: .isDirectory)
@@ -345,5 +391,52 @@ final class ProjectStore {
     private static func fileURL(_ key: String) -> URL {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "\(key.replacingOccurrences(of: "#", with: "-")).json")
+    }
+}
+
+/// The board cache files' encoding, and the generation that keeps a write
+/// from landing after `ProjectStore.clear` has deleted the folder. Nothing
+/// here is main-actor, so the encode, decode and write run off it.
+nonisolated final class BoardCacheFiles: Sendable {
+    private let lock = OSAllocatedUnfairLock(initialState: 0)
+
+    /// Counts the times the folder has been cleared.
+    var generation: Int { lock.withLock { $0 } }
+
+    /// Starts a new generation and deletes `directory`. Held under the lock
+    /// that `write` checks and writes under, so a write of an older
+    /// generation either finished before this or is skipped.
+    func reset(removing directory: URL) {
+        lock.withLock { generation in
+            generation += 1
+            try? FileManager.default.removeItem(at: directory)
+        }
+    }
+
+    /// Encodes `cache` and writes it, unless the folder was cleared since
+    /// `generation`.
+    func write(_ cache: BoardCache, to url: URL, generation expected: Int) {
+        guard let data = try? Self.makeEncoder().encode(cache) else { return }
+        lock.withLock { generation in
+            guard generation == expected else { return }
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    static func read(_ url: URL) -> BoardCache? {
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        return try? makeDecoder().decode(BoardCache.self, from: data)
+    }
+
+    static func makeEncoder() -> JSONEncoder {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        return encoder
+    }
+
+    static func makeDecoder() -> JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return decoder
     }
 }
