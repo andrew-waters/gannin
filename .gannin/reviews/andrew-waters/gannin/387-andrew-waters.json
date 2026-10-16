@@ -24,14 +24,15 @@
       "severity" : "minor"
     }
   ],
+  "merged_at" : "2026-10-16T09:28:05Z",
   "number" : 387,
   "posted_at" : "2026-10-16T07:13:26Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-16T07:11:30Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Read local sessions' hook files on change, not every second",
-  "updated_at" : "2026-10-16T07:13:27Z",
+  "updated_at" : "2026-10-16T09:34:47Z",
   "verdict" : "comment"
 }
