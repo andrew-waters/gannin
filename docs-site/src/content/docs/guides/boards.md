@@ -27,6 +27,8 @@ Layouts:
 - **Board**: columns in the board's option order, with GitHub's colours. A + on a column starts a [New Issue](/docs/guides/new-issue/) with that column's value.
 - **Insights**: how long items spent in each status, from the issue history's board changes.
 
+The Swimlanes menu on the Board layout, and Group on the Table layout, are remembered for each view on this Mac: a view opens with the grouping you last picked, and with its GitHub grouping until you pick one.
+
 A Roadmap view shows as a table. Reset puts a view's filter back as GitHub has it.
 
 Boards and their items are fetched again after the interval set in Settings › Sync. Reading boards needs the `project` permission on your GitHub sign-in.

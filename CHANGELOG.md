@@ -20,6 +20,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - The Claude Code window's tab bar keeps review tabs together after your work tabs, with a divider between the groups when both are open
 
 ### Changed
+- A project board view now opens with the swimlane (or table grouping) you last picked for it, instead of going back to its GitHub grouping each time
 - Review Now on a session whose review has ended now launches the reviewer again, restarting its Claude Code if that had exited, and brings its tab to the front; when it can't start, the panel says why instead of doing nothing
 - Opening a session's tab (from the tab bar, by cycling to it, or from the Agents page, the command palette or a notification) now shows its reviewer when the reviewer is waiting for an answer and the session itself isn't, instead of the work
 - Open issues are kept once on disk instead of in both the workload snapshot and the issue history, shown as Issues in Settings › Storage. Existing caches are moved across on first launch, so nothing is fetched again

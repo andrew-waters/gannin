@@ -93,9 +93,27 @@ struct ProjectBoardView: View {
         filter = view.filter
         appliedFilter = view.filter
         mode = .layout(view.layout == .roadmap ? .table : view.layout)
-        groupBy = view.groupBy.first
+        groupBy = rememberedGroupBy(view) ?? view.groupBy.first
         columnBy = view.columnBy.first ?? (view.layout == .board ? "Status" : nil)
         sortBy = view.sortBy
+    }
+
+    private func groupByKey(_ viewID: String) -> String { "boardGroupBy.\(org)#\(number).\(viewID)" }
+
+    /// The grouping last picked for a view on this Mac. The outer nil is
+    /// none picked yet; the inner nil is None picked.
+    private func rememberedGroupBy(_ view: BoardView) -> String?? {
+        guard let stored = UserDefaults.standard.string(forKey: groupByKey(view.id)) else { return nil }
+        return .some(stored.isEmpty ? nil : stored)
+    }
+
+    private var groupByChoice: Binding<String?> {
+        Binding {
+            groupBy
+        } set: { newValue in
+            groupBy = newValue
+            if let viewID { UserDefaults.standard.set(newValue ?? "", forKey: groupByKey(viewID)) }
+        }
     }
 
     // MARK: Header
@@ -160,7 +178,7 @@ struct ProjectBoardView: View {
                 fieldMenu("Columns", selection: $columnBy, fields: columnable, allowsNone: false)
             }
             if mode != .insights {
-                fieldMenu(mode == .layout(.board) ? "Swimlanes" : "Group", selection: $groupBy, fields: groupable, allowsNone: true)
+                fieldMenu(mode == .layout(.board) ? "Swimlanes" : "Group", selection: groupByChoice, fields: groupable, allowsNone: true)
                 sortMenu(groupable)
             }
         }
