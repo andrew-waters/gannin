@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
+  "effort" : 1,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -11,6 +11,7 @@
       "line" : 2088,
       "path" : "Gannin/Sessions/PullRequestReview.swift",
       "posted_at" : "2026-10-16T19:42:57Z",
+      "resolved_at" : "2026-10-16T19:48:45Z",
       "severity" : "nit"
     }
   ],
@@ -22,6 +23,6 @@
   "started_at" : "2026-10-16T19:41:40Z",
   "state" : "OPEN",
   "title" : "Add Ask Claude to the comment box on a review diff line",
-  "updated_at" : "2026-10-16T19:42:59Z",
+  "updated_at" : "2026-10-16T19:48:45Z",
   "verdict" : "approve"
 }
