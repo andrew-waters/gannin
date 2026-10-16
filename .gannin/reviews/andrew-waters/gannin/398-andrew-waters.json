@@ -15,14 +15,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-16T19:40:38Z",
   "number" : 398,
   "posted_at" : "2026-10-16T16:39:46Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-16T16:38:48Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Remember the swimlane picked for each project board view",
-  "updated_at" : "2026-10-16T16:45:44Z",
+  "updated_at" : "2026-10-16T19:41:43Z",
   "verdict" : "approve"
 }
