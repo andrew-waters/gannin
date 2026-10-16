@@ -76,7 +76,7 @@ struct ProjectBoardView: View {
         await RequestLimiter.interactive { await store.loadDefinition(org: org, number: number, force: force) }
         guard viewID == nil, let cache = store.cache(org: org, number: number) else { return }
         if let first = cache.board.views.first {
-            select(first)
+            select(first, in: cache.board)
         } else {
             // A board with no saved views at all: fall back to everything.
             viewID = ""
@@ -88,14 +88,44 @@ struct ProjectBoardView: View {
     }
 
     /// Opens a saved view with its own settings.
-    private func select(_ view: BoardView) {
+    private func select(_ view: BoardView, in board: Board) {
         viewID = view.id
         filter = view.filter
         appliedFilter = view.filter
         mode = .layout(view.layout == .roadmap ? .table : view.layout)
-        groupBy = view.groupBy.first
+        groupBy = rememberedGroupBy(view, in: board) ?? view.groupBy.first
         columnBy = view.columnBy.first ?? (view.layout == .board ? "Status" : nil)
         sortBy = view.sortBy
+    }
+
+    private func groupByKey(_ viewID: String) -> String { "boardGroupBy.\(org)#\(number).\(viewID)" }
+
+    /// The grouping last picked for a view on this Mac. The outer nil is
+    /// none picked yet, or the field is no longer groupable on the board; the
+    /// inner nil is None picked.
+    private func rememberedGroupBy(_ view: BoardView, in board: Board) -> String?? {
+        guard let stored = UserDefaults.standard.string(forKey: groupByKey(view.id)) else { return nil }
+        if stored.isEmpty { return .some(nil) }
+        return board.fields.contains { $0.isGroupable && $0.name == stored } ? .some(stored) : nil
+    }
+
+    /// A pick equal to the view's own grouping on GitHub clears the stored
+    /// one, so the view follows GitHub again until the user picks something
+    /// else.
+    private func groupByChoice(_ board: Board) -> Binding<String?> {
+        Binding {
+            groupBy
+        } set: { newValue in
+            groupBy = newValue
+            // A board with no saved views has no view ID to key a pick by.
+            guard let viewID, !viewID.isEmpty else { return }
+            let key = groupByKey(viewID)
+            if newValue == currentView(board)?.groupBy.first {
+                UserDefaults.standard.removeObject(forKey: key)
+            } else {
+                UserDefaults.standard.set(newValue ?? "", forKey: key)
+            }
+        }
     }
 
     // MARK: Header
@@ -118,7 +148,7 @@ struct ProjectBoardView: View {
             ScrollView(.horizontal) {
                 HStack(spacing: 2) {
                     ForEach(board.views) { view in
-                        Button { select(view) } label: {
+                        Button { select(view, in: board) } label: {
                             Label(view.name, systemImage: view.layout.systemImage)
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 5)
@@ -160,7 +190,7 @@ struct ProjectBoardView: View {
                 fieldMenu("Columns", selection: $columnBy, fields: columnable, allowsNone: false)
             }
             if mode != .insights {
-                fieldMenu(mode == .layout(.board) ? "Swimlanes" : "Group", selection: $groupBy, fields: groupable, allowsNone: true)
+                fieldMenu(mode == .layout(.board) ? "Swimlanes" : "Group", selection: groupByChoice(board), fields: groupable, allowsNone: true)
                 sortMenu(groupable)
             }
         }
