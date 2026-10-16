@@ -419,6 +419,8 @@ final class SessionStore {
     /// Each Ask session's Files pane, kept for the same reason.
     @ObservationIgnored var filesPanes: [UUID: SessionFiles] = [:]
     @ObservationIgnored private var polling: Task<Void, Never>?
+    /// Which loop `polling` is, so one replaced by `startPolling(wake:)` doesn't clear its successor.
+    @ObservationIgnored private var pollGeneration = 0
     /// The last `changed` value each session's hook wrote.
     @ObservationIgnored private var lastChanged: [UUID: String] = [:]
     /// Each session's real context limit, from its statusLine: kept apart
@@ -1004,7 +1006,7 @@ final class SessionStore {
             self?.watchHooks(id)
             // Files already on disk raise no event, and the poll may be asleep.
             self?.refreshLocal(id)
-            self?.startPolling()
+            self?.startPolling(wake: session.isRemote || session.isSandboxed)
         }
         // A stop of its sandbox still on its way would land after the start
         // script found it running: wait for it, so the script starts afresh.
@@ -1456,14 +1458,22 @@ final class SessionStore {
         return folders.lazy.map { $0.appending(path: "\(claudeID).jsonl") }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    private func startPolling() {
-        guard polling == nil else { return }
+    /// `wake` restarts a loop that's asleep, for a session that needs a
+    /// shorter wait than the loop's last choice (a server's or a sandbox's).
+    private func startPolling(wake: Bool = false) {
+        if polling != nil {
+            guard wake else { return }
+            polling?.cancel()
+        }
+        pollGeneration += 1
+        let generation = pollGeneration
         polling = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, let wait = self.poll() else { break }
                 try? await Task.sleep(for: wait)
             }
-            self?.polling = nil
+            // Not a loop that was replaced: its end mustn't clear the new one.
+            if let self, self.pollGeneration == generation { self.polling = nil }
         }
     }
 
@@ -1574,7 +1584,10 @@ final class SessionStore {
         // Also while needsYou: the state file can still read working, and
         // `apply` keeps it needsYou only while the prompt is seen.
         guard !session.isRemote, states[id] == .working || states[id] == .needsYou, optimisticApprovals[id] == nil, showsPermissionPrompt(id) else {
-            promptSeen.remove(id)
+            // A needsYou that came from the screen goes once the prompt does:
+            // the state file, still working while the approved command runs,
+            // wins again at once.
+            if promptSeen.remove(id) != nil, states[id] == .needsYou, !session.isRemote { refreshLocal(id) }
             return
         }
         if promptSeen.insert(id).inserted {
