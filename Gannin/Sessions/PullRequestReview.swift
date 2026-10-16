@@ -1342,7 +1342,12 @@ struct PullRequestReviewView: View {
                     applied: (review?.applied ?? []).filter { $0.path == file.path }, resolve: { appliedLearning($0) },
                     learningURL: { harnessIndex?.url(for: $0.document) },
                     existingComments: pullRequest.existingComments.filter { $0.path == file.path },
-                    fileURL: URL(string: "https://github.com/\(reference.repo)/blob/\(pullRequest.headSHA)/\(file.path)")
+                    fileURL: URL(string: "https://github.com/\(reference.repo)/blob/\(pullRequest.headSHA)/\(file.path)"),
+                    ask: sessions.isRunning(session.id) ? { text in
+                        guard sessions.submit(text, to: session.id) else { return false }
+                        conversation = true
+                        return true
+                    } : nil
                 )
                 .id(file.path)
             } else {
@@ -1586,6 +1591,8 @@ private struct ReviewDiff: View {
     /// The file at the PR's head commit, for a binary or too-large diff
     /// GitHub sent no patch for.
     let fileURL: URL?
+    /// Sends a question to the review's claude; nil when it isn't running.
+    let ask: ((String) -> Bool)?
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
     @State private var showsFileLearnings = true
@@ -1682,7 +1689,7 @@ private struct ReviewDiff: View {
                                 .padding(.trailing, 8)
                                 .padding(.vertical, 4)
                         }
-                        DiffRow(sessionID: session.id, filePath: file.path, line: line, highlight: colours?[line.id], isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting)
+                        DiffRow(sessionID: session.id, filePath: file.path, line: line, highlight: colours?[line.id], isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting, lines: file.lines, ask: ask)
                         if let newLine = line.newLine {
                             ForEach(appliedAt[newLine] ?? [], id: \.entry) { pair in
                                 AppliedLearningCard(session: session, entry: pair.entry, learning: pair.learning, url: pair.learning.flatMap(learningURL), showsLocation: false)
@@ -1784,6 +1791,10 @@ private struct DiffRow: View {
     var isLearned = false
     @Binding var hovered: DiffLine.ID?
     @Binding var commenting: DiffLine.ID?
+    /// The file's lines, for the context sent with a question.
+    let lines: [DiffLine]
+    /// Sends a question to the review's claude; nil when it isn't running.
+    let ask: ((String) -> Bool)?
 
     var body: some View {
         let anchor = line.anchor
@@ -1830,16 +1841,44 @@ private struct DiffRow: View {
         }
         .popover(isPresented: Binding(get: { commenting == line.id }, set: { if !$0 { commenting = nil } }), arrowEdge: .leading) {
             if let anchor {
-                ReviewCommentEditor(location: "\(filePath):\(anchor.line)") { body in
+                let askClaude = ask.map { ask in
+                    { (question: String) in
+                        let message = DiffQuestion.message(question, path: filePath, anchor: anchor, line: line, in: lines)
+                        if ask(message) { commenting = nil }
+                    }
+                }
+                ReviewCommentEditor(location: "\(filePath):\(anchor.line)", add: { body in
                     sessions.reviewDrafts[sessionID, default: ReviewDraft()].comments.append(
                         .init(path: filePath, line: anchor.line, isOld: anchor.isOld, body: body)
                     )
                     commenting = nil
-                } cancel: {
+                }, ask: askClaude, cancel: {
                     commenting = nil
-                }
+                })
             }
         }
+    }
+}
+
+/// A question about a diff line, with the lines around it, for the review's
+/// claude.
+nonisolated enum DiffQuestion {
+    static let radius = 5
+
+    static func message(_ question: String, path: String, anchor: (line: Int, isOld: Bool), line: DiffLine, in lines: [DiffLine]) -> String {
+        let index = lines.firstIndex { $0.id == line.id } ?? 0
+        let nearby = lines.indices.filter { abs($0 - index) <= radius }.map { lines[$0] }
+        let shown = nearby.map { ($0.id == line.id ? "> " : "  ") + $0.text }.joined(separator: "\n")
+        let side = anchor.isOld ? "line \(anchor.line) of the old file" : "line \(anchor.line)"
+        return """
+        A question about \(path), \(side), marked > in this part of the diff:
+
+        ```diff
+        \(shown)
+        ```
+
+        \(question)
+        """
     }
 }
 
@@ -1997,6 +2036,8 @@ private struct OwnCommentCard: View {
 private struct ReviewCommentEditor: View {
     let location: String
     let add: (String) -> Void
+    /// nil when the review's claude can't be asked.
+    let ask: ((String) -> Void)?
     let cancel: () -> Void
     @State private var text = ""
     @FocusState private var focused: Bool
@@ -2011,6 +2052,10 @@ private struct ReviewCommentEditor: View {
                 Text("Posted with the review").font(.caption).foregroundStyle(.secondary)
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+                Button("Ask Claude") { ask?(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    .keyboardShortcut(.return, modifiers: [.command, .option])
+                    .disabled(ask == nil || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help(ask == nil ? "The review's Claude isn't running" : "Send this to the reviewer with the lines around it")
                 Button("Add") { add(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
