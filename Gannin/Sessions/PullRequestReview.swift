@@ -2080,6 +2080,7 @@ private struct ReviewCommentEditor: View {
         }
         .padding(12)
         .onAppear { focused = true }
+        .onChange(of: text) { askFailed = false }
     }
 
     private func askClaude() {
