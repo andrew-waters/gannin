@@ -36,6 +36,9 @@ final class ProjectStore {
     /// writer yet. A later save for the same key replaces it, so only the
     /// latest state is ever written.
     @ObservationIgnored private var pendingSaves: [String: BoardCache] = [:]
+    /// The snapshot being written now for each key, kept until its write
+    /// returns so a quit mid-write can write it again (`flushPendingSaves`).
+    @ObservationIgnored private var inFlight: [String: BoardCache] = [:]
     /// Board keys with a write loop running. While a key is in here, `save`
     /// only updates `pendingSaves`, so one board never has two writes at once.
     @ObservationIgnored private var writingKeys: Set<String> = []
@@ -319,6 +322,7 @@ final class ProjectStore {
         errors = [:]
         // Writes still waiting or in flight belong to the folder removed here.
         pendingSaves = [:]
+        inFlight = [:]
         writingKeys = []
         files.reset(removing: Self.directory)
     }
@@ -347,8 +351,10 @@ final class ProjectStore {
         let url = Self.fileURL(key)
         Task {
             while files.generation == generation, let snapshot = pendingSaves.removeValue(forKey: key) {
+                inFlight[key] = snapshot
                 let files = files
                 await Task.detached { files.write(snapshot, to: url, generation: generation) }.value
+                if files.generation == generation { inFlight[key] = nil }
             }
             // After a `clear`, `writingKeys` is already empty and may hold a
             // newer loop for this key, which isn't this one's to remove.
@@ -356,13 +362,15 @@ final class ProjectStore {
         }
     }
 
-    /// Writes what's still waiting, on the main actor, so a quit right after
-    /// a sync doesn't lose it.
+    /// Writes what's still waiting or mid-write, on the main actor, so a quit
+    /// right after a sync doesn't lose it. A waiting snapshot is newer than
+    /// the one mid-write for its board, so it's the one written.
     private func flushPendingSaves() {
-        for (key, cache) in pendingSaves {
+        for (key, cache) in inFlight.merging(pendingSaves, uniquingKeysWith: { _, pending in pending }) {
             files.write(cache, to: Self.fileURL(key), generation: files.generation)
         }
         pendingSaves = [:]
+        inFlight = [:]
     }
 
     private static let encoder = BoardCacheFiles.makeEncoder()
