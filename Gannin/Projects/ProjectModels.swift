@@ -1,7 +1,7 @@
 import Foundation
 
 /// A GitHub project board: its fields and saved views.
-struct Board: Codable, Hashable {
+nonisolated struct Board: Codable, Hashable {
     let id: String
     let number: Int
     let title: String
@@ -14,7 +14,7 @@ struct Board: Codable, Hashable {
     }
 }
 
-struct BoardField: Codable, Hashable, Identifiable {
+nonisolated struct BoardField: Codable, Hashable, Identifiable {
     let id: String
     let name: String
     /// GitHub's data type: TITLE, ASSIGNEES, SINGLE_SELECT, ITERATION and so on.
@@ -29,7 +29,7 @@ struct BoardField: Codable, Hashable, Identifiable {
     }
 }
 
-struct BoardOption: Codable, Hashable, Identifiable {
+nonisolated struct BoardOption: Codable, Hashable, Identifiable {
     let id: String
     let name: String
     /// Single-select colour name (GRAY, BLUE, GREEN, and so on).
@@ -43,7 +43,7 @@ struct BoardOption: Codable, Hashable, Identifiable {
 }
 
 /// A saved view: its layout, filter, grouping, sort and visible fields.
-struct BoardView: Codable, Hashable, Identifiable {
+nonisolated struct BoardView: Codable, Hashable, Identifiable {
     enum Layout: String, Codable, CaseIterable, Identifiable {
         case table = "Table"
         case board = "Board"
@@ -79,7 +79,7 @@ struct BoardView: Codable, Hashable, Identifiable {
 }
 
 /// An item on a board: an issue, a pull request or a draft.
-struct BoardItem: Codable, Hashable, Identifiable {
+nonisolated struct BoardItem: Codable, Hashable, Identifiable {
     enum Kind: String, Codable {
         case issue = "ISSUE"
         case pullRequest = "PULL_REQUEST"
@@ -125,7 +125,7 @@ struct BoardItem: Codable, Hashable, Identifiable {
 
 /// A view's items as last fetched: which items matched, in order, resolved
 /// through `BoardCache.itemsByID`.
-struct BoardItems: Codable {
+nonisolated struct BoardItems: Codable {
     var fetchedAt: Date
     var ids: [String]
 }
@@ -134,7 +134,7 @@ struct BoardItems: Codable {
 /// `itemsByID` and shared between filters' results, since views' filters
 /// often overlap and would otherwise each store their own copy of the same
 /// issue.
-struct BoardCache: Codable {
+nonisolated struct BoardCache: Codable {
     var board: Board
     var fetchedAt: Date
     var items: [String: BoardItems] = [:]
@@ -169,7 +169,7 @@ struct BoardCache: Codable {
     }
 }
 
-extension BoardCache {
+nonisolated extension BoardCache {
     private struct LegacyItems: Decodable {
         var fetchedAt: Date
         var items: [BoardItem]

@@ -26,9 +26,13 @@ paths:
 - Never recommit on a retry (`IssueImageSet`) unless the repo changed. With no harness, images can't be attached.
 - Keep `skills/create-issue.md` in step with this flow.
 
+## Project boards
+- Never draw `BoardTableView`'s rows with `StatsTable`: it builds every row at once, which froze the app for seconds on a board of thousands of items. Rows stay in the one lazy stack, flattened by `BoardTableModel`.
+- Write the board cache through `ProjectStore.save` only: it encodes off the main actor, one write per board at a time, and `clear` must drop writes still waiting. The `BoardCache` types are `nonisolated` so they can encode there.
+
 ## Markdown
 - `MarkdownText` rewrites HTML tag names only, never inside code.
 
 ## Testing
-- Covered: `IssueHistoryOutsideRepoTests`, `OutsideRepo*Tests`, `UnreadableReposTests`, `IssueImagesTests`, `PrioritySchemeTests`.
+- Covered: `BoardTableModelTests` (the table's flattening, grouping and sort), `IssueHistoryOutsideRepoTests`, `OutsideRepo*Tests`, `UnreadableReposTests`, `IssueImagesTests`, `PrioritySchemeTests`.
 - Not covered: filters, FieldViews, board writes, `IssueWorkflow`; check by hand in the app.

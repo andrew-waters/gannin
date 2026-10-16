@@ -27,6 +27,21 @@ final class ProjectStore {
     private let auth: AuthStore
     private let activity: SyncActivity
 
+    // State for `save`, touched on the main actor only and not observed, since
+    // no view reads it.
+
+    /// The newest cache snapshot per board key that hasn't been handed to the
+    /// writer yet. A later save for the same key replaces it, so only the
+    /// latest state is ever written.
+    @ObservationIgnored private var pendingSaves: [String: BoardCache] = [:]
+    /// Board keys with a write loop running. While a key is in here, `save`
+    /// only updates `pendingSaves`, so one board never has two writes at once.
+    @ObservationIgnored private var writingKeys: Set<String> = []
+    /// Bumped by `clear`. A write loop that started under an older value
+    /// stops and doesn't write, so a snapshot can't bring back a file that
+    /// `clear` has just deleted.
+    @ObservationIgnored private var saveGeneration = 0
+
     init(auth: AuthStore, activity: SyncActivity) {
         self.auth = auth
         self.activity = activity
@@ -298,6 +313,10 @@ final class ProjectStore {
         allRepoBoardLists = [:]
         caches = [:]
         errors = [:]
+        // Writes still waiting or in flight belong to the folder removed below.
+        saveGeneration += 1
+        pendingSaves = [:]
+        writingKeys = []
         try? FileManager.default.removeItem(at: Self.directory)
     }
 
@@ -312,11 +331,29 @@ final class ProjectStore {
         caches[key] = cache
     }
 
+    /// Writes the cache off the main actor, newest snapshot last. A save made
+    /// while one for the same board is still writing replaces the waiting
+    /// snapshot, so a board never has two writes racing and bursts of saves
+    /// cost one more write, not one each.
     private func save(_ cache: BoardCache, key: String) {
-        if let data = try? Self.encoder.encode(cache) {
-            try? data.write(to: Self.fileURL(key), options: .atomic)
+        pendingSaves[key] = cache
+        guard writingKeys.insert(key).inserted else { return }
+        let generation = saveGeneration
+        let url = Self.fileURL(key)
+        Task {
+            while saveGeneration == generation, let snapshot = pendingSaves.removeValue(forKey: key) {
+                await Self.writer.write(snapshot, to: url)
+            }
+            if saveGeneration == generation {
+                writingKeys.remove(key)
+            } else if !writingKeys.contains(key) {
+                // `clear` emptied the folder while this was writing.
+                try? FileManager.default.removeItem(at: url)
+            }
         }
     }
+
+    private static let writer = BoardCacheWriter()
 
     private static let encoder: JSONEncoder = {
         let encoder = JSONEncoder()
@@ -345,5 +382,16 @@ final class ProjectStore {
     private static func fileURL(_ key: String) -> URL {
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         return directory.appending(path: "\(key.replacingOccurrences(of: "#", with: "-")).json")
+    }
+}
+
+/// Encodes and writes board caches one at a time, off the main actor.
+private actor BoardCacheWriter {
+    func write(_ cache: BoardCache, to url: URL) {
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        if let data = try? encoder.encode(cache) {
+            try? data.write(to: url, options: .atomic)
+        }
     }
 }

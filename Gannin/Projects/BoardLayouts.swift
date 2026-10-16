@@ -14,38 +14,160 @@ struct BoardTableView: View {
     @State private var sort: StatsSort?
     @State private var collapsed: Set<String> = []
 
+    private let rowHeight: CGFloat = 36
+    private let cellPadding: CGFloat = 10
+    /// Room at the right of every header for the sort chevron.
+    private let sortSlot: CGFloat = 12
+
+    // One flat list of group headers and rows in a single lazy stack, rather
+    // than a `StatsTable` per group: a table lays out all of its rows at
+    // once, which froze the app for seconds on a board of thousands of items.
     var body: some View {
-        let groups = BoardLayout.groups(items, by: groupBy, board: board)
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(groups) { group in
-                    if groupBy != nil {
+        let columns = columns
+        let sortKey = sort.flatMap { sort in columns.first { $0.id == sort.columnID }?.sortKey }
+        let entries = BoardTableModel.entries(
+            groups: BoardLayout.groups(items, by: groupBy, board: board),
+            showsHeaders: groupBy != nil,
+            collapsed: collapsed,
+            sortKey: sortKey,
+            ascending: sort?.ascending ?? true
+        )
+        ScrollView([.horizontal, .vertical]) {
+            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
+                Section {
+                    ForEach(entries) { entry in
+                        switch entry {
+                        case .header(let group): groupHeader(group)
+                        case .row(let item, _, let striped): rowView(item, columns: columns, striped: striped)
+                        }
+                    }
+                } header: {
+                    columnHeader(columns)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.bottom, 20)
+            .containerRelativeFrame(.horizontal) { visible, _ in max(visible, minimumWidth(columns)) }
+        }
+        .scrollBounceBehavior(.basedOnSize)
+    }
+
+    private func groupHeader(_ group: BoardLayout.Group) -> some View {
+        Button {
+            if collapsed.contains(group.id) { collapsed.remove(group.id) } else { collapsed.insert(group.id) }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .rotationEffect(.degrees(collapsed.contains(group.id) ? 0 : 90))
+                    .foregroundStyle(.secondary)
+                FieldValueLabel(board: board, field: groupBy ?? "", value: group.value, fallback: group.name)
+                    .font(.headline)
+                Text("\(group.items.count)").foregroundStyle(.secondary).monospacedDigit()
+            }
+            .padding(.horizontal, 8)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: Columns
+
+    private func columnWidth(of column: StatsColumn<BoardItem>) -> CGFloat? {
+        column.width.map { $0 + sortSlot }
+    }
+
+    private func minimumWidth(_ columns: [StatsColumn<BoardItem>]) -> CGFloat {
+        columns.reduce(0) { $0 + (columnWidth(of: $1) ?? $1.minWidth) } + 16
+    }
+
+    /// Frames a cell to its column's width, or lets the flexible column fill
+    /// what's left. Clipped, so a cell too wide for its column can't push the
+    /// ones after it along.
+    @ViewBuilder
+    private func sized<Content: View>(_ column: StatsColumn<BoardItem>, @ViewBuilder _ content: () -> Content) -> some View {
+        if let fixed = columnWidth(of: column) {
+            content().frame(width: fixed, alignment: column.alignment).clipped()
+        } else {
+            content().frame(minWidth: column.minWidth, maxWidth: .infinity, alignment: column.alignment)
+        }
+    }
+
+    /// Click a header to sort every group by it; click again to reverse.
+    private func columnHeader(_ columns: [StatsColumn<BoardItem>]) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(columns, id: \.id) { column in
+                    sized(column) {
                         Button {
-                            if collapsed.contains(group.id) { collapsed.remove(group.id) } else { collapsed.insert(group.id) }
+                            toggleSort(column)
                         } label: {
-                            HStack(spacing: 6) {
-                                Image(systemName: "chevron.right")
-                                    .font(.caption.weight(.semibold))
-                                    .rotationEffect(.degrees(collapsed.contains(group.id) ? 0 : 90))
-                                    .foregroundStyle(.secondary)
-                                FieldValueLabel(board: board, field: groupBy ?? "", value: group.value, fallback: group.name)
-                                    .font(.headline)
-                                Text("\(group.items.count)").foregroundStyle(.secondary).monospacedDigit()
-                            }
-                            .padding(.horizontal, 16)
-                            .padding(.top, 14)
-                            .padding(.bottom, 6)
-                            .contentShape(Rectangle())
+                            Text(column.title)
+                                .lineLimit(1)
+                                .fixedSize()
+                                .font(.callout.weight(.medium))
+                                .foregroundStyle(sort?.columnID == column.id ? .primary : .secondary)
+                                .padding(.leading, cellPadding)
+                                .padding(.trailing, cellPadding + sortSlot)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .overlay(alignment: .trailing) {
+                                    if sort?.columnID == column.id {
+                                        Image(systemName: sort?.ascending == true ? "chevron.up" : "chevron.down")
+                                            .font(.caption2.weight(.bold))
+                                            .foregroundStyle(.primary)
+                                            .fixedSize()
+                                            .padding(.trailing, 6)
+                                    }
+                                }
+                                .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
-                    }
-                    if !collapsed.contains(group.id) {
-                        StatsTable(rows: group.items, columns: columns, sort: $sort, selectedID: nil, onSelect: open, destination: { item in org.flatMap(item.page) })
-                            .padding(.horizontal, 8)
+                        .help(column.help)
                     }
                 }
             }
-            .padding(.bottom, 20)
+            .frame(height: 30)
+            Divider()
+        }
+        .background(.background)
+    }
+
+    private func toggleSort(_ column: StatsColumn<BoardItem>) {
+        if sort?.columnID == column.id {
+            sort?.ascending.toggle()
+        } else {
+            // Names read best A to Z; numbers are most useful biggest first.
+            sort = StatsSort(columnID: column.id, ascending: column.width == nil)
+        }
+    }
+
+    private func rowView(_ item: BoardItem, columns: [StatsColumn<BoardItem>], striped: Bool) -> some View {
+        Button {
+            open(item)
+        } label: {
+            HStack(spacing: 0) {
+                ForEach(columns, id: \.id) { column in
+                    sized(column) {
+                        // Color.clear keeps the column's width when a cell
+                        // draws nothing, which SwiftUI would otherwise drop,
+                        // frame and all, shifting the rest.
+                        ZStack(alignment: column.alignment) {
+                            Color.clear
+                            column.cell(item)
+                                .padding(.horizontal, cellPadding)
+                        }
+                    }
+                }
+            }
+            .frame(height: rowHeight)
+            .background(striped ? AnyShapeStyle(.quaternary.opacity(0.35)) : AnyShapeStyle(.clear), in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            if let page = org.flatMap(item.page) { OpenElsewhereItems(page) }
         }
     }
 

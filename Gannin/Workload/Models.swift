@@ -44,7 +44,7 @@ struct Team: Codable, Hashable, Identifiable {
     let members: [String]
 }
 
-struct IssueLabel: Codable, Hashable {
+nonisolated struct IssueLabel: Codable, Hashable {
     let name: String
     let color: String
 }
