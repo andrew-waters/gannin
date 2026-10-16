@@ -109,13 +109,22 @@ struct ProjectBoardView: View {
         return board.fields.contains { $0.isGroupable && $0.name == stored } ? .some(stored) : nil
     }
 
-    private var groupByChoice: Binding<String?> {
+    /// A pick equal to the view's own grouping on GitHub clears the stored
+    /// one, so the view follows GitHub again until the user picks something
+    /// else.
+    private func groupByChoice(_ board: Board) -> Binding<String?> {
         Binding {
             groupBy
         } set: { newValue in
             groupBy = newValue
             // A board with no saved views has no view ID to key a pick by.
-            if let viewID, !viewID.isEmpty { UserDefaults.standard.set(newValue ?? "", forKey: groupByKey(viewID)) }
+            guard let viewID, !viewID.isEmpty else { return }
+            let key = groupByKey(viewID)
+            if newValue == currentView(board)?.groupBy.first {
+                UserDefaults.standard.removeObject(forKey: key)
+            } else {
+                UserDefaults.standard.set(newValue ?? "", forKey: key)
+            }
         }
     }
 
@@ -181,7 +190,7 @@ struct ProjectBoardView: View {
                 fieldMenu("Columns", selection: $columnBy, fields: columnable, allowsNone: false)
             }
             if mode != .insights {
-                fieldMenu(mode == .layout(.board) ? "Swimlanes" : "Group", selection: groupByChoice, fields: groupable, allowsNone: true)
+                fieldMenu(mode == .layout(.board) ? "Swimlanes" : "Group", selection: groupByChoice(board), fields: groupable, allowsNone: true)
                 sortMenu(groupable)
             }
         }
