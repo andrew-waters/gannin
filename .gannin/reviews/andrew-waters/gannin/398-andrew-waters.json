@@ -1,0 +1,27 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Any pick, even of the same field the view already groups by on GitHub, pins the ",
+      "key" : "Gannin/Projects/ProjectBoardView.swift:118:Any pick, even of the same field the view already groups by ",
+      "line" : 118,
+      "path" : "Gannin/Projects/ProjectBoardView.swift",
+      "posted_at" : "2026-10-16T16:39:46Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 398,
+  "posted_at" : "2026-10-16T16:39:46Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-16T16:38:48Z",
+  "state" : "OPEN",
+  "title" : "Remember the swimlane picked for each project board view",
+  "updated_at" : "2026-10-16T16:39:47Z",
+  "verdict" : "approve"
+}
