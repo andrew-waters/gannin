@@ -1,6 +1,7 @@
 {
   "box" : "Anius",
   "branch" : "234-sync-keep-one-copy-of-open-issues-on",
+  "finishedAt" : "2026-10-16T10:30:28Z",
   "issue" : "andrew-waters/gannin#234",
   "pullRequests" : [
     "https://github.com/acme/api/pull/7",
