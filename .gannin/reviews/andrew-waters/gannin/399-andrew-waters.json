@@ -1,0 +1,27 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`askFailed` is never cleared. After one failed send, Couldn't reach Claude stays",
+      "key" : "Gannin/Sessions/PullRequestReview.swift:2088:`askFailed` is never cleared. After one failed send, Couldn'",
+      "line" : 2088,
+      "path" : "Gannin/Sessions/PullRequestReview.swift",
+      "posted_at" : "2026-10-16T19:42:57Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 399,
+  "posted_at" : "2026-10-16T19:42:57Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-16T19:41:40Z",
+  "state" : "OPEN",
+  "title" : "Add Ask Claude to the comment box on a review diff line",
+  "updated_at" : "2026-10-16T19:42:59Z",
+  "verdict" : "approve"
+}
