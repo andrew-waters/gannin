@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 3,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Once `apply` has turned a working state file into needsYou because a prompt was ",
+      "key" : "Gannin/Sessions/SessionStore.swift:1576:Once `apply` has turned a working state file into needsYou b",
+      "line" : 1576,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-16T07:13:26Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "performance",
+      "decision" : "kept",
+      "excerpt" : "With only plain local sessions running, the loop sleeps 10s, and `startPolling()",
+      "key" : "Gannin/Sessions/SessionStore.swift:1480:With only plain local sessions running, the loop sleeps 10s,",
+      "line" : 1480,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-16T07:13:26Z",
+      "severity" : "minor"
+    }
+  ],
+  "number" : 387,
+  "posted_at" : "2026-10-16T07:13:26Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-16T07:11:30Z",
+  "state" : "OPEN",
+  "title" : "Read local sessions' hook files on change, not every second",
+  "updated_at" : "2026-10-16T07:13:27Z",
+  "verdict" : "comment"
+}
