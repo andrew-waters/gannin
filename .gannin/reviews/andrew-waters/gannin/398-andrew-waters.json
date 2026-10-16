@@ -11,6 +11,7 @@
       "line" : 118,
       "path" : "Gannin/Projects/ProjectBoardView.swift",
       "posted_at" : "2026-10-16T16:39:46Z",
+      "resolved_at" : "2026-10-16T16:45:44Z",
       "severity" : "nit"
     }
   ],
@@ -22,6 +23,6 @@
   "started_at" : "2026-10-16T16:38:48Z",
   "state" : "OPEN",
   "title" : "Remember the swimlane picked for each project board view",
-  "updated_at" : "2026-10-16T16:39:47Z",
+  "updated_at" : "2026-10-16T16:45:44Z",
   "verdict" : "approve"
 }
