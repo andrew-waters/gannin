@@ -160,8 +160,9 @@ extension SessionStore {
         terminals[id].flatMap { ClaudeMode.fromFooter($0.screenLines(last: 24)) }
     }
 
-    /// Reads the session's mode again, each poll, so a Shift+Tab typed in
-    /// the terminal shows within a second. Left alone mid-switch.
+    /// Reads the session's mode again each time its screen changes, so a
+    /// Shift+Tab typed in the terminal shows within a second. Left alone
+    /// mid-switch.
     func refreshMode(_ id: UUID) {
         guard !switchingMode.contains(id), let mode = currentMode(id) else { return }
         if modes[id] != mode { modes[id] = mode }

@@ -394,7 +394,7 @@ final class SessionStore {
     /// waiting on the hook, and comes back if the state never leaves
     /// `needsYou` (`confirmApproval`).
     var optimisticApprovals: [UUID: String] = [:]
-    /// Sessions whose terminal showed a permission prompt on the last poll.
+    /// Sessions whose terminal showed a permission prompt on the last look.
     @ObservationIgnored private var promptSeen: Set<UUID> = []
     /// claude's permission mode in each session, as its terminal's footer
     /// (else its transcript) last showed it (`SessionMode.swift`).
@@ -419,6 +419,8 @@ final class SessionStore {
     /// Each Ask session's Files pane, kept for the same reason.
     @ObservationIgnored var filesPanes: [UUID: SessionFiles] = [:]
     @ObservationIgnored private var polling: Task<Void, Never>?
+    /// Which loop `polling` is, so one replaced by `startPolling(wake:)` doesn't clear its successor.
+    @ObservationIgnored private var pollGeneration = 0
     /// The last `changed` value each session's hook wrote.
     @ObservationIgnored private var lastChanged: [UUID: String] = [:]
     /// Each session's real context limit, from its statusLine: kept apart
@@ -429,6 +431,14 @@ final class SessionStore {
     /// Server sessions whose hook files are being read over ssh now.
     @ObservationIgnored private var readingRemote: Set<UUID> = []
     @ObservationIgnored private var pollTick = 0
+    /// Local sessions' folders, watched for their hooks' writes.
+    @ObservationIgnored private var hookWatchers: [UUID: HookFileWatcher] = [:]
+    /// Local sessions whose hook files are being read now, and those that
+    /// changed again meanwhile.
+    @ObservationIgnored private var readingHooks: Set<UUID> = []
+    @ObservationIgnored private var rereadHooks: Set<UUID> = []
+    /// Screen looks waiting out their delay, one per session.
+    @ObservationIgnored private var screenScans: [UUID: Task<Void, Never>] = [:]
     /// A review being started for a PR, by its ID, so concurrent starts for
     /// the same PR (`startReview`) share one instead of making two.
     @ObservationIgnored var startingReviews: [String: Task<CodeSession, Never>] = [:]
@@ -437,6 +447,7 @@ final class SessionStore {
     @ObservationIgnored var readers: [UUID: TranscriptReader] = [:]
     @ObservationIgnored var transcriptFiles: [UUID: URL] = [:]
     @ObservationIgnored var readingTranscript: Set<UUID> = []
+    @ObservationIgnored private var transcriptWaiters: [UUID: [() -> Void]] = [:]
     /// Each session's PRs, watched in the background so failing checks and
     /// new reviews flag it like a question would.
     var pullRequestInfo: [UUID: [SessionPullRequest]] = [:]
@@ -816,6 +827,7 @@ final class SessionStore {
         } onSignal: { [weak self] signal in
             self?.received(signal, for: session.id)
         }
+        terminal.onOutput = { [weak self] in self?.screenChanged(session.id) }
         terminals[session.id] = terminal
         // Not while one is on its way (a sandbox's stop or secrets first).
         if !terminal.isRunning, !launching.contains(session.id) { launch(session, in: terminal) }
@@ -885,6 +897,7 @@ final class SessionStore {
         // sandbox `deleteSandbox` is deleting (`stopSandboxIfIdle` needs it).
         terminals[id]?.terminate()
         terminals[id] = nil
+        unwatchHooks(id)
         noteSandboxedHarnesses()
         states[id] = nil
         drafts[id] = nil
@@ -990,7 +1003,10 @@ final class SessionStore {
                 environment: environment.map { "\($0.key)=\($0.value)" },
                 directory: session.isRemote || session.harnessPath != nil ? FileManager.default.homeDirectoryForCurrentUser.path : Self.workspaceRoot.path
             )
-            self?.startPolling()
+            self?.watchHooks(id)
+            // Files already on disk raise no event, and the poll may be asleep.
+            self?.refreshLocal(id)
+            self?.startPolling(wake: session.isRemote || session.isSandboxed)
         }
         // A stop of its sandbox still on its way would land after the start
         // script found it running: wait for it, so the script starts afresh.
@@ -1245,6 +1261,7 @@ final class SessionStore {
     }
 
     private func terminated(_ id: UUID) {
+        unwatchHooks(id)
         setState(.stopped, for: id)
         stopSandboxIfIdle(id)
     }
@@ -1379,7 +1396,12 @@ final class SessionStore {
     /// Reads what's been added to a local session's transcript, off the
     /// main thread.
     private func readLocalTranscript(_ id: UUID, then done: (() -> Void)? = nil) {
-        guard !readingTranscript.contains(id), let session = sessions[id] else { return }
+        guard let session = sessions[id] else { return }
+        guard !readingTranscript.contains(id) else {
+            // Run once the read in flight lands, so a state change waiting on it isn't dropped.
+            if let done { transcriptWaiters[id, default: []].append(done) }
+            return
+        }
         if transcriptFiles[id] == nil {
             // A sandbox's claude keeps its transcripts in the session's claude-home.
             // Helpers share their issue's.
@@ -1405,6 +1427,7 @@ final class SessionStore {
             readingTranscript.remove(id)
             if let (updated, moreToRead) = read, sessions[id] != nil { store(updated, for: id, moreToRead: moreToRead) }
             done?()
+            for waiter in transcriptWaiters.removeValue(forKey: id) ?? [] { waiter() }
         }
     }
 
@@ -1435,59 +1458,145 @@ final class SessionStore {
         return folders.lazy.map { $0.appending(path: "\(claudeID).jsonl") }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
-    private func startPolling() {
-        guard polling == nil else { return }
+    /// `wake` restarts a loop that's asleep, for a session that needs a
+    /// shorter wait than the loop's last choice (a server's or a sandbox's).
+    private func startPolling(wake: Bool = false) {
+        if polling != nil {
+            guard wake else { return }
+            polling?.cancel()
+        }
+        pollGeneration += 1
+        let generation = pollGeneration
         polling = Task { [weak self] in
             while !Task.isCancelled {
-                guard let self, self.poll() else { break }
-                try? await Task.sleep(for: .seconds(1))
+                guard let self, let wait = self.poll() else { break }
+                try? await Task.sleep(for: wait)
             }
-            self?.polling = nil
+            // Not a loop that was replaced: its end mustn't clear the new one.
+            if let self, self.pollGeneration == generation { self.polling = nil }
         }
     }
 
-    /// Reads what the running sessions' hooks wrote: here every second, on
-    /// a server every two over the shared ssh connection. False once
-    /// nothing runs.
-    private func poll() -> Bool {
-        var anyRunning = false
+    /// Reads what events don't reach, and says how long to wait before the
+    /// next time; nil once nothing runs. A server's hook files are read over
+    /// the shared ssh connection every two seconds. A sandbox's folder is
+    /// mounted from the Mac but isn't known to raise file events, so those
+    /// are read every second, as they were. Other local sessions are read when
+    /// their files change (`HookFileWatcher`), with this as the safety net.
+    private func poll() -> Duration? {
+        let running = terminals.filter(\.value.isRunning).compactMap { sessions[$0.key] }
+        guard !running.isEmpty else { return nil }
         pollTick += 1
-        for (id, terminal) in terminals where terminal.isRunning {
-            anyRunning = true
-            guard let session = sessions[id] else { continue }
-            refreshMode(id)
+        let interval = running.contains { $0.isSandboxed } ? 1 : running.contains { $0.isRemote } ? 2 : 10
+        for session in running {
             if session.isRemote {
-                if pollTick % 2 == 0 { readRemote(session) }
-                continue
+                if interval > 1 || pollTick % 2 == 0 { readRemote(session) }
+            } else if session.isSandboxed || pollTick % (10 / interval) == 0 {
+                hookWatchers[session.id]?.attach()
+                refreshLocal(session.id)
             }
-            let directory = Self.directory(for: id)
-            func read(_ name: String) -> String? {
-                (try? String(contentsOf: directory.appending(path: name), encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
-            }
-            var state = read("state")
-            let pullRequest = read("pr"), changed = read("changed"), statusLine = read("statusline")
-            // Not every prompt fires the Notification hook (a command that
-            // also trips a working-directory block, say), so a session
-            // that reads as working while the terminal asks is waiting.
-            // Seen on two polls running, since the state file can still read
-            // working for a moment after an answer while the old prompt clears.
-            let prompting = state == SessionState.working.rawValue && optimisticApprovals[id] == nil && showsPermissionPrompt(id)
-            if prompting, promptSeen.contains(id) { state = SessionState.needsYou.rawValue }
-            if prompting { promptSeen.insert(id) } else { promptSeen.remove(id) }
-            if session.isSandboxed, let sandbox = read("sandbox"), sandboxStatus[id] != sandbox { sandboxStatus[id] = sandbox }
-            let reviewRequest = read("review-request")
-            if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
-                // What it's asking is in the transcript: read it first, so
-                // the notification can offer the answers.
-                readLocalTranscript(id) { [weak self] in
-                    self?.apply(state: state, pullRequest: pullRequest, changed: changed, contextWindow: statusLine, reviewRequest: reviewRequest, for: id)
-                }
-                continue
-            }
-            if pollTick % 2 == 0 { readLocalTranscript(id) }
-            apply(state: state, pullRequest: pullRequest, changed: changed, contextWindow: statusLine, reviewRequest: reviewRequest, for: id)
         }
-        return anyRunning
+        return .seconds(interval)
+    }
+
+    private func watchHooks(_ id: UUID) {
+        guard hookWatchers[id] == nil, sessions[id]?.isRemote == false else { return }
+        let directory = Self.directory(for: id)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        hookWatchers[id] = HookFileWatcher(directory: directory) { [weak self] in self?.refreshLocal(id) }
+    }
+
+    private func unwatchHooks(_ id: UUID) {
+        hookWatchers[id]?.cancel()
+        hookWatchers[id] = nil
+        screenScans[id]?.cancel()
+        screenScans[id] = nil
+        promptSeen.remove(id)
+    }
+
+    /// Reads a local session's hook files off the main actor, then applies
+    /// them.
+    private func refreshLocal(_ id: UUID) {
+        // A server session's files are on the server (`readRemote`).
+        guard terminals[id]?.isRunning == true, sessions[id]?.isRemote == false else { return }
+        guard !readingHooks.contains(id) else {
+            rereadHooks.insert(id)
+            return
+        }
+        readingHooks.insert(id)
+        let directory = Self.directory(for: id)
+        Task {
+            let files = await Task.detached { HookFiles.read(in: directory) }.value
+            readingHooks.remove(id)
+            // Written again while it was read: what was read may be stale.
+            if rereadHooks.remove(id) != nil { return refreshLocal(id) }
+            guard terminals[id]?.isRunning == true, let session = sessions[id] else { return }
+            apply(files, to: session)
+        }
+    }
+
+    private func apply(_ files: HookFiles, to session: CodeSession) {
+        let id = session.id
+        var state = files.state
+        // Not every prompt fires the Notification hook (a command that
+        // also trips a working-directory block, say), so a session
+        // that reads as working while the terminal asks is waiting.
+        // Seen on two looks running (`scanScreen`), since the state file can
+        // still read working for a moment after an answer while the old
+        // prompt clears.
+        if state == SessionState.working.rawValue, promptSeen.contains(id) {
+            if optimisticApprovals[id] == nil, showsPermissionPrompt(id) {
+                state = SessionState.needsYou.rawValue
+            } else {
+                promptSeen.remove(id)
+            }
+        }
+        if session.isSandboxed, let sandbox = files.sandbox, sandboxStatus[id] != sandbox { sandboxStatus[id] = sandbox }
+        if state == SessionState.needsYou.rawValue, states[id] != .needsYou {
+            // What it's asking is in the transcript: read it first, so
+            // the notification can offer the answers.
+            readLocalTranscript(id) { [weak self] in
+                self?.apply(state: state, pullRequest: files.pullRequest, changed: files.changed, contextWindow: files.statusLine, reviewRequest: files.reviewRequest, for: id)
+            }
+            return
+        }
+        readLocalTranscript(id)
+        apply(state: state, pullRequest: files.pullRequest, changed: files.changed, contextWindow: files.statusLine, reviewRequest: files.reviewRequest, for: id)
+    }
+
+    /// The session's screen changed: look at it once a second at most, so a
+    /// spinner doesn't make it a read per frame.
+    private func screenChanged(_ id: UUID) {
+        guard screenScans[id] == nil else { return }
+        screenScans[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self else { return }
+            self.screenScans[id] = nil
+            self.scanScreen(id)
+        }
+    }
+
+    /// Reads the footer's mode and, for a session that reads as working,
+    /// whether the terminal is asking permission.
+    private func scanScreen(_ id: UUID) {
+        guard terminals[id]?.isRunning == true, let session = sessions[id] else { return }
+        refreshMode(id)
+        // Also while needsYou: the state file can still read working, and
+        // `apply` keeps it needsYou only while the prompt is seen.
+        guard !session.isRemote, states[id] == .working || states[id] == .needsYou, optimisticApprovals[id] == nil, showsPermissionPrompt(id) else {
+            // A needsYou that came from the screen goes once the prompt does:
+            // the state file, still working while the approved command runs,
+            // wins again at once.
+            if promptSeen.remove(id) != nil, states[id] == .needsYou, !session.isRemote { refreshLocal(id) }
+            return
+        }
+        if promptSeen.insert(id).inserted {
+            // A prompt draws once and then the screen is still: look again
+            // after the delay without waiting for output.
+            screenChanged(id)
+        } else {
+            refreshLocal(id)
+        }
     }
 
     // MARK: Places
@@ -1615,10 +1724,26 @@ final class SessionStore {
     }
 }
 
+/// A terminal view that says when its screen changes, so the store reads
+/// the screen only then.
+final class OutputReportingTerminalView: LocalProcessTerminalView {
+    var onOutput: (() -> Void)?
+
+    // SwiftTerm calls this on the main queue.
+    nonisolated override func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+        MainActor.assumeIsolated {
+            super.rangeChanged(source: source, startY: startY, endY: endY)
+            onOutput?()
+        }
+    }
+}
+
 /// One session's terminal: a container that stays put while the terminal
 /// view inside it is replaced on each launch.
 final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
     let container = NSView()
+    /// Called on the main queue whenever the screen changes.
+    var onOutput: (() -> Void)?
     private(set) var view: LocalProcessTerminalView?
     private(set) var isRunning = false
     private let onTerminate: () -> Void
@@ -1679,7 +1804,8 @@ final class SessionTerminal: NSObject, LocalProcessTerminalViewDelegate {
         // Launched with no tab showing it (an automatic review): a usual
         // size, so claude doesn't lay out for a terminal of no columns.
         if container.bounds.isEmpty { container.frame = NSRect(x: 0, y: 0, width: 960, height: 640) }
-        let view = LocalProcessTerminalView(frame: container.bounds)
+        let view = OutputReportingTerminalView(frame: container.bounds)
+        view.onOutput = { [weak self] in self?.onOutput?() }
         view.autoresizingMask = [.width, .height]
         view.font = EditorFontStore.shared.font
         view.nativeBackgroundColor = .textBackgroundColor
