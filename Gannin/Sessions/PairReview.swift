@@ -179,11 +179,8 @@ extension SessionStore {
                 and don't raise again ones it explained away unless you still disagree, saying why. Don't edit anything. \
                 End the same way with the fenced JSON list, empty (`[]`) when there's nothing left to fix.
                 """
-            if send(prompt, toReviewer: reviewer) {
-                if byYou { reveal(reviewer.id) }
-            } else {
-                stopPairReview(id, note: "Stopped: the reviewer's Claude Code had exited, so Review Now couldn't start a round")
-            }
+            send(prompt, toReviewer: reviewer)
+            if byYou { reveal(reviewer.id) }
         } else {
             let learnings = reviewLearnings(for: session)
             let prompt = Self.reviewPrompt(for: session, learnings: learnings) + said + """
@@ -219,13 +216,13 @@ extension SessionStore {
     }
 
     /// Pasted now if the reviewer's waiting, else once it is, resuming it
-    /// if it isn't running. False when claude has exited and left its shell.
-    private func send(_ prompt: String, toReviewer reviewer: CodeSession) -> Bool {
+    /// if it isn't running or claude has exited and left its shell.
+    private func send(_ prompt: String, toReviewer reviewer: CodeSession) {
         let id = reviewer.id
         guard isRunning(id) else {
             pendingPrompts[id] = prompt
             _ = open(reviewer)
-            return true
+            return
         }
         switch state(id) {
         case .idle:
@@ -233,9 +230,10 @@ extension SessionStore {
         case .starting, .working, .needsYou:
             pendingPrompts[id] = prompt
         case .exited, .stopped:
-            return false
+            // Only the shell is left: a paste would go to bash, so start claude again.
+            pendingPrompts[id] = prompt
+            restart(reviewer)
         }
-        return true
     }
 
     /// To the working agent: now if it's waiting for a prompt, else when its
