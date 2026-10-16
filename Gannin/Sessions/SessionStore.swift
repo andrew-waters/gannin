@@ -477,6 +477,8 @@ final class SessionStore {
     /// What to tell claude once it has started (a review asked to look
     /// again while it wasn't running).
     @ObservationIgnored var pendingPrompts: [UUID: String] = [:]
+    /// Why Review Now couldn't start a round, by working session, for its panel.
+    var pairReviewProblems: [UUID: String] = [:]
     /// New PR feedback waiting for claude's turn to end, each part with the keys
     /// to mark sent once it's pasted. Dropped if claude exits first.
     @ObservationIgnored var pendingFeedback: [UUID: [(prompt: String, keys: [String])]] = [:]

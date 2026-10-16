@@ -148,6 +148,12 @@ extension SessionStore {
             deliver("Pair review is off for this session, so no second agent will look at the change. Carry on.", to: id)
             return
         }
+        pairReviewProblems[id] = nil
+        // Findings go to claude's prompt, so without claude they'd have nowhere to land.
+        if byYou, !isRunning(id) {
+            pairReviewProblems[id] = "Claude Code isn't running in this session's tab, so there's nowhere to send findings. Open the session first."
+            return
+        }
         var pairing = session.pairing ?? PairReview()
         replaceFailedReviewer(of: id, in: &pairing)
         if pairing.isOver {
@@ -173,9 +179,8 @@ extension SessionStore {
                 and don't raise again ones it explained away unless you still disagree, saying why. Don't edit anything. \
                 End the same way with the fenced JSON list, empty (`[]`) when there's nothing left to fix.
                 """
-            if !send(prompt, toReviewer: reviewer) {
-                stopPairReview(id, note: "Stopped: the reviewer's Claude Code had exited")
-            }
+            send(prompt, toReviewer: reviewer)
+            if byYou { reveal(reviewer.id) }
         } else {
             let learnings = reviewLearnings(for: session)
             let prompt = Self.reviewPrompt(for: session, learnings: learnings) + said + """
@@ -189,6 +194,7 @@ extension SessionStore {
             pairing.phase = .reviewing
             update(id) { $0.pairing = pairing }
             _ = open(reviewer)
+            if byYou { reveal(reviewer.id) }
         }
     }
 
@@ -210,13 +216,13 @@ extension SessionStore {
     }
 
     /// Pasted now if the reviewer's waiting, else once it is, resuming it
-    /// if it isn't running. False when claude has exited and left its shell.
-    private func send(_ prompt: String, toReviewer reviewer: CodeSession) -> Bool {
+    /// if it isn't running or claude has exited and left its shell.
+    private func send(_ prompt: String, toReviewer reviewer: CodeSession) {
         let id = reviewer.id
         guard isRunning(id) else {
             pendingPrompts[id] = prompt
             _ = open(reviewer)
-            return true
+            return
         }
         switch state(id) {
         case .idle:
@@ -224,9 +230,10 @@ extension SessionStore {
         case .starting, .working, .needsYou:
             pendingPrompts[id] = prompt
         case .exited, .stopped:
-            return false
+            // Only the shell is left: a paste would go to bash, so start claude again.
+            pendingPrompts[id] = prompt
+            restart(reviewer)
         }
-        return true
     }
 
     /// To the working agent: now if it's waiting for a prompt, else when its
@@ -329,9 +336,13 @@ struct PairReviewSection: View {
                         .help("End the loop; claude is told to carry on if it's waiting for findings")
                 } else {
                     Button("Review Now") { sessions.reviewRequested(session.id, note: "", byYou: true) }
-                        .disabled(!sessions.isRunning(session.id))
                         .help("Start a round now, without waiting for claude to ask")
                 }
+            }
+            if let problem = sessions.pairReviewProblems[session.id] {
+                Text(problem)
+                    .font(.caption)
+                    .foregroundStyle(.red)
             }
         } header: {
             Text("Review by a second agent")

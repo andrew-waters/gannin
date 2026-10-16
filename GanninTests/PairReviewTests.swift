@@ -134,6 +134,19 @@ struct PairReviewTests {
         #expect(store.sessions[parent] != nil)
     }
 
+    @Test(arguments: [PairReview.Phase.settled, .limit, .stopped])
+    func reviewNowSaysWhyWhenTheSessionIsntRunning(phase: PairReview.Phase) {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "PairReviewTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let (store, parent, _) = paired(phase, in: folder)
+        let before = store.sessions[parent]?.pairing
+
+        store.reviewRequested(parent, note: "", byYou: true)
+
+        #expect(store.pairReviewProblems[parent] != nil)
+        #expect(store.sessions[parent]?.pairing == before)
+    }
+
     @Test func aReviewerWhoseSandboxStartedIsKept() {
         let folder = FileManager.default.temporaryDirectory.appending(path: "PairReviewTests-\(UUID().uuidString)", directoryHint: .isDirectory)
         defer { try? FileManager.default.removeItem(at: folder) }
