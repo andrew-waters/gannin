@@ -23,6 +23,20 @@ struct DiffQuestionTests {
         #expect(!message.contains("line 6"))
     }
 
+    @Test func aFenceInTheDiffDoesNotEndTheBlockEarly() {
+        var fenced = lines
+        fenced[12] = DiffLine(id: 12, kind: .added, text: "+```swift", newLine: 13)
+        let message = DiffQuestion.message("Why?", path: "A.md", anchor: (13, false), line: fenced[12], in: fenced)
+        #expect(message.contains("````diff\n"))
+        #expect(message.contains("\n````\n\nWhy?"))
+    }
+
+    @Test func aLineNotInTheFileSendsNoContext() {
+        let stray = DiffLine(id: 99, kind: .added, text: "+x", newLine: 5)
+        let message = DiffQuestion.message("Why?", path: "A.swift", anchor: (5, false), line: stray, in: lines)
+        #expect(message == "A question about A.swift, line 5:\n\nWhy?")
+    }
+
     @Test func saysWhenTheLineIsOnTheOldSide() {
         let message = DiffQuestion.message("Why?", path: "A.swift", anchor: (4, true), line: lines[3], in: lines)
         #expect(message.contains("line 4 of the old file"))

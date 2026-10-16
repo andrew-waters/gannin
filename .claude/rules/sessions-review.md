@@ -41,4 +41,4 @@ paths:
 - A review snapshots its config in `CodeSession.reviewConfig`; don't re-read it mid-review.
 
 ## Testing
-- Only `PairReviewTests.swift` touches review code (the pair loop). Nothing covers records, config layering, auto review or approval; add tests beside it.
+- Only `PairReviewTests.swift` (the pair loop) and `DiffQuestionTests.swift` (the question Ask Claude sends from a diff line) touch review code. Nothing covers records, config layering, auto review or approval; add tests beside them.
