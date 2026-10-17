@@ -151,6 +151,7 @@ struct SyncFooter: View {
             .keyboardShortcut("r")
             .contextMenu {
                 Button("Full Refresh") { refresh(.full) }
+                    .help(Self.fullRefreshHelp)
             }
             .help(refreshHelp(failure: failure))
         }
@@ -164,9 +165,21 @@ struct SyncFooter: View {
         } else {
             lines.append("Not synced yet.")
         }
-        lines.append("Fetch what's changed on GitHub (⌘R). Option-click for a full refresh.")
+        lines.append(Self.refreshExplanation)
         return lines.joined(separator: "\n")
     }
+
+    /// Must match `OrgRefresh` and `OrgStore.refresh`.
+    static let refreshExplanation = """
+        Refresh (⌘R) usually fetches only what changed on GitHub since the last sync: pull requests, issues, \
+        members and teams, merged-PR metrics, the project boards behind Investments, and the harness. Activity, \
+        issue history, Actions and Releases are included once those pages have been opened for this org.
+        Full Refresh (Option-click, or right-click) does the same, but searches pull requests and issues again \
+        from scratch, and also fetches every open issue in the issue history again, so it spends more of the \
+        GitHub budget.
+        """
+
+    static let fullRefreshHelp = "Searches pull requests and issues again from scratch, and also fetches every open issue in the issue history again, where Refresh usually fetches only what changed. Slower, and spends more of the GitHub budget."
 
     /// The runs making up the sync in progress: those still running, and
     /// any that finished since the earliest of them started (workload
@@ -313,7 +326,7 @@ private struct SyncRunSection: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(run.steps) { step in
-                SyncStepRow(step: step)
+                SyncStepRow(step: step, kind: run.kind)
             }
             if let failure = run.failure {
                 Label(failure, systemImage: "exclamationmark.triangle.fill")
@@ -328,6 +341,7 @@ private struct SyncRunSection: View {
 
 private struct SyncStepRow: View {
     let step: SyncStep
+    let kind: SyncRun.Kind
 
     var body: some View {
         HStack(spacing: 6) {
@@ -365,6 +379,7 @@ private struct SyncStepRow: View {
     private var tooltip: String {
         var lines = [step.title]
         if let detail = step.detail { lines.append(detail) }
+        if let counted = SyncStepHelp.counted(kind: kind, step: step.id) { lines.append("The number counts \(counted).") }
         switch step.state {
         case .pending: lines.append("Waiting")
         case .running:
@@ -400,6 +415,44 @@ private struct SyncStepRow: View {
         case .skipped:
             Image(systemName: "minus.circle")
                 .foregroundStyle(.tertiary)
+        }
+    }
+}
+
+/// What a step's number counts, by the run it belongs to and its id (ids
+/// repeat across runs: "issues" is in both the workload and the issue
+/// history). `nil` for a step the title already explains.
+private enum SyncStepHelp {
+    static func counted(kind: SyncRun.Kind, step id: String) -> String? {
+        if kind == .workload, id.hasPrefix("outside-") {
+            return "pull requests or issues in the repositories outside the org that the org's settings include"
+        }
+        switch (kind, id) {
+        case (.workload, "members"): return "members of the org"
+        case (.workload, "teams"): return "teams in the org"
+        case (.workload, "open-prs"): return "open pull requests"
+        case (.workload, "merged-prs"): return "pull requests merged in the lookback period"
+        case (.workload, "issues"): return "open issues"
+        case (.workload, "changed-prs"): return "pull requests changed since the last sync"
+        case (.workload, "changed-issues"): return "issues changed since the last sync"
+        case (.workload, "change-feed"): return "pull requests and issues GitHub reports as updated"
+        case (.metrics, "merged"): return "merged pull requests"
+        case (.metrics, "opened"): return "weeks of opened-PR counts fetched"
+        case (.metrics, "files"): return "pull requests whose changed files were fetched"
+        case (.workLog, "prs"): return "pull requests with activity by the people being tracked"
+        case (.workLog, "issues"): return "issues and comments by the people being tracked"
+        case (.issues, "issues"): return "issues fetched for the issue history in this sync"
+        case (.issueText, _): return "issues whose description and comments were fetched"
+        case (.projects, "boards"): return "project boards"
+        case (.projects, "fields"): return "fields on the investment board"
+        case (.projects, "board"): return "views on the board"
+        case (.projects, "items"): return "issues, pull requests and drafts on the board"
+        case (.actions, "repos"): return "repositories checked for workflow runs"
+        case (.actions, "runs"): return "workflow runs"
+        case (.releases, "repos"): return "milestones and releases found"
+        case (.releases, "more"): return "repositories whose releases were paged through"
+        case (.releases, "stars"): return "repositories whose star history was fetched"
+        default: return nil
         }
     }
 }

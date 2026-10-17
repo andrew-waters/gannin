@@ -23,7 +23,7 @@ The rows are grouped by what you're trying to do.
 
 Picking a person under Team shows their page as the main view.
 
-At the very bottom is the sync row: a **Refresh** link, how much of your GitHub [budget](/docs/concepts/github-budget/) is left and when it resets, and a chevron that opens the step-by-step detail of a sync. The detail slides up by itself while a sync runs and closes a few seconds after. If GitHub is refusing requests, the row says Paused to a time, in orange. Option-click or right-click Refresh for Full Refresh.
+At the very bottom is the sync row: a **Refresh** link, how much of your GitHub [budget](/docs/concepts/github-budget/) is left and when it resets, and a chevron that opens the step-by-step detail of a sync. The detail slides up by itself while a sync runs and closes a few seconds after. If GitHub is refusing requests, the row says Paused to a time, in orange. Option-click or right-click Refresh for Full Refresh. Refresh usually fetches only what changed since the last sync: pull requests, issues, members and teams, merged-PR metrics, the Investments board and the harness, plus Activity, issue history, Actions and Releases once those pages have been opened for the org. Full Refresh does the same, but searches pull requests and issues again from scratch, and also fetches every open issue in the issue history again. Hover either one for the same summary, and hover a row in the sync detail to see what its number counts.
 
 A page whose data source is turned off in [Settings › Sync](/docs/settings/app/sync/) says so at the top.
 
