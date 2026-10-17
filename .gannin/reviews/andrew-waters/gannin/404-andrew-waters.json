@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-17T15:54:38Z",
   "number" : 404,
   "posted_at" : "2026-10-17T15:12:40Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-17T15:11:44Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Ask for the review in the brief's pull request step",
-  "updated_at" : "2026-10-17T15:17:51Z",
+  "updated_at" : "2026-10-17T15:55:10Z",
   "verdict" : "approve"
 }
