@@ -171,14 +171,15 @@ struct SyncFooter: View {
 
     /// Must match `OrgRefresh` and `OrgStore.refresh`.
     static let refreshExplanation = """
-        Refresh (⌘R) fetches what changed on GitHub since the last sync: pull requests, issues, members and teams, \
-        merged-PR metrics, the project boards behind Investments, and the harness. Activity, issue history, \
-        Actions and Releases are included once those pages have been opened for this org.
-        Full Refresh (Option-click, or right-click) does the same, but searches pull requests and issues again from scratch \
-        and fetches every open issue again, so it spends more of the GitHub budget.
+        Refresh (⌘R) usually fetches only what changed on GitHub since the last sync: pull requests, issues, \
+        members and teams, merged-PR metrics, the project boards behind Investments, and the harness. Activity, \
+        issue history, Actions and Releases are included once those pages have been opened for this org.
+        Full Refresh (Option-click, or right-click) does the same, but searches pull requests and issues again \
+        from scratch, and also fetches every open issue in the issue history again, so it spends more of the \
+        GitHub budget.
         """
 
-    static let fullRefreshHelp = "Searches pull requests and issues again from scratch and fetches every open issue again, instead of only what changed. Slower, and spends more of the GitHub budget."
+    static let fullRefreshHelp = "Searches pull requests and issues again from scratch, and also fetches every open issue in the issue history again, instead of usually only what changed. Slower, and spends more of the GitHub budget."
 
     /// The runs making up the sync in progress: those still running, and
     /// any that finished since the earliest of them started (workload
@@ -440,7 +441,7 @@ private enum SyncStepHelp {
         case (.metrics, "files"): return "pull requests whose changed files were fetched"
         case (.workLog, "prs"): return "pull requests with activity by the people being tracked"
         case (.workLog, "issues"): return "issues and comments by the people being tracked"
-        case (.issues, "issues"): return "issues recorded in the issue history"
+        case (.issues, "issues"): return "issues fetched for the issue history in this sync"
         case (.issueText, _): return "issues whose description and comments were fetched"
         case (.projects, "boards"): return "project boards"
         case (.projects, "fields"): return "fields on the investment board"
