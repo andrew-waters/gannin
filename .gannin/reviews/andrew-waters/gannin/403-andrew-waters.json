@@ -70,14 +70,15 @@
       "severity" : "major"
     }
   ],
+  "merged_at" : "2026-10-17T16:51:32Z",
   "number" : 403,
   "posted_at" : "2026-10-17T15:01:12Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-17T14:52:19Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Record a session's PR only from the call that created it",
-  "updated_at" : "2026-10-17T15:06:04Z",
+  "updated_at" : "2026-10-17T16:52:10Z",
   "verdict" : "approve"
 }
