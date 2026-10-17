@@ -11,6 +11,7 @@
       "line" : 542,
       "path" : "Gannin/Sessions/SessionScript.swift",
       "posted_at" : "2026-10-17T15:12:40Z",
+      "resolved_at" : "2026-10-17T15:17:51Z",
       "severity" : "minor"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 542,
       "path" : "Gannin/Sessions/SessionScript.swift",
       "posted_at" : "2026-10-17T15:12:40Z",
+      "resolved_at" : "2026-10-17T15:17:51Z",
       "severity" : "nit"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 81,
       "path" : "GanninTests/QuickChangeTests.swift",
       "posted_at" : "2026-10-17T15:12:40Z",
+      "resolved_at" : "2026-10-17T15:17:51Z",
       "severity" : "nit"
     }
   ],
@@ -42,6 +45,6 @@
   "started_at" : "2026-10-17T15:11:44Z",
   "state" : "OPEN",
   "title" : "Ask for the review in the brief's pull request step",
-  "updated_at" : "2026-10-17T15:12:42Z",
+  "updated_at" : "2026-10-17T15:17:51Z",
   "verdict" : "approve"
 }
