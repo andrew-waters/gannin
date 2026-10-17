@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: done
 summary: "Attach files for a session's Claude wherever it runs (andrew-waters/gannin#401): drop on the side panel or paste, copy into .gannin/attachments/ on the session's box, click to stage with the next prompt (thumbnails over the composer), and track which were sent."
 issues: [andrew-waters/gannin#401]
 touches: [andrew-waters/gannin]
@@ -31,4 +31,4 @@ Dragging a file into a session's terminal only works when claude runs on this Ma
 - [x] Composer strip of staged thumbnails; Send with only attachments.
 - [x] Tests (`SessionAttachmentsTests`), docs page `agents/attachments.md`, Work on This page, CHANGELOG, sessions-core rule.
 - [x] Pair review, three rounds: upload guards the session folder and retries on start; names shared with helpers; Not copied state with Try Again; box copies deleted on Forget; local copies written off the main actor; images dropped with no file; a drop's notices add up.
-- [ ] Checked by hand on a session on this Mac, in a sandbox and on a server.
+- [x] Checked by hand on a session on this Mac, in a sandbox and on a server.
