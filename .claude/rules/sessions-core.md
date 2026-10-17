@@ -10,6 +10,7 @@ paths:
 - Never trust hook escape codes (OSC 7777) to arrive: hooks run with no terminal. State comes from the files hooks write in the session folder, which `HookFileWatcher` reports changes to and `SessionStore.refreshLocal` reads.
 - Never watch only the session folder: hooks write with `>`, which rewrites an existing file in place and raises no folder event. `HookFileWatcher` watches each file too.
 - Never read hook files or scan the terminal screen on a timer on the main actor. Reads run detached; the screen is scanned only after it changes (`OutputReportingTerminalView`), once a second at most. `SessionStore.poll` stays as the safety net, and as the only reader of server sessions and of sandboxed ones, whose mounted folder isn't known to raise file events.
+- Never record a PR from a tool call that merely mentions one: `SessionScript.pullRequestHook` reads only the result of `gh pr create`, a `gh api` POST to `/pulls` or a `create_pull_request` tool, or a session picks up every PR it views or lists. It splits the hook's JSON at `tool_response`, so it depends on Claude Code writing `tool_name` and `tool_input` first; `SessionPullRequestHookTests` is the guard, so run it when changing hooks or upgrading Claude Code.
 - Read the mode from the terminal footer (`ClaudeMode.fromFooter`) even for server sessions; that terminal is local.
 
 ## Trust boundaries
