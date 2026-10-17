@@ -179,7 +179,7 @@ struct SyncFooter: View {
         GitHub budget.
         """
 
-    static let fullRefreshHelp = "Searches pull requests and issues again from scratch, and also fetches every open issue in the issue history again, instead of usually only what changed. Slower, and spends more of the GitHub budget."
+    static let fullRefreshHelp = "Searches pull requests and issues again from scratch, and also fetches every open issue in the issue history again, where Refresh usually fetches only what changed. Slower, and spends more of the GitHub budget."
 
     /// The runs making up the sync in progress: those still running, and
     /// any that finished since the earliest of them started (workload
