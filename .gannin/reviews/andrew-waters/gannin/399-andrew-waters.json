@@ -15,14 +15,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-17T15:11:51Z",
   "number" : 399,
   "posted_at" : "2026-10-16T19:42:57Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-16T19:41:40Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Add Ask Claude to the comment box on a review diff line",
-  "updated_at" : "2026-10-17T12:26:29Z",
+  "updated_at" : "2026-10-17T15:12:55Z",
   "verdict" : "approve"
 }
