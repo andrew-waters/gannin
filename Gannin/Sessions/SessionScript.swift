@@ -538,8 +538,8 @@ enum SessionBrief {
         lines += goalsSection(goals)
 
         var working = ["## Working here", ""]
-        // The review request sits earlier in the list; the PR step repeats it, as claude goes by the last step it read.
-        let reviewFirst = session.canPairReview ? " First run `\(session.readyForReviewScript)` and wait for its outcome: don't open the pull request before then." : ""
+        // The PR step repeats the review request above so it isn't skipped. A draft is fine before the review.
+        let reviewFirst = session.canPairReview ? " First run `\(session.readyForReviewScript)` and wait for its outcome: don't open the pull request as ready for review before then (a draft is fine)." : ""
         if session.isInHarness, let harnessPath = session.harnessPath, let harnessRepo = session.harnessRepo {
             let folder = ".worktrees/\(session.branch)"
             // Where linked PRs were opened: likely where the code is.
