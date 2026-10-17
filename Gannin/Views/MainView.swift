@@ -256,7 +256,7 @@ struct MainView: View {
     var body: some View {
         NavigationSplitView {
             OrgSidebar(selectedOrg: $selectedOrg, workspace: Binding(get: { workspace }, set: { workspace = $0 }), selection: sidebarSelection, workload: workload)
-                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 340)
+                .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 500)
                 .environment(\.openElsewhere, sidebarOpenElsewhere)
         } detail: {
             if let selectedOrg {
