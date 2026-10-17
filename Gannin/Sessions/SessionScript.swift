@@ -299,9 +299,13 @@ enum SessionScript {
     ///   kept.
     /// - `gh api` to a path ending in `/pulls` with `-X POST`, `--method POST`,
     ///   or a `-f`, `-F`, `--field`, `--raw-field` or `--input` (which make gh
-    ///   POST), and no `-X GET`. Its result is the whole PR, body included, so
-    ///   only its `html_url` is kept.
-    /// A PR-creating MCP tool (`create_pull_request`) is read the same way.
+    ///   POST), and no `-X GET`, all in that one `gh api` command (up to the
+    ///   next `&&`, `;`, `|`, unescaped quote or newline), not elsewhere in
+    ///   the call. Its result is the whole PR, body included, so only its
+    ///   `html_url` or `url` is kept (a REST object's `url` is on
+    ///   api.github.com, so it never matches).
+    /// A PR-creating MCP tool (`create_pull_request`) is read the same way: the
+    ///   GitHub MCP server's result is a short `{id, url}` object.
     /// Left out, so the session records no PR: a wrapper script, a `gh`
     /// reached through `xargs`, `env` or `then`, a quoted `VAR="a b"` prefix,
     /// and `gh api` with its method or path in a variable.
@@ -316,13 +320,16 @@ enum SessionScript {
         input=$(cat)
         call=$(printf '%s' "$input" | sed 's/"tool_response".*//')
         has() { printf '%s' "$call" | grep -Eq -- "$1"; }
-        hasi() { printf '%s' "$call" | grep -Eqi -- "$1"; }
+        # Each `gh api` command on its own line, ending at a separator, an
+        # unescaped quote or a newline, so a flag on another command in the same
+        # call isn't taken as this one's.
+        creates() { printf '%s' "$call" | grep -Eo 'gh api ([^&;|`"\\]|\\[^n])*' | grep -E '/pulls([ ]|\\|$)' | grep -Ei '(-X ?|--method[ =])POST| (-[fF]|--field|--raw-field|--input)[ =]' | grep -Eiv '(-X ?|--method[ =])GET' | grep -q .; }
         start='"tool_name": ?"Bash".*"command": ?"(.*(&&|;|\||\\n|\(|`))? *([A-Za-z_][A-Za-z0-9_]*=[^ ]+ +)*'
         url='https://github\.com/[^"\\ ]+/pull/[0-9]+'
         if has "$start"'gh pr create'; then
           re=$url
-        elif has '"tool_name": ?"[^"]*create_pull_request"' || { has "$start"'gh api [^"]*/pulls([ "]|\\)' && hasi '(-X ?|--method[ =])POST| (-[fF]|--field|--raw-field|--input)[ =]' && ! hasi '(-X ?|--method[ =])GET'; }; then
-          re='html_url\\*": ?\\*"'"$url"
+        elif has '"tool_name": ?"[^"]*create_pull_request"' || { has "$start"'gh api ' && creates; }; then
+          re='"(html_)?url\\*": ?\\*"'"$url"
         else
           exit 0
         fi
