@@ -1305,6 +1305,20 @@ struct PullRequestReviewView: View {
 
     // MARK: Diff
 
+    /// Sends a question to the review's claude and shows the conversation;
+    /// false when it couldn't be sent.
+    private func askReviewer(_ text: String) -> Bool {
+        guard sessions.submit(text, to: session.id) else { return false }
+        conversation = true
+        return true
+    }
+
+    /// What a diff line's Ask Claude sends with; nil while claude isn't running.
+    private var diffAsk: ((String) -> Bool)? {
+        guard sessions.isRunning(session.id) else { return nil }
+        return { askReviewer($0) }
+    }
+
     @ViewBuilder
     private func diffColumn(review: SessionTranscript.ReviewResult?) -> some View {
         let findings = visible(review?.findings ?? [])
@@ -1313,11 +1327,7 @@ struct PullRequestReviewView: View {
                 ReviewOverview(
                     session: session, reference: reference, pullRequest: pullRequest, review: review,
                     readiness: readiness(review), status: status, canAsk: sessions.isRunning(session.id),
-                    open: open, ask: { text in
-                        guard sessions.submit(text, to: session.id) else { return false }
-                        conversation = true
-                        return true
-                    }
+                    open: open, ask: askReviewer
                 )
             } else if selectedFile == "\u{0}conversation" {
                 List { DescriptionSections(id: reference.id, url: reference.url) }
@@ -1342,7 +1352,8 @@ struct PullRequestReviewView: View {
                     applied: (review?.applied ?? []).filter { $0.path == file.path }, resolve: { appliedLearning($0) },
                     learningURL: { harnessIndex?.url(for: $0.document) },
                     existingComments: pullRequest.existingComments.filter { $0.path == file.path },
-                    fileURL: URL(string: "https://github.com/\(reference.repo)/blob/\(pullRequest.headSHA)/\(file.path)")
+                    fileURL: URL(string: "https://github.com/\(reference.repo)/blob/\(pullRequest.headSHA)/\(file.path)"),
+                    ask: diffAsk
                 )
                 .id(file.path)
             } else {
@@ -1586,6 +1597,8 @@ private struct ReviewDiff: View {
     /// The file at the PR's head commit, for a binary or too-large diff
     /// GitHub sent no patch for.
     let fileURL: URL?
+    /// Sends a question to the review's claude; nil when it isn't running.
+    let ask: ((String) -> Bool)?
     @State private var hovered: DiffLine.ID?
     @State private var commenting: DiffLine.ID?
     @State private var showsFileLearnings = true
@@ -1682,7 +1695,7 @@ private struct ReviewDiff: View {
                                 .padding(.trailing, 8)
                                 .padding(.vertical, 4)
                         }
-                        DiffRow(sessionID: session.id, filePath: file.path, line: line, highlight: colours?[line.id], isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting)
+                        DiffRow(sessionID: session.id, filePath: file.path, line: line, highlight: colours?[line.id], isLearned: marked.contains(line.id), hovered: $hovered, commenting: $commenting, lines: file.lines, ask: ask)
                         if let newLine = line.newLine {
                             ForEach(appliedAt[newLine] ?? [], id: \.entry) { pair in
                                 AppliedLearningCard(session: session, entry: pair.entry, learning: pair.learning, url: pair.learning.flatMap(learningURL), showsLocation: false)
@@ -1784,6 +1797,10 @@ private struct DiffRow: View {
     var isLearned = false
     @Binding var hovered: DiffLine.ID?
     @Binding var commenting: DiffLine.ID?
+    /// The file's lines, for the context sent with a question.
+    let lines: [DiffLine]
+    /// Sends a question to the review's claude; nil when it isn't running.
+    let ask: ((String) -> Bool)?
 
     var body: some View {
         let anchor = line.anchor
@@ -1830,16 +1847,50 @@ private struct DiffRow: View {
         }
         .popover(isPresented: Binding(get: { commenting == line.id }, set: { if !$0 { commenting = nil } }), arrowEdge: .leading) {
             if let anchor {
-                ReviewCommentEditor(location: "\(filePath):\(anchor.line)") { body in
+                ReviewCommentEditor(location: "\(filePath):\(anchor.line)", add: { body in
                     sessions.reviewDrafts[sessionID, default: ReviewDraft()].comments.append(
                         .init(path: filePath, line: anchor.line, isOld: anchor.isOld, body: body)
                     )
                     commenting = nil
-                } cancel: {
+                }, ask: ask == nil ? nil : { question in
+                    askAbout(line, anchor: anchor, question)
+                }, cancel: {
                     commenting = nil
-                }
+                })
             }
         }
+    }
+
+    /// Sends the question with its context, closing the popover once sent.
+    private func askAbout(_ line: DiffLine, anchor: (line: Int, isOld: Bool), _ question: String) -> Bool {
+        guard let ask else { return false }
+        let sent = ask(DiffQuestion.message(question, path: filePath, anchor: anchor, line: line, in: lines))
+        if sent { commenting = nil }
+        return sent
+    }
+}
+
+/// A question about a diff line, with the lines around it, for the review's
+/// claude.
+nonisolated enum DiffQuestion {
+    static let radius = 5
+
+    static func message(_ question: String, path: String, anchor: (line: Int, isOld: Bool), line: DiffLine, in lines: [DiffLine]) -> String {
+        let side = anchor.isOld ? "line \(anchor.line) of the old file" : "line \(anchor.line)"
+        guard let index = lines.firstIndex(where: { $0.id == line.id }) else {
+            return "A question about \(path), \(side):\n\n\(question)"
+        }
+        let nearby = lines.indices.filter { abs($0 - index) <= radius }.map { lines[$0] }
+        let shown = nearby.map { ($0.id == line.id ? "> " : "  ") + $0.text }.joined(separator: "\n")
+        // Longer than any run of backticks in the lines, so one of them can't end the block early.
+        var longest = 0
+        var run = 0
+        for character in shown {
+            run = character == "`" ? run + 1 : 0
+            longest = max(longest, run)
+        }
+        let fence = String(repeating: "`", count: max(3, longest + 1))
+        return "A question about \(path), \(side), marked > in this part of the diff:\n\n\(fence)diff\n\(shown)\n\(fence)\n\n\(question)"
     }
 }
 
@@ -1997,8 +2048,11 @@ private struct OwnCommentCard: View {
 private struct ReviewCommentEditor: View {
     let location: String
     let add: (String) -> Void
+    /// nil when the review's claude can't be asked.
+    let ask: ((String) -> Bool)?
     let cancel: () -> Void
     @State private var text = ""
+    @State private var askFailed = false
     @FocusState private var focused: Bool
 
     var body: some View {
@@ -2008,9 +2062,17 @@ private struct ReviewCommentEditor: View {
                 .frame(width: 340, height: 100)
                 .focused($focused)
             HStack {
-                Text("Posted with the review").font(.caption).foregroundStyle(.secondary)
+                if askFailed {
+                    Text("Couldn't reach Claude").font(.caption).foregroundStyle(ChartPalette.critical)
+                } else {
+                    Text("Add posts with the review").font(.caption).foregroundStyle(.secondary)
+                }
                 Spacer()
                 Button("Cancel", action: cancel).keyboardShortcut(.cancelAction)
+                Button("Ask Claude", action: askClaude)
+                    .keyboardShortcut(.return, modifiers: [.command, .option])
+                    .disabled(ask == nil || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .help(ask == nil ? "The review's Claude isn't running" : "Send this to the reviewer with the lines around it")
                 Button("Add") { add(text.trimmingCharacters(in: .whitespacesAndNewlines)) }
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -2018,6 +2080,13 @@ private struct ReviewCommentEditor: View {
         }
         .padding(12)
         .onAppear { focused = true }
+        .onChange(of: text) { askFailed = false }
+    }
+
+    private func askClaude() {
+        guard let ask else { return }
+        let question = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        askFailed = !ask(question)
     }
 }
 
