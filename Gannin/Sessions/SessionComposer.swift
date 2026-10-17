@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// The bar under a session's terminal: a box to tell it something (sent as a prompt, queued if it's
-/// busy); saved prompts (⌃1 to ⌃9); Esc to stop it; how full its context
+/// busy), with thumbnails of the attachments going with it; saved prompts (⌃1 to ⌃9); Esc to stop it; how full its context
 /// is, with /compact; and how its last test or build went.
 struct SessionComposer: View {
     @Environment(SessionStore.self) private var sessions
@@ -15,7 +15,9 @@ struct SessionComposer: View {
     var body: some View {
         let running = sessions.isRunning(session.id)
         let transcript = sessions.transcripts[session.id]
+        let attaching = !sessions.staged(in: session.id).isEmpty
         VStack(spacing: 0) {
+            StagedAttachmentsStrip(session: session)
             HStack(spacing: 8) {
                 snippetMenu(enabled: running)
                 TextField("Tell claude something", text: $text, axis: .vertical)
@@ -25,8 +27,8 @@ struct SessionComposer: View {
                     .onSubmit(send)
                     .disabled(!running)
                 Button("Send", action: send)
-                    .disabled(!running || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .help("Send it as a prompt. If claude is working, it reads it when it's done.")
+                    .disabled(!running || (!attaching && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .help("Send it as a prompt, with the attachments above it. If claude is working, it reads it when it's done.")
                 Button {
                     sessions.interrupt(session.id)
                 } label: {
@@ -59,8 +61,7 @@ struct SessionComposer: View {
     }
 
     private func send() {
-        let prompt = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !prompt.isEmpty, sessions.submit(prompt, to: session.id) else { return }
+        guard sessions.submit(text, withAttachmentsTo: session.id) else { return }
         text = ""
     }
 

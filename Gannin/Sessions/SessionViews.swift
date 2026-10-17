@@ -864,6 +864,8 @@ struct SessionTab: View {
     @State private var hiddenAsk: String?
     /// Documents dropped on a planning session, being confirmed.
     @State private var sharing: [URL]?
+    /// Files being dragged over the side panel, to attach.
+    @State private var dropping = false
     @AppStorage("sessionsPane") private var pane: SessionPane = .issue
     /// The side panel opens at its widest and is dragged no wider than
     /// this, however wide the window, nor narrower than the least.
@@ -983,6 +985,30 @@ struct SessionTab: View {
             Divider()
             SessionLocationBadge(session: session, prominent: true)
                 .padding(8)
+        }
+        // Anywhere on the panel, whichever pane shows: the Issue pane's
+        // Attachments section lists them.
+        .dropDestination(for: URL.self) { urls, _ in
+            let files = urls.filter(\.isFileURL)
+            guard !files.isEmpty, session.archivedAt == nil else { return false }
+            pane = .issue
+            Task { sessions.attachmentNotices[session.id] = await sessions.addAttachments(files, to: session.id) }
+            return true
+        } isTargeted: { dropping = $0 && session.archivedAt == nil }
+        .overlay {
+            if dropping {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6]))
+                    .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        Label("Attach for Claude", systemImage: "paperclip")
+                            .font(.headline)
+                            .padding(10)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .padding(6)
+                    .allowsHitTesting(false)
+            }
         }
     }
 
@@ -1774,6 +1800,9 @@ private struct SessionPanel: View {
                     Button("Open Issue") { openWindow(value: session.issue) }
                 }
             }
+            }
+            if session.archivedAt == nil {
+                SessionAttachmentsSection(session: session)
             }
             Section("Claude Code") {
                 LabeledContent("State") {
