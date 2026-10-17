@@ -97,6 +97,15 @@ struct SessionPullRequestHookTests {
         #expect(try recorded(bash("gh api repos/o/r/pulls -f state=all -f base=main --method GET", stdout: listing)) == [])
     }
 
+    @Test func flagsOnAnotherCommandInTheCallAreNotThisOnes() throws {
+        let listing = "{\\\"html_url\\\":\\\"\(other)\\\"}"
+        #expect(try recorded(bash("rm -f out.json && gh api repos/o/r/pulls --paginate", stdout: listing)) == [])
+        #expect(try recorded(bash("gh api repos/o/r/pulls --jq .[].number && gh api -X POST repos/o/r/issues/1/comments -f body=x", stdout: listing)) == [])
+        #expect(try recorded(bash("gh api repos/o/r/pulls\\ngh api repos/o/r/issues -f title=t", stdout: listing)) == [])
+        #expect(try recorded(bash("gh api \(path) -f title=t && gh api -X GET repos/o/r/pulls/1/files", stdout: pullObject)) == [mine])
+        #expect(try recorded(bash("gh api \(path) -f title=t\\ngh api -X GET repos/o/r/pulls/1/files", stdout: pullObject)) == [mine])
+    }
+
     @Test func createWithAVariableOrSubshellInFrontIsRecorded() throws {
         #expect(try recorded(bash("url=$(gh pr create --fill)", stdout: mine)) == [mine])
         #expect(try recorded(bash("(cd x && gh pr create --fill)", stdout: mine)) == [mine])
@@ -123,6 +132,8 @@ struct SessionPullRequestHookTests {
     @Test func aPullRequestCreatingToolIsRecorded() throws {
         let created = call("mcp__github__create_pull_request", input: #"{"title":"t","body":"Follows \#(other)"}"#, response: #"{"body":"Follows \#(other)","html_url":"\#(mine)"}"#)
         #expect(try recorded(created) == [mine])
+        let short = call("mcp__github__create_pull_request", input: "{}", response: #"{"id":"1","url":"\#(mine)"}"#)
+        #expect(try recorded(short) == [mine])
         let wrapped = call("mcp__github__create_pull_request", input: "{}", response: #"[{"type":"text","text":"{\"body\":\"Follows \#(other)\",\"html_url\":\"\#(mine)\"}"}]"#)
         #expect(try recorded(wrapped) == [mine])
     }
