@@ -174,7 +174,7 @@ struct SyncFooter: View {
         Refresh (⌘R) fetches what changed on GitHub since the last sync: pull requests, issues, members and teams, \
         merged-PR metrics, the project boards behind Investments, and the harness. Activity, issue history, \
         Actions and Releases are included once those pages have been opened for this org.
-        Full Refresh (Option-click, or right-click) does the same but searches everything again from scratch, \
+        Full Refresh (Option-click, or right-click) does the same, but searches pull requests and issues again from scratch \
         and fetches every open issue again, so it spends more of the GitHub budget.
         """
 
@@ -436,7 +436,7 @@ private enum SyncStepHelp {
         case (.workload, "changed-issues"): return "issues changed since the last sync"
         case (.workload, "change-feed"): return "pull requests and issues GitHub reports as updated"
         case (.metrics, "merged"): return "merged pull requests"
-        case (.metrics, "opened"): return "pull requests opened, week by week"
+        case (.metrics, "opened"): return "weeks of opened-PR counts fetched"
         case (.metrics, "files"): return "pull requests whose changed files were fetched"
         case (.workLog, "prs"): return "pull requests with activity by the people being tracked"
         case (.workLog, "issues"): return "issues and comments by the people being tracked"
@@ -448,9 +448,9 @@ private enum SyncStepHelp {
         case (.projects, "items"): return "issues, pull requests and drafts on the board"
         case (.actions, "repos"): return "repositories checked for workflow runs"
         case (.actions, "runs"): return "workflow runs"
-        case (.releases, "repos"): return "repositories checked for milestones and releases"
+        case (.releases, "repos"): return "milestones and releases found"
         case (.releases, "more"): return "repositories whose releases were paged through"
-        case (.releases, "stars"): return "stars on repositories with releases"
+        case (.releases, "stars"): return "repositories whose star history was fetched"
         default: return nil
         }
     }
