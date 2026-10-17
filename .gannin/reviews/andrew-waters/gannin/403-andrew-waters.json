@@ -11,6 +11,7 @@
       "line" : 304,
       "path" : "Gannin/Sessions/SessionScript.swift",
       "posted_at" : "2026-10-17T14:54:14Z",
+      "resolved_at" : "2026-10-17T15:01:16Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 305,
       "path" : "Gannin/Sessions/SessionScript.swift",
       "posted_at" : "2026-10-17T14:54:14Z",
+      "resolved_at" : "2026-10-17T15:01:16Z",
       "severity" : "minor"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 305,
       "path" : "Gannin/Sessions/SessionScript.swift",
       "posted_at" : "2026-10-17T14:54:14Z",
+      "resolved_at" : "2026-10-17T15:01:16Z",
       "severity" : "minor"
     },
     {
@@ -41,17 +44,38 @@
       "line" : 300,
       "path" : "Gannin/Sessions/SessionScript.swift",
       "posted_at" : "2026-10-17T14:54:14Z",
+      "resolved_at" : "2026-10-17T15:01:16Z",
       "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`hasi` and `! hasi` search the whole `call`, so a POST or field flag from anothe",
+      "key" : "Gannin/Sessions/SessionScript.swift:324:`hasi` and `! hasi` search the whole `call`, so a POST or fi",
+      "line" : 324,
+      "path" : "Gannin/Sessions/SessionScript.swift",
+      "posted_at" : "2026-10-17T15:01:12Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "I believe the GitHub MCP server's `create_pull_request` returns a short object, ",
+      "key" : "Gannin/Sessions/SessionScript.swift:325:I believe the GitHub MCP server's `create_pull_request` retu",
+      "line" : 325,
+      "path" : "Gannin/Sessions/SessionScript.swift",
+      "posted_at" : "2026-10-17T15:01:12Z",
+      "severity" : "major"
     }
   ],
   "number" : 403,
-  "posted_at" : "2026-10-17T14:54:14Z",
+  "posted_at" : "2026-10-17T15:01:12Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-17T14:52:19Z",
   "state" : "OPEN",
   "title" : "Record a session's PR only from the call that created it",
-  "updated_at" : "2026-10-17T14:54:15Z",
+  "updated_at" : "2026-10-17T15:01:16Z",
   "verdict" : "request_changes"
 }
