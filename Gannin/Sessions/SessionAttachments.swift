@@ -136,12 +136,18 @@ extension SessionStore {
     /// taken.
     func addDroppedAttachments(_ providers: [NSItemProvider], to id: UUID) -> Bool {
         var taken = false
+        // Each file loads on its own, so each only adds to what the drop
+        // has to say, cleared once here.
+        attachmentNotices[id] = nil
         for provider in providers {
             if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 taken = true
                 _ = provider.loadObject(ofClass: URL.self) { @Sendable url, _ in
                     guard let url else { return }
-                    Task { @MainActor in self.attachmentNotices[id] = await self.addAttachments([url], to: id) }
+                    Task { @MainActor in
+                        guard let note = await self.addAttachments([url], to: id) else { return }
+                        self.attachmentNotices[id] = [self.attachmentNotices[id], note].compactMap { $0 }.joined(separator: " ")
+                    }
                 }
             } else if provider.canLoadObject(ofClass: NSImage.self) {
                 taken = true
