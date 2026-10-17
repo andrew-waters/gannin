@@ -539,7 +539,7 @@ enum SessionBrief {
 
         var working = ["## Working here", ""]
         // The PR step repeats the review request above so it isn't skipped. A draft is fine before the review.
-        let reviewFirst = session.canPairReview ? " First run `\(session.readyForReviewScript)` and wait for its outcome: don't open the pull request as ready for review before then (a draft is fine)." : ""
+        let reviewFirst = session.canPairReview ? " Before opening it as ready for review, run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and wait for its outcome (opening it as a draft first is fine)." : ""
         if session.isInHarness, let harnessPath = session.harnessPath, let harnessRepo = session.harnessRepo {
             let folder = ".worktrees/\(session.branch)"
             // Where linked PRs were opened: likely where the code is.

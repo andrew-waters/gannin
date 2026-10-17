@@ -66,6 +66,33 @@ struct PairReviewTests {
         #expect(session(inHarness: false).readyForReviewScript == ".gannin/ready-for-review")
     }
 
+    @Test func briefsPullRequestStepAsksForTheReviewFirst() {
+        func brief(_ session: CodeSession) -> String {
+            SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: nil)
+        }
+        func asks(_ script: String) -> String {
+            "run `\(script) \"<what changed and where to look>\"` and wait for its outcome (opening it as a draft first is fine)."
+        }
+
+        let issue = brief(session())
+        #expect(issue.contains("Before opening it as ready for review, " + asks(".worktrees/68-pair-review/.gannin/ready-for-review")))
+        #expect(brief(session(inHarness: false)).contains(asks(".gannin/ready-for-review")))
+
+        var noIssue = session()
+        noIssue.quickChange = QuickChangeInfo(note: "Nudge it", attachments: [], hasIssue: false)
+        #expect(brief(noIssue).contains(asks(".worktrees/68-pair-review/.gannin/ready-for-review")))
+
+        var helper = session()
+        helper.parentID = UUID()
+        #expect(!brief(helper).contains("Before opening it as ready for review"))
+
+        var local = session()
+        var routine = Routine.new(org: "acme", harnessRepo: "acme/harness", kind: .code, name: "Tidy dependencies")
+        routine.limit = .localOnly
+        local.routineRun = RoutineRunInfo(routine: routine, run: UUID())
+        #expect(!brief(local).contains("Before opening it as ready for review"))
+    }
+
     @Test func scriptWritesTheRequestIntoTheSessionsFolder() {
         let script = SessionScript.readyForReview(session(), directory: #""$HOME"/.gannin/sessions/x"#)
         #expect(script.hasPrefix("#!/bin/bash\n"))

@@ -78,33 +78,6 @@ struct QuickChangeTests {
         #expect(!brief.contains("Not loaded in Gannin yet"))
     }
 
-    @Test func pullRequestStepAsksForTheReviewFirst() {
-        let sentence = "First run `.worktrees/"
-        func brief(_ session: CodeSession) -> String {
-            SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: nil)
-        }
-
-        let noIssue = brief(session(issue: false))
-        #expect(noIssue.contains("\(sentence)\(session(issue: false).branch)/.gannin/ready-for-review` and wait for its outcome"))
-        #expect(noIssue.contains("as ready for review before then (a draft is fine)"))
-        #expect(brief(session(issue: true)).contains("\(sentence)\(session(issue: true).branch)/.gannin/ready-for-review` and wait for its outcome"))
-
-        var plain = session(issue: true)
-        plain.harnessPath = nil
-        plain.harnessRepo = nil
-        #expect(brief(plain).contains("First run `.gannin/ready-for-review` and wait for its outcome"))
-
-        var helper = session(issue: false)
-        helper.parentID = UUID()
-        #expect(!brief(helper).contains("First run `"))
-
-        var local = session(issue: false)
-        var routine = Routine.new(org: "acme", harnessRepo: "acme/harness", kind: .code, name: "Tidy dependencies")
-        routine.limit = .localOnly
-        local.routineRun = RoutineRunInfo(routine: routine, run: UUID())
-        #expect(!brief(local).contains("First run `"))
-    }
-
     @Test func promptSkipsThePlanButStopsWhenItIsNotSmall() {
         let prompt = SessionStore.quickChangePrompt(session(issue: false))
         #expect(prompt.contains("quick change in acme/app"))
