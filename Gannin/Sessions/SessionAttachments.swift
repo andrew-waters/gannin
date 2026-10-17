@@ -193,7 +193,7 @@ extension SessionStore {
 
     /// Names and lists each file at once, so another drop meanwhile can't
     /// take a name; keeps its copy here, written off the main actor; then
-    /// copies it to the box.
+    /// copies it to the box and adds it to the next prompt.
     private func addAttachments(_ files: [Attaching], to id: UUID) async {
         guard !files.isEmpty, sessions[id] != nil else { return }
         let names = Self.attachmentNames(files.map(\.name), existing: takenAttachmentNames(id))
@@ -219,8 +219,12 @@ extension SessionStore {
             update(id) { $0.attachments?.removeAll { failed.contains($0.name) } }
             attachmentNotices[id] = "Couldn't keep \(failed.sorted().joined(separator: ", ")) on this Mac to attach."
         }
+        // Each goes with the next prompt once claude can read it.
         for name in written {
             await upload(name, in: id)
+            if attachments(of: id).contains(where: { $0.name == name && $0.uploaded }), stagedAttachments[id]?.contains(name) != true {
+                stagedAttachments[id, default: []].append(name)
+            }
         }
     }
 
@@ -352,7 +356,7 @@ struct SessionAttachmentsSection: View {
             Text("Attachments")
         } footer: {
             if !attachments.isEmpty {
-                Text("Click one to add it to the next prompt you send from the bar under the terminal.")
+                Text("New ones go with the next prompt you send from the bar under the terminal; click one to add it or leave it out.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

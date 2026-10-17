@@ -17,7 +17,7 @@ A spinner shows while a file is copied. If it can't be copied (the server isn't 
 
 ## Sending them
 
-Click an attachment to add it to your next prompt. Its thumbnail appears above the box under the terminal (an image's preview, a document's first page, or the file's icon); click its × to leave it out. **Send** sends what you typed, with the attachments' paths for Claude to read, or just the paths if you typed nothing.
+A file you drop, paste or add goes with your next prompt as soon as it has been copied: its thumbnail appears above the box under the terminal (an image's preview, a document's first page, or the file's icon); click its × to leave it out. Click an attachment in the list to add it again, or to leave it out. **Send** sends what you typed, with the attachments' paths for Claude to read, or just the paths if you typed nothing.
 
 Each attachment says **Not sent** until a prompt with it goes, then **Sent**. If you gave Claude a file another way, such as typing its path in the terminal, use **Mark as Sent** in its menu.
 

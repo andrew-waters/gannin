@@ -10,7 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
-- Attach screenshots and other files for a session's Claude, wherever it runs (this Mac, a sandbox or your server): drop them anywhere on the session's side panel, or Paste or Add Files under Attachments in its Issue pane. Click one to add it to your next prompt, shown as a thumbnail above the box under the terminal; each says whether it has been sent
+- Attach screenshots and other files for a session's Claude, wherever it runs (this Mac, a sandbox or your server): drop them anywhere on the session's side panel, or Paste or Add Files under Attachments in its Issue pane. Each new one goes with your next prompt, shown as a thumbnail above the box under the terminal (click one in the list to add it again or leave it out), and says whether it has been sent
 - Record queued sessions in Settings › Harness: switch it off for a project and sessions started from the agent queue or a pinned time no longer commit their brief and `session.json` to its harness; it's on by default, as before
 - A session's PR that starts to conflict with its base branch is now flagged, and with Send new feedback to Claude on, sent to the session's Claude, asking it to bring in the base branch and push.
 - Right-clicking an Ask or Planning session in the sidebar offers the same menu as its list: Open, Rename, Show in Finder and Delete for an Ask; Open and Delete for a plan, plus links to its plan and parent issue once agreed.
