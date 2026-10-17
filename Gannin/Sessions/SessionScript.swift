@@ -289,20 +289,46 @@ enum SessionScript {
     }
 
     /// The PostToolUse command that records a PR the session opens in `dir`'s
-    /// `pr` file. A new PR's URL is in the result of a Bash call whose command
-    /// runs `gh pr create`, or `gh api` with a POST to a repo's `/pulls` (a
-    /// field flag or `-X POST`), at the start of a command or after `&&`, `;`,
-    /// `|` or a newline; or of a PR-creating MCP tool. Only those results are
-    /// read: any other call that mentions a PR (viewing one, listing them,
-    /// including a `gh api` GET of `/pulls`, or a file naming one) would
-    /// otherwise be recorded as the session's own. A PR made by a wrapper
-    /// script isn't recorded. Claude Code writes tool_name and tool_input
-    /// before tool_response, and the command relies on that order. A tool call
-    /// can open more than one PR (one per repo in one command), so every URL
-    /// seen is kept, one per line, not just the last.
+    /// `pr` file. A new PR's URL is in the result of a call that creates one;
+    /// only those results are read, since any other call that mentions a PR
+    /// (viewing or listing them, a file naming one) would otherwise be
+    /// recorded as the session's own. A creating call is a Bash command that
+    /// runs, at the start of a command (after `&&`, `;`, `|`, `(`, `$(`, a
+    /// backtick or a newline, and any `VAR=value` words):
+    /// - `gh pr create`: its result is the new PR's URL, so every URL in it is
+    ///   kept.
+    /// - `gh api` to a path ending in `/pulls` with `-X POST`, `--method POST`,
+    ///   or a `-f`, `-F`, `--field`, `--raw-field` or `--input` (which make gh
+    ///   POST), and no `-X GET`. Its result is the whole PR, body included, so
+    ///   only its `html_url` is kept.
+    /// A PR-creating MCP tool (`create_pull_request`) is read the same way.
+    /// Left out, so the session records no PR: a wrapper script, a `gh`
+    /// reached through `xargs`, `env` or `then`, a quoted `VAR="a b"` prefix,
+    /// and `gh api` with its method or path in a variable.
+    ///
+    /// Claude Code writes tool_name and tool_input before tool_response, and
+    /// the command relies on that order: `SessionPullRequestHookTests` runs it
+    /// against JSON in that order and is what would show it change. A tool
+    /// call can open more than one PR (one per repo in one command), so every
+    /// URL seen is kept, one per line, not just the last.
     static func pullRequestHook(directory dir: String) -> String {
-        let api = #"gh api [^"]*(-X|--method)[ =]POST[^"]*/pulls([ "]|\\)|gh api [^"]*/pulls [^"]*((-X|--method)[ =]POST| -[fF] )"#
-        return #"input=$(cat); printf '%s' "$input" | sed 's/"tool_response".*//' | grep -Eq '"tool_name": ?"[^"]*create_pull_request"|"tool_name": ?"Bash".*"command": ?"(.*(&&|;|\||\\n))? *(gh pr create|\#(api))' || exit 0; printf '%s' "$input" | sed 's/.*"tool_response"//' | grep -Eo 'https://github\.com/[^"\\ ]+/pull/[0-9]+' | while IFS= read -r url; do grep -qxF "$url" \#(dir)/pr 2>/dev/null || { printf '%s\n' "$url" >> \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$url" > /dev/tty 2>/dev/null; }; done; exit 0"#
+        #"""
+        input=$(cat)
+        call=$(printf '%s' "$input" | sed 's/"tool_response".*//')
+        has() { printf '%s' "$call" | grep -Eq -- "$1"; }
+        hasi() { printf '%s' "$call" | grep -Eqi -- "$1"; }
+        start='"tool_name": ?"Bash".*"command": ?"(.*(&&|;|\||\\n|\(|`))? *([A-Za-z_][A-Za-z0-9_]*=[^ ]+ +)*'
+        url='https://github\.com/[^"\\ ]+/pull/[0-9]+'
+        if has "$start"'gh pr create'; then
+          re=$url
+        elif has '"tool_name": ?"[^"]*create_pull_request"' || { has "$start"'gh api [^"]*/pulls([ "]|\\)' && hasi '(-X ?|--method[ =])POST| (-[fF]|--field|--raw-field|--input)[ =]' && ! hasi '(-X ?|--method[ =])GET'; }; then
+          re='html_url\\*": ?\\*"'"$url"
+        else
+          exit 0
+        fi
+        printf '%s' "$input" | sed 's/.*"tool_response"//' | grep -Eo "$re" | grep -Eo "$url" | while IFS= read -r found; do grep -qxF "$found" \#(dir)/pr 2>/dev/null || { printf '%s\n' "$found" >> \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$found" > /dev/tty 2>/dev/null; }; done
+        exit 0
+        """#
     }
 
     /// Claude Code settings for the session: hooks that write its state to

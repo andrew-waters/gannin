@@ -63,18 +63,51 @@ struct SessionPullRequestHookTests {
         #expect(try recorded(bash("git push\\ngh pr create --fill", stdout: mine)) == [mine])
     }
 
-    @Test func ghApiPostToPullsIsRecorded() throws {
-        let path = "repos/andrew-waters/gannin/pulls"
-        #expect(try recorded(bash("gh api \(path) -f title=t -f head=b -f base=main", stdout: mine)) == [mine])
-        #expect(try recorded(bash("gh api -X POST \(path) --input body.json", stdout: mine)) == [mine])
-        #expect(try recorded(bash("gh api --method POST \(path)", stdout: mine)) == [mine])
+    /// What `gh api` prints for a created PR: the whole object as JSON, which
+    /// is escaped inside the hook's own JSON, with a body linking `other`.
+    private var pullObject: String {
+        #"{\"body\":\"Follows \#(other)\",\"html_url\":\"\#(mine)\",\"user\":{\"html_url\":\"https://github.com/andrew-waters\"}}"#
+    }
+
+    private let path = "repos/andrew-waters/gannin/pulls"
+
+    @Test func ghApiPostToPullsIsRecordedFromItsHTMLURLOnly() throws {
+        #expect(try recorded(bash("gh api \(path) -f title=t", stdout: pullObject)) == [mine])
+        #expect(try recorded(bash("gh api \(path) -f title=t -f head=b -f base=main", stdout: pullObject)) == [mine])
+        #expect(try recorded(bash("gh api \(path) -F draft=true", stdout: pullObject)) == [mine])
+        #expect(try recorded(bash("gh api \(path) --field title=t", stdout: pullObject)) == [mine])
+        #expect(try recorded(bash("gh api \(path) --raw-field title=t", stdout: pullObject)) == [mine])
+        #expect(try recorded(bash("gh api \(path) --input body.json", stdout: pullObject)) == [mine])
+        #expect(try recorded(bash("gh api -X POST \(path)", stdout: pullObject)) == [mine])
+        #expect(try recorded(bash("gh api --method POST \(path)", stdout: pullObject)) == [mine])
     }
 
     @Test func ghApiReadsOfPullsRecordNothing() throws {
         #expect(try recorded(bash("gh api repos/ctrl-hub/mono/pulls", stdout: other)) == [])
         #expect(try recorded(bash("gh api repos/ctrl-hub/mono/pulls --paginate", stdout: other)) == [])
+        #expect(try recorded(bash("gh api repos/ctrl-hub/mono/pulls?state=all", stdout: other)) == [])
         #expect(try recorded(bash("gh api repos/ctrl-hub/mono/pulls/783", stdout: other)) == [])
         #expect(try recorded(bash("gh api -X POST repos/ctrl-hub/mono/pulls/783/comments -f body=x", stdout: other)) == [])
+    }
+
+    @Test func ghApiGetWithFieldFlagsRecordsNothing() throws {
+        let listing = "{\\\"html_url\\\":\\\"\(other)\\\"}"
+        #expect(try recorded(bash("gh api repos/o/r/pulls -F head=o:b -F state=all -X GET", stdout: listing)) == [])
+        #expect(try recorded(bash("gh api -X GET repos/o/r/pulls -f state=closed -f per_page=100", stdout: listing)) == [])
+        #expect(try recorded(bash("gh api repos/o/r/pulls -f state=all -f base=main --method GET", stdout: listing)) == [])
+    }
+
+    @Test func createWithAVariableOrSubshellInFrontIsRecorded() throws {
+        #expect(try recorded(bash("url=$(gh pr create --fill)", stdout: mine)) == [mine])
+        #expect(try recorded(bash("(cd x && gh pr create --fill)", stdout: mine)) == [mine])
+        #expect(try recorded(bash("GH_REPO=o/r gh pr create --fill", stdout: mine)) == [mine])
+        #expect(try recorded(bash("A=1 B=2 gh api \(path) -f title=t", stdout: pullObject)) == [mine])
+    }
+
+    @Test func formsLeftOutAreNotRecorded() throws {
+        #expect(try recorded(bash("./scripts/open-pr.sh", stdout: mine)) == [])
+        #expect(try recorded(bash("echo x | xargs gh pr create", stdout: mine)) == [])
+        #expect(try recorded(bash("env GH_REPO=o/r gh pr create", stdout: mine)) == [])
     }
 
     @Test func aPullRequestPerRepoInOneCommandKeepsEach() throws {
@@ -88,7 +121,9 @@ struct SessionPullRequestHookTests {
     }
 
     @Test func aPullRequestCreatingToolIsRecorded() throws {
-        let created = call("mcp__github__create_pull_request", input: #"{"title":"t","body":"Follows \#(other)"}"#, response: #"{"html_url":"\#(mine)"}"#)
+        let created = call("mcp__github__create_pull_request", input: #"{"title":"t","body":"Follows \#(other)"}"#, response: #"{"body":"Follows \#(other)","html_url":"\#(mine)"}"#)
         #expect(try recorded(created) == [mine])
+        let wrapped = call("mcp__github__create_pull_request", input: "{}", response: #"[{"type":"text","text":"{\"body\":\"Follows \#(other)\",\"html_url\":\"\#(mine)\"}"}]"#)
+        #expect(try recorded(wrapped) == [mine])
     }
 }
