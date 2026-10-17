@@ -100,6 +100,9 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var hostReason: String? = nil
     /// The routine run that started it by itself (`Routines/`).
     var routineRun: RoutineRunInfo? = nil
+    /// Files dropped or pasted on its panel for claude, copied into
+    /// `.gannin/attachments/` on its box (`SessionAttachments.swift`).
+    var attachments: [SessionAttachment]? = nil
 
     var isRemote: Bool { connect != nil }
     var isSandboxed: Bool { sandbox != nil }
@@ -162,6 +165,7 @@ extension CodeSession {
         sandbox = try container.decodeIfPresent(String.self, forKey: .sandbox)
         hostReason = try container.decodeIfPresent(String.self, forKey: .hostReason)
         routineRun = try? container.decodeIfPresent(RoutineRunInfo.self, forKey: .routineRun)
+        attachments = try? container.decodeIfPresent([SessionAttachment].self, forKey: .attachments)
     }
 }
 
@@ -376,6 +380,15 @@ final class SessionStore {
     /// Review comments and checks already sent to a session's claude, by
     /// their URL, so they aren't offered again. For this launch only.
     private(set) var sent: [UUID: Set<String>] = [:]
+    /// Attachments picked to go with the next prompt, by name, in the order
+    /// picked (`SessionAttachments.swift`).
+    var stagedAttachments: [UUID: [String]] = [:]
+    /// Attachments still being copied to their box, as `<session>/<name>`.
+    var uploadingAttachments: Set<String> = []
+    /// Why an attachment didn't reach its box, by name.
+    var attachmentErrors: [UUID: [String: String]] = [:]
+    /// Why files dropped or pasted were left out, until the next try.
+    var attachmentNotices: [UUID: String] = [:]
     /// What you've made of a review's findings, and comments of your own;
     /// kept with the session.
     var reviewDrafts: [UUID: ReviewDraft] = [:] {
@@ -890,7 +903,10 @@ final class SessionStore {
             if selectedTab == id { selectedTab = parent }
             if besideTab == id { besideTab = parent }
         }
-        if let session = sessions[id] { deleteSandbox(of: session) }
+        if let session = sessions[id] {
+            deleteSandbox(of: session)
+            deleteAttachmentsOnBox((session.attachments ?? []).map(\.name), of: session)
+        }
         changesPanes[id] = nil
         filesPanes[id] = nil
         unflag(id)
@@ -903,6 +919,9 @@ final class SessionStore {
         noteSandboxedHarnesses()
         states[id] = nil
         drafts[id] = nil
+        stagedAttachments[id] = nil
+        attachmentErrors[id] = nil
+        attachmentNotices[id] = nil
         sandboxStatus[id] = nil
         transcripts[id] = nil
         readers[id] = nil
@@ -1101,6 +1120,9 @@ final class SessionStore {
         // Feedback queued for a claude that's gone may be dealt with by the
         // time it's back; the PRs pane still offers it.
         if state == .exited || state == .stopped { pendingFeedback[id] = nil }
+        // Its folder on the box is there once claude is: copy what couldn't
+        // be copied before it was, or before a relaunch.
+        if old == nil || old == .starting, [.working, .idle, .needsYou].contains(state) { retryAttachments(id) }
         if [.needsYou, .idle, .exited].contains(state), sessions[id] != nil {
             sessions[id]?.lastActiveAt = .now
             save()

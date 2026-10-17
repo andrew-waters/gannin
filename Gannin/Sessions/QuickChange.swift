@@ -101,13 +101,14 @@ extension SessionStore {
     /// File names safe for the shell and unique: letters, digits, dashes
     /// and underscores, the stem and extension cleaned apart so the
     /// extension survives a name in another script (`screenshot-N` for a
-    /// stem with nothing left), and a number added to a repeat.
-    static func attachmentNames(_ names: [String]) -> [String] {
+    /// stem with nothing left), and a number added to a repeat or to one in
+    /// `existing`.
+    static func attachmentNames(_ names: [String], existing: [String] = []) -> [String] {
         func clean(_ text: String) -> String {
             String(text.map { $0.isASCII && ($0.isLetter || $0.isNumber || "-_".contains($0)) ? $0 : "-" })
                 .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
         }
-        var taken: Set<String> = []
+        var taken = Set(existing.map { $0.lowercased() })
         return names.enumerated().map { index, name in
             // An empty name as a URL would be the current folder.
             let url = name.isEmpty ? nil : URL(filePath: name)

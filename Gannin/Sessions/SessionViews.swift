@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension SessionState {
     var color: Color {
@@ -864,6 +865,8 @@ struct SessionTab: View {
     @State private var hiddenAsk: String?
     /// Documents dropped on a planning session, being confirmed.
     @State private var sharing: [URL]?
+    /// Files being dragged over the side panel, to attach.
+    @State private var dropping = false
     @AppStorage("sessionsPane") private var pane: SessionPane = .issue
     /// The side panel opens at its widest and is dragged no wider than
     /// this, however wide the window, nor narrower than the least.
@@ -983,6 +986,29 @@ struct SessionTab: View {
             Divider()
             SessionLocationBadge(session: session, prominent: true)
                 .padding(8)
+        }
+        // Anywhere on the panel, whichever pane shows: the Issue pane's
+        // Attachments section lists them.
+        // Files, or an image from another app with no file.
+        .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
+            guard session.archivedAt == nil, sessions.addDroppedAttachments(providers, to: session.id) else { return false }
+            pane = .issue
+            return true
+        }
+        .overlay {
+            if dropping && session.archivedAt == nil {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6]))
+                    .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                    .overlay {
+                        Label("Attach for Claude", systemImage: "paperclip")
+                            .font(.headline)
+                            .padding(10)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                    .padding(6)
+                    .allowsHitTesting(false)
+            }
         }
     }
 
@@ -1774,6 +1800,9 @@ private struct SessionPanel: View {
                     Button("Open Issue") { openWindow(value: session.issue) }
                 }
             }
+            }
+            if session.archivedAt == nil {
+                SessionAttachmentsSection(session: session)
             }
             Section("Claude Code") {
                 LabeledContent("State") {

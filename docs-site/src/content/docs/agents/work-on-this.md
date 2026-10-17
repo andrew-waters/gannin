@@ -38,13 +38,13 @@ Helpers (such as a reviewer) have no tab of their own. They appear inside their 
 
 Each tab is a terminal beside a panel. You can drag the panel narrower and hide it from the composer.
 
-- **Issue** (Session for an Ask or a helper): the issue's state, and its plans and requirements from the harness.
+- **Issue** (Session for an Ask or a helper): the issue's state, files attached for Claude, and its plans and requirements from the harness. Drop files anywhere on the panel to attach them; see [Attachments](/docs/agents/attachments/).
 - **Changes** and **PRs**: see [Changes and pull requests](/docs/agents/changes-and-pull-requests/).
 - **Activity**: events, cost, time working against waiting, files edited, the last test or build, and how full Claude's context is. Plans Claude writes appear here with Read, Approve Plan and Request Changes.
 
 ## The composer
 
-Under the terminal: a box to tell Claude something, your saved prompts (⌃1 to ⌃9, edited in Settings), a stop button for interrupting mid-turn, the [Attended or Unattended](/docs/agents/attended-and-unattended/) menu, the context gauge with Compact Now, and the result of the last test or build.
+Under the terminal: a box to tell Claude something, with thumbnails above it of the [attachments](/docs/agents/attachments/) going with your next prompt, your saved prompts (⌃1 to ⌃9, edited in Settings), a stop button for interrupting mid-turn, the [Attended or Unattended](/docs/agents/attended-and-unattended/) menu, the context gauge with Compact Now, and the result of the last test or build.
 
 ## When Claude needs you
 

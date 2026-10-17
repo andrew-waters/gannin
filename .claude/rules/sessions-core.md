@@ -20,5 +20,11 @@ paths:
 - While any session rule is on, keep the rules guarding Gannin's preferences, Application Support, `.gannin/settings*` and Claude Code's settings, so a session can't switch its own rules off.
 - Keep `SessionRules.hookCommand` self-contained (inline base64 bash using sed, awk, grep, date only), so no editable script exists on the box.
 
+## Attachments (`SessionAttachments.swift`)
+- Copy attachments only into `.gannin/attachments/` in the session's folder on its box: `.gannin/` is kept out of git in harness and plain worktrees alike, so they're never committed, and a sandbox mounts the issue's folder writable.
+- Name them through `attachmentNames` with every name already in the folder: the issue session's, every helper's (they share it) and a quick change's screenshots. Names go into shell scripts and prompts, and a clash overwrites, or a Remove deletes, another's file.
+- Never make the session's folder from the upload: the start script takes an existing folder for a checkout, and a harness clone needs an empty one. Retry on start instead (`retryAttachments`).
+- Mark one sent only when `submit(_:withAttachmentsTo:)` has put a prompt naming it in the terminal.
+
 ## Testing
-`SessionModeTests` covers mode parsing, `TranscriptReader`'s permission mode and `TerminalKeys.encode`; `SessionRulesTests` covers session rules. Nothing covers `SessionTerminal.press` or the rest of transcript parsing (Activity, cost, questions, plans); check those by hand in a running session.
+`SessionModeTests` covers mode parsing, `TranscriptReader`'s permission mode and `TerminalKeys.encode`; `SessionRulesTests` covers session rules; `SessionAttachmentsTests` covers attachment names, paths, the upload script and the prompt. Nothing covers the copy to a box, `SessionTerminal.press` or the rest of transcript parsing (Activity, cost, questions, plans); check those by hand in a running session.
