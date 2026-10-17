@@ -290,17 +290,19 @@ enum SessionScript {
 
     /// The PostToolUse command that records a PR the session opens in `dir`'s
     /// `pr` file. A new PR's URL is in the result of a Bash call whose command
-    /// runs `gh pr create` (at the start of a command or after `&&`, `;`, `|`
-    /// or a newline) or of a PR-creating MCP tool. Only those results are read:
-    /// any other call that mentions a PR (viewing one, listing them, a file
-    /// naming one) would otherwise be recorded as the session's own. A PR made
-    /// another way (a wrapper script, `gh api`) isn't recorded; that is
-    /// deliberate. Claude Code writes tool_name and tool_input before
-    /// tool_response, and the command relies on that order. A tool call can
-    /// open more than one PR (one per repo in one command), so every URL seen
-    /// is kept, one per line, not just the last.
+    /// runs `gh pr create`, or `gh api` with a POST to a repo's `/pulls` (a
+    /// field flag or `-X POST`), at the start of a command or after `&&`, `;`,
+    /// `|` or a newline; or of a PR-creating MCP tool. Only those results are
+    /// read: any other call that mentions a PR (viewing one, listing them,
+    /// including a `gh api` GET of `/pulls`, or a file naming one) would
+    /// otherwise be recorded as the session's own. A PR made by a wrapper
+    /// script isn't recorded. Claude Code writes tool_name and tool_input
+    /// before tool_response, and the command relies on that order. A tool call
+    /// can open more than one PR (one per repo in one command), so every URL
+    /// seen is kept, one per line, not just the last.
     static func pullRequestHook(directory dir: String) -> String {
-        #"input=$(cat); printf '%s' "$input" | sed 's/"tool_response".*//' | grep -Eq '"tool_name": ?"[^"]*create_pull_request"|"tool_name": ?"Bash".*"command": ?"(.*(&&|;|\||\\n))? *gh pr create' || exit 0; printf '%s' "$input" | sed 's/.*"tool_response"//' | grep -Eo 'https://github\.com/[^"\\ ]+/pull/[0-9]+' | while IFS= read -r url; do grep -qxF "$url" \#(dir)/pr 2>/dev/null || { printf '%s\n' "$url" >> \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$url" > /dev/tty 2>/dev/null; }; done; exit 0"#
+        let api = #"gh api [^"]*(-X|--method)[ =]POST[^"]*/pulls([ "]|\\)|gh api [^"]*/pulls [^"]*((-X|--method)[ =]POST| -[fF] )"#
+        return #"input=$(cat); printf '%s' "$input" | sed 's/"tool_response".*//' | grep -Eq '"tool_name": ?"[^"]*create_pull_request"|"tool_name": ?"Bash".*"command": ?"(.*(&&|;|\||\\n))? *(gh pr create|\#(api))' || exit 0; printf '%s' "$input" | sed 's/.*"tool_response"//' | grep -Eo 'https://github\.com/[^"\\ ]+/pull/[0-9]+' | while IFS= read -r url; do grep -qxF "$url" \#(dir)/pr 2>/dev/null || { printf '%s\n' "$url" >> \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$url" > /dev/tty 2>/dev/null; }; done; exit 0"#
     }
 
     /// Claude Code settings for the session: hooks that write its state to

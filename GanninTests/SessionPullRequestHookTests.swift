@@ -63,6 +63,20 @@ struct SessionPullRequestHookTests {
         #expect(try recorded(bash("git push\\ngh pr create --fill", stdout: mine)) == [mine])
     }
 
+    @Test func ghApiPostToPullsIsRecorded() throws {
+        let path = "repos/andrew-waters/gannin/pulls"
+        #expect(try recorded(bash("gh api \(path) -f title=t -f head=b -f base=main", stdout: mine)) == [mine])
+        #expect(try recorded(bash("gh api -X POST \(path) --input body.json", stdout: mine)) == [mine])
+        #expect(try recorded(bash("gh api --method POST \(path)", stdout: mine)) == [mine])
+    }
+
+    @Test func ghApiReadsOfPullsRecordNothing() throws {
+        #expect(try recorded(bash("gh api repos/ctrl-hub/mono/pulls", stdout: other)) == [])
+        #expect(try recorded(bash("gh api repos/ctrl-hub/mono/pulls --paginate", stdout: other)) == [])
+        #expect(try recorded(bash("gh api repos/ctrl-hub/mono/pulls/783", stdout: other)) == [])
+        #expect(try recorded(bash("gh api -X POST repos/ctrl-hub/mono/pulls/783/comments -f body=x", stdout: other)) == [])
+    }
+
     @Test func aPullRequestPerRepoInOneCommandKeepsEach() throws {
         let second = "https://github.com/andrew-waters/harness/pull/5"
         #expect(try recorded(bash("gh pr create --fill; gh pr create --fill", stdout: "\(mine)\\n\(second)")) == [mine, second])
