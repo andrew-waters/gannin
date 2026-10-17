@@ -1,0 +1,57 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The second alternative, `/pulls [^\"]*((-X|--method)[ =]POST| -[fF] )`, counts an",
+      "key" : "Gannin/Sessions/SessionScript.swift:304:The second alternative, `/pulls [^\"]*((-X|--method)[ =]POST|",
+      "line" : 304,
+      "path" : "Gannin/Sessions/SessionScript.swift",
+      "posted_at" : "2026-10-17T14:54:14Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "For a `gh api` POST to `/pulls`, or an MCP `create_pull_request` that returns th",
+      "key" : "Gannin/Sessions/SessionScript.swift:305:For a `gh api` POST to `/pulls`, or an MCP `create_pull_requ",
+      "line" : 305,
+      "path" : "Gannin/Sessions/SessionScript.swift",
+      "posted_at" : "2026-10-17T14:54:14Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The command anchor `(.*(&&|;|\\||\\\\n))? *` doesn't catch some common forms, so th",
+      "key" : "Gannin/Sessions/SessionScript.swift:305:The command anchor `(.*(&&|;|\\||\\\\n))? *` doesn't catch some",
+      "line" : 305,
+      "path" : "Gannin/Sessions/SessionScript.swift",
+      "posted_at" : "2026-10-17T14:54:14Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "If Claude Code ever puts `tool_response` before `tool_input`, the first sed remo",
+      "key" : "Gannin/Sessions/SessionScript.swift:300:If Claude Code ever puts `tool_response` before `tool_input`",
+      "line" : 300,
+      "path" : "Gannin/Sessions/SessionScript.swift",
+      "posted_at" : "2026-10-17T14:54:14Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 403,
+  "posted_at" : "2026-10-17T14:54:14Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-17T14:52:19Z",
+  "state" : "OPEN",
+  "title" : "Record a session's PR only from the call that created it",
+  "updated_at" : "2026-10-17T14:54:15Z",
+  "verdict" : "request_changes"
+}
