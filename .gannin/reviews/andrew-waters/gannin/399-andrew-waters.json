@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 1,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -23,6 +23,6 @@
   "started_at" : "2026-10-16T19:41:40Z",
   "state" : "OPEN",
   "title" : "Add Ask Claude to the comment box on a review diff line",
-  "updated_at" : "2026-10-16T19:48:45Z",
+  "updated_at" : "2026-10-17T12:26:29Z",
   "verdict" : "approve"
 }
