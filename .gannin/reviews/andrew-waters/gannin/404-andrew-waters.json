@@ -1,0 +1,47 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The reminder tells Claude to run the script bare, but `readyForReviewNote` runs ",
+      "key" : "Gannin/Sessions/SessionScript.swift:542:The reminder tells Claude to run the script bare, but `ready",
+      "line" : 542,
+      "path" : "Gannin/Sessions/SessionScript.swift",
+      "posted_at" : "2026-10-17T15:12:40Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "\"First run X ... (a draft is fine)\" reads two ways: \"First\" says run the review ",
+      "key" : "Gannin/Sessions/SessionScript.swift:542:\"First run X ... (a draft is fine)\" reads two ways: \"First\" ",
+      "line" : 542,
+      "path" : "Gannin/Sessions/SessionScript.swift",
+      "posted_at" : "2026-10-17T15:12:40Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "This test covers plain-worktree sessions, helpers and routine runs, not just qui",
+      "key" : "GanninTests/QuickChangeTests.swift:81:This test covers plain-worktree sessions, helpers and routin",
+      "line" : 81,
+      "path" : "GanninTests/QuickChangeTests.swift",
+      "posted_at" : "2026-10-17T15:12:40Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 404,
+  "posted_at" : "2026-10-17T15:12:40Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-17T15:11:44Z",
+  "state" : "OPEN",
+  "title" : "Ask for the review in the brief's pull request step",
+  "updated_at" : "2026-10-17T15:12:42Z",
+  "verdict" : "approve"
+}
