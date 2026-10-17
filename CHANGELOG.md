@@ -31,6 +31,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ### Fixed
+- Claude is now reminded in the pull request step of a session's brief to ask for a second agent's review first, so the review is triggered more reliably before a pull request is opened
 - Opening a project board with thousands of items no longer freezes the app: the Table layout now builds only the rows on screen, so the window stays usable while it opens. The Table now has one column header, pinned at the top, instead of one under each group, and sorting by a column sorts within each group
 - A session and its helper starting together in one sandbox no longer race to create it, which could leave one failed or take the other's sandbox down; and asking for review again after a reviewer's sandbox failed to start now starts a new reviewer instead of talking to the one that never started
 - Posting a review, by hand or automatically, no longer repeats a finding that someone has already commented on the same line: Post to GitHub checks the PR for new comments first and lists the findings it left out, and an automatic review's log entry says how many it skipped

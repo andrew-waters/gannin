@@ -538,6 +538,8 @@ enum SessionBrief {
         lines += goalsSection(goals)
 
         var working = ["## Working here", ""]
+        // The PR step repeats the review request above so it isn't skipped. A draft is fine before the review.
+        let reviewFirst = session.canPairReview ? " Before opening it as ready for review, run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and wait for its outcome (opening it as a draft first is fine)." : ""
         if session.isInHarness, let harnessPath = session.harnessPath, let harnessRepo = session.harnessRepo {
             let folder = ".worktrees/\(session.branch)"
             // Where linked PRs were opened: likely where the code is.
@@ -584,8 +586,8 @@ enum SessionBrief {
                 limit == .localOnly
                     ? "- Commit in each worktree, and stop there: this run is Local only, so don't push or open a pull request (see Scheduled run)."
                     : session.hasNoIssue
-                    ? "- Commit in the worktree, and open \(create). There's no issue, so don't make one or invent a reference: put \"\(noIssueNote)\" in its body where `Closes` would go, and keep the branch's name, `\(session.branch)`."
-                    : "- Commit in each worktree, and open \(createEach), putting \"Closes \(reference.reference)\" in its body so it links to the issue.",
+                    ? "- Commit in the worktree, and open \(create). There's no issue, so don't make one or invent a reference: put \"\(noIssueNote)\" in its body where `Closes` would go, and keep the branch's name, `\(session.branch)`.\(reviewFirst)"
+                    : "- Commit in each worktree, and open \(createEach), putting \"Closes \(reference.reference)\" in its body so it links to the issue.\(reviewFirst)",
                 session.isQuickChange
                     ? "- A quick change needs no plan document. If it grows to need one, stop and say so instead."
                     : session.isMaintenance
@@ -604,7 +606,7 @@ enum SessionBrief {
             if session.canPairReview {
                 working.append(readyForReviewNote(session))
             }
-            working.append("- When the change is ready, open a pull request with `gh pr create` and put \"Closes \(session.closingReference)\" in its body so it links to the issue.")
+            working.append("- When the change is ready, open a pull request with `gh pr create` and put \"Closes \(session.closingReference)\" in its body so it links to the issue.\(reviewFirst)")
             if let harness {
                 working.append("- A plan's checkboxes are ticked off as its tasks land. The plan is in \(harness.repo), not this worktree.")
             }
