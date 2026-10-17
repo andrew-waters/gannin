@@ -1,6 +1,7 @@
 import AppKit
 import QuickLookThumbnailing
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// A file dropped or pasted on a session's panel for claude: copied into
 /// `.gannin/attachments/` in its folder on the box claude runs on (this Mac,
@@ -51,11 +52,33 @@ extension SessionStore {
 
     /// The script that writes one attachment, from standard input, into
     /// `.gannin/attachments/` in the session's folder on its box: to a part
-    /// file first, so one cut short isn't taken as there.
+    /// file first, so one cut short isn't taken as there. Never makes the
+    /// session's folder itself: the start script takes one that's there for
+    /// a checkout, and a harness clone needs an empty one. Whatever it gives
+    /// up on, it reads standard input to the end, so the write to it can't
+    /// break.
     static func attachmentUploadScript(_ name: String, in session: CodeSession) -> String {
-        let folder = SessionScript.shellPath(worktreePath(for: session) + "/.gannin/" + attachmentsFolder)
-        let part = SessionScript.quoted(".\(name).part")
-        return "d=\(folder)\nmkdir -p \"$d\" && cat > \"$d\"/\(part) && mv \"$d\"/\(part) \"$d\"/\(SessionScript.quoted(name))"
+        let part = "\"$d\"/" + SessionScript.quoted(".\(name).part")
+        return """
+            w=\(SessionScript.shellPath(worktreePath(for: session)))
+            if [ ! -d "$w" ]; then cat >/dev/null; echo "\(attachmentWaiting)" >&2; exit 1; fi
+            d="$w/.gannin/\(attachmentsFolder)"
+            { mkdir -p "$d" && cat > \(part) && mv \(part) "$d"/\(SessionScript.quoted(name)); } || { cat >/dev/null; exit 1; }
+            """
+    }
+
+    /// Why a file wasn't copied before the session's folder was made.
+    static let attachmentWaiting = "The session's folder isn't there yet. It's copied once the session has started."
+
+    /// The names taken in the session's folder on its box: its own, its
+    /// issue session's and every helper's on the same folder, and a quick
+    /// change's screenshots.
+    private func takenAttachmentNames(_ id: UUID) -> [String] {
+        let root = sessions[id]?.parentID ?? id
+        return ([root] + helpers(of: root).map(\.id)).flatMap { member in
+            ((try? FileManager.default.contentsOfDirectory(atPath: Self.attachmentsFolder(for: member).path)) ?? [])
+                + attachments(of: member).map(\.name) + (sessions[member]?.quickChange?.attachments ?? [])
+        }
     }
 
     private static func attachmentRunner(_ session: CodeSession) -> Shell.Runner? {
@@ -85,28 +108,55 @@ extension SessionStore {
         uploadingAttachments.contains("\(id.uuidString)/\(name)")
     }
 
-    /// Files dropped or picked: read off the main actor, folders and those
-    /// over the limit refused. Returns why any were left out.
+    /// Files dropped or picked, folders and those over the limit refused.
+    /// Returns why any were left out.
     func addAttachments(_ urls: [URL], to id: UUID) async -> String? {
         let limit = Self.attachmentLimit
-        let read = await Task.detached { () -> (files: [(name: String, data: Data)], refused: [String]) in
-            var files: [(name: String, data: Data)] = []
+        let checked = await Task.detached { () -> (files: [Attaching], refused: [String]) in
+            var files: [Attaching] = []
             var refused: [String] = []
             for url in urls where url.isFileURL {
                 let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
-                guard values?.isDirectory != true, (values?.fileSize ?? 0) <= limit,
-                      let data = try? Data(contentsOf: url) else {
+                guard let values, values.isDirectory != true, let size = values.fileSize, size <= limit else {
                     refused.append(url.lastPathComponent)
                     continue
                 }
-                files.append((url.lastPathComponent, data))
+                files.append(Attaching(name: url.lastPathComponent, size: size, source: .file(url)))
             }
             return (files, refused)
         }.value
-        await addAttachmentData(read.files, to: id)
-        guard !read.refused.isEmpty else { return nil }
+        await addAttachments(checked.files, to: id)
+        guard !checked.refused.isEmpty else { return nil }
         let size = ByteCountFormatter.string(fromByteCount: Int64(limit), countStyle: .file)
-        return "Left out \(read.refused.joined(separator: ", ")): only files up to \(size) can be attached, not folders."
+        return "Left out \(checked.refused.joined(separator: ", ")): only files up to \(size) can be attached, not folders."
+    }
+
+    /// What was dropped from another app: files, or an image with no file
+    /// (from a browser or Preview) as a PNG. Returns whether any could be
+    /// taken.
+    func addDroppedAttachments(_ providers: [NSItemProvider], to id: UUID) -> Bool {
+        var taken = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                taken = true
+                _ = provider.loadObject(ofClass: URL.self) { @Sendable url, _ in
+                    guard let url else { return }
+                    Task { @MainActor in self.attachmentNotices[id] = await self.addAttachments([url], to: id) }
+                }
+            } else if provider.canLoadObject(ofClass: NSImage.self) {
+                taken = true
+                _ = provider.loadObject(ofClass: NSImage.self) { @Sendable image, _ in
+                    guard let png = (image as? NSImage).flatMap(Self.png) else { return }
+                    Task { @MainActor in await self.addAttachmentData([("dropped-image.png", png)], to: id) }
+                }
+            }
+        }
+        if !taken { attachmentNotices[id] = "Only files and images can be attached." }
+        return taken
+    }
+
+    nonisolated static func png(_ image: NSImage) -> Data? {
+        image.tiffRepresentation.flatMap { NSBitmapImageRep(data: $0)?.representation(using: .png, properties: [:]) }
     }
 
     /// The clipboard's files, or its image as a PNG. Returns why nothing was
@@ -116,31 +166,64 @@ extension SessionStore {
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
             return await addAttachments(urls, to: id)
         }
-        guard let image = NSImage(pasteboard: pasteboard), let tiff = image.tiffRepresentation,
-              let png = NSBitmapImageRep(data: tiff)?.representation(using: .png, properties: [:]) else {
+        guard let image = NSImage(pasteboard: pasteboard), let png = Self.png(image) else {
             return "There's no image or file on the clipboard."
         }
         await addAttachmentData([("pasted-image.png", png)], to: id)
         return nil
     }
 
-    /// Keeps each file here, lists it on the session, then copies it to the
-    /// box.
     func addAttachmentData(_ files: [(name: String, data: Data)], to id: UUID) async {
+        await addAttachments(files.map { Attaching(name: $0.name, size: $0.data.count, source: .data($0.data)) }, to: id)
+    }
+
+    /// A file on its way in, from a file or from data.
+    nonisolated struct Attaching: Sendable {
+        nonisolated enum Source: Sendable { case file(URL), data(Data) }
+        let name: String
+        let size: Int
+        let source: Source
+    }
+
+    /// Names and lists each file at once, so another drop meanwhile can't
+    /// take a name; keeps its copy here, written off the main actor; then
+    /// copies it to the box.
+    private func addAttachments(_ files: [Attaching], to id: UUID) async {
         guard !files.isEmpty, sessions[id] != nil else { return }
-        let folder = Self.attachmentsFolder(for: id)
-        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let present = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
-        let existing = present + attachments(of: id).map(\.name) + (sessions[id]?.quickChange?.attachments ?? [])
-        let names = Self.attachmentNames(files.map(\.name), existing: existing)
-        var added: [SessionAttachment] = []
-        for (name, file) in zip(names, files) {
-            guard (try? file.data.write(to: folder.appending(path: name), options: .atomic)) != nil else { continue }
-            added.append(SessionAttachment(name: name, addedAt: .now, size: file.data.count))
-        }
+        let names = Self.attachmentNames(files.map(\.name), existing: takenAttachmentNames(id))
+        let added = zip(names, files).map { SessionAttachment(name: $0, addedAt: .now, size: $1.size) }
+        let keys = names.map { "\(id.uuidString)/\($0)" }
+        uploadingAttachments.formUnion(keys)
         update(id) { $0.attachments = ($0.attachments ?? []) + added }
-        for attachment in added {
-            await upload(attachment.name, in: id)
+        let folder = Self.attachmentsFolder(for: id)
+        let jobs = zip(names, files.map(\.source)).map { (name: $0, source: $1) }
+        let written = await Task.detached { () -> [String] in
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            return jobs.compactMap { job in
+                let target = folder.appending(path: job.name)
+                switch job.source {
+                case .file(let url): return (try? FileManager.default.copyItem(at: url, to: target)) != nil ? job.name : nil
+                case .data(let data): return (try? data.write(to: target, options: .atomic)) != nil ? job.name : nil
+                }
+            }
+        }.value
+        uploadingAttachments.subtract(keys)
+        let failed = Set(names).subtracting(written)
+        if !failed.isEmpty {
+            update(id) { $0.attachments?.removeAll { failed.contains($0.name) } }
+            attachmentNotices[id] = "Couldn't keep \(failed.sorted().joined(separator: ", ")) on this Mac to attach."
+        }
+        for name in written {
+            await upload(name, in: id)
+        }
+    }
+
+    /// Copies what isn't on the box yet: on start, once its folder is there.
+    func retryAttachments(_ id: UUID) {
+        let pending = attachments(of: id).filter { !$0.uploaded && !isUploading($0.name, in: id) }
+        guard !pending.isEmpty else { return }
+        Task {
+            for attachment in pending { await upload(attachment.name, in: id) }
         }
     }
 
@@ -203,9 +286,16 @@ extension SessionStore {
         // A quick change's screenshot of the same name never gets here:
         // names are unique across both.
         try? FileManager.default.removeItem(at: Self.localAttachment(name, in: id))
-        guard let runner = Self.attachmentRunner(session) else { return }
+        deleteAttachmentsOnBox([name], of: session)
+    }
+
+    /// Deletes attachments from the session's folder on its box, best
+    /// effort: on Remove, and when the session is forgotten, so a later
+    /// session on the branch can't find them.
+    func deleteAttachmentsOnBox(_ names: [String], of session: CodeSession) {
+        guard !names.isEmpty, let runner = Self.attachmentRunner(session) else { return }
         let folder = SessionScript.shellPath(Self.worktreePath(for: session) + "/.gannin/" + Self.attachmentsFolder)
-        let script = "rm -f \(folder)/\(SessionScript.quoted(name))"
+        let script = "cd \(folder) 2>/dev/null || exit 0\nrm -f " + names.map(SessionScript.quoted).joined(separator: " ")
         Task.detached { _ = Shell.run(script, runner) }
     }
 
@@ -287,7 +377,9 @@ struct SessionAttachmentsSection: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help(failure ?? (attachment.uploaded ? (staged ? "Click to leave it out of the next prompt" : "Click to add it to the next prompt") : "Copying it to where claude runs"))
+        .help(failure ?? (attachment.uploaded
+            ? (staged ? "Click to leave it out of the next prompt" : "Click to add it to the next prompt")
+            : uploading ? "Copying it to where claude runs" : "Not copied to where claude runs yet; Try Again is in its menu"))
         .contextMenu {
             Button(staged ? "Remove from Prompt" : "Add to Prompt") { sessions.toggleStaged(attachment.name, in: session.id) }
                 .disabled(!attachment.uploaded)
@@ -298,7 +390,7 @@ struct SessionAttachmentsSection: View {
             Button(attachment.sentAt == nil ? "Mark as Sent" : "Mark as Not Sent") {
                 sessions.setAttachmentSent(attachment.name, attachment.sentAt == nil, in: session.id)
             }
-            if failure != nil {
+            if !attachment.uploaded && !uploading {
                 Button("Try Again") { Task { await sessions.upload(attachment.name, in: session.id) } }
             }
             Divider()
@@ -312,6 +404,10 @@ struct SessionAttachmentsSection: View {
             ProgressView().controlSize(.small)
         } else if failure != nil {
             Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+        } else if !attachment.uploaded {
+            Text("Not copied")
+                .font(.caption)
+                .foregroundStyle(.orange)
         } else if let sent = attachment.sentAt {
             Text("Sent")
                 .font(.caption)

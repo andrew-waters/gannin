@@ -33,8 +33,25 @@ struct SessionAttachmentsTests {
 
     @Test func uploadWritesIntoTheSessionFolderOnItsBox() {
         let script = SessionStore.attachmentUploadScript("it's.png", in: session(harness: true, connect: "ssh -t devbox"))
-        #expect(script.hasPrefix(#"d="$HOME"/'Code/acme/harness/.worktrees/7-fix-the-thing/.gannin/attachments'"#))
+        #expect(script.hasPrefix(#"w="$HOME"/'Code/acme/harness/.worktrees/7-fix-the-thing'"#))
         #expect(script.contains(#"cat > "$d"/'.it'\''s.png.part' && mv "$d"/'.it'\''s.png.part' "$d"/'it'\''s.png'"#))
+    }
+
+    @Test func uploadNeverMakesTheSessionFolder() throws {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "attachments-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        var session = session(harness: true)
+        session.harnessPath = folder.path
+        let script = SessionStore.attachmentUploadScript("a.png", in: session)
+        let missing = Shell.run(script, .local, input: Data("png".utf8))
+        #expect(!missing.ok)
+        #expect(missing.error == SessionStore.attachmentWaiting)
+        #expect(!FileManager.default.fileExists(atPath: folder.path))
+
+        let worktree = folder.appending(path: ".worktrees/7-fix-the-thing")
+        try FileManager.default.createDirectory(at: worktree, withIntermediateDirectories: true)
+        #expect(Shell.run(script, .local, input: Data("png".utf8)).ok)
+        #expect(try String(contentsOf: worktree.appending(path: ".gannin/attachments/a.png"), encoding: .utf8) == "png")
     }
 
     @Test func oldSessionsDecodeWithoutAttachments() throws {

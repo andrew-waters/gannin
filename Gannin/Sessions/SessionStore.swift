@@ -903,7 +903,10 @@ final class SessionStore {
             if selectedTab == id { selectedTab = parent }
             if besideTab == id { besideTab = parent }
         }
-        if let session = sessions[id] { deleteSandbox(of: session) }
+        if let session = sessions[id] {
+            deleteSandbox(of: session)
+            deleteAttachmentsOnBox((session.attachments ?? []).map(\.name), of: session)
+        }
         changesPanes[id] = nil
         filesPanes[id] = nil
         unflag(id)
@@ -1117,6 +1120,9 @@ final class SessionStore {
         // Feedback queued for a claude that's gone may be dealt with by the
         // time it's back; the PRs pane still offers it.
         if state == .exited || state == .stopped { pendingFeedback[id] = nil }
+        // Its folder on the box is there once claude is: copy what couldn't
+        // be copied before it was, or before a relaunch.
+        if old == nil || old == .starting, [.working, .idle, .needsYou].contains(state) { retryAttachments(id) }
         if [.needsYou, .idle, .exited].contains(state), sessions[id] != nil {
             sessions[id]?.lastActiveAt = .now
             save()

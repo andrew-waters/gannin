@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 extension SessionState {
     var color: Color {
@@ -988,15 +989,14 @@ struct SessionTab: View {
         }
         // Anywhere on the panel, whichever pane shows: the Issue pane's
         // Attachments section lists them.
-        .dropDestination(for: URL.self) { urls, _ in
-            let files = urls.filter(\.isFileURL)
-            guard !files.isEmpty, session.archivedAt == nil else { return false }
+        // Files, or an image from another app with no file.
+        .onDrop(of: [.fileURL, .image], isTargeted: $dropping) { providers in
+            guard session.archivedAt == nil, sessions.addDroppedAttachments(providers, to: session.id) else { return false }
             pane = .issue
-            Task { sessions.attachmentNotices[session.id] = await sessions.addAttachments(files, to: session.id) }
             return true
-        } isTargeted: { dropping = $0 && session.archivedAt == nil }
+        }
         .overlay {
-            if dropping {
+            if dropping && session.archivedAt == nil {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6]))
                     .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))

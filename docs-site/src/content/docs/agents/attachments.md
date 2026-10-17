@@ -9,11 +9,11 @@ Dragging a file into the terminal only works when Claude runs on this Mac. Attac
 
 ## Adding files
 
-Drop files anywhere on a session's side panel, whichever pane it shows. The panel outlines itself while you drag, and the files appear under **Attachments** in the Issue pane (Session for an Ask or a helper). You can also use **Paste** there, for a screenshot copied with ⌃⇧⌘4 or files copied in Finder, or **Add Files** to pick them.
+Drop files anywhere on a session's side panel, whichever pane it shows; an image dragged from a browser or Preview works too, saved as a PNG. The panel outlines itself while you drag, and the files appear under **Attachments** in the Issue pane (Session for an Ask or a helper). You can also use **Paste** there, for a screenshot copied with ⌃⇧⌘4 or files copied in Finder, or **Add Files** to pick them.
 
 Each file is copied into the session's folder where Claude runs, in `.gannin/attachments/`, which is never committed. Files can be up to 25 MB; folders can't be attached. Names are tidied so they're safe to use in a shell, and one that's taken gets a number.
 
-A spinner shows while a file is copied. If it can't be copied (the server isn't reachable, say), a warning shows on it, with the reason in its tooltip, and **Try Again** in its menu.
+A spinner shows while a file is copied. If it can't be copied (the server isn't reachable, say), a warning shows on it, with the reason in its tooltip, and **Try Again** in its menu. A file dropped before the session has started is copied once it has, and one marked **Not copied** (say, after Gannin quit mid-copy) is copied again when the session next starts, or with Try Again.
 
 ## Sending them
 
@@ -28,4 +28,4 @@ Each attachment says **Not sent** until a prompt with it goes, then **Sent**. If
 - **Mark as Sent** or **Mark as Not Sent**.
 - **Remove**: takes it off the list and deletes it from the session's folder.
 
-Attachments last as long as the session. Forgetting or finishing it removes them.
+Attachments last as long as the session. Forgetting or finishing it removes them, here and where Claude runs.
