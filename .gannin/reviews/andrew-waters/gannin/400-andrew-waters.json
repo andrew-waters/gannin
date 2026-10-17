@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "This row's number is the issues fetched in this sync (search results plus change",
+      "key" : "Gannin/Views/SyncPanel.swift:443:This row's number is the issues fetched in this sync (search",
+      "line" : 443,
+      "path" : "Gannin/Views/SyncPanel.swift",
+      "posted_at" : "2026-10-17T12:26:00Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "This overstates the difference between the modes. Refresh doesn't always fetch o",
+      "key" : "Gannin/Views/SyncPanel.swift:177:This overstates the difference between the modes. Refresh do",
+      "line" : 177,
+      "path" : "Gannin/Views/SyncPanel.swift",
+      "posted_at" : "2026-10-17T12:26:00Z",
+      "severity" : "minor"
+    }
+  ],
+  "number" : 400,
+  "posted_at" : "2026-10-17T12:26:00Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-17T12:24:35Z",
+  "state" : "OPEN",
+  "title" : "Explain what Refresh and Full Refresh sync in tooltips",
+  "updated_at" : "2026-10-17T12:26:01Z",
+  "verdict" : "comment"
+}
