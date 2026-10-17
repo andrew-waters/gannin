@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-17T12:47:39Z",
   "number" : 400,
   "posted_at" : "2026-10-17T12:30:43Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-17T12:24:35Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Explain what Refresh and Full Refresh sync in tooltips",
-  "updated_at" : "2026-10-17T12:34:55Z",
+  "updated_at" : "2026-10-17T12:47:46Z",
   "verdict" : "approve"
 }
