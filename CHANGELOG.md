@@ -32,6 +32,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ### Fixed
+- A long error beside Finish and Clean Up, in a session's overview or the close-tab sheet, now shows its full text in a tooltip instead of being cut off after three lines
 - Claude is now reminded in the pull request step of a session's brief to ask for a second agent's review first, so the review is triggered more reliably before a pull request is opened
 - A session no longer picks up an unrelated pull request just because Claude read, listed or mentioned it: only a pull request the session opened itself (with `gh pr create` or a PR-creating tool) is recorded against it
 - Opening a project board with thousands of items no longer freezes the app: the Table layout now builds only the rows on screen, so the window stays usable while it opens. The Table now has one column header, pinned at the top, instead of one under each group, and sorting by a column sorts within each group
