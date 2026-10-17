@@ -11,6 +11,7 @@
       "line" : 443,
       "path" : "Gannin/Views/SyncPanel.swift",
       "posted_at" : "2026-10-17T12:26:00Z",
+      "resolved_at" : "2026-10-17T12:30:46Z",
       "severity" : "minor"
     },
     {
@@ -21,17 +22,28 @@
       "line" : 177,
       "path" : "Gannin/Views/SyncPanel.swift",
       "posted_at" : "2026-10-17T12:26:00Z",
+      "resolved_at" : "2026-10-17T12:30:46Z",
       "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "\"instead of usually only what changed\" reads awkwardly in the menu item's help. ",
+      "key" : "Gannin/Views/SyncPanel.swift:182:\"instead of usually only what changed\" reads awkwardly in th",
+      "line" : 182,
+      "path" : "Gannin/Views/SyncPanel.swift",
+      "posted_at" : "2026-10-17T12:30:43Z",
+      "severity" : "nit"
     }
   ],
   "number" : 400,
-  "posted_at" : "2026-10-17T12:26:00Z",
+  "posted_at" : "2026-10-17T12:30:43Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-17T12:24:35Z",
   "state" : "OPEN",
   "title" : "Explain what Refresh and Full Refresh sync in tooltips",
-  "updated_at" : "2026-10-17T12:26:01Z",
-  "verdict" : "comment"
+  "updated_at" : "2026-10-17T12:30:46Z",
+  "verdict" : "approve"
 }
