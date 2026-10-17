@@ -33,6 +33,7 @@
       "line" : 182,
       "path" : "Gannin/Views/SyncPanel.swift",
       "posted_at" : "2026-10-17T12:30:43Z",
+      "resolved_at" : "2026-10-17T12:34:55Z",
       "severity" : "nit"
     }
   ],
@@ -44,6 +45,6 @@
   "started_at" : "2026-10-17T12:24:35Z",
   "state" : "OPEN",
   "title" : "Explain what Refresh and Full Refresh sync in tooltips",
-  "updated_at" : "2026-10-17T12:30:46Z",
+  "updated_at" : "2026-10-17T12:34:55Z",
   "verdict" : "approve"
 }
