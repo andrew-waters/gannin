@@ -657,18 +657,24 @@ extension SessionStore {
         reveal(id)
     }
 
-    /// Deletes each worktree (a shell word, the issue's folder in a harness)
-    /// whose git dir doesn't exist, as when its clone was deleted: git can't
-    /// remove it, and `SandboxGitGuard` fails on it. Its files go with it, as
-    /// with `worktree remove --force`, under the same confirmation. A git dir
-    /// that exists but can't be entered is left (the `cd` into the worktree
-    /// comes first so a relative `gitdir:` resolves from there).
+    /// A script to run before the git-based removal, on `folder` (a shell
+    /// word; the issue's folder in a harness). It removes what git can't:
+    /// worktrees whose git dir doesn't exist, files included, as `worktree
+    /// remove --force` would under the same confirmation, and, in a harness,
+    /// symlinks standing in for a worktree. A git dir that exists but can't
+    /// be entered is left.
     nonisolated static func removeDanglingWorktrees(folder: String, inHarness: Bool) -> String {
         """
         for d in \(inHarness ? "\(folder)/*/" : folder); do
           d=${d%/}
+        \(inHarness ? """
+          # A link to a clone isn't a worktree: git would resolve it to the
+          # clone and refuse to remove it. Only the link goes.
+          if [ -L "$d" ]; then rm "$d"; continue; fi
+        """ : "")
           [ -f "$d/.git" ] || continue
           g=$(sed -n 's/^gitdir: //p' "$d/.git")
+          # Entered first so a relative gitdir: resolves from the worktree.
           if [ -n "$g" ] && (cd "$d" && [ ! -e "$g" ]) 2>/dev/null; then rm -rf "$d"; fi
         done
 

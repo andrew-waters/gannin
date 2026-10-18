@@ -89,6 +89,19 @@ struct RemoveDanglingWorktreesTests {
         #expect(exists(root + "/other/.git"))
     }
 
+    @Test func aLinkToACloneIsUnlinkedAndTheCloneKept() throws {
+        let root = folder()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try FileManager.default.createDirectory(atPath: root + "/clone/.git", withIntermediateDirectories: true)
+        try write(root + "/clone/main.swift", "mine")
+        try FileManager.default.createDirectory(atPath: root + "/issue", withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(atPath: root + "/issue/api", withDestinationPath: root + "/clone")
+        #expect(run(root + "/issue", inHarness: true).ok)
+        #expect((try? FileManager.default.destinationOfSymbolicLink(atPath: root + "/issue/api")) == nil)
+        #expect(exists(root + "/clone/main.swift"))
+        #expect(exists(root + "/clone/.git"))
+    }
+
     @Test func aFolderWithNoGitFileIsLeftAlone() throws {
         let root = folder()
         defer { try? FileManager.default.removeItem(atPath: root) }

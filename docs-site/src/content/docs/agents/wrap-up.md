@@ -24,7 +24,7 @@ Then choose what happens to the session:
 | --- | --- |
 | **Keep Running** | Closes the tab and leaves Claude working. Find it again under Agents. This is the default. |
 | **Stop Claude** | Ends Claude and its helpers but keeps the worktrees. Opening the session again carries on the conversation. |
-| **Finish and Clean Up…** | Offered once every pull request is merged. Removes the worktrees, after you confirm, including any whose git folder is already gone (such as when its clone was deleted). Such a folder is deleted with its files, and its changes can't be listed on the sheet first, so check it yourself if you're unsure. |
+| **Finish and Clean Up…** | Offered once every pull request is merged. Removes the worktrees, after you confirm, including any whose git folder is already gone (such as when its clone was deleted). A symlink to a clone where a worktree should be is unlinked and the clone is left alone. A worktree with no git folder is deleted with its files, and its changes can't be listed on the sheet first, so check it yourself if you're unsure. |
 | **Cancel** | Keeps the tab open. |
 
 A line above the buttons explains each one. Tabs for Ask, planning and review sessions close without the sheet.
