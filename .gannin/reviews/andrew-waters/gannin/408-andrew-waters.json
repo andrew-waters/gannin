@@ -1,0 +1,15 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "findings" : [
+
+  ],
+  "number" : 408,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-18T10:25:50Z",
+  "state" : "OPEN",
+  "title" : "Show the full finish error in a tooltip",
+  "updated_at" : "2026-10-18T10:26:25Z",
+  "verdict" : "approve"
+}
