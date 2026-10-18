@@ -658,16 +658,18 @@ extension SessionStore {
     }
 
     /// Deletes each worktree (a shell word, the issue's folder in a harness)
-    /// whose git dir is gone, as when its clone was deleted: git can't remove
-    /// it, and `SandboxGitGuard` fails on it. Its files go with it, as with
-    /// `worktree remove --force`, under the same confirmation.
+    /// whose git dir doesn't exist, as when its clone was deleted: git can't
+    /// remove it, and `SandboxGitGuard` fails on it. Its files go with it, as
+    /// with `worktree remove --force`, under the same confirmation. A git dir
+    /// that exists but can't be entered is left (the `cd` into the worktree
+    /// comes first so a relative `gitdir:` resolves from there).
     nonisolated static func removeDanglingWorktrees(folder: String, inHarness: Bool) -> String {
         """
         for d in \(inHarness ? "\(folder)/*/" : folder); do
           d=${d%/}
           [ -f "$d/.git" ] || continue
           g=$(sed -n 's/^gitdir: //p' "$d/.git")
-          (cd "$d" && cd "$g") 2>/dev/null || rm -rf "$d"
+          if (cd "$d" && [ ! -e "$g" ]) 2>/dev/null; then rm -rf "$d"; fi
         done
 
         """

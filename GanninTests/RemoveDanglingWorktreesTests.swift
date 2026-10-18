@@ -53,6 +53,32 @@ struct RemoveDanglingWorktreesTests {
         #expect(exists(root + "/issue/api/.git"))
     }
 
+    /// As `worktree.useRelativePaths` writes it: from the worktree's folder.
+    @Test func aRelativeGitDirIsFollowedFromTheWorktree() throws {
+        let root = folder()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try FileManager.default.createDirectory(atPath: root + "/clone/.git/worktrees/api", withIntermediateDirectories: true)
+        try write(root + "/issue/api/.git", "gitdir: ../../clone/.git/worktrees/api\n")
+        try write(root + "/issue/gone/.git", "gitdir: ../../clone/.git/worktrees/gone\n")
+        try write(root + "/issue/gone/main.swift", "work")
+        #expect(run(root + "/issue", inHarness: true).ok)
+        #expect(exists(root + "/issue/api/.git"))
+        #expect(!exists(root + "/issue/gone"))
+    }
+
+    @Test func aGitDirThatCantBeEnteredIsntTreatedAsMissing() throws {
+        let root = folder()
+        defer {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: root + "/clone/.git/worktrees/api")
+            try? FileManager.default.removeItem(atPath: root)
+        }
+        try FileManager.default.createDirectory(atPath: root + "/clone/.git/worktrees/api", withIntermediateDirectories: true)
+        try write(root + "/issue/api/.git", "gitdir: \(root)/clone/.git/worktrees/api\n")
+        try FileManager.default.setAttributes([.posixPermissions: 0o000], ofItemAtPath: root + "/clone/.git/worktrees/api")
+        #expect(run(root + "/issue", inHarness: true).ok)
+        #expect(exists(root + "/issue/api/.git"))
+    }
+
     @Test func aFolderWithNoGitFileIsLeftAlone() throws {
         let root = folder()
         defer { try? FileManager.default.removeItem(atPath: root) }
