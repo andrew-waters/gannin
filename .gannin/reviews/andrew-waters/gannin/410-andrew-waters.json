@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "data",
+      "decision" : "kept",
+      "excerpt" : "Any failure to `cd` counts as \"git dir is gone\", so a git dir that exists but ca",
+      "key" : "Gannin/Sessions/SessionActions.swift:670:Any failure to `cd` counts as \"git dir is gone\", so a git di",
+      "line" : 670,
+      "path" : "Gannin/Sessions/SessionActions.swift",
+      "posted_at" : "2026-10-18T12:44:42Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "Every test writes an absolute `gitdir:`. Add a case with a relative one (as `wor",
+      "key" : "GanninTests/RemoveDanglingWorktreesTests.swift:52:Every test writes an absolute `gitdir:`. Add a case with a r",
+      "line" : 52,
+      "path" : "GanninTests/RemoveDanglingWorktreesTests.swift",
+      "posted_at" : "2026-10-18T12:44:42Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 410,
+  "posted_at" : "2026-10-18T12:44:42Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-18T12:43:21Z",
+  "state" : "OPEN",
+  "title" : "Finish and Clean Up removes a worktree whose git folder is gone",
+  "updated_at" : "2026-10-18T12:44:43Z",
+  "verdict" : "approve"
+}
