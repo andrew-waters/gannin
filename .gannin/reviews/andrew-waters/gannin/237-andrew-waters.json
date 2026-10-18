@@ -11,6 +11,7 @@
       "line" : 28,
       "path" : "CLAUDE.md",
       "posted_at" : "2026-10-13T17:08:37Z",
+      "resolved_at" : "2026-10-18T18:35:24Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 15,
       "path" : "GanninUITests/NewAskSpacesUITests.swift",
       "posted_at" : "2026-10-13T17:08:37Z",
+      "resolved_at" : "2026-10-18T18:35:24Z",
       "severity" : "major"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 92,
       "path" : "Gannin/Harness/HarnessEditors.swift",
       "posted_at" : "2026-10-13T17:08:37Z",
+      "resolved_at" : "2026-10-18T18:35:24Z",
       "severity" : "minor"
     },
     {
@@ -41,16 +44,28 @@
       "line" : 30,
       "path" : "GanninUITests/NewAskSpacesUITests.swift",
       "posted_at" : "2026-10-13T17:08:37Z",
+      "resolved_at" : "2026-10-18T18:35:24Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "VoiceOver likely reads the title twice here: the caption `Text` is its own acces",
+      "key" : "Gannin/App/Platform.swift:25:VoiceOver likely reads the title twice here: the caption `Te",
+      "line" : 25,
+      "path" : "Gannin/App/Platform.swift",
+      "posted_at" : "2026-10-18T18:35:20Z",
       "severity" : "nit"
     }
   ],
   "number" : 237,
-  "posted_at" : "2026-10-13T17:08:37Z",
+  "posted_at" : "2026-10-18T18:35:20Z",
+  "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T15:44:10Z",
   "state" : "OPEN",
-  "title" : "Show a space typed at the end of a free-text box",
-  "updated_at" : "2026-10-13T17:08:39Z",
-  "verdict" : "comment"
+  "title" : "Show a space typed at the end of a multi-line text box in a form",
+  "updated_at" : "2026-10-18T18:35:24Z",
+  "verdict" : "approve"
 }
