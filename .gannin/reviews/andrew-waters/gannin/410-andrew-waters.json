@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-18T17:27:10Z",
   "number" : 410,
   "posted_at" : "2026-10-18T12:49:35Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-18T12:43:21Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Finish and Clean Up removes a worktree whose git folder is gone",
-  "updated_at" : "2026-10-18T12:53:34Z",
+  "updated_at" : "2026-10-18T17:27:40Z",
   "verdict" : "approve"
 }
