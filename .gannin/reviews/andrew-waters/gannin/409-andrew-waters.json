@@ -1,0 +1,27 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "Every step is ticked and the PR closes #396, but the plan still says `status: in",
+      "key" : "plans/2026-10-17-stop-board-table-rows-re-evaluating.md:3:Every step is ticked and the PR closes #396, but the plan st",
+      "line" : 3,
+      "path" : "plans/2026-10-17-stop-board-table-rows-re-evaluating.md",
+      "posted_at" : "2026-10-18T11:54:39Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 409,
+  "posted_at" : "2026-10-18T11:54:39Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-18T11:53:35Z",
+  "state" : "OPEN",
+  "title" : "Stop board table rows re-evaluating when only another row changed",
+  "updated_at" : "2026-10-18T11:54:40Z",
+  "verdict" : "approve"
+}
