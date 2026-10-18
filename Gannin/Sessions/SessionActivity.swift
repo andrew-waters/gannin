@@ -320,7 +320,7 @@ private struct HelperSheet: View {
                 TextField("For", text: $role, prompt: Text("Tests"))
                 TextField("First prompt", text: $prompt, axis: .vertical)
                     .lineLimit(4...10)
-                    .captionedTextBox("First prompt")
+                    .leadingTextBox("First prompt")
             } footer: {
                 Text("It works in \(parent.shortReference)'s folder on \(parent.branch), beside the main session, with the same brief. Tell it which repo and files are its, so they don't both edit the same ones.")
                     .font(.caption)

@@ -18,17 +18,16 @@ extension View {
         onExitCommand(perform: action)
     }
 
-    /// A text field in a grouped Form with its label above it and the text starting at the
-    /// leading edge. A labelled field's text is otherwise right-aligned beside its label, and
-    /// right-aligned text lets a typed trailing space hang past the edge, so it doesn't show.
-    /// The field's own title stays as its VoiceOver label.
-    func captionedTextBox(_ title: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
+    /// A text field in a grouped Form with its label beside it and the text starting right
+    /// after the label. A labelled field's text is otherwise right-aligned, and right-aligned
+    /// text lets a typed trailing space hang past the edge, so it doesn't show; no alignment
+    /// modifier changes that in a Form. The field's own title stays as its VoiceOver label.
+    func leadingTextBox(_ title: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
             Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
                 .accessibilityHidden(true)
             labelsHidden()
+                .multilineTextAlignment(.leading)
         }
     }
 

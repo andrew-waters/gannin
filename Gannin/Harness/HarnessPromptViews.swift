@@ -103,7 +103,7 @@ struct HarnessPromptEditor: View {
                 }
                 TextField("Summary", text: $summary, prompt: Text("What it's for, in a line"), axis: .vertical)
                     .lineLimit(1...3)
-                    .captionedTextBox("Summary")
+                    .leadingTextBox("Summary")
             }
             Section {
                 ForEach(PromptUse.allCases) { use in

@@ -401,9 +401,9 @@ struct WriteIssueSheet: View {
                 TextField("Title", text: $title)
                 TextField("Description", text: $bodyText, axis: .vertical)
                     .lineLimit(6...16)
-                    .captionedTextBox("Description")
+                    .leadingTextBox("Description")
                 TextField("Labels", text: $labels, prompt: Text("bug, customer"))
-                    .captionedTextBox("Labels")
+                    .leadingTextBox("Labels")
                 if configs.config(for: org).workflow.projectNumber != nil {
                     Toggle("Add to the board, for triage", isOn: $addToBoard)
                 }

@@ -102,7 +102,7 @@ struct ReviewConfigSheet: View {
                         }
                         TextField("Instructions", text: item.instructions, prompt: Text("Check auth, validation and error responses"), axis: .vertical)
                             .lineLimit(2...6)
-                            .captionedTextBox("Instructions")
+                            .leadingTextBox("Instructions")
                     }
                     .padding(.vertical, 2)
                 }
@@ -132,7 +132,7 @@ struct ReviewConfigSheet: View {
                         }
                         TextField("What passes", text: check.instructions, prompt: Text("Every migration that changes a table has a down step"), axis: .vertical)
                             .lineLimit(2...6)
-                            .captionedTextBox("What passes")
+                            .leadingTextBox("What passes")
                     }
                     .padding(.vertical, 2)
                 }

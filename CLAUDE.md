@@ -46,7 +46,7 @@ xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=
 - Every write to GitHub is confirmed by the user first.
 - In a grouped Form, never leave a labelled `TextField` as it is when people type prose or a
   comma-separated list in it: its text is right-aligned, so a typed trailing space hangs past the
-  edge and looks dropped. Use `captionedTextBox` (`App/Platform.swift`), or `labelsHidden()` with a
+  edge and looks dropped. Use `leadingTextBox` (`App/Platform.swift`), or `labelsHidden()` with a
   `prompt:`.
 
 ## Working rules
