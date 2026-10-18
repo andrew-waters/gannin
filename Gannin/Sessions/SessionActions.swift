@@ -657,6 +657,30 @@ extension SessionStore {
         reveal(id)
     }
 
+    /// A script to run before the git-based removal, on `folder` (a shell
+    /// word; the issue's folder in a harness). It removes what git can't:
+    /// worktrees whose git dir doesn't exist, files included, as `worktree
+    /// remove --force` would under the same confirmation, and, in a harness,
+    /// symlinks standing in for a worktree. A git dir that exists but can't
+    /// be entered is left.
+    nonisolated static func removeDanglingWorktrees(folder: String, inHarness: Bool) -> String {
+        """
+        for d in \(inHarness ? "\(folder)/*/" : folder); do
+          d=${d%/}
+        \(inHarness ? """
+          # A link to a clone isn't a worktree: git would resolve it to the
+          # clone and refuse to remove it. Only the link goes.
+          if [ -L "$d" ]; then rm "$d"; continue; fi
+        """ : "")
+          [ -f "$d/.git" ] || continue
+          g=$(sed -n 's/^gitdir: //p' "$d/.git")
+          # Entered first so a relative gitdir: resolves from the worktree.
+          if [ -n "$g" ] && (cd "$d" && [ ! -e "$g" ]) 2>/dev/null; then rm -rf "$d"; fi
+        done
+
+        """
+    }
+
     /// The session's worktrees, and the issue's folder, removed on its box.
     private func removeWorktrees(_ session: CodeSession) async throws {
         let folder = SessionScript.shellPath(Self.worktreePath(for: session))
@@ -674,6 +698,7 @@ extension SessionStore {
             common=$(git -C \(folder) rev-parse --path-format=absolute --git-common-dir) || exit 1
             git --git-dir="$common" worktree remove --force \(folder)
             """
+        let dangling = Self.removeDanglingWorktrees(folder: folder, inHarness: session.isInHarness)
         let runner: Shell.Runner
         if let connect = session.connect {
             guard let arguments = Shell.sshArguments(connect) else {
@@ -684,7 +709,7 @@ extension SessionStore {
             runner = .local
         }
         // Nothing a sandbox wrote in its repos' .git runs here.
-        let guardedScript = SessionChanges.guarded(session) + script
+        let guardedScript = dangling + SessionChanges.guarded(session) + script
         let result = await Task.detached { Shell.run(guardedScript, runner) }.value
         guard result.ok else { throw SessionError.message(result.error.isEmpty ? "Couldn't remove the worktrees." : result.error) }
     }
