@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: done
 summary: "Measure with _printChanges() whether BoardTableView rows re-run when only another row changed (andrew-waters/gannin#396), and only if they do, give each row, cell and header its own comparable view."
 issues: [andrew-waters/gannin#396]
 touches: [andrew-waters/gannin]
