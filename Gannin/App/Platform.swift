@@ -27,6 +27,7 @@ extension View {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
             labelsHidden()
         }
     }
