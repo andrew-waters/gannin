@@ -657,6 +657,27 @@ extension SessionStore {
         reveal(id)
     }
 
+    /// Deletes each worktree (a shell word, the issue's folder in a harness)
+    /// whose git dir is gone, as when its clone was deleted: git can't remove
+    /// it, and `SandboxGitGuard` fails on it. One holding anything beyond its
+    /// `.git` file stops the script instead, naming it, so no work is lost.
+    nonisolated static func removeDanglingWorktrees(folder: String, inHarness: Bool) -> String {
+        """
+        for d in \(inHarness ? "\(folder)/*/" : folder); do
+          d=${d%/}
+          [ -f "$d/.git" ] || continue
+          g=$(sed -n 's/^gitdir: //p' "$d/.git")
+          (cd "$d" && cd "$g") 2>/dev/null && continue
+          if [ -n "$(find "$d" -mindepth 1 -maxdepth 1 ! -name .git)" ]; then
+            echo "${d##*/}'s git folder is gone but it still has files. Look at $d, then remove it or try again." >&2
+            exit 1
+          fi
+          rm -rf "$d"
+        done
+
+        """
+    }
+
     /// The session's worktrees, and the issue's folder, removed on its box.
     private func removeWorktrees(_ session: CodeSession) async throws {
         let folder = SessionScript.shellPath(Self.worktreePath(for: session))
@@ -674,18 +695,7 @@ extension SessionStore {
             common=$(git -C \(folder) rev-parse --path-format=absolute --git-common-dir) || exit 1
             git --git-dir="$common" worktree remove --force \(folder)
             """
-        // A worktree whose git dir is gone (its clone was deleted or pruned)
-        // can't be removed through git, and the guard below fails on it, so
-        // it's deleted first.
-        let dangling = """
-            for d in \(session.isInHarness ? "\(folder)/*/" : folder); do
-              d=${d%/}
-              [ -f "$d/.git" ] || continue
-              g=$(sed -n 's/^gitdir: //p' "$d/.git")
-              (cd "$d" && cd "$g") 2>/dev/null || rm -rf "$d"
-            done
-
-            """
+        let dangling = Self.removeDanglingWorktrees(folder: folder, inHarness: session.isInHarness)
         let runner: Shell.Runner
         if let connect = session.connect {
             guard let arguments = Shell.sshArguments(connect) else {
