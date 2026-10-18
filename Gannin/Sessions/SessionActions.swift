@@ -669,7 +669,7 @@ extension SessionStore {
           d=${d%/}
           [ -f "$d/.git" ] || continue
           g=$(sed -n 's/^gitdir: //p' "$d/.git")
-          if (cd "$d" && [ ! -e "$g" ]) 2>/dev/null; then rm -rf "$d"; fi
+          if [ -n "$g" ] && (cd "$d" && [ ! -e "$g" ]) 2>/dev/null; then rm -rf "$d"; fi
         done
 
         """

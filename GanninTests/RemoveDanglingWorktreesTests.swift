@@ -79,6 +79,16 @@ struct RemoveDanglingWorktreesTests {
         #expect(exists(root + "/issue/api/.git"))
     }
 
+    @Test func aGitFileWithNoGitDirLineIsLeftAlone() throws {
+        let root = folder()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try write(root + "/empty/.git", "")
+        try write(root + "/other/.git", "not a gitdir line\n")
+        #expect(run(root, inHarness: true).ok)
+        #expect(exists(root + "/empty/.git"))
+        #expect(exists(root + "/other/.git"))
+    }
+
     @Test func aFolderWithNoGitFileIsLeftAlone() throws {
         let root = folder()
         defer { try? FileManager.default.removeItem(atPath: root) }
