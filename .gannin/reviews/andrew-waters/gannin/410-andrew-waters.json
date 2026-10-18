@@ -11,6 +11,7 @@
       "line" : 670,
       "path" : "Gannin/Sessions/SessionActions.swift",
       "posted_at" : "2026-10-18T12:44:42Z",
+      "resolved_at" : "2026-10-18T12:49:39Z",
       "severity" : "minor"
     },
     {
@@ -21,17 +22,28 @@
       "line" : 52,
       "path" : "GanninTests/RemoveDanglingWorktreesTests.swift",
       "posted_at" : "2026-10-18T12:44:42Z",
+      "resolved_at" : "2026-10-18T12:49:39Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "When the `.git` file has no `gitdir: ` line (empty, or something else), `g` is e",
+      "key" : "Gannin/Sessions/SessionActions.swift:672:When the `.git` file has no `gitdir: ` line (empty, or somet",
+      "line" : 672,
+      "path" : "Gannin/Sessions/SessionActions.swift",
+      "posted_at" : "2026-10-18T12:49:35Z",
       "severity" : "nit"
     }
   ],
   "number" : 410,
-  "posted_at" : "2026-10-18T12:44:42Z",
+  "posted_at" : "2026-10-18T12:49:35Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-18T12:43:21Z",
   "state" : "OPEN",
   "title" : "Finish and Clean Up removes a worktree whose git folder is gone",
-  "updated_at" : "2026-10-18T12:44:43Z",
+  "updated_at" : "2026-10-18T12:49:39Z",
   "verdict" : "approve"
 }
