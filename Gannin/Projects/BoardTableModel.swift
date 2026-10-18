@@ -14,6 +14,58 @@ enum BoardTableEntry: Identifiable {
     }
 }
 
+/// A column of the board table: the Title column, then one per visible
+/// field. Plain values, so a row can compare its columns to skip redrawing.
+struct BoardTableColumn: Equatable, Identifiable {
+    let id: String
+    let title: String
+    let help: String
+    /// Nil for the one flexible column.
+    let width: CGFloat?
+    let minWidth: CGFloat
+
+    static let title = BoardTableColumn(id: "title", title: "Title", help: "Click a row to open it", width: nil, minWidth: 280)
+
+    var isTitle: Bool { id == Self.title.id }
+
+    static func columns(visibleFields: [String]) -> [BoardTableColumn] {
+        [title] + visibleFields
+            .filter { $0.caseInsensitiveCompare(Self.title.title) != .orderedSame }
+            .map { BoardTableColumn(field: $0) }
+    }
+
+    init(id: String, title: String, help: String, width: CGFloat?, minWidth: CGFloat) {
+        self.id = id
+        self.title = title
+        self.help = help
+        self.width = width
+        self.minWidth = minWidth
+    }
+
+    init(field: String) {
+        let width: CGFloat = switch field.lowercased() {
+        case "assignees": 90
+        case "labels": 220
+        case "parent issue": 200
+        default: 140
+        }
+        self.init(id: field, title: field, help: field, width: width, minWidth: 0)
+    }
+
+    func sortKey(_ item: BoardItem) -> StatsSortKey {
+        if isTitle { return .text(item.title.lowercased()) }
+        switch item.value(id) {
+        case .number(let n): return .number(n)
+        case .option(_, let p): return .number(Double(p))
+        case .iteration(_, let start): return .number(start.timeIntervalSince1970)
+        case .date(let d): return .number(d.timeIntervalSince1970)
+        case .text(let t): return .text(t.lowercased())
+        case .options(let names): return .text(names.joined(separator: ", ").lowercased())
+        case nil: return .text("\u{10FFFF}")
+        }
+    }
+}
+
 enum BoardTableModel {
     /// The table as one flat list, so a lazy stack can build only the lines
     /// on screen. Each group is sorted on its own, keeping the order given
