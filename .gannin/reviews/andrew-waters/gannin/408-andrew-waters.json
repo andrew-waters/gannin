@@ -4,12 +4,13 @@
   "findings" : [
 
   ],
+  "merged_at" : "2026-10-18T11:53:37Z",
   "number" : 408,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-18T10:25:50Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Show the full finish error in a tooltip",
-  "updated_at" : "2026-10-18T10:26:25Z",
+  "updated_at" : "2026-10-18T11:54:44Z",
   "verdict" : "approve"
 }
