@@ -674,6 +674,18 @@ extension SessionStore {
             common=$(git -C \(folder) rev-parse --path-format=absolute --git-common-dir) || exit 1
             git --git-dir="$common" worktree remove --force \(folder)
             """
+        // A worktree whose git dir is gone (its clone was deleted or pruned)
+        // can't be removed through git, and the guard below fails on it, so
+        // it's deleted first.
+        let dangling = """
+            for d in \(session.isInHarness ? "\(folder)/*/" : folder); do
+              d=${d%/}
+              [ -f "$d/.git" ] || continue
+              g=$(sed -n 's/^gitdir: //p' "$d/.git")
+              (cd "$d" && cd "$g") 2>/dev/null || rm -rf "$d"
+            done
+
+            """
         let runner: Shell.Runner
         if let connect = session.connect {
             guard let arguments = Shell.sshArguments(connect) else {
@@ -684,7 +696,7 @@ extension SessionStore {
             runner = .local
         }
         // Nothing a sandbox wrote in its repos' .git runs here.
-        let guardedScript = SessionChanges.guarded(session) + script
+        let guardedScript = dangling + SessionChanges.guarded(session) + script
         let result = await Task.detached { Shell.run(guardedScript, runner) }.value
         guard result.ok else { throw SessionError.message(result.error.isEmpty ? "Couldn't remove the worktrees." : result.error) }
     }
