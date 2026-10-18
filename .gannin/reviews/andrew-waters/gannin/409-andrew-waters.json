@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
+  "effort" : 1,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -11,6 +11,7 @@
       "line" : 3,
       "path" : "plans/2026-10-17-stop-board-table-rows-re-evaluating.md",
       "posted_at" : "2026-10-18T11:54:39Z",
+      "resolved_at" : "2026-10-18T12:45:57Z",
       "severity" : "nit"
     }
   ],
@@ -22,6 +23,6 @@
   "started_at" : "2026-10-18T11:53:35Z",
   "state" : "OPEN",
   "title" : "Stop board table rows re-evaluating when only another row changed",
-  "updated_at" : "2026-10-18T11:54:40Z",
+  "updated_at" : "2026-10-18T12:45:57Z",
   "verdict" : "approve"
 }
