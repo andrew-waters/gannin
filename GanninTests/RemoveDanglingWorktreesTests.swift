@@ -19,6 +19,15 @@ struct RemoveDanglingWorktreesTests {
         Shell.run(SessionStore.removeDanglingWorktrees(folder: folder, inHarness: inHarness), .local)
     }
 
+    @Test func aCheckoutWithNoGitDirIsRemovedWithItsFiles() throws {
+        let root = folder()
+        defer { try? FileManager.default.removeItem(atPath: root) }
+        try write(root + "/api/.git", "gitdir: \(root)/missing/.git/worktrees/api\n")
+        try write(root + "/api/Sources/main.swift", "work")
+        #expect(run(root, inHarness: true).ok)
+        #expect(!exists(root + "/api"))
+    }
+
     @Test func aWorktreeWithNoGitDirAndNothingElseIsRemoved() throws {
         let root = folder()
         defer { try? FileManager.default.removeItem(atPath: root) }
@@ -44,14 +53,11 @@ struct RemoveDanglingWorktreesTests {
         #expect(exists(root + "/issue/api/.git"))
     }
 
-    @Test func aWorktreeWithFilesIsLeftAndNamed() throws {
+    @Test func aFolderWithNoGitFileIsLeftAlone() throws {
         let root = folder()
         defer { try? FileManager.default.removeItem(atPath: root) }
-        try write(root + "/api/.git", "gitdir: \(root)/missing/.git/worktrees/api\n")
-        try write(root + "/api/edited.swift", "work")
-        let result = run(root, inHarness: true)
-        #expect(!result.ok)
-        #expect(result.error.contains("api"))
-        #expect(exists(root + "/api/edited.swift"))
+        try write(root + "/notes/todo.md", "mine")
+        #expect(run(root, inHarness: true).ok)
+        #expect(exists(root + "/notes/todo.md"))
     }
 }
