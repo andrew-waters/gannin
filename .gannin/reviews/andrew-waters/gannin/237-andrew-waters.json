@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 2,
+  "effort" : 1,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -55,6 +55,7 @@
       "line" : 25,
       "path" : "Gannin/App/Platform.swift",
       "posted_at" : "2026-10-18T18:35:20Z",
+      "resolved_at" : "2026-10-18T18:40:09Z",
       "severity" : "nit"
     }
   ],
@@ -66,6 +67,6 @@
   "started_at" : "2026-10-12T15:44:10Z",
   "state" : "OPEN",
   "title" : "Show a space typed at the end of a multi-line text box in a form",
-  "updated_at" : "2026-10-18T18:35:24Z",
+  "updated_at" : "2026-10-18T18:40:09Z",
   "verdict" : "approve"
 }
