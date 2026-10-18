@@ -34,24 +34,6 @@ struct BoardTableColumn: Equatable, Identifiable {
             .map { BoardTableColumn(field: $0) }
     }
 
-    init(id: String, title: String, help: String, width: CGFloat?, minWidth: CGFloat) {
-        self.id = id
-        self.title = title
-        self.help = help
-        self.width = width
-        self.minWidth = minWidth
-    }
-
-    init(field: String) {
-        let width: CGFloat = switch field.lowercased() {
-        case "assignees": 90
-        case "labels": 220
-        case "parent issue": 200
-        default: 140
-        }
-        self.init(id: field, title: field, help: field, width: width, minWidth: 0)
-    }
-
     func sortKey(_ item: BoardItem) -> StatsSortKey {
         if isTitle { return .text(item.title.lowercased()) }
         switch item.value(id) {
@@ -63,6 +45,18 @@ struct BoardTableColumn: Equatable, Identifiable {
         case .options(let names): return .text(names.joined(separator: ", ").lowercased())
         case nil: return .text("\u{10FFFF}")
         }
+    }
+}
+
+extension BoardTableColumn {
+    init(field: String) {
+        let width: CGFloat = switch field.lowercased() {
+        case "assignees": 90
+        case "labels": 220
+        case "parent issue": 200
+        default: 140
+        }
+        self.init(id: field, title: field, help: field, width: width, minWidth: 0)
     }
 }
 
