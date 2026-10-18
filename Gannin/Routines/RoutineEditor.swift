@@ -181,6 +181,7 @@ struct RoutineEditor: View {
             }
             if routine.kind == .code {
                 TextField("Repos", text: $repoText, prompt: Text("owner/name, owner/name"))
+                    .captionedTextBox("Repos")
             }
             VStack(alignment: .leading, spacing: 4) {
                 Text(promptLabel)

@@ -18,6 +18,19 @@ extension View {
         onExitCommand(perform: action)
     }
 
+    /// A text field in a grouped Form with its label above it and the text starting at the
+    /// leading edge. A labelled field's text is otherwise right-aligned beside its label, and
+    /// right-aligned text lets a typed trailing space hang past the edge, so it doesn't show.
+    /// The field's own title stays as its VoiceOver label.
+    func captionedTextBox(_ title: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            labelsHidden()
+        }
+    }
+
     /// The window's subtitle.
     func windowSubtitle(_ subtitle: String) -> some View {
         navigationSubtitle(subtitle)

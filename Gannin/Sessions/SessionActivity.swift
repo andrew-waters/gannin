@@ -90,7 +90,8 @@ struct SessionActivityPane: View {
                     Button("Read") { reading = PlanReading(path: path) }
                 }
             }
-            TextField("What to change in the plan", text: $planChanges, axis: .vertical)
+            TextField("What to change in the plan", text: $planChanges, prompt: Text("What to change in the plan"), axis: .vertical)
+                .labelsHidden()
                 .lineLimit(1...4)
             HStack {
                 Spacer()
@@ -319,6 +320,7 @@ private struct HelperSheet: View {
                 TextField("For", text: $role, prompt: Text("Tests"))
                 TextField("First prompt", text: $prompt, axis: .vertical)
                     .lineLimit(4...10)
+                    .captionedTextBox("First prompt")
             } footer: {
                 Text("It works in \(parent.shortReference)'s folder on \(parent.branch), beside the main session, with the same brief. Tell it which repo and files are its, so they don't both edit the same ones.")
                     .font(.caption)

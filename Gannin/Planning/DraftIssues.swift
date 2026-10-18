@@ -124,10 +124,12 @@ struct DraftIssuesSheet: View {
                     Link(destination: made) { Image(systemName: "checkmark.circle.fill").foregroundStyle(ChartPalette.good) }
                 }
             }
-            TextField("Description", text: draft.body, axis: .vertical)
+            TextField("Description", text: draft.body, prompt: Text("Description"), axis: .vertical)
                 .lineLimit(2...8)
+                .labelsHidden()
                 .foregroundStyle(.secondary)
-            TextField("Labels", text: draft.labels)
+            TextField("Labels", text: draft.labels, prompt: Text("Labels, comma separated"))
+                .labelsHidden()
                 .font(.caption)
             if let failed = draft.wrappedValue.failed {
                 Text(failed).font(.caption).foregroundStyle(.red)

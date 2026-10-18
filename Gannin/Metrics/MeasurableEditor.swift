@@ -101,6 +101,7 @@ struct MeasurableEditor: View {
             Section("Notes") {
                 TextField("Notes", text: Binding(get: { draft.notes ?? "" }, set: { draft.notes = $0.isEmpty ? nil : $0 }), prompt: Text("Where the number comes from, what good looks like"), axis: .vertical)
                     .lineLimit(1...4)
+                    .labelsHidden()
             }
         }
         .formStyle(.grouped)

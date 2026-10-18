@@ -37,6 +37,7 @@ struct HarnessLearningEditor: View {
             Section {
                 TextField("Rule", text: $draft.rule, prompt: Text("Keep the sync writes on the store's actor"), axis: .vertical)
                     .lineLimit(1...4)
+                    .captionedTextBox("Rule")
                 TextField("Title", text: $draft.title, prompt: Text(draft.rule.isEmpty ? "Short, for lists" : String(draft.rule.prefix(60))))
                 Picker("Status", selection: $draft.status) {
                     ForEach(HarnessDocumentDraft.statuses(.learnings), id: \.self) { Text(HarnessDocumentDraft.statusTitle($0)).tag($0) }
@@ -51,6 +52,7 @@ struct HarnessLearningEditor: View {
                 TextField("Scope", text: $draft.paths, prompt: Text("Sources/Sync/\nSources/Sync/Store.swift#L40-L72"), axis: .vertical)
                     .font(.body.monospaced())
                     .lineLimit(2...6)
+                    .captionedTextBox("Scope")
                 TextField("Commit", text: $draft.commit, prompt: Text("The commit the line numbers are at"))
                     .font(.body.monospaced())
             } header: {
@@ -69,6 +71,7 @@ struct HarnessLearningEditor: View {
                 TextField("Given by", text: $draft.author, prompt: Text("Their GitHub login"))
                 TextField("What they said", text: $draft.quote, axis: .vertical)
                     .lineLimit(2...8)
+                    .captionedTextBox("What they said")
             }
             Section {
                 Text("\(existingPath == nil ? "Saved as" : "Rewrites") \(path) in \(setup.repo).")
