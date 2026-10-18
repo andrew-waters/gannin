@@ -33,6 +33,7 @@
       "line" : 672,
       "path" : "Gannin/Sessions/SessionActions.swift",
       "posted_at" : "2026-10-18T12:49:35Z",
+      "resolved_at" : "2026-10-18T12:53:34Z",
       "severity" : "nit"
     }
   ],
@@ -44,6 +45,6 @@
   "started_at" : "2026-10-18T12:43:21Z",
   "state" : "OPEN",
   "title" : "Finish and Clean Up removes a worktree whose git folder is gone",
-  "updated_at" : "2026-10-18T12:49:39Z",
+  "updated_at" : "2026-10-18T12:53:34Z",
   "verdict" : "approve"
 }
