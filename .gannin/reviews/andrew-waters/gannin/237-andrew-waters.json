@@ -1,6 +1,6 @@
 {
   "author" : "dwrss",
-  "effort" : 1,
+  "effort" : 2,
   "event" : "COMMENT",
   "findings" : [
     {
@@ -57,16 +57,46 @@
       "posted_at" : "2026-10-18T18:35:20Z",
       "resolved_at" : "2026-10-18T18:40:09Z",
       "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The label 'Ask anything' now sits right before a placeholder that starts 'Ask an",
+      "key" : "Gannin/Sessions/AskSession.swift:205:The label 'Ask anything' now sits right before a placeholder",
+      "line" : 205,
+      "path" : "Gannin/Sessions/AskSession.swift",
+      "posted_at" : "2026-10-18T21:10:34Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "Same doubling as New Ask: the label 'What to change' is followed by a placeholde",
+      "key" : "Gannin/Sessions/QuickChange.swift:389:Same doubling as New Ask: the label 'What to change' is foll",
+      "line" : 389,
+      "path" : "Gannin/Sessions/QuickChange.swift",
+      "posted_at" : "2026-10-18T21:10:34Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The label is a plain `Text` in an HStack beside a vertical-axis `TextField` that",
+      "key" : "Gannin/App/Platform.swift:27:The label is a plain `Text` in an HStack beside a vertical-a",
+      "line" : 27,
+      "path" : "Gannin/App/Platform.swift",
+      "posted_at" : "2026-10-18T21:10:34Z",
+      "severity" : "minor"
     }
   ],
   "number" : 237,
-  "posted_at" : "2026-10-18T18:35:20Z",
+  "posted_at" : "2026-10-18T21:10:34Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T15:44:10Z",
   "state" : "OPEN",
   "title" : "Show a space typed at the end of a multi-line text box in a form",
-  "updated_at" : "2026-10-18T18:40:09Z",
+  "updated_at" : "2026-10-18T21:10:35Z",
   "verdict" : "approve"
 }
