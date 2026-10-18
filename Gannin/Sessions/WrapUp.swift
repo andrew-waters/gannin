@@ -426,6 +426,7 @@ struct WrapUpSessionSheet: View {
                     .font(.caption)
                     .foregroundStyle(.red)
                     .lineLimit(3)
+                    .help(error)
             }
             HStack(spacing: 8) {
                 Toggle("Don't ask again", isOn: Binding { !asks } set: { asks = !$0 })

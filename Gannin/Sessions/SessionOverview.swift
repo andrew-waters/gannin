@@ -152,7 +152,7 @@ struct SessionFinishSection: View {
                     .font(.callout)
                 HStack {
                     if let error {
-                        Text(error).font(.caption).foregroundStyle(.red).lineLimit(3)
+                        Text(error).font(.caption).foregroundStyle(.red).lineLimit(3).help(error)
                     }
                     Spacer()
                     if working { ProgressView().controlSize(.small) }
