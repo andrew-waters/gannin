@@ -15,14 +15,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-18T12:54:33Z",
   "number" : 409,
   "posted_at" : "2026-10-18T11:54:39Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-18T11:53:35Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Stop board table rows re-evaluating when only another row changed",
-  "updated_at" : "2026-10-18T12:45:57Z",
+  "updated_at" : "2026-10-18T12:55:24Z",
   "verdict" : "approve"
 }
