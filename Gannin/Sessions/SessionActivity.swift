@@ -90,9 +90,9 @@ struct SessionActivityPane: View {
                     Button("Read") { reading = PlanReading(path: path) }
                 }
             }
-            TextField("What to change in the plan", text: $planChanges, prompt: Text("What to change in the plan"), axis: .vertical)
-                .labelsHidden()
+            TextField("What to change in the plan", text: $planChanges, prompt: Text("What to change"), axis: .vertical)
                 .lineLimit(1...4)
+                .leadingTextBox("Changes")
             HStack {
                 Spacer()
                 Button("Request Changes") {

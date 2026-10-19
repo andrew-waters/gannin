@@ -364,9 +364,9 @@ struct NewPlanningView: View {
                         }
                     }
                 }
-                TextField("What are we planning?", text: $text, prompt: Text("What are we planning?"), axis: .vertical)
-                    .labelsHidden()
+                TextField("What are we planning?", text: $text, prompt: Text("A topic, in a line or two"), axis: .vertical)
                     .lineLimit(1...3)
+                    .leadingTextBox("Topic")
                 if let source {
                     LabeledContent("Starting from", value: source.path)
                 }
