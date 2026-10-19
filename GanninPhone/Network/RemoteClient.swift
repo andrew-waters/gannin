@@ -116,6 +116,13 @@ final class RemoteClient {
                         self.send(.hello(name: UIDevice.current.name))
                         self.send(.subscribe)
                         self.receive(on: connection)
+                    case .waiting(.tls):
+                        // The pinned key refused what this Mac presented: it isn't the Mac that was paired, or
+                        // it has a new key. Network.framework reports that as `.waiting` and would keep
+                        // retrying the same refusal, leaving the screen on "Connecting". Other waiting
+                        // errors (no route, nothing listening) are left to recover when the network does.
+                        self.phase = .offline("This isn't the Mac you paired with. Pair \(self.mac.name) again.")
+                        connection.cancel()
                     case .failed(let error):
                         self.phase = .offline(error.localizedDescription)
                         connection.cancel()

@@ -47,6 +47,8 @@ struct RemoteSettingsView: View {
         .formStyle(.grouped)
         .onChange(of: enabled) { host.apply() }
         .onChange(of: name) { if enabled { host.apply() } }
+        // A phone paired while the code was showing: the code is spent, so close the sheet.
+        .onChange(of: host.phones.phones.count) { invite = nil }
         .sheet(item: $invite, onDismiss: { host.cancelPairing() }) { invite in
             PairPhoneSheet(invite: invite, expiresAt: host.pairing?.expiresAt ?? .now)
         }

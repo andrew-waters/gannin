@@ -163,7 +163,7 @@ struct GanninApp: App {
         scheduler.watch = { [weak sessions] in sessions?.watchRoutineRuns() }
         scheduler.begin()
         // iPhones that can see and answer sessions, when Settings › Remote has it on.
-        let remote = RemoteHost(store: sessions)
+        let remote = RemoteHost(store: sessions, security: KeychainTransportSecurity())
         _remote = State(initialValue: remote)
         remote.apply()
         TabMenuRename.shared.install()
