@@ -25,6 +25,7 @@ extension View {
     func leadingTextBox(_ title: String) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(title)
+                .fixedSize()
                 .accessibilityHidden(true)
             labelsHidden()
                 .multilineTextAlignment(.leading)
