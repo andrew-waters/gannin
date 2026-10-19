@@ -21,7 +21,7 @@ public struct RemoteSessionsState: Sendable, Equatable {
             }
         case .sessionRemoved(let id):
             sessions.removeAll { $0.id == id }
-        case .result, .heartbeat:
+        case .result, .heartbeat, .pairChallenge, .pairAccepted, .pairRejected:
             break
         }
     }

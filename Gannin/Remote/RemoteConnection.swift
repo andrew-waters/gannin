@@ -103,6 +103,9 @@ final class RemoteConnection {
             let sessions = RemoteSnapshot.fitting(snapshot())
             send(.snapshot(sessions: sessions))
             if !isClosed { sent = sessions }
+        case .pairRequest, .pairProof:
+            // Pairing is for an unpaired connection; a paired phone has no reason to send it.
+            close()
         case .intent(let id, let session, let promptID, let intent):
             guard limiter.allow() else {
                 send(.result(id: id, result: .refused(reason: .rateLimited)))

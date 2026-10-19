@@ -77,6 +77,11 @@ public struct PairingWindow: Sendable {
         self.expiresAt = now.addingTimeInterval(Self.lifetime)
     }
 
+    /// Whether a phone could still use the code. Doesn't spend it.
+    public func isOpen(at now: Date = Date()) -> Bool {
+        !spent && now < expiresAt
+    }
+
     /// The secret to check a phone's proof against, once; nil when expired or already used.
     public mutating func consume(at now: Date = Date()) -> PairingSecret? {
         guard !spent, now < expiresAt else { return nil }

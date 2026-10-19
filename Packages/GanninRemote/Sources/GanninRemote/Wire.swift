@@ -3,7 +3,7 @@ import Foundation
 /// What the Mac and the phone agree on before they say anything else.
 public enum RemoteProtocol {
     /// Bumped when a message changes in a way an older side can't read.
-    public static let version = 1
+    public static let version = 2
     /// The Bonjour service the Mac advertises.
     public static let serviceType = "_gannin._tcp"
     /// The largest frame either side accepts, length prefix excluded.
@@ -208,6 +208,10 @@ public enum ClientMessage: Codable, Sendable, Equatable {
     case subscribe
     /// `promptID` is required when `intent.answersPrompt`.
     case intent(id: String, session: String, promptID: String?, intent: RemoteIntent)
+    /// First message of pairing, the only one an unpaired phone may send. `nonce` is `PairingNonce.byteCount` random bytes.
+    case pairRequest(name: String, nonce: Data)
+    /// The phone's `PairingProof` (role phone), answering `ServerMessage.pairChallenge`.
+    case pairProof(Data)
 }
 
 public enum ServerMessage: Codable, Sendable, Equatable {
@@ -217,4 +221,20 @@ public enum ServerMessage: Codable, Sendable, Equatable {
     case sessionRemoved(id: String)
     case result(id: String, result: RemoteResult)
     case heartbeat
+    /// The Mac's nonce, once the pairing secret has been spent on this connection.
+    case pairChallenge(nonce: Data)
+    /// The phone's proof held and the person confirmed on the Mac; carries the Mac's own `PairingProof`.
+    case pairAccepted(proof: Data)
+    case pairRejected(reason: PairingRefusal)
+}
+
+public enum PairingRefusal: String, Codable, Sendable, Equatable {
+    /// The pairing code was used already or its two minutes are up.
+    case expired
+    /// The phone's proof didn't match: it was given a different code.
+    case wrongCode
+    /// The person on the Mac said no.
+    case declined
+    /// A message out of order or the wrong size.
+    case invalid
 }
