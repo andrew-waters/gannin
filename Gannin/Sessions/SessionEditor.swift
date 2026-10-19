@@ -56,18 +56,20 @@ enum CodeEditor: String, CaseIterable, Identifiable {
     }
 
     /// Opens the project, then the file once GoLand has had time to open it,
-    /// each the way JetBrains documents for macOS, which has no launcher by
-    /// default: `open -na GoLand.app --args [--line N] path`. A file given
-    /// while its project isn't open opens in LightEdit mode, and GoLand
-    /// doesn't take a folder and a file in one command.
+    /// by running the binary in GoLand.app, which `open --args` didn't reach
+    /// GoLand through. A file given while its project isn't open opens in
+    /// LightEdit mode, and GoLand doesn't take a folder and a file in one
+    /// command.
     private func openInGoLand(_ path: String, line: Int?, project: String?) {
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.goland") else {
             return NSSound.beep()
         }
         func launch(_ arguments: [String]) {
             let process = Process()
-            process.executableURL = URL(filePath: "/usr/bin/open")
-            process.arguments = ["-na", app.path(percentEncoded: false), "--args"] + arguments
+            process.executableURL = app.appending(path: "Contents/MacOS/goland")
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
             do { try process.run() } catch { NSSound.beep() }
         }
         let file = (line.map { ["--line", "\($0)"] } ?? []) + [path]
