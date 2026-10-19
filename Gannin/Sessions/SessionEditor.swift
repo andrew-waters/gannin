@@ -55,11 +55,16 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Opens the project, then the file once GoLand has had time to open it,
-    /// by running the binary in GoLand.app, which `open --args` didn't reach
-    /// GoLand through. A file given while its project isn't open opens in
-    /// LightEdit mode, and GoLand doesn't take a folder and a file in one
-    /// command.
+    /// How long after the project the file is opened in GoLand. GoLand gives
+    /// no sign that a project has opened, so this is a guess: a slow start,
+    /// or its Open project in prompt left unanswered, makes the file open
+    /// in LightEdit mode instead.
+    private static let golandFileDelay = Duration.seconds(2)
+
+    /// Opens the project, then the file after `golandFileDelay`, by running
+    /// the binary in GoLand.app. A file given while its project isn't open
+    /// opens in LightEdit mode, and GoLand doesn't take a folder and a file
+    /// in one command.
     private func openInGoLand(_ path: String, line: Int?, project: String?) {
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.goland") else {
             return NSSound.beep()
@@ -76,7 +81,7 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         guard let project, project != path else { return launch(file) }
         launch([project])
         Task {
-            try? await Task.sleep(for: .seconds(2))
+            try? await Task.sleep(for: Self.golandFileDelay)
             launch(file)
         }
     }
