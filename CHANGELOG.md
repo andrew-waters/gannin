@@ -48,6 +48,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A PR you've just reviewed from a review tab (Approve, Request Changes or Comment) leaves the Inbox's Ready for your approval and Needs your review sections straight away, instead of waiting for the next refresh
 - A mouse wheel over the Claude Code window's tab bar scrolls the tabs sideways
 - A session now shows as needing you, with its Allow and Deny card, when Claude Code's permission prompt is on screen even if Claude Code didn't notify Gannin of it, as with a command that also reads outside the session's folders (sessions on this Mac only)
+- Re-run Failed Checks on a session's PR now checks GitHub again first, so it no longer fails with a confusing error when a check it last saw as failing has since passed
 
 ## [0.0.3] - 2026-10-13
 

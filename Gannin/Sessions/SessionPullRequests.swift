@@ -350,17 +350,28 @@ struct SessionPullRequestsPane: View {
         return draft
     }
 
+    /// Refetches the PR before re-running: `runIDs` came from the last poll,
+    /// which may be minutes old, and GitHub refuses `rerun-failed-jobs` on a
+    /// run with no failed jobs, so asking it to re-run a check that has since
+    /// passed only produces a confusing error.
     private func rerun(_ runIDs: Set<Int>, in pr: SessionPullRequest) {
         guard let api = auth.api else { return }
         rerunError = nil
         rerunningPR = pr.id
         Task {
-            do {
-                for runID in runIDs {
-                    try await api.rerunWorkflow(repo: pr.repo, runID: runID, failedOnly: true)
+            await sessions.refreshPullRequests(owner)
+            let stillFailing = Set(sessions.pullRequestInfo[owner]?.first { $0.id == pr.id }?.failed.compactMap(\.runID) ?? [])
+            let toRerun = runIDs.intersection(stillFailing)
+            if toRerun.isEmpty {
+                rerunError = (pr.id, "Those checks aren't failing anymore.")
+            } else {
+                do {
+                    for runID in toRerun {
+                        try await api.rerunWorkflow(repo: pr.repo, runID: runID, failedOnly: true)
+                    }
+                } catch {
+                    rerunError = (pr.id, "GitHub didn't take it: \(error.localizedDescription)")
                 }
-            } catch {
-                rerunError = (pr.id, "GitHub didn't take it: \(error.localizedDescription)")
             }
             rerunningPR = nil
         }
