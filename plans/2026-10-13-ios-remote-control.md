@@ -170,12 +170,12 @@ requirement keeps it that way.
 - [ ] T1. Create the issue in the project and link it here and in the requirement. Satisfies: all.
 - [x] T2. `Packages/GanninRemote`: wire types, framing, version negotiation, unit tests for
       encode/decode, oversize frames and unknown versions. Satisfies: HLR5, HLR6.
-- [ ] T3. Pairing and keys: secret, proofs and window (done, in the package, with tests). Left:
-      keychain identities, pinned mutual TLS (the `RemoteTransportSecurity` and
-      `ClientTransportSecurity` seams), the pairing handshake (`PairingHandshake`), the Mac's
-      "Pair Alex's iPhone?" confirmation, tests with an in-process loopback for
-      success, wrong code, expired code, second attempt, revoked phone.
-      Satisfies: HLR1.
+- [x] T3. Pairing and keys: secret, proofs and window; keychain identities (`DeviceIdentity`), pinned
+      mutual TLS (`PinnedTLS`, behind the `RemoteTransportSecurity` and `ClientTransportSecurity`
+      seams), the exchange (`PairingResponder`, `PairingInitiator`, `PairingClient`,
+      `PairingConnection`) and the Mac's "Pair Alex's iPhone?" confirmation. Tested on macOS with
+      real handshakes over localhost: success, typed code, wrong code, expired code, second attempt,
+      declined, a relayed exchange. Not run on iOS or a device (T10). Satisfies: HLR1.
 - [x] T4. `RemoteSessionMirror` and the diff stream over `SessionStore` (written; the diff and
       connection are tested, the mirror itself has no test yet: it needs a real `SessionStore`
       with fixtures for each `SessionState`). Satisfies: HLR2.
@@ -214,8 +214,6 @@ requirement keeps it that way.
 
 ## Not built yet
 
-- TLS, key pinning and the pairing handshake (T3), so the host refuses to start and the phone can't
-  pair. Everything else is written against their seams.
 - **Add by address** for a Mac Bonjour can't see (a VPN). The listener's port is dynamic and isn't
   shown anywhere, so it needs the port in Settings › Remote and a host and port form on the phone.
 - A test for `RemoteSessionMirror`, and a unit-test target for `GanninPhone`.
