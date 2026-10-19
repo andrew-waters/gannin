@@ -32,6 +32,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ### Fixed
+- Picking a file in a session's Changes pane no longer moves the divider and leaves the diff a sliver; it stays where you put it
 - Finish and Clean Up now removes a symlink standing in for a worktree (only the link, never the clone it points to), and a worktree whose git folder has been deleted, instead of failing with "Couldn't remove the worktrees". The folder and its files are deleted, as with any worktree it removes, so anything not pushed in it is lost
 - A long error beside Finish and Clean Up, in a session's overview or the close-tab sheet, now shows its full text in a tooltip instead of being cut off after three lines
 - Claude is now reminded in the pull request step of a session's brief to ask for a second agent's review first, so the review is triggered more reliably before a pull request is opened

@@ -1414,7 +1414,15 @@ private struct DiffPane: View {
         let dark: Bool
     }
 
+    /// The ZStack keeps this one split pane through the swap between the
+    /// empty state and the diff. Without it the `VSplitView` replaces its
+    /// bottom pane and sizes the new one itself, ignoring the divider.
     var body: some View {
+        ZStack { pane }
+    }
+
+    @ViewBuilder
+    private var pane: some View {
         if let file = changes.selectedFile {
             let worktreeName = changes.worktrees.first { $0.path == file.worktree }?.name ?? ""
             let drafts = (sessions.drafts[session.id] ?? []).filter { $0.worktree == file.worktree && $0.path == file.path }
