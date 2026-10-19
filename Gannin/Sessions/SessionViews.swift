@@ -1309,7 +1309,7 @@ private struct SessionChangesPane: View {
                 }
                 .frame(minHeight: 120, idealHeight: 240)
                 DiffPane(session: session, changes: changes)
-                    .frame(minHeight: 120, maxHeight: .infinity)
+                    .frame(minHeight: 120, idealHeight: 480, maxHeight: .infinity)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
