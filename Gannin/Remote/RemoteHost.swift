@@ -36,11 +36,15 @@ final class RemoteHost {
     @ObservationIgnored private var connections: [RemoteConnection] = []
     /// Links accepted but not yet ready: held here, since nothing else keeps one alive until it is.
     @ObservationIgnored private var pending: [NetworkLink] = []
+    /// The one pairing exchange in progress, if any. Others from unpaired phones are turned away.
+    @ObservationIgnored private var pairingConnection: PairingConnection?
+    @ObservationIgnored private let confirmPairing: @MainActor (String) async -> Bool
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var heartbeatTask: Task<Void, Never>?
 
-    init(store: SessionStore, phones: PairedPhones = PairedPhones(), security: any RemoteTransportSecurity = UnconfiguredTransportSecurity(), defaults: UserDefaults = .standard) {
+    init(store: SessionStore, phones: PairedPhones = PairedPhones(), security: any RemoteTransportSecurity = UnconfiguredTransportSecurity(), defaults: UserDefaults = .standard, confirmPairing: @escaping @MainActor (String) async -> Bool = PairingConfirmation.ask) {
         self.store = store
+        self.confirmPairing = confirmPairing
         self.phones = phones
         self.security = security
         self.defaults = defaults
@@ -101,6 +105,8 @@ final class RemoteHost {
         connections = []
         for link in pending { link.close() }
         pending = []
+        pairingConnection?.close()
+        pairingConnection = nil
         connectionCount = 0
         pairing = nil
         status = .off
@@ -130,10 +136,14 @@ final class RemoteHost {
         link.onReady = { [weak self, weak link] in
             guard let self, let link else { return }
             self.pending.removeAll { $0 === link }
-            // Only a phone whose key the handshake proved and that is still paired stays; pairing
-            // a new one is a separate exchange, not handled here.
-            guard let fingerprint = self.security.peerFingerprint(of: connection), let phone = self.phones.phone(for: fingerprint) else {
+            // The handshake has proved the phone holds the key it presented. A paired key gets its
+            // sessions; any other key may only pair, and only while a pairing code is on offer.
+            guard let fingerprint = self.security.peerFingerprint(of: connection) else {
                 link.close()
+                return
+            }
+            guard let phone = self.phones.phone(for: fingerprint) else {
+                self.acceptPairing(over: link, phoneFingerprint: fingerprint)
                 return
             }
             let remote = RemoteConnection(
@@ -161,6 +171,32 @@ final class RemoteHost {
             self.pending.removeAll { $0 === link }
         }
         link.start()
+    }
+
+    /// Holds a connection from an unpaired key to the pairing exchange.
+    private func acceptPairing(over link: NetworkLink, phoneFingerprint: Data) {
+        guard pairing != nil, pairingConnection == nil, let macFingerprint = security.macFingerprint else {
+            link.close()
+            return
+        }
+        let exchange = PairingConnection(
+            link: link,
+            macFingerprint: macFingerprint,
+            phoneFingerprint: phoneFingerprint,
+            isOpen: { [weak self] in self?.pairing?.isOpen() ?? false },
+            consume: { [weak self] in self?.pairing?.consume() },
+            confirm: confirmPairing,
+            onPaired: { [weak self] name in
+                self?.phones.add(name: name, fingerprint: phoneFingerprint)
+                self?.pairing = nil
+            }
+        )
+        link.onData = { [weak exchange] data in exchange?.receive(data) }
+        link.onClose = { [weak exchange] in exchange?.linkClosed() }
+        exchange.onClose = { [weak self] in self?.pairingConnection = nil }
+        pairingConnection = exchange
+        exchange.start()
+        link.startReceiving()
     }
 
     private func listenerChanged(_ state: NWListener.State) {
