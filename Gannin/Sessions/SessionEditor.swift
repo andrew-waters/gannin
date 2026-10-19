@@ -4,7 +4,7 @@ import AppKit
 /// session on a server, over its ssh connection where the editor can
 /// (VS Code and Cursor through Remote SSH, Zed through its own).
 enum CodeEditor: String, CaseIterable, Identifiable {
-    case vscode, cursor, zed, xcode
+    case vscode, cursor, zed, xcode, goland
 
     static let key = "sessionsEditor"
 
@@ -20,14 +20,17 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         case .cursor: "Cursor"
         case .zed: "Zed"
         case .xcode: "Xcode"
+        case .goland: "GoLand"
         }
     }
 
-    var opensRemote: Bool { self != .xcode }
+    var opensRemote: Bool { self != .xcode && self != .goland }
 
-    /// Opens `path` (absolute, on the session's box) at `line`.
+    /// Opens `path` (absolute, on the session's box) at `line`. `project` is
+    /// the folder it belongs to, which GoLand opens too so the file isn't
+    /// left in LightEdit mode.
     @MainActor
-    func open(_ path: String, line: Int?, host: String?) {
+    func open(_ path: String, line: Int?, host: String?, project: String? = nil) {
         let at = line.map { ":\($0)" } ?? ""
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
         let address: String?
@@ -38,7 +41,7 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         case (.vscode, let host?): address = "vscode://vscode-remote/ssh-remote+\(host)\(encoded)\(at)"
         case (.cursor, let host?): address = "cursor://vscode-remote/ssh-remote+\(host)\(encoded)\(at)"
         case (.zed, let host?): address = "zed://ssh/\(host)\(encoded)\(at)"
-        case (.xcode, _): address = nil
+        case (.xcode, _), (.goland, _): address = nil
         }
         if let address, let url = URL(string: address) {
             NSWorkspace.shared.open(url)
@@ -47,6 +50,39 @@ enum CodeEditor: String, CaseIterable, Identifiable {
             process.executableURL = URL(filePath: "/usr/bin/xed")
             process.arguments = (line.map { ["-l", "\($0)"] } ?? []) + [path]
             try? process.run()
+        } else if self == .goland, host == nil {
+            openInGoLand(path, line: line, project: project)
+        }
+    }
+
+    /// How long after the project the file is opened in GoLand. GoLand gives
+    /// no sign that a project has opened, so this is a guess: a slow start,
+    /// or its Open project in prompt left unanswered, makes the file open
+    /// in LightEdit mode instead.
+    private static let golandFileDelay = Duration.seconds(2)
+
+    /// Opens the project, then the file after `golandFileDelay`, by running
+    /// the binary in GoLand.app. A file given while its project isn't open
+    /// opens in LightEdit mode, and GoLand doesn't take a folder and a file
+    /// in one command.
+    private func openInGoLand(_ path: String, line: Int?, project: String?) {
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.goland") else {
+            return NSSound.beep()
+        }
+        func launch(_ arguments: [String]) {
+            let process = Process()
+            process.executableURL = app.appending(path: "Contents/MacOS/goland")
+            process.arguments = arguments
+            process.standardOutput = FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            do { try process.run() } catch { NSSound.beep() }
+        }
+        let file = (line.map { ["--line", "\($0)"] } ?? []) + [path]
+        guard let project, project != path else { return launch(file) }
+        launch([project])
+        Task {
+            try? await Task.sleep(for: Self.golandFileDelay)
+            launch(file)
         }
     }
 
@@ -97,7 +133,7 @@ extension SessionStore {
         let editor = CodeEditor.chosen
         let relative = worktree + "/" + path
         guard let connect = session.connect else {
-            editor.open(Self.expanded(relative).path, line: line, host: nil)
+            editor.open(Self.expanded(relative).path, line: line, host: nil, project: Self.expanded(worktree).path)
             return
         }
         guard editor.opensRemote, let host = CodeEditor.host(of: connect) else {
