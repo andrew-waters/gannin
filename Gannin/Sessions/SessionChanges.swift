@@ -84,8 +84,11 @@ final class SessionChanges {
         var title: String { self == .branch ? "Branch" : "Uncommitted" }
     }
 
+    /// The other mode's files stay listed until the read for this one
+    /// returns: clearing them swaps the whole split view out for a spinner and
+    /// resets its divider.
     var mode: Mode = .branch {
-        didSet { if mode != oldValue { worktrees = []; diff = []; loaded = false } }
+        didSet { if mode != oldValue { diff = [] } }
     }
     private(set) var worktrees: [WorktreeChanges] = []
     /// The selected file's diff header, for making a patch of one hunk.
