@@ -197,6 +197,8 @@ extension SessionStore {
         let choices = permissionChoices(for: id)
         var replies: [QuickReply]
         if let first = choices.first {
+            // The prompt's own last choice is always some wording of "No,
+            // tell Claude what to do differently", which Deny (Esc) already covers.
             replies = [QuickReply(title: first.label, keys: "choice:\(first.number)")]
                 + choices.dropFirst().dropLast().map { QuickReply(title: $0.label, keys: "choice:\($0.number)") }
                 + [QuickReply(title: "Deny", keys: "\u{1B}", isDestructive: true)]
@@ -408,9 +410,17 @@ extension SessionStore {
                 keys.insert(item.key)
                 current[item.id] = item.key
                 guard let seen, !seen.contains(item.key) else { continue }
+                // `item.key` has changed since last time (a new comment landed on
+                // this thread), so it won't be in `seen`. `keyPrefix` is the part
+                // that doesn't change, which finds the thread's previous key if
+                // it was seen before at all, under whatever comment URL it had then.
                 let priorKey = seen.first { $0.hasPrefix(item.keyPrefix) }
                 if priorKey != nil { replies.insert(item.id) }
+                // The prior key's suffix is the comment URL seen last time.
                 let priorURL = priorKey.map { $0.dropFirst(item.keyPrefix.count) }
+                // Everything on the thread after that comment; if it's gone
+                // (edited away, or this is the first time seeing the thread),
+                // every comment on it counts as new.
                 let newComments = priorURL.flatMap { url in item.comments.firstIndex { $0.url.absoluteString == url } }
                     .map { Array(item.comments[($0 + 1)...]) } ?? item.comments
                 guard let theirs = newComments.last(where: { !isFromAuthorOrViewer($0.author, of: pr, me: me) }) else { continue }
@@ -426,6 +436,8 @@ extension SessionStore {
         forgetSent(conflicts.cleared, for: id)
         // Keys of PRs no longer open are kept: a reopened PR's are still seen.
         if let seen, keys.isSubset(of: seen), conflicts.cleared.isEmpty { return }
+        // A thread's prior key, now superseded by a newer comment on the same
+        // thread in `current`, so it's dropped rather than kept alongside it.
         let outdated = (seen ?? []).filter { key in
             current.contains { key.hasPrefix(SessionPullRequest.Feedback.keyPrefix($0.key)) && key != $0.value }
         }
@@ -500,6 +512,8 @@ extension SessionStore {
     ) -> FeedbackDelivery? {
         guard let session = sessions[id], session.reviewOf == nil, !session.isReviewer,
               sendsFeedback(id), isRunning(id) else { return nil }
+        // Each part keeps the keys of what it covers, so `markSent`/`forgetSent`
+        // can track delivery per check, thread or conflict, not per notification.
         let parts: [(prompt: String, keys: [String])] = failed.map { (SessionPrompts.failures($0.pr, in: session), ["checks:\($0.pr.id):" + $0.pr.failed.map(\.id).joined(separator: ",")]) }
             + said.map { (SessionPrompts.feedback($0.items, on: $0.pr, in: session), $0.items.map(\.key)) }
             + conflicted.map { (SessionPrompts.conflicts($0, in: session), ["conflicts:\($0.id)"]) }
@@ -588,6 +602,8 @@ extension SessionStore {
         for finding in findings {
             var path = finding.path
             if let range = path.range(of: ".worktrees/\(parent.branch)/") { path = String(path[range.upperBound...]) }
+            // In a harness, `path` still names the repo's own worktree folder
+            // first (`api/src/x.go`); elsewhere `folder` already is that repo.
             let parts = path.split(separator: "/", maxSplits: 1).map(String.init)
             let (worktreeName, filePath, worktree) = parent.isInHarness && parts.count == 2
                 ? (parts[0], parts[1], "\(folder)/\(parts[0])")
