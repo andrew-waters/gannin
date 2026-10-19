@@ -17,7 +17,7 @@ The review opens on its Overview:
 - **Needs attention**, in tiers: Blocking the merge, Fix before merging, Waiting on and Not blocking. Empty tiers are hidden. Each item opens its file, its checks or its thread.
 - The walkthrough, the description, and a rail of the PR's own comments and reviews. Ask the reviewer there pastes your question to it and opens the conversation.
 
-When the PR has new commits the review hasn't seen, the Overview says "New commits since this review". Review Again looks at them now. To see whether anything changed first, without asking Claude to review again, choose Check for Changes: it fetches the PR again and, if Watch for changes is on, notes any new commits and comments straight away instead of waiting for the next check.
+When the PR has new commits the review hasn't seen, the Overview says "New commits since this review". Review Again looks at them now. To see whether anything changed first, without asking Claude to review again, choose Check for Changes: it fetches the PR again and, if Watch for changes is on, notes any new commits and comments straight away instead of waiting for the next check, and says what it found next to the button. It never starts a review itself, and without Watch for changes it only refreshes the diff.
 
 ## Files and findings
 

@@ -825,6 +825,8 @@ struct PullRequestReviewView: View {
     /// that gap would paste the prompt twice.
     @State private var reviewingAgain = false
     @State private var checkingForChanges = false
+    /// What the last Check for Changes found, until the next one.
+    @State private var checkResult: String?
     @State private var headerWidth: CGFloat = 0
     /// The PR's state on GitHub (conflicts, checks, review decision, open
     /// threads), for whether it can merge.
@@ -935,6 +937,16 @@ struct PullRequestReviewView: View {
         if let found { status = found.pullRequests.first { $0.id == reference.id } }
     }
 
+    /// What the watch has noted since the review. Without a watch only the
+    /// diff and status were refreshed, so it can't say.
+    private func checkSummary() -> String {
+        guard let watch = sessions.sessions[session.id]?.watch, watch.isOn else { return "Refreshed (not watching)" }
+        var found: [String] = []
+        if watch.hasNewCommits { found.append("new commits") }
+        if watch.newComments > 0 { found.append("\(watch.newComments) new comment\(watch.newComments == 1 ? "" : "s")") }
+        return found.isEmpty ? "No changes" : found.joined(separator: ", ")
+    }
+
     /// Opens what an Overview item points at.
     private func open(_ action: ReviewReadiness.Action) {
         switch action {
@@ -997,13 +1009,17 @@ struct PullRequestReviewView: View {
                 checkingForChanges = true
                 Task {
                     defer { checkingForChanges = false }
-                    await sessions.checkWatchedReviews(only: session.id)
+                    await sessions.checkWatchedReviews(only: session.id, reviewing: false)
                     await load()
                     await loadStatus()
+                    checkResult = checkSummary()
                 }
             }
-            .disabled(checkingForChanges)
+            .disabled(checkingForChanges || session.archivedAt != nil)
             .help("Fetch the PR again now, and note any new commits or comments, without asking claude to review it")
+            if let checkResult {
+                Text(checkResult).font(.callout).foregroundStyle(.secondary)
+            }
             Button("Review Again") {
                 reviewingAgain = true
                 Task {
