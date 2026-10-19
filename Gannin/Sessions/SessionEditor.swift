@@ -55,17 +55,28 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Opens the file the way JetBrains documents for macOS, which has no
-    /// launcher by default: `open -na GoLand.app --args [project] --line N path`.
+    /// Opens the project, then the file once GoLand has had time to open it,
+    /// each the way JetBrains documents for macOS, which has no launcher by
+    /// default: `open -na GoLand.app --args [--line N] path`. A file given
+    /// while its project isn't open opens in LightEdit mode, and GoLand
+    /// doesn't take a folder and a file in one command.
     private func openInGoLand(_ path: String, line: Int?, project: String?) {
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.goland") else {
             return NSSound.beep()
         }
-        let process = Process()
-        process.executableURL = URL(filePath: "/usr/bin/open")
-        let folder = project.flatMap { $0 == path ? nil : [$0] } ?? []
-        process.arguments = ["-na", app.path(percentEncoded: false), "--args"] + folder + (line.map { ["--line", "\($0)"] } ?? []) + [path]
-        do { try process.run() } catch { NSSound.beep() }
+        func launch(_ arguments: [String]) {
+            let process = Process()
+            process.executableURL = URL(filePath: "/usr/bin/open")
+            process.arguments = ["-na", app.path(percentEncoded: false), "--args"] + arguments
+            do { try process.run() } catch { NSSound.beep() }
+        }
+        let file = (line.map { ["--line", "\($0)"] } ?? []) + [path]
+        guard let project, project != path else { return launch(file) }
+        launch([project])
+        Task {
+            try? await Task.sleep(for: .seconds(2))
+            launch(file)
+        }
     }
 
     /// The host an ssh command reaches: its first word that isn't an
