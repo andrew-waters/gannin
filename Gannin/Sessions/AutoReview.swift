@@ -79,6 +79,9 @@ struct ReviewEvent: Codable, Identifiable, Hashable {
         case started, reviewed, posted, failed, comment, push, stopped
     }
 
+    /// The text of the `.stopped` event for a merged PR; the Inbox reads it to offer Finish Review.
+    static let mergedText = "Merged"
+
     let id: String
     let pullRequest: PullRequestReference
     let session: UUID
@@ -292,7 +295,7 @@ extension SessionStore {
         }
         guard now.state == "OPEN" else {
             watch.isOn = false
-            note(id, .stopped, text: now.state == "MERGED" ? "Merged" : "Closed")
+            note(id, .stopped, text: now.state == "MERGED" ? ReviewEvent.mergedText : "Closed")
             // How its findings landed, now it's done.
             Task { await recordReview(id) }
             return
