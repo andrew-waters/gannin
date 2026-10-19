@@ -273,9 +273,10 @@ extension SessionStore {
 
     /// Looks at every watched PR: new commits and others' comments are
     /// noted, and once it's been quiet a while it's reviewed again. A merged
-    /// or closed PR stops being watched.
-    func checkWatchedReviews() async {
-        let watched = sessions.values.filter { $0.reviewOf != nil && $0.watch?.isOn == true }
+    /// or closed PR stops being watched. `only` limits it to one review (the
+    /// tab's Check for Changes).
+    func checkWatchedReviews(only session: UUID? = nil) async {
+        let watched = sessions.values.filter { $0.reviewOf != nil && $0.watch?.isOn == true && (session == nil || $0.id == session) }
         guard !watched.isEmpty, let api = api() else { return }
         guard let found = try? await api.watchedPullRequests(ids: watched.compactMap(\.reviewOf?.id)) else { return }
         for session in watched {

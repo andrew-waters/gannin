@@ -824,6 +824,7 @@ struct PullRequestReviewView: View {
     /// enabled until claude's state turns to working, so a second click in
     /// that gap would paste the prompt twice.
     @State private var reviewingAgain = false
+    @State private var checkingForChanges = false
     @State private var headerWidth: CGFloat = 0
     /// The PR's state on GitHub (conflicts, checks, review decision, open
     /// threads), for whether it can merge.
@@ -992,6 +993,17 @@ struct PullRequestReviewView: View {
             .buttonStyle(.bordered)
             ExplainPullRequestButton(reference: reference, walkthrough: review?.walkthrough ?? [])
                 .buttonStyle(.bordered)
+            Button("Check for Changes") {
+                checkingForChanges = true
+                Task {
+                    defer { checkingForChanges = false }
+                    await sessions.checkWatchedReviews(only: session.id)
+                    await load()
+                    await loadStatus()
+                }
+            }
+            .disabled(checkingForChanges)
+            .help("Fetch the PR again now, and note any new commits or comments, without asking claude to review it")
             Button("Review Again") {
                 reviewingAgain = true
                 Task {
