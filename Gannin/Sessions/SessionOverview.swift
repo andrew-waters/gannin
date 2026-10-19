@@ -192,7 +192,7 @@ struct SessionPromptSettingsSection: View {
             Picker("Open files in", selection: $editor) {
                 ForEach(CodeEditor.allCases) { Text($0.name).tag($0) }
             }
-            Text(editor.opensRemote ? "Files of a session on a server open there through \(editor.name)'s SSH remote." : "Xcode only opens files on this Mac.")
+            Text(editor.opensRemote ? "Files of a session on a server open there through \(editor.name)'s SSH remote." : "\(editor.name) only opens files on this Mac.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             ForEach($snippets) { $snippet in

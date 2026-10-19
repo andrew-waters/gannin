@@ -62,7 +62,7 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/open")
         process.arguments = ["-na", app.path(percentEncoded: false), "--args"] + (line.map { ["--line", "\($0)"] } ?? []) + [path]
-        try? process.run()
+        do { try process.run() } catch { NSSound.beep() }
     }
 
     /// The host an ssh command reaches: its first word that isn't an
