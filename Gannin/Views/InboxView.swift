@@ -80,6 +80,8 @@ struct InboxView: View {
     @AppStorage private var storedOrder: String
     @State private var search = ""
     @State private var isArranging = false
+    /// The merged PR's review waiting on Finish Review's confirmation.
+    @State private var finishing: UUID?
 
     init(org: String, workload: Workload) {
         self.org = org
@@ -119,6 +121,16 @@ struct InboxView: View {
                 bar
                 Divider()
                 table(sections)
+            }
+            .confirmationDialog("Finish this review?", isPresented: Binding(get: { finishing != nil }, set: { if !$0 { finishing = nil } })) {
+                Button("Finish Review") {
+                    guard let id = finishing else { return }
+                    // Opening the review marks its news seen, which is what takes the row out.
+                    sessions.activity.markSeen(session: id)
+                    Task { await sessions.archiveReview(id) }
+                }
+            } message: {
+                Text("The PR has merged. This ends the reviewer and keeps the review in your history.")
             }
             .task(id: org) { await issueStore.sync(org, windowDays: MetricsWindow(code: windowDays).syncDays()) }
             // Checks finishing don't touch a PR's updatedAt, so running or
@@ -271,6 +283,10 @@ struct InboxView: View {
         .contextMenu(forSelectionType: String.self) { ids in
             if let row = sections.flatMap(\.rows).first(where: { ids.contains($0.id) }), let page = row.page {
                 OpenElsewhereItems(page)
+                if let review = row.finishableReview {
+                    Divider()
+                    Button("Finish Review…") { finishing = review }
+                }
             }
         } primaryAction: { ids in
             guard let row = sections.flatMap(\.rows).first(where: { ids.contains($0.id) }) else { return }
@@ -321,11 +337,13 @@ struct InboxView: View {
             sections.append((InboxSection.catchUp.rawValue, news.compactMap { item in
                 guard let pr = item.events.last?.pullRequest else { return nil }
                 let failed = item.events.contains { $0.kind == .failed }
+                // The watch records a merge as a stopped event ("Merged", `SessionStore` in AutoReview.swift).
+                let merged = item.events.contains { $0.kind == .stopped && $0.text == "Merged" }
                 return InboxRow(
                     id: "news-\(item.session)", title: pr.title, reference: Self.number(pr.repo, pr.number),
                     people: [], checks: nil, state: ReviewActivity.summary(item.events), stateColor: failed ? .orange : .secondary,
                     tint: failed ? .orange : ChartPalette.blue, since: item.events.first?.at, sinceLabel: "Since", size: nil,
-                    page: .pullRequest(pr.id), session: item.session
+                    page: .pullRequest(pr.id), session: item.session, finishableReview: merged ? item.session : nil
                 )
             }))
         }
@@ -485,6 +503,8 @@ struct InboxRow: Identifiable {
     let size: (added: Int, removed: Int)?
     let page: DetailSelection?
     var session: UUID? = nil
+    /// The review to finish from the row's menu: set once its PR has merged.
+    var finishableReview: UUID? = nil
     var flags: [IssueSignals.Flag] = []
 
     /// The repo, from the reference: "api" from "api#3129", the

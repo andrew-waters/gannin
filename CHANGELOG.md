@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- A review whose PR has merged can be finished from its row in the Inbox's While you were away section: right-click it and choose Finish Review, without opening it first
 - Attach screenshots and other files for a session's Claude, wherever it runs (this Mac, a sandbox or your server): drop them anywhere on the session's side panel, or Paste or Add Files under Attachments in its Issue pane. Each new one goes with your next prompt, shown as a thumbnail above the box under the terminal (click one in the list to add it again or leave it out), and says whether it has been sent
 - Hovering Refresh at the bottom of the sidebar, or Full Refresh in its right-click menu, now says what each fetches and how they differ, and hovering a row in the sync detail says what its number counts
 - The comment box on a review's diff lines now has Ask Claude, which sends your question to the reviewer with the lines around it and opens the conversation; it's available while the review's Claude is running

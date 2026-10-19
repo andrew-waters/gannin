@@ -31,6 +31,8 @@ Such PRs are first in the Inbox (Ready for your approval), at the top of Act now
 
 The Inbox's While you were away lists what happened on PRs Claude reviewed, one row per review, until you've looked at its tab.
 
+When the PR has merged, right-click its row and choose Finish Review to end the reviewer and keep the review in your history, without opening it. The row leaves the Inbox, as it does when you open the review and choose Finish. Closed PRs that weren't merged don't get the menu item.
+
 ## Review config
 
 Review Config, in a repository's bar, sets how reviews go: a profile (Quiet, Chill or Assertive), instructions, a tone, files to skip, instructions for paths, checks (each off, warning or error) and title keywords that automatic reviews skip. You can edit the repo's section in the harness, every repo in the project, or the repo's own `.gannin/review.json` file. Later layers win. Failed checks show in the Overview's tiers.
