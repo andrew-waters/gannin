@@ -122,7 +122,7 @@ private func roundTrip<M: Codable & Equatable>(_ message: M) throws -> M {
 }
 
 @Test func unknownMessageInThisVersionIsMalformed() {
-    let payload = Data(#"{"v":1,"m":{"somethingNew":{}}}"#.utf8)
+    let payload = Data(#"{"v":\#(RemoteProtocol.version),"m":{"somethingNew":{}}}"#.utf8)
     #expect(throws: FrameError.malformed) { try FrameCodec.decode(payload, as: ServerMessage.self) }
 }
 
