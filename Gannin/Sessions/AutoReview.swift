@@ -273,18 +273,26 @@ extension SessionStore {
 
     /// Looks at every watched PR: new commits and others' comments are
     /// noted, and once it's been quiet a while it's reviewed again. A merged
-    /// or closed PR stops being watched.
-    func checkWatchedReviews() async {
-        let watched = sessions.values.filter { $0.reviewOf != nil && $0.watch?.isOn == true }
-        guard !watched.isEmpty, let api = api() else { return }
-        guard let found = try? await api.watchedPullRequests(ids: watched.compactMap(\.reviewOf?.id)) else { return }
+    /// or closed PR stops being watched. `only` limits it to one review, and
+    /// `reviewing` false (the tab's Check for Changes) only notes what
+    /// changed, leaving the review to be asked for. Returns `only`'s PR
+    /// state on GitHub (`OPEN`, `MERGED` or `CLOSED`), nil if it wasn't
+    /// watched or couldn't be fetched.
+    @discardableResult
+    func checkWatchedReviews(only reviewID: UUID? = nil, reviewing: Bool = true) async -> String? {
+        let watched = sessions.values.filter { $0.reviewOf != nil && $0.watch?.isOn == true && (reviewID == nil || $0.id == reviewID) }
+        guard !watched.isEmpty, let api = api() else { return nil }
+        guard let found = try? await api.watchedPullRequests(ids: watched.compactMap(\.reviewOf?.id)) else { return nil }
+        var state: String?
         for session in watched {
             guard let id = session.reviewOf?.id, let now = found.pullRequests[id] else { continue }
-            await look(at: now, for: session.id, me: found.login)
+            await look(at: now, for: session.id, me: found.login, reviewing: reviewing)
+            if session.id == reviewID { state = now.state }
         }
+        return state
     }
 
-    private func look(at now: WatchedPullRequest, for id: UUID, me: String) async {
+    private func look(at now: WatchedPullRequest, for id: UUID, me: String, reviewing: Bool) async {
         guard var watch = sessions[id]?.watch, watch.isOn else { return }
         defer { update(id) { $0.watch = watch } }
         // The first look notes what's there.
@@ -319,7 +327,7 @@ extension SessionStore {
             watch.changedAt = .now
             return
         }
-        guard let since = watch.changedAt, Date.now.timeIntervalSince(since) >= AutoReview.quietPeriod,
+        guard reviewing, let since = watch.changedAt, Date.now.timeIntervalSince(since) >= AutoReview.quietPeriod,
               ![.working, .starting, .needsYou].contains(state(id)) else { return }
         var reasons: [String] = []
         if watch.hasNewCommits { reasons.append("new commits have been pushed") }

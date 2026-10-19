@@ -824,6 +824,9 @@ struct PullRequestReviewView: View {
     /// enabled until claude's state turns to working, so a second click in
     /// that gap would paste the prompt twice.
     @State private var reviewingAgain = false
+    @State private var checkingForChanges = false
+    /// What the last Check for Changes found, until the next one.
+    @State private var checkResult: String?
     @State private var headerWidth: CGFloat = 0
     /// The PR's state on GitHub (conflicts, checks, review decision, open
     /// threads), for whether it can merge.
@@ -934,6 +937,24 @@ struct PullRequestReviewView: View {
         if let found { status = found.pullRequests.first { $0.id == reference.id } }
     }
 
+    /// What a check found: the PR's `state` from `checkWatchedReviews` (nil
+    /// when it couldn't look) and what the watch has noted since the review.
+    /// Without a watch only the diff and status were refreshed, so it can't say.
+    private func checkSummary(watching: Bool, state: String?) -> String {
+        guard watching else { return "Refreshed (not watching)" }
+        switch state {
+        case nil: return "Couldn't check GitHub"
+        case "MERGED": return "Merged"
+        case "CLOSED": return "Closed"
+        default: break
+        }
+        guard let watch = sessions.sessions[session.id]?.watch else { return "No changes" }
+        var found: [String] = []
+        if watch.hasNewCommits { found.append("new commits") }
+        if watch.newComments > 0 { found.append("\(watch.newComments) new comment\(watch.newComments == 1 ? "" : "s")") }
+        return found.isEmpty ? "No changes" : found.joined(separator: ", ")
+    }
+
     /// Opens what an Overview item points at.
     private func open(_ action: ReviewReadiness.Action) {
         switch action {
@@ -992,8 +1013,25 @@ struct PullRequestReviewView: View {
             .buttonStyle(.bordered)
             ExplainPullRequestButton(reference: reference, walkthrough: review?.walkthrough ?? [])
                 .buttonStyle(.bordered)
+            Button("Check for Changes") {
+                checkingForChanges = true
+                Task {
+                    defer { checkingForChanges = false }
+                    let watching = sessions.sessions[session.id]?.watch?.isOn == true
+                    let state = await sessions.checkWatchedReviews(only: session.id, reviewing: false)
+                    await load()
+                    await loadStatus()
+                    checkResult = checkSummary(watching: watching, state: state)
+                }
+            }
+            .disabled(checkingForChanges || session.archivedAt != nil)
+            .help("Fetch the PR again now, and note any new commits or comments, without asking claude to review it")
+            if let checkResult {
+                Text(checkResult).font(.callout).foregroundStyle(.secondary)
+            }
             Button("Review Again") {
                 reviewingAgain = true
+                checkResult = nil
                 Task {
                     defer { reviewingAgain = false }
                     // The diff may cover more of the repo than it did
