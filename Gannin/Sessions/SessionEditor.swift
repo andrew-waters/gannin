@@ -53,16 +53,15 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Runs GoLand's own launcher, which passes the file to a running GoLand
-    /// or starts one. Its `jetbrains://` links need the project's name, which
-    /// a file path doesn't give.
+    /// Opens the file the way JetBrains documents for macOS, which has no
+    /// launcher by default: `open -na GoLand.app --args --line N path`.
     private func openInGoLand(_ path: String, line: Int?) {
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.goland") else {
             return NSSound.beep()
         }
         let process = Process()
-        process.executableURL = app.appending(path: "Contents/MacOS/goland")
-        process.arguments = (line.map { ["--line", "\($0)"] } ?? []) + [path]
+        process.executableURL = URL(filePath: "/usr/bin/open")
+        process.arguments = ["-na", app.path(percentEncoded: false), "--args"] + (line.map { ["--line", "\($0)"] } ?? []) + [path]
         try? process.run()
     }
 
