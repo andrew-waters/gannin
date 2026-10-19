@@ -26,9 +26,11 @@ enum CodeEditor: String, CaseIterable, Identifiable {
 
     var opensRemote: Bool { self != .xcode && self != .goland }
 
-    /// Opens `path` (absolute, on the session's box) at `line`.
+    /// Opens `path` (absolute, on the session's box) at `line`. `project` is
+    /// the folder it belongs to, which GoLand opens too so the file isn't
+    /// left in LightEdit mode.
     @MainActor
-    func open(_ path: String, line: Int?, host: String?) {
+    func open(_ path: String, line: Int?, host: String?, project: String? = nil) {
         let at = line.map { ":\($0)" } ?? ""
         let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
         let address: String?
@@ -49,19 +51,20 @@ enum CodeEditor: String, CaseIterable, Identifiable {
             process.arguments = (line.map { ["-l", "\($0)"] } ?? []) + [path]
             try? process.run()
         } else if self == .goland, host == nil {
-            openInGoLand(path, line: line)
+            openInGoLand(path, line: line, project: project)
         }
     }
 
     /// Opens the file the way JetBrains documents for macOS, which has no
-    /// launcher by default: `open -na GoLand.app --args --line N path`.
-    private func openInGoLand(_ path: String, line: Int?) {
+    /// launcher by default: `open -na GoLand.app --args [project] --line N path`.
+    private func openInGoLand(_ path: String, line: Int?, project: String?) {
         guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.goland") else {
             return NSSound.beep()
         }
         let process = Process()
         process.executableURL = URL(filePath: "/usr/bin/open")
-        process.arguments = ["-na", app.path(percentEncoded: false), "--args"] + (line.map { ["--line", "\($0)"] } ?? []) + [path]
+        let folder = project.flatMap { $0 == path ? nil : [$0] } ?? []
+        process.arguments = ["-na", app.path(percentEncoded: false), "--args"] + folder + (line.map { ["--line", "\($0)"] } ?? []) + [path]
         do { try process.run() } catch { NSSound.beep() }
     }
 
@@ -112,7 +115,7 @@ extension SessionStore {
         let editor = CodeEditor.chosen
         let relative = worktree + "/" + path
         guard let connect = session.connect else {
-            editor.open(Self.expanded(relative).path, line: line, host: nil)
+            editor.open(Self.expanded(relative).path, line: line, host: nil, project: Self.expanded(worktree).path)
             return
         }
         guard editor.opensRemote, let host = CodeEditor.host(of: connect) else {

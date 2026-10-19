@@ -587,7 +587,7 @@ final class LocalRepository {
 
     func openInEditor(_ file: GitFileChange? = nil, line: Int? = nil) {
         let base = (path as NSString).expandingTildeInPath
-        CodeEditor.chosen.open(file.map { base + "/" + $0.path } ?? base, line: line, host: nil)
+        CodeEditor.chosen.open(file.map { base + "/" + $0.path } ?? base, line: line, host: nil, project: base)
     }
 
     func revealInFinder(_ file: GitFileChange? = nil) {
