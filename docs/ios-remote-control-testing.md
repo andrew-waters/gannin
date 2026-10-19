@@ -9,18 +9,18 @@ Mark each box as it passes. Anything that fails goes back to the branch as a fix
 
 ## 0. What is and isn't built
 
-Built, against seams: the wire package, the Mac host and connection logic, the intent handler, the
-session mirror, paired phones, Settings › Remote, the iPhone app, docs, CI steps.
+Built: the wire package, the Mac host and connection logic, the intent handler, the session mirror,
+paired phones, Settings › Remote, the iPhone app, pinned mutual TLS (`PinnedTLS`, `DeviceIdentity`),
+the pairing exchange (`PairingResponder`, `PairingInitiator`, `PairingClient`, `PairingConnection`),
+the Mac's "Pair <phone>?" confirmation (`PairingConfirmation`), docs, CI steps.
 
-**Not built: TLS, key pinning and the pairing handshake.** `UnconfiguredTransportSecurity` (Mac) and
-`UnconfiguredClientSecurity` (phone) stand in. Consequences you will see:
+Checked on macOS by `swift test --package-path Packages/GanninRemote`, which makes identities in the
+login keychain and runs real TLS handshakes and pairing exchanges over localhost, and by the Mac
+tests (the Mac's pairing connection). **Not checked on a device:** anything iOS-specific (the iOS
+keychain path in `DeviceIdentity`, the phone's accessibility class, Local Network), and all of
+sections 6 and 7.
 
-- Settings › Remote shows "Not available in this build yet." and its switch and Pair a Phone are
-  disabled. `RemoteHost.start()` refuses with that message.
-- The phone can't pair, so it can't connect. Sections 6 and 7 can't run end to end until a
-  `RemoteTransportSecurity` and a `ClientTransportSecurity` exist.
-- Not built either: Add by address, the Mac's "Pair Alex's iPhone?" confirmation, a test for
-  `RemoteSessionMirror`, and a unit-test target for `GanninPhone`.
+Not built: Add by address, a test for `RemoteSessionMirror`, and a unit-test target for `GanninPhone`.
 
 ## 1. Order of work after pulling
 
@@ -85,10 +85,10 @@ Most likely compile problems, in order of suspicion:
   scene only.
 - [ ] `project.yml`: the `GanninRemote` local package is a dependency of both `Gannin` and
   `GanninTests`. `xcodegen generate` should show no errors.
-- [ ] Settings › Remote appears as a pane with the iPhone icon, its switch and Pair a Phone disabled,
-  its text reading "Not available in this build yet.".
+- [ ] Settings › Remote appears as a pane with the iPhone icon and its switch off.
 - [ ] Gannin launches and nothing listens: `lsof -iTCP -sTCP:LISTEN -n -P | grep -i gannin` shows no
-  new listener, and no `_gannin._tcp` service in `dns-sd -B _gannin._tcp`.
+  new listener, and no `_gannin._tcp` service in `dns-sd -B _gannin._tcp`. No key has been made yet:
+  `security find-certificate -c dev.andon.gannin.remote` finds nothing until the switch is first turned on.
 
 ## 4. iPhone app compiles
 
@@ -106,8 +106,7 @@ concurrency errors will show on the first compile.
 - [ ] Run it in the simulator. Expect: the lock screen, Face ID prompt (Features › Face ID in the
   simulator), then "No Macs paired". Add a Mac shows the scanner (no camera in the simulator: it
   stays blank), the Mac picker (empty) and typed code field. Pair stays disabled until a Mac is
-  chosen and the code is valid; with a valid-looking code and a chosen Mac, Pair fails with
-  "Pairing isn't available in this build yet.".
+  chosen and the code is valid.
 
 ## 5. Mac unit tests
 
@@ -211,9 +210,10 @@ Pairing (after the real handshake exists):
 A reviewer researched this (see the plan's pinning decision) and ran `openssl` on a P-256 key. What
 follows is what's still to be proved in this code, on a device.
 
-- [ ] The key read in the verify block via `SecTrustCopyKey(sec_trust_copy_ref(...))` exports as 65
-  bytes starting `04`. A key that doesn't is refused.
-- [ ] `P256.Signing.PublicKey(x963Representation:).derRepresentation` is 91 bytes starting
+- [x] The key read in the verify block via `SecTrustCopyKey(sec_trust_copy_ref(...))` exports as 65
+  bytes starting `04`. A key that doesn't is refused. (macOS loopback tests.)
+- [x] (Checked on macOS CryptoKit only: the SHA-256 of `derRepresentation` equalled openssl's SPKI hash for the
+  same key. The iOS build is unchecked.) `P256.Signing.PublicKey(x963Representation:).derRepresentation` is 91 bytes starting
   `3059301306072a8648ce3d020106082a8648ce3d030107034200`, **on Apple's CryptoKit** (the reviewer
   confirmed it in swift-crypto's source, not in CryptoKit's, which is closed).
 - [ ] SHA-256 of it equals `openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256`
@@ -223,15 +223,27 @@ follows is what's still to be proved in this code, on a device.
   `P256.Signing.PublicKey`).
 - [ ] The verify block is idempotent: run twice on one connection it gives the same answer, and its
   completion is called exactly once each time, on every path, including a missing key.
-- [ ] A wrong key is refused and the right one accepted, on both sides, on TLS 1.3. No system trust
-  evaluation runs.
-- [ ] The Mac asks for a client certificate (`sec_protocol_options_set_peer_authentication_required(true)`);
-  without it, an unpaired phone is never asked for one. Both sides set a local identity.
+- [x] A wrong key is refused and the right one accepted, on both sides, on TLS 1.3. No system trust
+  evaluation runs. (macOS loopback tests, with self-signed certificates that system trust would reject.)
+- [x] The Mac asks for a client certificate (`sec_protocol_options_set_peer_authentication_required(true)`);
+  without it, an unpaired phone is never asked for one. Both sides set a local identity. (In the loopback
+  test the Mac reads the phone's key from the connection's TLS metadata.)
 - [ ] A peer that presents the right certificate but doesn't hold its private key fails the handshake
   (the reviewer couldn't confirm from Apple's source that this precedes the verify block): try a
   replayed certificate with another key.
-- [ ] If swift-certificates is used, the fingerprint is not taken from `subjectPublicKeyInfoBytes`.
-- [ ] `sec_protocol_metadata_copy_peer_public_key` and `SecTrustCopyCertificateChain` aren't used in the block.
+- [x] swift-certificates isn't used: `SelfSignedCertificate` writes the DER itself and the fingerprint is the
+  SPKI hash.
+- [x] `sec_protocol_metadata_copy_peer_public_key` and `SecTrustCopyCertificateChain` aren't used. The verify
+  block reads the key with `SecTrustCopyKey`; `PinnedTLS.peerFingerprint(of:)` reads the peer certificate from
+  the connection's metadata after the handshake.
+- [ ] A paired Mac whose key has changed (delete its `dev.andon.gannin.remote` key and certificate from the
+  Mac's keychain, then turn Remote off and on): the phone shows "This isn't the Mac you paired with. Pair
+  <name> again." and doesn't sit on "Connecting". Network.framework reports the refusal as `.waiting(.tls)`;
+  `RemoteClient` handles that case.
+- [ ] On iOS, `DeviceIdentity.find` finds this app's own identity. The macOS path builds it from the certificate
+  (`SecIdentityCreateWithCertificate`), because a macOS `kSecClassIdentity` query ignores the label and returns
+  the first identity in the keychain. The iOS path queries by label and is unverified: check it returns ours,
+  and that a second launch loads the same fingerprint instead of making a new key.
 
 ## 8. Docs
 
@@ -241,10 +253,8 @@ follows is what's still to be proved in this code, on a device.
   `settings/app/remote.md`, the sidebar entry in `astro.config.mjs` and the Storage order change.
 - [ ] Read the pages as they render: the Remote control group appears between Ways to run sessions and
   Settings reference; Settings › Remote sits before Storage; the links work.
-- [ ] The docs describe pairing, the QR code and revoking as finished. Don't release them until the
-  TLS and handshake work lands, or add a note that the feature isn't available yet.
-- [ ] The pairing steps in `remote/iphone.md` include the Mac asking you to confirm the phone, which
-  isn't built yet. Build it or remove the step.
+- [ ] The pairing steps in `remote/iphone.md` include the Mac asking you to confirm the phone. Check the
+  wording matches `PairingConfirmation`.
 - [ ] `CHANGELOG.md` has the Added entry under Unreleased. Move it only when the feature really ships.
 
 ## 9. Known gaps and judgement calls to review
