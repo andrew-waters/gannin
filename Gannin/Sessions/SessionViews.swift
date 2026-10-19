@@ -1159,8 +1159,6 @@ private struct SessionChangesPane: View {
     @State private var discarding: ChangedFile?
     @State private var committing: WorktreeChanges?
     @State private var actionError: String?
-    /// The split's height, so the diff's ideal height follows the window.
-    @State private var splitHeight: CGFloat = 0
 
     private func worktreeHeader(_ worktree: WorktreeChanges) -> some View {
         HStack(spacing: 8) {
@@ -1311,9 +1309,8 @@ private struct SessionChangesPane: View {
                 }
                 .frame(minHeight: 120, idealHeight: 240)
                 DiffPane(session: session, changes: changes)
-                    .frame(minHeight: 120, idealHeight: splitHeight * 0.6, maxHeight: .infinity)
+                    .frame(minHeight: 120, idealHeight: 480, maxHeight: .infinity)
             }
-            .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { splitHeight = $0 }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 VStack(spacing: 0) {
                     commentsBar
