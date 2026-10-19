@@ -86,7 +86,7 @@ Rules match commands as they are written. That stops mistakes and casual prompt 
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Open files in | Visual Studio Code | The editor files open in: Visual Studio Code, Cursor, Zed or Xcode. Xcode only opens files on this Mac. | This Mac |
+| Open files in | Visual Studio Code | The editor files open in: Visual Studio Code, Cursor, Zed, Xcode or GoLand. Xcode and GoLand only open files on this Mac. | This Mac |
 | Name | Five starter prompts | The name of a saved prompt. | This Mac |
 | Prompt | Five starter prompts | The text of a saved prompt. | This Mac |
 | Write with Claude | Not applicable | The sparkles button beside each saved prompt. Drafts the prompt by talking it through with Claude. Nothing changes until you use the draft. | This Mac |

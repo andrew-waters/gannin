@@ -4,7 +4,7 @@ import AppKit
 /// session on a server, over its ssh connection where the editor can
 /// (VS Code and Cursor through Remote SSH, Zed through its own).
 enum CodeEditor: String, CaseIterable, Identifiable {
-    case vscode, cursor, zed, xcode
+    case vscode, cursor, zed, xcode, goland
 
     static let key = "sessionsEditor"
 
@@ -20,10 +20,11 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         case .cursor: "Cursor"
         case .zed: "Zed"
         case .xcode: "Xcode"
+        case .goland: "GoLand"
         }
     }
 
-    var opensRemote: Bool { self != .xcode }
+    var opensRemote: Bool { self != .xcode && self != .goland }
 
     /// Opens `path` (absolute, on the session's box) at `line`.
     @MainActor
@@ -38,7 +39,7 @@ enum CodeEditor: String, CaseIterable, Identifiable {
         case (.vscode, let host?): address = "vscode://vscode-remote/ssh-remote+\(host)\(encoded)\(at)"
         case (.cursor, let host?): address = "cursor://vscode-remote/ssh-remote+\(host)\(encoded)\(at)"
         case (.zed, let host?): address = "zed://ssh/\(host)\(encoded)\(at)"
-        case (.xcode, _): address = nil
+        case (.xcode, _), (.goland, _): address = nil
         }
         if let address, let url = URL(string: address) {
             NSWorkspace.shared.open(url)
@@ -47,7 +48,22 @@ enum CodeEditor: String, CaseIterable, Identifiable {
             process.executableURL = URL(filePath: "/usr/bin/xed")
             process.arguments = (line.map { ["-l", "\($0)"] } ?? []) + [path]
             try? process.run()
+        } else if self == .goland, host == nil {
+            openInGoLand(path, line: line)
         }
+    }
+
+    /// Runs GoLand's own launcher, which passes the file to a running GoLand
+    /// or starts one. Its `jetbrains://` links need the project's name, which
+    /// a file path doesn't give.
+    private func openInGoLand(_ path: String, line: Int?) {
+        guard let app = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.jetbrains.goland") else {
+            return NSSound.beep()
+        }
+        let process = Process()
+        process.executableURL = app.appending(path: "Contents/MacOS/goland")
+        process.arguments = (line.map { ["--line", "\($0)"] } ?? []) + [path]
+        try? process.run()
     }
 
     /// The host an ssh command reaches: its first word that isn't an
