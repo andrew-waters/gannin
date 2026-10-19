@@ -937,10 +937,18 @@ struct PullRequestReviewView: View {
         if let found { status = found.pullRequests.first { $0.id == reference.id } }
     }
 
-    /// What the watch has noted since the review. Without a watch only the
-    /// diff and status were refreshed, so it can't say.
-    private func checkSummary() -> String {
-        guard let watch = sessions.sessions[session.id]?.watch, watch.isOn else { return "Refreshed (not watching)" }
+    /// What a check found: the PR's `state` from `checkWatchedReviews` (nil
+    /// when it couldn't look) and what the watch has noted since the review.
+    /// Without a watch only the diff and status were refreshed, so it can't say.
+    private func checkSummary(watching: Bool, state: String?) -> String {
+        guard watching else { return "Refreshed (not watching)" }
+        switch state {
+        case nil: return "Couldn't check GitHub"
+        case "MERGED": return "Merged"
+        case "CLOSED": return "Closed"
+        default: break
+        }
+        guard let watch = sessions.sessions[session.id]?.watch else { return "No changes" }
         var found: [String] = []
         if watch.hasNewCommits { found.append("new commits") }
         if watch.newComments > 0 { found.append("\(watch.newComments) new comment\(watch.newComments == 1 ? "" : "s")") }
@@ -1009,10 +1017,11 @@ struct PullRequestReviewView: View {
                 checkingForChanges = true
                 Task {
                     defer { checkingForChanges = false }
-                    await sessions.checkWatchedReviews(only: session.id, reviewing: false)
+                    let watching = sessions.sessions[session.id]?.watch?.isOn == true
+                    let state = await sessions.checkWatchedReviews(only: session.id, reviewing: false)
                     await load()
                     await loadStatus()
-                    checkResult = checkSummary()
+                    checkResult = checkSummary(watching: watching, state: state)
                 }
             }
             .disabled(checkingForChanges || session.archivedAt != nil)
@@ -1022,6 +1031,7 @@ struct PullRequestReviewView: View {
             }
             Button("Review Again") {
                 reviewingAgain = true
+                checkResult = nil
                 Task {
                     defer { reviewingAgain = false }
                     // The diff may cover more of the repo than it did

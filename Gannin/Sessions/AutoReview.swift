@@ -275,15 +275,21 @@ extension SessionStore {
     /// noted, and once it's been quiet a while it's reviewed again. A merged
     /// or closed PR stops being watched. `only` limits it to one review, and
     /// `reviewing` false (the tab's Check for Changes) only notes what
-    /// changed, leaving the review to be asked for.
-    func checkWatchedReviews(only reviewID: UUID? = nil, reviewing: Bool = true) async {
+    /// changed, leaving the review to be asked for. Returns `only`'s PR
+    /// state on GitHub (`OPEN`, `MERGED` or `CLOSED`), nil if it wasn't
+    /// watched or couldn't be fetched.
+    @discardableResult
+    func checkWatchedReviews(only reviewID: UUID? = nil, reviewing: Bool = true) async -> String? {
         let watched = sessions.values.filter { $0.reviewOf != nil && $0.watch?.isOn == true && (reviewID == nil || $0.id == reviewID) }
-        guard !watched.isEmpty, let api = api() else { return }
-        guard let found = try? await api.watchedPullRequests(ids: watched.compactMap(\.reviewOf?.id)) else { return }
+        guard !watched.isEmpty, let api = api() else { return nil }
+        guard let found = try? await api.watchedPullRequests(ids: watched.compactMap(\.reviewOf?.id)) else { return nil }
+        var state: String?
         for session in watched {
             guard let id = session.reviewOf?.id, let now = found.pullRequests[id] else { continue }
             await look(at: now, for: session.id, me: found.login, reviewing: reviewing)
+            if session.id == reviewID { state = now.state }
         }
+        return state
     }
 
     private func look(at now: WatchedPullRequest, for id: UUID, me: String, reviewing: Bool) async {
