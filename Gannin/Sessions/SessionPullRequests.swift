@@ -447,8 +447,8 @@ extension GitHubAPI {
               repository { nameWithOwner }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 80) { nodes {
                 __typename
-                ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { databaseId } } }
-                ... on StatusContext { context state targetUrl }
+                ... on CheckRun { name status conclusion detailsUrl startedAt checkSuite { workflowRun { databaseId } } }
+                ... on StatusContext { context state targetUrl createdAt }
               } } } } } }
               reviews(last: 30) { nodes { id author { login } state body url } }
               reviewThreads(first: 50) { nodes { id isResolved isOutdated path line originalLine
@@ -635,6 +635,12 @@ struct SessionRawPullRequest: Decodable {
         let context: String?
         let state: String?
         let targetUrl: String?
+        let startedAt: String?
+        let createdAt: String?
+
+        /// ISO 8601 UTC, so strings order by time.
+        var began: String { startedAt ?? createdAt ?? "" }
+        var checkName: String { __typename == "StatusContext" ? context ?? "Status" : name ?? "Check" }
     }
     struct Rollup: Decodable { let contexts: Connection<Context> }
     struct Commit: Decodable { let statusCheckRollup: Rollup? }
@@ -680,8 +686,14 @@ struct SessionRawPullRequest: Decodable {
 
     var model: SessionPullRequest? {
         guard let id, let number, let title, let url, let state, let repository else { return nil }
-        let contexts = commits?.nodes.last?.commit.statusCheckRollup?.contexts.nodes ?? []
-        let checks = contexts.map { context -> SessionPullRequest.Check in
+        // A re-run adds a run under the same name and the rollup keeps the
+        // earlier ones, so only the newest of each name is current.
+        var newest: [String: Context] = [:]
+        for context in commits?.nodes.last?.commit.statusCheckRollup?.contexts.nodes ?? [] {
+            if let kept = newest[context.checkName], kept.began >= context.began { continue }
+            newest[context.checkName] = context
+        }
+        let checks = newest.values.map { context -> SessionPullRequest.Check in
             if context.__typename == "StatusContext" {
                 let state: SessionPullRequest.Check.State = switch context.state {
                 case "SUCCESS": .passed
@@ -724,7 +736,7 @@ struct SessionRawPullRequest: Decodable {
         return SessionPullRequest(
             id: id, number: number, title: title, url: url, repo: repository.nameWithOwner, author: prAuthor, state: state,
             isDraft: isDraft ?? false, reviewDecision: reviewDecision, mergeable: mergeable,
-            checks: checks.sorted { order($0.state) < order($1.state) }, feedback: feedback, baseRef: baseRefName
+            checks: checks.sorted { (order($0.state), $0.name) < (order($1.state), $1.name) }, feedback: feedback, baseRef: baseRefName
         )
     }
 
