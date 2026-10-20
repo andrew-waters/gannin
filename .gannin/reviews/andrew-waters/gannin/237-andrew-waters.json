@@ -89,14 +89,15 @@
       "severity" : "minor"
     }
   ],
+  "merged_at" : "2026-10-20T15:22:08Z",
   "number" : 237,
   "posted_at" : "2026-10-18T21:10:34Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-12T15:44:10Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Show a space typed at the end of a multi-line text box in a form",
-  "updated_at" : "2026-10-18T21:10:35Z",
+  "updated_at" : "2026-10-20T15:22:26Z",
   "verdict" : "approve"
 }
