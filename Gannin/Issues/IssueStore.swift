@@ -6,8 +6,6 @@ import Observation
 @Observable
 final class IssueStore {
     private static let overlap: TimeInterval = 5 * 60
-    /// The most results GitHub returns for one search.
-    private static let searchCap = 1000
 
     private(set) var histories: [String: IssueHistory] = [:]
     /// Orgs whose descriptions and comments are being fetched.
@@ -141,7 +139,7 @@ final class IssueStore {
             // scoped to the repos that search actually covers so a batch
             // not due this round doesn't lose its last known issues.
             for (index, entry) in searches.enumerated() where entry.kind == .open {
-                let capped = Self.isCapped(count: counts?["s\(index)"], repoScoped: entry.repos != nil, totalRecords: records.count, cap: Self.searchCap)
+                let capped = Self.isCapped(count: counts?["s\(index)"], repoScoped: entry.repos != nil, totalRecords: records.count, cap: ParallelSearches.searchCap)
                 guard !capped else { continue }
                 updated.issues = Self.pruneStaleOpenIssues(updated.issues, fetchedIDs: fetchedIDs, scope: entry.repos, outside: outside)
             }

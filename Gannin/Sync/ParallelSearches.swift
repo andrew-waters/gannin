@@ -7,6 +7,9 @@ enum ParallelSearches {
     /// secondary rate limits.
     static let concurrency = 4
 
+    /// GitHub returns at most this many results for a search.
+    static let searchCap = 1000
+
     /// Runs `operation` for each index in `0..<count`, `concurrency` at a
     /// time, and returns everything they fetched. `operation` is handed a
     /// callback for the number it has fetched so far, summed across all of
