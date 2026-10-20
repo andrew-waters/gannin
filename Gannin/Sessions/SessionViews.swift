@@ -345,13 +345,9 @@ private struct NewSessionPopover: View {
     }
 
     private var matching: [CodeSession] {
-        let words = search.lowercased().split(separator: " ").map(String.init)
-        guard !words.isEmpty else { return closed }
-        return closed.filter { session in
-            let kind = TabKind(session)
-            let text = [kind.name, kind.reference ?? "", kind.title, session.title, session.issue.repo]
-                .joined(separator: " ").lowercased()
-            return words.allSatisfy { text.contains($0) }
+        let words = SessionSearch.words(search)
+        return closed.filter {
+            SessionSearch.matches($0, words: words, pullRequests: sessions.pullRequestInfo[$0.id] ?? [])
         }
     }
 
@@ -538,7 +534,7 @@ private struct SessionPickerRow: View {
 
 /// What a tab says it is: a plan, a review or code, with the issue or PR
 /// it's about and its title without the kind in front.
-private struct TabKind {
+struct TabKind {
     let name: String
     let symbol: String
     let reference: String?

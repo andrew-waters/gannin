@@ -3,15 +3,53 @@ import SwiftUI
 /// Every session at once: what each is doing, what it last said, the
 /// files it's touched, its PRs' checks and what it's cost. Waiting ones
 /// first; clicking one opens its tab. Reviews are a section of their own,
-/// as in the tab bar.
+/// as in the tab bar. A search field narrows them to those matching every
+/// word typed (`SessionSearch`); it starts empty each time the grid opens.
 struct SessionOverview: View {
     @Environment(SessionStore.self) private var sessions
+    @State private var search = ""
+    @FocusState private var searching: Bool
 
     var body: some View {
-        let all = sessions.sessions.values.filter { $0.archivedAt == nil }.sorted { order($0) < order($1) }
+        let everything = sessions.sessions.values.filter { $0.archivedAt == nil }
+        let words = SessionSearch.words(search)
+        let all = everything
+            .filter { SessionSearch.matches($0, words: words, pullRequests: sessions.pullRequestInfo[$0.id] ?? []) }
+            .sorted { order($0) < order($1) }
+        VStack(spacing: 0) {
+            if !everything.isEmpty {
+                searchBar
+                Divider()
+            }
+            grid(all, isEmpty: everything.isEmpty)
+        }
+    }
+
+    private var searchBar: some View {
+        HStack {
+            FilterSearchField(text: $search, prompt: "Title, issue, repo, branch or PR", fills: true, focus: $searching)
+                .onEscape { search = "" }
+        }
+        .background {
+            Button("Search") { searching = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .opacity(0)
+                .frame(width: 0, height: 0)
+                .accessibilityHidden(true)
+        }
+        .controlSize(.small)
+        .font(.callout)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+    }
+
+    private func grid(_ all: [CodeSession], isEmpty nothingStarted: Bool) -> some View {
         ScrollView {
-            if all.isEmpty {
+            if nothingStarted {
                 ContentUnavailableView("No sessions", systemImage: "terminal", description: Text("Work on This on an issue starts one."))
+                    .padding(.top, 80)
+            } else if all.isEmpty {
+                ContentUnavailableView.search(text: search)
                     .padding(.top, 80)
             }
             VStack(alignment: .leading, spacing: 20) {

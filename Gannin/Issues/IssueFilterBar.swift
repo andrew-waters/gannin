@@ -427,11 +427,13 @@ struct FilterSearchField: View {
     /// Whether it stretches across the space it's given, rather than the
     /// bars' usual 200 points.
     var fills = false
+    /// Focus on the text field itself, for a caller that moves it there.
+    var focus: FocusState<Bool>.Binding?
 
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search", text: $text, prompt: Text(prompt))
+            field
                 .textFieldStyle(.plain)
                 .frame(minWidth: fills ? 80 : 200, maxWidth: fills ? .infinity : 200)
             if !text.isEmpty {
@@ -443,6 +445,16 @@ struct FilterSearchField: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(.quaternary.opacity(0.7), in: Capsule())
+    }
+
+    @ViewBuilder
+    private var field: some View {
+        let field = TextField("Search", text: $text, prompt: Text(prompt))
+        if let focus {
+            field.focused(focus)
+        } else {
+            field
+        }
     }
 }
 
