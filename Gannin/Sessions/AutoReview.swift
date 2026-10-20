@@ -227,6 +227,17 @@ extension SessionStore {
             let pull = try await api.reviewedPullRequest(repo: pr.repo, number: pr.number, lenientComments: true)
             let (inline, general, omitted) = pull.comments(for: review, draft: draft)
             let body = ReviewedPullRequest.body(summary: review.summary, general: general)
+            // A failed lookup doesn't block posting, as with the comment check.
+            if let mine = try? await api.myReviews(repo: pr.repo, number: pr.number),
+               let same = PostedReview.repeated(in: mine, event: "COMMENT", commit: pull.headSHA, body: body) {
+                reviewDrafts[id, default: ReviewDraft()].posted = same.url ?? pr.url
+                reviewDrafts[id, default: ReviewDraft()].postedAt = same.submittedAt
+                reviewDrafts[id, default: ReviewDraft()].postedEvent = "COMMENT"
+                note(id, .reviewed, text: "Nothing posted: you've already posted this review", url: same.url)
+                await resolveThreads(review.resolved ?? [], of: pr, for: id, api: api)
+                await recordReview(id)
+                return
+            }
             let url = try await api.postReview(repo: pr.repo, number: pr.number, commit: pull.headSHA, event: "COMMENT", body: body, comments: inline)
             reviewDrafts[id, default: ReviewDraft()].posted = url ?? pr.url
             reviewDrafts[id, default: ReviewDraft()].postedAt = .now
@@ -245,6 +256,20 @@ extension SessionStore {
         }
         await resolveThreads(review.resolved ?? [], of: pr, for: id, api: api)
         await recordReview(id, posting: true, automatically: true)
+    }
+
+    /// Looks for a review of yours on GitHub that says what this review does
+    /// and notes it as posted, so one posted from another Mac or on GitHub
+    /// shows here. Returns whether it learned of a post it didn't have.
+    func syncPostedReview(_ id: UUID) async -> Bool {
+        guard let session = sessions[id], let pr = session.reviewOf, let review = session.reviewResult, let api = api(),
+              let mine = try? await api.myReviews(repo: pr.repo, number: pr.number),
+              let found = PostedReview.latest(in: mine, summary: review.summary),
+              found.submittedAt > (reviewDrafts[id]?.postedAt ?? session.reviewDraft?.postedAt ?? .distantPast) else { return false }
+        reviewDrafts[id, default: ReviewDraft()].posted = found.url ?? pr.url
+        reviewDrafts[id, default: ReviewDraft()].postedAt = found.submittedAt
+        reviewDrafts[id, default: ReviewDraft()].postedEvent = found.event
+        return true
     }
 
     /// Resolves the threads of yours the review says are dealt with (only
