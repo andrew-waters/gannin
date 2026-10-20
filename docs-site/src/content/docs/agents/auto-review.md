@@ -15,7 +15,7 @@ A review request is reviewed this way once. Drafts, ones you've dismissed, ones 
 
 ## Watching a reviewed PR
 
-With Watch for changes on the review (on by default), Gannin keeps checking the PR. When new commits or comments from others (not yours, not bots') arrive and things have been quiet a while, it asks the reviewer to look again. A merged or closed PR stops the watch. How often it checks is under Settings › Sync, Watched reviews.
+With Watch for changes on the review (on by default), Gannin keeps checking the PR. When new commits or comments from others (not yours, not bots') arrive and things have been quiet a while, it asks the reviewer to look again. The reviewer answers the PR author's comments, and other people's only when they disagree with the review or the reviewer disagrees with them. A merged or closed PR stops the watch. How often it checks is under Settings › Sync, Watched reviews.
 
 ## What gets posted
 

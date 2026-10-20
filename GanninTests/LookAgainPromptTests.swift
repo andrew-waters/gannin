@@ -22,6 +22,13 @@ struct LookAgainPromptTests {
         #expect(prompt.contains("keep the findings that still stand"))
         #expect(!prompt.contains("Leave out findings"))
     }
+
+    @Test(arguments: [true, false])
+    func answersTheAuthorAndOthersOnlyIfTheyDisagree(wasPosted: Bool) {
+        let prompt = SessionStore.lookAgainPrompt(pr, because: "new comments have been left", wasPosted: wasPosted, learned: "", author: "octo")
+        #expect(prompt.contains("Answer what the PR author (@octo)'s comments ask of you."))
+        #expect(prompt.contains("Answer other people's comments only if they disagree with your review or one of its findings, or you disagree with what they say"))
+    }
 }
 
 /// Whether the author has seen the latest review result.

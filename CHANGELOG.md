@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Changed
+- When a review looks again after new comments, it answers the PR author's comments and other people's only if they disagree with the review or the reviewer disagrees with them
+
 ### Added
 - A review's tab says "Not posted" until a review is posted, Check for Changes finds a review you posted elsewhere on GitHub, and Post Review and automatic posting no longer send a review you've already posted (same kind, body and commit)
 - GoLand is one of the editors files open in (Settings › General › Open files in), at the line for files on this Mac
