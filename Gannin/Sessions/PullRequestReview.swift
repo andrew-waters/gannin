@@ -309,6 +309,32 @@ struct ReviewedPullRequest: Equatable {
     }
 }
 
+/// A review you've submitted on GitHub, as `GitHubAPI.myReviews` reads it.
+struct PostedReview: Equatable {
+    /// `APPROVE`, `REQUEST_CHANGES` or `COMMENT`, as when posting.
+    let event: String
+    let body: String
+    let commit: String
+    let url: URL?
+    let submittedAt: Date
+
+    /// The latest of `reviews` whose body begins with a review's summary:
+    /// that review, posted from here or from elsewhere.
+    static func latest(in reviews: [PostedReview], summary: String) -> PostedReview? {
+        let summary = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !summary.isEmpty else { return nil }
+        return reviews.last { $0.body.hasPrefix(summary) }
+    }
+
+    /// A review that posting `body` as `event` on `commit` would repeat.
+    static func repeated(in reviews: [PostedReview], event: String, commit: String, body: String) -> PostedReview? {
+        let body = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return reviews.last {
+            $0.event == event && $0.commit == commit && $0.body.trimmingCharacters(in: .whitespacesAndNewlines) == body
+        }
+    }
+}
+
 extension GitHubAPI {
     /// The paths a PR changes, for scoping what a reviewer's told (such as
     /// which learnings apply) without fetching every file's patch. A
@@ -451,6 +477,33 @@ extension GitHubAPI {
             "commit_id": commit, "event": event, "body": body, "comments": comments,
         ])
         return posted.htmlUrl
+    }
+
+    /// The reviews you've submitted on a PR, oldest first. Pending and
+    /// dismissed ones aren't counted.
+    func myReviews(repo: String, number: Int) async throws -> [PostedReview] {
+        struct Review: Decodable {
+            struct User: Decodable { let login: String }
+            let state: String
+            let body: String?
+            let commitId: String?
+            let htmlUrl: URL?
+            let submittedAt: Date?
+            let user: User?
+        }
+        let me = try await viewer().login
+        var reviews: [PostedReview] = []
+        for page in 1...30 {
+            let batch: [Review] = try await rest("repos/\(repo)/pulls/\(number)/reviews", query: ["per_page": "100", "page": "\(page)"])
+            reviews += batch.compactMap { review in
+                guard let login = review.user?.login, login.caseInsensitiveCompare(me) == .orderedSame,
+                      let event = ["APPROVED": "APPROVE", "CHANGES_REQUESTED": "REQUEST_CHANGES", "COMMENTED": "COMMENT"][review.state],
+                      let at = review.submittedAt else { return nil }
+                return PostedReview(event: event, body: review.body ?? "", commit: review.commitId ?? "", url: review.htmlUrl, submittedAt: at)
+            }
+            if batch.count < 100 { break }
+        }
+        return reviews
     }
 
     /// The threads a review says are dealt with that Gannin will resolve:
@@ -1019,9 +1072,10 @@ struct PullRequestReviewView: View {
                     defer { checkingForChanges = false }
                     let watching = sessions.sessions[session.id]?.watch?.isOn == true
                     let state = await sessions.checkWatchedReviews(only: session.id, reviewing: false)
+                    let foundPost = await sessions.syncPostedReview(session.id)
                     await load()
                     await loadStatus()
-                    checkResult = checkSummary(watching: watching, state: state)
+                    checkResult = checkSummary(watching: watching, state: state) + (foundPost ? ", review found on GitHub" : "")
                 }
             }
             .disabled(checkingForChanges || session.archivedAt != nil)
@@ -1058,6 +1112,10 @@ struct PullRequestReviewView: View {
                         .foregroundStyle(label.color)
                 }
                 .help("Open the review on GitHub")
+            } else if review != nil {
+                Label("Not posted", systemImage: "circle.dashed")
+                    .foregroundStyle(.secondary)
+                    .help("This review hasn't been posted to GitHub. Check for Changes also looks for one you posted elsewhere")
             }
             // Kept in the row while the first review runs, so it appearing
             // doesn't reflow the buttons.
@@ -2368,6 +2426,17 @@ private struct PostReviewSheet: View {
                         sending = false
                         return
                     }
+                }
+                // A failed lookup doesn't block posting, as with the comment check.
+                if let mine = try? await api.myReviews(repo: reference.repo, number: reference.number),
+                   let same = PostedReview.repeated(in: mine, event: event, commit: pullRequest.headSHA, body: body) {
+                    sessions.reviewDrafts[session.id, default: ReviewDraft()].posted = same.url ?? reference.url
+                    sessions.reviewDrafts[session.id, default: ReviewDraft()].postedAt = same.submittedAt
+                    sessions.reviewDrafts[session.id, default: ReviewDraft()].postedEvent = event
+                    isPosted = true
+                    sending = false
+                    notice = "You've already posted this review to GitHub, so it wasn't sent again."
+                    return
                 }
                 let inline = comments().0
                 do {

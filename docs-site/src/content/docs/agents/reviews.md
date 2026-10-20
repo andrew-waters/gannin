@@ -17,7 +17,9 @@ The review opens on its Overview:
 - **Needs attention**, in tiers: Blocking the merge, Fix before merging, Waiting on and Not blocking. Empty tiers are hidden. Each item opens its file, its checks or its thread.
 - The walkthrough, the description, and a rail of the PR's own comments and reviews. Ask the reviewer there pastes your question to it and opens the conversation.
 
-When the PR has new commits the review hasn't seen, the Overview says "New commits since this review". Review Again looks at them now. To see whether anything changed first, without asking Claude to review again, choose Check for Changes: it fetches the PR again and, if Watch for changes is on, notes any new commits and comments straight away instead of waiting for the next check, and says what it found next to the button. It never starts a review itself, and without Watch for changes it only refreshes the diff.
+When the PR has new commits the review hasn't seen, the Overview says "New commits since this review". Review Again looks at them now. To see whether anything changed first, without asking Claude to review again, choose Check for Changes: it fetches the PR again and, if Watch for changes is on, notes any new commits and comments straight away instead of waiting for the next check, and says what it found next to the button. It also looks on GitHub for a review of yours that says what this one does (whether or not Watch for changes is on), so one you posted from another Mac or on GitHub shows as posted here; the result then ends "review found on GitHub". It never starts a review itself, and without Watch for changes it otherwise only refreshes the diff.
+
+The header shows what was posted (Approved, Commented or Changes requested, with when), or "Not posted" while nothing has been.
 
 ## Files and findings
 
@@ -35,6 +37,7 @@ Post Review sends one review to GitHub as you:
 - Kept findings and your comments go inline on lines the diff shows. A suggestion becomes a GitHub suggestion block. Anything else goes in the body.
 - If the reviewer says threads of yours are now dealt with, Post Review offers them ticked and resolves them after posting. Only unresolved threads you started are resolved.
 - When you press Post to GitHub, Gannin first checks the PR for comments added since the review was drafted. A finding is left out, and listed under "left out", when someone has already commented on its line, on the new side of the diff, saying much the same (case, punctuation and suggestion blocks are ignored; the wording has to be nearly the same). Only findings that go inline are checked, not ones that go in the body. A comment a later push has made outdated doesn't count, so a point raised again after the code changed is posted. A comment in a resolved thread still counts. Each left-out finding is shown with its own text above the comment that covers it. If the findings left out change at that point, nothing is posted yet: look over the list and post again. A finding wrongly left out can't be put back from the sheet, so add it as a comment of your own, which is never left out. If the check fails, the error is shown and pressing Post again sends the review without it.
+- Gannin also checks GitHub for a review of yours with the same kind (Approve, Comment or Request Changes), body and latest commit. If there is one, nothing is sent: the sheet says you've already posted it, and the header shows it as posted. If that check fails, the review is posted anyway.
 - Record it in the harness saves a record of the review (see [Automatic reviews](/docs/agents/auto-review/)).
 
 Nothing is posted until you press it, unless you've turned on Post automatic reviews. Gannin never approves a PR by itself.
