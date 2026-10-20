@@ -11,6 +11,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Added
 - A review's tab says "Not posted" until a review is posted, Check for Changes finds a review you posted elsewhere on GitHub, and Post Review and automatic posting no longer send a review you've already posted (same kind, body and commit)
+- The sessions grid has a search field (⌘F to focus it, Esc to clear it) that narrows it to sessions matching every word typed, in their kind, reference, title, repo, branch or pull requests; the + menu's Open a Session filter now matches branches and pull requests too
 - GoLand is one of the editors files open in (Settings › General › Open files in), at the line for files on this Mac
 - Check for Changes on a review's tab fetches the PR again now and, for a watched review, notes new commits and comments, so you can see what changed before you ask Claude to review it again
 - A review whose PR has merged can be finished from its row in the Inbox's While you were away section: right-click it and choose Finish Review, without opening it first
