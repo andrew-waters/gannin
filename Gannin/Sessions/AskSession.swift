@@ -190,7 +190,7 @@ struct NewAskForm: View {
                         }
                     }
                 }
-                TextField("Ask anything", text: $message, prompt: Text("Ask anything: how many users logged in today, pull last month's signups as a CSV, explain how billing works"), axis: .vertical)
+                TextField("Ask anything", text: $message, prompt: Text("How many users logged in today, pull last month's signups as a CSV, explain how billing works"), axis: .vertical)
                     .lineLimit(3...12)
                     .focused($focused)
                     // Return starts; Shift-Return (or Option-Return) is a new line.
@@ -202,6 +202,7 @@ struct NewAskForm: View {
                         }
                         return .handled
                     }
+                    .leadingTextBox("Ask anything")
             } footer: {
                 Text(setup == nil
                      ? "Ask runs in a project's harness. Add one in the org's Settings, under Projects."

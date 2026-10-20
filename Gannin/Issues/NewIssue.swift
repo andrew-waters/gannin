@@ -507,6 +507,7 @@ struct NewIssueSheet: View {
             }
             TextField("Ask Claude", text: $ask, prompt: Text(conversation.isEmpty ? "What's it about? A rough line is enough." : "What to change"), axis: .vertical)
                 .lineLimit(2...6)
+                .leadingTextBox("Ask Claude")
             HStack {
                 if !library.isEmpty {
                     Menu {

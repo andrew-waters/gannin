@@ -143,6 +143,7 @@ private struct InvestmentCategoryEditor: View {
                 Section {
                     TextField("Name", text: $category.name)
                     TextField("Description", text: $category.details, axis: .vertical)
+                        .leadingTextBox("Description")
                     LabeledContent("Target share") {
                         HStack(spacing: 4) {
                             TextField("none", value: Binding(

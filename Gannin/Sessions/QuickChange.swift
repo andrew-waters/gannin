@@ -383,9 +383,10 @@ struct NewQuickChangeView: View {
                     if let value { repo = value }
                 }
             }
-            TextField("What to change", text: $note, prompt: Text("What to change: the Save button on Settings sits too low on small windows, nudge it up"), axis: .vertical)
+            TextField("What to change", text: $note, prompt: Text("The Save button on Settings sits too low on small windows, nudge it up"), axis: .vertical)
                 .lineLimit(4...14)
                 .focused($focused)
+                .leadingTextBox("What to change")
             TextField("Title", text: $title, prompt: Text(SessionStore.askTitle(note).isEmpty || note.isEmpty ? "From the note's first line" : SessionStore.askTitle(note)))
         } footer: {
             Text(setup == nil

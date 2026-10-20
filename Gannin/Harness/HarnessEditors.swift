@@ -90,7 +90,9 @@ struct HarnessSkillEditor: View {
                 }
                 TextField("Description", text: $summary, prompt: Text("What it does and when to use it"), axis: .vertical)
                     .lineLimit(1...4)
+                    .leadingTextBox("Description")
                 TextField("Repos", text: $repos, prompt: Text("All, or api, web"))
+                    .leadingTextBox("Repos")
             } footer: {
                 Text("The description is how an agent decides to use it, so say when it applies.")
                     .font(.caption)
@@ -232,6 +234,7 @@ struct HarnessDocumentEditor: View {
                     .foregroundStyle(.secondary)
                 TextField("Summary", text: $draft.summary, prompt: Text("A sentence or two for deciding whether to open it"), axis: .vertical)
                     .lineLimit(1...4)
+                    .leadingTextBox("Summary")
             }
             Section {
                 Picker("Status", selection: $draft.status) {

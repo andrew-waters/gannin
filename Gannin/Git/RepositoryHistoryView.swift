@@ -349,6 +349,7 @@ struct NewTagSheet: View {
                     .help("A branch, tag or commit; HEAD is the commit checked out")
                 TextField("Message", text: $message, prompt: Text("Optional: makes it an annotated tag"), axis: .vertical)
                     .lineLimit(2...8)
+                    .leadingTextBox("Message")
                 Toggle("Push to origin", isOn: $push)
             } header: {
                 Text("New tag in \(repository.repo)")

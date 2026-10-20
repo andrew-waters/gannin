@@ -152,8 +152,9 @@ struct PromptPickerSections: View {
             }
         }
         Section {
-            TextField("Anything else, for this one", text: $choice.note, axis: .vertical)
+            TextField("Anything else, for this one", text: $choice.note, prompt: Text("For this one only"), axis: .vertical)
                 .lineLimit(2...6)
+                .leadingTextBox("Note")
             DisclosureGroup("What Claude is told besides Gannin's prompt") {
                 Text(library.instructions(for: choice, values: values) ?? "Nothing more.")
                     .font(.callout.monospaced())

@@ -18,6 +18,20 @@ extension View {
         onExitCommand(perform: action)
     }
 
+    /// A text field in a grouped Form with its label beside it and the text starting right
+    /// after the label. A labelled field's text is otherwise right-aligned, and right-aligned
+    /// text lets a typed trailing space hang past the edge, so it doesn't show; no alignment
+    /// modifier changes that in a Form. The field's own title stays as its VoiceOver label.
+    func leadingTextBox(_ title: String) -> some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(title)
+                .fixedSize()
+                .accessibilityHidden(true)
+            labelsHidden()
+                .multilineTextAlignment(.leading)
+        }
+    }
+
     /// The window's subtitle.
     func windowSubtitle(_ subtitle: String) -> some View {
         navigationSubtitle(subtitle)
