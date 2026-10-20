@@ -18,7 +18,7 @@ extension GitHubAPI {
             async let prs = changeSearch("\(scope) is:pr updated:>=\(stamp)", kind: .pullRequest, isOutside: isOutside)
             async let issues = changeSearch("\(scope) is:issue updated:>=\(stamp)", kind: .issue, isOutside: isOutside)
             let (prEntries, issueEntries) = try await (prs, issues)
-            capped = capped || prEntries.count >= ChangeFeed.searchCap || issueEntries.count >= ChangeFeed.searchCap
+            capped = capped || prEntries.count >= ParallelSearches.searchCap || issueEntries.count >= ParallelSearches.searchCap
             entries += prEntries + issueEntries
         }
         return (entries, capped)

@@ -26,8 +26,6 @@ nonisolated struct ChangeFeed: Sendable {
     /// Overlap on each run's search, so an update landing while the previous
     /// run was fetching isn't missed.
     static let overlap: TimeInterval = 5 * 60
-    /// GitHub returns at most this many results for a search.
-    static let searchCap = 1000
 
     var entries: [String: ChangeEntry]
     /// Every update after this is in `entries`.
