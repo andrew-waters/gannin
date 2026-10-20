@@ -27,9 +27,10 @@ struct SessionOverview: View {
 
     private var searchBar: some View {
         HStack {
-            FilterSearchField(text: $search, prompt: "Title, issue, repo, branch or PR", fills: true)
-                .focused($searching)
+            FilterSearchField(text: $search, prompt: "Title, issue, repo, branch or PR", fills: true, focus: $searching)
                 .onEscape { search = "" }
+        }
+        .background {
             Button("Search") { searching = true }
                 .keyboardShortcut("f", modifiers: .command)
                 .opacity(0)
