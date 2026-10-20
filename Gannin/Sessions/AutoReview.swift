@@ -68,6 +68,8 @@ struct ReviewWatch: Codable, Hashable {
     var changedAt: Date?
     var hasNewCommits = false
     var newComments = 0
+    /// Who opened the PR, as of the last look, for the look-again prompt.
+    var author: String?
 }
 
 // MARK: - What happened while you were away
@@ -320,6 +322,7 @@ extension SessionStore {
     private func look(at now: WatchedPullRequest, for id: UUID, me: String, reviewing: Bool) async {
         guard var watch = sessions[id]?.watch, watch.isOn else { return }
         defer { update(id) { $0.watch = watch } }
+        watch.author = now.author
         // The first look notes what's there.
         guard let head = watch.headSHA else {
             watch.headSHA = now.headSHA
@@ -366,21 +369,23 @@ extension SessionStore {
 
     /// What the author has seen decides the wording: a review that was never
     /// posted isn't one they can be told has "not changed".
-    static func lookAgainPrompt(_ pr: PullRequestReference, because reasons: String, wasPosted: Bool, learned: String) -> String {
+    static func lookAgainPrompt(_ pr: PullRequestReference, because reasons: String, wasPosted: Bool, learned: String, author: String? = nil) -> String {
+        let whose = author.map { "the PR author (@\($0))" } ?? "the PR author"
+        let answerComments = "Answer what \(whose)'s comments ask of you. Answer other people's comments only if they disagree with your review or one of its findings, or you disagree with what they say; leave the rest alone."
         let opening: String
         let earlier: String
         if wasPosted {
             opening = "Since your last review of \(pr.repo)#\(pr.number), \(reasons). Fetch the PR again with its comments and review it as it is now."
             earlier = """
-                Answer what the comments ask of you. Leave out findings from your earlier review that still stand unchanged, and say in the \
+                \(answerComments) Leave out findings from your earlier review that still stand unchanged, and say in the \
                 summary which of them are now dealt with, and list their threads in `resolved`.
                 """
         } else {
             opening = "Review \(pr.repo)#\(pr.number) as it is now; \(reasons). Fetch the PR again with its comments."
             earlier = """
                 Your earlier review was never posted, so the author hasn't seen it. Review the PR as if for the first time: keep the \
-                findings that still stand, answer what the comments ask of you, and write a summary that stands alone. Don't refer to \
-                your earlier review or say that nothing has changed.
+                findings that still stand and write a summary that stands alone. \(answerComments) Don't refer to your earlier review or \
+                say that nothing has changed.
                 """
         }
         return """
@@ -401,7 +406,7 @@ extension SessionStore {
         let learnings = await reviewLearnings(org: pr.org, harnessRepo: session.harnessRepo, repo: pr.repo, number: pr.number)
         let learned = HarnessLearning.reviewInstructions(learnings).map { "\n\n\($0)" } ?? ""
         let wasPosted = (reviewDrafts[id] ?? session.reviewDraft)?.postedLatest ?? false
-        let prompt = SessionStore.lookAgainPrompt(pr, because: reasons, wasPosted: wasPosted, learned: learned)
+        let prompt = SessionStore.lookAgainPrompt(pr, because: reasons, wasPosted: wasPosted, learned: learned, author: session.watch?.author)
         if isRunning(id) {
             guard state(id) == .idle else {
                 // Claude has exited and left its shell, where a paste would go to bash.
@@ -451,6 +456,8 @@ struct WatchedPullRequest {
 
     let state: String
     let headSHA: String
+    /// The login of whoever opened the PR; nil if their account is gone.
+    let author: String?
     /// Conversation comments, reviews with words, and comments on lines.
     let comments: [Comment]
 }
@@ -473,6 +480,7 @@ extension GitHubAPI {
             let id: String?
             let state: String?
             let headRefOid: String?
+            let author: Author?
             let comments: Connection<Comment>?
             let reviews: Connection<Review>?
         }
@@ -483,7 +491,7 @@ extension GitHubAPI {
               viewer { login }
               nodes(ids: $ids) {
                 ... on PullRequest {
-                  id state headRefOid
+                  id state headRefOid author { __typename login }
                   comments(last: 30) { nodes { id url body createdAt author { __typename login } } }
                   reviews(last: 30) {
                     nodes {
@@ -509,7 +517,7 @@ extension GitHubAPI {
                 }
                 comments += review.comments.nodes.map { comment($0.id, $0.author, $0.body, $0.url, $0.createdAt) }
             }
-            found[id] = WatchedPullRequest(state: state, headSHA: head, comments: comments)
+            found[id] = WatchedPullRequest(state: state, headSHA: head, author: node.author?.login, comments: comments)
         }
         return (response.viewer.login, found)
     }
