@@ -447,7 +447,7 @@ extension GitHubAPI {
               repository { nameWithOwner }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 80) { nodes {
                 __typename
-                ... on CheckRun { name status conclusion detailsUrl startedAt checkSuite { workflowRun { databaseId } } }
+                ... on CheckRun { name status conclusion detailsUrl startedAt checkSuite { workflowRun { databaseId workflow { name } } } }
                 ... on StatusContext { context state targetUrl createdAt }
               } } } } } }
               reviews(last: 30) { nodes { id author { login } state body url } }
@@ -623,7 +623,11 @@ struct SessionRawPullRequest: Decodable {
     struct Repository: Decodable { let nameWithOwner: String }
     struct Context: Decodable {
         struct Suite: Decodable {
-            struct Run: Decodable { let databaseId: Int? }
+            struct Run: Decodable {
+                struct Workflow: Decodable { let name: String? }
+                let databaseId: Int?
+                let workflow: Workflow?
+            }
             let workflowRun: Run?
         }
         let __typename: String
@@ -638,9 +642,17 @@ struct SessionRawPullRequest: Decodable {
         let startedAt: String?
         let createdAt: String?
 
-        /// ISO 8601 UTC, so strings order by time.
-        var began: String { startedAt ?? createdAt ?? "" }
-        var checkName: String { __typename == "StatusContext" ? context ?? "Status" : name ?? "Check" }
+        /// ISO 8601 UTC, so strings order by time. A check run that hasn't
+        /// started (a queued re-run) has no `startedAt` and is the newest.
+        var began: String { startedAt ?? createdAt ?? (__typename == "StatusContext" ? "" : "\u{FFFF}") }
+
+        /// What a re-run replaces: the same kind of check, in the same
+        /// workflow, with the same name. Jobs sharing a name in different
+        /// workflows are different checks.
+        var identity: String {
+            let title = __typename == "StatusContext" ? context : name
+            return [__typename, checkSuite?.workflowRun?.workflow?.name ?? "", title ?? ""].joined(separator: "\u{0}")
+        }
     }
     struct Rollup: Decodable { let contexts: Connection<Context> }
     struct Commit: Decodable { let statusCheckRollup: Rollup? }
@@ -686,12 +698,14 @@ struct SessionRawPullRequest: Decodable {
 
     var model: SessionPullRequest? {
         guard let id, let number, let title, let url, let state, let repository else { return nil }
-        // A re-run adds a run under the same name and the rollup keeps the
-        // earlier ones, so only the newest of each name is current.
+        // A re-run adds a run alongside the earlier ones in the rollup, so
+        // only the newest of each check is current. This relies on the query's
+        // `contexts(first:)` returning both; a PR with more checks than that
+        // can lose the newer run and keep the older one.
         var newest: [String: Context] = [:]
         for context in commits?.nodes.last?.commit.statusCheckRollup?.contexts.nodes ?? [] {
-            if let kept = newest[context.checkName], kept.began >= context.began { continue }
-            newest[context.checkName] = context
+            if let kept = newest[context.identity], kept.began >= context.began { continue }
+            newest[context.identity] = context
         }
         let checks = newest.values.map { context -> SessionPullRequest.Check in
             if context.__typename == "StatusContext" {
