@@ -2,7 +2,7 @@
 title: Goals settings
 description: Every option in Org settings › Goals, the delivery targets shown on the Dashboard as on track or not.
 sidebar:
-  order: 7
+  order: 8
 ---
 
 Org settings › Goals sets delivery targets for the whole org, and for any team that wants its own. Open it with the cog beside the account menu in the sidebar's footer, then pick Goals in the toolbar. The Dashboard shows each goal as on track or not, for the window picked, with where it was in the period before. The Scorecard keeps its own measurables and targets for each cadence, starting from these as weekly ones.
