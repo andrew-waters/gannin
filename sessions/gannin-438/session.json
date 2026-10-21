@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "438-run-remote-pr-reviews-only-in-scheduled",
+  "issue" : "andrew-waters/gannin#438",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-21T17:23:19Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Run remote PR reviews only in scheduled windows, managed with routines in one schedule view",
+  "url" : "https://github.com/andrew-waters/gannin/issues/438"
+}
