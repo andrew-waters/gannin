@@ -169,12 +169,12 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
         case 0:
             break
         case 127:
-            return .failed(run.error.isEmpty ? "\(title) isn't installed on this Mac." : run.error)
+            return .failed(run.error.isEmpty ? "\(title) isn't installed on this Mac." : run.error, output: Self.shown(run.output))
         case Self.timedOut:
-            return .failed("\(title) timed out after \(Int(Self.timeout / 60)) minutes.")
+            return .failed("\(title) timed out after \(Int(Self.timeout / 60)) minutes.", output: Self.shown(run.output))
         default:
             let why = run.error.trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failed(why.isEmpty ? "\(title) failed (exit \(run.status))." : "\(title) failed: \(why)")
+            return .failed(why.isEmpty ? "\(title) failed (exit \(run.status))." : "\(title) failed: \(why)", output: Self.shown(run.output))
         }
         struct Output: Decodable { let result: String? }
         guard let output = try? JSONDecoder().decode(Output.self, from: Data(run.output.utf8)), let reply = output.result else {

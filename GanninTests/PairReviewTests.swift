@@ -161,6 +161,24 @@ struct PairReviewTests {
         #expect(outcome(result(bad)) == .failed("Junie replied with no list of findings.", output: bad))
     }
 
+    @Test func everyKindOfFailedJunieRunKeepsWhatItPrinted() {
+        #expect(outcome(status: 1, "partial", error: "boom") == .failed("Junie failed: boom", output: "partial"))
+        #expect(outcome(status: ExtraReviewer.timedOut, "partial") == .failed("Junie timed out after 10 minutes.", output: "partial"))
+        #expect(outcome(status: 127, "partial", error: "") == .failed("Junie isn't installed on this Mac.", output: "partial"))
+    }
+
+    @Test func anExtraShowsItsFindingsOrWhatItPrinted() {
+        var extra = PairReview.ExtraReview()
+        #expect(extra.shownText == nil)
+        extra.state = .answered
+        #expect(extra.shownText == nil)
+        extra.findings = [finding("app/a.swift", 3, "Off by one"), SessionTranscript.Finding(path: "app/b.swift", line: nil, comment: "Missing test")]
+        #expect(extra.shownText == "app/a.swift:3\nOff by one\n\napp/b.swift\nMissing test")
+        extra.state = .failed
+        extra.output = "It printed this"
+        #expect(extra.shownText == "It printed this")
+    }
+
     @Test func aFailedExtraKeepsWhatItPrinted() {
         var pairing = PairReview()
         pairing.startExtras([.junie])
