@@ -914,6 +914,7 @@ final class SessionStore {
             if besideTab == id { besideTab = parent }
         }
         if let session = sessions[id] {
+            cancelRunningExtras(of: session.pairing)
             deleteSandbox(of: session)
             deleteAttachmentsOnBox((session.attachments ?? []).map(\.name), of: session)
         }

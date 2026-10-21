@@ -66,10 +66,13 @@ struct PairReview: Codable, Hashable {
 
     var isOver: Bool { [.settled, .limit, .stopped].contains(phase) }
 
-    /// Fails any extra still running: one saved by a Gannin that quit mid-round
-    /// has no run left to answer, and would hold the round up for good.
+    /// Fails any extra still running in a round that is waiting on it: one
+    /// saved by a Gannin that quit mid-round has no run left to answer, and
+    /// would hold the round up for good. A review you stopped keeps its
+    /// extras as they were, since it wasn't the quit that ended them.
     /// Returns whether there was one.
     mutating func abandonRunningExtras(_ message: String) -> Bool {
+        guard phase == .reviewing else { return false }
         var found = false
         for (id, extra) in extras ?? [:] where extra.state == .running {
             extras?[id]?.state = .failed
@@ -125,30 +128,38 @@ struct PairReview: Codable, Hashable {
         claudeFindings = nil
     }
 
-    /// One list from the reviewers' lists, claude's first, each finding once
-    /// (the same path, line and comment from two reviewers is one, credited
-    /// to both). With no extra reviewer's list it is claude's, unlabelled;
-    /// with one, every finding says who raised it.
+    /// One list from the reviewers' lists, claude's first. Findings from
+    /// different reviewers on the same line of the same file are one, credited
+    /// to both with each one's comment (two models rarely word a problem the
+    /// same way); two on the same line from one reviewer stay separate, as do
+    /// ones with no line. With no extra reviewer's list it is claude's,
+    /// unlabelled; with one, every finding says who raised it.
     static func merge(claude: [SessionTranscript.Finding], extras: [(reviewer: String, findings: [SessionTranscript.Finding])]) -> [SessionTranscript.Finding] {
         guard !extras.isEmpty else { return claude }
-        var merged: [SessionTranscript.Finding] = []
-        var names: [[String]] = []
-        var seen: [String: Int] = [:]
+        /// A finding and who said what about it.
+        struct Merged {
+            var finding: SessionTranscript.Finding
+            var says: [(reviewer: String, comment: String)]
+        }
+        var merged: [Merged] = []
         for (reviewer, findings) in [("claude", claude)] + extras.map({ ($0.reviewer, $0.findings) }) {
             for finding in findings {
-                let key = "\(finding.path)\u{1}\(finding.line.map(String.init) ?? "")\u{1}\(finding.comment)"
-                if let index = seen[key] {
-                    if !names[index].contains(reviewer) { names[index].append(reviewer) }
+                let match: Int? = finding.line == nil ? nil : merged.firstIndex { entry in
+                    entry.finding.path == finding.path && entry.finding.line == finding.line && !entry.says.contains { $0.reviewer == reviewer }
+                }
+                if let match {
+                    merged[match].says.append((reviewer, finding.comment))
                 } else {
-                    seen[key] = merged.count
-                    merged.append(finding)
-                    names.append([reviewer])
+                    merged.append(Merged(finding: finding, says: [(reviewer, finding.comment)]))
                 }
             }
         }
-        return zip(merged, names).map { finding, names in
-            var labelled = finding
-            labelled.reviewer = names.joined(separator: " and ")
+        return merged.map { entry in
+            var labelled = entry.finding
+            labelled.reviewer = entry.says.map(\.reviewer).joined(separator: " and ")
+            let comments = entry.says.map(\.comment)
+            // Said the same by all of them, or each in their own words.
+            labelled.comment = Set(comments).count == 1 ? comments[0] : entry.says.map { "\($0.reviewer): \($0.comment)" }.joined(separator: " ")
             return labelled
         }
     }
@@ -281,6 +292,9 @@ extension SessionStore {
             // Already looking: it'll see the change as it is when it reads it.
             return
         }
+        // A round still waiting on an extra from before (its reviewer was
+        // replaced) is over, so its run mustn't go on beside the new one.
+        cancelRunningExtras(of: session.pairing)
         let said = note.isEmpty ? "" : "\n\nThe agent working on it says: \(note)"
         let extras = enabledExtraReviewers(for: session)
         if let reviewerID = pairing.reviewerID, let reviewer = sessions[reviewerID] {
@@ -334,11 +348,22 @@ extension SessionStore {
         for reviewer in reviewers {
             guard let run = sessions[session.id]?.pairing?.extras?[reviewer.id]?.run else { continue }
             Task {
-                let outcome = await reviewer.review(folder: folder, prompt: prompt) { script in
+                let outcome = await reviewer.review(folder: folder, prompt: prompt, tag: run.uuidString) { script in
                     await Task.detached { ClaudeRunner.run(script, place: .local) }.value
                 }
                 extraFinished(reviewer, run: run, outcome: outcome, for: session.id)
             }
+        }
+    }
+
+    /// Stops the extras `pairing` is still waiting on, on a copy of the
+    /// worktree each. Their results would be ignored anyway; this saves the
+    /// CPU, disk and quota until their own timeout.
+    func cancelRunningExtras(of pairing: PairReview?) {
+        for (id, extra) in pairing?.extras ?? [:] where extra.state == .running {
+            guard let reviewer = ExtraReviewer(rawValue: id) else { continue }
+            let script = reviewer.cancelScript(tag: extra.run.uuidString)
+            Task.detached { _ = ClaudeRunner.run(script, place: .local) }
         }
     }
 
@@ -457,6 +482,7 @@ extension SessionStore {
     func stopPairReview(_ id: UUID, note: String? = nil) {
         guard var pairing = sessions[id]?.pairing, !pairing.isOver else { return }
         let waiting = pairing.phase == .reviewing
+        cancelRunningExtras(of: pairing)
         pairing.phase = .stopped
         pairing.note = note
         pairing.endedAt = .now

@@ -58,14 +58,18 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
     ///
     /// `slack` is how many seconds past `timeout` the CLI is left before it
     /// is stopped, if it hasn't stopped itself.
-    func script(folder: URL, prompt: String, timeout: TimeInterval = ExtraReviewer.timeout, slack: Int = 30) -> String {
+    ///
+    /// The copy lives in a folder named for `tag`, which `cancelScript(tag:)`
+    /// finds to stop this run early.
+    func script(folder: URL, prompt: String, tag: String = UUID().uuidString, timeout: TimeInterval = ExtraReviewer.timeout, slack: Int = 30) -> String {
         switch self {
         case .junie:
             let milliseconds = Int(timeout * 1000)
             let watchdog = Int(timeout) + slack
             let source = SessionScript.quoted(folder.path)
             return [
-                #"d=$(mktemp -d "${TMPDIR:-/tmp}/gannin-junie.XXXXXX")"#,
+                "d=\(workFolder(tag: tag))",
+                #"mkdir -m 700 "$d" || exit 1"#,
                 #"trap 'rm -rf "$d"' EXIT"#,
                 "src=\(source)",
                 "command -v junie >/dev/null 2>&1 || { echo 'junie is not installed on this Mac (not found on PATH)' >&2; exit 127; }",
@@ -95,8 +99,13 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
                 // background job no stdin, and this script is itself read from
                 // stdin, so the CLI is given none: it could read the rest of it.
                 "set -m",
+                // Stopped while it was being copied: don't start it.
+                #"[ -e "$d/cancel" ] && exit 130"#,
                 #"junie --project "$d/project" --output-format json --json-output-file "$d/result.json" --timeout \#(milliseconds) --skip-update-check "$(cat "$d/prompt")" </dev/null >"$d/stdout" 2>"$d/stderr" &"#,
                 "pid=$!",
+                #"echo $pid > "$d/pid""#,
+                // Stopped in the moment before the pid was written.
+                #"[ -e "$d/cancel" ] && kill -TERM -$pid 2>/dev/null"#,
                 "( sleep \(watchdog); kill -TERM -$pid 2>/dev/null ) &",
                 "watchdog=$!",
                 // Disowned, so bash doesn't print a job notice for it into the error text.
@@ -115,6 +124,25 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
                 #"cat "$d/result.json""#,
             ].joined(separator: "\n") + "\n"
         }
+    }
+
+    /// Where a run's copy and files are, as a shell word.
+    private func workFolder(tag: String) -> String {
+        #""${TMPDIR:-/tmp}/gannin-\#(rawValue).\#(tag)""#
+    }
+
+    /// A bash script that stops the run `script(tag:)` made, the CLI and
+    /// everything it started, so a round you stopped doesn't go on using CPU
+    /// and quota. The run's script then ends and removes its copy. It does
+    /// nothing for a run that has already ended.
+    func cancelScript(tag: String) -> String {
+        [
+            "d=\(workFolder(tag: tag))",
+            #"[ -d "$d" ] || exit 0"#,
+            #"touch "$d/cancel""#,
+            #"read -r pid < "$d/pid" 2>/dev/null && kill -TERM -- "-$pid" 2>/dev/null"#,
+            "exit 0",
+        ].joined(separator: "\n") + "\n"
     }
 
     /// The findings in what a run printed (its result file), or why there
@@ -144,18 +172,20 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
 
     /// One round: copies, runs and reads. A run that hasn't finished
     /// `limit` seconds in is given up on (its script stops the CLI soon
-    /// after, and removes the copy).
-    func review(folder: URL, prompt: String, limit: TimeInterval = ExtraReviewer.timeout + ExtraReviewer.grace, run: @escaping Runner) async -> Outcome {
-        let script = script(folder: folder, prompt: self.prompt(prompt))
+    /// after, and removes the copy). `tag` names the run for `cancelScript`.
+    func review(folder: URL, prompt: String, tag: String = UUID().uuidString, limit: TimeInterval = ExtraReviewer.timeout + ExtraReviewer.grace, run: @escaping Runner) async -> Outcome {
+        let script = script(folder: folder, prompt: self.prompt(prompt), tag: tag)
         let finished: Result? = await withCheckedContinuation { continuation in
             let once = Once()
+            let timer = Task {
+                do { try await Task.sleep(for: .seconds(limit)) } catch { return }
+                if once.first() { continuation.resume(returning: nil) }
+            }
             Task {
                 let result = await run(script)
                 if once.first() { continuation.resume(returning: result) }
-            }
-            Task {
-                try? await Task.sleep(for: .seconds(limit))
-                if once.first() { continuation.resume(returning: nil) }
+                // Not left sleeping out the limit.
+                timer.cancel()
             }
         }
         guard let finished else { return .failed("\(title) timed out after \(Int(Self.timeout / 60)) minutes.") }

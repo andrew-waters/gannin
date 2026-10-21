@@ -64,7 +64,8 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
     nonisolated struct Finding: Sendable, Hashable, Codable {
         let path: String
         let line: Int?
-        let comment: String
+        /// Changed only by a pair review, which joins two reviewers' comments on a line.
+        var comment: String
         /// `blocker`, `major`, `minor` or `nit`, from a PR review.
         var severity: String? = nil
         /// What the line should be instead, for a GitHub suggestion.

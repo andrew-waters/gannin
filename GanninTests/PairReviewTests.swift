@@ -282,6 +282,59 @@ struct PairReviewTests {
         #expect(!again)
     }
 
+    @Test func aStoppedReviewsExtraIsntBlamedOnTheQuit() {
+        var pairing = PairReview()
+        pairing.startExtras([.junie])
+        pairing.phase = .stopped
+        let found = pairing.abandonRunningExtras("Gannin quit while it was running.")
+        #expect(!found)
+        #expect(pairing.extras?[ExtraReviewer.junie.id]?.state == .running)
+        #expect(pairing.extras?[ExtraReviewer.junie.id]?.message == nil)
+    }
+
+    @Test func cancellingARunStopsItAndEverythingItStartedAndRemovesItsCopy() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ExtraReviewerCancel-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appending(path: "worktrees"), work = root.appending(path: "tmp")
+        try FileManager.default.createDirectory(at: folder.appending(path: "repo"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: work, withIntermediateDirectories: true)
+        let pidFile = root.appending(path: "child.pid")
+        try fakeJunie(in: root.appending(path: "bin"), body: "sleep 300 & echo $! > \(pidFile.path); wait")
+        let environment = ["PATH": "\(root.appending(path: "bin").path):/usr/bin:/bin", "TMPDIR": work.path]
+        let tag = UUID().uuidString
+
+        let process = Process()
+        process.executableURL = URL(filePath: "/bin/bash")
+        process.arguments = ["-s"]
+        process.environment = environment
+        let stdin = Pipe()
+        process.standardInput = stdin
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try process.run()
+        stdin.fileHandleForWriting.write(Data(ExtraReviewer.junie.script(folder: folder, prompt: "Review it", tag: tag).utf8))
+        try stdin.fileHandleForWriting.close()
+
+        // Cancelled once the CLI is running.
+        for _ in 0..<100 where !FileManager.default.fileExists(atPath: pidFile.path) { Thread.sleep(forTimeInterval: 0.1) }
+        let child = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        try run(["/bin/bash", "-s"], environment: environment, input: ExtraReviewer.junie.cancelScript(tag: tag))
+        process.waitUntilExit()
+
+        #expect(process.terminationStatus == ExtraReviewer.timedOut)
+        var alive = true
+        for _ in 0..<50 where alive {
+            alive = kill(child, 0) == 0
+            if alive { Thread.sleep(forTimeInterval: 0.1) }
+        }
+        #expect(!alive)
+        #expect(try FileManager.default.contentsOfDirectory(atPath: work.path).isEmpty)
+
+        // Cancelling a run that has ended leaves nothing behind.
+        try run(["/bin/bash", "-s"], environment: environment, input: ExtraReviewer.junie.cancelScript(tag: tag))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: work.path).isEmpty)
+    }
+
     @Test func aRunThatNeverEndsIsGivenUpOn() async {
         let outcome = await ExtraReviewer.junie.review(folder: URL(filePath: "/tmp"), prompt: "x", limit: 0.05) { _ in
             try? await Task.sleep(for: .seconds(30))
@@ -298,6 +351,24 @@ struct PairReviewTests {
         )
         #expect(merged.map(\.comment) == ["Off by one", "Missing test", "Leaks the file handle"])
         #expect(merged.map(\.reviewer) == ["claude and Junie", "claude", "Junie"])
+    }
+
+    @Test func theSameLineInDifferentWordsIsOneFindingWithBothComments() {
+        let merged = PairReview.merge(
+            claude: [finding("app/a.swift", 3, "Off by one in the loop bound")],
+            extras: [("Junie", [finding("app/a.swift", 3, "The range should stop at count - 1")])]
+        )
+        #expect(merged.count == 1)
+        #expect(merged[0].reviewer == "claude and Junie")
+        #expect(merged[0].comment == "claude: Off by one in the loop bound Junie: The range should stop at count - 1")
+    }
+
+    @Test func oneReviewersFindingsOnALineAndFileWideOnesStaySeparate() {
+        let merged = PairReview.merge(
+            claude: [finding("app/a.swift", 3, "One"), finding("app/a.swift", 3, "Two"), finding("app/a.swift", nil, "Three")],
+            extras: [("Junie", [finding("app/a.swift", nil, "Four"), finding("app/a.swift", 4, "Five")])]
+        )
+        #expect(merged.map(\.comment) == ["One", "Two", "Three", "Four", "Five"])
     }
 
     @Test func mergingWithNoExtraLeavesClaudesAlone() {
