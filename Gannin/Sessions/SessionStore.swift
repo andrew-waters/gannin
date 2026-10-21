@@ -479,6 +479,9 @@ final class SessionStore {
     /// The signed-in login, so a session's own feedback on a PR it isn't
     /// the author of (reviewing someone else's) doesn't notify; set by the app.
     @ObservationIgnored var viewerLogin: () -> String? = { nil }
+    /// The extra pair reviewers turned on for a session's project; set by
+    /// the app, from the user's own settings.
+    @ObservationIgnored var extraReviewers: (CodeSession) -> [ExtraReviewer] = { _ in [] }
     /// The budget is low or GitHub has refused: background PR checks wait.
     @ObservationIgnored var holdsOff: () -> Bool = { false }
     /// Gannin's view of an org as files (`OrgContext`), for an Ask session
@@ -540,6 +543,7 @@ final class SessionStore {
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
                 var session = session
+                _ = session.pairing?.abandonRunningExtras("Gannin quit while it was running.")
                 if !session.isRemote, !session.hasNoIssue, let worktree = Self.worktree(for: session), !FileManager.default.fileExists(atPath: worktree.path) {
                     session.branch = Self.branchName(session.issue)
                 }
@@ -560,6 +564,12 @@ final class SessionStore {
         }
         tabs = saved.filter { !isReviewTab($0) } + saved.filter { isReviewTab($0) }
         selectedTab = tabs.first
+        // A round claude had answered while an extra reviewer was still out
+        // can finish now that the extra has been given up on.
+        let ready = sessions.values.filter { $0.pairing?.phase == .reviewing && $0.pairing?.isRoundComplete == true }.map(\.id)
+        if !ready.isEmpty {
+            Task { for id in ready { finishRoundIfReady(id) } }
+        }
     }
 
     // MARK: Tabs
@@ -904,6 +914,7 @@ final class SessionStore {
             if besideTab == id { besideTab = parent }
         }
         if let session = sessions[id] {
+            cancelRunningExtras(of: session.pairing)
             deleteSandbox(of: session)
             deleteAttachmentsOnBox((session.attachments ?? []).map(\.name), of: session)
         }

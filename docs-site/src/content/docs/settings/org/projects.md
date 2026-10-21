@@ -40,6 +40,7 @@ The header is the project's name. The footer says where it is saved: `.gannin/pr
 | --- | --- | --- | --- |
 | Harness | The repo you added | Shows the harness repo. Read only. | This Mac |
 | Branch | Default (the repo's default branch) | The branch Gannin reads the harness from and commits to. | This Mac |
+| Junie reviewer | Off | Has JetBrains Junie also review the change in this project's pair reviews, alongside claude. Local sessions only. See [pair review](/docs/agents/pair-review/). | This Mac |
 | Make Home | Not applied | Makes this project Home, so the org's data is read from its harness. Shown only on projects that are not Home. | This Mac |
 
 Make Home asks first. Choose Copy the Org's Data and Make Home to have Gannin commit a copy to the new home first of the org-wide files committed in the current home's harness (not settings from this Mac), or Make Home Without Copying to switch straight away. The old copy stays where it is either way.

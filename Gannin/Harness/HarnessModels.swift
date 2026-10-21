@@ -12,6 +12,23 @@ struct HarnessConfig: Codable, Hashable {
     /// (`owner/name` or a name alone). Work in them runs in it; anything
     /// no other harness claims runs in the primary.
     var repos: [String]? = nil
+    /// The extra pair reviewers turned on for sessions in this project, by
+    /// `ExtraReviewer.id`. Nil or empty is none. Kept on this Mac with
+    /// which harnesses are projects, not in the harness.
+    var extraReviewers: [String]? = nil
+
+    /// The turned-on reviewers this build knows; an id from a newer build is
+    /// ignored rather than failing.
+    var enabledExtraReviewers: [ExtraReviewer] {
+        ExtraReviewer.allCases.filter { (extraReviewers ?? []).contains($0.id) }
+    }
+
+    mutating func setExtraReviewer(_ reviewer: ExtraReviewer, enabled: Bool) {
+        var ids = extraReviewers ?? []
+        ids.removeAll { $0 == reviewer.id }
+        if enabled { ids.append(reviewer.id) }
+        extraReviewers = ids.isEmpty ? nil : ids
+    }
 
     var name: String { repo.split(separator: "/").last.map(String.init) ?? repo }
 

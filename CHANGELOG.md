@@ -13,6 +13,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - When a review looks again after new comments, it answers the PR author's comments and other people's only if they disagree with the review or the reviewer disagrees with them
 
 ### Added
+- A pair review can also use JetBrains Junie as an extra reviewer, alongside claude's: turn on Junie reviewer for a project in Org settings › Projects (off by default, local sessions only). Each round runs Junie in a throwaway copy of the worktree, sends both reviewers' findings to claude together with who raised each, and carries on without Junie, saying why on the session's panel, if it's missing or fails
 - A review's tab says "Not posted" until a review is posted, Check for Changes finds a review you posted elsewhere on GitHub, and Post Review and automatic posting no longer send a review you've already posted (same kind, body and commit)
 - The sessions grid has a search field (⌘F to focus it, Esc to clear it) that narrows it to sessions matching every word typed, in their kind, reference, title, repo, branch or pull requests; the + menu's Open a Session filter now matches branches and pull requests too
 - GoLand is one of the editors files open in (Settings › General › Open files in), at the line for files on this Mac

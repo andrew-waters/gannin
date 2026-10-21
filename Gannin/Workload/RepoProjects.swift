@@ -466,6 +466,15 @@ struct ProjectsSettingsSection: View {
                 Text(project.harness.repo)
             }
             branchPicker(project.harness)
+            ForEach(ExtraReviewer.allCases) { reviewer in
+                Toggle("\(reviewer.title) reviewer", isOn: Binding(
+                    get: { project.harness.enabledExtraReviewers.contains(reviewer) },
+                    set: { on in
+                        configs.updateHarnesses(org) { $0.updateHarness(project.harness.repo) { $0.setExtraReviewer(reviewer, enabled: on) } }
+                    }
+                ))
+                .help("In a pair review, \(reviewer.title) also looks at the change, alongside claude. Kept on this Mac, for local sessions only.")
+            }
             if let error = harness.error(org, project.harness) {
                 Text(error).font(.caption).foregroundStyle(.red)
             }
