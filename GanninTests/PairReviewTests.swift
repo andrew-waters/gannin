@@ -153,10 +153,20 @@ struct PairReviewTests {
     }
 
     @Test func junieOutputWithoutAListOrAResultFails() {
-        #expect(outcome(result("I looked at it.")) == .failed("Junie replied with no list of findings."))
-        #expect(outcome("not json") == .failed("Junie didn't write a result."))
-        #expect(outcome("{\"sessionId\": \"s\"}") == .failed("Junie didn't write a result."))
-        #expect(outcome(result("```json\n[{\"path\": 1}]\n```")) == .failed("Junie replied with no list of findings."))
+        #expect(outcome(result("I looked at it.")) == .failed("Junie replied with no list of findings.", output: "I looked at it."))
+        #expect(outcome("not json") == .failed("Junie didn't write a result.", output: "not json"))
+        #expect(outcome("{\"sessionId\": \"s\"}") == .failed("Junie didn't write a result.", output: "{\"sessionId\": \"s\"}"))
+        #expect(outcome("") == .failed("Junie didn't write a result."))
+        let bad = "```json\n[{\"path\": 1}]\n```"
+        #expect(outcome(result(bad)) == .failed("Junie replied with no list of findings.", output: bad))
+    }
+
+    @Test func aFailedExtraKeepsWhatItPrinted() {
+        var pairing = PairReview()
+        pairing.startExtras([.junie])
+        let run = pairing.extras![ExtraReviewer.junie.id]!.run
+        _ = pairing.extraFinished(.junie, run: run, outcome: .failed("Junie replied with no list of findings.", output: "I looked at it."))
+        #expect(pairing.extras?[ExtraReviewer.junie.id]?.output == "I looked at it.")
     }
 
     @Test func aFailedJunieRunSaysWhy() {

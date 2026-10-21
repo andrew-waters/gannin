@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Added
+- The Junie line in a session's Activity pane expands to show Junie's findings, or what it printed when it didn't give a list
+
 ### Fixed
 - The Junie reviewer's findings are no longer lost: its pair review failed with "Junie replied with no list of findings" because Junie dropped the list from its final summary, so it is now asked to put the list in that summary
 

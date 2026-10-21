@@ -58,10 +58,25 @@ struct PairReview: Codable, Hashable {
         var state: State = .running
         var findings: [SessionTranscript.Finding] = []
         var message: String?
+        /// What the reviewer printed, when that's why it failed.
+        var output: String?
         /// Which start of the reviewer this is, so one that outlives its
         /// round (you stopped the loop and started another) can't answer
         /// for the new one.
         var run = UUID()
+
+        /// What the panel can expand: the findings it listed, or what it
+        /// printed when it failed.
+        var shownText: String? {
+            guard state != .answered else {
+                if findings.isEmpty { return nil }
+                return findings.map { finding in
+                    let place = finding.line.map { "\(finding.path):\($0)" } ?? finding.path
+                    return "\(place)\n\(finding.comment)"
+                }.joined(separator: "\n\n")
+            }
+            return output
+        }
     }
 
     var isOver: Bool { [.settled, .limit, .stopped].contains(phase) }
@@ -103,9 +118,10 @@ struct PairReview: Codable, Hashable {
         case .findings(let findings):
             extra.state = .answered
             extra.findings = findings
-        case .failed(let message):
+        case .failed(let message, let output):
             extra.state = .failed
             extra.message = message
+            extra.output = output
         }
         extras?[reviewer.id] = extra
         return true
@@ -523,6 +539,17 @@ struct PairReviewSection: View {
                     Text(extraStatus(reviewer, pairing: pairing))
                         .multilineTextAlignment(.trailing)
                         .foregroundStyle(pairing?.extras?[reviewer.id]?.state == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                }
+                if let extra = pairing?.extras?[reviewer.id], let output = extra.shownText {
+                    DisclosureGroup(extra.state == .answered ? "\(reviewer.title)'s findings" : "What \(reviewer.title) printed") {
+                        ScrollView {
+                            Text(output)
+                                .font(.caption.monospaced())
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .frame(maxHeight: 200)
+                    }
                 }
             }
             HStack {
