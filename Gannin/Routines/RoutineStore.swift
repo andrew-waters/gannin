@@ -42,6 +42,9 @@ enum RoutineKind: String, Codable, CaseIterable, Identifiable {
     case issueQueue
     /// An issue pinned to a time (R8).
     case pinned
+    /// A window automatic PR reviews may start in; outside every one they
+    /// wait in the review queue.
+    case reviewQueue
 
     var id: Self { self }
 
@@ -51,6 +54,7 @@ enum RoutineKind: String, Codable, CaseIterable, Identifiable {
         case .code: "Maintenance"
         case .issueQueue: "Queue window"
         case .pinned: "Pinned issue"
+        case .reviewQueue: "Review window"
         }
     }
 
@@ -60,11 +64,12 @@ enum RoutineKind: String, Codable, CaseIterable, Identifiable {
         case .code: "wrench.and.screwdriver"
         case .issueQueue: "tray.full"
         case .pinned: "pin"
+        case .reviewQueue: "eye"
         }
     }
 
     /// Whether its runs work on code, so the push limit applies.
-    var touchesCode: Bool { self != .report }
+    var touchesCode: Bool { self == .code || self == .issueQueue || self == .pinned }
 }
 
 /// A recurring agent session, a queue window or a pinned issue, the
@@ -89,7 +94,8 @@ struct Routine: Codable, Identifiable, Hashable {
     var maxMinutes: Int = 60
     /// Most a run may cost, in US dollars, before it's stopped (R11).
     var maxCost: Double = 5
-    /// How many of a queue window's runs go at once (R7).
+    /// How many of a queue window's runs go at once (R7); a review window's
+    /// reviews at once.
     var concurrency: Int = 1
     /// A pinned issue's issue.
     var issue: IssueReference?
@@ -104,6 +110,7 @@ struct Routine: Codable, Identifiable, Hashable {
         let midnight = Calendar.current.startOfDay(for: now)
         let fallback: RoutineSchedule = switch kind {
         case .issueQueue: .window(RoutineWindow(start: TimeOfDay(hour: 18), end: TimeOfDay(hour: 8), days: nil))
+        case .reviewQueue: .window(RoutineWindow(start: TimeOfDay(hour: 12), end: TimeOfDay(hour: 13), days: nil))
         case .pinned: .once(Calendar.current.date(byAdding: .hour, value: 1, to: now) ?? now)
         case .report: .workingDays(TimeOfDay(hour: 9))
         case .code: .every(minutes: 7 * 24 * 60, anchor: midnight)
@@ -197,12 +204,16 @@ final class RoutineStore {
     /// The scheduler's last look, so times due while Gannin was closed are
     /// known as missed on the next launch (R2).
     private(set) var checkedAt: Date?
+    /// Orgs whose review windows are this Mac's own rather than the
+    /// person's synced ones.
+    private(set) var reviewOverrides: Set<String> = []
 
     static let maxRuns = 500
 
     private struct State: Codable {
         var isPaused = false
         var checkedAt: Date?
+        var reviewOverrides: [String]?
     }
 
     @ObservationIgnored private let directory: URL
@@ -220,6 +231,7 @@ final class RoutineStore {
         let state = read(State.self, "state.json") ?? State()
         isPaused = state.isPaused
         checkedAt = state.checkedAt
+        reviewOverrides = Set(state.reviewOverrides ?? [])
     }
 
     // MARK: Routines
@@ -389,9 +401,19 @@ final class RoutineStore {
         if due { saveState() }
     }
 
+    /// Whether the org's review windows are this Mac's own (Override on
+    /// This Mac).
+    func overridesReviewWindows(_ org: String) -> Bool { reviewOverrides.contains(org) }
+
+    func setOverridesReviewWindows(_ org: String, _ on: Bool) {
+        guard on != overridesReviewWindows(org) else { return }
+        if on { reviewOverrides.insert(org) } else { reviewOverrides.remove(org) }
+        saveState()
+    }
+
     func saveState() {
         stateSavedAt = checkedAt ?? .now
-        write(State(isPaused: isPaused, checkedAt: checkedAt), "state.json")
+        write(State(isPaused: isPaused, checkedAt: checkedAt, reviewOverrides: reviewOverrides.isEmpty ? nil : reviewOverrides.sorted()), "state.json")
     }
 
     private static let stateSaveInterval: TimeInterval = 5 * 60

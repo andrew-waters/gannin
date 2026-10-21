@@ -575,10 +575,13 @@ final class HarnessTeamStore {
         for absence in before.absences where new[absence.id] == nil {
             notes.append("\(absence.kind == .sick ? "sick" : "time off") removed for \(login), \(range(absence))")
         }
+        if before.reviewWindows != after.reviewWindows { notes.append("review windows for \(login)") }
         var otherBefore = before
         var otherAfter = after
         otherBefore.absences = []
         otherAfter.absences = []
+        otherBefore.reviewWindows = nil
+        otherAfter.reviewWindows = nil
         if otherBefore != otherAfter { notes.append("dates for \(login)") }
         return notes
     }
