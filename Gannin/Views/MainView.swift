@@ -38,6 +38,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     case repositories = "Repositories"
     case actions = "Actions"
     case investments = "Investments"
+    /// Time on R&D work for tax credit claims, under Delivery.
+    case rdTime = "R&D Time"
     case projects = "Projects"
     case harness = "Harness"
     /// The project's decisions, requirements and plans by area, first
@@ -99,6 +101,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .repositories: "folder"
         case .actions: "play.circle"
         case .investments: "chart.pie"
+        case .rdTime: "clock.badge.checkmark"
         case .projects: "rectangle.split.3x1"
         case .harness: "text.book.closed"
         case .onboarding: "map"
@@ -1299,6 +1302,7 @@ struct OrgSidebar: View {
                     row(.issueFlow)
                     row(.releases)
                     row(.investments)
+                    row(.rdTime)
                     row(.actions)
                 }
 
@@ -1524,7 +1528,7 @@ struct OrgSidebar: View {
         case .agents:
             guard let selectedOrg else { return 0 }
             return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .projects, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .rdTime, .projects, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
         case .routines:
             guard let selectedOrg else { return 0 }
             let ids = Set(routines.routines(for: selectedOrg).map(\.id))
