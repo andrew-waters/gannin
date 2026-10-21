@@ -447,7 +447,7 @@ extension GitHubAPI {
               repository { nameWithOwner }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 80) { nodes {
                 __typename
-                ... on CheckRun { name status conclusion detailsUrl startedAt checkSuite { workflowRun { databaseId workflow { name } } } }
+                ... on CheckRun { name status conclusion detailsUrl startedAt checkSuite { app { slug } workflowRun { databaseId event workflow { name } } } }
                 ... on StatusContext { context state targetUrl createdAt }
               } } } } } }
               reviews(last: 30) { nodes { id author { login } state body url } }
@@ -626,8 +626,11 @@ struct SessionRawPullRequest: Decodable {
             struct Run: Decodable {
                 struct Workflow: Decodable { let name: String? }
                 let databaseId: Int?
+                let event: String?
                 let workflow: Workflow?
             }
+            struct App: Decodable { let slug: String? }
+            let app: App?
             let workflowRun: Run?
         }
         let __typename: String
@@ -646,12 +649,15 @@ struct SessionRawPullRequest: Decodable {
         /// started (a queued re-run) has no `startedAt` and is the newest.
         var began: String { startedAt ?? createdAt ?? (__typename == "StatusContext" ? "" : "\u{FFFF}") }
 
-        /// What a re-run replaces: the same kind of check, in the same
-        /// workflow, with the same name. Jobs sharing a name in different
-        /// workflows are different checks.
+        /// What a re-run replaces: the same kind of check, from the same
+        /// workflow and triggering event (or, outside Actions, the same app),
+        /// with the same name. A workflow on both `push` and `pull_request`
+        /// runs twice on a commit, and both runs count.
         var identity: String {
             let title = __typename == "StatusContext" ? context : name
-            return [__typename, checkSuite?.workflowRun?.workflow?.name ?? "", title ?? ""].joined(separator: "\u{0}")
+            let run = checkSuite?.workflowRun
+            let source = run == nil ? checkSuite?.app?.slug : nil
+            return [__typename, run?.workflow?.name ?? "", run?.event ?? "", source ?? "", title ?? ""].joined(separator: "\u{0}")
         }
     }
     struct Rollup: Decodable { let contexts: Connection<Context> }
