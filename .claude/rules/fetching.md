@@ -37,9 +37,9 @@ paths:
 
 ## Shared issue store
 - Issues live in `SharedIssueStore` (core fields plus a workload slot and a history slot), written through `merge` and changed through `IssueStore`'s `record*` methods, never kept in `OrgSnapshot`'s or `IssueHistory`'s own file: a copy beside it can drift from the one `updatedAt` is compared against. Both files list issue IDs (`storedIssueIDs`, `storedIDs`); load them through `OrgSnapshotCache` and `IssueStore.loadCached`, never by decoding them, or their issues come back empty.
-- Write a board field or label edit through `IssueEdits`, which changes the issue and every cached board together. Calling `IssueStore` and `ProjectStore` separately lets one miss the other.
+- Write a board field, label or assignee edit through `IssueEdits`, which changes the issue and every cached board together. Calling `IssueStore` and `ProjectStore` separately lets one miss the other.
 - Each slot records the `updatedAt` it was fetched at; a store's skip check reads that, never `core.updatedAt`. The core merges field by field, and a label or person from a fetch that reads names only keeps the colour or avatar another fetch saved.
-- Only a label edit writes `core.labels`; other local edits write the history slot alone, because the history's in-memory record can be older than a core the workload has refreshed. `OrgSnapshotCache.save` merges only issues whose workload part differs from the held one, so an issue a changes-only refresh carried over can't undo a label edit.
+- Only a label edit writes `core.labels` and only an assignee edit writes `core.assignees`; other local edits write the history slot alone, because the history's in-memory record can be older than a core the workload has refreshed. `OrgSnapshotCache.save` merges only issues whose workload part differs from the held one, so an issue a changes-only refresh carried over can't undo a label edit.
 - Clear a store's own part with `clear(_ slot:)`, never the whole store. The workload leaves out an issue the history has since seen closed, so a closed issue is not a missing one.
 
 ## Sync settings

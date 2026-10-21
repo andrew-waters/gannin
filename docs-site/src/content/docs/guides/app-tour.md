@@ -45,7 +45,7 @@ Opening something from a page (a person, a repo, a board) pushes it over the pag
 
 ## Drawers
 
-Pull requests, issues and harness documents open in a **drawer** over the page rather than replacing it. An issue's drawer has its facts, its timeline, plans, linked PRs, description and board fields. A drawer has **Open as Page** and **Open in Window** if you want more room.
+Pull requests, issues and harness documents open in a **drawer** over the page rather than replacing it. An issue's drawer has its facts, its timeline, plans, linked PRs, description, assignees and board fields. To reassign an issue, choose people under **Assignees** in the side panel (of the drawer or of the issue's window) and press **Save**; nothing is written to GitHub until you do, and **Revert** drops the change. A drawer has **Open as Page** and **Open in Window** if you want more room.
 
 - A link inside a drawer opens another drawer on top. The ones beneath show as a dimmed edge, up to three. Click an edge to go back to it.
 - **Done** or Esc closes the top drawer. Clicking outside closes them all.

@@ -288,6 +288,11 @@ final class IssueStore {
         change(org: org, issueID: issueID, labels: labels) { $0.labels = labels }
     }
 
+    /// Assignees written from the app, shown before the next fetch.
+    func recordAssignees(org: String, issueID: String, assignees: [Person]) {
+        change(org: org, issueID: issueID, assignees: assignees) { $0.assignees = assignees.map(\.login) }
+    }
+
     /// An issue added to a board from the app, shown before the next fetch.
     func recordAddedToBoard(org: String, issueID: String, projectNumber: Int, projectTitle: String) {
         change(org: org, issueID: issueID) { record in
@@ -325,10 +330,11 @@ final class IssueStore {
 
     /// Applies an edit to one record and writes it to the shared issue store,
     /// where the history file's IDs already point. Only a label edit (`labels`)
-    /// writes the shared core's labels: this record can be older than the core,
-    /// which the workload refreshes more often, so any other edit would put the
-    /// record's labels back over newer ones.
-    private func change(org: String, issueID: String, labels: [String]? = nil, _ edit: (inout IssueRecord) -> Void) {
+    /// or an assignee edit (`assignees`) writes the shared core's labels or
+    /// assignees: this record can be older than the core, which the workload
+    /// refreshes more often, so any other edit would put the record's labels
+    /// and assignees back over newer ones.
+    private func change(org: String, issueID: String, labels: [String]? = nil, assignees: [Person]? = nil, _ edit: (inout IssueRecord) -> Void) {
         guard var history = histories[org], var record = history.issues[issueID] else { return }
         edit(&record)
         history.issues[issueID] = record
@@ -336,6 +342,7 @@ final class IssueStore {
         issueStore.update(issueID, org: org) { stored in
             stored.applyHistoryEdits(of: record)
             if let labels { stored.setLabels(labels) }
+            if let assignees { stored.setAssignees(assignees) }
         }
     }
 
