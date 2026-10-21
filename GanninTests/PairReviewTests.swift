@@ -139,6 +139,19 @@ struct PairReviewTests {
         #expect(outcome(result("Nothing.\n\n```json\n[]\n```")) == .findings([]))
     }
 
+    @Test func junieFindingsAreReadFromTheEndOfItsSummaryTemplate() {
+        let reply = result("### Summary\nOne issue.\n\n### Changes\n- None.\n\n### Notes\n```json\n[{\"path\": \"app/a.swift\", \"line\": 3, \"comment\": \"Off by one\"}]\n```")
+        #expect(outcome(reply) == .findings([finding("app/a.swift", 3, "Off by one")]))
+    }
+
+    @Test func juniesPromptAsksForTheListInItsFinalSummary() {
+        let prompt = ExtraReviewer.junie.prompt("Review it")
+        #expect(prompt.hasPrefix("Review it"))
+        #expect(prompt.contains("final task summary"))
+        #expect(prompt.contains("fenced ```json block"))
+        #expect(prompt.contains("`[]`"))
+    }
+
     @Test func junieOutputWithoutAListOrAResultFails() {
         #expect(outcome(result("I looked at it.")) == .failed("Junie replied with no list of findings."))
         #expect(outcome("not json") == .failed("Junie didn't write a result."))
