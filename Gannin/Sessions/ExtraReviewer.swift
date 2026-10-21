@@ -78,7 +78,10 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
                 #"  gitdir=$(sed -n 's/^gitdir: //p' "$f")"#,
                 // A relative gitdir is relative to where the file was copied from.
                 #"  case "$gitdir" in /*) ;; *) gitdir="$(dirname "$src${f#"$d/project"}")/$gitdir" ;; esac"#,
-                #"  common=$(cd "$gitdir" && cd "$(cat commondir)" && pwd -P) || exit 1"#,
+                // Only a linked worktree has a commondir. A submodule's or a
+                // separate git dir's `.git` is left as it was, so isn't isolated.
+                #"  [ -f "$gitdir/commondir" ] || continue"#,
+                #"  common=$(cd "$gitdir" && cd "$(cat "$gitdir/commondir")" && pwd -P) || exit 1"#,
                 #"  g="$d/git/$n""#,
                 #"  mkdir -p "$g" || exit 1"#,
                 #"  rsync -a --exclude /objects --exclude /worktrees --exclude /lfs "$common/" "$g/common/" || exit 1"#,
@@ -88,9 +91,11 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
                 "done || { echo \"Couldn't set up git in the copy\" >&2; exit 1; }",
                 "printf %s \(Data(prompt.utf8).base64EncodedString()) | base64 -d > \"$d/prompt\"",
                 // Job control, so the CLI and everything it starts are a process
-                // group that can be stopped together.
+                // group that can be stopped together. It stops bash giving a
+                // background job no stdin, and this script is itself read from
+                // stdin, so the CLI is given none: it could read the rest of it.
                 "set -m",
-                #"junie --project "$d/project" --output-format json --json-output-file "$d/result.json" --timeout \#(milliseconds) --skip-update-check "$(cat "$d/prompt")" >"$d/stdout" 2>"$d/stderr" &"#,
+                #"junie --project "$d/project" --output-format json --json-output-file "$d/result.json" --timeout \#(milliseconds) --skip-update-check "$(cat "$d/prompt")" </dev/null >"$d/stdout" 2>"$d/stderr" &"#,
                 "pid=$!",
                 "( sleep \(watchdog); kill -TERM -$pid 2>/dev/null ) &",
                 "watchdog=$!",

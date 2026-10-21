@@ -197,6 +197,8 @@ struct PairReviewTests {
                 *) shift ;;
               esac
             done
+            # Reads stdin, as a CLI checking for piped input does: the script's own, if it were passed on.
+            cat > /dev/null
             cd "$project/repo"
             \(body)
             printf '{"result":"```json\\\\n[]\\\\n```"}' > "$out"
@@ -221,6 +223,11 @@ struct PairReviewTests {
         try run([git, "add", "-A"], in: main, environment: environment)
         try run([git, "commit", "-q", "-m", "first"], in: main, environment: environment)
         try run([git, "worktree", "add", "-q", repo.path, "-b", "feature"], in: main, environment: environment)
+
+        // A submodule's `.git` file, whose git dir has no commondir, mustn't stop the review.
+        try FileManager.default.createDirectory(at: root.appending(path: "modules/sub"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder.appending(path: "sub"), withIntermediateDirectories: true)
+        try "gitdir: \(root.path)/modules/sub\n".write(to: folder.appending(path: "sub/.git"), atomically: true, encoding: .utf8)
 
         // Edits a file, commits, makes a branch and resets: all of it in the copy.
         try fakeJunie(in: root.appending(path: "bin"), body: "echo changed > a.txt; git add -A; git commit -q -m edit; git checkout -q -b other; git reset -q --hard HEAD~1; echo again > b.txt")
