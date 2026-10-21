@@ -1,0 +1,47 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "This `onChange(of: issueID)` is attached inside `if let record`, so it isn't ins",
+      "key" : "Gannin/Issues/AssigneesSection.swift:58:This `onChange(of: issueID)` is attached inside `if let reco",
+      "line" : 58,
+      "path" : "Gannin/Issues/AssigneesSection.swift",
+      "posted_at" : "2026-10-21T17:09:46Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "When GitHub skips someone being added, this `return` skips the removals too and ",
+      "key" : "Gannin/Issues/AssigneesSection.swift:99:When GitHub skips someone being added, this `return` skips t",
+      "line" : 99,
+      "path" : "Gannin/Issues/AssigneesSection.swift",
+      "posted_at" : "2026-10-21T17:09:46Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`displayName` falls back to the login, so someone with no name (often an outside",
+      "key" : "Gannin/Issues/AssigneesSection.swift:25:`displayName` falls back to the login, so someone with no na",
+      "line" : 25,
+      "path" : "Gannin/Issues/AssigneesSection.swift",
+      "posted_at" : "2026-10-21T17:09:46Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 444,
+  "posted_at" : "2026-10-21T17:09:46Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-21T17:08:03Z",
+  "state" : "OPEN",
+  "title" : "Change an issue's assignees from its window or drawer",
+  "updated_at" : "2026-10-21T17:09:47Z",
+  "verdict" : "comment"
+}
