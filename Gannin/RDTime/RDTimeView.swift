@@ -19,7 +19,8 @@ struct RDTimeView: View {
     let workload: Workload?
 
     @SceneStorage("rdTab") private var tab: Tab = .work
-    @SceneStorage("rdRange") private var rangePreset: RDRange = .thisYear
+    /// An `RDRange`'s raw value, or `period:` and one of the org's periods.
+    @SceneStorage("rdRange") private var rangeChoice: String = RDRange.thisYear.rawValue
     @SceneStorage("rdFrom") private var customFrom: Double = Date.now.addingTimeInterval(-90 * 86_400).timeIntervalSince1970
     @SceneStorage("rdTo") private var customTo: Double = Date.now.timeIntervalSince1970
     @SceneStorage("rdOnlyCounted") private var onlyCounted = true
@@ -35,8 +36,20 @@ struct RDTimeView: View {
 
     private var config: OrgConfig { configs.config(for: org) }
 
+    private static let periodPrefix = "period:"
+
+    /// The org's period picked, if it still exists.
+    private var period: AccountingPeriod? {
+        guard rangeChoice.hasPrefix(Self.periodPrefix), let id = UUID(uuidString: String(rangeChoice.dropFirst(Self.periodPrefix.count))) else { return nil }
+        return config.accountingCalendar.period(id: id)
+    }
+
+    /// The preset picked; a period that's gone reads as this year.
+    private var rangePreset: RDRange { RDRange(rawValue: rangeChoice) ?? .thisYear }
+
     private var range: DateInterval {
-        rangePreset.interval(yearStart: config.rndConfig.accountingYear, customFrom: Date(timeIntervalSince1970: customFrom), customTo: Date(timeIntervalSince1970: customTo))
+        if let period { return period.interval }
+        return rangePreset.interval(yearStart: config.accountingCalendar.year, customFrom: Date(timeIntervalSince1970: customFrom), customTo: Date(timeIntervalSince1970: customTo))
     }
 
     var body: some View {
@@ -313,12 +326,19 @@ struct RDTimeView: View {
                 .fixedSize()
                 .help("Only work that counts as \(name), or everything with time on it")
             }
-            Picker("Range", selection: $rangePreset) {
-                ForEach(RDRange.allCases) { Text($0.rawValue).tag($0) }
+            Picker("Range", selection: Binding { period.map { Self.periodPrefix + $0.id.uuidString } ?? rangePreset.rawValue } set: { rangeChoice = $0 }) {
+                ForEach(RDRange.allCases.filter { $0 != .custom }) { Text($0.rawValue).tag($0.rawValue) }
+                let periods = config.accountingCalendar.namedPeriods
+                if !periods.isEmpty {
+                    Divider()
+                    ForEach(periods) { Text($0.name).tag(Self.periodPrefix + $0.id.uuidString) }
+                }
+                Divider()
+                Text(RDRange.custom.rawValue).tag(RDRange.custom.rawValue)
             }
             .fixedSize()
             .help("\(range.start.formatted(date: .abbreviated, time: .omitted)) to \(RDExport.lastDay(range).formatted(date: .abbreviated, time: .omitted))")
-            if rangePreset == .custom {
+            if period == nil, rangePreset == .custom {
                 DatePicker("From", selection: date($customFrom), displayedComponents: .date)
                     .labelsHidden()
                 DatePicker("To", selection: date($customTo), displayedComponents: .date)

@@ -21,8 +21,6 @@ struct RDConfig: Codable, Hashable {
     /// estimates, sessions) fill in what earlier ones don't cover.
     var sources: [RDTimeSource]?
     var activity: RDActivityOptions?
-    /// When the accounting year starts, for the report's periods.
-    var yearStart: RDYearStart?
 
     static let defaultName = "R&D"
 
@@ -34,7 +32,6 @@ struct RDConfig: Codable, Hashable {
     var qualifiedBy: RDQualification { qualification ?? .byHand }
     var timeSources: [RDTimeSource] { sources.flatMap { $0.isEmpty ? nil : $0 } ?? [.activity] }
     var activityOptions: RDActivityOptions { activity ?? RDActivityOptions() }
-    var accountingYear: RDYearStart { yearStart ?? RDYearStart() }
 
     func mark(_ issueID: String) -> RDMark? { marks?[issueID] }
 
@@ -190,29 +187,8 @@ struct RDActivityOptions: Codable, Hashable {
     var comments: Bool { countsComments ?? true }
 }
 
-/// The first day of the accounting year, which claims usually follow.
-struct RDYearStart: Codable, Hashable {
-    var month = 1
-    var day = 1
-
-    /// The accounting year holding `date`.
-    func year(containing date: Date, calendar: Calendar = .current) -> DateInterval {
-        let year = calendar.component(.year, from: date)
-        let thisStart = start(in: year, calendar: calendar)
-        let start = thisStart <= date ? thisStart : self.start(in: year - 1, calendar: calendar)
-        let end = calendar.date(byAdding: .year, value: 1, to: start) ?? start
-        return DateInterval(start: start, end: end)
-    }
-
-    /// Its start in a calendar year, a day past the month's end clamped to it.
-    func start(in year: Int, calendar: Calendar = .current) -> Date {
-        let first = calendar.date(from: DateComponents(year: year, month: month, day: 1)) ?? .now
-        let days = calendar.range(of: .day, in: .month, for: first)?.count ?? 28
-        return calendar.date(from: DateComponents(year: year, month: month, day: min(max(1, day), days))) ?? first
-    }
-}
-
-/// The ranges the report offers, in accounting years and their quarters.
+/// The ranges the report offers, in the org's accounting years and their
+/// quarters; its own periods are offered beside them.
 enum RDRange: String, CaseIterable, Identifiable {
     case thisYear = "This accounting year"
     case lastYear = "Last accounting year"
@@ -222,7 +198,7 @@ enum RDRange: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
-    func interval(yearStart: RDYearStart, now: Date = .now, customFrom: Date, customTo: Date, calendar: Calendar = .current) -> DateInterval {
+    func interval(yearStart: AccountingYearStart, now: Date = .now, customFrom: Date, customTo: Date, calendar: Calendar = .current) -> DateInterval {
         let year = yearStart.year(containing: now, calendar: calendar)
         switch self {
         case .thisYear:

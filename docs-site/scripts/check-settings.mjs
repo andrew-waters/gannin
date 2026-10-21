@@ -29,6 +29,7 @@ const panes = [
   ['Gannin/WorkLog/WorkWeek.swift', ['WorkWeekSection'], ['org/working-time']],
   ['Gannin/WorkLog/Leave.swift', ['LeavePolicySection'], ['org/working-time']],
   ['Gannin/WorkLog/PeopleDates.swift', ['PeopleDatesSection'], ['org/working-time']],
+  ['Gannin/RDTime/Accounting.swift', null, ['org/working-time']],
   ['Gannin/Issues/IssueWorkflowSettings.swift', null, ['org/issues']],
   ['Gannin/Investments/InvestmentSettings.swift', null, ['org/investments']],
   ['Gannin/RDTime/RDSettings.swift', null, ['org/rd-time']],

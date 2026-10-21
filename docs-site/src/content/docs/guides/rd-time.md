@@ -5,7 +5,7 @@ sidebar:
   order: 16
 ---
 
-Delivery › R&D Time shows how much of each person's working time went to issues that count as research and development, over an accounting period, so a claim for an R&D tax credit can be prepared from the issues themselves. What counts, how time is found and when your accounting year starts are set in [R&D settings](/docs/settings/org/rd-time/).
+Delivery › R&D Time shows how much of each person's working time went to issues that count as research and development, over an accounting period, so a claim for an R&D tax credit can be prepared from the issues themselves. What counts and how time is found are set in [R&D settings](/docs/settings/org/rd-time/); the accounting year and any periods of your own are the org's, in [Working Time](/docs/settings/org/working-time/#accounting-periods).
 
 It records and reports time only. Gannin never asks for or keeps salaries, rates or costs: turning hours into a claim value stays with you or your adviser. Nothing in it follows one country's scheme, and the name "R&D" can be changed to the term your scheme uses. Which work qualifies is for you and your adviser to decide; this is not tax advice.
 
@@ -23,7 +23,7 @@ The activity is the same as the [Activity](/docs/guides/activity/) page's, fetch
 
 - **By issue** or **By person** in the middle.
 - **Show**, on By issue: only work that counts as R&D, or Everything with time on it.
-- **Range**: This accounting year, Last accounting year, This quarter, Last quarter (quarters of the accounting year), or Custom with From and To dates. Hover it for the dates.
+- **Range**: This accounting year, Last accounting year, This quarter, Last quarter (quarters of the accounting year), each of the org's own periods by name, or Custom with From and To dates. Hover it for the dates.
 - **Export**: Issues (CSV), People (CSV), Daily lines (CSV) or Report (Markdown), saved where you choose.
 
 ## Reading it

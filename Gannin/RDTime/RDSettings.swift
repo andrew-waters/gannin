@@ -1,7 +1,8 @@
 import SwiftUI
 
-/// Settings › R&D: what the work is called, which issues count, how time is
-/// found and when the accounting year starts. Kept in the project's harness.
+/// Settings › R&D: what the work is called, which issues count and how time
+/// is found. Kept in the project's harness; the accounting year is the
+/// org's, in Working Time.
 struct RDSettingsSection: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(ProjectStore.self) private var projects
@@ -40,7 +41,7 @@ struct RDSettingsSection: View {
         } header: {
             Text("What counts")
         } footer: {
-            Text("Issues can also be marked by hand on the R&D Time page, with a share and a rationale; a mark wins over this. Sub-issues count when their parent does.")
+            Text("Issues can also be marked by hand on the R&D Time page, with a share and a rationale; a mark wins over this. Sub-issues count when their parent does. The page's ranges follow the accounting year and periods in Working Time.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -70,16 +71,6 @@ struct RDSettingsSection: View {
             Text("Each working day's hours, from the working week and each person's own pattern, less bank holidays and time off, are split across the issues they committed to, reviewed or commented on that day. A pull request's activity goes to the issues it closes.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
-        }
-
-        let year = rnd.accountingYear
-        Section("Accounting year") {
-            Picker("Starts in", selection: Binding { year.month } set: { month in updateYear { $0.month = month } }) {
-                ForEach(1...12, id: \.self) { Text(Calendar.current.monthSymbols[$0 - 1]).tag($0) }
-            }
-            Stepper(value: Binding { year.day } set: { day in updateYear { $0.day = day } }, in: 1...31) {
-                LabeledContent("Day", value: "\(year.day)")
-            }
         }
 
         let marks = (rnd.marks ?? [:]).sorted { ($0.value.issue ?? $0.key) < ($1.value.issue ?? $1.key) }
@@ -210,14 +201,6 @@ struct RDSettingsSection: View {
             var options = rnd.activityOptions
             change(&options)
             rnd.activity = options
-        }
-    }
-
-    private func updateYear(_ change: (inout RDYearStart) -> Void) {
-        configs.updateRD(org) { rnd in
-            var year = rnd.accountingYear
-            change(&year)
-            rnd.yearStart = year
         }
     }
 }

@@ -1,13 +1,13 @@
 ---
 title: R&D settings
-description: Every option in Org settings › R&D, where you choose what counts as R&D work, how its time is found and when your accounting year starts.
+description: Every option in Org settings › R&D, where you choose what counts as R&D work and how its time is found.
 sidebar:
   order: 7
 ---
 
 Org settings › R&D sets up the [R&D Time](/docs/guides/rd-time/) page. Open it with the cog beside the account menu in the sidebar's footer, then pick R&D in the toolbar.
 
-Everything here belongs to the project your window is working in. A project's harness keeps it as `.gannin/rnd.json`, along with the issues marked by hand, and changes wait in the sidebar ("N changes to commit") until you review and commit them. An org with no harness keeps it on this Mac. No salaries, rates or other costs are asked for or kept anywhere.
+Everything here belongs to the project your window is working in. A project's harness keeps it as `.gannin/rnd.json`, along with the issues marked by hand, and changes wait in the sidebar ("N changes to commit") until you review and commit them. An org with no harness keeps it on this Mac. No salaries, rates or other costs are asked for or kept anywhere. The page's ranges follow the org's accounting year and periods, set in [Working Time](/docs/settings/org/working-time/#accounting-periods).
 
 ## What counts
 
@@ -32,13 +32,6 @@ A sub-issue counts when its parent does, unless it is marked itself. An issue ma
 | Count issue comments | On | Whether commenting on (or opening) an issue counts as working on it. | Harness (`.gannin/rnd.json`) |
 
 Working hours come from [Working Time](/docs/settings/org/working-time/): the org's working week or a person's own pattern, less bank holidays and time off. Commits and opening a PR always count.
-
-## Accounting year
-
-| Option | Default | What it changes | Kept |
-| --- | --- | --- | --- |
-| Starts in | January | The month your accounting year starts, which the page's ranges follow. | Harness (`.gannin/rnd.json`) |
-| Day | 1 | The day of that month it starts. A day past the month's end means its last day. | Harness (`.gannin/rnd.json`) |
 
 ## Marked issues
 

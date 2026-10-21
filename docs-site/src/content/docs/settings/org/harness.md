@@ -34,6 +34,7 @@ Where each kind of setting is kept:
 | Project name, repos and boards ([Projects](/docs/settings/org/projects/)) | Harness, `.gannin/project.json` |
 | Investment categories ([Investments](/docs/settings/org/investments/)) | Harness, `.gannin/investments.json` |
 | What counts as R&D, how its time is found and issues marked by hand ([R&D](/docs/settings/org/rd-time/)) | Harness, `.gannin/rnd.json` |
+| Accounting year and periods ([Working Time](/docs/settings/org/working-time/#accounting-periods)) | Home harness, `.gannin/accounting.json` |
 | Issue workflow ([Issues](/docs/settings/org/issues/)) | Harness, `.gannin/workflow.json` |
 | Goals ([Goals](/docs/settings/org/goals/)) | Harness, `.gannin/goals.json` |
 | Scorecard, recap cadence, committed date field and notes from the field | Harness, `.gannin/scorecard.json`, `recap.json`, `prioritisation.json` and `field-notes.json` |

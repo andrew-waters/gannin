@@ -181,12 +181,29 @@ struct RDTimeTests {
     // MARK: Periods and export
 
     @Test func accountingYearsStartOnTheirDay() {
-        let start = RDYearStart(month: 4, day: 6)
+        let start = AccountingYearStart(month: 4, day: 6)
         let year = start.year(containing: calendar.date(from: DateComponents(year: 2026, month: 3, day: 1))!)
         #expect(year.start == calendar.date(from: DateComponents(year: 2025, month: 4, day: 6)))
         #expect(year.end == calendar.date(from: DateComponents(year: 2026, month: 4, day: 6)))
         // A day past the month's end is its last day.
-        #expect(RDYearStart(month: 2, day: 31).start(in: 2026) == calendar.date(from: DateComponents(year: 2026, month: 2, day: 28)))
+        #expect(AccountingYearStart(month: 2, day: 31).start(in: 2026) == calendar.date(from: DateComponents(year: 2026, month: 2, day: 28)))
+
+        // November to October: the quarter holding 21 October 2026 is August to October.
+        let november = AccountingYearStart(month: 11, day: 1)
+        let now = calendar.date(from: DateComponents(year: 2026, month: 10, day: 21))!
+        let thisYear = RDRange.thisYear.interval(yearStart: november, now: now, customFrom: now, customTo: now)
+        #expect(thisYear.start == calendar.date(from: DateComponents(year: 2025, month: 11, day: 1)))
+        let quarter = RDRange.thisQuarter.interval(yearStart: november, now: now, customFrom: now, customTo: now)
+        #expect(quarter.start == calendar.date(from: DateComponents(year: 2026, month: 8, day: 1)))
+        #expect(quarter.end == calendar.date(from: DateComponents(year: 2026, month: 11, day: 1)))
+    }
+
+    @Test func periodsIncludeTheirLastDay() {
+        let start = calendar.date(from: DateComponents(year: 2026, month: 1, day: 1, hour: 15))!
+        let end = calendar.date(from: DateComponents(year: 2026, month: 3, day: 31))!
+        let period = AccountingPeriod(name: "Claim", start: start, end: end)
+        #expect(period.interval.start == calendar.date(from: DateComponents(year: 2026, month: 1, day: 1)))
+        #expect(period.interval.end == calendar.date(from: DateComponents(year: 2026, month: 4, day: 1)))
     }
 
     @Test func quotesCSVFieldsAndDisarmsFormulas() {

@@ -118,6 +118,7 @@ struct OrgSettingsView: View {
         case .workingTime:
             WorkWeekSection(org: org)
             LeavePolicySection(org: org)
+            AccountingSection(org: org)
             PeopleDatesSection(org: org, people: (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending })
         case .issues:
             IssueWorkflowSection(org: org)

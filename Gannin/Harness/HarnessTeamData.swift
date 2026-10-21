@@ -12,6 +12,7 @@ enum TeamFile {
     static let workflow = ".gannin/workflow.json"
     static let workingWeek = ".gannin/working-week.json"
     static let leave = ".gannin/leave.json"
+    static let accounting = ".gannin/accounting.json"
     static let exclusions = ".gannin/exclusions.json"
     static let goals = ".gannin/goals.json"
     static let authoring = ".gannin/authoring.json"
@@ -27,7 +28,7 @@ enum TeamFile {
 
     /// The org's, in the home harness, rather than each project's.
     static func isOrgWide(_ path: String) -> Bool {
-        path.hasPrefix(peoplePrefix) || [views, workingWeek, leave, exclusions, authoring].contains(path)
+        path.hasPrefix(peoplePrefix) || [views, workingWeek, leave, accounting, exclusions, authoring].contains(path)
     }
 
     static func person(_ login: String) -> String { "\(peoplePrefix)\(login).json" }
@@ -46,6 +47,7 @@ enum TeamFile {
         case workflow: "issue workflow"
         case workingWeek: "working week"
         case leave: "leave policy"
+        case accounting: "accounting year and periods"
         case exclusions: "repos and people left out, and repos without review"
         case goals: "delivery goals"
         case authoring: "prompts for drafting harness documents"
@@ -89,6 +91,7 @@ struct HarnessTeamData {
     var workflow: IssueWorkflow?
     var workWeek: WorkWeek?
     var leave: LeavePolicy?
+    var accounting: AccountingCalendar?
     var exclusions: TeamExclusions?
     var goals: MetricGoals?
     var authoring: [String: String]?
@@ -108,6 +111,7 @@ struct HarnessTeamData {
         workflow = files[TeamFile.workflow].flatMap { TeamCoding.decode(IssueWorkflow.self, $0) }
         workWeek = files[TeamFile.workingWeek].flatMap { TeamCoding.decode(WorkWeek.self, $0) }
         leave = files[TeamFile.leave].flatMap { TeamCoding.decode(LeavePolicy.self, $0) }
+        accounting = files[TeamFile.accounting].flatMap { TeamCoding.decode(AccountingCalendar.self, $0) }
         exclusions = files[TeamFile.exclusions].flatMap { TeamCoding.decode(TeamExclusions.self, $0) }
         goals = files[TeamFile.goals].flatMap { TeamCoding.decode(MetricGoals.self, $0) }
         authoring = files[TeamFile.authoring].flatMap { TeamCoding.decode([String: String].self, $0) }
@@ -132,6 +136,7 @@ struct HarnessTeamData {
         config.fieldViews = views ?? []
         config.workWeek = workWeek
         config.leave = leave
+        config.accounting = accounting
         config.excludedRepos = Set(exclusions?.repos ?? [])
         config.excludedAuthors = Set(exclusions?.people ?? [])
         config.includedAuthors = Set(exclusions?.includedPeople ?? [])
@@ -171,6 +176,7 @@ struct HarnessTeamData {
         if before.recap != after.recap { files[TeamFile.recap] = after.recap.flatMap(TeamCoding.encode) }
         if before.scorecard != after.scorecard { files[TeamFile.scorecard] = after.scorecard.flatMap(TeamCoding.encode) }
         if before.leave != after.leave { files[TeamFile.leave] = after.leave.flatMap(TeamCoding.encode) }
+        if before.accounting != after.accounting { files[TeamFile.accounting] = after.accounting.flatMap(TeamCoding.encode) }
         if before.committedDateField != after.committedDateField {
             files[TeamFile.prioritisation] = after.committedDateField.flatMap { TeamCoding.encode(TeamPrioritisation(committedDateField: $0)) }
         }
