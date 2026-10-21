@@ -44,14 +44,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-21T13:42:00Z",
   "number" : 437,
   "posted_at" : "2026-10-21T07:06:35Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-21T07:04:14Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Add Junie as an extra reviewer in a pair review",
-  "updated_at" : "2026-10-21T07:06:36Z",
+  "updated_at" : "2026-10-21T13:42:27Z",
   "verdict" : "approve"
 }
