@@ -21,6 +21,8 @@ Work on This starts the issue's session in the harness checkout: it pulls the ha
 
 Each session starts through your own shell (the one `$SHELL` names, `/bin/zsh` if unset) as a login, interactive shell. It reads that shell's login and interactive startup files first (for zsh, `~/.zshenv`, `~/.zprofile` and `~/.zshrc`), so the `PATH`, exported variables, ssh config and tools you have in a terminal are what Claude Code gets.
 
+Only what the shell exports carries over. The session's script runs in bash, which doesn't inherit zsh functions or aliases, so a `claude()` wrapper in `~/.zshrc` is skipped. To change how `claude` starts (to set `GH_TOKEN`, say), put an executable script named `claude` in a folder at the front of your `PATH` that ends by running the real binary by its full path.
+
 Gannin's own background git and gh calls (the Repositories page, for one) don't read your shell files. Gannin puts Homebrew's folders in front of the `PATH` it was launched with.
 
 This applies to sessions on this Mac. [Sandboxed](/docs/sessions/sandboxes/) and [server](/docs/sessions/server/) sessions start differently, so your shell files there are the container's or the server's.
