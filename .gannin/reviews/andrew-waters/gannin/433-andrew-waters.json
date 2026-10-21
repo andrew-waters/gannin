@@ -1,0 +1,37 @@
+{
+  "author" : "dwrss",
+  "effort" : 2,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The identity leaves out the event that started the run. A workflow with `on: [pu",
+      "key" : "Gannin/Sessions/SessionPullRequests.swift:654:The identity leaves out the event that started the run. A wo",
+      "line" : 654,
+      "path" : "Gannin/Sessions/SessionPullRequests.swift",
+      "posted_at" : "2026-10-21T07:08:51Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "A check run that isn't from Actions (from a GitHub App such as a linter or a dep",
+      "key" : "Gannin/Sessions/SessionPullRequests.swift:654:A check run that isn't from Actions (from a GitHub App such ",
+      "line" : 654,
+      "path" : "Gannin/Sessions/SessionPullRequests.swift",
+      "posted_at" : "2026-10-21T07:08:51Z",
+      "severity" : "minor"
+    }
+  ],
+  "number" : 433,
+  "posted_at" : "2026-10-21T07:08:51Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-21T07:07:37Z",
+  "state" : "OPEN",
+  "title" : "Show only the latest run of each check on a session's pull request",
+  "updated_at" : "2026-10-21T07:08:52Z",
+  "verdict" : "request_changes"
+}
