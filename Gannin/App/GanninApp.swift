@@ -10,6 +10,7 @@ struct GanninApp: App {
     @State private var hidden: HiddenStore
     @State private var metrics: MetricsStore
     @State private var workLog: WorkLogStore
+    @State private var rdActivity: RDActivityStore
     @State private var issues: IssueStore
     @State private var projects: ProjectStore
     @State private var actions: ActionsStore
@@ -61,6 +62,7 @@ struct GanninApp: App {
         let metrics = MetricsStore(auth: auth, activity: activity)
         _metrics = State(initialValue: metrics)
         _workLog = State(initialValue: WorkLogStore(auth: auth, activity: activity))
+        _rdActivity = State(initialValue: RDActivityStore(auth: auth))
         let issues = IssueStore(auth: auth, activity: activity)
         // Every project's outside repos, as OrgStore's is set (R7's for the
         // issue history too, andrew-waters/gannin#205).
@@ -193,6 +195,7 @@ struct GanninApp: App {
                 .environment(hidden)
                 .environment(metrics)
                 .environment(workLog)
+                .environment(rdActivity)
                 .environment(issues)
                 .environment(projects)
                 .environment(orgConfigs)
@@ -247,6 +250,7 @@ struct GanninApp: App {
                     .environment(hidden)
                     .environment(metrics)
                     .environment(workLog)
+                    .environment(rdActivity)
                     .environment(issues)
                     .environment(projects)
                     .environment(orgConfigs)
@@ -281,6 +285,7 @@ struct GanninApp: App {
                     .environment(hidden)
                     .environment(metrics)
                     .environment(workLog)
+                    .environment(rdActivity)
                     .environment(issues)
                     .environment(projects)
                     .environment(orgConfigs)
@@ -306,6 +311,7 @@ struct GanninApp: App {
                 .environment(sessions)
                 .environment(metrics)
                 .environment(workLog)
+                .environment(rdActivity)
                 .environment(actions)
                 .environment(releases)
                 .environment(orgs)
@@ -341,6 +347,7 @@ struct GanninApp: App {
                 .environment(metrics)
                 .environment(issues)
                 .environment(workLog)
+                .environment(rdActivity)
                 .environment(projects)
                 .environment(details)
                 .environment(bankHolidays)

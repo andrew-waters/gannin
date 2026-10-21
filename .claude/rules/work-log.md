@@ -10,7 +10,7 @@ paths:
 - Keep the work log's issues step failing on its own: a failed issue search must still save the PRs and leave `coveredFrom` and `fetchedAt` where they were (a new log covers nothing), or those weeks never get their issues.
 - Issues don't go through the change feed: `WorkLogIssue` has no `updatedAt` to compare and there's no fetch by ID for it yet. Add both before routing them through `feedPlan`.
 - Keep newly added fields optional (as `IssueRecord.author`) so older records still load.
-- Fetch only once the People page (or R&D Time, which allocates from the log) has been opened for an org.
+- Fetch only once the People page has been opened for an org.
 - Attribute commits to the GitHub author when the email is linked, else the PR author. GitHub doesn't say who moved or closed an issue, so those count for the assignees.
 - Show authored PRs only in Threads: "Update branch" and merges from main add others' commits.
 - Leave merges out of punchcards: merge queues land them whenever CI finishes.

@@ -26,6 +26,8 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
     case changeFeed
     /// Opening an issue, PR or anything looked up for it.
     case details
+    /// R&D Time's activity, fetched only when asked on its page.
+    case rdTime
     /// Writes you confirmed.
     case writes
     /// Signing in, the org list and settings' pickers.
@@ -43,7 +45,7 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
 
     var isSetting: Bool {
         switch self {
-        case .details, .writes, .account, .other, .changeFeed: false
+        case .details, .rdTime, .writes, .account, .other, .changeFeed: false
         default: true
         }
     }
@@ -68,6 +70,7 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
         case .sessionChecks: "While checks run"
         case .changeFeed: "Change feed"
         case .details: "Items you open"
+        case .rdTime: "R&D Time"
         case .writes: "Changes you make"
         case .account: "Account and settings"
         case .other: "Other"
@@ -94,6 +97,7 @@ nonisolated enum SyncSource: String, CaseIterable, Identifiable, Codable, Sendab
         case .sessionChecks: "How often while a session's PR has checks running."
         case .changeFeed: "Which PRs and issues changed, found once and used by the workload, issue history and work log instead of each searching for them."
         case .details: "Issues and PRs opened in a drawer or window, and what's looked up for them."
+        case .rdTime: "Activity for R&D Time, fetched only when you confirm a fetch on that page."
         case .writes: "Issues created, fields set, reviews posted and commits to the harness."
         case .account: "Your profile, orgs, and pickers in Settings."
         case .other: "Anything not charged to a source above."

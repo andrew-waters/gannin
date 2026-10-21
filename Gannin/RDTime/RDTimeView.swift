@@ -3,11 +3,13 @@ import SwiftUI
 /// The R&D Time page under Delivery: each person's working hours over a
 /// range, allocated to the issues they worked on, with those that count as
 /// R&D (and how much of each, and why), by issue or by person, exported for
-/// an accountant or adviser.
+/// an accountant or adviser. Its activity is fetched only from here, after
+/// showing what it will cost (`RDActivityStore`), never by Refresh.
 struct RDTimeView: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
-    @Environment(WorkLogStore.self) private var workLog
+    @Environment(RDActivityStore.self) private var activity
+    @Environment(AuthStore.self) private var auth
     @Environment(PeopleDatesStore.self) private var peopleDates
     @Environment(BankHolidayStore.self) private var holidayStore
     @Environment(HiddenStore.self) private var hidden
@@ -28,6 +30,9 @@ struct RDTimeView: View {
     @State private var peopleSort: StatsSort?
     /// The issue whose mark is being edited.
     @State private var editing: RDWorkItem?
+    /// A fetch priced and waiting to be confirmed.
+    @State private var pending: RDActivityStore.Plan?
+    @State private var planError: String?
 
     enum Tab: String, CaseIterable {
         case work = "By issue"
@@ -55,9 +60,11 @@ struct RDTimeView: View {
     var body: some View {
         let range = range
         let name = config.rndConfig.displayName
-        let report = report(range)
+        let cache = activity.cache(for: org)
+        let report = cache.map { report($0, range: range) }
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
+                fetchPanel(cache, range: range)
                 if let report {
                     summary(report, name: name)
                     switch tab {
@@ -65,51 +72,155 @@ struct RDTimeView: View {
                     case .people: peopleTable(report, name: name)
                     }
                     footnote(name: name)
-                } else {
-                    HStack(spacing: 8) {
-                        ProgressView().controlSize(.small)
-                        Text("Fetching activity back to \(range.start.formatted(date: .abbreviated, time: .omitted)).").foregroundStyle(.secondary)
-                    }
                 }
             }
             .padding(20)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .toolbar { toolbar(report, range: range, name: name) }
-        .syncOffNotice(.workLog)
         .outsideReposNotice(org: org)
         .sheet(item: $editing) { item in
             RDMarkEditor(org: org, item: item, name: name)
         }
-        .task(id: "\(org) \(Int(range.start.timeIntervalSince1970))") {
-            async let issues: Void = issueStore.sync(org, windowDays: max(1, Int(Date.now.timeIntervalSince(range.start) / 86_400) + 1))
-            async let activity: Void = workLog.sync(org, from: range.start)
-            _ = await (issues, activity)
-        }
+        // A plan priced for one range doesn't hold for another.
+        .onChange(of: rangeChoice) { pending = nil }
+        .onChange(of: customFrom) { pending = nil }
         .task(id: "\(years(range)) \(regions.hashValue)") {
             await holidayStore.load(regions, years: years(range))
         }
     }
 
+    // MARK: Fetching
+
+    /// What's fetched for the range, and the way to fetch more: priced
+    /// first, confirmed here, with progress and Cancel while it runs.
+    @ViewBuilder
+    private func fetchPanel(_ cache: RDActivityStore.Cache?, range: DateInterval) -> some View {
+        let reaches = cache.map { $0.coveredFrom <= range.start } ?? false
+        let current = cache.map { $0.fetchedAt >= min(range.end, .now) } ?? false
+        if let progress = activity.progress[org] {
+            panel {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("Fetching activity").font(.headline)
+                        Spacer()
+                        Button("Cancel") { activity.cancel(org) }
+                    }
+                    ProgressView(value: Double(progress.weeksDone), total: Double(max(progress.weeks, 1)))
+                    Text("\(progress.step): \(progress.weeksDone) of \(progress.weeks) weeks, \(progress.pullRequests) pull requests, \(progress.issues) issues\(progress.records > 0 ? ", \(progress.records) issues looked up" : "")")
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+            }
+        } else if let pending {
+            confirmation(pending)
+        } else if !reaches || cache == nil {
+            panel {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(cache == nil ? "No activity fetched yet" : "Activity reaches back to \(Self.day(cache?.coveredFrom))").font(.headline)
+                    Text("R&D Time fetches commits, reviews and issue comments only when you ask, since a long range takes a search per week. The range starts \(Self.day(range.start)). See what fetching it would take first; nothing is fetched until you confirm.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    estimateButton(range: range)
+                    notice
+                }
+            }
+        } else if let cache {
+            HStack(spacing: 8) {
+                Text("Activity fetched back to \(Self.day(cache.coveredFrom)), last \(cache.fetchedAt.formatted(.relative(presentation: .named))).")
+                    .foregroundStyle(.secondary)
+                if !current { estimateButton(range: range, title: "Update") }
+                notice
+            }
+            .font(.callout)
+        }
+    }
+
+    private func panel<Content: View>(@ViewBuilder _ content: () -> Content) -> some View {
+        content()
+            .padding(14)
+            .frame(maxWidth: 640, alignment: .leading)
+            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    @ViewBuilder
+    private var notice: some View {
+        if let message = planError ?? activity.notices[org] {
+            Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private func estimateButton(range: DateInterval, title: String = "See What It Takes") -> some View {
+        HStack(spacing: 8) {
+            Button(title) {
+                planError = nil
+                Task {
+                    do {
+                        let plan = try await activity.plan(org: org, from: range.start, through: range.end)
+                        if plan.isEmpty { return }
+                        pending = plan
+                    } catch {
+                        planError = "Couldn't count what to fetch: \(error.localizedDescription)"
+                    }
+                }
+            }
+            .disabled(activity.estimating.contains(org))
+            if activity.estimating.contains(org) {
+                ProgressView().controlSize(.small)
+                Text("Counting").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    /// The plan's cost, against what's left of the budget, to confirm.
+    private func confirmation(_ plan: RDActivityStore.Plan) -> some View {
+        let budget = auth.rateLimit
+        return panel {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Fetch activity back to \(Self.day(plan.start))?").font(.headline)
+                Text("\(plan.weeks.count) weekly searches, finding about \(plan.pullRequests) pull requests and \(plan.issues) issues, then the issues they worked on are looked up for what counts.")
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("About \(plan.requests) requests and \(plan.points) points of GitHub's hourly budget\(budget.map { ", with \($0.remaining) of \($0.limit) left until \($0.resetAt.formatted(date: .omitted, time: .shortened))" } ?? ""). It stops before the last \(RDActivityStore.reserve) points, so the rest of Gannin keeps working, and you can cancel at any time; what's fetched is kept.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if plan.weeks.contains(where: { $0.pullRequests > RDActivityStore.Plan.searchCap || $0.issues > RDActivityStore.Plan.searchCap }) {
+                    Text("Some weeks have more than \(RDActivityStore.Plan.searchCap) results, GitHub's limit for a search, so part of them can't be fetched.")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+                HStack {
+                    Button("Fetch") {
+                        activity.fetch(plan)
+                        pending = nil
+                    }
+                    .keyboardShortcut(.defaultAction)
+                    Button("Not Now") { pending = nil }
+                }
+            }
+        }
+    }
+
+    private static func day(_ date: Date?) -> String {
+        date?.formatted(date: .abbreviated, time: .omitted) ?? ""
+    }
+
     // MARK: Data
 
-    /// Everyone with activity in the log or on the team, but those left out
-    /// of the org's stats.
-    private func people(_ log: WorkLogHistory) -> Set<String> {
+    /// Everyone with activity or on the team, but those left out of the
+    /// org's stats.
+    private func people(_ cache: RDActivityStore.Cache) -> Set<String> {
         var logins = Set(workload?.people.map(\.person.login) ?? [])
-        for pr in log.pullRequests.values {
+        for pr in cache.pullRequests.values {
             if let author = pr.author { logins.insert(author) }
             logins.formUnion(pr.commits.compactMap(\.author))
             logins.formUnion(pr.reviews.map(\.author))
         }
-        for issue in log.issues.values { logins.formUnion(issue.comments.map(\.author)) }
+        for issue in cache.issues.values { logins.formUnion(issue.comments.map(\.author)) }
         return logins.filter { !config.excludes($0) }
     }
 
     private var regions: Set<BankHolidayRegion> {
         let orgRegion = config.week.holidays
-        guard let log = workLog.history(for: org) else { return [] }
-        return Set(people(log).compactMap { peopleDates.region(for: $0, in: org, default: orgRegion) })
+        guard let cache = activity.cache(for: org) else { return [] }
+        return Set(people(cache).compactMap { peopleDates.region(for: $0, in: org, default: orgRegion) })
     }
 
     private func years(_ range: DateInterval) -> ClosedRange<Int> {
@@ -118,28 +229,32 @@ struct RDTimeView: View {
         return first...max(first, calendar.component(.year, from: range.end))
     }
 
-    /// Nil until the log reaches back to the range's start.
-    private func report(_ range: DateInterval) -> RDReport? {
-        guard let log = workLog.history(for: org), log.coveredFrom <= range.start || !workLog.syncing.contains(org) else { return nil }
+    /// The range's part that's been fetched: from where coverage reaches.
+    private func report(_ cache: RDActivityStore.Cache, range: DateInterval) -> RDReport {
         let config = config
         let rnd = config.rndConfig
-        let people = people(log)
+        let people = people(cache)
         let years = years(range)
+        let covered = DateInterval(start: max(range.start, Calendar.current.startOfDay(for: cache.coveredFrom)), end: max(range.end, cache.coveredFrom))
         let calendars = Dictionary(uniqueKeysWithValues: people.map {
             ($0, peopleDates.workingCalendar(for: $0, in: org, orgWeek: config.week, holidays: holidayStore, years: years))
         })
         let dates = Dictionary(uniqueKeysWithValues: people.map { ($0, peopleDates.dates(for: $0, in: org)) })
         let found = RDActivityAllocator.allocate(.init(
-            people: people, range: range,
-            pullRequests: log.pullRequests(config: config, hidden: hidden.keys), issues: log.issues(config: config, hidden: hidden.keys),
+            people: people, range: covered,
+            pullRequests: cache.pullRequests.values.filter { !hidden.keys.contains($0.id) && !config.repoExclusion.contains($0.repo) },
+            issues: cache.issues.values.filter { !hidden.keys.contains($0.id) && !config.repoExclusion.contains($0.repo) },
             calendars: calendars, dates: dates, orgCalendar: holidayStore.calendar(week: config.week, region: config.week.holidays, years: years),
             options: rnd.activityOptions
         ))
-        let records = issueStore.history(for: org)?.issues ?? [:]
+        // The issue history's copy when it has one (kept current by the
+        // regular sync), else the one looked up for R&D Time.
+        let history = issueStore.history(for: org)?.issues ?? [:]
+        func record(_ id: String) -> IssueRecord? { history[id] ?? cache.records[id] }
         let investments = config.investmentConfig
         return RDReport(found) { item in
-            let record = records[item.id]
-            return rnd.status(item.id, record: record, parent: record?.parentID.flatMap { records[$0] }, investments: investments)
+            let found = record(item.id)
+            return rnd.status(item.id, record: found, parent: found?.parentID.flatMap(record), investments: investments)
         }
     }
 
@@ -356,6 +471,16 @@ struct RDTimeView: View {
             }
             .disabled(report == nil)
             .help("Save the report as CSV or Markdown")
+            Menu {
+                Button("Forget Fetched Activity") {
+                    pending = nil
+                    activity.clear(org)
+                }
+                .disabled(activity.cache(for: org) == nil || activity.isFetching(org))
+            } label: {
+                Label("Activity", systemImage: "ellipsis.circle")
+            }
+            .help("The activity fetched for R&D Time, kept on this Mac")
         }
     }
 

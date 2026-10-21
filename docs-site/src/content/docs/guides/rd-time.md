@@ -17,7 +17,17 @@ Time comes from activity Gannin already sees. For each person and each working d
 2. The hours are split across the issues they worked on that day: commits on (and opening) a PR that closes an issue, reviews of one, and comments on an issue. A PR that closes no issue keeps its own share, so the time is still accounted for, though only issues can count as R&D.
 3. A working day with no activity goes to the issues behind the PRs they had open, or stays unallocated, as set.
 
-The activity is the same as the [Activity](/docs/guides/activity/) page's, fetched back to the start of the range when you open the page. A whole accounting year can take a while the first time.
+## Fetching activity
+
+R&D Time fetches its own activity, and only when you ask: Refresh and the regular sync never fetch it, and opening the page fetches nothing. A long range is a search per week, so a year is many requests.
+
+When the range reaches further back than what's been fetched, the top of the page says so. **See What It Takes** counts what fetching the range would find (a single quick query) and shows it to confirm: how many weekly searches, about how many pull requests and issues, and the requests and points of GitHub's hourly budget it should take, against what's left. **Fetch** starts it and **Not Now** leaves it.
+
+While it runs, the page shows a progress bar and the week it's on, and **Cancel** stops it. What's been fetched is kept either way, and the next fetch carries on from there. A fetch also stops by itself before the last 500 points of the budget, so the rest of Gannin keeps working, and says when to carry on.
+
+Once the range is covered, the top of the page says how far back activity reaches and when it was last fetched. For a range running up to today, **Update** prices and fetches what changed since. **Activity › Forget Fetched Activity** in the toolbar removes it from this Mac. It's kept in Application Support, apart from the work log.
+
+Searches go by when a pull request or issue was last updated, so work in the range is found even if it carried on after. Each pull request brings its last 100 commits and 50 reviews, and each issue its last 30 comments, as on the [Activity](/docs/guides/activity/) page.
 
 ## The toolbar
 

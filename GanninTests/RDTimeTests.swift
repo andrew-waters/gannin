@@ -214,4 +214,45 @@ struct RDTimeTests {
         #expect(RDExport.field("-2.5") == "-2.5")
         #expect(RDExport.csv([["a", "b"], ["1", "2"]]) == "a,b\r\n1,2\r\n")
     }
+
+    // MARK: Fetch planning
+
+    @Test func plansEveryWeekBackToTheStartWithNothingFetched() {
+        let now = day(14)
+        let plan = RDActivityStore.weeks(cache: nil, org: "acme", from: week.start, through: now, now: now)
+        #expect(plan.topUp.isEmpty)
+        #expect(plan.backfill.count == 3)
+        // Newest first, the newest open-ended to now.
+        #expect(plan.backfill.first?.end == nil)
+        #expect(plan.backfill.last?.start == week.start)
+    }
+
+    @Test func plansOnlyWhatTheCacheLacks() {
+        let now = day(28)
+        var cache = RDActivityStore.Cache(org: "acme", coveredFrom: day(7, hour: 0), fetchedAt: day(14))
+        cache.pullRequests["P_1"] = pr("P_1", closes: ["I_1"])
+        // A range already covered and ending before the last fetch: nothing.
+        let covered = RDActivityStore.weeks(cache: cache, org: "acme", from: day(7, hour: 0), through: day(10), now: now)
+        #expect(covered.weeks.isEmpty)
+        #expect(covered.missingRecords == 1)
+        // Further back and up to now: a week back, and from the last fetch on.
+        let both = RDActivityStore.weeks(cache: cache, org: "acme", from: week.start, through: now, now: now)
+        #expect(both.backfill.count == 1)
+        #expect(both.backfill.first?.start == week.start)
+        #expect(!both.topUp.isEmpty)
+        #expect(both.topUp.first?.end == nil)
+        #expect(both.start == week.start)
+    }
+
+    @Test func pricesAPagePerTwentyPullRequestsAndFiftyIssues() {
+        var plan = RDActivityStore.weeks(cache: nil, org: "acme", from: week.start, through: day(6), now: day(6))
+        plan.backfill[0].pullRequests = 45
+        plan.backfill[0].issues = 10
+        // Three PR pages and one issue page, and a batch per 15 of the
+        // (45 + 10) / 2 issues guessed to be looked up.
+        #expect(plan.requests == 3 + 1 + 2)
+        #expect(plan.points == plan.requests + 2)
+        plan.backfill[0].pullRequests = 5000
+        #expect(plan.pullRequests == RDActivityStore.Plan.searchCap)
+    }
 }
