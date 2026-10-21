@@ -173,9 +173,11 @@ struct GanninApp: App {
         }
         scheduler.watch = { [weak sessions] in sessions?.watchRoutineRuns() }
         // Review windows: the signed-in person's, or this Mac's own.
-        let reviewWindows: (String) -> [Routine] = { [weak routines, weak auth, weak peopleDates] org in
-            guard let routines, let peopleDates else { return [] }
-            return ReviewWindowBook(org: org, login: auth?.viewer?.login, routines: routines, people: peopleDates).windows
+        // Nil until they're known, so nothing starts on an empty list just
+        // after launch.
+        let reviewWindows: (String) -> [Routine]? = { [weak routines, weak auth, weak peopleDates] org in
+            guard let routines, let peopleDates else { return nil }
+            return ReviewWindowBook(org: org, login: auth?.viewer?.login, routines: routines, people: peopleDates).windowsIfKnown
         }
         sessions.reviewGate = { [weak sessions, weak routines, weak scheduler] org in
             guard let sessions, let routines, let scheduler else { return .start(limit: AutoReview.maxRunning) }

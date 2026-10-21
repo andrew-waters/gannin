@@ -69,4 +69,73 @@ struct ReviewGateTests {
     @Test func whilePausedItWaitsEvenInAWindow() {
         #expect(decide([window(12, 13)], at: date(2026, 10, 21, 12, 30), paused: true) == .queue)
     }
+
+    @Test func windowsNotYetKnownStartNothing() {
+        // Just after launch, before sign-in or the harness has loaded.
+        #expect(ReviewGate.decide(now: date(2026, 10, 21, 12, 30), windows: nil, running: 0, paused: false, calendar: calendar, isWorkingDay: everyDay) == .unknown)
+    }
+}
+
+/// What a queued review's turn comes to before it starts.
+struct QueuedReviewCheckTests {
+    private let pr = PullRequestReference(org: "acme", id: "PR_1", number: 1, title: "PR 1", repo: "acme/app",
+                                          url: URL(string: "https://github.com/acme/app/pull/1")!)
+    private let open = PullRequestState(state: "OPEN", isDraft: false)
+
+    private var request: QueuedReview { QueuedReview(pullRequest: pr, queuedAt: .now) }
+    private var lookAgain: QueuedReview {
+        QueuedReview(pullRequest: pr, lookAgain: .init(session: UUID(), hasNewCommits: true, newComments: 0), queuedAt: .now)
+    }
+
+    private func facts(_ state: PullRequestState?, requested: Set<String>? = ["PR_1"]) -> QueuedReviewCheck.Facts {
+        var facts = QueuedReviewCheck.Facts(requested: requested)
+        facts.pullRequest = state
+        return facts
+    }
+
+    @Test func anOpenRequestStillAskingGoesAhead() {
+        #expect(QueuedReviewCheck.verdict(request, facts(open)) == nil)
+        // Before the first look at requests, it isn't held to them.
+        #expect(QueuedReviewCheck.verdict(request, facts(open, requested: nil)) == nil)
+    }
+
+    @Test func aPRThatChangedWhileItWaitedIsSkipped() {
+        #expect(QueuedReviewCheck.verdict(request, facts(PullRequestState(state: "MERGED", isDraft: false))) == .skipped("It was merged while it waited."))
+        #expect(QueuedReviewCheck.verdict(request, facts(PullRequestState(state: "CLOSED", isDraft: false))) == .skipped("It was closed while it waited."))
+        #expect(QueuedReviewCheck.verdict(request, facts(PullRequestState(state: "OPEN", isDraft: true))) == .skipped("It was made a draft while it waited."))
+        #expect(QueuedReviewCheck.verdict(request, facts(nil)) == .skipped("The PR is gone."))
+        // The same holds for a Look Again.
+        #expect(QueuedReviewCheck.verdict(lookAgain, facts(PullRequestState(state: "MERGED", isDraft: false))) == .skipped("It was merged while it waited."))
+    }
+
+    @Test func aRequestNoLongerAskingOrDismissedIsSkipped() {
+        // `requested` leaves out dismissed requests.
+        #expect(QueuedReviewCheck.verdict(request, facts(open, requested: [])) == .skipped("It no longer asks for your review, or you dismissed it."))
+    }
+
+    @Test func aRequestAlreadyReviewedStartingOrOffIsHandledWithoutStarting() {
+        var reviewed = facts(open)
+        reviewed.hasReview = true
+        #expect(QueuedReviewCheck.verdict(request, reviewed) == .skipped("It already has a review."))
+        var starting = facts(open)
+        starting.isStarting = true
+        #expect(QueuedReviewCheck.verdict(request, starting) == .notYet("Its review was already being started."))
+        var off = facts(open)
+        off.autoReviewIsOn = false
+        #expect(QueuedReviewCheck.verdict(request, off) == .skipped("Auto review is off for acme."))
+    }
+
+    @Test func aLookAgainNeedsItsReviewWatchingAndFree() {
+        var finished = facts(open, requested: [])
+        finished.reviewIsWatching = false
+        #expect(QueuedReviewCheck.verdict(lookAgain, finished) == .skipped("Its review was finished, or stopped watching the PR."))
+        var busy = facts(open, requested: [])
+        busy.reviewIsWatching = true
+        busy.reviewIsBusy = true
+        #expect(QueuedReviewCheck.verdict(lookAgain, busy) == .notYet("Its review was busy, so it waits for the next turn."))
+        // A Look Again isn't held to the requests: the request was answered long ago.
+        var free = facts(open, requested: [])
+        free.reviewIsWatching = true
+        #expect(QueuedReviewCheck.verdict(lookAgain, free) == nil)
+    }
 }

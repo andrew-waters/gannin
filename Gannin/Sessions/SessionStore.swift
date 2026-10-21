@@ -490,6 +490,9 @@ final class SessionStore {
     /// Reviews Gannin started or asked to look again by itself, until
     /// their result arrives (`AutoReview.swift`).
     @ObservationIgnored var automaticRuns: Set<UUID> = []
+    /// When each automatic run was started, for counting it before its
+    /// claude is running (`automaticReviewsRunning`).
+    @ObservationIgnored var automaticStartedAt: [UUID: Date] = [:]
     /// What to tell claude once it has started (a review asked to look
     /// again while it wasn't running).
     @ObservationIgnored var pendingPrompts: [UUID: String] = [:]

@@ -18,6 +18,9 @@ enum AutoReview {
     /// More than this many automatic reviews at once wait for a later check,
     /// when there are no review windows; inside one, its reviews at once.
     static let maxRunning = 2
+    /// How long a review just started counts as running before its claude
+    /// is, so the cap holds while its terminal comes up.
+    static let launchGrace: TimeInterval = 120
     /// How long a watched PR must stay quiet before it's reviewed again, so
     /// a run of pushes or a conversation is one review rather than several.
     static let quietPeriod: TimeInterval = 120
@@ -189,8 +192,14 @@ final class ReviewActivity {
 // MARK: - Starting, watching and reviewing again
 
 extension SessionStore {
-    /// Automatic reviews whose claude is running, every org's.
-    var automaticReviewsRunning: Int { automaticRuns.filter(isRunning).count }
+    /// Automatic reviews whose claude is running, every org's, and those just
+    /// started whose claude hasn't come up yet (`automaticStartedAt`), so a
+    /// review between its start and its terminal still holds its place.
+    var automaticReviewsRunning: Int {
+        automaticRuns.filter { id in
+            isRunning(id) || automaticStartedAt[id].map { Date.now.timeIntervalSince($0) < AutoReview.launchGrace } ?? false
+        }.count
+    }
 
     /// Auto review of a request found, when it's on for the PR's org: in the
     /// harness of the project with the PR's repo, unless the review config
@@ -212,6 +221,9 @@ extension SessionStore {
                 return .queued
             case .start(let room):
                 limit = room
+            case .unknown:
+                // Not known yet, so a later check asks again.
+                return .later
             }
         }
         return await startAutomaticReview(of: pr, harness: setup, harnessPath: path, limit: limit).map { .started($0) } ?? .later
@@ -224,37 +236,36 @@ extension SessionStore {
     /// less those you've dismissed; nil if not looked yet.
     func startQueuedReview(_ queued: QueuedReview, configs: OrgConfigStore, requested: Set<String>?) async -> RoutineStart {
         let pr = queued.pullRequest
+        // Failing to reach GitHub is likely to pass, so the review goes back
+        // and the window backs off; a failure of the review's own (nothing to
+        // run it in) won't, so it leaves the queue rather than hold it up.
         guard let api = api() else { return .failed("Gannin isn't signed in to GitHub.") }
-        let found: PullRequestState?
+        var facts = QueuedReviewCheck.Facts(requested: requested)
         do {
-            found = try await api.pullRequestStates(ids: [pr.id])[pr.id]
+            facts.pullRequest = try await api.pullRequestStates(ids: [pr.id])[pr.id]
         } catch {
             return .failed("Couldn't look the PR up: \(error.localizedDescription)")
         }
-        guard let found else { return .skipped("The PR is gone.") }
-        switch found.state {
-        case "MERGED": return .skipped("It was merged while it waited.")
-        case "CLOSED": return .skipped("It was closed while it waited.")
-        default: break
-        }
-        if found.isDraft { return .skipped("It was made a draft while it waited.") }
+        facts.hasReview = review(of: pr.id) != nil
+        facts.isStarting = startingReviews[pr.id] != nil
+        facts.autoReviewIsOn = AutoReview.isOn(for: pr.org)
         if let lookAgain = queued.lookAgain {
-            let id = lookAgain.session
-            guard sessions[id]?.watch?.isOn == true else { return .skipped("Its review was finished, or stopped watching the PR.") }
-            if isBusyForLookAgain(id) { return .notYet("Its review was busy, so it waits for the next turn.") }
-            guard await reviewAgain(id, because: lookAgain.reasons) else { return .failed("Couldn't ask its review to look again.") }
-            return .started(session: id)
+            facts.reviewIsWatching = sessions[lookAgain.session]?.watch?.isOn == true
+            facts.reviewIsBusy = isBusyForLookAgain(lookAgain.session)
         }
-        if let requested, !requested.contains(pr.id) { return .skipped("It no longer asks for your review, or you dismissed it.") }
-        if review(of: pr.id) != nil { return .skipped("It already has a review.") }
-        if startingReviews[pr.id] != nil { return .notYet("Its review was already being started.") }
-        guard AutoReview.isOn(for: pr.org) else { return .skipped("Auto review is off for \(pr.org).") }
+        if let verdict = QueuedReviewCheck.verdict(queued, facts) { return verdict }
+        if let lookAgain = queued.lookAgain {
+            guard await reviewAgain(lookAgain.session, because: lookAgain.reasons) else {
+                return .failed("Couldn't ask its review to look again: Claude Code isn't running in its tab.", retry: false)
+            }
+            return .started(session: lookAgain.session)
+        }
         switch await autoReview(pr, configs: configs, gated: false, limit: .max) {
         case .started(let id): return .started(session: id)
         case .skipped: return .skipped("Its review config leaves it alone.")
         case .queued, .later:
             if startingReviews[pr.id] != nil { return .notYet("Its review was already being started.") }
-            return .failed("Couldn't start its review: the project covering \(pr.repo) isn't checked out here.")
+            return .failed("Couldn't start its review: the project covering \(pr.repo) isn't checked out here.", retry: false)
         }
     }
 
@@ -276,6 +287,7 @@ extension SessionStore {
         guard automaticReviewsRunning < limit else { return nil }
         let session = await startReview(of: pr, harness: setup, harnessPath: harnessPath, reveals: false)
         automaticRuns.insert(session.id)
+        automaticStartedAt[session.id] = .now
         _ = open(session)
         note(session.id, .started, text: "Started reviewing it when your review was requested")
         return session.id
@@ -302,6 +314,7 @@ extension SessionStore {
         }
         // Ready for you whether it started by itself or by hand.
         noticeApproval(id)
+        automaticStartedAt[id] = nil
         guard automaticRuns.remove(id) != nil else { return }
         let verdict = switch session.reviewResult?.verdict {
         case "approve": "would approve"
@@ -457,8 +470,11 @@ extension SessionStore {
         guard reviewing, let since = watch.changedAt, Date.now.timeIntervalSince(since) >= AutoReview.quietPeriod,
               !isBusyForLookAgain(id) else { return }
         let reasons = AutoReview.reasons(newCommits: watch.hasNewCommits, newComments: watch.newComments)
+        let decision = sessions[id]?.reviewOf.map { reviewGate($0.org) }
+        // Windows not known yet: look again on a later pass.
+        if decision == .unknown { return }
         // Outside every review window it waits its turn, with what's changed (R4).
-        if let routines, let pr = sessions[id]?.reviewOf, reviewGate(pr.org) == .queue {
+        if let routines, let pr = sessions[id]?.reviewOf, decision == .queue {
             routines.enqueueReview(QueuedReview(
                 pullRequest: pr, lookAgain: .init(session: id, hasNewCommits: watch.hasNewCommits, newComments: watch.newComments), queuedAt: .now
             ))
@@ -528,6 +544,7 @@ extension SessionStore {
             _ = open(session)
         }
         automaticRuns.insert(id)
+        automaticStartedAt[id] = .now
         note(id, .started, text: "Reviewing it again: \(reasons)")
         return true
     }

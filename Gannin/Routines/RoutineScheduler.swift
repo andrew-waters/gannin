@@ -3,7 +3,7 @@ import Foundation
 import Observation
 
 /// What starting a scheduled run came to.
-enum RoutineStart {
+enum RoutineStart: Equatable {
     case started(session: UUID)
     /// `retry` is false when the issue itself is the trouble (it already
     /// has a session), so a queued one isn't put back.
@@ -34,7 +34,8 @@ final class RoutineScheduler {
     @ObservationIgnored var watch: () -> Void = {}
     /// The org's review windows, this Mac's or the person's synced ones
     /// (`ReviewWindowBook`).
-    @ObservationIgnored var reviewWindows: (String) -> [Routine] = { _ in [] }
+    /// Nil while they aren't known yet, which holds the queue.
+    @ObservationIgnored var reviewWindows: (String) -> [Routine]? = { _ in [] }
     /// Automatic reviews running on this Mac, every org's.
     @ObservationIgnored var runningReviews: () -> Int = { 0 }
     /// Starts a queued review whose turn has come, after checking it's still
@@ -186,7 +187,8 @@ final class RoutineScheduler {
         // Pause All holds the queue, with or without windows.
         guard !store.isPaused else { return false }
         let days = workingDays(org)
-        let windows = reviewWindows(org).filter(\.isEnabled)
+        // Not known yet (just launched, not signed in): hold the queue.
+        guard let windows = reviewWindows(org)?.filter(\.isEnabled) else { return false }
         for window in windows where !window.schedule.isOpen(at: now, calendar: calendar, isWorkingDay: days) {
             failures[window.id] = nil
             heldUntil[window.id] = nil
@@ -251,7 +253,7 @@ final class RoutineScheduler {
     /// org's first review window if it has one.
     func runReviewNow(_ review: QueuedReview) {
         guard store.isReviewQueued(review.id) else { return }
-        let counted = reviewWindows(review.pullRequest.org).first?.id ?? Self.reviewQueueRuns
+        let counted = reviewWindows(review.pullRequest.org)?.first?.id ?? Self.reviewQueueRuns
         store.dequeueReview(review.id)
         heldUntil[counted] = nil
         failures[counted] = nil

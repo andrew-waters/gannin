@@ -30,6 +30,10 @@ The queue is on Agents › Queue, beside the agent queue: see [Routines](/docs/a
 
 Your review windows are kept in your own file in the org's harness (`people/<login>.json`), so every Mac you use with that harness follows the same windows once the change is committed. Teammates can see them there. A Mac that should behave differently can tick Override on This Mac beside Review windows: that Mac then uses windows of its own, starting from a copy of yours, and leaves your file alone. An org with no harness keeps your windows on this Mac.
 
+Update Gannin on every Mac you use before you set review windows: an older version doesn't know about them, so changing your dates or time off there and committing it drops your windows from the file.
+
+Right after Gannin opens, automatic reviews wait until it knows your windows: you're signed in and the org's harness has loaded. Nothing starts or joins the queue in that moment, so a window can't be missed by starting too early.
+
 ## Watching a reviewed PR
 
 With Watch for changes on the review (on by default), Gannin keeps checking the PR. When new commits or comments from others (not yours, not bots') arrive and things have been quiet a while, it asks the reviewer to look again. The reviewer answers the PR author's comments, and other people's only when they disagree with the review or the reviewer disagrees with them. A merged or closed PR stops the watch. How often it checks is under Settings › Sync, Watched reviews.

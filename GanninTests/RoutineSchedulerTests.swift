@@ -181,6 +181,8 @@ struct RoutineSchedulerTests {
         let store: RoutineStore
         let scheduler: RoutineScheduler
         var windows: [String: [Routine]] = [:]
+        /// Orgs whose windows aren't known yet.
+        var unknown: Set<String> = []
         var running: [String] = []
         var started: [Int] = []
         var answer: (QueuedReview) -> RoutineStart = { _ in .started(session: UUID()) }
@@ -191,7 +193,7 @@ struct RoutineSchedulerTests {
             scheduler = RoutineScheduler(store: store)
             scheduler.calendar = calendar
             scheduler.workingDays = { _ in { _ in true } }
-            scheduler.reviewWindows = { [unowned self] org in self.windows[org] ?? [] }
+            scheduler.reviewWindows = { [unowned self] org in self.unknown.contains(org) ? nil : self.windows[org] ?? [] }
             scheduler.runningReviews = { [unowned self] in self.running.count }
             scheduler.reviewReady = { [unowned self] review in !self.busy.contains(review.pullRequest.number) }
             scheduler.startReview = { [unowned self] review, _ in
@@ -322,6 +324,37 @@ struct RoutineSchedulerTests {
         reviews.answer = { _ in .started(session: UUID()) }
         await reviews.check(date(2026, 10, 21, 10, 0, 15))
         #expect(reviews.started == [2, 1])
+    }
+
+    @Test func aReviewThatCantEverStartLeavesTheQueue() async {
+        let reviews = Reviews(calendar: calendar)
+        let lunch = reviewWindow(0, 23)
+        reviews.windows["acme"] = [lunch]
+        reviews.answer = { review in
+            review.pullRequest.number == 1
+                ? .failed("Couldn't start its review: the project covering acme/app isn't checked out here.", retry: false)
+                : .started(session: UUID())
+        }
+        reviews.queue([pullRequest(1), pullRequest(2)])
+        await reviews.check(date(2026, 10, 21, 10))
+        await reviews.check(date(2026, 10, 21, 10, 0, 15))
+        // It failed once and left; the one behind it ran, with no hold.
+        #expect(reviews.started == [2])
+        #expect(reviews.store.reviewQueue.isEmpty)
+        #expect(reviews.store.runs(for: lunch.id).first { $0.pullRequest?.number == 1 }?.outcome == .failed)
+        #expect(reviews.scheduler.heldUntil[lunch.id] == nil)
+    }
+
+    @Test func windowsNotYetKnownHoldTheQueue() async {
+        let reviews = Reviews(calendar: calendar)
+        reviews.unknown = ["acme"]
+        reviews.queue([pullRequest(1)])
+        await reviews.check(date(2026, 10, 21, 3))
+        #expect(reviews.started.isEmpty)
+        // Known, and none: it starts as Auto review would.
+        reviews.unknown = []
+        await reviews.check(date(2026, 10, 21, 3, 0, 15))
+        #expect(reviews.started == [1])
     }
 
     @Test func pauseAllHoldsTheQueueEvenWithNoWindows() async {
