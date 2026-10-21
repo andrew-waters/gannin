@@ -17,6 +17,11 @@ With no Connect with command and sandboxing off, sessions run on this Mac.
 
 Work on This starts the issue's session in the harness checkout: it pulls the harness, records the session there (asking first, unless you said not to), puts the brief in the issue's folder (`.worktrees/<branch>/`) and starts Claude Code there. Claude makes a worktree per repo the issue touches, from the shared clones in `projects/`.
 
+## Your shell setup
+
+Each session starts through your own shell (the one `$SHELL` names, `/bin/zsh` if unset) as a login, interactive shell. It reads `~/.zprofile` and `~/.zshrc` first, so the `PATH`, exported variables, ssh config and tools you have in a terminal are what Claude Code gets.
+Gannin's own background git and gh calls (the Repositories page, for one) don't read your shell files. They use a fixed `PATH` that starts with Homebrew's folders.
+
 ## What it protects
 
 Nothing beyond Claude Code's own permission prompts. Claude runs as you, so it can read and change anything you can: other repos, `~/.ssh`, your keychain, cloud credentials. That's usually fine for Attended work. For Unattended sessions and routines, consider a [sandbox](/docs/sessions/sandboxes/).
