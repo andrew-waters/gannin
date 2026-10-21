@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-21T17:49:59Z",
   "number" : 444,
   "posted_at" : "2026-10-21T17:09:46Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-21T17:08:03Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Change an issue's assignees from its window or drawer",
-  "updated_at" : "2026-10-21T17:21:33Z",
+  "updated_at" : "2026-10-21T17:50:38Z",
   "verdict" : "approve"
 }
