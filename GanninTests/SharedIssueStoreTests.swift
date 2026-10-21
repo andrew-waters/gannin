@@ -240,6 +240,24 @@ struct SharedIssueStoreTests {
         #expect(again.history(for: "acme")?.issues["a"] == records[0])
     }
 
+    @Test func recordingAssigneesChangesTheHistoryRecordAndTheSharedCore() throws {
+        let directory = URL.applicationSupportDirectory.appending(path: "SharedIssueStoreTests-dir-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let shared = SharedIssueStore(folder: folder)
+        defer { try? FileManager.default.removeItem(at: directory); shared.clear() }
+        try writeOldHistory([record("a")], to: directory)
+        let store = issueStore(shared, directory)
+        store.loadCached("acme")
+
+        let sam = Person(login: "sam", name: nil, avatarUrl: nil)
+        store.recordAssignees(org: "acme", issueID: "a", assignees: [sam])
+        #expect(store.history(for: "acme")?.issues["a"]?.assignees == ["sam"])
+        #expect(shared.issues(org: "acme")["a"]?.core.assignees == [sam])
+
+        store.recordAssignees(org: "acme", issueID: "a", assignees: [])
+        #expect(store.history(for: "acme")?.issues["a"]?.assignees == [])
+        #expect(shared.issues(org: "acme")["a"]?.core.assignees == [])
+    }
+
     @Test func aHistoryWhoseIssueStoreWasClearedIsDroppedSoItFetchesAgain() throws {
         let directory = URL.applicationSupportDirectory.appending(path: "SharedIssueStoreTests-dir-\(UUID().uuidString)", directoryHint: .isDirectory)
         let shared = SharedIssueStore(folder: folder)

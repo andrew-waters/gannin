@@ -180,6 +180,16 @@ final class OrgStore {
         cache.update(snapshot.openPullRequests[index], org: login)
     }
 
+    /// Changes an open issue's assignees in the snapshot after a write to
+    /// GitHub, so the workload shows them before the next refresh. Only in
+    /// memory: the issue's stored assignees are written through `IssueStore`.
+    func recordAssignees(_ id: String, org login: String, assignees: [Person]) {
+        guard var snapshot = snapshots[login],
+              let index = snapshot.issues.firstIndex(where: { $0.id == id }) else { return }
+        snapshot.issues[index].assignees = assignees
+        snapshots[login] = snapshot
+    }
+
     /// Shows the cached snapshot straight away, then refreshes when there is
     /// none or it is older than the workload's interval (Settings › Sync).
     /// With a cached snapshot, waits out a low rate limit rather than

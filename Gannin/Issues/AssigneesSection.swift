@@ -20,21 +20,21 @@ struct AssigneesSection: View {
             let saved = Set(record.assignees)
             let chosen = draft ?? saved
             Section("Assignees") {
-                LabeledContent("Assignees") {
-                    Menu {
-                        ForEach(candidates(including: saved)) { person in
-                            Toggle("\(person.displayName) (\(person.login))", isOn: Binding(get: { chosen.contains(person.login) }, set: { on in
-                                var next = chosen
-                                if on { next.insert(person.login) } else { next.remove(person.login) }
-                                draft = next == saved ? nil : next
-                            }))
-                        }
-                    } label: {
-                        Text(chosen.isEmpty ? "Nobody" : chosen.sorted().joined(separator: ", ")).lineLimit(1)
+                Menu {
+                    ForEach(candidates(including: saved)) { person in
+                        Toggle("\(person.displayName) (\(person.login))", isOn: Binding(get: { chosen.contains(person.login) }, set: { on in
+                            var next = chosen
+                            if on { next.insert(person.login) } else { next.remove(person.login) }
+                            draft = next == saved ? nil : next
+                        }))
+                        .disabled(!chosen.contains(person.login) && chosen.count >= GitHubAPI.maxAssignees)
                     }
-                    .fixedSize()
-                    .disabled(isSaving)
+                } label: {
+                    Text(chosen.isEmpty ? "Nobody" : chosen.sorted().joined(separator: ", ")).lineLimit(1)
                 }
+                .fixedSize()
+                .disabled(isSaving)
+                .help("GitHub allows up to \(GitHubAPI.maxAssignees) assignees")
                 if draft != nil {
                     HStack(spacing: 8) {
                         Spacer()
@@ -75,6 +75,12 @@ struct AssigneesSection: View {
             ?? Person(login: login, name: nil, avatarUrl: URL(string: "https://github.com/\(login).png?size=64"))
     }
 
+    /// Records who GitHub says is assigned, as soon as each write lands, so a
+    /// failure in the next one doesn't leave the stored issue behind it.
+    private func record(_ logins: [String]) {
+        IssueEdits.setAssignees(org: org, issueID: issueID, assignees: logins.sorted().map(person), issues: issueStore, projects: projectStore, orgs: orgs)
+    }
+
     private func save(saved: Set<String>, chosen: Set<String>) {
         guard let api = auth.api else { return }
         isSaving = true
@@ -82,8 +88,20 @@ struct AssigneesSection: View {
         Task {
             defer { isSaving = false }
             do {
-                try await api.setAssignees(issueID: issueID, add: chosen.subtracting(saved).sorted(), remove: saved.subtracting(chosen).sorted())
-                IssueEdits.setAssignees(org: org, issueID: issueID, assignees: chosen.sorted().map(person), issues: issueStore, projects: projectStore)
+                let add = chosen.subtracting(saved).sorted()
+                let remove = saved.subtracting(chosen).sorted()
+                if !add.isEmpty {
+                    let assigned = try await api.addAssignees(issueID: issueID, logins: add)
+                    record(assigned)
+                    let skipped = add.filter { !assigned.contains($0) }
+                    if !skipped.isEmpty {
+                        saveError = "GitHub didn't assign \(skipped.joined(separator: ", ")); they may not have access to this issue's repo."
+                        return
+                    }
+                }
+                if !remove.isEmpty {
+                    record(try await api.removeAssignees(issueID: issueID, logins: remove))
+                }
                 draft = nil
             } catch {
                 saveError = "Couldn't save assignees: \(error.localizedDescription)"

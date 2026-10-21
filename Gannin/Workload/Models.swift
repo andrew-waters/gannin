@@ -139,7 +139,8 @@ struct Issue: Codable, Hashable, Identifiable {
     let createdAt: Date
     let updatedAt: Date
     let closedAt: Date?
-    let assignees: [Person]
+    /// A var so assignees written from the app show before the next fetch.
+    var assignees: [Person]
     let labels: [IssueLabel]
     let linkedPullRequests: [LinkedItem]
 }

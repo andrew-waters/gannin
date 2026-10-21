@@ -303,6 +303,6 @@ struct OrgSnapshotCacheTests {
         #expect(issues.issues(org: "acme")["a"]?.core.assignees.map(\.login) == ["sam"])
 
         c.save(snapshot(issues: [issue("a", updated: 20)]))
-        #expect(issues.issues(org: "acme")["a"]?.core.assignees.map(\.login) != ["sam"])
+        #expect(issues.issues(org: "acme")["a"]?.core.assignees.map(\.login) == ["kim"])
     }
 }
