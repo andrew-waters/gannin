@@ -311,9 +311,12 @@ struct RoutineSchedulerTests {
         #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [1])
         // Run Now while it's busy puts it back, and the window isn't held.
         reviews.answer = { _ in .notYet("Its review was busy, so it waits for the next turn.") }
+        let runsBefore = reviews.store.runs.count
         reviews.scheduler.runReviewNow(reviews.store.reviewQueue(for: "acme")[0])
         await reviews.scheduler.startsFinished()
         #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [1])
+        // It leaves no run behind.
+        #expect(reviews.store.runs.count == runsBefore)
         reviews.busy = []
         reviews.running = []
         reviews.answer = { _ in .started(session: UUID()) }

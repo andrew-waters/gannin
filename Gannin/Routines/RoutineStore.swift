@@ -443,6 +443,14 @@ final class RoutineStore {
         if runs[index] != before { write(runs, "runs.json") }
     }
 
+    /// Takes back a run that never got going (a queued review put back
+    /// because it couldn't start yet), so it leaves no row.
+    func removeRun(_ id: UUID) {
+        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
+        runs.remove(at: index)
+        write(runs, "runs.json")
+    }
+
     /// Times passed without running, as one row for the gap: missed (R2) or
     /// skipped while paused (R14).
     func recordGap(_ times: [Date], routine: UUID, outcome: RoutineRun.Outcome, issue: IssueReference? = nil) {

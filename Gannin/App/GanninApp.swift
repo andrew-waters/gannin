@@ -186,8 +186,13 @@ struct GanninApp: App {
         }
         scheduler.reviewWindows = reviewWindows
         scheduler.runningReviews = { [weak sessions] in sessions?.automaticReviewsRunning ?? 0 }
+        // Passed over while its review is busy or still being started (a
+        // hand-started review building its sandbox, say), so it neither
+        // holds up the queue nor is tried every tick.
         scheduler.reviewReady = { [weak sessions] review in
-            guard let sessions, let lookAgain = review.lookAgain else { return true }
+            guard let sessions else { return true }
+            if sessions.startingReviews[review.pullRequest.id] != nil { return false }
+            guard let lookAgain = review.lookAgain else { return true }
             return !sessions.isBusyForLookAgain(lookAgain.session)
         }
         scheduler.startReview = { [weak sessions, weak orgConfigs] review, _ in

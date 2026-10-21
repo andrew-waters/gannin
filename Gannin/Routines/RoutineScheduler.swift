@@ -11,7 +11,8 @@ enum RoutineStart {
     /// A queued review no longer wanted, and why (R7).
     case skipped(String)
     /// A queued review that can't start yet through no fault of the window
-    /// (its review is busy): it goes back where it was, with no hold.
+    /// (its review is busy): it goes back where it was, with no hold and no
+    /// run recorded. `reviewReady` passes over these, so it's only a race.
     case notYet(String)
 }
 
@@ -229,12 +230,8 @@ final class RoutineScheduler {
                     run.endedAt = .now
                     run.note = why
                 }
-            case .notYet(let why):
-                self.store.updateRun(id) { run in
-                    run.outcome = .skipped
-                    run.endedAt = .now
-                    run.note = why
-                }
+            case .notYet:
+                self.store.removeRun(id)
                 self.store.enqueueReview(review, atFront: true)
             case .failed(let why, let retry):
                 self.store.updateRun(id) { run in
