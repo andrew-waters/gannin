@@ -1,0 +1,66 @@
+{
+  "author" : "andrew-waters",
+  "effort" : 4,
+  "event" : "REQUEST_CHANGES",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "A review that can never start blocks the queue. `startQueuedReview` returns `.fa",
+      "key" : "Gannin/Routines/RoutineScheduler.swift:244:A review that can never start blocks the queue. `startQueued",
+      "line" : 244,
+      "path" : "Gannin/Routines/RoutineScheduler.swift",
+      "posted_at" : "2026-10-21T18:20:03Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The gate fails open when the windows haven't loaded yet. `ReviewWindowBook.windo",
+      "key" : "Gannin/App/GanninApp.swift:178:The gate fails open when the windows haven't loaded yet. `Re",
+      "line" : 178,
+      "path" : "Gannin/App/GanninApp.swift",
+      "posted_at" : "2026-10-21T18:20:03Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`startQueuedReview` holds most of the new decisions: the skip reasons, the `requ",
+      "key" : "Gannin/Sessions/AutoReview.swift:225:`startQueuedReview` holds most of the new decisions: the ski",
+      "line" : 225,
+      "path" : "Gannin/Sessions/AutoReview.swift",
+      "posted_at" : "2026-10-21T18:20:03Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The cap is checked against `runningReviews() + reviewsStarting`. `automaticRevie",
+      "key" : "Gannin/Routines/RoutineScheduler.swift:197:The cap is checked against `runningReviews() + reviewsStarti",
+      "line" : 197,
+      "path" : "Gannin/Routines/RoutineScheduler.swift",
+      "posted_at" : "2026-10-21T18:20:03Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "data",
+      "decision" : "kept",
+      "excerpt" : "`PersonDates.reviewWindows` is a new key in a file shared across Macs and teamma",
+      "key" : "Gannin/Routines/ReviewWindows.swift:61:`PersonDates.reviewWindows` is a new key in a file shared ac",
+      "line" : 61,
+      "path" : "Gannin/Routines/ReviewWindows.swift",
+      "posted_at" : "2026-10-21T18:20:03Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 451,
+  "posted_at" : "2026-10-21T18:20:03Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-21T18:17:11Z",
+  "state" : "OPEN",
+  "title" : "Run automatic PR reviews only in review windows, with a review queue",
+  "updated_at" : "2026-10-21T18:20:05Z",
+  "verdict" : "comment"
+}
