@@ -13,6 +13,23 @@ Settings › General › Agent has Review requests automatically. An org can cho
 
 A review request is reviewed this way once. Drafts, ones you've dismissed, ones already reviewed, and PRs whose title contains a skip keyword (see below) are left alone. Reviews run in the background with no tab, two at a time. Others wait for a later check. Review requests are found every few minutes (Settings › Sync, Your reviews and PRs).
 
+## Review windows
+
+Reviews build and run code, so they can slow your Mac while you work. Review windows say when automatic reviews may start: for example weekdays 12:00 to 13:00 and 18:00 to 20:00. Add them under Agents › Routines, in Review windows, with New Routine › New Review Window. Each has a name, the days it opens (working days or days you pick), Opens and Closes (it may cross midnight) and Reviews at once (1 by default).
+
+With no review windows, nothing changes: requests start as above. With windows:
+
+- A request, or a watched review's Look Again, that comes up outside every window waits in the review queue instead of starting. A request's notification says "waiting for a review window"; for a Look Again, the review's entry in While you were away says so.
+- When a window opens, the queue is worked through in order, never running more reviews at once than the window's Reviews at once. That counts every automatic review on this Mac, whatever its org, so overlapping windows don't add up.
+- A review still running when its window closes finishes. Nothing new starts until a window is open again.
+- When a queued review's turn comes, it's skipped, and the reason noted, if the PR was merged, closed or made a draft while it waited, or no longer asks for your review.
+- Reviews you start yourself, with Review with Claude, are never held.
+- A window Gannin was closed or asleep through is missed: the queue waits for the next one. Pause All on Agents › Routines holds the queue too.
+
+The queue is on Agents › Queue, beside the agent queue: see [Routines](/docs/agents/routines/#the-review-queue). Only you see it; nobody is told on GitHub that their review is queued.
+
+Your review windows are kept in your own file in the org's harness (`people/<login>.json`), so every Mac you use with that harness follows the same windows once the change is committed. Teammates can see them there. A Mac that should behave differently can tick Override on This Mac beside Review windows: that Mac then uses windows of its own, starting from a copy of yours, and leaves your file alone. An org with no harness keeps your windows on this Mac.
+
 ## Watching a reviewed PR
 
 With Watch for changes on the review (on by default), Gannin keeps checking the PR. When new commits or comments from others (not yours, not bots') arrive and things have been quiet a while, it asks the reviewer to look again. The reviewer answers the PR author's comments, and other people's only when they disagree with the review or the reviewer disagrees with them. A merged or closed PR stops the watch. How often it checks is under Settings › Sync, Watched reviews.

@@ -29,7 +29,8 @@ paths:
 - Keep the tints and marker colours for a highlighted row in the shared `DiffStyle`: the review's `DiffRow` and the session Changes pane's `DiffPaneRow` both use them. Repositories diffs aren't highlighted.
 
 ## Automatic review
-- Gate on: not draft, not dismissed, not already started (`autoReviewedRequests`). Cap concurrent runs at `AutoReview.maxRunning`.
+- Gate on: not draft, not dismissed, not already started (`autoReviewedRequests`). Then ask `reviewGate` (review windows, `ReviewGate`): outside every window, queue it in `RoutineStore`'s `reviews.json` and remember it as handled, so a request removed from the queue isn't queued again. Cap concurrent runs at `AutoReview.maxRunning` with no windows, or the open window's reviews at once.
+- Watched reviews' Look Again asks `reviewGate` too, queueing what changed and clearing the watch's counts. Reviews started by hand (`startReview`) never ask.
 - Watched reviews: the first look only records state. Count commits and comments from others only (not the viewer, not bots), and ask the reviewer to look again only after `quietPeriod` with the reviewer idle. Merged or closed ends the watch.
 
 ## Review records (`ReviewRecords.swift`)
@@ -42,4 +43,4 @@ paths:
 - A review snapshots its config in `CodeSession.reviewConfig`; don't re-read it mid-review.
 
 ## Testing
-- Only `PairReviewTests.swift` (the pair loop) and `DiffQuestionTests.swift` (the question Ask Claude sends from a diff line) touch review code. Nothing covers records, config layering, auto review or approval; add tests beside them.
+- Only `PairReviewTests.swift` (the pair loop), `DiffQuestionTests.swift` (the question Ask Claude sends from a diff line) and `ReviewGateTests.swift` (review windows) touch review code. Nothing covers records, config layering, the rest of auto review or approval; add tests beside them.

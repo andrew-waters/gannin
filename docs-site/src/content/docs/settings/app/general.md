@@ -41,7 +41,7 @@ Settings › General is where you set how Gannin looks, who you are signed in as
 | Provider | Anthropic | Chooses the AI provider that sessions use. | This Mac |
 | Model | Claude Code's default | Chooses the model sessions run with, from their next start or Resume. Pick Other to type a model ID yourself. | This Mac |
 | Model ID | Empty | Only shown when you pick Other. The exact model ID to pass to Claude Code. | This Mac |
-| Review requests automatically | Off | A new review request starts Claude's review in the background, two at a time. Each org can say otherwise in its Settings, under Harness. | This Mac |
+| Review requests automatically | Off | A new review request starts Claude's review in the background, two at a time. Each org can say otherwise in its Settings, under Harness. With [review windows](/docs/agents/auto-review/#review-windows) (Agents › Routines), it starts only while one is open, and waits in the review queue otherwise. | This Mac |
 | Watch reviewed pull requests | On | Once a review finishes, new commits or comments on its PR start another review after a couple of quiet minutes, until the PR is merged or closed. | This Mac |
 | Post automatic reviews to GitHub | Off | Posts reviews that Gannin starts by itself as comments. They never approve or request changes. Off, they wait for you to Post Review. | This Mac |
 | Record reviews in the harness | On | Commits a review's findings and outcome to its harness when it is posted, finished, merged or closed. Agents › Metrics reads them. | This Mac |

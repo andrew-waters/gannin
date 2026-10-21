@@ -16,7 +16,7 @@ Pull requests, issues, reviews, boards, checks, releases and repos stay on GitHu
 When an org has a [harness](/docs/concepts/projects-and-harnesses/), the team's settings live in it as JSON files under `.gannin/`, so everyone reads the same copy on every Mac:
 
 - **Each project's harness:** its project (name, repos, boards) in `project.json`, the issue workflow (`workflow.json`), investments (`investments.json`), R&D time settings and marked issues (`rnd.json`, while the activity it fetches stays in Application Support on this Mac), goals (`goals.json`), scorecard (`scorecard.json`), recap cadence (`recap.json`), the committed date field (`prioritisation.json`), notes from the field (`field-notes.json`), the review config (`review.json`) and any repo's own sandbox image (`sandbox/<repo>.Containerfile`).
-- **The home project's harness also holds the org-wide ones:** views (`views.json`), the working week (`working-week.json`), leave (`leave.json`), the accounting year and periods (`accounting.json`), excluded repos and people and the Needs Review and Needs the Mac ticks (`exclusions.json`), drafting guidance (`authoring.json`), and each person's dates and time off (`people/<login>.json`).
+- **The home project's harness also holds the org-wide ones:** views (`views.json`), the working week (`working-week.json`), leave (`leave.json`), the accounting year and periods (`accounting.json`), excluded repos and people and the Needs Review and Needs the Mac ticks (`exclusions.json`), drafting guidance (`authoring.json`), and each person's dates, time off and [review windows](/docs/agents/auto-review/#review-windows) (`people/<login>.json`).
 
 Plans, requirements, decisions, findings, skills, prompts, learnings, session records and review records are in the harness too, as Markdown and JSON.
 
@@ -33,7 +33,7 @@ These are yours alone and never leave this Mac:
 - Where each harness is checked out, automatic review per org, whether to record sessions without asking, and whether to record queued sessions.
 - Your GitHub token, and sandbox credentials, in the keychain.
 - Caches of what was fetched from GitHub (Settings › Storage shows their size, with Clear).
-- Agent sessions, routines and their runs.
+- Agent sessions, routines and their runs, the review queue, and review windows set with Override on This Mac.
 - What you've read on Harness › Onboarding, never committed or shared.
 - Release download history, which GitHub can't give back once lost, so only Erase Everything removes it.
 
