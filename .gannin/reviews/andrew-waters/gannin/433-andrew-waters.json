@@ -24,14 +24,15 @@
       "severity" : "minor"
     }
   ],
+  "merged_at" : "2026-10-21T09:14:38Z",
   "number" : 433,
   "posted_at" : "2026-10-21T07:08:51Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-21T07:07:37Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Show only the latest run of each check on a session's pull request",
-  "updated_at" : "2026-10-21T07:08:52Z",
+  "updated_at" : "2026-10-21T12:05:41Z",
   "verdict" : "request_changes"
 }
