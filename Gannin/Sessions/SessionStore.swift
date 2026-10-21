@@ -503,6 +503,9 @@ final class SessionStore {
     /// Routines and their runs, for naming and watching scheduled runs
     /// (`Routines/`); set by the app.
     @ObservationIgnored var routines: RoutineStore?
+    /// Whether an automatic review of the org's PR may start now or waits
+    /// for a review window (`ReviewGate`); set by the app.
+    @ObservationIgnored var reviewGate: (String) -> ReviewGate.Decision = { _ in .start(limit: AutoReview.maxRunning) }
     /// Scheduled runs' sessions seen working since launch, so one waiting
     /// for its first prompt isn't taken for finished.
     @ObservationIgnored var routineSessionsWorked: Set<UUID> = []

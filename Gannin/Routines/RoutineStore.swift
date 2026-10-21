@@ -129,6 +129,25 @@ struct QueuedIssue: Codable, Identifiable, Hashable {
     let addedAt: Date
 }
 
+/// A PR review waiting for a review window (R3, R4): a request Auto review
+/// would have started, or a watched review's Look Again, once per PR.
+struct QueuedReview: Codable, Identifiable, Hashable {
+    /// What has changed on a watched PR since its review last looked.
+    struct LookAgain: Codable, Hashable {
+        let session: UUID
+        var hasNewCommits: Bool
+        var newComments: Int
+
+        var reasons: String { AutoReview.reasons(newCommits: hasNewCommits, newComments: newComments) }
+    }
+
+    var id: String { pullRequest.id }
+    let pullRequest: PullRequestReference
+    /// Nil for a review request.
+    var lookAgain: LookAgain?
+    let queuedAt: Date
+}
+
 /// One run of a routine (R13), or a gap of times missed or skipped.
 struct RoutineRun: Codable, Identifiable, Hashable {
     enum Outcome: String, Codable {
@@ -190,14 +209,16 @@ struct RoutineRun: Codable, Identifiable, Hashable {
     }
 }
 
-/// Routines, the agent queue and run history, on this Mac only (R15):
-/// Application Support/<bundle ID>/Routines, written through as each
-/// changes. Runs are the newest 500.
+/// Routines, the agent queue, the review queue and run history, on this Mac
+/// only (R15): Application Support/<bundle ID>/Routines, written through as
+/// each changes. Runs are the newest 500.
 @Observable
 final class RoutineStore {
     private(set) var routines: [Routine] = []
     /// Every org's queue in one list; each org's in its order.
     private(set) var queue: [QueuedIssue] = []
+    /// Reviews waiting for a review window, every org's in one list.
+    private(set) var reviewQueue: [QueuedReview] = []
     private(set) var runs: [RoutineRun] = []
     /// Pause All (R14).
     private(set) var isPaused = false
@@ -227,6 +248,7 @@ final class RoutineStore {
         self.directory = directory
         routines = read([Routine].self, "routines.json") ?? []
         queue = read([QueuedIssue].self, "queue.json") ?? []
+        reviewQueue = read([QueuedReview].self, "reviews.json") ?? []
         runs = read([RoutineRun].self, "runs.json") ?? []
         let state = read(State.self, "state.json") ?? State()
         isPaused = state.isPaused
@@ -329,6 +351,54 @@ final class RoutineStore {
         let org = item.issue.org
         guard let from = queue(for: org).firstIndex(of: item) else { return }
         move(in: org, fromOffsets: IndexSet(integer: from), toOffset: toFront ? 0 : queue(for: org).count)
+    }
+
+    // MARK: The review queue
+
+    func reviewQueue(for org: String) -> [QueuedReview] { reviewQueue.filter { $0.pullRequest.org == org } }
+
+    func isReviewQueued(_ id: String) -> Bool { reviewQueue.contains { $0.id == id } }
+
+    /// Adds the review at the end of its org's queue, or at its front as a
+    /// failed start goes back. A PR waits once: a Look Again for one already
+    /// waiting adds what's changed to it, and a request waiting already
+    /// covers any Look Again.
+    func enqueueReview(_ review: QueuedReview, atFront: Bool = false) {
+        if let index = reviewQueue.firstIndex(where: { $0.id == review.id }) {
+            guard var waiting = reviewQueue[index].lookAgain, let more = review.lookAgain else { return }
+            waiting.hasNewCommits = waiting.hasNewCommits || more.hasNewCommits
+            waiting.newComments += more.newComments
+            reviewQueue[index].lookAgain = waiting
+        } else if atFront {
+            reviewQueue.insert(review, at: 0)
+        } else {
+            reviewQueue.append(review)
+        }
+        write(reviewQueue, "reviews.json")
+    }
+
+    func dequeueReview(_ id: String) {
+        guard isReviewQueued(id) else { return }
+        reviewQueue.removeAll { $0.id == id }
+        write(reviewQueue, "reviews.json")
+    }
+
+    /// Reorders the org's review queue as a list does (`onMove`), leaving
+    /// other orgs' where they are.
+    func moveReviews(in org: String, fromOffsets source: IndexSet, toOffset destination: Int) {
+        var mine = reviewQueue(for: org)
+        mine.move(fromOffsets: source, toOffset: destination)
+        var next = mine.makeIterator()
+        reviewQueue = reviewQueue.map { $0.pullRequest.org == org ? (next.next() ?? $0) : $0 }
+        write(reviewQueue, "reviews.json")
+    }
+
+    /// Moves the review to the front or the back of its org's queue.
+    func moveReview(_ id: String, toFront: Bool) {
+        guard let item = reviewQueue.first(where: { $0.id == id }) else { return }
+        let org = item.pullRequest.org
+        guard let from = reviewQueue(for: org).firstIndex(of: item) else { return }
+        moveReviews(in: org, fromOffsets: IndexSet(integer: from), toOffset: toFront ? 0 : reviewQueue(for: org).count)
     }
 
     // MARK: Runs

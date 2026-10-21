@@ -139,13 +139,10 @@ struct GanninApp: App {
         }
         // Auto review: a request found starts a review in the background, in
         // the harness of the project with the PR's repo, when it's on for
-        // that org.
+        // that org, or waits for a review window (`sessions.reviewGate`).
         watch.autoReview = { [weak sessions, weak orgConfigs] reference in
-            guard AutoReview.isOn(for: reference.org), let sessions,
-                  let setup = orgConfigs?.baseConfig(for: reference.org).harness(covering: [reference.repo]),
-                  let path = SessionStore.harnessPath(org: reference.org, repo: setup.repo) else { return false }
-            if await sessions.reviewConfig(org: reference.org, harness: setup, repo: reference.repo).resolved.skips(title: reference.title) { return nil }
-            return await sessions.startAutomaticReview(of: reference, harness: setup, harnessPath: path)
+            guard let sessions, let orgConfigs else { return .later }
+            return await sessions.autoReview(reference, configs: orgConfigs)
         }
         watch.checkWatched = { [weak sessions] in await sessions?.checkWatchedReviews() }
         watch.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
@@ -175,6 +172,18 @@ struct GanninApp: App {
             return await sessions.startRoutine(routine, issue: issue, run: run, configs: orgConfigs, issues: issues, details: details, login: auth?.viewer?.login)
         }
         scheduler.watch = { [weak sessions] in sessions?.watchRoutineRuns() }
+        // Review windows: the signed-in person's, or this Mac's own.
+        let reviewWindows: (String) -> [Routine] = { [weak routines, weak auth, weak peopleDates] org in
+            guard let routines, let peopleDates else { return [] }
+            return ReviewWindowBook(org: org, login: auth?.viewer?.login, routines: routines, people: peopleDates).windows
+        }
+        sessions.reviewGate = { [weak sessions, weak routines, weak scheduler] org in
+            guard let sessions, let routines, let scheduler else { return .start(limit: AutoReview.maxRunning) }
+            return ReviewGate.decide(
+                now: .now, windows: reviewWindows(org), running: sessions.automaticReviewsRunning,
+                paused: routines.isPaused, isWorkingDay: scheduler.workingDays(org)
+            )
+        }
         if !demo { scheduler.begin() }
         TabMenuRename.shared.install()
     }

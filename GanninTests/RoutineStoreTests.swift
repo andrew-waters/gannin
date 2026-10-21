@@ -40,6 +40,49 @@ struct RoutineStoreTests {
         #expect(RoutineStore(directory: folder).runs.isEmpty)
     }
 
+    private func pullRequest(_ number: Int, org: String = "acme") -> PullRequestReference {
+        PullRequestReference(org: org, id: "PR_\(org)_\(number)", number: number, title: "PR \(number)", repo: "\(org)/app",
+                             url: URL(string: "https://github.com/\(org)/app/pull/\(number)")!)
+    }
+
+    @Test func aReviewWaitsOnceAndALookAgainAddsWhatChanged() {
+        let store = RoutineStore(directory: folder)
+        let session = UUID()
+        store.enqueueReview(QueuedReview(pullRequest: pullRequest(1), queuedAt: .now))
+        store.enqueueReview(QueuedReview(pullRequest: pullRequest(1), queuedAt: .now))
+        // A request waiting already covers a Look Again.
+        store.enqueueReview(QueuedReview(pullRequest: pullRequest(1), lookAgain: .init(session: session, hasNewCommits: true, newComments: 1), queuedAt: .now))
+        #expect(store.reviewQueue.count == 1)
+        #expect(store.reviewQueue.first?.lookAgain == nil)
+
+        store.enqueueReview(QueuedReview(pullRequest: pullRequest(2), lookAgain: .init(session: session, hasNewCommits: false, newComments: 1), queuedAt: .now))
+        store.enqueueReview(QueuedReview(pullRequest: pullRequest(2), lookAgain: .init(session: session, hasNewCommits: true, newComments: 2), queuedAt: .now))
+        let merged = store.reviewQueue.first { $0.id == pullRequest(2).id }?.lookAgain
+        #expect(merged == .init(session: session, hasNewCommits: true, newComments: 3))
+        #expect(merged?.reasons == "new commits have been pushed and 3 new comments have been left")
+
+        let again = RoutineStore(directory: folder)
+        #expect(again.reviewQueue == store.reviewQueue)
+        again.dequeueReview(pullRequest(1).id)
+        #expect(RoutineStore(directory: folder).reviewQueue.map(\.id) == [pullRequest(2).id])
+    }
+
+    @Test func eachOrgsReviewQueueReordersOnItsOwn() {
+        let store = RoutineStore(directory: folder)
+        for item in [pullRequest(1), pullRequest(1, org: "other"), pullRequest(2), pullRequest(3)] {
+            store.enqueueReview(QueuedReview(pullRequest: item, queuedAt: .now))
+        }
+        store.moveReview(pullRequest(3).id, toFront: true)
+        #expect(store.reviewQueue(for: "acme").map(\.pullRequest.number) == [3, 1, 2])
+        #expect(store.reviewQueue(for: "other").map(\.pullRequest.number) == [1])
+        store.moveReviews(in: "acme", fromOffsets: IndexSet(integer: 0), toOffset: 3)
+        #expect(store.reviewQueue(for: "acme").map(\.pullRequest.number) == [1, 2, 3])
+        // Back at the front when a start fails.
+        store.dequeueReview(pullRequest(3).id)
+        store.enqueueReview(QueuedReview(pullRequest: pullRequest(3), queuedAt: .now), atFront: true)
+        #expect(store.reviewQueue(for: "acme").first?.pullRequest.number == 3)
+    }
+
     @Test func lookTimesAreWrittenAtMostEveryFiveMinutesUnlessSaved() {
         let start = Date(timeIntervalSince1970: 1_800_000_000)
         let store = RoutineStore(directory: folder)

@@ -116,3 +116,29 @@ struct ReviewWindowBook {
         }
     }
 }
+
+/// Whether an automatic review (a request Auto review picks up, or a
+/// watched review's Look Again) may start now or waits in the review queue.
+/// Reviews started by hand never ask.
+enum ReviewGate {
+    enum Decision: Equatable {
+        /// Start it, while fewer than `limit` automatic reviews run.
+        case start(limit: Int)
+        case queue
+    }
+
+    /// With no windows (none on), start as before, up to
+    /// `AutoReview.maxRunning` (R11). With windows, start only while one is
+    /// open and `running` (every automatic review on this Mac, whatever its
+    /// org) is under its reviews at once (R5); otherwise, or while routines
+    /// are paused, queue it (R3, R4).
+    static func decide(now: Date, windows: [Routine], running: Int, paused: Bool, calendar: Calendar = .current,
+                       isWorkingDay: RoutineSchedule.WorkingDays = RoutineSchedule.everyWeekday) -> Decision {
+        let windows = windows.filter(\.isEnabled)
+        guard !windows.isEmpty else { return .start(limit: AutoReview.maxRunning) }
+        guard !paused,
+              let room = windows.filter({ $0.schedule.isOpen(at: now, calendar: calendar, isWorkingDay: isWorkingDay) }).map(\.concurrency).max(),
+              running < room else { return .queue }
+        return .start(limit: room)
+    }
+}
