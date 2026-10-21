@@ -205,6 +205,9 @@ extension SessionStore {
             switch reviewGate(pr.org) {
             case .queue:
                 guard let routines else { break }
+                // One already reviewed or being started (by hand, say) isn't
+                // queued, as `startAutomaticReview` wouldn't start it.
+                guard review(of: pr.id) == nil, startingReviews[pr.id] == nil else { return .later }
                 routines.enqueueReview(QueuedReview(pullRequest: pr, queuedAt: .now))
                 return .queued
             case .start(let room):
@@ -218,7 +221,7 @@ extension SessionStore {
     /// merged, closed or made a draft while it waited, or, for a request, no
     /// longer asks for you (R7); else started as Auto review or Look Again
     /// would. `requested` is every PR asking for your review as last seen,
-    /// nil if not looked yet.
+    /// less those you've dismissed; nil if not looked yet.
     func startQueuedReview(_ queued: QueuedReview, configs: OrgConfigStore, requested: Set<String>?) async -> RoutineStart {
         let pr = queued.pullRequest
         guard let api = api() else { return .failed("Gannin isn't signed in to GitHub.") }
@@ -238,18 +241,26 @@ extension SessionStore {
         if let lookAgain = queued.lookAgain {
             let id = lookAgain.session
             guard sessions[id]?.watch?.isOn == true else { return .skipped("Its review was finished, or stopped watching the PR.") }
-            if [.working, .starting, .needsYou].contains(state(id)) { return .failed("Its review is busy, so it'll try again.") }
+            if isBusyForLookAgain(id) { return .notYet("Its review was busy, so it waits for the next turn.") }
             guard await reviewAgain(id, because: lookAgain.reasons) else { return .failed("Couldn't ask its review to look again.") }
             return .started(session: id)
         }
-        if let requested, !requested.contains(pr.id) { return .skipped("It no longer asks for your review.") }
+        if let requested, !requested.contains(pr.id) { return .skipped("It no longer asks for your review, or you dismissed it.") }
         if review(of: pr.id) != nil { return .skipped("It already has a review.") }
+        if startingReviews[pr.id] != nil { return .notYet("Its review was already being started.") }
         guard AutoReview.isOn(for: pr.org) else { return .skipped("Auto review is off for \(pr.org).") }
         switch await autoReview(pr, configs: configs, gated: false, limit: .max) {
         case .started(let id): return .started(session: id)
         case .skipped: return .skipped("Its review config leaves it alone.")
-        case .queued, .later: return .failed("Couldn't start its review: the project covering \(pr.repo) isn't checked out here.")
+        case .queued, .later:
+            if startingReviews[pr.id] != nil { return .notYet("Its review was already being started.") }
+            return .failed("Couldn't start its review: the project covering \(pr.repo) isn't checked out here.")
         }
+    }
+
+    /// Whether a review's claude is busy, so asking it to look again waits.
+    func isBusyForLookAgain(_ id: UUID) -> Bool {
+        [.working, .starting, .needsYou].contains(state(id))
     }
 
     /// A review started by Gannin for a request it found, in the background:
@@ -444,7 +455,7 @@ extension SessionStore {
             return
         }
         guard reviewing, let since = watch.changedAt, Date.now.timeIntervalSince(since) >= AutoReview.quietPeriod,
-              ![.working, .starting, .needsYou].contains(state(id)) else { return }
+              !isBusyForLookAgain(id) else { return }
         let reasons = AutoReview.reasons(newCommits: watch.hasNewCommits, newComments: watch.newComments)
         // Outside every review window it waits its turn, with what's changed (R4).
         if let routines, let pr = sessions[id]?.reviewOf, reviewGate(pr.org) == .queue {

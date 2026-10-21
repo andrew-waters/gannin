@@ -186,9 +186,14 @@ struct GanninApp: App {
         }
         scheduler.reviewWindows = reviewWindows
         scheduler.runningReviews = { [weak sessions] in sessions?.automaticReviewsRunning ?? 0 }
+        scheduler.reviewReady = { [weak sessions] review in
+            guard let sessions, let lookAgain = review.lookAgain else { return true }
+            return !sessions.isBusyForLookAgain(lookAgain.session)
+        }
         scheduler.startReview = { [weak sessions, weak orgConfigs] review, _ in
             guard let sessions, let orgConfigs else { return .failed("Gannin is closing.") }
-            let requested = watch.checkedAt == nil ? nil : Set(watch.reviewRequests.map(\.id))
+            // Dismissed requests are never reviewed automatically.
+            let requested = watch.checkedAt == nil ? nil : Set(watch.waitingReviews.map(\.id))
             return await sessions.startQueuedReview(review, configs: orgConfigs, requested: requested)
         }
         if !demo { scheduler.begin() }

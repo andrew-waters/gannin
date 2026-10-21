@@ -51,9 +51,9 @@ A queue window that fails to start an issue puts it back at the front and waits 
 
 ## The list
 
-Each row shows its schedule, limit, next run (or Open now), last outcome and an on switch.
+Each row shows its schedule, limit, next run (or Open now), last outcome and an on switch. Pause All in the toolbar stops every routine, with a banner while it's on. A row's menu has Run Now, Edit, Turn Off and Delete. A routine's page shows its settings, next times and its runs: when scheduled, started, outcome, how long, cost, PRs and Open Session. The newest 500 runs are kept.
 
-Review windows have a section of their own, with Override on This Mac. A review window's row shows its days and hours, Reviews at once, Open now or when it next opens, and its last outcome; click it or use Edit to change it, or Delete to remove it. Reviews it started show on Agents › Queue. Deleting a window leaves its reviews in the queue: with no windows left they start as automatic reviews always have. Pause All in the toolbar stops every routine, with a banner while it's on. A row's menu has Run Now, Edit, Turn Off and Delete. A routine's page shows its settings, next times and its runs: when scheduled, started, outcome, how long, cost, PRs and Open Session. The newest 500 runs are kept.
+Review windows have a section of their own, with Override on This Mac. A review window's row shows its days and hours, Reviews at once, Open now or when it next opens, and its last outcome, with no on switch. Click it or use Edit to change it, or Delete to remove it. Reviews it started show on Agents › Queue. Deleting a window leaves its reviews in the queue: with no windows left they start as automatic reviews always have, unless Pause All is on.
 
 ## The queue
 

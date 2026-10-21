@@ -10,6 +10,9 @@ enum RoutineStart {
     case failed(String, retry: Bool = true)
     /// A queued review no longer wanted, and why (R7).
     case skipped(String)
+    /// A queued review that can't start yet through no fault of the window
+    /// (its review is busy): it goes back where it was, with no hold.
+    case notYet(String)
 }
 
 /// Starts agent sessions by themselves while Gannin runs: each routine's
@@ -36,6 +39,9 @@ final class RoutineScheduler {
     /// Starts a queued review whose turn has come, after checking it's still
     /// wanted (`SessionStore.startQueuedReview`).
     @ObservationIgnored var startReview: (QueuedReview, UUID) async -> RoutineStart = { _, _ in .failed("Gannin isn't ready to start reviews.") }
+    /// Whether a queued review could start now: false for a Look Again
+    /// whose review is busy, which waits without holding up the rest.
+    @ObservationIgnored var reviewReady: (QueuedReview) -> Bool = { _ in true }
     /// The calendar times are worked out in; a test's own.
     @ObservationIgnored var calendar: Calendar = .current
 
@@ -176,6 +182,8 @@ final class RoutineScheduler {
     /// Auto review would (R11). A window closing only stops new starts (R6).
     /// Whether it started any.
     private func drainReviews(org: String, now: Date) -> Bool {
+        // Pause All holds the queue, with or without windows.
+        guard !store.isPaused else { return false }
         let days = workingDays(org)
         let windows = reviewWindows(org).filter(\.isEnabled)
         for window in windows where !window.schedule.isOpen(at: now, calendar: calendar, isWorkingDay: days) {
@@ -183,7 +191,7 @@ final class RoutineScheduler {
             heldUntil[window.id] = nil
         }
         var started = false
-        while let next = store.reviewQueue(for: org).first {
+        while let next = store.reviewQueue(for: org).first(where: reviewReady) {
             let running = runningReviews() + reviewsStarting
             guard case .start(let limit) = ReviewGate.decide(now: now, windows: windows, running: running, paused: store.isPaused, calendar: calendar, isWorkingDay: days),
                   running < limit else { return started }
@@ -221,6 +229,13 @@ final class RoutineScheduler {
                     run.endedAt = .now
                     run.note = why
                 }
+            case .notYet(let why):
+                self.store.updateRun(id) { run in
+                    run.outcome = .skipped
+                    run.endedAt = .now
+                    run.note = why
+                }
+                self.store.enqueueReview(review, atFront: true)
             case .failed(let why, let retry):
                 self.store.updateRun(id) { run in
                     run.outcome = .failed
@@ -247,13 +262,18 @@ final class RoutineScheduler {
     }
 
     /// Backs the window off after a failed start, then gives up until it
-    /// next opens.
+    /// next opens. Runs with no window (`reviewQueueRuns`) never open or
+    /// shut, so they keep backing off, at most as long as the last hold
+    /// before giving up, rather than stopping for good.
     private func holdAfterFailure(_ window: UUID, scheduledAt: Date) {
         let count = (failures[window] ?? 0) + 1
         failures[window] = count
-        heldUntil[window] = count >= Self.maxFailures
-            ? .distantFuture
-            : max(scheduledAt, .now).addingTimeInterval(Self.holdAfterFailure * pow(2, Double(count - 1)))
+        if count >= Self.maxFailures, window != Self.reviewQueueRuns {
+            heldUntil[window] = .distantFuture
+            return
+        }
+        let doublings = min(count, Self.maxFailures - 1) - 1
+        heldUntil[window] = max(scheduledAt, .now).addingTimeInterval(Self.holdAfterFailure * pow(2, Double(doublings)))
     }
 
     /// Starts the next queued issues while the window has room (R7), each
@@ -306,7 +326,7 @@ final class RoutineScheduler {
                     self.store.enqueue(issue, atFront: true)
                     self.holdAfterFailure(routine.id, scheduledAt: scheduledAt)
                 }
-            case .skipped(let why):
+            case .skipped(let why), .notYet(let why):
                 self.store.updateRun(id) { run in
                     run.outcome = .skipped
                     run.endedAt = .now

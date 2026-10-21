@@ -184,6 +184,7 @@ struct RoutineSchedulerTests {
         var running: [String] = []
         var started: [Int] = []
         var answer: (QueuedReview) -> RoutineStart = { _ in .started(session: UUID()) }
+        var busy: Set<Int> = []
 
         init(calendar: Calendar) {
             store = RoutineStore(directory: FileManager.default.temporaryDirectory.appending(path: "RoutineSchedulerTests-\(UUID().uuidString)", directoryHint: .isDirectory))
@@ -192,6 +193,7 @@ struct RoutineSchedulerTests {
             scheduler.workingDays = { _ in { _ in true } }
             scheduler.reviewWindows = { [unowned self] org in self.windows[org] ?? [] }
             scheduler.runningReviews = { [unowned self] in self.running.count }
+            scheduler.reviewReady = { [unowned self] review in !self.busy.contains(review.pullRequest.number) }
             scheduler.startReview = { [unowned self] review, _ in
                 let result = self.answer(review)
                 if case .started = result {
@@ -297,6 +299,54 @@ struct RoutineSchedulerTests {
         #expect(reviews.started == [2])
         #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [1])
         #expect(reviews.store.runs(for: lunch.id).count == 1)
+    }
+
+    @Test func aBusyLookAgainWaitsWithoutHoldingUpTheRest() async {
+        let reviews = Reviews(calendar: calendar)
+        reviews.windows["acme"] = [reviewWindow(0, 23)]
+        reviews.busy = [1]
+        reviews.queue([pullRequest(1), pullRequest(2)])
+        await reviews.check(date(2026, 10, 21, 10))
+        #expect(reviews.started == [2])
+        #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [1])
+        // Run Now while it's busy puts it back, and the window isn't held.
+        reviews.answer = { _ in .notYet("Its review was busy, so it waits for the next turn.") }
+        reviews.scheduler.runReviewNow(reviews.store.reviewQueue(for: "acme")[0])
+        await reviews.scheduler.startsFinished()
+        #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [1])
+        reviews.busy = []
+        reviews.running = []
+        reviews.answer = { _ in .started(session: UUID()) }
+        await reviews.check(date(2026, 10, 21, 10, 0, 15))
+        #expect(reviews.started == [2, 1])
+    }
+
+    @Test func pauseAllHoldsTheQueueEvenWithNoWindows() async {
+        let reviews = Reviews(calendar: calendar)
+        reviews.queue([pullRequest(1)])
+        reviews.store.setPaused(true)
+        await reviews.check(date(2026, 10, 21, 3))
+        #expect(reviews.started.isEmpty)
+        reviews.store.setPaused(false)
+        await reviews.check(date(2026, 10, 21, 3, 0, 15))
+        #expect(reviews.started == [1])
+    }
+
+    @Test func withNoWindowsFailedStartsKeepBackingOffRatherThanStopping() async {
+        let reviews = Reviews(calendar: calendar)
+        var tries = 0
+        reviews.answer = { _ in
+            tries += 1
+            return .failed("Couldn't look the PR up.")
+        }
+        reviews.queue([pullRequest(1)])
+        // Holds count from the look's time when it's later than now: 5, 10,
+        // 20 minutes, then 20 again past the fourth failure, never for good.
+        for minute in [0, 6, 17, 38, 59] {
+            await reviews.check(date(2030, 1, 1, 10, minute))
+        }
+        #expect(tries == 5)
+        #expect(reviews.scheduler.heldUntil[RoutineScheduler.reviewQueueRuns] == date(2030, 1, 1, 11, 19))
     }
 
     @Test func withNoWindowsALeftoverQueueDrainsAsAutoReviewWould() async {
