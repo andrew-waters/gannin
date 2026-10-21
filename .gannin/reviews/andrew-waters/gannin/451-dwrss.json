@@ -1,7 +1,7 @@
 {
   "author" : "andrew-waters",
   "effort" : 4,
-  "event" : "REQUEST_CHANGES",
+  "event" : "APPROVE",
   "findings" : [
     {
       "category" : "correctness",
@@ -11,6 +11,7 @@
       "line" : 244,
       "path" : "Gannin/Routines/RoutineScheduler.swift",
       "posted_at" : "2026-10-21T18:20:03Z",
+      "resolved_at" : "2026-10-21T18:33:07Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 178,
       "path" : "Gannin/App/GanninApp.swift",
       "posted_at" : "2026-10-21T18:20:03Z",
+      "resolved_at" : "2026-10-21T18:33:07Z",
       "severity" : "major"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 225,
       "path" : "Gannin/Sessions/AutoReview.swift",
       "posted_at" : "2026-10-21T18:20:03Z",
+      "resolved_at" : "2026-10-21T18:33:07Z",
       "severity" : "minor"
     },
     {
@@ -41,6 +44,7 @@
       "line" : 197,
       "path" : "Gannin/Routines/RoutineScheduler.swift",
       "posted_at" : "2026-10-21T18:20:03Z",
+      "resolved_at" : "2026-10-21T18:33:07Z",
       "severity" : "minor"
     },
     {
@@ -51,16 +55,27 @@
       "line" : 61,
       "path" : "Gannin/Routines/ReviewWindows.swift",
       "posted_at" : "2026-10-21T18:20:03Z",
+      "resolved_at" : "2026-10-21T18:33:07Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`reviewWindowsNote` and the Review windows section on Routines read `ReviewWindo",
+      "key" : "Gannin/Routines/AgentQueuePage.swift:180:`reviewWindowsNote` and the Review windows section on Routin",
+      "line" : 180,
+      "path" : "Gannin/Routines/AgentQueuePage.swift",
+      "posted_at" : "2026-10-21T18:33:01Z",
       "severity" : "nit"
     }
   ],
   "number" : 451,
-  "posted_at" : "2026-10-21T18:20:03Z",
+  "posted_at" : "2026-10-21T18:33:01Z",
   "repo" : "andrew-waters/gannin",
   "reviewer" : "dwrss",
   "started_at" : "2026-10-21T18:17:11Z",
   "state" : "OPEN",
   "title" : "Run automatic PR reviews only in review windows, with a review queue",
-  "updated_at" : "2026-10-21T18:20:05Z",
-  "verdict" : "comment"
+  "updated_at" : "2026-10-21T18:33:07Z",
+  "verdict" : "approve"
 }
