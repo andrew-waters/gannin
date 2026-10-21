@@ -479,6 +479,9 @@ final class SessionStore {
     /// The signed-in login, so a session's own feedback on a PR it isn't
     /// the author of (reviewing someone else's) doesn't notify; set by the app.
     @ObservationIgnored var viewerLogin: () -> String? = { nil }
+    /// The extra pair reviewers turned on for a session's project; set by
+    /// the app, from the user's own settings.
+    @ObservationIgnored var extraReviewers: (CodeSession) -> [ExtraReviewer] = { _ in [] }
     /// The budget is low or GitHub has refused: background PR checks wait.
     @ObservationIgnored var holdsOff: () -> Bool = { false }
     /// Gannin's view of an org as files (`OrgContext`), for an Ask session

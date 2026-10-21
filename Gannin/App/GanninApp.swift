@@ -103,7 +103,11 @@ struct GanninApp: App {
         EditorFontStore.shared.onChange = { [weak sessions] font in sessions?.applyEditorFont(font) }
         sessions.api = { [weak auth] in auth?.api }
         sessions.viewerLogin = { [weak auth] in auth?.viewer?.login }
-        sessions.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
+        sessions.extraReviewers = { [weak orgConfigs] session in
+            guard let repo = session.harnessRepo else { return [] }
+            return orgConfigs?.harnesses(for: session.org).first { $0.repo == repo }?.enabledExtraReviewers ?? []
+        }
+        sessions.holdsOff = {[weak auth] in auth?.shouldHoldOff ?? false }
         // An Ask's org data, written when it starts or resumes.
         sessions.orgContext = { [weak orgs, weak metrics, weak issues, weak orgConfigs, weak harness, weak peopleDates, weak hidden] org, repo in
             guard let orgs, let metrics, let issues, let orgConfigs, let harness, let peopleDates, let hidden else { return [:] }

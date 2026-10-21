@@ -71,6 +71,9 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
         var suggestion: String? = nil
         /// What it's about (`ReviewCategory`), from a PR review.
         var category: String? = nil
+        /// Who raised it, in a pair review with an extra reviewer: names
+        /// joined with " and " when more than one found it.
+        var reviewer: String? = nil
     }
 
     /// One area of a reviewed PR's change, in the order to read them.

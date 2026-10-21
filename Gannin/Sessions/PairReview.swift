@@ -36,8 +36,109 @@ struct PairReview: Codable, Hashable {
     var endedAt: Date?
     /// Why it stopped, when it wasn't you.
     var note: String?
+    /// The claude reviewer's findings this round, once it has answered and
+    /// until the round finishes (`finishMergedRound`).
+    var claudeFindings: [SessionTranscript.Finding]?
+    /// This round's extra reviewers, by `ExtraReviewer.id`: those that
+    /// started, and how each is getting on. Kept after the round for the
+    /// panel, until the next one starts.
+    var extras: [String: ExtraReview]?
+
+    /// An extra reviewer's part in a round.
+    struct ExtraReview: Codable, Hashable {
+        enum State: String, Codable {
+            case running
+            /// Its findings (possibly none) are in `findings`.
+            case answered
+            /// It couldn't review; `message` says why. It counts as having
+            /// found nothing, so the round isn't held up.
+            case failed
+        }
+
+        var state: State = .running
+        var findings: [SessionTranscript.Finding] = []
+        var message: String?
+        /// Which start of the reviewer this is, so one that outlives its
+        /// round (you stopped the loop and started another) can't answer
+        /// for the new one.
+        var run = UUID()
+    }
 
     var isOver: Bool { [.settled, .limit, .stopped].contains(phase) }
+
+    /// Starts a round's extra reviewers, none having answered.
+    mutating func startExtras(_ reviewers: [ExtraReviewer]) {
+        claudeFindings = nil
+        extras = reviewers.isEmpty ? nil : Dictionary(uniqueKeysWithValues: reviewers.map { ($0.id, ExtraReview()) })
+    }
+
+    var isWaitingOnExtras: Bool { extras?.values.contains { $0.state == .running } ?? false }
+
+    mutating func claudeAnswered(_ findings: [SessionTranscript.Finding], reply: String) {
+        claudeFindings = findings
+        lastReply = reply
+    }
+
+    /// Records an extra reviewer's outcome, if it's the run this round is
+    /// waiting on. Returns whether it was.
+    mutating func extraFinished(_ reviewer: ExtraReviewer, run: UUID, outcome: ExtraReviewer.Outcome) -> Bool {
+        guard phase == .reviewing, var extra = extras?[reviewer.id], extra.state == .running, extra.run == run else { return false }
+        switch outcome {
+        case .findings(let findings):
+            extra.state = .answered
+            extra.findings = findings
+        case .failed(let message):
+            extra.state = .failed
+            extra.message = message
+        }
+        extras?[reviewer.id] = extra
+        return true
+    }
+
+    /// Claude has answered and every extra that started has too (or failed).
+    var isRoundComplete: Bool { claudeFindings != nil && !isWaitingOnExtras }
+
+    /// Claude's findings and those of the extras that answered, as one list.
+    var mergedFindings: [SessionTranscript.Finding] {
+        let answered = ExtraReviewer.allCases.compactMap { reviewer in
+            extras?[reviewer.id].flatMap { $0.state == .answered ? (reviewer.title, $0.findings) : nil }
+        }
+        return Self.merge(claude: claudeFindings ?? [], extras: answered)
+    }
+
+    /// Finishes the round with the merged findings.
+    mutating func finishMergedRound(at date: Date = .now) {
+        finishRound(findings: mergedFindings.count, reply: lastReply ?? "", at: date)
+        claudeFindings = nil
+    }
+
+    /// One list from the reviewers' lists, claude's first, each finding once
+    /// (the same path, line and comment from two reviewers is one, credited
+    /// to both). With no extra reviewer's list it is claude's, unlabelled;
+    /// with one, every finding says who raised it.
+    static func merge(claude: [SessionTranscript.Finding], extras: [(reviewer: String, findings: [SessionTranscript.Finding])]) -> [SessionTranscript.Finding] {
+        guard !extras.isEmpty else { return claude }
+        var merged: [SessionTranscript.Finding] = []
+        var names: [[String]] = []
+        var seen: [String: Int] = [:]
+        for (reviewer, findings) in [("claude", claude)] + extras.map({ ($0.reviewer, $0.findings) }) {
+            for finding in findings {
+                let key = "\(finding.path)\u{1}\(finding.line.map(String.init) ?? "")\u{1}\(finding.comment)"
+                if let index = seen[key] {
+                    if !names[index].contains(reviewer) { names[index].append(reviewer) }
+                } else {
+                    seen[key] = merged.count
+                    merged.append(finding)
+                    names.append([reviewer])
+                }
+            }
+        }
+        return zip(merged, names).map { finding, names in
+            var labelled = finding
+            labelled.reviewer = names.joined(separator: " and ")
+            return labelled
+        }
+    }
 
     /// A round the reviewer finished with `findings`: settled with none,
     /// at the limit on the last round, else back to the working agent.
@@ -168,9 +269,12 @@ extension SessionStore {
             return
         }
         let said = note.isEmpty ? "" : "\n\nThe agent working on it says: \(note)"
+        let extras = enabledExtraReviewers(for: session)
         if let reviewerID = pairing.reviewerID, let reviewer = sessions[reviewerID] {
             pairing.phase = .reviewing
+            pairing.startExtras(extras)
             update(id) { $0.pairing = pairing }
+            startExtraReviewers(extras, for: session, said: said)
             let folder = session.isInHarness ? ".worktrees/\(session.branch)/" : "the worktree"
             let prompt = """
                 The agent working on \(session.longReference) has changed things since your last look.\(said)
@@ -192,10 +296,45 @@ extension SessionStore {
             guard let reviewer = startHelper(for: id, role: "Review", prompt: prompt, reviewer: true, reveals: false) else { return }
             pairing.reviewerID = reviewer.id
             pairing.phase = .reviewing
+            pairing.startExtras(extras)
             update(id) { $0.pairing = pairing }
+            startExtraReviewers(extras, for: session, said: said)
             _ = open(reviewer)
             if byYou { reveal(reviewer.id) }
         }
+    }
+
+    /// The project's extra reviewers that can run for the session: only on
+    /// this Mac and outside a sandbox, since they use a CLI installed and
+    /// signed in here.
+    func enabledExtraReviewers(for session: CodeSession) -> [ExtraReviewer] {
+        guard !session.isRemote, !session.isSandboxed, Self.worktree(for: session) != nil else { return [] }
+        return extraReviewers(session)
+    }
+
+    /// Runs each extra reviewer once, on a copy of the worktree, and takes
+    /// its outcome into the round. The prompt is the claude reviewer's
+    /// first one, pointed at the copy.
+    private func startExtraReviewers(_ reviewers: [ExtraReviewer], for session: CodeSession, said: String) {
+        guard !reviewers.isEmpty, let folder = Self.worktree(for: session) else { return }
+        let prompt = Self.reviewPrompt(for: session, learnings: reviewLearnings(for: session), inCopy: true) + said
+        for reviewer in reviewers {
+            guard let run = sessions[session.id]?.pairing?.extras?[reviewer.id]?.run else { continue }
+            Task {
+                let outcome = await reviewer.review(folder: folder, prompt: prompt) { script in
+                    await Task.detached { ClaudeRunner.run(script, place: .local) }.value
+                }
+                extraFinished(reviewer, run: run, outcome: outcome, for: session.id)
+            }
+        }
+    }
+
+    /// An extra reviewer's run ended: its findings, or why it has none,
+    /// join the round, which finishes if nothing else is awaited.
+    func extraFinished(_ reviewer: ExtraReviewer, run: UUID, outcome: ExtraReviewer.Outcome, for id: UUID) {
+        guard var pairing = sessions[id]?.pairing, pairing.extraFinished(reviewer, run: run, outcome: outcome) else { return }
+        update(id) { $0.pairing = pairing }
+        finishRoundIfReady(id)
     }
 
     /// Forgets the pairing's reviewer when its sandbox failed to start: a
@@ -247,32 +386,46 @@ extension SessionStore {
     }
 
     /// A transcript read: if it's a pair reviewer that has just ended a
-    /// round with its JSON list, the round goes to the working agent.
+    /// round with its JSON list, that's claude's part of the round.
     func pairRoundRead(_ reviewerID: UUID) {
         guard let parent = pairReviewed(by: reviewerID), var pairing = parent.pairing, pairing.phase == .reviewing,
               let transcript = transcripts[reviewerID], let reply = transcript.lastReplyID, reply != pairing.lastReply,
               let findings = transcript.listedFindings else { return }
-        pairing.finishRound(findings: findings.count, reply: reply)
+        pairing.claudeAnswered(findings, reply: reply)
         update(parent.id) { $0.pairing = pairing }
+        finishRoundIfReady(parent.id)
+    }
+
+    /// Once claude and every extra reviewer that started have answered (or
+    /// failed), the round goes to the working agent. Both sides call this
+    /// whichever finishes last, and the phase leaving `reviewing` stops a
+    /// second call finishing it again.
+    func finishRoundIfReady(_ id: UUID) {
+        guard let parent = sessions[id], var pairing = parent.pairing, pairing.phase == .reviewing, pairing.isRoundComplete else { return }
+        let findings = pairing.mergedFindings
+        pairing.finishMergedRound()
+        update(id) { $0.pairing = pairing }
         let script = parent.readyForReviewScript
         switch pairing.phase {
         case .settled:
-            deliver("The reviewer found nothing more to fix after \(pairing.round) round\(pairing.round == 1 ? "" : "s"). Go ahead: open the pull request, or mark it ready for review, as the brief and the team's skills say.", to: parent.id)
-            flag(parent.id, title: "Review settled", body: pairing.status, replies: false)
-            end(reviewerID)
+            deliver("The reviewer found nothing more to fix after \(pairing.round) round\(pairing.round == 1 ? "" : "s"). Go ahead: open the pull request, or mark it ready for review, as the brief and the team's skills say.", to: id)
+            flag(id, title: "Review settled", body: pairing.status, replies: false)
+            if let reviewerID = pairing.reviewerID { end(reviewerID) }
         case .limit:
-            deliver(Self.findingsPrompt(findings, round: pairing.round, script: script, last: true), to: parent.id)
-            flag(parent.id, title: "Review stopped after \(pairing.round) rounds", body: "\(pairing.findings) finding\(pairing.findings == 1 ? "" : "s") went to Claude in the last round.", replies: false)
-            end(reviewerID)
+            deliver(Self.findingsPrompt(findings, round: pairing.round, script: script, last: true), to: id)
+            flag(id, title: "Review stopped after \(pairing.round) rounds", body: "\(pairing.findings) finding\(pairing.findings == 1 ? "" : "s") went to Claude in the last round.", replies: false)
+            if let reviewerID = pairing.reviewerID { end(reviewerID) }
         default:
-            deliver(Self.findingsPrompt(findings, round: pairing.round, script: script, last: false), to: parent.id)
+            deliver(Self.findingsPrompt(findings, round: pairing.round, script: script, last: false), to: id)
         }
     }
 
-    /// The reviewer's findings, as the working agent is told them.
+    /// The reviewers' findings, as the working agent is told them; each says
+    /// who raised it when an extra reviewer took part.
     static func findingsPrompt(_ findings: [SessionTranscript.Finding], round: Int, script: String, last: Bool) -> String {
         let list = findings.enumerated().map { index, finding in
-            "\(index + 1). `\(finding.line.map { "\(finding.path):\($0)" } ?? finding.path)`: \(finding.comment)"
+            let by = finding.reviewer.map { " (\($0))" } ?? ""
+            return "\(index + 1). `\(finding.line.map { "\(finding.path):\($0)" } ?? finding.path)`\(by): \(finding.comment)"
         }
         let next = last
             ? "That was the last round, so the reviewer won't look again and there's no need to run \(script). Fix what you can, commit, and leave anything outstanding for the pull request's description."
@@ -326,6 +479,13 @@ struct PairReviewSection: View {
                 Text(pairing?.status ?? "Waiting for claude to say the change is ready")
                     .multilineTextAlignment(.trailing)
             }
+            ForEach(sessions.extraReviewers(session)) { reviewer in
+                LabeledContent(reviewer.title) {
+                    Text(extraStatus(reviewer, pairing: pairing))
+                        .multilineTextAlignment(.trailing)
+                        .foregroundStyle(pairing?.extras?[reviewer.id]?.state == .failed ? AnyShapeStyle(.red) : AnyShapeStyle(.secondary))
+                }
+            }
             HStack {
                 if let reviewerID = pairing?.reviewerID, sessions.sessions[reviewerID] != nil {
                     Button("Show Reviewer") { sessions.reveal(reviewerID) }
@@ -346,6 +506,19 @@ struct PairReviewSection: View {
             }
         } header: {
             Text("Review by a second agent")
+        }
+    }
+
+    /// An extra reviewer in a line: why it can't be used here, or where it
+    /// is in the round.
+    private func extraStatus(_ reviewer: ExtraReviewer, pairing: PairReview?) -> String {
+        if session.isSandboxed { return "Not available: this session runs in a sandbox, and \(reviewer.title) runs on this Mac" }
+        if session.isRemote { return "Not available: this session runs on a server, and \(reviewer.title) runs on this Mac" }
+        guard let extra = pairing?.extras?[reviewer.id] else { return "Will join the next round" }
+        switch extra.state {
+        case .running: return "Looking"
+        case .answered: return "\(extra.findings.count) finding\(extra.findings.count == 1 ? "" : "s")"
+        case .failed: return "\(extra.message ?? "Failed"). The round went ahead without it."
         }
     }
 }

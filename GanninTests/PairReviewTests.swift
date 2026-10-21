@@ -118,6 +118,192 @@ struct PairReviewTests {
         #expect(last.contains("last round"))
     }
 
+    // MARK: Extra reviewers
+
+    private func finding(_ path: String, _ line: Int?, _ comment: String) -> SessionTranscript.Finding {
+        SessionTranscript.Finding(path: path, line: line, comment: comment)
+    }
+
+    private func result(_ text: String) -> String {
+        let data = try! JSONSerialization.data(withJSONObject: ["sessionId": "s", "result": text, "changes": []])
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    private func outcome(status: Int32 = 0, _ output: String, error: String = "") -> ExtraReviewer.Outcome {
+        ExtraReviewer.junie.outcome(for: (status, output, error))
+    }
+
+    @Test func junieFindingsAreReadFromItsResultFile() {
+        let reply = result("Found one thing.\n\n```json\n[{\"path\": \"app/a.swift\", \"line\": 3, \"comment\": \"Off by one\"}]\n```")
+        #expect(outcome(reply) == .findings([finding("app/a.swift", 3, "Off by one")]))
+        #expect(outcome(result("Nothing.\n\n```json\n[]\n```")) == .findings([]))
+    }
+
+    @Test func junieOutputWithoutAListOrAResultFails() {
+        #expect(outcome(result("I looked at it.")) == .failed("Junie replied with no list of findings."))
+        #expect(outcome("not json") == .failed("Junie didn't write a result."))
+        #expect(outcome("{\"sessionId\": \"s\"}") == .failed("Junie didn't write a result."))
+        #expect(outcome(result("```json\n[{\"path\": 1}]\n```")) == .failed("Junie replied with no list of findings."))
+    }
+
+    @Test func aFailedJunieRunSaysWhy() {
+        #expect(outcome(status: 127, "", error: "junie is not installed on this Mac (not found on PATH)") == .failed("junie is not installed on this Mac (not found on PATH)"))
+        #expect(outcome(status: ExtraReviewer.timedOut, "") == .failed("Junie timed out after 10 minutes."))
+        #expect(outcome(status: 1, "", error: "Quota could not be found") == .failed("Junie failed: Quota could not be found"))
+        #expect(outcome(status: 2, "") == .failed("Junie failed (exit 2)."))
+    }
+
+    @Test func junieRunsInACopyAndLeavesItsOwnOutputOut() {
+        let script = ExtraReviewer.junie.script(folder: URL(filePath: "/Users/me/code/harness/.worktrees/68-pair-review"), prompt: "Review it")
+        #expect(script.contains("'/Users/me/code/harness/.worktrees/68-pair-review'"))
+        #expect(script.contains(#"--project "$d/project""#))
+        #expect(script.contains("--timeout 600000"))
+        #expect(script.contains(#"trap 'rm -rf "$d"' EXIT"#))
+        #expect(script.contains(#">"$d/stdout""#))
+    }
+
+    @Test func aRunThatNeverEndsIsGivenUpOn() async {
+        let outcome = await ExtraReviewer.junie.review(folder: URL(filePath: "/tmp"), prompt: "x", limit: 0.05) { _ in
+            try? await Task.sleep(for: .seconds(30))
+            return (0, "", "")
+        }
+        #expect(outcome == .failed("Junie timed out after 10 minutes."))
+    }
+
+    @Test func mergingKeepsEachFindingOnceAndSaysWhoRaisedIt() {
+        let both = finding("app/a.swift", 3, "Off by one")
+        let merged = PairReview.merge(
+            claude: [both, finding("app/b.swift", nil, "Missing test")],
+            extras: [("Junie", [both, finding("app/c.swift", 9, "Leaks the file handle")])]
+        )
+        #expect(merged.map(\.comment) == ["Off by one", "Missing test", "Leaks the file handle"])
+        #expect(merged.map(\.reviewer) == ["claude and Junie", "claude", "Junie"])
+    }
+
+    @Test func mergingWithNoExtraLeavesClaudesAlone() {
+        let list = [finding("app/a.swift", 3, "Off by one")]
+        #expect(PairReview.merge(claude: list, extras: []) == list)
+        #expect(PairReview.merge(claude: list, extras: []).first?.reviewer == nil)
+    }
+
+    @Test func labelsReachTheWorkingAgentOnlyWithAnExtra() {
+        var raised = finding("app/a.swift", 3, "Off by one")
+        let plain = SessionStore.findingsPrompt([raised], round: 1, script: ".gannin/ready-for-review", last: false)
+        #expect(plain.contains("1. `app/a.swift:3`: Off by one"))
+        raised.reviewer = "Junie"
+        let labelled = SessionStore.findingsPrompt([raised], round: 1, script: ".gannin/ready-for-review", last: false)
+        #expect(labelled.contains("1. `app/a.swift:3` (Junie): Off by one"))
+    }
+
+    @Test func roundWaitsForJunieThenFinishesOnce() {
+        var pairing = PairReview()
+        pairing.startExtras([.junie])
+        let run = pairing.extras![ExtraReviewer.junie.id]!.run
+        pairing.claudeAnswered([], reply: "r1")
+        #expect(!pairing.isRoundComplete)
+
+        let taken = pairing.extraFinished(.junie, run: run, outcome: .findings([finding("app/a.swift", 3, "Off by one")]))
+        #expect(taken)
+        #expect(pairing.isRoundComplete)
+        #expect(pairing.mergedFindings.count == 1)
+        pairing.finishMergedRound()
+        #expect(pairing.phase == .fixing)
+        #expect(pairing.findings == 1)
+        #expect(pairing.round == 1)
+
+        // A second answer from the same run isn't taken.
+        let again = pairing.extraFinished(.junie, run: run, outcome: .findings([]))
+        #expect(!again)
+    }
+
+    @Test func junieFirstOrClaudeFirstGivesTheSameRound() {
+        var pairing = PairReview()
+        pairing.startExtras([.junie])
+        let run = pairing.extras![ExtraReviewer.junie.id]!.run
+        _ = pairing.extraFinished(.junie, run: run, outcome: .findings([]))
+        #expect(!pairing.isRoundComplete)
+        pairing.claudeAnswered([], reply: "r1")
+        #expect(pairing.isRoundComplete)
+        pairing.finishMergedRound()
+        #expect(pairing.phase == .settled)
+    }
+
+    @Test func aFailedJunieDoesntHoldUpClaudesRound() {
+        var pairing = PairReview()
+        pairing.startExtras([.junie])
+        let run = pairing.extras![ExtraReviewer.junie.id]!.run
+        pairing.claudeAnswered([finding("app/b.swift", nil, "Missing test")], reply: "r1")
+        let taken = pairing.extraFinished(.junie, run: run, outcome: .failed("Junie failed: signed out"))
+        #expect(taken)
+        #expect(pairing.isRoundComplete)
+        #expect(pairing.extras?[ExtraReviewer.junie.id]?.message == "Junie failed: signed out")
+        #expect(pairing.mergedFindings.map(\.comment) == ["Missing test"])
+        #expect(pairing.mergedFindings.first?.reviewer == nil)
+    }
+
+    @Test func aRunFromAnEarlierLoopCantAnswerForTheNewOne() {
+        var pairing = PairReview()
+        pairing.startExtras([.junie])
+        let old = pairing.extras![ExtraReviewer.junie.id]!.run
+        pairing.startExtras([.junie])
+        let taken = pairing.extraFinished(.junie, run: old, outcome: .findings([]))
+        #expect(!taken)
+        #expect(pairing.isWaitingOnExtras)
+    }
+
+    @Test func withNoExtraTheRoundNeedsOnlyClaude() {
+        var pairing = PairReview()
+        pairing.startExtras([])
+        #expect(pairing.extras == nil)
+        pairing.claudeAnswered([finding("app/a.swift", 3, "Off by one")], reply: "r1")
+        #expect(pairing.isRoundComplete)
+        #expect(pairing.mergedFindings.first?.reviewer == nil)
+    }
+
+    @Test func aPairingSavedBeforeExtrasStillDecodes() throws {
+        let old = #"{"round": 1, "phase": "fixing", "findings": 2}"#
+        let pairing = try JSONDecoder().decode(PairReview.self, from: Data(old.utf8))
+        #expect(pairing.extras == nil)
+        #expect(pairing.claudeFindings == nil)
+    }
+
+    @Test func projectsExtraReviewersDefaultToNoneAndIgnoreUnknownOnes() throws {
+        var setup = HarnessConfig(repo: "acme/harness")
+        #expect(setup.enabledExtraReviewers.isEmpty)
+        setup.setExtraReviewer(.junie, enabled: true)
+        #expect(setup.enabledExtraReviewers == [.junie])
+        setup.setExtraReviewer(.junie, enabled: false)
+        #expect(setup.extraReviewers == nil)
+
+        let saved = #"{"repo": "acme/harness", "extraReviewers": ["junie", "someone-newer"]}"#
+        let decoded = try JSONDecoder().decode(HarnessConfig.self, from: Data(saved.utf8))
+        #expect(decoded.enabledExtraReviewers == [.junie])
+        let before = try JSONDecoder().decode(HarnessConfig.self, from: Data(#"{"repo": "acme/harness"}"#.utf8))
+        #expect(before.enabledExtraReviewers.isEmpty)
+    }
+
+    @Test func extrasDontRunInASandboxOrOnAServer() {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "PairReviewTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60), defaults: UserDefaults(suiteName: "PairReviewTests-\(UUID().uuidString)")!)
+        store.extraReviewers = { _ in [.junie] }
+        var local = session()
+        #expect(store.enabledExtraReviewers(for: local) == [.junie])
+        local.sandbox = "box"
+        #expect(store.enabledExtraReviewers(for: local).isEmpty)
+        var remote = session()
+        remote.connect = "me@server"
+        #expect(store.enabledExtraReviewers(for: remote).isEmpty)
+    }
+
+    @Test func theCopysPromptNamesNoHarnessFolder() {
+        let inRepo = SessionStore.reviewPrompt(for: session())
+        let inCopy = SessionStore.reviewPrompt(for: session(), inCopy: true)
+        #expect(inRepo.contains(".worktrees/68-pair-review/"))
+        #expect(!inCopy.contains(".worktrees/68-pair-review/"))
+        #expect(inCopy.contains("The brief is in .gannin/brief.md"))
+    }
+
     // MARK: A reviewer whose sandbox failed
 
     /// A store with a working session and its reviewer helper in a sandbox, the
