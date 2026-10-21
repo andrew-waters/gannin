@@ -39,9 +39,17 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
     /// Exit status the script gives when it had to stop the CLI.
     static let timedOut: Int32 = 124
 
-    /// The review prompt, ended the way the reviewer must answer.
+    /// The review prompt, ended the way the reviewer must answer. Junie
+    /// writes its final summary to a fixed template and leaves out a list
+    /// asked for in its reply, so the list is asked for in the summary
+    /// itself, which is all `outcome(for:)` reads.
     func prompt(_ review: String) -> String {
-        review + "\n\nWhen there's nothing to fix, end with an empty list (`[]`)."
+        review + """
+
+
+            Your final task summary (the text you finish with, not an earlier message) must contain, as its last section, the findings as a fenced ```json block, written out in full. \
+            When there's nothing to fix, that block is an empty list (`[]`).
+            """
     }
 
     /// A bash script that copies `folder`, runs the CLI in the copy and

@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Fixed
+- The Junie reviewer's findings are no longer lost: its pair review failed with "Junie replied with no list of findings" because Junie dropped the list from its final summary, so it is now asked to put the list in that summary
+
 ### Changed
 - When a review looks again after new comments, it answers the PR author's comments and other people's only if they disagree with the review or the reviewer disagrees with them
 
