@@ -11,7 +11,8 @@ struct IssueRecord: Codable, Hashable, Identifiable {
     /// Who opened it. Optional so records from before it was fetched still
     /// load; they gain it when next fetched.
     let author: String?
-    let assignees: [String]
+    /// A var so assignees written from the app show before the next fetch.
+    var assignees: [String]
     /// A var so labels written from the app show before the next fetch.
     var labels: [String]
     let issueType: String?

@@ -101,6 +101,7 @@ struct IssueSheet: View {
                 CategoriseMenu(issueID: reference.id, org: reference.org)
             }
         }
+        AssigneesSection(org: reference.org, issueID: reference.id)
         ProjectFieldsSections(org: reference.org, issueID: reference.id)
     }
 

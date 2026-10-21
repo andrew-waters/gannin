@@ -288,4 +288,21 @@ struct OrgSnapshotCacheTests {
         c.save(snapshot(issues: [issue("a", updated: 20)]))
         #expect(issues.issues(org: "acme")["a"]?.core.labels.map(\.name) == ["bug"])
     }
+
+    @Test func anIssueCarriedOverUnchangedDoesNotUndoAnAssigneeEditMadeSinceTheLastFetch() {
+        let dir = directory()
+        let store = PullRequestStore(folder: uniqueFolder())
+        defer { try? FileManager.default.removeItem(at: dir); store.clear(); SharedIssueStore(folder: issueFolder).clear() }
+        let issues = SharedIssueStore(folder: issueFolder)
+        let c = OrgSnapshotCache(directory: dir, pullRequests: store, issues: issues)
+        let carried = snapshot(issues: [issue("a")])
+        c.save(carried)
+        issues.update("a", org: "acme") { $0.setAssignees([Person(login: "sam", name: nil, avatarUrl: nil)]) }
+
+        c.save(carried)
+        #expect(issues.issues(org: "acme")["a"]?.core.assignees.map(\.login) == ["sam"])
+
+        c.save(snapshot(issues: [issue("a", updated: 20)]))
+        #expect(issues.issues(org: "acme")["a"]?.core.assignees.map(\.login) == ["kim"])
+    }
 }

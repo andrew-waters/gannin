@@ -97,7 +97,7 @@ nonisolated struct BoardItem: Codable, Hashable, Identifiable {
     let repo: String?
     /// OPEN, CLOSED or MERGED.
     var state: String?
-    let assignees: [Person]
+    var assignees: [Person]
     var labels: [IssueLabel]
     let milestone: String?
     let parent: String?

@@ -121,6 +121,20 @@ final class ProjectStore {
         }
     }
 
+    /// Records assignees changed on an issue from the app, on every board
+    /// that has it cached.
+    func recordAssignees(org: String, contentID: String, assignees: [Person]) {
+        let prefix = "\(org)#"
+        for key in caches.keys where key.hasPrefix(prefix) {
+            guard var cache = caches[key] else { continue }
+            let matching = cache.itemsByID.values.filter { $0.contentID == contentID }.map(\.id)
+            guard !matching.isEmpty else { continue }
+            for id in matching { cache.itemsByID[id]?.assignees = assignees }
+            caches[key] = cache
+            save(cache, key: key)
+        }
+    }
+
     func isLoading(org: String, number: Int) -> Bool {
         let key = Self.key(org, number)
         return loading.contains { $0 == key || $0.hasPrefix(key + "|") }

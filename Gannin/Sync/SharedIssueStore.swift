@@ -294,6 +294,11 @@ extension StoredIssue {
         }
     }
 
+    /// The assignees an assignee edit left on the issue.
+    mutating func setAssignees(_ people: [Person]) {
+        core.assignees = people
+    }
+
     /// An issue as the issue history fetch has it.
     init(history record: IssueRecord) {
         core = IssueCore(

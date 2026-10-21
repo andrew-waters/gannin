@@ -20,4 +20,11 @@ enum IssueEdits {
         issues.recordLabels(org: org, issueID: issueID, labels: labels)
         projects.recordLabels(org: org, contentID: issueID, labels: labels)
     }
+
+    /// An issue's assignees after a change.
+    static func setAssignees(org: String, issueID: String, assignees: [Person], issues: IssueStore, projects: ProjectStore, orgs: OrgStore) {
+        issues.recordAssignees(org: org, issueID: issueID, assignees: assignees)
+        orgs.recordAssignees(issueID, org: org, assignees: assignees)
+        projects.recordAssignees(org: org, contentID: issueID, assignees: assignees)
+    }
 }
