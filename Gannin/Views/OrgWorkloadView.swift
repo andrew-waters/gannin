@@ -55,6 +55,8 @@ struct OrgWorkloadView: View {
                 EpicsView(org: org)
             } else if tab == .releases {
                 ReleasesView(org: org)
+            } else if tab == .rdTime {
+                RDTimeView(org: org, workload: workload)
             } else if tab == .repositories {
                 // Clones on this Mac need no workload; their GitHub side does.
                 repositoryView(workload)
@@ -227,7 +229,7 @@ struct OrgWorkloadView: View {
         case .repositories: EmptyView()
         // Across everyone: a team picked on another page doesn't carry over.
         case .investments: InvestmentsView(org: org, team: nil, selection: $selection)
-        case .projects, .actions, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agents, .agentMetrics, .routines, .agentQueue, .ask, .epics, .hygiene, .releases, .settings: EmptyView()
+        case .rdTime, .projects, .actions, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agents, .agentMetrics, .routines, .agentQueue, .ask, .epics, .hygiene, .releases, .settings: EmptyView()
         }
     }
 

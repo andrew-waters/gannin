@@ -17,6 +17,10 @@ struct OrgConfig: Codable, Hashable {
     var reposNeedingMac: Set<String> = []
     /// Investment categories; nil until edited, meaning the default preset.
     var investments: InvestmentConfig?
+    /// What counts as R&D and how its time is found; nil for the defaults.
+    var rnd: RDConfig?
+    /// The accounting year and the org's own periods; nil for calendar years.
+    var accounting: AccountingCalendar?
     /// How issues move through the org's board; nil means the defaults.
     var issueWorkflow: IssueWorkflow?
     /// Working days and hours; nil means Monday to Friday, 9 to 5.
@@ -185,6 +189,10 @@ struct OrgConfig: Codable, Hashable {
 
     var investmentConfig: InvestmentConfig { investments ?? .default }
 
+    var rndConfig: RDConfig { rnd ?? RDConfig() }
+
+    var accountingCalendar: AccountingCalendar { accounting ?? AccountingCalendar() }
+
     init() {}
 
     /// Tolerates configs saved before a field existed.
@@ -196,6 +204,8 @@ struct OrgConfig: Codable, Hashable {
         reposWithoutReview = try container.decodeIfPresent(Set<String>.self, forKey: .reposWithoutReview) ?? []
         reposNeedingMac = try container.decodeIfPresent(Set<String>.self, forKey: .reposNeedingMac) ?? []
         investments = try container.decodeIfPresent(InvestmentConfig.self, forKey: .investments)
+        rnd = try? container.decodeIfPresent(RDConfig.self, forKey: .rnd)
+        accounting = try? container.decodeIfPresent(AccountingCalendar.self, forKey: .accounting)
         issueWorkflow = try container.decodeIfPresent(IssueWorkflow.self, forKey: .issueWorkflow)
         workWeek = try container.decodeIfPresent(WorkWeek.self, forKey: .workWeek)
         leave = try container.decodeIfPresent(LeavePolicy.self, forKey: .leave)
@@ -214,7 +224,7 @@ struct OrgConfig: Codable, Hashable {
         priorityScheme = try? container.decodeIfPresent(PriorityScheme.self, forKey: .priorityScheme)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil && priorityScheme == nil }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && rnd == nil && accounting == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil && priorityScheme == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.
@@ -334,6 +344,7 @@ final class OrgConfigStore {
         guard let team = storage.team, let home = own.harness else { return own }
         var config = team.data(for: org, in: home).appliedOrgWide(to: own)
         config.investments = nil
+        config.rnd = nil
         config.issueWorkflow = nil
         config.goals = nil
         config.recap = nil
@@ -457,6 +468,14 @@ final class OrgConfigStore {
             var investments = config.investmentConfig
             change(&investments)
             config.investments = investments
+        }
+    }
+
+    func updateRD(_ org: String, _ change: (inout RDConfig) -> Void) {
+        update(org) { config in
+            var rnd = config.rndConfig
+            change(&rnd)
+            config.rnd = rnd
         }
     }
 

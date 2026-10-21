@@ -13,7 +13,7 @@ paths:
 - After a commit, refetch the index until GitHub reports the new head (`load(expecting:)`) so writes show without a Refresh.
 
 ## Team data (`.gannin/*.json`, `HarnessTeamData.swift`)
-- Per project: `project.json`, `investments.json`, `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json`, `triage.json`, `field-notes.json`. Home only (`TeamFile.isOrgWide`): `views.json`, `working-week.json`, `leave.json`, `exclusions.json`, `authoring.json`, `people/<login>.json`. A missing file means the default.
+- Per project: `project.json`, `investments.json`, `rnd.json`, `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json`, `triage.json`, `field-notes.json`. Home only (`TeamFile.isOrgWide`): `views.json`, `working-week.json`, `leave.json`, `accounting.json`, `exclusions.json`, `authoring.json`, `people/<login>.json`. A missing file means the default.
 - Keys sorted, days as `2026-10-03` (`TeamCoding`). Add new fields as optional (`decodeIfPresent`) so older files still decode: `TeamCoding.decode` returns nil on any failure, which reads as the default and drops that file's settings.
 - Edits stay pending (`HarnessTeamStore.pending`) until reviewed. Commit merges three ways onto the head's copy (`TeamCoding.merge`: objects by key, object lists by `id`, ours wins), so others' changes survive.
 - `update` stages org-wide files to home and the rest to the window's project (`HarnessTeamStore.stage`).

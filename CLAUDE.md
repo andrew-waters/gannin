@@ -82,6 +82,7 @@ xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=
 | `metrics` | Delivery metrics, Scorecards, Investments, CI (`Metrics/`, `Investments/`, `Actions/`) |
 | `releases-milestones` | Releases, downloads, stars, milestones (`Releases/`) |
 | `work-log` | Activity, Standup, time off, bank holidays (`WorkLog/`) |
+| `rd-time` | R&D time, its strategies, report and exports (`RDTime/`) |
 | `issues-projects` | Issue history, New Issue, boards, Views, Board Hygiene (`Issues/`, `Projects/`, `FieldViews/`, `Planning/`) |
 | `meetings` | Prioritisation, Recap, Triage (`Meetings/`, `Triage/`) |
 | `sessions-core` | Claude Code sessions: terminal, polling, modes, session rules, helpers (`Sessions/`) |

@@ -1,6 +1,6 @@
 ---
 title: Working Time settings
-description: Every option in Org settings › Working Time, covering the working week, the holiday allowance, and people's dates and time off.
+description: Every option in Org settings › Working Time, covering the working week, the holiday allowance, accounting periods, and people's dates and time off.
 sidebar:
   order: 4
 ---
@@ -31,6 +31,19 @@ Allowances are in working days, with bank holidays on top. Each person's is pro-
 | Allowance | 25 days a year | The days a full-time person gets. The stepper holds it between 0 and 100 in half days; a number you type is not limited. | Harness (`.gannin/leave.json`) |
 | Pro-rate for part-time patterns | On | Scales the allowance by working days a week for people with a working pattern of their own. | Harness (`.gannin/leave.json`) |
 | This leave year | The current leave year's dates | Shows the dates of the leave year now under way. Read only. | Harness (`.gannin/leave.json`) |
+
+## Accounting periods
+
+When the company's accounting year starts, and any other periods it reports on. Reports that follow the accounts, such as [R&D Time](/docs/guides/rd-time/), offer this and last accounting year, their quarters and these periods. Any start works: 1 November for a year running November to October, or 6 April for one following the UK tax year.
+
+| Option | Default | What it changes | Kept |
+| --- | --- | --- | --- |
+| Accounting year starts | January | The month each accounting year begins. | Harness (`.gannin/accounting.json`) |
+| On day | 1 | The day of that month it begins. A day past the month's end means its last day. | Harness (`.gannin/accounting.json`) |
+| Each year runs | 1 January to 31 December | Shows the dates the accounting year runs between. Read only. | Harness (`.gannin/accounting.json`) |
+| Add Period | Not applied | Adds a named period, such as a claim period or a short first year, with a Name and its From and To dates (both included). It is offered by name in the reports' ranges. | Harness (`.gannin/accounting.json`) |
+| Edit | Not applied | On a period: changes its name or dates. | Harness (`.gannin/accounting.json`) |
+| Remove | Not applied | On a period: removes it. | Harness (`.gannin/accounting.json`) |
 
 ## Dates and time off
 

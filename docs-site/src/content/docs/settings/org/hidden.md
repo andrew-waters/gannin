@@ -2,7 +2,7 @@
 title: Hidden settings
 description: Every option in Org settings › Hidden, where you bring back the pull requests and issues you hid one at a time.
 sidebar:
-  order: 9
+  order: 10
 ---
 
 Org settings › Hidden lists the pull requests and issues you have hidden, so you can bring any of them back. Open it with the cog beside the account menu in the sidebar's footer, then pick Hidden in the toolbar. To hide something in the first place, right-click a pull request or issue.
