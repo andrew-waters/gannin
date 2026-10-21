@@ -61,7 +61,7 @@ struct RDTimeView: View {
         let range = range
         let name = config.rndConfig.displayName
         let cache = activity.cache(for: org)
-        let report = cache.map { report($0, range: range) }
+        let report = fetchedReport(cache, range: range)
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 fetchPanel(cache, range: range)
@@ -96,8 +96,8 @@ struct RDTimeView: View {
     /// first, confirmed here, with progress and Cancel while it runs.
     @ViewBuilder
     private func fetchPanel(_ cache: RDActivityStore.Cache?, range: DateInterval) -> some View {
-        let reaches = cache.map { $0.coveredFrom <= range.start } ?? false
-        let current = cache.map { $0.fetchedAt >= min(range.end, .now) } ?? false
+        let reaches = (cache?.coveredFrom ?? .distantFuture) <= range.start
+        let current = (cache?.fetchedAt ?? .distantPast) >= min(range.end, .now)
         if let progress = activity.progress[org] {
             panel {
                 VStack(alignment: .leading, spacing: 6) {
@@ -173,13 +173,13 @@ struct RDTimeView: View {
 
     /// The plan's cost, against what's left of the budget, to confirm.
     private func confirmation(_ plan: RDActivityStore.Plan) -> some View {
-        let budget = auth.rateLimit
+        let budget = auth.rateLimit.map { ", with \($0.remaining) of \($0.limit) left until \($0.resetAt.formatted(date: .omitted, time: .shortened))" } ?? ""
         return panel {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Fetch activity back to \(Self.day(plan.start))?").font(.headline)
                 Text("\(plan.weeks.count) weekly searches, finding about \(plan.pullRequests) pull requests and \(plan.issues) issues, then the issues they worked on are looked up for what counts.")
                     .fixedSize(horizontal: false, vertical: true)
-                Text("About \(plan.requests) requests and \(plan.points) points of GitHub's hourly budget\(budget.map { ", with \($0.remaining) of \($0.limit) left until \($0.resetAt.formatted(date: .omitted, time: .shortened))" } ?? ""). It stops before the last \(RDActivityStore.reserve) points, so the rest of Gannin keeps working, and you can cancel at any time; what's fetched is kept.")
+                Text("About \(plan.requests) requests and \(plan.points) points of GitHub's hourly budget\(budget). It stops before the last \(RDActivityStore.reserve) points, so the rest of Gannin keeps working, and you can cancel at any time; what's fetched is kept.")
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 if plan.weeks.contains(where: { $0.pullRequests > RDActivityStore.Plan.searchCap || $0.issues > RDActivityStore.Plan.searchCap }) {
@@ -230,7 +230,13 @@ struct RDTimeView: View {
     }
 
     /// The range's part that's been fetched: from where coverage reaches.
-    private func report(_ cache: RDActivityStore.Cache, range: DateInterval) -> RDReport {
+    /// The report, once anything's been fetched.
+    private func fetchedReport(_ cache: RDActivityStore.Cache?, range: DateInterval) -> RDReport? {
+        guard let cache else { return nil }
+        return makeReport(cache, range: range)
+    }
+
+    private func makeReport(_ cache: RDActivityStore.Cache, range: DateInterval) -> RDReport {
         let config = config
         let rnd = config.rndConfig
         let people = people(cache)
