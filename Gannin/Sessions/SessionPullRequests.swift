@@ -447,8 +447,8 @@ extension GitHubAPI {
               repository { nameWithOwner }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 80) { nodes {
                 __typename
-                ... on CheckRun { name status conclusion detailsUrl checkSuite { workflowRun { databaseId } } }
-                ... on StatusContext { context state targetUrl }
+                ... on CheckRun { name status conclusion detailsUrl startedAt checkSuite { app { slug } workflowRun { databaseId event workflow { name } } } }
+                ... on StatusContext { context state targetUrl createdAt }
               } } } } } }
               reviews(last: 30) { nodes { id author { login } state body url } }
               reviewThreads(first: 50) { nodes { id isResolved isOutdated path line originalLine
@@ -623,7 +623,14 @@ struct SessionRawPullRequest: Decodable {
     struct Repository: Decodable { let nameWithOwner: String }
     struct Context: Decodable {
         struct Suite: Decodable {
-            struct Run: Decodable { let databaseId: Int? }
+            struct Run: Decodable {
+                struct Workflow: Decodable { let name: String? }
+                let databaseId: Int?
+                let event: String?
+                let workflow: Workflow?
+            }
+            struct App: Decodable { let slug: String? }
+            let app: App?
             let workflowRun: Run?
         }
         let __typename: String
@@ -635,6 +642,23 @@ struct SessionRawPullRequest: Decodable {
         let context: String?
         let state: String?
         let targetUrl: String?
+        let startedAt: String?
+        let createdAt: String?
+
+        /// ISO 8601 UTC, so strings order by time. A check run that hasn't
+        /// started (a queued re-run) has no `startedAt` and is the newest.
+        var began: String { startedAt ?? createdAt ?? (__typename == "StatusContext" ? "" : "\u{FFFF}") }
+
+        /// What a re-run replaces: the same kind of check, from the same
+        /// workflow and triggering event (or, outside Actions, the same app),
+        /// with the same name. A workflow on both `push` and `pull_request`
+        /// runs twice on a commit, and both runs count.
+        var identity: String {
+            let title = __typename == "StatusContext" ? context : name
+            let run = checkSuite?.workflowRun
+            let source = run == nil ? checkSuite?.app?.slug : nil
+            return [__typename, run?.workflow?.name ?? "", run?.event ?? "", source ?? "", title ?? ""].joined(separator: "\u{0}")
+        }
     }
     struct Rollup: Decodable { let contexts: Connection<Context> }
     struct Commit: Decodable { let statusCheckRollup: Rollup? }
@@ -680,8 +704,16 @@ struct SessionRawPullRequest: Decodable {
 
     var model: SessionPullRequest? {
         guard let id, let number, let title, let url, let state, let repository else { return nil }
-        let contexts = commits?.nodes.last?.commit.statusCheckRollup?.contexts.nodes ?? []
-        let checks = contexts.map { context -> SessionPullRequest.Check in
+        // A re-run adds a run alongside the earlier ones in the rollup, so
+        // only the newest of each check is current. This relies on the query's
+        // `contexts(first:)` returning both; a PR with more checks than that
+        // can lose the newer run and keep the older one.
+        var newest: [String: Context] = [:]
+        for context in commits?.nodes.last?.commit.statusCheckRollup?.contexts.nodes ?? [] {
+            if let kept = newest[context.identity], kept.began >= context.began { continue }
+            newest[context.identity] = context
+        }
+        let checks = newest.values.map { context -> SessionPullRequest.Check in
             if context.__typename == "StatusContext" {
                 let state: SessionPullRequest.Check.State = switch context.state {
                 case "SUCCESS": .passed
@@ -724,7 +756,7 @@ struct SessionRawPullRequest: Decodable {
         return SessionPullRequest(
             id: id, number: number, title: title, url: url, repo: repository.nameWithOwner, author: prAuthor, state: state,
             isDraft: isDraft ?? false, reviewDecision: reviewDecision, mergeable: mergeable,
-            checks: checks.sorted { order($0.state) < order($1.state) }, feedback: feedback, baseRef: baseRefName
+            checks: checks.sorted { (order($0.state), $0.name) < (order($1.state), $1.name) }, feedback: feedback, baseRef: baseRefName
         )
     }
 
