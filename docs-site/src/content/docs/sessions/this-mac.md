@@ -19,8 +19,11 @@ Work on This starts the issue's session in the harness checkout: it pulls the ha
 
 ## Your shell setup
 
-Each session starts through your own shell (the one `$SHELL` names, `/bin/zsh` if unset) as a login, interactive shell. It reads `~/.zprofile` and `~/.zshrc` first, so the `PATH`, exported variables, ssh config and tools you have in a terminal are what Claude Code gets.
-Gannin's own background git and gh calls (the Repositories page, for one) don't read your shell files. They use a fixed `PATH` that starts with Homebrew's folders.
+Each session starts through your own shell (the one `$SHELL` names, `/bin/zsh` if unset) as a login, interactive shell. It reads that shell's login and interactive startup files first (for zsh, `~/.zshenv`, `~/.zprofile` and `~/.zshrc`), so the `PATH`, exported variables, ssh config and tools you have in a terminal are what Claude Code gets.
+
+Gannin's own background git and gh calls (the Repositories page, for one) don't read your shell files. Gannin puts Homebrew's folders in front of the `PATH` it was launched with.
+
+This applies to sessions on this Mac. [Sandboxed](/docs/sessions/sandboxes/) and [server](/docs/sessions/server/) sessions start differently, so your shell files there are the container's or the server's.
 
 ## What it protects
 
