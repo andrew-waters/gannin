@@ -165,7 +165,9 @@ struct RoutinesPage: View {
             VStack(spacing: 0) {
                 if list.isEmpty {
                     HStack {
-                        Text("None, so automatic reviews start as soon as they're asked for.")
+                        // Not known yet: the gate holds reviews meanwhile.
+                        Text(book.isLoaded ? "None, so automatic reviews start as soon as they're asked for."
+                            : "Checking your review windows. Until Gannin knows them, automatic reviews wait.")
                             .foregroundStyle(.secondary)
                         Spacer()
                         newReviewWindowButton

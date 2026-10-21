@@ -167,17 +167,25 @@ struct AgentQueuePage: View {
     @ViewBuilder
     private var reviewWindowsNote: some View {
         let days = RoutineScheduleContext.workingDays(org: org, configs: configs, holidays: holidays)
-        let windows = ReviewWindowBook(org: org, login: auth.viewer?.login, routines: routines, people: peopleDates).windows.filter(\.isEnabled)
+        // Nil until they're known, while the queue is held (`windowsIfKnown`).
+        let known = ReviewWindowBook(org: org, login: auth.viewer?.login, routines: routines, people: peopleDates).windowsIfKnown?.filter(\.isEnabled)
+        let windows = known ?? []
         let waiting = routines.reviewQueue(for: org).count
         if !windows.isEmpty || waiting > 0 {
             let open = windows.first { $0.schedule.isOpen(at: .now, isWorkingDay: days) }
             let next = windows.compactMap { $0.schedule.nextTimes(after: .now, count: 1, isWorkingDay: days).first }.min()
+            let when: String = if known == nil {
+                "Checking your review windows, so none start yet."
+            } else if windows.isEmpty {
+                "No review window, so they start as Auto review would."
+            } else {
+                open.map { "\($0.name) is open now." } ?? next.map { "Next review window opens \($0.formatted(.relative(presentation: .named)))." } ?? ""
+            }
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 Image(systemName: RoutineKind.reviewQueue.systemImage)
                     .foregroundStyle(.secondary)
                 Text("\(waiting) review\(waiting == 1 ? "" : "s") waiting. ")
-                    + Text(windows.isEmpty ? "No review window, so they start as Auto review would."
-                        : open.map { "\($0.name) is open now." } ?? next.map { "Next review window opens \($0.formatted(.relative(presentation: .named)))." } ?? "")
+                    + Text(when)
                     .foregroundStyle(open != nil ? ChartPalette.good : .secondary)
             }
         }
