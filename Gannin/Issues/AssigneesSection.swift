@@ -3,6 +3,18 @@ import SwiftUI
 /// An issue's assignees, chosen from the org's people. Like the board
 /// fields, edits stay local until Save sends them to GitHub.
 struct AssigneesSection: View {
+    let org: String
+    let issueID: String
+
+    var body: some View {
+        // The drawer swaps one issue for another in place with Previous and
+        // Next, so the draft and any save in flight are keyed to the issue.
+        AssigneesEditor(org: org, issueID: issueID)
+            .id(issueID)
+    }
+}
+
+private struct AssigneesEditor: View {
     @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
     @Environment(IssueStore.self) private var issueStore
@@ -22,7 +34,7 @@ struct AssigneesSection: View {
             Section("Assignees") {
                 Menu {
                     ForEach(candidates(including: saved)) { person in
-                        Toggle("\(person.displayName) (\(person.login))", isOn: Binding(get: { chosen.contains(person.login) }, set: { on in
+                        Toggle(Self.title(person), isOn: Binding(get: { chosen.contains(person.login) }, set: { on in
                             var next = chosen
                             if on { next.insert(person.login) } else { next.remove(person.login) }
                             draft = next == saved ? nil : next
@@ -55,11 +67,13 @@ struct AssigneesSection: View {
                         .foregroundStyle(.red)
                 }
             }
-            .onChange(of: issueID) {
-                draft = nil
-                saveError = nil
-            }
         }
+    }
+
+    /// The login goes in brackets only when the name shows something else;
+    /// `displayName` is the login for someone with no name.
+    private static func title(_ person: Person) -> String {
+        person.displayName == person.login ? person.login : "\(person.displayName) (\(person.login))"
     }
 
     /// The org's people, and anyone already assigned who isn't one of them
@@ -88,21 +102,30 @@ struct AssigneesSection: View {
         Task {
             defer { isSaving = false }
             do {
+                var assigned = saved
+                var skipped: [String] = []
                 let add = chosen.subtracting(saved).sorted()
-                let remove = saved.subtracting(chosen).sorted()
                 if !add.isEmpty {
-                    let assigned = try await api.addAssignees(issueID: issueID, logins: add)
-                    record(assigned)
-                    let skipped = add.filter { !assigned.contains($0) }
-                    if !skipped.isEmpty {
-                        saveError = "GitHub didn't assign \(skipped.joined(separator: ", ")); they may not have access to this issue's repo."
-                        return
-                    }
+                    let result = try await api.addAssignees(issueID: issueID, logins: add)
+                    record(result)
+                    assigned = Set(result)
+                    skipped = add.filter { !assigned.contains($0) }
                 }
+                // The removals go ahead even when someone was skipped, so
+                // they aren't held up behind an add that can't succeed.
+                let remove = saved.subtracting(chosen).sorted()
                 if !remove.isEmpty {
-                    record(try await api.removeAssignees(issueID: issueID, logins: remove))
+                    let result = try await api.removeAssignees(issueID: issueID, logins: remove)
+                    record(result)
+                    assigned = Set(result)
                 }
-                draft = nil
+                // Anyone skipped leaves the draft, so Save again doesn't
+                // send the same add.
+                let wanted = chosen.subtracting(skipped)
+                draft = wanted == assigned ? nil : wanted
+                if !skipped.isEmpty {
+                    saveError = "GitHub didn't assign \(skipped.joined(separator: ", ")); they may not have access to this issue's repo."
+                }
             } catch {
                 saveError = "Couldn't save assignees: \(error.localizedDescription)"
             }
