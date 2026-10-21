@@ -66,6 +66,19 @@ struct PairReview: Codable, Hashable {
 
     var isOver: Bool { [.settled, .limit, .stopped].contains(phase) }
 
+    /// Fails any extra still running: one saved by a Gannin that quit mid-round
+    /// has no run left to answer, and would hold the round up for good.
+    /// Returns whether there was one.
+    mutating func abandonRunningExtras(_ message: String) -> Bool {
+        var found = false
+        for (id, extra) in extras ?? [:] where extra.state == .running {
+            extras?[id]?.state = .failed
+            extras?[id]?.message = message
+            found = true
+        }
+        return found
+    }
+
     /// Starts a round's extra reviewers, none having answered.
     mutating func startExtras(_ reviewers: [ExtraReviewer]) {
         claudeFindings = nil
@@ -516,9 +529,11 @@ struct PairReviewSection: View {
         if session.isRemote { return "Not available: this session runs on a server, and \(reviewer.title) runs on this Mac" }
         guard let extra = pairing?.extras?[reviewer.id] else { return "Will join the next round" }
         switch extra.state {
-        case .running: return "Looking"
+        case .running: return pairing?.phase == .reviewing ? "Looking" : "Stopped with the review"
         case .answered: return "\(extra.findings.count) finding\(extra.findings.count == 1 ? "" : "s")"
-        case .failed: return "\(extra.message ?? "Failed"). The round went ahead without it."
+        case .failed:
+            let why = (extra.message ?? "Failed").trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+            return "\(why). The round went ahead without it."
         }
     }
 }

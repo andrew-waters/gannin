@@ -48,30 +48,60 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
     /// prints its result file; the copy is removed however it ends. The
     /// CLI's own stdout is discarded: with Junie it is coloured text
     /// whatever the output format is.
-    func script(folder: URL, prompt: String) -> String {
+    ///
+    /// A worktree's `.git` file points at its admin directory in the main
+    /// clone, so a git command run in a plain copy would change the real
+    /// index, HEAD and branch. Each `.git` file in the copy is pointed at a
+    /// private copy of that admin directory and of the clone's refs and
+    /// config instead, borrowing the clone's objects read only (an
+    /// alternate), so commits, checkouts and resets stay in the copy.
+    ///
+    /// `slack` is how many seconds past `timeout` the CLI is left before it
+    /// is stopped, if it hasn't stopped itself.
+    func script(folder: URL, prompt: String, timeout: TimeInterval = ExtraReviewer.timeout, slack: Int = 30) -> String {
         switch self {
         case .junie:
-            let milliseconds = Int(Self.timeout) * 1000
-            // The CLI stops itself at its own timeout; this stops it a little
-            // later if it hasn't.
-            let watchdog = Int(Self.timeout) + 30
+            let milliseconds = Int(timeout * 1000)
+            let watchdog = Int(timeout) + slack
+            let source = SessionScript.quoted(folder.path)
             return [
                 #"d=$(mktemp -d "${TMPDIR:-/tmp}/gannin-junie.XXXXXX")"#,
                 #"trap 'rm -rf "$d"' EXIT"#,
+                "src=\(source)",
                 "command -v junie >/dev/null 2>&1 || { echo 'junie is not installed on this Mac (not found on PATH)' >&2; exit 127; }",
                 // A copy-on-write clone where the volume has them, which is
                 // quick however big the worktrees are.
-                "cp -cRP \(SessionScript.quoted(folder.path)) \"$d/project\" 2>/dev/null || { rm -rf \"$d/project\"; cp -RP \(SessionScript.quoted(folder.path)) \"$d/project\"; } || { echo \"Couldn't copy the worktree\" >&2; exit 1; }",
+                #"cp -cRP "$src" "$d/project" 2>/dev/null || { rm -rf "$d/project"; cp -RP "$src" "$d/project"; } || { echo "Couldn't copy the worktree" >&2; exit 1; }"#,
+                #"n=0"#,
+                #"find "$d/project" -maxdepth 3 -name .git -type f | while IFS= read -r f; do"#,
+                #"  n=$((n + 1))"#,
+                #"  gitdir=$(sed -n 's/^gitdir: //p' "$f")"#,
+                // A relative gitdir is relative to where the file was copied from.
+                #"  case "$gitdir" in /*) ;; *) gitdir="$(dirname "$src${f#"$d/project"}")/$gitdir" ;; esac"#,
+                #"  common=$(cd "$gitdir" && cd "$(cat commondir)" && pwd -P) || exit 1"#,
+                #"  g="$d/git/$n""#,
+                #"  mkdir -p "$g" || exit 1"#,
+                #"  rsync -a --exclude /objects --exclude /worktrees --exclude /lfs "$common/" "$g/common/" || exit 1"#,
+                #"  mkdir -p "$g/common/objects/info" && echo "$common/objects" > "$g/common/objects/info/alternates" || exit 1"#,
+                #"  cp -RP "$gitdir" "$g/admin" || exit 1"#,
+                #"  echo "$g/common" > "$g/admin/commondir" && echo "$f" > "$g/admin/gitdir" && echo "gitdir: $g/admin" > "$f" || exit 1"#,
+                "done || { echo \"Couldn't set up git in the copy\" >&2; exit 1; }",
                 "printf %s \(Data(prompt.utf8).base64EncodedString()) | base64 -d > \"$d/prompt\"",
+                // Job control, so the CLI and everything it starts are a process
+                // group that can be stopped together.
+                "set -m",
                 #"junie --project "$d/project" --output-format json --json-output-file "$d/result.json" --timeout \#(milliseconds) --skip-update-check "$(cat "$d/prompt")" >"$d/stdout" 2>"$d/stderr" &"#,
                 "pid=$!",
-                "( sleep \(watchdog); kill $pid 2>/dev/null ) &",
+                "( sleep \(watchdog); kill -TERM -$pid 2>/dev/null ) &",
                 "watchdog=$!",
                 // Disowned, so bash doesn't print a job notice for it into the error text.
                 "disown $watchdog",
                 "wait $pid",
                 "status=$?",
-                "kill $watchdog 2>/dev/null",
+                // The watchdog's group, so its sleep goes too, and anything the
+                // CLI left running.
+                "kill -TERM -$watchdog 2>/dev/null",
+                "kill -TERM -$pid 2>/dev/null",
                 #"[ "$status" -eq 143 ] && { echo 'timed out' >&2; exit \#(Self.timedOut); }"#,
                 #"if [ "$status" -ne 0 ]; then"#,
                 #"  if [ -s "$d/stderr" ]; then tail -n 3 "$d/stderr" >&2; else tail -n 3 "$d/stdout" | LC_ALL=C sed $'s/\033\\[[0-9;]*[A-Za-z]//g' >&2; fi"#,

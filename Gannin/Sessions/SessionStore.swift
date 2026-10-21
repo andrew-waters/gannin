@@ -543,6 +543,7 @@ final class SessionStore {
            let saved = try? JSONDecoder().decode([CodeSession].self, from: data) {
             sessions = Dictionary(uniqueKeysWithValues: saved.map { session in
                 var session = session
+                _ = session.pairing?.abandonRunningExtras("Gannin quit while it was running.")
                 if !session.isRemote, !session.hasNoIssue, let worktree = Self.worktree(for: session), !FileManager.default.fileExists(atPath: worktree.path) {
                     session.branch = Self.branchName(session.issue)
                 }
@@ -563,6 +564,12 @@ final class SessionStore {
         }
         tabs = saved.filter { !isReviewTab($0) } + saved.filter { isReviewTab($0) }
         selectedTab = tabs.first
+        // A round claude had answered while an extra reviewer was still out
+        // can finish now that the extra has been given up on.
+        let ready = sessions.values.filter { $0.pairing?.phase == .reviewing && $0.pairing?.isRoundComplete == true }.map(\.id)
+        if !ready.isEmpty {
+            Task { for id in ready { finishRoundIfReady(id) } }
+        }
     }
 
     // MARK: Tabs

@@ -162,6 +162,119 @@ struct PairReviewTests {
         #expect(script.contains(#">"$d/stdout""#))
     }
 
+    /// Runs `args` and returns its status and standard output.
+    @discardableResult
+    private func run(_ args: [String], in folder: URL? = nil, environment: [String: String] = [:], input: String? = nil) throws -> (status: Int32, output: String) {
+        let process = Process()
+        process.executableURL = URL(filePath: args[0])
+        process.arguments = Array(args.dropFirst())
+        process.currentDirectoryURL = folder
+        process.environment = environment
+        let output = Pipe()
+        process.standardOutput = output
+        process.standardError = FileHandle.nullDevice
+        let stdin = Pipe()
+        process.standardInput = stdin
+        try process.run()
+        if let input { stdin.fileHandleForWriting.write(Data(input.utf8)) }
+        try stdin.fileHandleForWriting.close()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (process.terminationStatus, String(decoding: data, as: UTF8.self))
+    }
+
+    /// A fake `junie` that runs `body` in the project it's given, then writes an empty list.
+    private func fakeJunie(in bin: URL, body: String) throws {
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let script = """
+            #!/bin/bash
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --project) project="$2"; shift 2 ;;
+                --json-output-file) out="$2"; shift 2 ;;
+                --output-format|--timeout) shift 2 ;;
+                --skip-update-check) shift ;;
+                *) shift ;;
+              esac
+            done
+            cd "$project/repo"
+            \(body)
+            printf '{"result":"```json\\\\n[]\\\\n```"}' > "$out"
+            """
+        let url = bin.appending(path: "junie")
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    @Test func junieCantChangeTheRealWorktreeOrItsGit() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ExtraReviewerGit-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let main = root.appending(path: "main"), folder = root.appending(path: "worktrees"), repo = folder.appending(path: "repo")
+        try FileManager.default.createDirectory(at: main, withIntermediateDirectories: true)
+        let git = "/usr/bin/git"
+        let environment = [
+            "PATH": "\(root.appending(path: "bin").path):/usr/bin:/bin", "HOME": root.path, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+            "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.com", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.com",
+        ]
+        try run([git, "init", "-q", "-b", "main"], in: main, environment: environment)
+        try "original\n".write(to: main.appending(path: "a.txt"), atomically: true, encoding: .utf8)
+        try run([git, "add", "-A"], in: main, environment: environment)
+        try run([git, "commit", "-q", "-m", "first"], in: main, environment: environment)
+        try run([git, "worktree", "add", "-q", repo.path, "-b", "feature"], in: main, environment: environment)
+
+        // Edits a file, commits, makes a branch and resets: all of it in the copy.
+        try fakeJunie(in: root.appending(path: "bin"), body: "echo changed > a.txt; git add -A; git commit -q -m edit; git checkout -q -b other; git reset -q --hard HEAD~1; echo again > b.txt")
+        let script = ExtraReviewer.junie.script(folder: folder, prompt: "Review it")
+        let result = try run(["/bin/bash", "-s"], environment: environment, input: script)
+
+        #expect(result.status == 0)
+        #expect(ExtraReviewer.junie.outcome(for: (result.status, result.output, "")) == .findings([]))
+        #expect(try String(contentsOf: repo.appending(path: "a.txt"), encoding: .utf8) == "original\n")
+        #expect(!FileManager.default.fileExists(atPath: repo.appending(path: "b.txt").path))
+        #expect(try run([git, "rev-parse", "--abbrev-ref", "HEAD"], in: repo, environment: environment).output == "feature\n")
+        #expect(try run([git, "branch", "--list", "other"], in: main, environment: environment).output == "")
+        #expect(try run([git, "rev-list", "--count", "feature"], in: main, environment: environment).output == "1\n")
+        #expect(try run([git, "status", "--porcelain"], in: repo, environment: environment).output == "")
+    }
+
+    @Test func aTimedOutJunieAndEverythingItStartedIsStopped() throws {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ExtraReviewerTimeout-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appending(path: "worktrees")
+        try FileManager.default.createDirectory(at: folder.appending(path: "repo"), withIntermediateDirectories: true)
+        let pidFile = root.appending(path: "child.pid")
+        try fakeJunie(in: root.appending(path: "bin"), body: "sleep 300 & echo $! > \(pidFile.path); wait")
+        let script = ExtraReviewer.junie.script(folder: folder, prompt: "Review it", timeout: 1, slack: 0)
+        let environment = ["PATH": "\(root.appending(path: "bin").path):/usr/bin:/bin"]
+        let result = try run(["/bin/bash", "-s"], environment: environment, input: script)
+
+        #expect(result.status == ExtraReviewer.timedOut)
+        let child = try #require(Int32(String(contentsOf: pidFile, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)))
+        // Gone, or on its way out as signals are delivered.
+        var alive = true
+        for _ in 0..<50 where alive {
+            alive = kill(child, 0) == 0
+            if alive { Thread.sleep(forTimeInterval: 0.1) }
+        }
+        #expect(!alive)
+    }
+
+    @Test func anExtraLeftRunningByAQuitIsFailedAndDoesntHoldTheRoundUp() throws {
+        var pairing = PairReview()
+        pairing.startExtras([.junie])
+        // Saved mid-round, then read back by the next launch.
+        pairing = try JSONDecoder().decode(PairReview.self, from: JSONEncoder().encode(pairing))
+        #expect(pairing.isWaitingOnExtras)
+        let found = pairing.abandonRunningExtras("Gannin quit while it was running.")
+        #expect(found)
+        #expect(!pairing.isWaitingOnExtras)
+        pairing.claudeAnswered([finding("app/b.swift", nil, "Missing test")], reply: "r1")
+        #expect(pairing.isRoundComplete)
+        #expect(pairing.mergedFindings.map(\.comment) == ["Missing test"])
+        let again = pairing.abandonRunningExtras("x")
+        #expect(!again)
+    }
+
     @Test func aRunThatNeverEndsIsGivenUpOn() async {
         let outcome = await ExtraReviewer.junie.review(folder: URL(filePath: "/tmp"), prompt: "x", limit: 0.05) { _ in
             try? await Task.sleep(for: .seconds(30))
