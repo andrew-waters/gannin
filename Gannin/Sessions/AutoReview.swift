@@ -214,6 +214,44 @@ extension SessionStore {
         return await startAutomaticReview(of: pr, harness: setup, harnessPath: path, limit: limit).map { .started($0) } ?? .later
     }
 
+    /// A queued review whose turn has come (R5, R8): skipped if its PR was
+    /// merged, closed or made a draft while it waited, or, for a request, no
+    /// longer asks for you (R7); else started as Auto review or Look Again
+    /// would. `requested` is every PR asking for your review as last seen,
+    /// nil if not looked yet.
+    func startQueuedReview(_ queued: QueuedReview, configs: OrgConfigStore, requested: Set<String>?) async -> RoutineStart {
+        let pr = queued.pullRequest
+        guard let api = api() else { return .failed("Gannin isn't signed in to GitHub.") }
+        let found: PullRequestState?
+        do {
+            found = try await api.pullRequestStates(ids: [pr.id])[pr.id]
+        } catch {
+            return .failed("Couldn't look the PR up: \(error.localizedDescription)")
+        }
+        guard let found else { return .skipped("The PR is gone.") }
+        switch found.state {
+        case "MERGED": return .skipped("It was merged while it waited.")
+        case "CLOSED": return .skipped("It was closed while it waited.")
+        default: break
+        }
+        if found.isDraft { return .skipped("It was made a draft while it waited.") }
+        if let lookAgain = queued.lookAgain {
+            let id = lookAgain.session
+            guard sessions[id]?.watch?.isOn == true else { return .skipped("Its review was finished, or stopped watching the PR.") }
+            if [.working, .starting, .needsYou].contains(state(id)) { return .failed("Its review is busy, so it'll try again.") }
+            guard await reviewAgain(id, because: lookAgain.reasons) else { return .failed("Couldn't ask its review to look again.") }
+            return .started(session: id)
+        }
+        if let requested, !requested.contains(pr.id) { return .skipped("It no longer asks for your review.") }
+        if review(of: pr.id) != nil { return .skipped("It already has a review.") }
+        guard AutoReview.isOn(for: pr.org) else { return .skipped("Auto review is off for \(pr.org).") }
+        switch await autoReview(pr, configs: configs, gated: false, limit: .max) {
+        case .started(let id): return .started(session: id)
+        case .skipped: return .skipped("Its review config leaves it alone.")
+        case .queued, .later: return .failed("Couldn't start its review: the project covering \(pr.repo) isn't checked out here.")
+        }
+    }
+
     /// A review started by Gannin for a request it found, in the background:
     /// no tab is shown. Nil when the PR already has a review or `limit`
     /// automatic ones are running; a later check tries again.
@@ -503,6 +541,13 @@ extension SessionStore {
 
 // MARK: - Watched PRs from GitHub
 
+/// Whether a PR is still open and ready, for a queued review's turn.
+struct PullRequestState {
+    /// `OPEN`, `MERGED` or `CLOSED`.
+    let state: String
+    let isDraft: Bool
+}
+
 struct WatchedPullRequest {
     struct Comment {
         let id: String
@@ -522,6 +567,23 @@ struct WatchedPullRequest {
 }
 
 extension GitHubAPI {
+    /// PRs' state and draft flag by node ID; one that's gone is left out.
+    func pullRequestStates(ids: [String]) async throws -> [String: PullRequestState] {
+        struct Node: Decodable { let id: String?; let state: String?; let isDraft: Bool? }
+        struct Response: Decodable { let nodes: [Node?] }
+        let response: Response = try await query("""
+            query($ids: [ID!]!) {
+              nodes(ids: $ids) { ... on PullRequest { id state isDraft } }
+            }
+            """, values: ["ids": ids])
+        var found: [String: PullRequestState] = [:]
+        for case let node? in response.nodes {
+            guard let id = node.id, let state = node.state else { continue }
+            found[id] = PullRequestState(state: state, isDraft: node.isDraft ?? false)
+        }
+        return found
+    }
+
     /// Watched PRs by node ID, each one's latest comments and reviews, and
     /// who you are, so yours are left out.
     func watchedPullRequests(ids: [String]) async throws -> (login: String, pullRequests: [String: WatchedPullRequest]) {

@@ -180,9 +180,16 @@ struct GanninApp: App {
         sessions.reviewGate = { [weak sessions, weak routines, weak scheduler] org in
             guard let sessions, let routines, let scheduler else { return .start(limit: AutoReview.maxRunning) }
             return ReviewGate.decide(
-                now: .now, windows: reviewWindows(org), running: sessions.automaticReviewsRunning,
+                now: .now, windows: reviewWindows(org), running: sessions.automaticReviewsRunning + scheduler.reviewsStarting,
                 paused: routines.isPaused, isWorkingDay: scheduler.workingDays(org)
             )
+        }
+        scheduler.reviewWindows = reviewWindows
+        scheduler.runningReviews = { [weak sessions] in sessions?.automaticReviewsRunning ?? 0 }
+        scheduler.startReview = { [weak sessions, weak orgConfigs] review, _ in
+            guard let sessions, let orgConfigs else { return .failed("Gannin is closing.") }
+            let requested = watch.checkedAt == nil ? nil : Set(watch.reviewRequests.map(\.id))
+            return await sessions.startQueuedReview(review, configs: orgConfigs, requested: requested)
         }
         if !demo { scheduler.begin() }
         TabMenuRename.shared.install()

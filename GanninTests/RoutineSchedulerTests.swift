@@ -160,4 +160,150 @@ struct RoutineSchedulerTests {
         await scheduler.startsFinished()
         #expect(tries == 1)
     }
+
+    // MARK: Review windows
+
+    private func pullRequest(_ number: Int, org: String = "acme") -> PullRequestReference {
+        PullRequestReference(org: org, id: "PR_\(org)_\(number)", number: number, title: "PR \(number)", repo: "\(org)/app",
+                             url: URL(string: "https://github.com/\(org)/app/pull/\(number)")!)
+    }
+
+    private func reviewWindow(_ start: Int, _ end: Int, atOnce: Int = 1, org: String = "acme") -> Routine {
+        var window = Routine.new(org: org, harnessRepo: "", kind: .reviewQueue,
+                                 schedule: .window(RoutineWindow(start: TimeOfDay(hour: start), end: TimeOfDay(hour: end), days: nil)))
+        window.concurrency = atOnce
+        return window
+    }
+
+    /// A scheduler over a fresh store whose review starts count as running
+    /// until `finish`, with `windows` for every org.
+    private final class Reviews {
+        let store: RoutineStore
+        let scheduler: RoutineScheduler
+        var windows: [String: [Routine]] = [:]
+        var running: [String] = []
+        var started: [Int] = []
+        var answer: (QueuedReview) -> RoutineStart = { _ in .started(session: UUID()) }
+
+        init(calendar: Calendar) {
+            store = RoutineStore(directory: FileManager.default.temporaryDirectory.appending(path: "RoutineSchedulerTests-\(UUID().uuidString)", directoryHint: .isDirectory))
+            scheduler = RoutineScheduler(store: store)
+            scheduler.calendar = calendar
+            scheduler.workingDays = { _ in { _ in true } }
+            scheduler.reviewWindows = { [unowned self] org in self.windows[org] ?? [] }
+            scheduler.runningReviews = { [unowned self] in self.running.count }
+            scheduler.startReview = { [unowned self] review, _ in
+                let result = self.answer(review)
+                if case .started = result {
+                    self.started.append(review.pullRequest.number)
+                    self.running.append(review.id)
+                }
+                return result
+            }
+        }
+
+        func queue(_ prs: [PullRequestReference]) {
+            for pr in prs { store.enqueueReview(QueuedReview(pullRequest: pr, queuedAt: .now)) }
+        }
+
+        func check(_ now: Date) async {
+            await scheduler.check(now: now)
+            await scheduler.startsFinished()
+        }
+    }
+
+    @Test func aReviewWindowStartsQueuedReviewsInOrderUpToItsNumber() async {
+        let reviews = Reviews(calendar: calendar)
+        let lunch = reviewWindow(12, 13, atOnce: 2)
+        reviews.windows["acme"] = [lunch]
+        reviews.queue((1...3).map { pullRequest($0) })
+        // Shut: nothing starts.
+        await reviews.check(date(2026, 10, 21, 11, 59))
+        #expect(reviews.started.isEmpty)
+        // Open: the first two, in queue order, each recorded against the window.
+        await reviews.check(date(2026, 10, 21, 12, 0, 15))
+        #expect(reviews.started == [1, 2])
+        #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [3])
+        #expect(reviews.store.runs(for: lunch.id).compactMap(\.pullRequest?.number).sorted() == [1, 2])
+        // One finishes: the third takes its place.
+        reviews.running.removeFirst()
+        await reviews.check(date(2026, 10, 21, 12, 20))
+        #expect(reviews.started == [1, 2, 3])
+    }
+
+    @Test func reviewsRunningInAnotherOrgFillTheWindow() async {
+        let reviews = Reviews(calendar: calendar)
+        reviews.windows["acme"] = [reviewWindow(12, 13)]
+        reviews.windows["other"] = [reviewWindow(12, 13, org: "other")]
+        reviews.queue([pullRequest(1, org: "other"), pullRequest(1)])
+        await reviews.check(date(2026, 10, 21, 12, 0, 15))
+        // One review at once across the Mac, whichever org went first.
+        #expect(reviews.started.count == 1)
+        #expect(reviews.store.reviewQueue.count == 1)
+    }
+
+    @Test func aClosingWindowStartsNothingNew() async {
+        let reviews = Reviews(calendar: calendar)
+        reviews.windows["acme"] = [reviewWindow(12, 13)]
+        reviews.queue([pullRequest(1), pullRequest(2)])
+        await reviews.check(date(2026, 10, 21, 12, 50))
+        #expect(reviews.started == [1])
+        // The first finishes after the window has shut: the second waits.
+        reviews.running.removeAll()
+        await reviews.check(date(2026, 10, 21, 13, 5))
+        #expect(reviews.started == [1])
+        #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [2])
+    }
+
+    @Test func aReviewNoLongerWantedIsSkippedWithWhy() async {
+        let reviews = Reviews(calendar: calendar)
+        let lunch = reviewWindow(12, 13)
+        reviews.windows["acme"] = [lunch]
+        reviews.answer = { $0.pullRequest.number == 1 ? .skipped("It was merged while it waited.") : .started(session: UUID()) }
+        reviews.queue([pullRequest(1), pullRequest(2)])
+        await reviews.check(date(2026, 10, 21, 12, 0, 15))
+        await reviews.check(date(2026, 10, 21, 12, 0, 30))
+        let skipped = reviews.store.runs(for: lunch.id).first { $0.pullRequest?.number == 1 }
+        #expect(skipped?.outcome == .skipped)
+        #expect(skipped?.note == "It was merged while it waited.")
+        #expect(reviews.started == [2])
+        #expect(reviews.store.reviewQueue.isEmpty)
+    }
+
+    @Test func aFailedReviewStartGoesBackAndHoldsItsWindow() async {
+        let reviews = Reviews(calendar: calendar)
+        reviews.windows["acme"] = [reviewWindow(0, 23)]
+        var tries = 0
+        reviews.answer = { _ in
+            tries += 1
+            return .failed("Couldn't look the PR up.")
+        }
+        reviews.queue([pullRequest(1), pullRequest(2)])
+        await reviews.check(date(2026, 10, 21, 10))
+        #expect(tries == 1)
+        #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [1, 2])
+        await reviews.check(date(2026, 10, 21, 10, 0, 15))
+        #expect(tries == 1)
+    }
+
+    @Test func runNowStartsAQueuedReviewOutsideEveryWindow() async {
+        let reviews = Reviews(calendar: calendar)
+        let lunch = reviewWindow(12, 13)
+        reviews.windows["acme"] = [lunch]
+        reviews.queue([pullRequest(1), pullRequest(2)])
+        let second = reviews.store.reviewQueue(for: "acme")[1]
+        reviews.scheduler.runReviewNow(second)
+        await reviews.scheduler.startsFinished()
+        #expect(reviews.started == [2])
+        #expect(reviews.store.reviewQueue(for: "acme").map(\.pullRequest.number) == [1])
+        #expect(reviews.store.runs(for: lunch.id).count == 1)
+    }
+
+    @Test func withNoWindowsALeftoverQueueDrainsAsAutoReviewWould() async {
+        let reviews = Reviews(calendar: calendar)
+        reviews.queue((1...3).map { pullRequest($0) })
+        await reviews.check(date(2026, 10, 21, 3))
+        #expect(reviews.started == [1, 2])
+        #expect(reviews.store.runs(for: RoutineScheduler.reviewQueueRuns).count == 2)
+    }
 }

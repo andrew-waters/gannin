@@ -330,7 +330,7 @@ struct RunOutcomeLabel: View {
         case .needsYou, .stoppedAtLimit: .orange
         case .failed: ChartPalette.critical
         case .finished: ChartPalette.good
-        case .missed, .skippedPaused: .secondary
+        case .missed, .skippedPaused, .skipped: .secondary
         }
     }
 }

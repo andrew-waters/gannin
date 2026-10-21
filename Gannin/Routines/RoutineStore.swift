@@ -160,6 +160,8 @@ struct RoutineRun: Codable, Identifiable, Hashable {
         case missed
         /// Due while routines were paused (R14).
         case skippedPaused
+        /// A queued review no longer wanted when its turn came (R7).
+        case skipped
         case failed
 
         var label: String {
@@ -170,6 +172,7 @@ struct RoutineRun: Codable, Identifiable, Hashable {
             case .stoppedAtLimit: "Stopped at limit"
             case .missed: "Missed"
             case .skippedPaused: "Skipped while paused"
+            case .skipped: "Skipped"
             case .failed: "Failed"
             }
         }
@@ -186,6 +189,8 @@ struct RoutineRun: Codable, Identifiable, Hashable {
     var count: Int?
     /// The issue a queue window or pinned issue ran.
     var issue: IssueReference?
+    /// The PR a review window reviewed.
+    var pullRequest: PullRequestReference?
     var startedAt: Date?
     var endedAt: Date?
     var outcome: Outcome
