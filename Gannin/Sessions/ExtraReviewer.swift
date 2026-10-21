@@ -21,10 +21,18 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
     }
 
     /// What its run produced: a findings list (empty when nothing's left),
-    /// or why there isn't one.
+    /// or why there isn't one, with what the CLI printed when that's the
+    /// reason.
     enum Outcome: Equatable {
         case findings([SessionTranscript.Finding])
-        case failed(String)
+        case failed(String, output: String? = nil)
+    }
+
+    /// The end of what a CLI printed, kept for the panel: a failed run's
+    /// reply can be long, and it's saved with the pairing.
+    static func shown(_ output: String) -> String? {
+        let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : String(trimmed.suffix(8_000))
     }
 
     /// A finished script: its exit status and what it printed.
@@ -161,19 +169,19 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
         case 0:
             break
         case 127:
-            return .failed(run.error.isEmpty ? "\(title) isn't installed on this Mac." : run.error)
+            return .failed(run.error.isEmpty ? "\(title) isn't installed on this Mac." : run.error, output: Self.shown(run.output))
         case Self.timedOut:
-            return .failed("\(title) timed out after \(Int(Self.timeout / 60)) minutes.")
+            return .failed("\(title) timed out after \(Int(Self.timeout / 60)) minutes.", output: Self.shown(run.output))
         default:
             let why = run.error.trimmingCharacters(in: .whitespacesAndNewlines)
-            return .failed(why.isEmpty ? "\(title) failed (exit \(run.status))." : "\(title) failed: \(why)")
+            return .failed(why.isEmpty ? "\(title) failed (exit \(run.status))." : "\(title) failed: \(why)", output: Self.shown(run.output))
         }
         struct Output: Decodable { let result: String? }
         guard let output = try? JSONDecoder().decode(Output.self, from: Data(run.output.utf8)), let reply = output.result else {
-            return .failed("\(title) didn't write a result.")
+            return .failed("\(title) didn't write a result.", output: Self.shown(run.output))
         }
         guard let findings = ClaudeRunner.json([SessionTranscript.Finding].self, in: reply) else {
-            return .failed("\(title) replied with no list of findings.")
+            return .failed("\(title) replied with no list of findings.", output: Self.shown(reply))
         }
         return .findings(findings)
     }

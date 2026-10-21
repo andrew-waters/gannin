@@ -153,10 +153,38 @@ struct PairReviewTests {
     }
 
     @Test func junieOutputWithoutAListOrAResultFails() {
-        #expect(outcome(result("I looked at it.")) == .failed("Junie replied with no list of findings."))
-        #expect(outcome("not json") == .failed("Junie didn't write a result."))
-        #expect(outcome("{\"sessionId\": \"s\"}") == .failed("Junie didn't write a result."))
-        #expect(outcome(result("```json\n[{\"path\": 1}]\n```")) == .failed("Junie replied with no list of findings."))
+        #expect(outcome(result("I looked at it.")) == .failed("Junie replied with no list of findings.", output: "I looked at it."))
+        #expect(outcome("not json") == .failed("Junie didn't write a result.", output: "not json"))
+        #expect(outcome("{\"sessionId\": \"s\"}") == .failed("Junie didn't write a result.", output: "{\"sessionId\": \"s\"}"))
+        #expect(outcome("") == .failed("Junie didn't write a result."))
+        let bad = "```json\n[{\"path\": 1}]\n```"
+        #expect(outcome(result(bad)) == .failed("Junie replied with no list of findings.", output: bad))
+    }
+
+    @Test func everyKindOfFailedJunieRunKeepsWhatItPrinted() {
+        #expect(outcome(status: 1, "partial", error: "boom") == .failed("Junie failed: boom", output: "partial"))
+        #expect(outcome(status: ExtraReviewer.timedOut, "partial") == .failed("Junie timed out after 10 minutes.", output: "partial"))
+        #expect(outcome(status: 127, "partial", error: "") == .failed("Junie isn't installed on this Mac.", output: "partial"))
+    }
+
+    @Test func anExtraShowsItsFindingsOrWhatItPrinted() {
+        var extra = PairReview.ExtraReview()
+        #expect(extra.shownText == nil)
+        extra.state = .answered
+        #expect(extra.shownText == nil)
+        extra.findings = [finding("app/a.swift", 3, "Off by one"), SessionTranscript.Finding(path: "app/b.swift", line: nil, comment: "Missing test")]
+        #expect(extra.shownText == "app/a.swift:3\nOff by one\n\napp/b.swift\nMissing test")
+        extra.state = .failed
+        extra.output = "It printed this"
+        #expect(extra.shownText == "It printed this")
+    }
+
+    @Test func aFailedExtraKeepsWhatItPrinted() {
+        var pairing = PairReview()
+        pairing.startExtras([.junie])
+        let run = pairing.extras![ExtraReviewer.junie.id]!.run
+        _ = pairing.extraFinished(.junie, run: run, outcome: .failed("Junie replied with no list of findings.", output: "I looked at it."))
+        #expect(pairing.extras?[ExtraReviewer.junie.id]?.output == "I looked at it.")
     }
 
     @Test func aFailedJunieRunSaysWhy() {
