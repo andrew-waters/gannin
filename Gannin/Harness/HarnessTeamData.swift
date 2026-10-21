@@ -8,6 +8,7 @@ import Observation
 enum TeamFile {
     static let views = ".gannin/views.json"
     static let investments = ".gannin/investments.json"
+    static let rnd = ".gannin/rnd.json"
     static let workflow = ".gannin/workflow.json"
     static let workingWeek = ".gannin/working-week.json"
     static let leave = ".gannin/leave.json"
@@ -41,6 +42,7 @@ enum TeamFile {
         switch path {
         case views: "views"
         case investments: "investment categories"
+        case rnd: "R&D time settings and marked issues"
         case workflow: "issue workflow"
         case workingWeek: "working week"
         case leave: "leave policy"
@@ -83,6 +85,7 @@ struct TeamPrioritisation: Codable, Hashable {
 struct HarnessTeamData {
     var views: [FieldView]?
     var investments: InvestmentConfig?
+    var rnd: RDConfig?
     var workflow: IssueWorkflow?
     var workWeek: WorkWeek?
     var leave: LeavePolicy?
@@ -101,6 +104,7 @@ struct HarnessTeamData {
     init(files: [String: String]) {
         views = files[TeamFile.views].flatMap { TeamCoding.decode([FieldView].self, $0) }
         investments = files[TeamFile.investments].flatMap { TeamCoding.decode(InvestmentConfig.self, $0) }
+        rnd = files[TeamFile.rnd].flatMap { TeamCoding.decode(RDConfig.self, $0) }
         workflow = files[TeamFile.workflow].flatMap { TeamCoding.decode(IssueWorkflow.self, $0) }
         workWeek = files[TeamFile.workingWeek].flatMap { TeamCoding.decode(WorkWeek.self, $0) }
         leave = files[TeamFile.leave].flatMap { TeamCoding.decode(LeavePolicy.self, $0) }
@@ -141,6 +145,7 @@ struct HarnessTeamData {
     func appliedProject(to config: OrgConfig) -> OrgConfig {
         var config = config
         config.investments = investments
+        config.rnd = rnd
         config.issueWorkflow = workflow
         config.goals = goals
         config.recap = recap
@@ -158,6 +163,7 @@ struct HarnessTeamData {
             files[TeamFile.views] = after.fieldViews.isEmpty ? nil : TeamCoding.encode(after.fieldViews)
         }
         if before.investments != after.investments { files[TeamFile.investments] = after.investments.flatMap(TeamCoding.encode) }
+        if before.rnd != after.rnd { files[TeamFile.rnd] = after.rnd.flatMap(TeamCoding.encode) }
         if before.issueWorkflow != after.issueWorkflow { files[TeamFile.workflow] = after.issueWorkflow.flatMap(TeamCoding.encode) }
         if before.workWeek != after.workWeek { files[TeamFile.workingWeek] = after.workWeek.flatMap(TeamCoding.encode) }
         if before.goals != after.goals { files[TeamFile.goals] = after.goals.flatMap(TeamCoding.encode) }
