@@ -144,6 +144,12 @@ struct PairReviewTests {
         #expect(outcome(reply) == .findings([finding("app/a.swift", 3, "Off by one")]))
     }
 
+    @Test func junieFindingsAreReadFromAFenceLeftOpen() {
+        // Braces in the prose before the list mustn't be taken for its start.
+        let reply = result("### Findings\n4. The helper returns `{ error: {} }`.\n\n```json\n[{\"path\": \"app/a.swift\", \"line\": 3, \"comment\": \"Off by one\"}]")
+        #expect(outcome(reply) == .findings([finding("app/a.swift", 3, "Off by one")]))
+    }
+
     @Test func juniesPromptAsksForTheListInItsFinalSummary() {
         let prompt = ExtraReviewer.junie.prompt("Review it")
         #expect(prompt.hasPrefix("Review it"))

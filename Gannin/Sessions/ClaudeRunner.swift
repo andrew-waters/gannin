@@ -191,12 +191,13 @@ enum ClaudeRunner {
     }
 
     /// The JSON object or list in a reply, from its last fenced block or
-    /// the whole reply.
+    /// the whole reply. A last block left unclosed (Junie's final summary
+    /// can end without the closing fence) runs to the end of the reply.
     static func json<T: Decodable>(_ type: T.Type, in reply: String) -> T? {
         var candidates: [String] = []
         if let start = reply.range(of: "```json", options: .backwards) {
             let rest = reply[start.upperBound...]
-            if let end = rest.range(of: "```") { candidates.append(String(rest[..<end.lowerBound])) }
+            candidates.append(String(rest[..<(rest.range(of: "```")?.lowerBound ?? rest.endIndex)]))
         }
         candidates.append(reply)
         if let open = reply.firstIndex(where: { $0 == "{" || $0 == "[" }), let close = reply.lastIndex(where: { $0 == "}" || $0 == "]" }), open < close {
