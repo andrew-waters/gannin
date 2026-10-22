@@ -11,16 +11,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Added
 - The Junie line in a session's Activity pane expands to show Junie's findings, or what it printed when it didn't give a list
-
-### Fixed
-- The Junie reviewer's findings are no longer lost: its pair review failed with "Junie replied with no list of findings" because Junie dropped the list from its final summary, so it is now asked to put the list in that summary
-
-### Changed
-- When a review looks again after new comments, it answers the PR author's comments and other people's only if they disagree with the review or the reviewer disagrees with them
-
-### Added
 - An issue's assignees can be changed from its window or drawer: choose people under Assignees in the side panel and press Save to write the change to GitHub
 - Delivery › R&D Time shows how much of each person's working time went to R&D work over an accounting period, by issue and by person, with time found from their activity, working week and time off, over the org's accounting year (any start, set in Settings › Working Time with named periods of its own); what counts is set in Settings › R&D (marked by hand, investment categories, labels or a board field), issues can be marked by hand with a share and rationale, and the report exports as CSV or Markdown. Its activity is fetched only from that page, after showing the searches and GitHub budget it will take and asking to confirm, with progress and Cancel; Refresh never fetches it. Hours only, no costs
+- Review windows hold automatic PR reviews to times you choose, so their builds and tests don't slow your Mac while you work: add them under Agents › Routines (New Routine › New Review Window) with days, hours and Reviews at once. Outside every window, review requests and Look Agains wait in a review queue on Agents › Queue, where you can reorder them, remove them or Run Now, and they start in order when a window opens; one whose PR was merged, closed, made a draft or no longer asks for you is skipped. Windows are kept in your file in the org's harness so all your Macs follow them, with Override on This Mac for one that shouldn't. With no windows, nothing changes. Update Gannin on all your Macs first: an older version that changes your dates or time off drops your windows from your file
 - A pair review can also use JetBrains Junie as an extra reviewer, alongside claude's: turn on Junie reviewer for a project in Org settings › Projects (off by default, local sessions only). Each round runs Junie in a throwaway copy of the worktree, sends both reviewers' findings to claude together with who raised each, and carries on without Junie, saying why on the session's panel, if it's missing or fails
 - A review's tab says "Not posted" until a review is posted, Check for Changes finds a review you posted elsewhere on GitHub, and Post Review and automatic posting no longer send a review you've already posted (same kind, body and commit)
 - The sessions grid has a search field (⌘F to focus it, Esc to clear it) that narrows it to sessions matching every word typed, in their kind, reference, title, repo, branch or pull requests; the + menu's Open a Session filter now matches branches and pull requests too
@@ -39,16 +32,8 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Every session at once in the Claude Code window divides into Work and Reviews sections when both are open
 - The Claude Code window's tab bar keeps review tabs together after your work tabs, with a divider between the groups when both are open
 
-### Changed
-- The sidebar can be dragged wider, up to 500 points instead of 340
-- A project board view now opens with the swimlane (or table grouping) you last picked for it, instead of going back to its GitHub grouping each time
-- Review Now on a session whose review has ended now launches the reviewer again, restarting its Claude Code if that had exited, and brings its tab to the front; when it can't start, the panel says why instead of doing nothing
-- Opening a session's tab (from the tab bar, by cycling to it, or from the Agents page, the command palette or a notification) now shows its reviewer when the reviewer is waiting for an answer and the session itself isn't, instead of the work
-- Open issues are kept once on disk instead of in both the workload snapshot and the issue history, shown as Issues in Settings › Storage. Existing caches are moved across on first launch, so nothing is fetched again
-- A plan can be ended from its own tab with End: Claude stops and the tab closes, and the plan stays on Rituals › Planning as Finished to read, but leaves the sidebar. An Ask's tab has a Delete button, with the same confirmation as the list's
-- A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
-
 ### Fixed
+- The Junie reviewer's findings are no longer lost: its pair review failed with "Junie replied with no list of findings" because Junie dropped the list from its final summary, so it is now asked to put the list in that summary
 - A session's pull request lists only the latest run of each check, so a failure that was since re-run and passed no longer stays listed as failed
 - Picking a file, or switching between Branch and Uncommitted, in a session's Changes pane no longer moves the divider and leaves the diff a sliver
 - Finish and Clean Up now removes a symlink standing in for a worktree (only the link, never the clone it points to), and a worktree whose git folder has been deleted, instead of failing with "Couldn't remove the worktrees". The folder and its files are deleted, as with any worktree it removes, so anything not pushed in it is lost
@@ -66,6 +51,16 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A mouse wheel over the Claude Code window's tab bar scrolls the tabs sideways
 - A session now shows as needing you, with its Allow and Deny card, when Claude Code's permission prompt is on screen even if Claude Code didn't notify Gannin of it, as with a command that also reads outside the session's folders (sessions on this Mac only)
 - Re-run Failed Checks on a session's PR now checks GitHub again first, so it no longer fails with a confusing error when a check it last saw as failing has since passed
+
+### Changed
+- When a review looks again after new comments, it answers the PR author's comments and other people's only if they disagree with the review or the reviewer disagrees with them
+- The sidebar can be dragged wider, up to 500 points instead of 340
+- A project board view now opens with the swimlane (or table grouping) you last picked for it, instead of going back to its GitHub grouping each time
+- Review Now on a session whose review has ended now launches the reviewer again, restarting its Claude Code if that had exited, and brings its tab to the front; when it can't start, the panel says why instead of doing nothing
+- Opening a session's tab (from the tab bar, by cycling to it, or from the Agents page, the command palette or a notification) now shows its reviewer when the reviewer is waiting for an answer and the session itself isn't, instead of the work
+- Open issues are kept once on disk instead of in both the workload snapshot and the issue history, shown as Issues in Settings › Storage. Existing caches are moved across on first launch, so nothing is fetched again
+- A plan can be ended from its own tab with End: Claude stops and the tab closes, and the plan stays on Rituals › Planning as Finished to read, but leaves the sidebar. An Ask's tab has a Delete button, with the same confirmation as the list's
+- A session's Changes pane colours the code in a file's diff by its language, as a pull request review's diff does
 
 ## [0.0.3] - 2026-10-13
 

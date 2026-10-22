@@ -3,15 +3,22 @@ import Foundation
 import Observation
 
 /// What starting a scheduled run came to.
-enum RoutineStart {
+enum RoutineStart: Equatable {
     case started(session: UUID)
     /// `retry` is false when the issue itself is the trouble (it already
     /// has a session), so a queued one isn't put back.
     case failed(String, retry: Bool = true)
+    /// A queued review no longer wanted, and why (R7).
+    case skipped(String)
+    /// A queued review that can't start yet through no fault of the window
+    /// (its review is busy): it goes back where it was, with no hold and no
+    /// run recorded. `reviewReady` passes over these, so it's only a race.
+    case notYet(String)
 }
 
 /// Starts agent sessions by themselves while Gannin runs: each routine's
-/// times as they come, and queue windows draining the agent queue. Ticks
+/// times as they come, queue windows draining the agent queue, and review
+/// windows draining the review queue. Ticks
 /// every 15 seconds, and at once when the Mac wakes. Times older than the
 /// grace (Gannin was closed or the Mac asleep) are recorded as missed and
 /// not run (R2); while paused, as skipped (R14).
@@ -25,6 +32,18 @@ final class RoutineScheduler {
     @ObservationIgnored var workingDays: (String) -> RoutineSchedule.WorkingDays = { _ in RoutineSchedule.everyWeekday }
     /// Called each tick to watch the runs going (limits, outcomes).
     @ObservationIgnored var watch: () -> Void = {}
+    /// The org's review windows, this Mac's or the person's synced ones
+    /// (`ReviewWindowBook`).
+    /// Nil while they aren't known yet, which holds the queue.
+    @ObservationIgnored var reviewWindows: (String) -> [Routine]? = { _ in [] }
+    /// Automatic reviews running on this Mac, every org's.
+    @ObservationIgnored var runningReviews: () -> Int = { 0 }
+    /// Starts a queued review whose turn has come, after checking it's still
+    /// wanted (`SessionStore.startQueuedReview`).
+    @ObservationIgnored var startReview: (QueuedReview, UUID) async -> RoutineStart = { _, _ in .failed("Gannin isn't ready to start reviews.") }
+    /// Whether a queued review could start now: false for a Look Again
+    /// whose review is busy, which waits without holding up the rest.
+    @ObservationIgnored var reviewReady: (QueuedReview) -> Bool = { _ in true }
     /// The calendar times are worked out in; a test's own.
     @ObservationIgnored var calendar: Calendar = .current
 
@@ -37,13 +56,16 @@ final class RoutineScheduler {
     /// Failures in a row after which a window stops trying until it next
     /// opens, or Run Now.
     static let maxFailures = 4
+    /// What a review run counts against when no review window started it:
+    /// Run Now with none open, or a queue left after its windows went.
+    static let reviewQueueRuns = UUID(uuidString: "5EC0E5E0-0000-4000-8000-000000000000")!
 
     @ObservationIgnored private var loop: Task<Void, Never>?
     @ObservationIgnored private var wakeObserver: NSObjectProtocol?
     /// Starts under way, by run: a start can take minutes (a sandbox's
     /// image, the harness commit), so none is awaited by a look.
     @ObservationIgnored private var starting: [UUID: Task<Void, Never>] = [:]
-    /// Queue windows held off after a failed start, until when.
+    /// Queue and review windows held off after a failed start, until when.
     private(set) var heldUntil: [UUID: Date] = [:]
     /// Each queue window's failed starts in a row.
     private(set) var failures: [UUID: Int] = [:]
@@ -147,7 +169,110 @@ final class RoutineScheduler {
         for routine in store.routines where routine.kind == .issueQueue {
             if drain(routine, now: now) { acted = true }
         }
+        for org in Set(store.reviewQueue.map(\.pullRequest.org)).sorted() {
+            if drainReviews(org: org, now: now) { acted = true }
+        }
         if acted { store.saveState() }
+    }
+
+    /// Reviews being started, which count as running until their session is.
+    var reviewsStarting: Int { starting.keys.filter { store.run($0)?.pullRequest != nil }.count }
+
+    /// Starts the org's queued reviews in order while a review window is open
+    /// and every automatic review on this Mac, whatever its org, is under its
+    /// reviews at once (R5), as `ReviewGate` decides; with no windows, as
+    /// Auto review would (R11). A window closing only stops new starts (R6).
+    /// Whether it started any.
+    private func drainReviews(org: String, now: Date) -> Bool {
+        // Pause All holds the queue, with or without windows.
+        guard !store.isPaused else { return false }
+        let days = workingDays(org)
+        // Not known yet (just launched, not signed in): hold the queue.
+        guard let windows = reviewWindows(org)?.filter(\.isEnabled) else { return false }
+        for window in windows where !window.schedule.isOpen(at: now, calendar: calendar, isWorkingDay: days) {
+            failures[window.id] = nil
+            heldUntil[window.id] = nil
+        }
+        var started = false
+        while let next = store.reviewQueue(for: org).first(where: reviewReady) {
+            let running = runningReviews() + reviewsStarting
+            guard case .start(let limit) = ReviewGate.decide(now: now, windows: windows, running: running, paused: store.isPaused, calendar: calendar, isWorkingDay: days),
+                  running < limit else { return started }
+            // The roomiest open window with a place takes it.
+            let window = windows
+                .filter { $0.schedule.isOpen(at: now, calendar: calendar, isWorkingDay: days) && $0.concurrency > running }
+                .max { $0.concurrency < $1.concurrency }
+            let counted = window?.id ?? Self.reviewQueueRuns
+            if let held = heldUntil[counted], now < held { return started }
+            store.dequeueReview(next.id)
+            runReview(next, counted: counted, scheduledAt: now)
+            started = true
+        }
+        return started
+    }
+
+    /// Records the review's run as going and starts it in a task of its own,
+    /// as `run` does. One whose start fails goes back to the front and holds
+    /// its window off; one no longer wanted is dropped with why (R7).
+    private func runReview(_ review: QueuedReview, counted: UUID, scheduledAt: Date) {
+        let id = UUID()
+        store.record(RoutineRun(id: id, routine: counted, scheduledAt: scheduledAt, pullRequest: review.pullRequest, startedAt: .now, outcome: .running))
+        starting[id] = Task { [weak self] in
+            guard let self else { return }
+            let result = await self.startReview(review, id)
+            self.starting[id] = nil
+            switch result {
+            case .started(let session):
+                self.store.updateRun(id) { $0.session = session }
+                self.failures[counted] = nil
+                self.heldUntil[counted] = nil
+            case .skipped(let why):
+                self.store.updateRun(id) { run in
+                    run.outcome = .skipped
+                    run.endedAt = .now
+                    run.note = why
+                }
+            case .notYet:
+                self.store.removeRun(id)
+                self.store.enqueueReview(review, atFront: true)
+            case .failed(let why, let retry):
+                self.store.updateRun(id) { run in
+                    run.outcome = .failed
+                    run.endedAt = .now
+                    run.note = why
+                }
+                if retry {
+                    self.store.enqueueReview(review, atFront: true)
+                    self.holdAfterFailure(counted, scheduledAt: scheduledAt)
+                }
+            }
+        }
+    }
+
+    /// Runs a queued review now, whatever the time (R8), counted against the
+    /// org's first review window if it has one.
+    func runReviewNow(_ review: QueuedReview) {
+        guard store.isReviewQueued(review.id) else { return }
+        let counted = reviewWindows(review.pullRequest.org)?.first?.id ?? Self.reviewQueueRuns
+        store.dequeueReview(review.id)
+        heldUntil[counted] = nil
+        failures[counted] = nil
+        runReview(review, counted: counted, scheduledAt: .now)
+    }
+
+    /// Backs the window off after a failed start, then gives up until it
+    /// next opens. Runs with no window (`reviewQueueRuns`) never open or
+    /// shut, so they keep backing off, at most as long as the last hold
+    /// before giving up, rather than stopping for good.
+    private func holdAfterFailure(_ window: UUID, scheduledAt: Date) {
+        let count = (failures[window] ?? 0) + 1
+        failures[window] = count
+        if count >= Self.maxFailures, window != Self.reviewQueueRuns {
+            heldUntil[window] = .distantFuture
+            return
+        }
+        let doublings = min(count, Self.maxFailures - 1) - 1
+        heldUntil[window] = max(scheduledAt, .now).addingTimeInterval(Self.holdAfterFailure * pow(2, Double(doublings)))
     }
 
     /// Starts the next queued issues while the window has room (R7), each
@@ -198,12 +323,13 @@ final class RoutineScheduler {
                 }
                 if fromQueue, retry, let issue {
                     self.store.enqueue(issue, atFront: true)
-                    let count = (self.failures[routine.id] ?? 0) + 1
-                    self.failures[routine.id] = count
-                    // Backs off, then gives up until the window next opens.
-                    self.heldUntil[routine.id] = count >= Self.maxFailures
-                        ? .distantFuture
-                        : max(scheduledAt, .now).addingTimeInterval(Self.holdAfterFailure * pow(2, Double(count - 1)))
+                    self.holdAfterFailure(routine.id, scheduledAt: scheduledAt)
+                }
+            case .skipped(let why), .notYet(let why):
+                self.store.updateRun(id) { run in
+                    run.outcome = .skipped
+                    run.endedAt = .now
+                    run.note = why
                 }
             }
         }

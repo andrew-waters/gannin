@@ -69,7 +69,7 @@ struct ScheduleDraft: Equatable {
 
     func schedule(for kind: RoutineKind) -> RoutineSchedule {
         switch kind {
-        case .issueQueue: return .window(window)
+        case .issueQueue, .reviewQueue: return .window(window)
         case .pinned: return .once(once)
         case .report, .code:
             switch form {
@@ -95,7 +95,9 @@ extension TimeOfDay {
 
 /// A routine's settings: what it runs, where, when (with the next five
 /// times, or why the schedule can't be used), how far it may go and its
-/// limits. New ones start on Local only (R10).
+/// limits. New ones start on Local only (R10). A review window has only its
+/// name, its hours and reviews at once, and is saved by `onSave`, as it may
+/// be kept in the person's file rather than here.
 struct RoutineEditor: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(RoutineStore.self) private var routines
@@ -107,10 +109,12 @@ struct RoutineEditor: View {
     @State private var routine: Routine
     @State private var schedule: ScheduleDraft
     @State private var repoText: String
+    let onSave: ((Routine) -> Void)?
 
-    init(routine: Routine, isNew: Bool) {
+    init(routine: Routine, isNew: Bool, onSave: ((Routine) -> Void)? = nil) {
         original = routine
         self.isNew = isNew
+        self.onSave = onSave
         _routine = State(initialValue: routine)
         _schedule = State(initialValue: ScheduleDraft(routine.schedule))
         _repoText = State(initialValue: routine.repos.joined(separator: ", "))
@@ -123,7 +127,7 @@ struct RoutineEditor: View {
                 whatSection
                 whenSection(built)
                 if routine.kind.touchesCode { limitSection }
-                limitsSection
+                if routine.kind != .reviewQueue { limitsSection }
                 if let warning = autoModeWarning {
                     Section {
                         Label(warning, systemImage: "exclamationmark.triangle")
@@ -157,7 +161,7 @@ struct RoutineEditor: View {
     private var whatSection: some View {
         Section {
             TextField("Name", text: $routine.name)
-            if isNew, routine.kind != .pinned {
+            if isNew, routine.kind != .pinned, routine.kind != .reviewQueue {
                 Picker("Kind", selection: $routine.kind) {
                     ForEach([RoutineKind.report, .code, .issueQueue]) { kind in
                         Label(kind.label, systemImage: kind.systemImage).tag(kind)
@@ -183,15 +187,17 @@ struct RoutineEditor: View {
                 TextField("Repos", text: $repoText, prompt: Text("owner/name, owner/name"))
                     .leadingTextBox("Repos")
             }
-            VStack(alignment: .leading, spacing: 4) {
-                Text(promptLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                TextEditor(text: $routine.prompt)
-                    .font(.body)
-                    .frame(minHeight: 90)
+            if routine.kind != .reviewQueue {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(promptLabel)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    TextEditor(text: $routine.prompt)
+                        .font(.body)
+                        .frame(minHeight: 90)
+                }
+                teamPrompts
             }
-            teamPrompts
         } header: {
             Text("What it runs")
         } footer: {
@@ -204,6 +210,7 @@ struct RoutineEditor: View {
         case .report: "What to report on, as you'd ask in an Ask"
         case .code: "The task"
         case .issueQueue, .pinned: "A note added to each issue's prompt (optional)"
+        case .reviewQueue: ""
         }
     }
 
@@ -213,6 +220,7 @@ struct RoutineEditor: View {
         case .code: "A session with no issue, a new branch each run, worktrees of the repos named, laid out as Work on This lays them out."
         case .issueQueue: "While the window is open, the next issue in the org's agent queue starts as Work on This would, in the project covering its repos, up to the number at once below. Its session record is committed to the harness, unless Record queued sessions is off for that project in Settings › Harness."
         case .pinned: "The issue starts as Work on This would at the time below. Its session record is committed to the harness, unless Record queued sessions is off for that project in Settings › Harness."
+        case .reviewQueue: "Automatic reviews (requests Auto review picks up, and Look Again on watched reviews) start only while a review window is open, up to the number at once below. The rest wait in the review queue on Agents › Queue. Reviews you start yourself are never held."
         }
     }
 
@@ -246,7 +254,7 @@ struct RoutineEditor: View {
             switch routine.kind {
             case .pinned:
                 DatePicker("At", selection: $schedule.once, in: Date.now..., displayedComponents: [.date, .hourAndMinute])
-            case .issueQueue:
+            case .issueQueue, .reviewQueue:
                 DatePicker("Opens", selection: timeBinding(\.window.start), displayedComponents: .hourAndMinute)
                 DatePicker("Closes", selection: timeBinding(\.window.end), displayedComponents: .hourAndMinute)
                 Picker("On", selection: Binding(get: { schedule.window.days == nil }, set: { working in
@@ -271,7 +279,7 @@ struct RoutineEditor: View {
                         }
                     }
                 }
-                Stepper("At once: \(routine.concurrency)", value: $routine.concurrency, in: 1...6)
+                Stepper(routine.kind == .reviewQueue ? "Reviews at once: \(routine.concurrency)" : "At once: \(routine.concurrency)", value: $routine.concurrency, in: 1...6)
             case .report, .code:
                 Picker("Runs", selection: $schedule.form) {
                     ForEach(ScheduleDraft.Form.allCases) { form in
@@ -415,7 +423,7 @@ struct RoutineEditor: View {
                 isEnabled: saved.isEnabled || saved.kind == .pinned, createdAt: .now
             )
         }
-        routines.save(saved)
+        if let onSave { onSave(saved) } else { routines.save(saved) }
         dismiss()
     }
 }

@@ -176,6 +176,8 @@ extension SessionStore {
             return await startIssueRun(routine, issue: issue, run: run, setup: covering, goals: goals, configs: configs, issues: issues, details: details, login: login)
         case .report, .code:
             break
+        case .reviewQueue:
+            return .failed("A review window starts reviews, not sessions of its own.", retry: false)
         }
         guard let setup = own else { return .failed(gone) }
         let goals = project.config(for: routine.org).measurables
@@ -188,7 +190,7 @@ extension SessionStore {
             }
             let placement = Self.routinePlacement(org: routine.org, repos: routine.repos, configs: configs)
             return await startMaintenanceRun(routine, run: run, setup: setup, harnessPath: path, placement: placement, goals: goals)
-        case .issueQueue, .pinned:
+        case .issueQueue, .pinned, .reviewQueue:
             return .failed("There was no issue to work on.")
         }
     }

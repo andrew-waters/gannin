@@ -73,10 +73,9 @@ final class EngineerWatch {
     /// Starts Claude's review of a PR, as Review with Claude does.
     @ObservationIgnored var startReview: (PullRequestReference) -> Void = { NSWorkspace.shared.open($0.url) }
     /// Starts a review in the background when auto review is on for the
-    /// PR's org; true if it started (`AutoReview`, wired in `GanninApp`).
-    /// Starts an automatic review: true when it started, false to try
-    /// again later, nil when the review config says to leave it alone.
-    @ObservationIgnored var autoReview: (PullRequestReference) async -> Bool? = { _ in false }
+    /// PR's org, or queues it for a review window (`AutoReview`, wired in
+    /// `GanninApp`). `.later` tries again on a later check.
+    @ObservationIgnored var autoReview: (PullRequestReference) async -> AutoReviewOutcome = { _ in .later }
     /// Watched reviews looked at again, on their own interval (`AutoReview`).
     @ObservationIgnored var checkWatched: () async -> Void = {}
     /// The budget is low or GitHub has refused: automatic checks wait.
@@ -185,18 +184,22 @@ final class EngineerWatch {
             lastNeeds = Dictionary(uniqueKeysWithValues: mine.map { ($0.id, $0.needs ?? "") })
         }
         // Automatic reviews: every request not yet started, the first
-        // check's too, as there's room (`AutoReview.maxRunning`).
+        // check's too, as there's room (`AutoReview.maxRunning`, or a review
+        // window's reviews at once), else queued for a window. A queued one
+        // is remembered too, so one removed from the queue isn't queued again.
         var started: Set<String> = []
+        var queued: Set<String> = []
         var skipped: Set<String> = []
         for pr in reviews where !pr.isDraft && !dismissed.contains(pr.id) && !autoReviewed.contains(pr.id) {
             switch await autoReview(pr.reference) {
-            case true?: started.insert(pr.id)
-            case nil: skipped.insert(pr.id)
-            case false?: break
+            case .started: started.insert(pr.id)
+            case .queued: queued.insert(pr.id)
+            case .skipped: skipped.insert(pr.id)
+            case .later: break
             }
         }
         let requested = Set(reviews.map(\.id))
-        let remembered = autoReviewed.union(started).union(skipped).intersection(requested)
+        let remembered = autoReviewed.union(started).union(queued).union(skipped).intersection(requested)
         if remembered != autoReviewed {
             autoReviewed = remembered
             UserDefaults.standard.set(Array(remembered), forKey: "autoReviewedRequests")
@@ -205,8 +208,9 @@ final class EngineerWatch {
         guard let known, notifies else { return }
         registerCategories()
         for pr in reviews where !known.contains(pr.id) && !dismissed.contains(pr.id) {
-            let auto = started.contains(pr.id)
-            post(id: "review-\(pr.id)", title: auto ? "Review requested: Claude is reviewing it" : "Review requested", subtitle: "\(pr.repo.split(separator: "/").last ?? "")#\(pr.number) \(pr.title)",
+            let title = started.contains(pr.id) ? "Review requested: Claude is reviewing it"
+                : queued.contains(pr.id) ? "Review requested: waiting for a review window" : "Review requested"
+            post(id: "review-\(pr.id)", title: title, subtitle: "\(pr.repo.split(separator: "/").last ?? "")#\(pr.number) \(pr.title)",
                  body: pr.author.map { "From \($0)" } ?? "", category: Self.reviewCategory, info: ["review": pr.id])
         }
         for pr in mine {

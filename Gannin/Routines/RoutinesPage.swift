@@ -1,27 +1,38 @@
 import SwiftUI
 
-/// Agents › Routines: the org's routines, queue windows and pinned issues,
-/// each with its schedule, next run and last outcome, with Pause All
-/// (R14) and New Routine in the toolbar. A routine opens its page.
+/// Agents › Routines: the org's routines, queue windows, review windows and
+/// pinned issues, each with its schedule, next run and last outcome, with
+/// Pause All (R14) and New Routine in the toolbar. A routine opens its page;
+/// a review window opens its editor, as it may not be kept here.
 struct RoutinesPage: View {
     @Environment(RoutineStore.self) private var routines
     @Environment(SessionStore.self) private var sessions
     @Environment(OrgConfigStore.self) private var configs
     @Environment(BankHolidayStore.self) private var holidays
+    @Environment(PeopleDatesStore.self) private var peopleDates
+    @Environment(AuthStore.self) private var auth
     @Environment(\.navigate) private var navigate
     let org: String
     @State private var editing: EditedRoutine?
+    @State private var editingWindow: EditedRoutine?
     @State private var deleting: Routine?
+    @State private var deletingWindow: Routine?
+
+    private var book: ReviewWindowBook {
+        ReviewWindowBook(org: org, login: auth.viewer?.login, routines: routines, people: peopleDates)
+    }
 
     var body: some View {
-        let all = routines.routines(for: org)
+        // This Mac's review windows are listed with the synced ones, below.
+        let all = routines.routines(for: org).filter { $0.kind != .reviewQueue }
+        let reviewWindows = book.windows
         let recurring = all.filter { $0.kind == .report || $0.kind == .code }
         let windows = all.filter { $0.kind == .issueQueue }
         let pins = all.filter { $0.kind == .pinned }.sorted { (pinTime($0) ?? .distantPast) > (pinTime($1) ?? .distantPast) }
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if routines.isPaused { pausedBanner }
-                if all.isEmpty {
+                if all.isEmpty && reviewWindows.isEmpty {
                     ContentUnavailableView {
                         Label("No routines yet", systemImage: "clock.arrow.circlepath")
                     } description: {
@@ -34,6 +45,7 @@ struct RoutinesPage: View {
                 }
                 section("Reports and maintenance", recurring)
                 section("Queue windows", windows, footer: windows.isEmpty ? nil : "Each drains the agent queue (Agents › Queue) while it's open.")
+                reviewWindowsSection(reviewWindows)
                 section("Pinned issues", pins)
             }
             .padding(20)
@@ -53,7 +65,7 @@ struct RoutinesPage: View {
                 .help(routines.isPaused ? "Let routines start sessions again" : "Start no scheduled run until resumed; times passing are recorded as skipped")
                 .environment(routines)
             }
-            ToolbarItem { newMenu.environment(routines).environment(configs) }
+            ToolbarItem { newMenu.environment(routines).environment(configs).environment(auth).environment(peopleDates) }
         }
         .sheet(item: $editing) { edited in
             RoutineEditor(routine: edited.routine, isNew: edited.isNew)
@@ -61,6 +73,22 @@ struct RoutinesPage: View {
                 .environment(sessions)
                 .environment(configs)
                 .environment(holidays)
+        }
+        .sheet(item: $editingWindow) { edited in
+            RoutineEditor(routine: edited.routine, isNew: edited.isNew) { book.save($0) }
+                .environment(routines)
+                .environment(sessions)
+                .environment(configs)
+                .environment(holidays)
+        }
+        .confirmationDialog(
+            "Delete \(deletingWindow?.name ?? "this review window")?",
+            isPresented: Binding(get: { deletingWindow != nil }, set: { if !$0 { deletingWindow = nil } }),
+            presenting: deletingWindow
+        ) { window in
+            Button("Delete", role: .destructive) { book.remove(window.id) }
+        } message: { _ in
+            Text("Reviews waiting for a window stay in the review queue.")
         }
         .confirmationDialog(
             "Delete \(deleting?.name ?? "this routine")?",
@@ -100,12 +128,82 @@ struct RoutinesPage: View {
                 } label: {
                     Label("New \(kind.label)", systemImage: kind.systemImage)
                 }
+                .disabled(configs.config(for: org).allHarnesses.isEmpty)
             }
+            Divider()
+            newReviewWindowButton
         } label: {
             Label("New Routine", systemImage: "plus")
         }
-        .help("A report, maintenance or a window for the agent queue")
-        .disabled(configs.config(for: org).allHarnesses.isEmpty)
+        .help("A report, maintenance, a window for the agent queue or a review window")
+    }
+
+    private var newReviewWindowButton: some View {
+        Button {
+            editingWindow = EditedRoutine(routine: Routine.new(org: org, harnessRepo: "", kind: .reviewQueue, name: "Reviews"), isNew: true)
+        } label: {
+            Label("New \(RoutineKind.reviewQueue.label)", systemImage: RoutineKind.reviewQueue.systemImage)
+        }
+        .disabled(!book.canEdit)
+    }
+
+    /// The windows automatic reviews wait for (R1, R2), wherever they're
+    /// kept, with the switch that makes this Mac's its own.
+    @ViewBuilder
+    private func reviewWindowsSection(_ list: [Routine]) -> some View {
+        let book = book
+        let days = RoutineScheduleContext.workingDays(org: org, configs: configs, holidays: holidays)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Review windows")
+                    .font(.headline)
+                Spacer()
+                Toggle("Override on This Mac", isOn: Binding(get: { book.isOverridden }, set: { book.setOverridden($0) }))
+                    .checkboxToggle()
+                    .help("Use windows kept only on this Mac in place of the ones in your file")
+            }
+            VStack(spacing: 0) {
+                if list.isEmpty {
+                    HStack {
+                        // Not known yet: the gate holds reviews meanwhile.
+                        Text(book.isLoaded ? "None, so automatic reviews start as soon as they're asked for."
+                            : "Checking your review windows. Until Gannin knows them, automatic reviews wait.")
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        newReviewWindowButton
+                            .labelStyle(.titleOnly)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+                ForEach(list) { window in
+                    RoutineRow(routine: window, isWorkingDay: days, showsToggle: false)
+                        .contentShape(Rectangle())
+                        .onTapGesture { editingWindow = EditedRoutine(routine: window, isNew: false) }
+                        .contextMenu {
+                            Button("Edit…") { editingWindow = EditedRoutine(routine: window, isNew: false) }
+                            Divider()
+                            Button("Delete…", role: .destructive) { deletingWindow = window }
+                        }
+                    if window.id != list.last?.id { Divider() }
+                }
+            }
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+            .overlay { RoundedRectangle(cornerRadius: 10).stroke(Color.separatorLine) }
+            Text(reviewWindowsFooter(book))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func reviewWindowsFooter(_ book: ReviewWindowBook) -> String {
+        let gate = "Outside every window, review requests Auto review picks up and Look Again on watched reviews wait in the review queue (Agents › Queue). Reviews you start yourself are never held."
+        if book.isOverridden { return "This Mac's own windows, used here in place of the ones in your file. \(gate)" }
+        if book.login == nil { return "Sign in to keep review windows in your file. \(gate)" }
+        if peopleDates.team?.keepsData(org) == true {
+            return "Kept in your file in the org's harness, so your other Macs use the same windows once the change is committed (Review, at the foot of the sidebar). \(gate)"
+        }
+        return "Kept only in this app on this Mac, as the org has no harness. \(gate)"
     }
 
     /// The window's project, else the org's first.
@@ -158,6 +256,8 @@ private struct RoutineRow: View {
     @Environment(RoutineScheduler.self) private var scheduler
     let routine: Routine
     let isWorkingDay: RoutineSchedule.WorkingDays
+    /// Off for a review window, which is always on while it's kept.
+    var showsToggle = true
 
     var body: some View {
         let last = routines.lastRun(of: routine.id)
@@ -175,13 +275,14 @@ private struct RoutineRow: View {
                     Text(routine.schedule.summary)
                     if routine.kind.touchesCode { Text(routine.limit.label) }
                     if routine.kind == .issueQueue { Text("\(routine.concurrency) at once") }
+                    if routine.kind == .reviewQueue { Text("\(routine.concurrency) review\(routine.concurrency == 1 ? "" : "s") at once") }
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                if routine.kind == .issueQueue, routine.isEnabled, routine.schedule.isOpen(at: .now, isWorkingDay: isWorkingDay) {
+                if routine.schedule.isWindow, routine.isEnabled, routine.schedule.isOpen(at: .now, isWorkingDay: isWorkingDay) {
                     Text("Open now")
                         .font(.caption.weight(.medium))
                         .foregroundStyle(ChartPalette.good)
@@ -203,11 +304,13 @@ private struct RoutineRow: View {
                         .foregroundStyle(.orange)
                 }
             }
-            Toggle("On", isOn: Binding(get: { routine.isEnabled }, set: { on in routines.update(routine.id) { $0.isEnabled = on } }))
-                .toggleStyle(.switch)
-                .labelsHidden()
-                .controlSize(.small)
-                .help(routine.isEnabled ? "Turn it off: no runs, and nothing recorded as missed" : "Turn it on")
+            if showsToggle {
+                Toggle("On", isOn: Binding(get: { routine.isEnabled }, set: { on in routines.update(routine.id) { $0.isEnabled = on } }))
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .help(routine.isEnabled ? "Turn it off: no runs, and nothing recorded as missed" : "Turn it on")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
@@ -229,7 +332,7 @@ struct RunOutcomeLabel: View {
         case .needsYou, .stoppedAtLimit: .orange
         case .failed: ChartPalette.critical
         case .finished: ChartPalette.good
-        case .missed, .skippedPaused: .secondary
+        case .missed, .skippedPaused, .skipped: .secondary
         }
     }
 }

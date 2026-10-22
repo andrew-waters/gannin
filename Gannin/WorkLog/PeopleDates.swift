@@ -20,10 +20,12 @@ struct PersonDates: Codable, Hashable {
     var allowance: Double?
     /// Days carried into a leave year, by the year it starts in.
     var carryOver: [String: Double]?
+    /// When automatic PR reviews may start on their Macs (`ReviewWindowBook`).
+    var reviewWindows: [ReviewWindow]?
 
     var isEmpty: Bool {
         startDate == nil && endDate == nil && absences.isEmpty && holidayRegion == nil && workWeek == nil && timeZone == nil
-            && allowance == nil && carryOver == nil
+            && allowance == nil && carryOver == nil && reviewWindows == nil
     }
 
     /// What the day was for them, if anything but an ordinary day.

@@ -121,4 +121,61 @@ struct ScheduleBoardTests {
         let decoded = try JSONDecoder().decode(RoutineRunInfo.self, from: JSONSerialization.data(withJSONObject: old))
         #expect(decoded.resumed == nil)
     }
+
+    // MARK: Review windows
+
+    private func pullRequest(_ number: Int) -> PullRequestReference {
+        PullRequestReference(org: "acme", id: "PR_\(number)", number: number, title: "PR \(number)", repo: "acme/app",
+                             url: URL(string: "https://github.com/acme/app/pull/\(number)")!)
+    }
+
+    private func reviewWindow(_ start: Int, _ end: Int, atOnce: Int = 1) -> Routine {
+        var routine = Routine.new(org: "acme", harnessRepo: "", kind: .reviewQueue, name: "Reviews",
+                                  schedule: .window(RoutineWindow(start: TimeOfDay(hour: start), end: TimeOfDay(hour: end), days: Set(1...7))), now: saturday)
+        routine.concurrency = atOnce
+        return routine
+    }
+
+    private func projectReviews(_ windows: [Routine], queue: [Int], running: [RoutineRun] = [], issueWindows: [Routine] = [], paused: Bool = false) -> ScheduleProjection {
+        ScheduleProjection.make(
+            windows: issueWindows, pins: [], queue: [], active: [], routines: issueWindows,
+            reviewWindows: windows, reviewQueue: queue.map { QueuedReview(pullRequest: pullRequest($0), queuedAt: saturday) }, reviewRuns: running,
+            paused: paused, range: DateInterval(start: saturday, duration: 7 * 86400), calendar: calendar
+        )
+    }
+
+    @Test func reviewWindowsHaveALaneForEachReviewAtOnce() {
+        let issues = window(18, 8)
+        let reviews = reviewWindow(12, 13, atOnce: 2)
+        let projection = projectReviews([reviews], queue: [], issueWindows: [issues])
+        #expect(projection.lanes == [
+            .init(window: issues.id, index: 0), .init(window: reviews.id, index: 0), .init(window: reviews.id, index: 1), ScheduleProjection.pinnedLane,
+        ])
+        #expect(projection.reviewWindows == [reviews.id])
+        #expect(projection.openHours[reviews.id]?.first == DateInterval(start: at(12), end: at(13)))
+    }
+
+    @Test func queuedReviewsFillTheirWindowsInOrder() {
+        let lunch = reviewWindow(12, 13)
+        let projection = projectReviews([lunch], queue: [1, 2, 3])
+        #expect(projection.reviewBars.map(\.pullRequest.number) == [1, 2, 3])
+        // Each takes half an hour, so the third waits for the next day's window.
+        #expect(projection.reviewBars.map(\.interval.start) == [at(12), at(12, 30), at(12, dayOffset: 1)])
+        #expect(projection.reviewBars.map(\.kind) == [.queued(1), .queued(2), .queued(3)])
+        // Issues never go to a review window's lanes.
+        #expect(projection.bars.isEmpty)
+    }
+
+    @Test func aRunningReviewHoldsItsLane() {
+        let lunch = reviewWindow(12, 13)
+        let run = RoutineRun(id: UUID(), routine: lunch.id, scheduledAt: at(12), pullRequest: pullRequest(9), startedAt: at(12), outcome: .running)
+        let projection = projectReviews([lunch], queue: [1], running: [run])
+        #expect(projection.reviewBars.map(\.kind) == [.running, .queued(1)])
+        #expect(projection.reviewBars.last?.interval.start == at(12, 30))
+    }
+
+    @Test func pausedOrWindowlessReviewsAreLater() {
+        #expect(projectReviews([reviewWindow(12, 13)], queue: [1], paused: true).reviewsLater.map(\.pullRequest.number) == [1])
+        #expect(projectReviews([], queue: [1, 2]).reviewsLater.map(\.pullRequest.number) == [1, 2])
+    }
 }

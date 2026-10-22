@@ -1,10 +1,13 @@
 import SwiftUI
 
 /// Where the org's agent work falls over the coming days, as the scheduling
-/// board draws it: a lane for each run a queue window lets go at once, and
-/// one for pinned issues. Queued issues are laid into the windows' open
-/// hours in queue order, each taking its window's whole time limit, so a
-/// time is the latest it should start by rather than a promise.
+/// board draws it: a lane for each run a queue window lets go at once, one
+/// for each review a review window lets go at once, and one for pinned
+/// issues. Queued issues are laid into the windows' open hours in queue
+/// order, each taking its window's whole time limit, so a time is the latest
+/// it should start by rather than a promise. Queued reviews are laid into
+/// review windows the same way, each taking `reviewMinutes`; reviews in
+/// other orgs share the windows' places too, so theirs may come later.
 struct ScheduleProjection {
     struct Lane: Hashable, Identifiable {
         /// The queue window's ID; nil for pinned issues.
@@ -32,23 +35,48 @@ struct ScheduleProjection {
         var id: String { "\(issue.id)-\(lane.id)" }
     }
 
+    /// A review on a review window's lane.
+    struct ReviewBar: Identifiable {
+        enum Kind: Equatable {
+            case running
+            /// Queued, at its place in the org's review queue from 1.
+            case queued(Int)
+        }
+
+        let pullRequest: PullRequestReference
+        let lane: Lane
+        let interval: DateInterval
+        let kind: Kind
+        var id: String { "\(pullRequest.id)-\(lane.id)" }
+    }
+
     var lanes: [Lane] = []
     var bars: [Bar] = []
+    var reviewBars: [ReviewBar] = []
     /// Queued issues no window reaches within the range, in queue order.
     var later: [QueuedIssue] = []
-    /// Each window's open hours within the range.
+    /// Queued reviews no review window reaches within the range.
+    var reviewsLater: [QueuedReview] = []
+    /// Each window's open hours within the range, queue and review windows'.
     var openHours: [UUID: [DateInterval]] = [:]
+    /// Which lanes' windows are review windows, which take no issues.
+    var reviewWindows: Set<UUID> = []
 
     static let pinnedLane = Lane(window: nil, index: 0)
+    /// How long the board gives a review, which has no limit of its own.
+    static let reviewMinutes = 30
 
     /// `windows` and `pins` are the org's enabled queue windows and pinned
-    /// issues, `active` the runs going. While paused, nothing queued starts.
+    /// issues, `active` the runs going. `reviewWindows`, `reviewQueue` and
+    /// `reviewRuns` are its review windows, queued reviews and review runs
+    /// going. While paused, nothing queued starts.
     static func make(windows: [Routine], pins: [Routine], queue: [QueuedIssue], active: [RoutineRun], routines: [Routine],
+                     reviewWindows: [Routine] = [], reviewQueue: [QueuedReview] = [], reviewRuns: [RoutineRun] = [],
                      paused: Bool, range: DateInterval, calendar: Calendar = .current,
                      isWorkingDay: RoutineSchedule.WorkingDays = RoutineSchedule.everyWeekday) -> ScheduleProjection {
         var projection = ScheduleProjection()
         var free: [Lane: Date] = [:]
-        for window in windows {
+        for window in windows + reviewWindows {
             projection.openHours[window.id] = window.schedule.openIntervals(in: range, calendar: calendar, isWorkingDay: isWorkingDay)
             for index in 0..<max(1, window.concurrency) {
                 let lane = Lane(window: window.id, index: index)
@@ -56,6 +84,7 @@ struct ScheduleProjection {
                 free[lane] = range.start
             }
         }
+        projection.reviewWindows = Set(reviewWindows.map(\.id))
         projection.lanes.append(pinnedLane)
 
         // Runs going hold their lane until their limit, at the latest.
@@ -105,21 +134,59 @@ struct ScheduleProjection {
             free[best.lane] = end
             projection.bars.append(Bar(issue: item.issue, lane: best.lane, interval: DateInterval(start: best.start, end: end), kind: .queued(position + 1)))
         }
+
+        // Reviews going hold a lane of the window that started them.
+        let review = TimeInterval(reviewMinutes * 60)
+        for run in reviewRuns {
+            guard let pr = run.pullRequest,
+                  let lane = projection.lanes.filter({ $0.window == run.routine }).min(by: { (free[$0] ?? range.start) < (free[$1] ?? range.start) })
+            else { continue }
+            let start = run.startedAt ?? range.start
+            let end = max(start.addingTimeInterval(review), range.start.addingTimeInterval(5 * 60))
+            free[lane] = max(free[lane] ?? range.start, end)
+            projection.reviewBars.append(ReviewBar(pullRequest: pr, lane: lane, interval: DateInterval(start: start, end: end), kind: .running))
+        }
+        // Queued reviews in order, each to the review lane that can start it soonest.
+        for (position, item) in reviewQueue.enumerated() {
+            var best: (lane: Lane, start: Date)?
+            if !paused {
+                for window in reviewWindows {
+                    let hours = projection.openHours[window.id] ?? []
+                    for lane in projection.lanes where lane.window == window.id {
+                        let after = free[lane] ?? range.start
+                        guard let open = hours.first(where: { $0.end > after }) else { continue }
+                        let start = max(open.start, after)
+                        if best.map({ start < $0.start }) ?? true { best = (lane, start) }
+                    }
+                }
+            }
+            guard let best else {
+                projection.reviewsLater.append(item)
+                continue
+            }
+            let end = best.start.addingTimeInterval(review)
+            free[best.lane] = end
+            projection.reviewBars.append(ReviewBar(pullRequest: item.pullRequest, lane: best.lane, interval: DateInterval(start: best.start, end: end), kind: .queued(position + 1)))
+        }
         return projection
     }
 }
 
 /// The scheduling board: the project's unscheduled open issues beside the
-/// coming week of the org's queue windows and pinned issues, laid out as
-/// `ScheduleProjection` works them out. Dragging an issue onto a window's
-/// lane queues it at that point, onto Pinned pins it at that time, and back
-/// to the list takes it off. `window` limits it to one window's lanes, on
-/// that window's page.
+/// coming week of the org's queue windows, review windows and pinned issues,
+/// laid out as `ScheduleProjection` works them out. Dragging an issue onto a
+/// queue window's lane queues it at that point, onto Pinned pins it at that
+/// time, and back to the list takes it off. Queued reviews are moved from
+/// their menus. `window` limits it to one window's lanes, on that window's
+/// page.
 struct ScheduleBoard: View {
     @Environment(RoutineStore.self) private var routines
+    @Environment(RoutineScheduler.self) private var scheduler
     @Environment(IssueStore.self) private var issues
     @Environment(OrgConfigStore.self) private var configs
     @Environment(BankHolidayStore.self) private var holidays
+    @Environment(PeopleDatesStore.self) private var peopleDates
+    @Environment(AuthStore.self) private var auth
     @Environment(\.navigate) private var navigate
     let org: String
     var window: UUID?
@@ -151,6 +218,11 @@ struct ScheduleBoard: View {
         }
     }
 
+    /// The org's review windows in force here, synced or this Mac's.
+    private var reviewWindows: [Routine] {
+        ReviewWindowBook(org: org, login: auth.viewer?.login, routines: routines, people: peopleDates).windows.filter(\.isEnabled)
+    }
+
     private func projection(_ range: DateInterval) -> ScheduleProjection {
         let mine = routines.routines(for: org)
         return ScheduleProjection.make(
@@ -158,7 +230,11 @@ struct ScheduleBoard: View {
             pins: mine.filter { $0.kind == .pinned && $0.isEnabled },
             queue: routines.queue(for: org),
             active: routines.activeRuns.filter { $0.issue?.org == org },
-            routines: mine, paused: routines.isPaused, range: range,
+            routines: mine,
+            reviewWindows: window == nil ? reviewWindows : [],
+            reviewQueue: routines.reviewQueue(for: org),
+            reviewRuns: routines.activeRuns.filter { $0.pullRequest?.org == org },
+            paused: routines.isPaused, range: range,
             isWorkingDay: RoutineScheduleContext.workingDays(org: org, configs: configs, holidays: holidays)
         )
     }
@@ -271,7 +347,17 @@ struct ScheduleBoard: View {
 
     @ViewBuilder
     private func laneLabel(_ lane: ScheduleProjection.Lane) -> some View {
-        if let id = lane.window, let routine = routines.routine(id) {
+        if let id = lane.window, let routine = reviewWindows.first(where: { $0.id == id }) {
+            VStack(alignment: .leading, spacing: 1) {
+                Label(routine.name, systemImage: RoutineKind.reviewQueue.systemImage)
+                    .lineLimit(1)
+                Text(routine.concurrency > 1 ? "Review \(lane.index + 1) of \(routine.concurrency)" : routine.schedule.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .help("Review window \(routine.name): \(routine.schedule.summary), \(routine.concurrency) review\(routine.concurrency == 1 ? "" : "s") at once. Reviews are shown \(ScheduleProjection.reviewMinutes) minutes long.")
+        } else if let id = lane.window, let routine = routines.routine(id) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(routine.name)
                     .lineLimit(1)
@@ -345,13 +431,56 @@ struct ScheduleBoard: View {
                     .frame(width: max(18, x(bar.interval.end, in: range) - x(max(bar.interval.start, range.start), in: range) - 2), height: laneHeight - 8)
                     .offset(x: x(max(bar.interval.start, range.start), in: range) + 1, y: 4)
             }
+            ForEach(projection.reviewBars.filter { $0.lane == lane }) { bar in
+                reviewBarView(bar)
+                    .frame(width: max(18, x(bar.interval.end, in: range) - x(max(bar.interval.start, range.start), in: range) - 2), height: laneHeight - 8)
+                    .offset(x: x(max(bar.interval.start, range.start), in: range) + 1, y: 4)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .contentShape(Rectangle())
         .dropDestination(for: String.self) { ids, location in
+            // A review window takes no issues.
+            if let window = lane.window, projection.reviewWindows.contains(window) { return false }
             let time = date(atX: location.x, in: range)
             for id in ids { drop(id, on: lane, at: time, projection: projection) }
             return !ids.isEmpty
+        }
+    }
+
+    private func reviewBarView(_ bar: ScheduleProjection.ReviewBar) -> some View {
+        let pr = bar.pullRequest
+        let name = "\(pr.repo.split(separator: "/").last ?? "")#\(pr.number) \(pr.title)"
+        let time = bar.interval.start.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        let color: Color = bar.kind == .running ? ChartPalette.good : .orange
+        let help: String = switch bar.kind {
+        case .running: "Reviewing \(name)\nSince \(time)"
+        case .queued(let position): "Review of \(name)\nNumber \(position) in the review queue; starts by \(time), if each review before it takes \(ScheduleProjection.reviewMinutes) minutes"
+        }
+        let queued = routines.reviewQueue.first { $0.id == pr.id }
+        return HStack(spacing: 4) {
+            if case .queued(let position) = bar.kind {
+                Text("\(position)").font(.caption2.bold().monospacedDigit())
+            } else {
+                Image(systemName: "play.fill").font(.caption2)
+            }
+            Image(systemName: RoutineKind.reviewQueue.systemImage).font(.caption2)
+            Text(name)
+                .font(.caption)
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(color.opacity(0.22), in: RoundedRectangle(cornerRadius: 5))
+        .overlay(RoundedRectangle(cornerRadius: 5).strokeBorder(color.opacity(0.7)))
+        .help(help)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { navigate?.perform(.pullRequestReference(pr)) }
+        .contextMenu {
+            Button("Open Pull Request") { navigate?.perform(.pullRequestReference(pr)) }
+            if let queued {
+                QueuedReviewMenu(review: queued, routines: routines, scheduler: scheduler)
+            }
         }
     }
 
@@ -413,10 +542,14 @@ struct ScheduleBoard: View {
                 Text("After this week: " + projection.later.map(\.issue.reference).joined(separator: ", "))
                     .foregroundStyle(.secondary)
             }
+            if !projection.reviewsLater.isEmpty {
+                Text("Reviews no window reaches this week: " + projection.reviewsLater.map { "\($0.pullRequest.repo)#\($0.pullRequest.number)" }.joined(separator: ", "))
+                    .foregroundStyle(.secondary)
+            }
             if routines.isPaused {
-                Text("Routines are paused, so nothing queued starts.")
+                Text("Routines are paused, so nothing queued starts, reviews included.")
                     .foregroundStyle(.orange)
-            } else if shown.allSatisfy({ $0.window == nil }) {
+            } else if shown.allSatisfy({ $0.window.map(projection.reviewWindows.contains) ?? true }) {
                 Text("No queue window is on, so queued issues won't start by themselves. Add one under Routines.")
                     .foregroundStyle(.secondary)
             }

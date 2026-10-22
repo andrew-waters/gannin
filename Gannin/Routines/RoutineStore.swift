@@ -42,6 +42,9 @@ enum RoutineKind: String, Codable, CaseIterable, Identifiable {
     case issueQueue
     /// An issue pinned to a time (R8).
     case pinned
+    /// A window automatic PR reviews may start in; outside every one they
+    /// wait in the review queue.
+    case reviewQueue
 
     var id: Self { self }
 
@@ -51,6 +54,7 @@ enum RoutineKind: String, Codable, CaseIterable, Identifiable {
         case .code: "Maintenance"
         case .issueQueue: "Queue window"
         case .pinned: "Pinned issue"
+        case .reviewQueue: "Review window"
         }
     }
 
@@ -60,11 +64,12 @@ enum RoutineKind: String, Codable, CaseIterable, Identifiable {
         case .code: "wrench.and.screwdriver"
         case .issueQueue: "tray.full"
         case .pinned: "pin"
+        case .reviewQueue: "eye"
         }
     }
 
     /// Whether its runs work on code, so the push limit applies.
-    var touchesCode: Bool { self != .report }
+    var touchesCode: Bool { self == .code || self == .issueQueue || self == .pinned }
 }
 
 /// A recurring agent session, a queue window or a pinned issue, the
@@ -89,7 +94,8 @@ struct Routine: Codable, Identifiable, Hashable {
     var maxMinutes: Int = 60
     /// Most a run may cost, in US dollars, before it's stopped (R11).
     var maxCost: Double = 5
-    /// How many of a queue window's runs go at once (R7).
+    /// How many of a queue window's runs go at once (R7); a review window's
+    /// reviews at once.
     var concurrency: Int = 1
     /// A pinned issue's issue.
     var issue: IssueReference?
@@ -104,6 +110,7 @@ struct Routine: Codable, Identifiable, Hashable {
         let midnight = Calendar.current.startOfDay(for: now)
         let fallback: RoutineSchedule = switch kind {
         case .issueQueue: .window(RoutineWindow(start: TimeOfDay(hour: 18), end: TimeOfDay(hour: 8), days: nil))
+        case .reviewQueue: .window(RoutineWindow(start: TimeOfDay(hour: 12), end: TimeOfDay(hour: 13), days: nil))
         case .pinned: .once(Calendar.current.date(byAdding: .hour, value: 1, to: now) ?? now)
         case .report: .workingDays(TimeOfDay(hour: 9))
         case .code: .every(minutes: 7 * 24 * 60, anchor: midnight)
@@ -122,6 +129,25 @@ struct QueuedIssue: Codable, Identifiable, Hashable {
     let addedAt: Date
 }
 
+/// A PR review waiting for a review window (R3, R4): a request Auto review
+/// would have started, or a watched review's Look Again, once per PR.
+struct QueuedReview: Codable, Identifiable, Hashable {
+    /// What has changed on a watched PR since its review last looked.
+    struct LookAgain: Codable, Hashable {
+        let session: UUID
+        var hasNewCommits: Bool
+        var newComments: Int
+
+        var reasons: String { AutoReview.reasons(newCommits: hasNewCommits, newComments: newComments) }
+    }
+
+    var id: String { pullRequest.id }
+    let pullRequest: PullRequestReference
+    /// Nil for a review request.
+    var lookAgain: LookAgain?
+    let queuedAt: Date
+}
+
 /// One run of a routine (R13), or a gap of times missed or skipped.
 struct RoutineRun: Codable, Identifiable, Hashable {
     enum Outcome: String, Codable {
@@ -134,6 +160,8 @@ struct RoutineRun: Codable, Identifiable, Hashable {
         case missed
         /// Due while routines were paused (R14).
         case skippedPaused
+        /// A queued review no longer wanted when its turn came (R7).
+        case skipped
         case failed
 
         var label: String {
@@ -144,6 +172,7 @@ struct RoutineRun: Codable, Identifiable, Hashable {
             case .stoppedAtLimit: "Stopped at limit"
             case .missed: "Missed"
             case .skippedPaused: "Skipped while paused"
+            case .skipped: "Skipped"
             case .failed: "Failed"
             }
         }
@@ -160,6 +189,8 @@ struct RoutineRun: Codable, Identifiable, Hashable {
     var count: Int?
     /// The issue a queue window or pinned issue ran.
     var issue: IssueReference?
+    /// The PR a review window reviewed.
+    var pullRequest: PullRequestReference?
     var startedAt: Date?
     var endedAt: Date?
     var outcome: Outcome
@@ -183,26 +214,32 @@ struct RoutineRun: Codable, Identifiable, Hashable {
     }
 }
 
-/// Routines, the agent queue and run history, on this Mac only (R15):
-/// Application Support/<bundle ID>/Routines, written through as each
-/// changes. Runs are the newest 500.
+/// Routines, the agent queue, the review queue and run history, on this Mac
+/// only (R15): Application Support/<bundle ID>/Routines, written through as
+/// each changes. Runs are the newest 500.
 @Observable
 final class RoutineStore {
     private(set) var routines: [Routine] = []
     /// Every org's queue in one list; each org's in its order.
     private(set) var queue: [QueuedIssue] = []
+    /// Reviews waiting for a review window, every org's in one list.
+    private(set) var reviewQueue: [QueuedReview] = []
     private(set) var runs: [RoutineRun] = []
     /// Pause All (R14).
     private(set) var isPaused = false
     /// The scheduler's last look, so times due while Gannin was closed are
     /// known as missed on the next launch (R2).
     private(set) var checkedAt: Date?
+    /// Orgs whose review windows are this Mac's own rather than the
+    /// person's synced ones.
+    private(set) var reviewOverrides: Set<String> = []
 
     static let maxRuns = 500
 
     private struct State: Codable {
         var isPaused = false
         var checkedAt: Date?
+        var reviewOverrides: [String]?
     }
 
     @ObservationIgnored private let directory: URL
@@ -216,10 +253,12 @@ final class RoutineStore {
         self.directory = directory
         routines = read([Routine].self, "routines.json") ?? []
         queue = read([QueuedIssue].self, "queue.json") ?? []
+        reviewQueue = read([QueuedReview].self, "reviews.json") ?? []
         runs = read([RoutineRun].self, "runs.json") ?? []
         let state = read(State.self, "state.json") ?? State()
         isPaused = state.isPaused
         checkedAt = state.checkedAt
+        reviewOverrides = Set(state.reviewOverrides ?? [])
     }
 
     // MARK: Routines
@@ -319,6 +358,54 @@ final class RoutineStore {
         move(in: org, fromOffsets: IndexSet(integer: from), toOffset: toFront ? 0 : queue(for: org).count)
     }
 
+    // MARK: The review queue
+
+    func reviewQueue(for org: String) -> [QueuedReview] { reviewQueue.filter { $0.pullRequest.org == org } }
+
+    func isReviewQueued(_ id: String) -> Bool { reviewQueue.contains { $0.id == id } }
+
+    /// Adds the review at the end of its org's queue, or at its front as a
+    /// failed start goes back. A PR waits once: a Look Again for one already
+    /// waiting adds what's changed to it, and a request waiting already
+    /// covers any Look Again.
+    func enqueueReview(_ review: QueuedReview, atFront: Bool = false) {
+        if let index = reviewQueue.firstIndex(where: { $0.id == review.id }) {
+            guard var waiting = reviewQueue[index].lookAgain, let more = review.lookAgain else { return }
+            waiting.hasNewCommits = waiting.hasNewCommits || more.hasNewCommits
+            waiting.newComments += more.newComments
+            reviewQueue[index].lookAgain = waiting
+        } else if atFront {
+            reviewQueue.insert(review, at: 0)
+        } else {
+            reviewQueue.append(review)
+        }
+        write(reviewQueue, "reviews.json")
+    }
+
+    func dequeueReview(_ id: String) {
+        guard isReviewQueued(id) else { return }
+        reviewQueue.removeAll { $0.id == id }
+        write(reviewQueue, "reviews.json")
+    }
+
+    /// Reorders the org's review queue as a list does (`onMove`), leaving
+    /// other orgs' where they are.
+    func moveReviews(in org: String, fromOffsets source: IndexSet, toOffset destination: Int) {
+        var mine = reviewQueue(for: org)
+        mine.move(fromOffsets: source, toOffset: destination)
+        var next = mine.makeIterator()
+        reviewQueue = reviewQueue.map { $0.pullRequest.org == org ? (next.next() ?? $0) : $0 }
+        write(reviewQueue, "reviews.json")
+    }
+
+    /// Moves the review to the front or the back of its org's queue.
+    func moveReview(_ id: String, toFront: Bool) {
+        guard let item = reviewQueue.first(where: { $0.id == id }) else { return }
+        let org = item.pullRequest.org
+        guard let from = reviewQueue(for: org).firstIndex(of: item) else { return }
+        moveReviews(in: org, fromOffsets: IndexSet(integer: from), toOffset: toFront ? 0 : reviewQueue(for: org).count)
+    }
+
     // MARK: Runs
 
     func run(_ id: UUID) -> RoutineRun? { runs.first { $0.id == id } }
@@ -356,6 +443,14 @@ final class RoutineStore {
         if runs[index] != before { write(runs, "runs.json") }
     }
 
+    /// Takes back a run that never got going (a queued review put back
+    /// because it couldn't start yet), so it leaves no row.
+    func removeRun(_ id: UUID) {
+        guard let index = runs.firstIndex(where: { $0.id == id }) else { return }
+        runs.remove(at: index)
+        write(runs, "runs.json")
+    }
+
     /// Times passed without running, as one row for the gap: missed (R2) or
     /// skipped while paused (R14).
     func recordGap(_ times: [Date], routine: UUID, outcome: RoutineRun.Outcome, issue: IssueReference? = nil) {
@@ -389,9 +484,19 @@ final class RoutineStore {
         if due { saveState() }
     }
 
+    /// Whether the org's review windows are this Mac's own (Override on
+    /// This Mac).
+    func overridesReviewWindows(_ org: String) -> Bool { reviewOverrides.contains(org) }
+
+    func setOverridesReviewWindows(_ org: String, _ on: Bool) {
+        guard on != overridesReviewWindows(org) else { return }
+        if on { reviewOverrides.insert(org) } else { reviewOverrides.remove(org) }
+        saveState()
+    }
+
     func saveState() {
         stateSavedAt = checkedAt ?? .now
-        write(State(isPaused: isPaused, checkedAt: checkedAt), "state.json")
+        write(State(isPaused: isPaused, checkedAt: checkedAt, reviewOverrides: reviewOverrides.isEmpty ? nil : reviewOverrides.sorted()), "state.json")
     }
 
     private static let stateSaveInterval: TimeInterval = 5 * 60

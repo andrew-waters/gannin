@@ -381,6 +381,13 @@ final class HarnessTeamStore {
     /// Whether the org's team data is the harnesses': it has one.
     func keepsData(_ org: String) -> Bool { home(org) != nil }
 
+    /// Whether the org's team data is known here: it has no harness, or its
+    /// home harness's index has loaded.
+    func hasLoaded(_ org: String) -> Bool {
+        guard let home = home(org) else { return true }
+        return harness.index(for: org, home) != nil
+    }
+
     /// A harness's team data files as they stand here: the index's (none
     /// until it's loaded), then what was just committed, then what's
     /// pending.
@@ -575,10 +582,13 @@ final class HarnessTeamStore {
         for absence in before.absences where new[absence.id] == nil {
             notes.append("\(absence.kind == .sick ? "sick" : "time off") removed for \(login), \(range(absence))")
         }
+        if before.reviewWindows != after.reviewWindows { notes.append("review windows for \(login)") }
         var otherBefore = before
         var otherAfter = after
         otherBefore.absences = []
         otherAfter.absences = []
+        otherBefore.reviewWindows = nil
+        otherAfter.reviewWindows = nil
         if otherBefore != otherAfter { notes.append("dates for \(login)") }
         return notes
     }

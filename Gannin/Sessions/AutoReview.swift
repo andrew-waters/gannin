@@ -15,8 +15,12 @@ enum AutoReview {
     /// Settings > General: post automatic reviews to GitHub as comments,
     /// never approving or requesting changes. Off, they wait for Post Review.
     static let postKey = "autoPostReviews"
-    /// More than this many automatic reviews at once wait for a later check.
+    /// More than this many automatic reviews at once wait for a later check,
+    /// when there are no review windows; inside one, its reviews at once.
     static let maxRunning = 2
+    /// How long a review just started counts as running before its claude
+    /// is, so the cap holds while its terminal comes up.
+    static let launchGrace: TimeInterval = 120
     /// How long a watched PR must stay quiet before it's reviewed again, so
     /// a run of pushes or a conversation is one review rather than several.
     static let quietPeriod: TimeInterval = 120
@@ -41,6 +45,15 @@ enum AutoReview {
         }
     }
 
+    /// Why a watched review looks again: "new commits have been pushed and 2
+    /// new comments have been left".
+    static func reasons(newCommits: Bool, newComments: Int) -> String {
+        var reasons: [String] = []
+        if newCommits { reasons.append("new commits have been pushed") }
+        if newComments > 0 { reasons.append("\(newComments) new comment\(newComments == 1 ? " has" : "s have") been left") }
+        return reasons.joined(separator: " and ")
+    }
+
     /// Whether a finished review posts itself, for the project its session
     /// ran in (its harness repo), falling back to Settings' own choice.
     static func shouldPost(repo: String?) -> Bool {
@@ -51,6 +64,18 @@ enum AutoReview {
         default: return postsAutomatically
         }
     }
+}
+
+/// What asking for an automatic review of a request came to.
+enum AutoReviewOutcome: Equatable {
+    case started(UUID)
+    /// Outside every review window: it waits in the review queue.
+    case queued
+    /// The review config says to leave it alone.
+    case skipped
+    /// Not now (off for the org, no harness, enough running): a later check
+    /// tries again.
+    case later
 }
 
 /// A reviewed PR being watched for new commits and comments, kept with its
@@ -79,6 +104,8 @@ struct ReviewWatch: Codable, Hashable {
 struct ReviewEvent: Codable, Identifiable, Hashable {
     enum Kind: String, Codable {
         case started, reviewed, posted, failed, comment, push, stopped
+        /// Waiting in the review queue for a review window.
+        case queued
     }
 
     /// The text of the `.stopped` event for a merged PR; the Inbox reads it to offer Finish Review.
@@ -151,6 +178,7 @@ final class ReviewActivity {
         if events.contains(where: { $0.kind == .failed }) { parts.append("couldn't post") }
         if let stopped = events.last(where: { $0.kind == .stopped }) { parts.append(stopped.text?.lowercased() ?? "stopped watching") }
         if parts.isEmpty, events.contains(where: { $0.kind == .started }) { parts.append("reviewing") }
+        if parts.isEmpty, events.contains(where: { $0.kind == .queued }) { parts.append("waiting for a review window") }
         guard let first = parts.first else { return "" }
         return ([first.prefix(1).uppercased() + first.dropFirst()] + parts.dropFirst()).joined(separator: ", ")
     }
@@ -164,22 +192,105 @@ final class ReviewActivity {
 // MARK: - Starting, watching and reviewing again
 
 extension SessionStore {
+    /// Automatic reviews whose claude is running, every org's, and those just
+    /// started whose claude hasn't come up yet (`automaticStartedAt`), so a
+    /// review between its start and its terminal still holds its place.
+    var automaticReviewsRunning: Int {
+        automaticRuns.filter { id in
+            isRunning(id) || automaticStartedAt[id].map { Date.now.timeIntervalSince($0) < AutoReview.launchGrace } ?? false
+        }.count
+    }
+
+    /// Auto review of a request found, when it's on for the PR's org: in the
+    /// harness of the project with the PR's repo, unless the review config
+    /// skips it. `gated`, it asks the review windows first and queues it
+    /// outside them (R3); a queued one's turn (`startQueuedReview`) has asked.
+    func autoReview(_ pr: PullRequestReference, configs: OrgConfigStore, gated: Bool = true, limit: Int = AutoReview.maxRunning) async -> AutoReviewOutcome {
+        guard AutoReview.isOn(for: pr.org), let setup = configs.baseConfig(for: pr.org).harness(covering: [pr.repo]),
+              let path = Self.harnessPath(org: pr.org, repo: setup.repo) else { return .later }
+        if await reviewConfig(org: pr.org, harness: setup, repo: pr.repo).resolved.skips(title: pr.title) { return .skipped }
+        var limit = limit
+        if gated {
+            switch reviewGate(pr.org) {
+            case .queue:
+                guard let routines else { break }
+                // One already reviewed or being started (by hand, say) isn't
+                // queued, as `startAutomaticReview` wouldn't start it.
+                guard review(of: pr.id) == nil, startingReviews[pr.id] == nil else { return .later }
+                routines.enqueueReview(QueuedReview(pullRequest: pr, queuedAt: .now))
+                return .queued
+            case .start(let room):
+                limit = room
+            case .unknown:
+                // Not known yet, so a later check asks again.
+                return .later
+            }
+        }
+        return await startAutomaticReview(of: pr, harness: setup, harnessPath: path, limit: limit).map { .started($0) } ?? .later
+    }
+
+    /// A queued review whose turn has come (R5, R8): skipped if its PR was
+    /// merged, closed or made a draft while it waited, or, for a request, no
+    /// longer asks for you (R7); else started as Auto review or Look Again
+    /// would. `requested` is every PR asking for your review as last seen,
+    /// less those you've dismissed; nil if not looked yet.
+    func startQueuedReview(_ queued: QueuedReview, configs: OrgConfigStore, requested: Set<String>?) async -> RoutineStart {
+        let pr = queued.pullRequest
+        // Failing to reach GitHub is likely to pass, so the review goes back
+        // and the window backs off; a failure of the review's own (nothing to
+        // run it in) won't, so it leaves the queue rather than hold it up.
+        guard let api = api() else { return .failed("Gannin isn't signed in to GitHub.") }
+        var facts = QueuedReviewCheck.Facts(requested: requested)
+        do {
+            facts.pullRequest = try await api.pullRequestStates(ids: [pr.id])[pr.id]
+        } catch {
+            return .failed("Couldn't look the PR up: \(error.localizedDescription)")
+        }
+        facts.hasReview = review(of: pr.id) != nil
+        facts.isStarting = startingReviews[pr.id] != nil
+        facts.autoReviewIsOn = AutoReview.isOn(for: pr.org)
+        if let lookAgain = queued.lookAgain {
+            facts.reviewIsWatching = sessions[lookAgain.session]?.watch?.isOn == true
+            facts.reviewIsBusy = isBusyForLookAgain(lookAgain.session)
+        }
+        if let verdict = QueuedReviewCheck.verdict(queued, facts) { return verdict }
+        if let lookAgain = queued.lookAgain {
+            guard await reviewAgain(lookAgain.session, because: lookAgain.reasons) else {
+                return .failed("Couldn't ask its review to look again: Claude Code isn't running in its tab.", retry: false)
+            }
+            return .started(session: lookAgain.session)
+        }
+        switch await autoReview(pr, configs: configs, gated: false, limit: .max) {
+        case .started(let id): return .started(session: id)
+        case .skipped: return .skipped("Its review config leaves it alone.")
+        case .queued, .later:
+            if startingReviews[pr.id] != nil { return .notYet("Its review was already being started.") }
+            return .failed("Couldn't start its review: the project covering \(pr.repo) isn't checked out here.", retry: false)
+        }
+    }
+
+    /// Whether a review's claude is busy, so asking it to look again waits.
+    func isBusyForLookAgain(_ id: UUID) -> Bool {
+        [.working, .starting, .needsYou].contains(state(id))
+    }
+
     /// A review started by Gannin for a request it found, in the background:
-    /// no tab is shown. False when the PR already has a review or enough
+    /// no tab is shown. Nil when the PR already has a review or `limit`
     /// automatic ones are running; a later check tries again.
-    func startAutomaticReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String) async -> Bool {
+    func startAutomaticReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, limit: Int = AutoReview.maxRunning) async -> UUID? {
         // Also skip a PR whose review is still being started (`startingReviews`): a review
         // already being started by hand would join that in-flight task and come back as the
         // manual session, which shouldn't count as automatic or be posted on its own.
         // Leaving it be here means a later check finds it through `review(of:)` once that
         // task's added its session.
-        guard review(of: pr.id) == nil, startingReviews[pr.id] == nil else { return false }
-        guard automaticRuns.filter(isRunning).count < AutoReview.maxRunning else { return false }
+        guard review(of: pr.id) == nil, startingReviews[pr.id] == nil else { return nil }
+        guard automaticReviewsRunning < limit else { return nil }
         let session = await startReview(of: pr, harness: setup, harnessPath: harnessPath, reveals: false)
         automaticRuns.insert(session.id)
+        automaticStartedAt[session.id] = .now
         _ = open(session)
         note(session.id, .started, text: "Started reviewing it when your review was requested")
-        return true
+        return session.id
     }
 
     /// Turns watching the review's PR on or off. Turned on again, it starts
@@ -203,6 +314,7 @@ extension SessionStore {
         }
         // Ready for you whether it started by itself or by hand.
         noticeApproval(id)
+        automaticStartedAt[id] = nil
         guard automaticRuns.remove(id) != nil else { return }
         let verdict = switch session.reviewResult?.verdict {
         case "approve": "would approve"
@@ -356,11 +468,23 @@ extension SessionStore {
             return
         }
         guard reviewing, let since = watch.changedAt, Date.now.timeIntervalSince(since) >= AutoReview.quietPeriod,
-              ![.working, .starting, .needsYou].contains(state(id)) else { return }
-        var reasons: [String] = []
-        if watch.hasNewCommits { reasons.append("new commits have been pushed") }
-        if watch.newComments > 0 { reasons.append("\(watch.newComments) new comment\(watch.newComments == 1 ? " has" : "s have") been left") }
-        if await reviewAgain(id, because: reasons.joined(separator: " and ")) {
+              !isBusyForLookAgain(id) else { return }
+        let reasons = AutoReview.reasons(newCommits: watch.hasNewCommits, newComments: watch.newComments)
+        let decision = sessions[id]?.reviewOf.map { reviewGate($0.org) }
+        // Windows not known yet: look again on a later pass.
+        if decision == .unknown { return }
+        // Outside every review window it waits its turn, with what's changed (R4).
+        if let routines, let pr = sessions[id]?.reviewOf, decision == .queue {
+            routines.enqueueReview(QueuedReview(
+                pullRequest: pr, lookAgain: .init(session: id, hasNewCommits: watch.hasNewCommits, newComments: watch.newComments), queuedAt: .now
+            ))
+            note(id, .queued, text: "Waiting for a review window to look again: \(reasons)")
+            watch.changedAt = nil
+            watch.hasNewCommits = false
+            watch.newComments = 0
+            return
+        }
+        if await reviewAgain(id, because: reasons) {
             watch.changedAt = nil
             watch.hasNewCommits = false
             watch.newComments = 0
@@ -398,7 +522,7 @@ extension SessionStore {
 
     /// Asks the reviewer to look again: now if it's waiting, else once
     /// it's started (resumed from the history if it was finished).
-    private func reviewAgain(_ id: UUID, because reasons: String) async -> Bool {
+    func reviewAgain(_ id: UUID, because reasons: String) async -> Bool {
         guard let session = sessions[id], let pr = session.reviewOf else { return false }
         // The PR's diff may have grown since the review started, so the
         // learnings fixed into its first prompt may now fall short of
@@ -420,6 +544,7 @@ extension SessionStore {
             _ = open(session)
         }
         automaticRuns.insert(id)
+        automaticStartedAt[id] = .now
         note(id, .started, text: "Reviewing it again: \(reasons)")
         return true
     }
@@ -444,6 +569,13 @@ extension SessionStore {
 
 // MARK: - Watched PRs from GitHub
 
+/// Whether a PR is still open and ready, for a queued review's turn.
+struct PullRequestState {
+    /// `OPEN`, `MERGED` or `CLOSED`.
+    let state: String
+    let isDraft: Bool
+}
+
 struct WatchedPullRequest {
     struct Comment {
         let id: String
@@ -463,6 +595,23 @@ struct WatchedPullRequest {
 }
 
 extension GitHubAPI {
+    /// PRs' state and draft flag by node ID; one that's gone is left out.
+    func pullRequestStates(ids: [String]) async throws -> [String: PullRequestState] {
+        struct Node: Decodable { let id: String?; let state: String?; let isDraft: Bool? }
+        struct Response: Decodable { let nodes: [Node?] }
+        let response: Response = try await query("""
+            query($ids: [ID!]!) {
+              nodes(ids: $ids) { ... on PullRequest { id state isDraft } }
+            }
+            """, values: ["ids": ids])
+        var found: [String: PullRequestState] = [:]
+        for case let node? in response.nodes {
+            guard let id = node.id, let state = node.state else { continue }
+            found[id] = PullRequestState(state: state, isDraft: node.isDraft ?? false)
+        }
+        return found
+    }
+
     /// Watched PRs by node ID, each one's latest comments and reviews, and
     /// who you are, so yours are left out.
     func watchedPullRequests(ids: [String]) async throws -> (login: String, pullRequests: [String: WatchedPullRequest]) {

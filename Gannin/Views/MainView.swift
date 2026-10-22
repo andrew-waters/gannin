@@ -1532,7 +1532,8 @@ struct OrgSidebar: View {
         case .routines:
             guard let selectedOrg else { return 0 }
             let ids = Set(routines.routines(for: selectedOrg).map(\.id))
-            return routines.activeRuns.filter { ids.contains($0.routine) }.count
+            // Review runs show on Agents › Queue, wherever their windows are kept.
+            return routines.activeRuns.filter { ids.contains($0.routine) && $0.pullRequest == nil }.count
         case .agentQueue:
             guard let selectedOrg else { return 0 }
             return routines.queue(for: selectedOrg).count

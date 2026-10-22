@@ -490,6 +490,9 @@ final class SessionStore {
     /// Reviews Gannin started or asked to look again by itself, until
     /// their result arrives (`AutoReview.swift`).
     @ObservationIgnored var automaticRuns: Set<UUID> = []
+    /// When each automatic run was started, for counting it before its
+    /// claude is running (`automaticReviewsRunning`).
+    @ObservationIgnored var automaticStartedAt: [UUID: Date] = [:]
     /// What to tell claude once it has started (a review asked to look
     /// again while it wasn't running).
     @ObservationIgnored var pendingPrompts: [UUID: String] = [:]
@@ -503,6 +506,9 @@ final class SessionStore {
     /// Routines and their runs, for naming and watching scheduled runs
     /// (`Routines/`); set by the app.
     @ObservationIgnored var routines: RoutineStore?
+    /// Whether an automatic review of the org's PR may start now or waits
+    /// for a review window (`ReviewGate`); set by the app.
+    @ObservationIgnored var reviewGate: (String) -> ReviewGate.Decision = { _ in .start(limit: AutoReview.maxRunning) }
     /// Scheduled runs' sessions seen working since launch, so one waiting
     /// for its first prompt isn't taken for finished.
     @ObservationIgnored var routineSessionsWorked: Set<UUID> = []

@@ -38,6 +38,10 @@ extension SessionStore {
         guard let routines else { return }
         for run in routines.activeRuns {
             guard let id = run.session, !stoppingRoutineSessions.contains(id) else { continue }
+            if run.pullRequest != nil {
+                watchReviewRun(run, session: id, now: now)
+                continue
+            }
             guard let session = sessions[id], let info = session.routineRun else {
                 routines.updateRun(run.id) { run in
                     run.outcome = .failed
@@ -87,6 +91,28 @@ extension SessionStore {
                 }
                 handBack(id, info: info)
             }
+        }
+    }
+
+    /// A review window's run ends with its review (`reviewFinished` takes it
+    /// out of `automaticRuns`), or once claude has gone from its tab. It has
+    /// no limits of its own.
+    private func watchReviewRun(_ run: RoutineRun, session id: UUID, now: Date) {
+        guard let routines else { return }
+        guard sessions[id] != nil else {
+            routines.updateRun(run.id) { run in
+                run.outcome = .failed
+                run.endedAt = now
+                run.note = "Its review was removed."
+            }
+            return
+        }
+        // Claude takes a moment to start in a tab that wasn't open.
+        let settled = now.timeIntervalSince(run.startedAt ?? now) > 60
+        guard !automaticRuns.contains(id) || (settled && !isRunning(id)) else { return }
+        routines.updateRun(run.id) { run in
+            run.outcome = .finished
+            run.endedAt = now
         }
     }
 
