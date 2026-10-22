@@ -66,16 +66,18 @@
       "line" : 180,
       "path" : "Gannin/Routines/AgentQueuePage.swift",
       "posted_at" : "2026-10-21T18:33:01Z",
+      "resolved_at" : "2026-10-22T06:45:51Z",
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-22T06:41:23Z",
   "number" : 451,
   "posted_at" : "2026-10-21T18:33:01Z",
   "repo" : "andrew-waters/gannin",
   "reviewer" : "dwrss",
   "started_at" : "2026-10-21T18:17:11Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Run automatic PR reviews only in review windows, with a review queue",
-  "updated_at" : "2026-10-21T18:33:07Z",
+  "updated_at" : "2026-10-22T06:45:51Z",
   "verdict" : "approve"
 }
