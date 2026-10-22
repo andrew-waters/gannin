@@ -1075,6 +1075,8 @@ struct PullRequestReviewView: View {
                     let foundPost = await sessions.syncPostedReview(session.id)
                     await load()
                     await loadStatus()
+                    // The sessions grid reads its checks from `pullRequestInfo`.
+                    await sessions.refreshPullRequests(session.id)
                     checkResult = checkSummary(watching: watching, state: state) + (foundPost ? ", review found on GitHub" : "")
                 }
             }

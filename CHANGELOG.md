@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Fixed
+- Check for Changes on a review's tab also refreshes the PR's checks shown on its card in the sessions grid
+
 ## [0.0.4] - 2026-10-22
 
 ### Added
