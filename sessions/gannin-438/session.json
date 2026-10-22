@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "438-run-remote-pr-reviews-only-in-scheduled",
+  "finishedAt" : "2026-10-22T06:48:21Z",
   "issue" : "andrew-waters/gannin#438",
   "pullRequests" : [
 
