@@ -9,6 +9,8 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+## [0.0.4] - 2026-10-22
+
 ### Added
 - The Junie line in a session's Activity pane expands to show Junie's findings, or what it printed when it didn't give a list
 - An issue's assignees can be changed from its window or drawer: choose people under Assignees in the side panel and press Save to write the change to GitHub
