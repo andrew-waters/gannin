@@ -236,6 +236,7 @@ struct ReviewedPullRequest: Equatable {
     /// `existingComments` and `earlierReviews` may be missing some.
     var existingCommentsError: String?
     /// The signed-in user, whose outdated comments still count as said.
+    /// Set by the caller, which already knows it.
     var viewer: String?
 
     /// How far, in lines, a finding can be from a comment saying the same
@@ -263,21 +264,26 @@ struct ReviewedPullRequest: Equatable {
         var inline: [[String: Any]] = []
         var general: [SessionTranscript.Finding] = []
         var omitted: [Omitted] = []
+        // This review, if it's already on GitHub (posted from another Mac,
+        // or before a relaunch), isn't an earlier one: leaving out what it
+        // said would shrink the body so `PostedReview.repeated` misses it.
+        let summary = review?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let earlier = earlierReviews.filter { summary.isEmpty || !$0.body.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(summary) }
         for finding in review?.findings ?? [] {
             let decision = draft.decisions[finding.key]
             if decision == .dismissed { continue }
             var text = finding.comment
             if case .edited(let edited) = decision { text = edited }
             guard let line = finding.line, let file = files.first(where: { $0.path == finding.path }), file.hasLine(line, isOld: false) else {
-                if let earlier = said(text, path: finding.path, line: nil) {
-                    omitted.append(.init(path: finding.path, line: finding.line, comment: text, author: earlier.author, said: earlier.said, url: earlier.url))
+                if let before = said(text, path: finding.path, line: finding.line, earlier: earlier) {
+                    omitted.append(.init(path: finding.path, line: finding.line, comment: text, author: before.author, said: before.said, url: before.url))
                 } else {
                     general.append(.init(path: finding.path, line: finding.line, comment: text, severity: finding.severity))
                 }
                 continue
             }
-            if let earlier = said(text, path: finding.path, line: line) {
-                omitted.append(.init(path: finding.path, line: line, comment: text, author: earlier.author, said: earlier.said, url: earlier.url))
+            if let before = said(text, path: finding.path, line: line, earlier: earlier) {
+                omitted.append(.init(path: finding.path, line: line, comment: text, author: before.author, said: before.said, url: before.url))
                 continue
             }
             if let suggestion = finding.suggestion, decision == nil {
@@ -293,11 +299,11 @@ struct ReviewedPullRequest: Equatable {
 
     /// Who already said `text` about `path`, and where: a review comment on
     /// the new side near `line` (anywhere in the file for a finding with
-    /// no `line` on the diff), or a line of an earlier review's body that
-    /// names the path. An outdated comment counts only when it's the
-    /// viewer's: GitHub hides it, but it was still sent, while someone
-    /// else's may be about code that has since changed.
-    private func said(_ text: String, path: String, line: Int?) -> (author: String, said: String, url: URL?)? {
+    /// no line), or a finding in an earlier review's body about the path.
+    /// An outdated comment counts only when it's the viewer's: GitHub hides
+    /// it, but it was still sent, while someone else's may be about code
+    /// that has since changed.
+    private func said(_ text: String, path: String, line: Int?, earlier: [PostedReview]) -> (author: String, said: String, url: URL?)? {
         let comment = existingComments.first { comment in
             guard !comment.isOld, comment.path == path, Self.isSameComment(existing: comment.body, finding: text) else { return false }
             if comment.isOutdated {
@@ -308,23 +314,44 @@ struct ReviewedPullRequest: Equatable {
             return abs(comment.line - line) <= Self.lineLeeway
         }
         if let comment { return (comment.author, comment.body, comment.url) }
-        for review in earlierReviews {
-            // Gannin writes a body finding as "- `path:line`: comment".
-            let lines = review.body.split(separator: "\n").map(String.init).filter { $0.contains(path) }
-            if let match = lines.first(where: { Self.isSameComment(existing: Self.withoutLocation($0, path: path), finding: text) }) {
-                return (review.author, match, review.url)
+        for review in earlier {
+            for entry in Self.findingEntries(in: review.body) {
+                if let comment = Self.comment(on: path, in: entry), Self.isSameComment(existing: comment, finding: text) {
+                    return (review.author, comment, review.url)
+                }
             }
         }
         return nil
     }
 
-    /// A body line with its "- `path:line`:" lead taken off, so its words
-    /// are only what was said.
-    private static func withoutLocation(_ line: String, path: String) -> String {
-        guard let range = line.range(of: path) else { return line }
-        var rest = line[range.upperBound...].drop { $0 == ":" || $0.isNumber || $0 == "`" }
-        rest = rest.drop { $0 == ":" || $0.isWhitespace }
-        return String(rest)
+    /// The findings in a review body as `body(summary:general:)` writes
+    /// them: each starts a line with "- `" and runs until the next, so a
+    /// comment over several lines stays whole.
+    private static func findingEntries(in body: String) -> [String] {
+        var entries: [String] = []
+        for line in body.split(separator: "\n", omittingEmptySubsequences: false) {
+            if line.hasPrefix("- `") {
+                entries.append(String(line))
+            } else if !entries.isEmpty {
+                entries[entries.count - 1] += "\n" + line
+            }
+        }
+        return entries
+    }
+
+    /// What a body finding says, when it's about `path` exactly: its lead
+    /// is "- `path`: " or "- `path:line`: ".
+    private static func comment(on path: String, in entry: String) -> String? {
+        let lead = "- `" + path
+        guard entry.hasPrefix(lead) else { return nil }
+        var rest = entry.dropFirst(lead.count)
+        if rest.first == ":" {
+            rest = rest.dropFirst()
+            guard rest.first?.isNumber == true else { return nil }
+            rest = rest.drop { $0.isNumber }
+        }
+        guard rest.hasPrefix("`:") else { return nil }
+        return rest.dropFirst(2).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Whether an existing comment already says what a finding says: the
@@ -485,13 +512,11 @@ extension GitHubAPI {
             if !lenientComments { throw error }
             existingError = error.localizedDescription
         }
-        let me = try? await viewer().login
         return ReviewedPullRequest(
             title: pull.title, body: pull.body ?? "", author: pull.user?.login, headSHA: pull.head.sha,
             additions: pull.additions, deletions: pull.deletions,
             state: pull.merged == true ? "merged" : pull.state, files: files,
-            existingComments: existing, earlierReviews: earlier, existingCommentsError: existingError,
-            viewer: me
+            existingComments: existing, earlierReviews: earlier, existingCommentsError: existingError
         )
     }
 
@@ -2287,6 +2312,9 @@ private struct PostReviewSheet: View {
     /// pressing it again after a failed check posts without one.
     @State private var checkedComments = false
     @State private var notice: String?
+    /// The body as built from the findings, to tell whether the user has
+    /// edited `bodyText` since.
+    @State private var builtBody = ""
 
     private var reference: PullRequestReference { session.reviewOf! }
 
@@ -2294,10 +2322,12 @@ private struct PostReviewSheet: View {
     /// was opened with. Only those change: the review is posted against the
     /// commit it saw.
     private var current: ReviewedPullRequest {
-        guard let latestComments, let latestReviews else { return pullRequest }
         var pull = pullRequest
-        pull.existingComments = latestComments
-        pull.earlierReviews = latestReviews
+        pull.viewer = auth.viewer?.login
+        if let latestComments, let latestReviews {
+            pull.existingComments = latestComments
+            pull.earlierReviews = latestReviews
+        }
         return pull
     }
 
@@ -2438,6 +2468,7 @@ private struct PostReviewSheet: View {
             default: "COMMENT"
             }
             bodyText = ReviewedPullRequest.body(summary: review?.summary ?? "", general: general)
+            builtBody = bodyText
         }
     }
 
@@ -2495,7 +2526,16 @@ private struct PostReviewSheet: View {
                         return
                     }
                     if shown != Set(comments().2.map { "\($0.path):\($0.line ?? 0):\($0.comment)" }) {
-                        notice = "The findings left out changed: someone has commented since this review was drafted. Check the list, then post again. To send one that's wrongly left out, add it as a comment of your own."
+                        notice = "The findings left out changed: someone has commented or reviewed since this review was drafted. Check the list, then post again. To send one that's wrongly left out, add it as a comment of your own."
+                        // The body carries the findings that go in it, so it
+                        // changes with them, unless the user has edited it.
+                        let rebuilt = ReviewedPullRequest.body(summary: review?.summary ?? "", general: comments().1)
+                        if bodyText == builtBody {
+                            bodyText = rebuilt
+                        } else if rebuilt != builtBody {
+                            notice! += " You've edited the review's text, so it wasn't updated: take out any finding now listed as left out."
+                        }
+                        builtBody = rebuilt
                         sending = false
                         return
                     }

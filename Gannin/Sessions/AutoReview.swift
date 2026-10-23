@@ -345,7 +345,8 @@ extension SessionStore {
                 await recordReview(id)
                 return
             }
-            let pull = try await api.reviewedPullRequest(repo: pr.repo, number: pr.number, lenientComments: true)
+            var pull = try await api.reviewedPullRequest(repo: pr.repo, number: pr.number, lenientComments: true)
+            pull.viewer = viewerLogin()
             let (inline, general, omitted) = pull.comments(for: review, draft: draft)
             let body = ReviewedPullRequest.body(summary: review.summary, general: general)
             // A failed lookup doesn't block posting, as with the comment check.

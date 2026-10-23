@@ -193,4 +193,39 @@ struct ReviewDuplicateCommentTests {
         #expect(inline.count == 1)
         #expect(omitted.count == 1)
     }
+
+    @Test func theSameReviewAlreadyPostedIsNotAnEarlierOne() {
+        let text = "The retry here never stops when the server keeps failing."
+        let finding = SessionTranscript.Finding(path: "B.swift", line: 40, comment: text)
+        let result = SessionTranscript.ReviewResult(summary: "Looks good apart from one thing.", verdict: "comment", findings: [finding])
+        let posted = ReviewedPullRequest.body(summary: result.summary, general: [finding])
+        let (_, general, omitted) = pull(reviews: [earlier(posted)]).comments(for: result, draft: ReviewDraft())
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
+        let body = ReviewedPullRequest.body(summary: result.summary, general: general)
+        #expect(PostedReview.repeated(in: [earlier(posted)], event: "COMMENT", commit: "old", body: body) != nil)
+    }
+
+    @Test func aBodyFindingAboutAPathEndingTheSameIsPosted() {
+        let text = "The retry here never stops when the server keeps failing."
+        let reviews = [earlier("Summary.\n\n- `Sub/B.swift:40`: \(text)\n- `LB.swift:40`: \(text)")]
+        let (_, general, omitted) = pull(reviews: reviews).comments(for: review(line: 40, comment: text, path: "B.swift"), draft: ReviewDraft())
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
+    }
+
+    @Test func aBodyFindingOverSeveralLinesIsLeftOut() {
+        let text = "The retry here never stops when the server keeps failing.\nCap it at three attempts and back off between them."
+        let reviews = [earlier("Summary.\n\n- `B.swift:40`: \(text)\n- `C.swift`: Something else entirely about the parser.")]
+        let (_, general, omitted) = pull(reviews: reviews).comments(for: review(line: 40, comment: text, path: "B.swift"), draft: ReviewDraft())
+        #expect(general.isEmpty)
+        #expect(omitted.count == 1)
+    }
+
+    @Test func anOffDiffFindingFarFromTheCommentIsPosted() {
+        let text = "This force unwrap crashes when the token is missing."
+        let (_, general, omitted) = pull(existing: [existing(line: 12, body: text)]).comments(for: review(line: 300, comment: text), draft: ReviewDraft())
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
+    }
 }
