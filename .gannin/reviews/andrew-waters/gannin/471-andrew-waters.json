@@ -1,0 +1,47 @@
+{
+  "author" : "dwrss",
+  "effort" : 1,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Gannin's instructions come after the team's own guidance, and a saved prompt can",
+      "key" : "Gannin/Sessions/PlanningWorkspace.swift:206:Gannin's instructions come after the team's own guidance, an",
+      "line" : 206,
+      "path" : "Gannin/Sessions/PlanningWorkspace.swift",
+      "posted_at" : "2026-10-23T11:17:35Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "\"or fewer where one piece of work spans repos\" doesn't fit the task shape. Each ",
+      "key" : "Gannin/Sessions/PlanningWorkspace.swift:206:\"or fewer where one piece of work spans repos\" doesn't fit t",
+      "line" : 206,
+      "path" : "Gannin/Sessions/PlanningWorkspace.swift",
+      "posted_at" : "2026-10-23T11:17:35Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The JSON shape further down still describes a task's `body` as \"Markdown: what t",
+      "key" : "Gannin/Sessions/PlanningWorkspace.swift:206:The JSON shape further down still describes a task's `body` ",
+      "line" : 206,
+      "path" : "Gannin/Sessions/PlanningWorkspace.swift",
+      "posted_at" : "2026-10-23T11:17:35Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 471,
+  "posted_at" : "2026-10-23T11:17:35Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-23T11:16:37Z",
+  "state" : "OPEN",
+  "title" : "Ask planning sessions for a few larger tasks instead of one per step",
+  "updated_at" : "2026-10-23T11:17:36Z",
+  "verdict" : "comment"
+}
