@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "467-avoid-sending-duplicate-review-comments",
+  "issue" : "andrew-waters/gannin#467",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-23T18:24:50Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Avoid sending duplicate review comments on follow-up reviews",
+  "url" : "https://github.com/andrew-waters/gannin/issues/467"
+}
