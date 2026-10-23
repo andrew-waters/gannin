@@ -10,6 +10,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Pull Requests filter menus end with Hide These, which hides the values ticked (a repository, an author and so on) instead of showing only them
+- Hide reviewed on the Pull Requests page's bar leaves out pull requests you've reviewed and haven't been asked to review again
+- A Checks menu on the Pull Requests page narrows the list to passing, failing, running or no checks
 - Hide drafts on the Pull Requests page's bar leaves draft pull requests out of that window's list, without changing counts elsewhere
 - CI time per pull request on Delivery › CI: the median and p75 per PR against the period before, how much went on replaced commits and failures, the wait on a PR's final CI, small PRs that run the full suite, and bots' share
 - Pull requests and People tables on the CI page, with a page per PR (its time by workflow and its runs by commit) and per person (their share of CI time against their share of PRs)

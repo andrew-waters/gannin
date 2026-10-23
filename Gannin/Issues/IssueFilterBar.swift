@@ -378,29 +378,31 @@ extension [FilterOption] {
 
 /// A filter bar's menu, as on Views: the values to tick (any of them
 /// matches), those in `leading` first, and Clear. Its label says what's
-/// picked, tinted while anything is.
+/// picked, tinted while anything is. Given `excluding`, it ends with Hide
+/// These, which hides the values ticked instead of showing only them.
 struct FilterMenu: View {
     let title: String
     var leading: [FilterOption] = []
     let options: [FilterOption]
     @Binding var picked: Set<String>
+    var excluding: Binding<Bool>? = nil
 
     var body: some View {
+        let hides = excluding?.wrappedValue ?? false
         Menu {
             ForEach(leading, id: \.value) { toggle($0) }
             if !leading.isEmpty, !options.isEmpty { Divider() }
             ForEach(options, id: \.value) { toggle($0) }
-            if !picked.isEmpty {
-                Divider()
-                Button("Clear") { picked = [] }
-            }
+            if excluding != nil || !picked.isEmpty { Divider() }
+            if let excluding { Toggle("Hide These", isOn: excluding) }
+            if !picked.isEmpty { Button("Clear") { picked = [] } }
         } label: {
-            Text(picked.isEmpty ? title : "\(title): \(summary())")
+            Text(picked.isEmpty ? title : "\(title): \(hides ? "not " : "")\(summary())")
                 .lineLimit(1)
         }
         .fixedSize()
         .tint(picked.isEmpty ? nil : .accentColor)
-        .help(picked.isEmpty ? "Only some values of \(title)" : "Only where \(title) is \(summary(limit: 10))")
+        .help(picked.isEmpty ? "Only some values of \(title)" : "\(hides ? "Hiding" : "Only") where \(title) is \(summary(limit: 10))")
     }
 
     private func toggle(_ option: FilterOption) -> some View {

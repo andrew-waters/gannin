@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// What the Pull Requests page narrows its PRs by: open or merged, a search,
-/// authors, reviewers, statuses and repositories (several of each, any
-/// matching), and whether to hide the viewer's own and drafts. Kept per window.
+/// authors, reviewers, statuses, checks and repositories (several of each,
+/// any matching, or with the key in `excluding` none), and whether to hide
+/// the viewer's own, drafts and those they've reviewed. Kept per window.
 struct PullRequestFilters {
     enum State: String, CaseIterable {
         case open = "Open"
@@ -14,6 +15,7 @@ struct PullRequestFilters {
         case author = "Author"
         case reviewer = "Reviewer"
         case status = "Status"
+        case checks = "Checks"
         case repository = "Repository"
     }
 
@@ -40,13 +42,33 @@ struct PullRequestFilters {
         }
     }
 
+    /// The latest commit's checks, as the drawer shows them.
+    enum Checks: String, CaseIterable {
+        case passing = "Passing"
+        case failing = "Failing"
+        case running = "Running"
+        case noChecks = "No checks"
+
+        init(_ state: ItemDetail.CheckState?) {
+            switch state {
+            case .success: self = .passing
+            case .failure, .error: self = .failing
+            case .pending, .expected: self = .running
+            case nil: self = .noChecks
+            }
+        }
+    }
+
     var state: State = .open
     var search = ""
     var values: [Key: Set<String>] = [:]
+    /// Keys whose picked values are hidden rather than the only ones shown.
+    var excluding: Set<Key> = []
     var hideMine = false
     var hideDrafts = false
+    var hideReviewed = false
 
-    var isNarrowed: Bool { !search.isEmpty || hideMine || hideDrafts || values.values.contains { !$0.isEmpty } }
+    var isNarrowed: Bool { !search.isEmpty || hideMine || hideDrafts || hideReviewed || values.values.contains { !$0.isEmpty } }
 
     func inState(_ pr: PullRequest) -> Bool {
         switch state {
@@ -62,11 +84,21 @@ struct PullRequestFilters {
         Set(pr.requestedReviewers.map(\.login) + pr.reviewers.map(\.login) + (pr.requestedTeams ?? []))
     }
 
+    /// Whether `login` has reviewed it and hasn't been asked again since, as
+    /// the Reviewers column reads it.
+    static func isReviewed(_ pr: PullRequest, by login: String) -> Bool {
+        pr.reviewers.contains { $0.login == login } && !pr.requestedReviewers.contains { $0.login == login }
+    }
+
     /// Everything but the state, less `key` (so a menu counts what picking
-    /// among its values would give).
-    func matches(_ pr: PullRequest, except key: Key? = nil, viewerLogin: String? = nil) -> Bool {
+    /// among its values would give). `checks` is a PR's freshest check state.
+    func matches(
+        _ pr: PullRequest, except key: Key? = nil, viewerLogin: String? = nil,
+        checks: (PullRequest) -> ItemDetail.CheckState? = { $0.checks }
+    ) -> Bool {
         if hideMine, let viewerLogin, pr.author?.login == viewerLogin { return false }
         if hideDrafts, pr.isDraft { return false }
+        if hideReviewed, let viewerLogin, Self.isReviewed(pr, by: viewerLogin) { return false }
         for (filter, picked) in values where filter != key && !picked.isEmpty {
             let hit: Bool = switch filter {
             case .author: pr.author.map { picked.contains($0.login) } ?? false
@@ -75,9 +107,10 @@ struct PullRequestFilters {
                     value == Self.noReviewer ? Self.reviewers(pr).isEmpty : Self.reviewers(pr).contains(value)
                 }
             case .status: picked.contains(Status(pr).rawValue)
+            case .checks: picked.contains(Checks(checks(pr)).rawValue)
             case .repository: picked.contains(pr.repo)
             }
-            if !hit { return false }
+            if hit == excluding.contains(filter) { return false }
         }
         let people = ([pr.author].compactMap { $0 } + pr.assignees + pr.requestedReviewers + pr.reviewers).flatMap { [$0.login, $0.displayName] }
         return IssueSearch.matches(search, title: pr.title, repo: pr.repo, number: pr.number, people: people, labels: [])
@@ -90,17 +123,21 @@ struct StoredPullRequestFilters: DynamicProperty {
     @SceneStorage("pullRequests.author") private var author = ""
     @SceneStorage("pullRequests.reviewer") private var reviewer = ""
     @SceneStorage("pullRequests.status") private var status = ""
+    @SceneStorage("pullRequests.checks") private var checks = ""
     @SceneStorage("pullRequests.repository") private var repository = ""
+    @SceneStorage("pullRequests.excluding") private var excluding = ""
     @SceneStorage("pullRequests.hideMine") private var hideMine = false
     @SceneStorage("pullRequests.hideDrafts") private var hideDrafts = false
+    @SceneStorage("pullRequests.hideReviewed") private var hideReviewed = false
     @State private var search = ""
 
     var wrappedValue: PullRequestFilters {
         get {
             PullRequestFilters(state: state, search: search, values: [
                 .author: StoredSet.set(author), .reviewer: StoredSet.set(reviewer),
-                .status: StoredSet.set(status), .repository: StoredSet.set(repository),
-            ], hideMine: hideMine, hideDrafts: hideDrafts)
+                .status: StoredSet.set(status), .checks: StoredSet.set(checks), .repository: StoredSet.set(repository),
+            ], excluding: Set(StoredSet.set(excluding).compactMap(PullRequestFilters.Key.init)),
+            hideMine: hideMine, hideDrafts: hideDrafts, hideReviewed: hideReviewed)
         }
         nonmutating set {
             state = newValue.state
@@ -108,9 +145,12 @@ struct StoredPullRequestFilters: DynamicProperty {
             author = StoredSet.string(newValue.values[.author] ?? [])
             reviewer = StoredSet.string(newValue.values[.reviewer] ?? [])
             status = StoredSet.string(newValue.values[.status] ?? [])
+            checks = StoredSet.string(newValue.values[.checks] ?? [])
             repository = StoredSet.string(newValue.values[.repository] ?? [])
+            excluding = StoredSet.string(Set(newValue.excluding.map(\.rawValue)))
             hideMine = newValue.hideMine
             hideDrafts = newValue.hideDrafts
+            hideReviewed = newValue.hideReviewed
         }
     }
 
@@ -120,12 +160,13 @@ struct StoredPullRequestFilters: DynamicProperty {
 }
 
 /// Pull Requests: the open ones and those merged in the lookback, found with
-/// the bar's search and narrowed by author, reviewer, status and repository,
-/// as the issue pages are.
+/// the bar's search and narrowed by author, reviewer, status, checks and
+/// repository, as the issue pages are.
 struct PullRequestsView: View {
     @Environment(AuthStore.self) private var auth
     @Environment(HiddenStore.self) private var hidden
     @Environment(SessionStore.self) private var sessions
+    @Environment(DetailStore.self) private var details
     @Environment(\.openURL) private var openURL
     let workload: Workload
     @Binding var selection: DetailSelection?
@@ -144,7 +185,7 @@ struct PullRequestsView: View {
     var body: some View {
         let filters = stored.wrappedValue
         let pool = (workload.openPullRequests + workload.mergedPullRequests).filter(filters.inState)
-        let shown = pool.filter { filters.matches($0, viewerLogin: auth.viewer?.login) }
+        let shown = pool.filter { filters.matches($0, viewerLogin: auth.viewer?.login, checks: checks) }
         let open = shown.filter { !$0.isMerged }.sorted { $0.updatedAt > $1.updatedAt }.map(PullRequestTableRow.init)
         let merged = shown.filter(\.isMerged).sorted { ($0.mergedAt ?? $0.updatedAt) > ($1.mergedAt ?? $1.updatedAt) }.map(PullRequestTableRow.init)
         var sections: [(title: String, rows: [PullRequestTableRow])] = []
@@ -164,6 +205,11 @@ struct PullRequestsView: View {
         .onChange(of: tableSelection) {
             if tableSelection.count == 1, let id = tableSelection.first { selection = .pullRequest(id) }
         }
+    }
+
+    /// The drawer's checks when it has fetched them, as they're fresher.
+    private func checks(_ pr: PullRequest) -> ItemDetail.CheckState? {
+        details.detail(for: pr.id)?.checks ?? pr.checks
     }
 
     private func table(_ sections: [(title: String, rows: [PullRequestTableRow])]) -> some View {
@@ -273,7 +319,10 @@ struct PullRequestsView: View {
     }
 
     private func bar(_ filters: PullRequestFilters, pool: [PullRequest]) -> some View {
-        HStack(spacing: 8) {
+        // A ticked Hide drafts the setting has taken over isn't something to clear.
+        var clearable = filters
+        if excludeDrafts { clearable.hideDrafts = false }
+        return HStack(spacing: 8) {
             FilterSearchField(text: stored.projectedValue.search, prompt: "Title, number, person or repo")
             ForEach(PullRequestFilters.Key.allCases, id: \.self) { menu($0, filters: filters, pool: pool) }
             Toggle("Hide mine", isOn: stored.projectedValue.hideMine)
@@ -282,9 +331,11 @@ struct PullRequestsView: View {
                 .checkboxToggle()
                 .disabled(excludeDrafts)
                 .help(excludeDrafts ? "Drafts are left out everywhere by Settings › General › Exclude draft PRs" : "")
+            Toggle("Hide reviewed", isOn: stored.projectedValue.hideReviewed)
+                .checkboxToggle()
+                .help("Leave out PRs you've reviewed and haven't been asked to review again")
             Spacer(minLength: 0)
-            // A ticked Hide drafts the setting has taken over isn't something to clear.
-            if (excludeDrafts ? PullRequestFilters(state: filters.state, search: filters.search, values: filters.values, hideMine: filters.hideMine) : filters).isNarrowed {
+            if clearable.isNarrowed {
                 Button("Clear All") {
                     let state = filters.state
                     stored.wrappedValue = PullRequestFilters(state: state)
@@ -305,7 +356,7 @@ struct PullRequestsView: View {
     }
 
     private func menu(_ key: PullRequestFilters.Key, filters: PullRequestFilters, pool: [PullRequest]) -> some View {
-        let candidates = pool.filter { filters.matches($0, except: key, viewerLogin: auth.viewer?.login) }
+        let candidates = pool.filter { filters.matches($0, except: key, viewerLogin: auth.viewer?.login, checks: checks) }
         var counts: [String: Int] = [:]
         var names: [String: String] = [:]
         for pr in candidates {
@@ -323,6 +374,7 @@ struct PullRequestsView: View {
                     names[person.login] = person.displayName
                 }
             case .status: counts[PullRequestFilters.Status(pr).rawValue, default: 0] += 1
+            case .checks: counts[PullRequestFilters.Checks(checks(pr)).rawValue, default: 0] += 1
             case .repository: counts[pr.repo, default: 0] += 1
             }
         }
@@ -343,6 +395,10 @@ struct PullRequestsView: View {
             options = PullRequestFilters.Status.allCases.compactMap { status in
                 counts[status.rawValue].map { FilterOption(value: status.rawValue, title: status.rawValue, count: $0) }
             }
+        case .checks:
+            options = PullRequestFilters.Checks.allCases.compactMap { value in
+                counts[value.rawValue].map { FilterOption(value: value.rawValue, title: value.rawValue, count: $0) }
+            }
         case .repository:
             options = counts.keys
                 .map { FilterOption(value: $0, title: $0.split(separator: "/").last.map(String.init) ?? $0, count: counts[$0] ?? 0) }
@@ -350,7 +406,10 @@ struct PullRequestsView: View {
         }
         return FilterMenu(
             title: key.rawValue, leading: leading, options: options,
-            picked: Binding(get: { filters.values[key] ?? [] }, set: { stored.wrappedValue.values[key] = $0 })
+            picked: Binding(get: { filters.values[key] ?? [] }, set: { stored.wrappedValue.values[key] = $0 }),
+            excluding: Binding(get: { filters.excluding.contains(key) }, set: { isOn in
+                if isOn { stored.wrappedValue.excluding.insert(key) } else { stored.wrappedValue.excluding.remove(key) }
+            })
         )
     }
 }
