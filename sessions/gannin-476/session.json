@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "476-show-ci-time-per-pull-request-with",
+  "issue" : "andrew-waters/gannin#476",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-23T13:27:29Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Show CI time per pull request, with averages and what drives it, in the metrics",
+  "url" : "https://github.com/andrew-waters/gannin/issues/476"
+}
