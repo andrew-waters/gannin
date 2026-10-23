@@ -40,13 +40,15 @@ With Watch for changes on the review (on by default), Gannin keeps checking the 
 
 ## What gets posted
 
-By default nothing. An automatic review waits for you to open it and press Post Review. If you turn on Post automatic reviews, Gannin posts them itself, always as a plain comment, never approving or requesting changes, and resolves the threads it says are dealt with. Just before posting it fetches the PR's comments and leaves out findings that someone has already raised on the same line, as [Post Review](/docs/agents/reviews/#post-review) does; the review's log entry says how many. If it can't fetch them it posts anyway and the entry says that some comments may repeat. It also skips a review you've already posted with the same body on the same commit, and the entry says so.
+By default nothing. An automatic review waits for you to open it and press Post Review. If you turn on Post automatic reviews, Gannin posts them itself, always as a plain comment, never approving or requesting changes (one Claude would approve is held for you instead while it's ready for your approval, as below), and resolves the threads it says are dealt with. Just before posting it fetches the PR's comments and leaves out findings that someone has already raised on the same line, as [Post Review](/docs/agents/reviews/#post-review) does; the review's log entry says how many. If it can't fetch them it posts anyway and the entry says that some comments may repeat. It also skips a review you've already posted with the same body on the same commit, and the entry says so.
 
 ## Ready for your approval
 
-When Claude's review says approve, covers the PR's latest commits, and the PR has no draft, failing checks or conflicts, it counts as ready for your approval. A review that would approve with nothing to say isn't posted at all. The approval is always yours.
+When Claude's review says approve, covers the PR's latest commits, and the PR has no draft, failing checks or conflicts, it counts as ready for your approval. Gannin never posts one by itself, even with Post automatic reviews on: the review is held, findings and all, until you sign off. The approval is always yours, and when you give it, the summary and comments go up with it as one review, so nothing appears on the PR twice.
 
-Such PRs are first in the Inbox (Ready for your approval), at the top of Act now on the Dashboard, and arrive as a notification that counts on the Dock and in Waiting on You. Opening one starts Post Review on Approve, unless there are commits the review hasn't seen.
+An approving review of a PR that isn't ready (a draft, failing checks or conflicts) isn't held: with Post automatic reviews on, its findings are posted as a comment, as any other automatic review's are. One with nothing to say isn't posted at all.
+
+Such PRs are first in the Inbox (Ready for your approval), at the top of Act now on the Dashboard, and arrive as a notification that counts on the Dock and in Waiting on You. Each row says how many findings the review holds (for example, Claude would approve · 2 findings); Post Review leaves out any already raised on the same line. Opening one shows the review, with its summary and comments, and starts Post Review on Approve, unless there are commits the review hasn't seen. In Post Review you can edit the body, leave out findings you've dismissed, or post it as a Comment instead. Until you post it, the review's log says it's waiting for you.
 
 ## While you were away
 

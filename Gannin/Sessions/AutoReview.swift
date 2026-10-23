@@ -327,13 +327,20 @@ extension SessionStore {
     }
 
     /// Posts the review as a comment: never an approval or a request for
-    /// changes, which stay yours to give.
+    /// changes, which stay yours to give. One Claude would approve is held
+    /// for you instead while it's ready for your approval.
     private func postAutomatically(_ id: UUID) async {
         guard let session = sessions[id], let pr = session.reviewOf, let review = session.reviewResult, let api = api() else { return }
         do {
             let draft = reviewDrafts[id] ?? ReviewDraft()
-            if Self.holdsForApproval(review, draft: draft) {
-                note(id, .reviewed, text: "Nothing posted: Claude would approve it, so it's waiting for you to look and approve")
+            let isReady = readyForApproval(pr.id, whileBusy: true) != nil
+            if Self.holdsForApproval(review, draft: draft, isReady: isReady) {
+                let held = Self.heldFindings(review, draft: draft)
+                let findings = held == 0 ? "" : ", with \(held) finding\(held == 1 ? "" : "s") held to go up with your approval"
+                let text = isReady
+                    ? "Nothing posted: Claude would approve it\(findings), so it's waiting for you to look and approve"
+                    : "Nothing posted: Claude would approve it with nothing to say, once the PR is ready"
+                note(id, .reviewed, text: text)
                 await resolveThreads(review.resolved ?? [], of: pr, for: id, api: api)
                 await recordReview(id)
                 return

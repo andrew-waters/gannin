@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Changed
+- An automatic review Claude would approve is no longer posted by itself, even with findings, while the PR is ready for your approval: it waits in Ready for your approval, and your approval posts its comments once, as one review
+
 ### Fixed
 - Check for Changes on a review's tab also refreshes the PR's checks shown on its card in the sessions grid
 
