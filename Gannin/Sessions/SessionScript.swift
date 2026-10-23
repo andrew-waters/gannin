@@ -38,18 +38,27 @@ enum SessionScript {
         [session.prompt ?? issuePrompt, session.instructions].compactMap { $0 }.joined(separator: "\n\n")
     }
 
+    /// Asks claude to put questions through `AskUserQuestion`, which Gannin
+    /// shows as a card; empty for a scheduled run, with nobody to answer.
+    private static func askingInstruction(_ session: CodeSession) -> String {
+        session.routineRun == nil
+            ? " If you have questions for me, ask them with the AskUserQuestion tool rather than as plain text."
+            : ""
+    }
+
     /// The first prompt a session in the harness is given: pasted by Gannin
     /// for a scheduled run, once it's in auto mode, rather than passed to
     /// claude as it starts.
     static func openingPrompt(_ session: CodeSession) -> String {
         let folder = ".worktrees/\(session.branch)"
         let issue = session.issue
+        let asking = askingInstruction(session)
         return firstPrompt(session, otherwise: """
             You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
             it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
             (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
             code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
-            the brief says, never in projects/ or the harness checkout itself.
+            the brief says, never in projects/ or the harness checkout itself.\(asking)
             """)
     }
 
@@ -226,7 +235,7 @@ enum SessionScript {
         let prompt = firstPrompt(session, otherwise: """
             You're picking up \(issue.reference), "\(issue.title)", in \(session.repo). Read .gannin/brief.md first: it has the \
             issue, its discussion, where it sits on the board and any plans for it. Then look through the code and propose a plan \
-            before changing anything.
+            before changing anything.\(askingInstruction(session))
             """)
         return """
             # Written by Gannin for \(issue.reference). Run in the session's terminal.

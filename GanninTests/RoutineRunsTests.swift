@@ -75,6 +75,8 @@ struct RoutineRunsTests {
         let attended = SessionScript.claudeSteps(session(nil), settings: "s.json", shellNote: "")
         #expect(attended.contains("--settings s.json 'You're picking up") || attended.contains("--settings s.json 'You'\\''re picking up"))
         #expect(!attended.contains("--disallowedTools"))
+        #expect(attended.contains("AskUserQuestion"))
+        #expect(!SessionScript.openingPrompt(session(info)).contains("AskUserQuestion"))
     }
 
     @Test func oldSessionsDecodeWithoutARoutine() throws {
