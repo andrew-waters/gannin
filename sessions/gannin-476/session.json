@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "476-show-ci-time-per-pull-request-with",
+  "finishedAt" : "2026-10-23T14:31:00Z",
   "issue" : "andrew-waters/gannin#476",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/478"
