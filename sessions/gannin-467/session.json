@@ -3,7 +3,7 @@
   "branch" : "467-avoid-sending-duplicate-review-comments",
   "issue" : "andrew-waters/gannin#467",
   "pullRequests" : [
-
+    "https://github.com/andrew-waters/gannin/pull/487"
   ],
   "repos" : [
 
