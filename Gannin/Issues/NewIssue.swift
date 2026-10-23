@@ -57,9 +57,10 @@ struct NewIssueCommand: View {
 /// New Viewer Window is).
 struct NewWindowCommand: View {
     @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.windowPlace) private var place
 
     var body: some View {
-        Button("New Window") { openWindow(id: "main") }
+        Button("New Window") { WindowRequest.openBlank(from: place, placement: .window, openWindow: openWindow) }
             .keyboardShortcut("n", modifiers: [.command, .option])
     }
 }

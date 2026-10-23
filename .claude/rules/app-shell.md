@@ -12,6 +12,7 @@ paths:
 - Never rename a `WorkloadTab` raw value; windows saved with the old one must still decode. Change `title` instead.
 - Push pages through the `selection` binding or the `navigate` action, not by mutating the path directly. Issues, PRs and harness documents go to drawers, not the path.
 - Open in New Window hands state over via `WindowRequest.pending`; anything a new window must restore has to be carried there.
+- New Window and New Tab go through `WindowRequest.openBlank`, never a bare `openWindow(id: "main")`: that skips asking which org and project to open on, and the window falls back to the last org picked anywhere.
 - Use `Platform.swift` styles; AppKit directly, no `#if os`.
 
 ## Personal accounts

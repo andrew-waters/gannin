@@ -48,6 +48,8 @@ struct CommandPaletteCommand: View {
 enum PaletteRouter {
     struct MainWindow {
         let org: () -> String?
+        /// Its org and project, for New Window and New Tab to start from.
+        let place: () -> WindowPlace?
         let open: (PaletteDestination, PalettePlacement) -> Void
         weak var window: NSWindow?
     }
@@ -511,10 +513,10 @@ struct CommandPalette: View {
                 actions: actions, releases: releases, projects: projects, configs: configs.root, harness: harness, windowDays: windowDays
             )(org, mode: full ? .full : .manual)
         case .newWindow:
-            openWindow(id: "main")
+            WindowRequest.openBlank(from: PaletteRouter.mostRecent?.place(), placement: .window, openWindow: openWindow)
         case .newTab:
-            TabRequest.parent = PaletteRouter.mostRecent?.window ?? NSApp.keyWindow
-            openWindow(id: "main")
+            // The palette may be the key window; tab onto the main one.
+            WindowRequest.openBlank(from: PaletteRouter.mostRecent?.place(), placement: .tab, parent: PaletteRouter.mostRecent?.window, openWindow: openWindow)
         case .openClaudeCode:
             openWindow(id: SessionStore.windowID)
         case .newAsk(let org):
