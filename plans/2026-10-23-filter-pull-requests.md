@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: The Pull Requests page's filter menus can hide the values picked instead of showing only them, a Checks menu narrows by CI, and Hide reviewed leaves out PRs the viewer has reviewed and not been asked to again.
 issues: [andrew-waters/gannin#484]
 domains: [pull-requests]
