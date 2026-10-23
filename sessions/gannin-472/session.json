@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "472-planning-only-suggests-repos-that-accept",
+  "finishedAt" : "2026-10-23T18:54:25Z",
   "issue" : "andrew-waters/gannin#472",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/486"
