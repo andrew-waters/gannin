@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "472-planning-only-suggests-repos-that-accept",
+  "issue" : "andrew-waters/gannin#472",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-23T18:24:36Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Planning only suggests repos that accept issues, and follows an org-level issue strategy stored in the harness",
+  "url" : "https://github.com/andrew-waters/gannin/issues/472"
+}
