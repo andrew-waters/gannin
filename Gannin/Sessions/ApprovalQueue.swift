@@ -5,8 +5,8 @@ import Foundation
 /// come first (the Inbox's Ready for your approval, the Dashboard's Act
 /// now, a notification and the waiting count), but the approval is always
 /// yours, given from the review tab after you've looked: automatic reviews
-/// never approve, and one Claude would approve with nothing to say isn't
-/// posted at all.
+/// never approve, and one Claude would approve isn't posted at all, so its
+/// comments go up once, with your approval.
 extension SessionStore {
     /// The PR's review when it's ready for you to approve; nil otherwise.
     /// `whileBusy` counts one the reviewer is just finishing (its result
@@ -44,9 +44,23 @@ extension SessionStore {
     }
 
     /// Whether automatic posting should hold the review for you: Claude
-    /// would approve and has nothing to say, so a comment from your account
-    /// would only be noise, or read as an approval.
-    static func holdsForApproval(_ review: SessionTranscript.ReviewResult, draft: ReviewDraft) -> Bool {
-        review.verdict == "approve" && !review.findings.contains { draft.decisions[$0.key] != .dismissed }
+    /// would approve, so it waits, comments and all, for your approval to
+    /// go up as the one review. Posting its comments now would read as an
+    /// approval and post them again beside yours.
+    static func holdsForApproval(_ review: SessionTranscript.ReviewResult) -> Bool {
+        review.verdict == "approve"
+    }
+
+    /// The findings a held approval carries (those not dismissed), which go
+    /// up with your approval.
+    static func heldFindings(_ review: SessionTranscript.ReviewResult, draft: ReviewDraft) -> Int {
+        review.findings.count { draft.decisions[$0.key] != .dismissed }
+    }
+
+    /// "Claude would approve", with how many comments it's holding for you.
+    func approvalState(_ session: CodeSession) -> String {
+        guard let result = transcripts[session.id]?.review ?? session.reviewResult else { return "Claude would approve" }
+        let held = Self.heldFindings(result, draft: reviewDrafts[session.id] ?? session.reviewDraft ?? ReviewDraft())
+        return held == 0 ? "Claude would approve" : "Claude would approve · \(held) comment\(held == 1 ? "" : "s")"
     }
 }

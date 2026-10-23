@@ -196,7 +196,7 @@ struct AttentionOverview: View {
                 items.append(Item(
                     id: "approve \(pr.id)", severity: .critical, symbol: "checkmark.seal",
                     title: pr.title,
-                    detail: "Claude would approve: yours to look over, asked \(age(asked, now: now)) ago · \(shortRepo(pr.repo))#\(pr.number)",
+                    detail: "\(sessions.approvalState(session)): yours to look over, asked \(age(asked, now: now)) ago · \(shortRepo(pr.repo))#\(pr.number)",
                     // Above everything else that's urgent.
                     weight: .greatestFiniteMagnitude / 2 + now.timeIntervalSince(asked),
                     open: { sessions.show(session.id, with: openWindow) }

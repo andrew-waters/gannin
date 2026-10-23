@@ -314,7 +314,7 @@ struct InboxView: View {
                 InboxRow(
                     id: "approve-\(item.pr.id)", title: item.pr.title, reference: Self.number(item.pr.repo, item.pr.number),
                     people: item.pr.author.map { [$0] } ?? [], checks: checks(item.pr),
-                    state: "Claude would approve", stateColor: ChartPalette.good,
+                    state: sessions.approvalState(session), stateColor: ChartPalette.good,
                     tint: ChartPalette.good, since: item.askedAt, sinceLabel: "Asked", size: (item.pr.additions, item.pr.deletions),
                     page: .pullRequest(item.pr.id), session: session.id
                 )
