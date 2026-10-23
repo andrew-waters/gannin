@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "468-show-whether-review-has-been-requested",
+  "finishedAt" : "2026-10-23T13:29:55Z",
   "issue" : "andrew-waters/gannin#468",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/474"
