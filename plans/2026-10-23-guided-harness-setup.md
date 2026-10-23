@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In progress
+status: Done
 summary: New users are guided through creating a harness or linking one they have, in one Set Up Harness sheet that opens by itself for an org with no project, can be put off and reopened, and finishes with missing starter files and the checkout.
 issues: [andrew-waters/gannin#463]
 domains: [harness, onboarding]
