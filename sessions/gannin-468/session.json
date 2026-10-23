@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "468-show-whether-review-has-been-requested",
+  "issue" : "andrew-waters/gannin#468",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-23T12:56:05Z",
+  "startedBy" : "andrew-waters",
+  "title" : "Show whether review has been requested, not just who the reviewers are",
+  "url" : "https://github.com/andrew-waters/gannin/issues/468"
+}
