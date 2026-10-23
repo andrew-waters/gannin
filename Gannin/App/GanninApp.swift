@@ -144,7 +144,10 @@ struct GanninApp: App {
             guard let sessions, let orgConfigs else { return .later }
             return await sessions.autoReview(reference, configs: orgConfigs)
         }
-        watch.checkWatched = { [weak sessions] in await sessions?.checkWatchedReviews() }
+        watch.checkWatched = { [weak sessions] in
+            sessions?.remindApprovals()
+            await sessions?.checkWatchedReviews()
+        }
         watch.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
         if !demo { watch.start() }
         // Routines: sessions started by themselves on a schedule, and the

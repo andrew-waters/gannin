@@ -17,7 +17,8 @@ extension SessionStore {
               result.verdict == "approve",
               // New commits since: not ready until it's looked again.
               session.watch?.hasNewCommits != true,
-              (reviewDrafts[session.id] ?? session.reviewDraft)?.postedEvent != "APPROVE" else { return nil }
+              (reviewDrafts[session.id] ?? session.reviewDraft)?.postedEvent != "APPROVE",
+              (reviewDrafts[session.id] ?? session.reviewDraft)?.approvalDismissed != true else { return nil }
         if !whileBusy, isRunning(session.id), [.working, .starting].contains(state(session.id)) { return nil }
         if let request = EngineerWatch.shared.reviewRequests.first(where: { $0.id == pullRequestID }),
            request.isDraft || request.isFailing || request.mergeable == "CONFLICTING" { return nil }
@@ -40,7 +41,33 @@ extension SessionStore {
     /// waiting on you with a notification saying so.
     func noticeApproval(_ id: UUID) {
         guard let pr = sessions[id]?.reviewOf, readyForApproval(pr.id, whileBusy: true) != nil else { return }
+        approvalNoticedAt[id] = .now
         flag(id, title: "Ready for your approval", body: "Claude would approve \(pr.repo)#\(pr.number). Look over the review, then approve it.", replies: false)
+    }
+
+    /// How long a held approval waits before its notification is sent again.
+    static let approvalReminderInterval: TimeInterval = 24 * 3600
+
+    /// Notifies again for each approval in the queue that's been waiting
+    /// `approvalReminderInterval` since its last notification, until it's
+    /// given or dismissed. Run on each check of the watched reviews.
+    func remindApprovals(now: Date = .now) {
+        for (_, session) in approvalQueue() {
+            guard let noticed = approvalNoticedAt[session.id] else {
+                // Found already waiting (after a relaunch): counted from now.
+                approvalNoticedAt[session.id] = now
+                continue
+            }
+            if now.timeIntervalSince(noticed) >= Self.approvalReminderInterval { noticeApproval(session.id) }
+        }
+    }
+
+    /// Puts a held approval away without giving it: it leaves the Inbox, the
+    /// Dashboard and the waiting count, and its record stops saying it's held.
+    func dismissApproval(_ id: UUID) {
+        reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].approvalDismissedAt = .now
+        unflag(id)
+        Task { await recordReview(id) }
     }
 
     /// Whether automatic posting should hold the review for you: Claude

@@ -46,9 +46,9 @@ By default nothing. An automatic review waits for you to open it and press Post 
 
 When Claude's review says approve, covers the PR's latest commits, and the PR has no draft, failing checks or conflicts, it counts as ready for your approval. Gannin never posts one by itself, even with Post automatic reviews on: the review is held, findings and all, until you sign off. The approval is always yours, and when you give it, the summary and comments go up with it as one review, so nothing appears on the PR twice.
 
-An approving review of a PR that isn't ready (a draft, failing checks or conflicts) isn't held: with Post automatic reviews on, its findings are posted as a comment, as any other automatic review's are. One with nothing to say isn't posted at all.
+An approving review of a PR that isn't ready (a draft, failing checks or conflicts) isn't held: with Post automatic reviews on, its findings are posted as a comment, as any other automatic review's are, and the comment ends with a line saying it isn't an approval: Claude would approve, and the approval is waiting for the reviewer. Claude is also told not to write that it approves in the summary. One with nothing to say isn't posted at all.
 
-Such PRs are first in the Inbox (Ready for your approval), at the top of Act now on the Dashboard, and arrive as a notification that counts on the Dock and in Waiting on You. Each row says how many findings the review holds (for example, Claude would approve · 2 findings); Post Review leaves out any the PR already has. Opening one shows the review, with its summary and comments, and starts Post Review on Approve, unless there are commits the review hasn't seen. In Post Review you can edit the body, leave out findings you've dismissed, or post it as a Comment instead. Until you post it, the review's log says it's waiting for you.
+Such PRs are first in the Inbox (Ready for your approval), at the top of Act now on the Dashboard, and arrive as a notification that counts on the Dock and in Waiting on You. The notification comes again every 24 hours, on each check of watched reviews (Settings › Sync), until you approve the PR or dismiss it. Dismiss Approval, in the row's context menu in the Inbox and on the Dashboard, puts it away: it leaves the Inbox, the Dashboard and the waiting count until Claude reviews the PR again. A PR that is merged or closed leaves them as well. Each row says how many findings the review holds (for example, Claude would approve · 2 findings); Post Review leaves out any the PR already has. Opening one shows the review, with its summary and comments, and starts Post Review on Approve, unless there are commits the review hasn't seen. In Post Review you can edit the body, leave out findings you've dismissed, or post it as a Comment instead. Until you post it, the review's log says it's waiting for you.
 
 ## While you were away
 
@@ -62,6 +62,6 @@ Review Config, in a repository's bar, sets how reviews go: a profile (Quiet, Chi
 
 ## Recording reviews
 
-With Record reviews in the harness (Settings › General › Agent, on by default) each review is committed to the harness as a file under `.gannin/reviews/`: who ran it, the verdict, what was posted, and what happened to each finding. [Metrics](/docs/agents/reviews/#metrics) reads them.
+With Record reviews in the harness (Settings › General › Agent, on by default) each review is committed to the harness as a file under `.gannin/reviews/`: who ran it, Claude's verdict, what was posted (`event`), and what happened to each finding. `verdict` is Claude's and `event` is what reached GitHub, so a verdict of approve with an event of `COMMENT` is not an approved PR. `approval_held` is true while the verdict is approve and no approval has been given, and it's left out once you approve or dismiss it. [Metrics](/docs/agents/reviews/#metrics) reads them.
 
 For a second agent reviewing a session's own work, see [Pair review](/docs/agents/pair-review/).

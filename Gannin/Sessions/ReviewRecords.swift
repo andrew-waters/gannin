@@ -110,6 +110,10 @@ struct ReviewRecord: Codable, Hashable, Identifiable {
     /// What was posted (`APPROVE`, `COMMENT`, `REQUEST_CHANGES`) and when.
     var event: String?
     var postedAt: Date?
+    /// True while the verdict is approve and no `APPROVE` has reached GitHub:
+    /// the approval is the reviewer's to give. Absent otherwise, and in
+    /// records written before it existed.
+    var approvalHeld: Bool?
     /// Posted by Gannin by itself (Post automatic reviews).
     var postedAutomatically: Bool?
     /// `OPEN`, `MERGED` or `CLOSED` when last looked at.
@@ -199,6 +203,7 @@ struct ReviewRecord: Codable, Hashable, Identifiable {
             record.event = draft.postedEvent
             if automatically { record.postedAutomatically = true }
         }
+        record.approvalHeld = record.verdict == "approve" && record.event != "APPROVE" && !draft.approvalDismissed ? true : nil
         if let outcome {
             record.title = outcome.title ?? record.title
             record.author = outcome.author ?? record.author

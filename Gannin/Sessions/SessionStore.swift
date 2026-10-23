@@ -493,6 +493,8 @@ final class SessionStore {
     /// When each automatic run was started, for counting it before its
     /// claude is running (`automaticReviewsRunning`).
     @ObservationIgnored var automaticStartedAt: [UUID: Date] = [:]
+    /// When each held approval's notification was last sent (`remindApprovals`).
+    @ObservationIgnored var approvalNoticedAt: [UUID: Date] = [:]
     /// What to tell claude once it has started (a review asked to look
     /// again while it wasn't running).
     @ObservationIgnored var pendingPrompts: [UUID: String] = [:]
@@ -1214,7 +1216,7 @@ final class SessionStore {
         return identifier
     }
 
-    private func unflag(_ id: UUID) {
+    func unflag(_ id: UUID) {
         guard attention[id] != nil else { return }
         attention[id] = nil
         updateBadge()

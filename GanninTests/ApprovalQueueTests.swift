@@ -37,6 +37,58 @@ struct ApprovalQueueTests {
         #expect(!SessionStore.holdsForApproval(review(nil, findings: findings), draft: ReviewDraft(), isReady: true))
     }
 
+    private func record(_ verdict: String?, draft: ReviewDraft = ReviewDraft(), posting: Bool = false) -> ReviewRecord? {
+        let pr = PullRequestReference(
+            org: "acme", id: "PR_1", number: 7, title: "Plan", repo: "acme/harness",
+            url: URL(string: "https://github.com/acme/harness/pull/7")!
+        )
+        var session = CodeSession(
+            id: UUID(), issue: IssueReference(org: "acme", id: "I_1", number: 7, title: "Plan", repo: "acme/harness", url: pr.url),
+            repo: "acme/harness", branch: "review", createdAt: .now
+        )
+        session.reviewOf = pr
+        return ReviewRecord.updated(nil, session: session, review: review(verdict), draft: draft, reviewer: "andrew", posting: posting, automatically: posting, outcome: nil)
+    }
+
+    @Test func recordMarksAnApprovalNotGivenAsHeld() {
+        #expect(record("approve")?.approvalHeld == true)
+        // Posted as a comment: the verdict is approve, but what reached GitHub isn't.
+        var commented = ReviewDraft()
+        commented.postedEvent = "COMMENT"
+        #expect(record("approve", draft: commented, posting: true)?.approvalHeld == true)
+        #expect(record("approve", draft: commented, posting: true)?.event == "COMMENT")
+    }
+
+    @Test func recordDoesNotHoldAnApprovalOnceGivenOrDismissed() {
+        var approved = ReviewDraft()
+        approved.postedEvent = "APPROVE"
+        #expect(record("approve", draft: approved, posting: true)?.approvalHeld == nil)
+        var dismissed = ReviewDraft()
+        dismissed.approvalDismissedAt = .now
+        #expect(record("approve", draft: dismissed)?.approvalHeld == nil)
+    }
+
+    @Test func recordHoldsNothingForOtherVerdicts() {
+        #expect(record("comment")?.approvalHeld == nil)
+        #expect(record("request_changes")?.approvalHeld == nil)
+    }
+
+    @Test func dismissalLapsesWithANewResult() {
+        var draft = ReviewDraft()
+        draft.resultAt = Date(timeIntervalSince1970: 100)
+        draft.approvalDismissedAt = Date(timeIntervalSince1970: 200)
+        #expect(draft.approvalDismissed)
+        draft.resultAt = Date(timeIntervalSince1970: 300)
+        #expect(!draft.approvalDismissed)
+    }
+
+    @Test func approvalHeldNoteIsAddedToTheBodyOnlyWhenHeld() {
+        #expect(!ReviewedPullRequest.body(summary: "Looks good.", general: []).contains(ReviewedPullRequest.approvalHeldNote))
+        let held = ReviewedPullRequest.body(summary: "Looks good.", general: [], approvalHeld: true)
+        #expect(held.hasPrefix("Looks good."))
+        #expect(held.contains(ReviewedPullRequest.approvalHeldNote))
+    }
+
     @Test func dismissedFindingsAreNotHeld() {
         var draft = ReviewDraft()
         #expect(SessionStore.heldFindings(review("approve", findings: findings), draft: draft) == 2)

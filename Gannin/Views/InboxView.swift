@@ -290,6 +290,10 @@ struct InboxView: View {
                     Divider()
                     Button("Finish Review…") { finishing = review }
                 }
+                if ids.count == 1, let review = row.dismissableApproval {
+                    Divider()
+                    Button("Dismiss Approval") { sessions.dismissApproval(review) }
+                }
             }
         } primaryAction: { ids in
             guard let row = sections.flatMap(\.rows).first(where: { ids.contains($0.id) }) else { return }
@@ -320,7 +324,7 @@ struct InboxView: View {
                     people: item.pr.author.map { [$0] } ?? [], checks: checks(item.pr),
                     state: sessions.approvalState(session), stateColor: ChartPalette.good,
                     tint: ChartPalette.good, since: item.askedAt, sinceLabel: "Asked", size: (item.pr.additions, item.pr.deletions),
-                    page: .pullRequest(item.pr.id), session: session.id
+                    page: .pullRequest(item.pr.id), session: session.id, dismissableApproval: session.id
                 )
             }))
         }
@@ -509,6 +513,8 @@ struct InboxRow: Identifiable {
     var reviewersOf: PullRequest? = nil
     /// The review to finish from the row's menu: set once its PR has merged.
     var finishableReview: UUID? = nil
+    /// The review to put away from the row's menu: set on a held approval.
+    var dismissableApproval: UUID? = nil
     var flags: [IssueSignals.Flag] = []
 
     /// The repo, from the reference: "api" from "api#3129", the
