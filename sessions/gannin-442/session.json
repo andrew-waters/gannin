@@ -1,0 +1,15 @@
+{
+  "box" : "Anius",
+  "branch" : "442-auto-review-a-held-approval-reads-as",
+  "issue" : "andrew-waters/gannin#442",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-23T15:26:29Z",
+  "startedBy" : "dwrss",
+  "title" : "Auto review: a held approval reads as approved in the record and the posted comment, and is easy to miss",
+  "url" : "https://github.com/andrew-waters/gannin/issues/442"
+}
