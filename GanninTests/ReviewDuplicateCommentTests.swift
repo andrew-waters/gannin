@@ -2,23 +2,28 @@ import Foundation
 import Testing
 @testable import Gannin
 
-/// Findings left out of a review because their line already has the same comment.
+/// Findings left out of a review because a comment near their line, or an
+/// earlier review, already says the same.
 struct ReviewDuplicateCommentTests {
-    private func pull(existing: [ReviewedPullRequest.ExistingComment]) -> ReviewedPullRequest {
+    private func pull(existing: [ReviewedPullRequest.ExistingComment] = [], reviews: [PostedReview] = []) -> ReviewedPullRequest {
         let lines = (1...20).map { DiffLine(id: $0, kind: .added, text: "x", newLine: $0) }
         return ReviewedPullRequest(
             title: "Fix it", body: "", author: "sam", headSHA: "abc", additions: 20, deletions: 0, state: "open",
             files: [.init(path: "A.swift", status: "modified", additions: 20, deletions: 0, lines: lines)],
-            existingComments: existing
+            existingComments: existing, earlierReviews: reviews, viewer: "me"
         )
     }
 
-    private func existing(line: Int, isOld: Bool = false, body: String) -> ReviewedPullRequest.ExistingComment {
-        .init(id: line, path: "A.swift", line: line, isOld: isOld, body: body, author: "alex", avatarURL: nil, createdAt: .now, url: nil)
+    private func existing(line: Int, isOld: Bool = false, body: String, author: String = "alex") -> ReviewedPullRequest.ExistingComment {
+        .init(id: line, path: "A.swift", line: line, isOld: isOld, body: body, author: author, avatarURL: nil, createdAt: .now, url: nil)
     }
 
-    private func review(line: Int, comment: String, suggestion: String? = nil) -> SessionTranscript.ReviewResult {
-        .init(summary: "s", verdict: "comment", findings: [.init(path: "A.swift", line: line, comment: comment, suggestion: suggestion)])
+    private func review(line: Int?, comment: String, suggestion: String? = nil, path: String = "A.swift") -> SessionTranscript.ReviewResult {
+        .init(summary: "s", verdict: "comment", findings: [.init(path: path, line: line, comment: comment, suggestion: suggestion)])
+    }
+
+    private func earlier(_ body: String, author: String = "me") -> PostedReview {
+        PostedReview(event: "COMMENT", body: body, commit: "old", url: nil, submittedAt: .now, author: author)
     }
 
     @Test func sameCommentOnTheSameLineIsLeftOut() {
@@ -27,7 +32,7 @@ struct ReviewDuplicateCommentTests {
         #expect(inline.isEmpty)
         #expect(general.isEmpty)
         #expect(omitted.count == 1)
-        #expect(omitted.first?.existing.author == "alex")
+        #expect(omitted.first?.author == "alex")
     }
 
     @Test func rewordedCommentOnTheSameLineIsLeftOut() {
@@ -52,11 +57,18 @@ struct ReviewDuplicateCommentTests {
         #expect(omitted.isEmpty)
     }
 
-    @Test func sameCommentOnAnotherLineIsKept() {
+    @Test func sameCommentOnALineFarAwayIsKept() {
         let text = "This force unwrap crashes when the token is missing."
-        let (inline, _, omitted) = pull(existing: [existing(line: 6, body: text)]).comments(for: review(line: 5, comment: text), draft: ReviewDraft())
+        let (inline, _, omitted) = pull(existing: [existing(line: 15, body: text)]).comments(for: review(line: 5, comment: text), draft: ReviewDraft())
         #expect(inline.count == 1)
         #expect(omitted.isEmpty)
+    }
+
+    @Test func sameCommentAFewLinesAwayIsLeftOut() {
+        let text = "This force unwrap crashes when the token is missing."
+        let (inline, _, omitted) = pull(existing: [existing(line: 7, body: text)]).comments(for: review(line: 5, comment: text), draft: ReviewDraft())
+        #expect(inline.isEmpty)
+        #expect(omitted.first?.line == 5)
     }
 
     @Test func sameCommentOnTheRemovedSideIsKept() {
@@ -99,7 +111,7 @@ struct ReviewDuplicateCommentTests {
         #expect(!ReviewedPullRequest.isSameComment(existing: "this force unwrapped crashes now", finding: "this force unwrap crashes"))
     }
 
-    @Test func anOutdatedCommentDoesNotCount() {
+    @Test func someoneElsesOutdatedCommentDoesNotCount() {
         let text = "This force unwrap crashes when the token is missing."
         var old = existing(line: 5, body: text)
         old.isOutdated = true
@@ -112,5 +124,108 @@ struct ReviewDuplicateCommentTests {
         let text = "This force unwrap crashes when the token is missing."
         let (_, _, omitted) = pull(existing: [existing(line: 5, body: text)]).comments(for: review(line: 5, comment: text), draft: ReviewDraft())
         #expect(omitted.first?.comment == text)
+    }
+
+    @Test func yourOwnOutdatedCommentCountsWhereverItWas() {
+        let text = "This force unwrap crashes when the token is missing."
+        var old = existing(line: 18, body: text, author: "me")
+        old.isOutdated = true
+        let (inline, _, omitted) = pull(existing: [old]).comments(for: review(line: 5, comment: text), draft: ReviewDraft())
+        #expect(inline.isEmpty)
+        #expect(omitted.first?.author == "me")
+    }
+
+    @Test func aBodyFindingInAnEarlierReviewIsLeftOut() {
+        let text = "The retry here never stops when the server keeps failing."
+        let body = "Looks good apart from one thing.\n\n- `B.swift:40`: \(text)"
+        let (_, general, omitted) = pull(reviews: [earlier(body)]).comments(for: review(line: 40, comment: text, path: "B.swift"), draft: ReviewDraft())
+        #expect(general.isEmpty)
+        #expect(omitted.first?.path == "B.swift")
+        #expect(omitted.first?.said.contains("retry") == true)
+    }
+
+    @Test func aBodyFindingWithNoLineInAnEarlierReviewIsLeftOut() {
+        let text = "Nothing tests the new parser yet; add a test for an empty file."
+        let body = "Summary.\n\n- `C.swift`: nothing tests the new parser yet. Add a test for an empty file!"
+        let (_, general, omitted) = pull(reviews: [earlier(body, author: "alex")]).comments(for: review(line: nil, comment: text, path: "C.swift"), draft: ReviewDraft())
+        #expect(general.isEmpty)
+        #expect(omitted.first?.line == nil)
+        #expect(omitted.first?.author == "alex")
+    }
+
+    @Test func aNewBodyFindingIsPosted() {
+        let body = "Summary.\n\n- `B.swift:40`: The retry here never stops when the server keeps failing."
+        let (_, general, omitted) = pull(reviews: [earlier(body)])
+            .comments(for: review(line: 40, comment: "This log line prints the user's token in full.", path: "B.swift"), draft: ReviewDraft())
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
+    }
+
+    @Test func theSamePointAboutAnotherFileIsPosted() {
+        let text = "The retry here never stops when the server keeps failing."
+        let body = "Summary.\n\n- `B.swift:40`: \(text)"
+        let (_, general, omitted) = pull(reviews: [earlier(body)]).comments(for: review(line: 40, comment: text, path: "D.swift"), draft: ReviewDraft())
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
+    }
+
+    @Test func anInlineFindingAnEarlierReviewPutInItsBodyIsLeftOut() {
+        let text = "This force unwrap crashes when the token is missing."
+        let (inline, _, omitted) = pull(reviews: [earlier("Summary.\n\n- `A.swift:90`: \(text)")]).comments(for: review(line: 5, comment: text), draft: ReviewDraft())
+        #expect(inline.isEmpty)
+        #expect(omitted.count == 1)
+    }
+
+    @Test func aBodyFindingAlreadyCommentedInlineIsLeftOut() {
+        let text = "This force unwrap crashes when the token is missing."
+        let (_, general, omitted) = pull(existing: [existing(line: 12, body: text)]).comments(for: review(line: nil, comment: text), draft: ReviewDraft())
+        #expect(general.isEmpty)
+        #expect(omitted.count == 1)
+    }
+
+    @Test func aNewInlineFindingIsPostedAlongsideLeftOutOnes() {
+        let text = "This force unwrap crashes when the token is missing."
+        let result = SessionTranscript.ReviewResult(summary: "s", verdict: "comment", findings: [
+            .init(path: "A.swift", line: 5, comment: text, suggestion: nil),
+            .init(path: "A.swift", line: 6, comment: "Rename this to match the other handlers.", suggestion: nil),
+        ])
+        let (inline, _, omitted) = pull(existing: [existing(line: 5, body: text)]).comments(for: result, draft: ReviewDraft())
+        #expect(inline.count == 1)
+        #expect(omitted.count == 1)
+    }
+
+    @Test func theSameReviewAlreadyPostedIsNotAnEarlierOne() {
+        let text = "The retry here never stops when the server keeps failing."
+        let finding = SessionTranscript.Finding(path: "B.swift", line: 40, comment: text)
+        let result = SessionTranscript.ReviewResult(summary: "Looks good apart from one thing.", verdict: "comment", findings: [finding])
+        let posted = ReviewedPullRequest.body(summary: result.summary, general: [finding])
+        let (_, general, omitted) = pull(reviews: [earlier(posted)]).comments(for: result, draft: ReviewDraft())
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
+        let body = ReviewedPullRequest.body(summary: result.summary, general: general)
+        #expect(PostedReview.repeated(in: [earlier(posted)], event: "COMMENT", commit: "old", body: body) != nil)
+    }
+
+    @Test func aBodyFindingAboutAPathEndingTheSameIsPosted() {
+        let text = "The retry here never stops when the server keeps failing."
+        let reviews = [earlier("Summary.\n\n- `Sub/B.swift:40`: \(text)\n- `LB.swift:40`: \(text)")]
+        let (_, general, omitted) = pull(reviews: reviews).comments(for: review(line: 40, comment: text, path: "B.swift"), draft: ReviewDraft())
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
+    }
+
+    @Test func aBodyFindingOverSeveralLinesIsLeftOut() {
+        let text = "The retry here never stops when the server keeps failing.\nCap it at three attempts and back off between them."
+        let reviews = [earlier("Summary.\n\n- `B.swift:40`: \(text)\n- `C.swift`: Something else entirely about the parser.")]
+        let (_, general, omitted) = pull(reviews: reviews).comments(for: review(line: 40, comment: text, path: "B.swift"), draft: ReviewDraft())
+        #expect(general.isEmpty)
+        #expect(omitted.count == 1)
+    }
+
+    @Test func anOffDiffFindingFarFromTheCommentIsPosted() {
+        let text = "This force unwrap crashes when the token is missing."
+        let (_, general, omitted) = pull(existing: [existing(line: 12, body: text)]).comments(for: review(line: 300, comment: text), draft: ReviewDraft())
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
     }
 }
