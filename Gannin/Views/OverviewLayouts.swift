@@ -95,6 +95,8 @@ struct AttentionOverview: View {
         /// Sorts within a severity: bigger first.
         let weight: Double
         let open: () -> Void
+        /// Set on an item that can be put away from its menu.
+        var dismiss: (() -> Void)? = nil
     }
 
     var body: some View {
@@ -149,6 +151,9 @@ struct AttentionOverview: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let dismiss = item.dismiss { Button("Dismiss Approval", action: dismiss) }
+        }
     }
 
     private func items(now: Date = .now) -> [Item] {
@@ -199,7 +204,8 @@ struct AttentionOverview: View {
                     detail: "\(sessions.approvalState(session)): yours to look over, asked \(age(asked, now: now)) ago · \(shortRepo(pr.repo))#\(pr.number)",
                     // Above everything else that's urgent.
                     weight: .greatestFiniteMagnitude / 2 + now.timeIntervalSince(asked),
-                    open: { sessions.show(session.id, with: openWindow) }
+                    open: { sessions.show(session.id, with: openWindow) },
+                    dismiss: { sessions.dismissApproval(session.id) }
                 ))
             }
         }
