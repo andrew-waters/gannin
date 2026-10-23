@@ -21,8 +21,9 @@ off-diff findings again (the duplicate check covers inline comments only).
 ## Decisions
 
 - Keep the name Ready for your approval: the Inbox, notifications and docs already use it.
-- Every approve verdict is held, whatever its findings. Comment and request changes reviews keep posting
-  as they do.
+- An approve verdict is held, whatever its findings, while the PR is `readyForApproval`. One that isn't
+  ready (failing checks, conflicts) is held only with nothing to say, else its findings are posted as a
+  comment, since it never reaches the queue. Comment and request changes reviews keep posting as they do.
 - Signing off stays Post Review: the body can be edited, findings dismissed, or the kind changed to
   Comment. No new GitHub write.
 - Answered by what's there: new commits take the PR out of the queue until it's reviewed again; merged,
@@ -30,8 +31,8 @@ off-diff findings again (the duplicate check covers inline comments only).
 
 ## Tasks
 
-- [x] Hold every approve verdict in `postAutomatically`, noting how many comments are held
-- [x] Show the held comment count in the Inbox row and the Dashboard's Act now
+- [x] Hold every approve verdict in `postAutomatically`, noting how many findings are held
+- [x] Show the held finding count in the Inbox row and the Dashboard's Act now
 - [x] Tests for `holdsForApproval` and `heldFindings`
 - [x] Docs (Auto review, Settings › General), rule, CHANGELOG
 - [ ] Try it in the app: an automatic review that would approve with comments, then approve it

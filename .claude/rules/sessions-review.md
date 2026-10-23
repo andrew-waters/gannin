@@ -13,7 +13,7 @@ paths:
 
 ## Safety
 - Never let an automatic review approve or request changes. Automatic runs (`automaticRuns`) post only as a COMMENT review, and only when post-automatic is on (`AutoReview.shouldPost`; project override beats the app setting).
-- Never post an automatic review that would approve, whatever its findings (`holdsForApproval`): its comments go up once, in the user's approval from Post Review. Posting them as a comment first repeats the body and off-diff findings, which the duplicate check doesn't cover.
+- Never post an automatic review that would approve while it's `readyForApproval` (`holdsForApproval`): its findings go up once, in the user's approval from Post Review. Posting them as a comment first repeats the body and off-diff findings, which the duplicate check doesn't cover. Hold one that isn't ready only when it has nothing to say: it never reaches the queue, so its findings would go nowhere.
 - Post Review: send only Comment on the user's own PR (GitHub rejects the rest). Put inline comments only on lines the diff shows; everything else goes in the body.
 - Never post findings without comparing them to the PR's current review comments (`ReviewedPullRequest.comments(for:draft:)` leaves out a duplicate): the sheet's copy of the PR dates from when it opened, so `PostReviewSheet.post()` re-fetches comments first, and `postAutomatically` uses a fresh `reviewedPullRequest`. A failed check must not block posting; show it. Only inline findings are checked: those that go in the body (no line, or off the diff) are posted regardless. Outdated comments (`ExistingComment.isOutdated`) never count, since GitHub hides them; comments in resolved threads do, as the REST comments don't say which threads are resolved.
 - Never post a review the viewer already has on GitHub (`PostedReview.repeated`: same kind, commit and body). `PostReviewSheet.post()` and `postAutomatically` check it just before posting, and a failed lookup must not block posting. `syncPostedReview` (Check for Changes) matches by the summary at the start of the body, since the body may have been edited.
@@ -43,4 +43,4 @@ paths:
 - A review snapshots its config in `CodeSession.reviewConfig`; don't re-read it mid-review.
 
 ## Testing
-- Only `PairReviewTests.swift` (the pair loop), `DiffQuestionTests.swift` (the question Ask Claude sends from a diff line) and `ReviewGateTests.swift` (review windows) and `ApprovalQueueTests.swift` (which automatic reviews are held) touch review code. Nothing covers records, config layering, the rest of auto review or `readyForApproval`; add tests beside them.
+- Only `PairReviewTests.swift` (the pair loop), `DiffQuestionTests.swift` (the question Ask Claude sends from a diff line), `ReviewGateTests.swift` (review windows) and `ApprovalQueueTests.swift` (which automatic reviews are held) touch review code. Nothing covers records, config layering, the rest of auto review or `readyForApproval`; add tests beside them.

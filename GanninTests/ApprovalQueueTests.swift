@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Gannin
 
-/// Automatic reviews Claude would approve are held for the user, comments and all.
+/// Automatic reviews Claude would approve are held for the user, findings and all, while they're ready.
 struct ApprovalQueueTests {
     private let findings: [SessionTranscript.Finding] = [
         .init(path: "A.swift", line: 3, comment: "Off by one"),
@@ -13,18 +13,28 @@ struct ApprovalQueueTests {
         .init(summary: "s", verdict: verdict, findings: findings)
     }
 
-    @Test func approvalWithNothingToSayIsHeld() {
-        #expect(SessionStore.holdsForApproval(review("approve")))
+    @Test func approvalWithNothingToSayIsHeldReadyOrNot() {
+        #expect(SessionStore.holdsForApproval(review("approve"), draft: ReviewDraft(), isReady: true))
+        #expect(SessionStore.holdsForApproval(review("approve"), draft: ReviewDraft(), isReady: false))
     }
 
-    @Test func approvalWithCommentsIsHeld() {
-        #expect(SessionStore.holdsForApproval(review("approve", findings: findings)))
+    @Test func approvalWithFindingsIsHeldWhenReady() {
+        #expect(SessionStore.holdsForApproval(review("approve", findings: findings), draft: ReviewDraft(), isReady: true))
+    }
+
+    /// Failing checks or conflicts keep it out of the queue, so its findings
+    /// are posted rather than held where nobody sees them.
+    @Test func approvalWithFindingsIsPostedWhenNotReady() {
+        #expect(!SessionStore.holdsForApproval(review("approve", findings: findings), draft: ReviewDraft(), isReady: false))
+        var draft = ReviewDraft()
+        for finding in findings { draft.decisions[finding.key] = .dismissed }
+        #expect(SessionStore.holdsForApproval(review("approve", findings: findings), draft: draft, isReady: false))
     }
 
     @Test func commentsAndChangeRequestsAreNotHeld() {
-        #expect(!SessionStore.holdsForApproval(review("comment", findings: findings)))
-        #expect(!SessionStore.holdsForApproval(review("request_changes", findings: findings)))
-        #expect(!SessionStore.holdsForApproval(review(nil, findings: findings)))
+        #expect(!SessionStore.holdsForApproval(review("comment", findings: findings), draft: ReviewDraft(), isReady: true))
+        #expect(!SessionStore.holdsForApproval(review("request_changes", findings: findings), draft: ReviewDraft(), isReady: true))
+        #expect(!SessionStore.holdsForApproval(review(nil, findings: findings), draft: ReviewDraft(), isReady: true))
     }
 
     @Test func dismissedFindingsAreNotHeld() {

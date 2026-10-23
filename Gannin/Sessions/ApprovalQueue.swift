@@ -44,11 +44,13 @@ extension SessionStore {
     }
 
     /// Whether automatic posting should hold the review for you: Claude
-    /// would approve, so it waits, comments and all, for your approval to
-    /// go up as the one review. Posting its comments now would read as an
-    /// approval and post them again beside yours.
-    static func holdsForApproval(_ review: SessionTranscript.ReviewResult) -> Bool {
-        review.verdict == "approve"
+    /// would approve and the PR is `isReady` for you, so it waits, findings
+    /// and all, for your approval to go up as the one review (posting them
+    /// now would post them again beside yours). One with nothing to say is
+    /// held either way, as a comment would only be noise. One that isn't
+    /// ready but has findings is posted, or they'd go nowhere.
+    static func holdsForApproval(_ review: SessionTranscript.ReviewResult, draft: ReviewDraft, isReady: Bool) -> Bool {
+        review.verdict == "approve" && (isReady || heldFindings(review, draft: draft) == 0)
     }
 
     /// The findings a held approval carries (those not dismissed), which go
@@ -57,10 +59,11 @@ extension SessionStore {
         review.findings.count { draft.decisions[$0.key] != .dismissed }
     }
 
-    /// "Claude would approve", with how many comments it's holding for you.
+    /// "Claude would approve", with how many findings it's holding for you.
+    /// Findings: Post Review may leave out some already on the PR.
     func approvalState(_ session: CodeSession) -> String {
         guard let result = transcripts[session.id]?.review ?? session.reviewResult else { return "Claude would approve" }
         let held = Self.heldFindings(result, draft: reviewDrafts[session.id] ?? session.reviewDraft ?? ReviewDraft())
-        return held == 0 ? "Claude would approve" : "Claude would approve · \(held) comment\(held == 1 ? "" : "s")"
+        return held == 0 ? "Claude would approve" : "Claude would approve · \(held) finding\(held == 1 ? "" : "s")"
     }
 }
