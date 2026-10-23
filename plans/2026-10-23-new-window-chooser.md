@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: File › New Window and New Tab ask which org and project the window opens on, starting on the window they were opened from, with a setting in Settings › General to copy that window instead.
 issues: [andrew-waters/gannin#464]
 domains: [app-shell]
