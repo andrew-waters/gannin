@@ -55,9 +55,10 @@ struct PullRequestFilters {
         }
     }
 
-    /// Everyone asked to review it or who has.
+    /// Everyone asked to review it or who has, and teams asked (so a PR
+    /// only a team is asked on isn't No Reviewer).
     static func reviewers(_ pr: PullRequest) -> Set<String> {
-        Set(pr.requestedReviewers.map(\.login) + pr.reviewers.map(\.login))
+        Set(pr.requestedReviewers.map(\.login) + pr.reviewers.map(\.login) + (pr.requestedTeams ?? []))
     }
 
     /// Everything but the state, less `key` (so a menu counts what picking
@@ -198,8 +199,7 @@ struct PullRequestsView: View {
             .width(min: 80, ideal: 140)
             .customizationID("author")
             TableColumn("Reviewers", value: \.reviewerSort) { row in
-                AvatarStack(people: row.reviewers)
-                    .help(row.reviewers.map(\.displayName).joined(separator: ", "))
+                ReviewerStack(pr: row.pr)
             }
             .width(min: 60, ideal: 90)
             .customizationID("reviewers")
@@ -306,7 +306,7 @@ struct PullRequestsView: View {
                 }
             case .reviewer:
                 let reviewers = pr.requestedReviewers + pr.reviewers
-                if reviewers.isEmpty { counts[PullRequestFilters.noReviewer, default: 0] += 1 }
+                if reviewers.isEmpty, pr.requestedTeams?.isEmpty ?? true { counts[PullRequestFilters.noReviewer, default: 0] += 1 }
                 for person in Dictionary(reviewers.map { ($0.login, $0) }, uniquingKeysWith: { first, _ in first }).values {
                     counts[person.login, default: 0] += 1
                     names[person.login] = person.displayName
@@ -353,12 +353,12 @@ struct PullRequestTableRow: Identifiable {
     var repoName: String { pr.repo.split(separator: "/").last.map(String.init) ?? pr.repo }
     var number: Int { pr.number }
     var authorSort: String { pr.author?.displayName.lowercased() ?? "" }
-    /// Asked for a review, then those who've given one.
-    var reviewers: [Person] {
-        var seen: Set<String> = []
-        return (pr.requestedReviewers + pr.reviewers).filter { seen.insert($0.login).inserted }
+    /// Most still waiting on (people and teams asked) first, then most reviewers.
+    var reviewerSort: Int {
+        let entries = pr.reviewerEntries
+        let waiting = entries.filter { $0.standing == .waiting }.count + (pr.requestedTeams?.count ?? 0)
+        return waiting * 100 + entries.count
     }
-    var reviewerSort: Int { reviewers.count }
     var status: String { pr.statusText }
     var linkedCount: Int { pr.linkedIssues.count }
     var when: Date { pr.mergedAt ?? pr.updatedAt }

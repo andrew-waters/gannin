@@ -33,6 +33,16 @@ Pull Requests has its own bar: search, **Author**, **Reviewer** (Me first, then 
 
 Filters are kept per window, so two tabs can look at different slices.
 
+### Reviewers
+
+The Reviewers column on Pull Requests shows who has been asked to review and who already has. Each face has a badge:
+
+- A clock: asked and hasn't reviewed yet, or asked again after reviewing. These come first, so it's easy to see who a PR is waiting on.
+- A team icon with a clock: a team asked to review.
+- A green tick: approved. An orange mark: changes requested. A speech bubble: commented.
+
+Hover for each name and where their review stands. A PR nobody has been asked to review and nobody has reviewed shows None. Sorting by the column puts PRs waiting on the most reviewers first. A PR only a team has been asked on isn't No Reviewer in the Reviewer filter. The PR's drawer marks its reviewers the same way and lists any teams asked.
+
 ## Add issues to a board
 
 On Not on a board, select issues and choose Add to Board, then pick the board. This writes to GitHub: Gannin lists what will be added and asks you to confirm. It then adds each one and ticks it off, and stays open until you press Done. Reading boards needs the `project` permission on your GitHub sign-in.

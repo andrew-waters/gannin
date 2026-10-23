@@ -62,7 +62,7 @@ The Inbox is your share of the workload, in sections:
 - **While you were away**: what happened on PRs Claude reviewed while you weren't looking.
 - **Needs your review**: reviews requested of you, longest waiting first. A PR a teammate has already reviewed says so in its State, such as "Review requested, approved by Sam".
 - **Changed since your review**: PRs you asked changes of that have new commits or a reply.
-- **Your pull requests** and where each stands.
+- **Your pull requests** and where each stands. Who shows its reviewers, marked the same way as the Reviewers column on Pull Requests ([Issues and Pull Requests](/docs/guides/issues-and-pull-requests/#reviewers)).
 - **Your issues**: those assigned to you, in progress first.
 
 Three more are off until you want them: **Issues you opened**, **Your harness plans** and **Uncategorised investments**.

@@ -85,6 +85,7 @@ struct WorkloadExtras: Codable, Hashable {
     var reviewedAt: [String: Date]?
     var lastCommitAt: Date?
     var authorRepliedAt: Date?
+    var requestedTeams: [String]?
 }
 
 struct StoredPullRequest: Codable, Hashable, Identifiable {
@@ -314,7 +315,8 @@ extension StoredPullRequest {
             updatedAt: pr.updatedAt, state: pr.state, isDraft: pr.isDraft, reviewDecision: pr.reviewDecision,
             assignees: pr.assignees, requestedReviewers: pr.requestedReviewers, reviewRequestedAt: pr.reviewRequestedAt,
             reviewers: pr.reviewers, linkedIssues: pr.linkedIssues, checks: pr.checks, reviewStates: pr.reviewStates,
-            reviewedAt: pr.reviewedAt, lastCommitAt: pr.lastCommitAt, authorRepliedAt: pr.authorRepliedAt
+            reviewedAt: pr.reviewedAt, lastCommitAt: pr.lastCommitAt, authorRepliedAt: pr.authorRepliedAt,
+            requestedTeams: pr.requestedTeams
         )
     }
 
@@ -329,7 +331,8 @@ extension StoredPullRequest {
             changedFiles: core.changedFiles, assignees: workload.assignees, requestedReviewers: workload.requestedReviewers,
             reviewRequestedAt: workload.reviewRequestedAt, reviewers: workload.reviewers, linkedIssues: workload.linkedIssues,
             checks: workload.checks, reviewStates: workload.reviewStates, reviewedAt: workload.reviewedAt,
-            lastCommitAt: workload.lastCommitAt, authorRepliedAt: workload.authorRepliedAt
+            lastCommitAt: workload.lastCommitAt, authorRepliedAt: workload.authorRepliedAt,
+            requestedTeams: workload.requestedTeams
         )
     }
 }
