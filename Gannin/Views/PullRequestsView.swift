@@ -283,7 +283,8 @@ struct PullRequestsView: View {
                 .disabled(excludeDrafts)
                 .help(excludeDrafts ? "Drafts are left out everywhere by Settings › General › Exclude draft PRs" : "")
             Spacer(minLength: 0)
-            if filters.isNarrowed {
+            // A ticked Hide drafts the setting has taken over isn't something to clear.
+            if (excludeDrafts ? PullRequestFilters(state: filters.state, search: filters.search, values: filters.values, hideMine: filters.hideMine) : filters).isNarrowed {
                 Button("Clear All") {
                     let state = filters.state
                     stored.wrappedValue = PullRequestFilters(state: state)
