@@ -25,7 +25,8 @@ weren't fetched: `reviewRequests` read `... on User` only.
   waiting, not reviewed.
 - Teams are fetched as `combinedSlug` into an optional `requestedTeams`, so caches written before it still
   decode, and count as a reviewer for the No Reviewer filter.
-- Sorting the column puts PRs waiting on the most reviewers first.
+- Sorting the column orders PRs by how many reviewers they're waiting on, then how many they have.
+- A team asked counts as someone the Inbox's State is waiting on, so it doesn't read No reviewer.
 
 ## Tasks
 

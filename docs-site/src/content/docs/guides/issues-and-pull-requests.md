@@ -41,7 +41,7 @@ The Reviewers column on Pull Requests shows who has been asked to review and who
 - A team icon with a clock: a team asked to review.
 - A green tick: approved. An orange mark: changes requested. A speech bubble: commented.
 
-Hover for each name and where their review stands. A PR nobody has been asked to review and nobody has reviewed shows None. Sorting by the column puts PRs waiting on the most reviewers first. A PR only a team has been asked on isn't No Reviewer in the Reviewer filter. The PR's drawer marks its reviewers the same way and lists any teams asked.
+Hover for each name and where their review stands. A PR nobody has been asked to review and nobody has reviewed shows None. Sorting by the column orders PRs by how many reviewers they're waiting on, then by how many reviewers they have. A PR only a team has been asked on isn't No Reviewer in the Reviewer filter, and in the Inbox its State reads Waiting on the team. The PR's drawer marks its reviewers the same way and lists any teams asked.
 
 ## Add issues to a board
 

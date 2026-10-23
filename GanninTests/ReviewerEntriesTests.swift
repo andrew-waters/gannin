@@ -36,4 +36,10 @@ struct ReviewerEntriesTests {
         #expect(PullRequestFilters.reviewers(pr(teams: ["acme/backend"])) == ["acme/backend"])
         #expect(PullRequestFilters.reviewers(pr(teams: nil)).isEmpty)
     }
+
+    @Test func aPullRequestOnlyATeamIsAskedOnIsWaitingOnTheTeam() {
+        #expect(Inbox.standing(pr(teams: ["acme/backend"])).text == "Waiting on @acme/backend")
+        #expect(Inbox.standing(pr(requested: ["ann"], teams: ["acme/backend"])).text == "Waiting on ann, @acme/backend")
+        #expect(Inbox.standing(pr()).text == "No reviewer")
+    }
 }

@@ -662,7 +662,7 @@ struct Inbox {
         default:
             if Workload.isStale(pr) { return ("Stale", .orange) }
             if pr.hasBeenReviewed { return ("Commented", ChartPalette.blue) }
-            let waiting = pr.requestedReviewers.map(\.displayName)
+            let waiting = pr.requestedReviewers.map(\.displayName) + (pr.requestedTeams ?? []).map { "@\($0)" }
             if waiting.isEmpty, !needsReview { return ("No review needed", .secondary) }
             return (waiting.isEmpty ? "No reviewer" : "Waiting on \(waiting.joined(separator: ", "))", waiting.isEmpty ? .orange : ChartPalette.blue)
         }
