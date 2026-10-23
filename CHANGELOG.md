@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Changed
+- Work on This tells Claude to ask its questions with the AskUserQuestion tool, so they appear as a question card instead of plain text in the terminal
+
 ### Added
 - Hide drafts on the Pull Requests page's bar leaves draft pull requests out of that window's list, without changing counts elsewhere
 - CI time per pull request on Delivery › CI: the median and p75 per PR against the period before, how much went on replaced commits and failures, the wait on a PR's final CI, small PRs that run the full suite, and bots' share

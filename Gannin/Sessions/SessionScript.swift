@@ -44,12 +44,16 @@ enum SessionScript {
     static func openingPrompt(_ session: CodeSession) -> String {
         let folder = ".worktrees/\(session.branch)"
         let issue = session.issue
+        // A scheduled run has nobody to answer.
+        let asking = session.routineRun == nil
+            ? " If you have questions for me, ask them with the AskUserQuestion tool rather than as plain text."
+            : ""
         return firstPrompt(session, otherwise: """
             You're picking up \(issue.reference), "\(issue.title)", in the team's harness. Read \(folder)/.gannin/brief.md first: \
             it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches \
             (those under projects/, or the harness itself when it's the code repo and has no projects/) and look through their \
             code, then propose a plan before changing anything. Make the changes in a worktree per repo under \(folder)/, as \
-            the brief says, never in projects/ or the harness checkout itself.
+            the brief says, never in projects/ or the harness checkout itself.\(asking)
             """)
     }
 
