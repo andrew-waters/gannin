@@ -20,7 +20,7 @@ paths:
 - Resolve only unresolved threads on that PR that the viewer started (`GitHubAPI.resolvableThreads`), whatever IDs claude returns, and only after the review is posted.
 - A PR is `readyForApproval` only if its review says approve, covers the latest commits, has no draft, failing checks or conflicts, and the reviewer hasn't dismissed it (`ReviewDraft.approvalDismissed`). Keep that in step with `ApprovalQueue.swift`.
 - Never write `ReviewRecord.approvalHeld` from one place only: it is derived in `ReviewRecord.updated` from verdict, event and dismissal, so that every writer of the record agrees.
-- A comment posted for an approve verdict carries `ReviewedPullRequest.approvalHeldNote`: the summary is written for an approval and, alone, reads as one on GitHub.
+- An automatic comment posted for an approve verdict carries `ReviewedPullRequest.approvalHeldNote` (`postAutomatically` passes `approvalHeld`): the summary is written for an approval and, alone, reads as one on GitHub. A Comment posted by hand from Post Review doesn't, as the reviewer chose it.
 
 ## Reading claude's output
 - Read the review JSON leniently (`SessionTranscript.review`, and `applied`, `learnings`, `checks`, `resolved`); a malformed entry must never lose the review. Add new fields the same way.
