@@ -97,11 +97,13 @@ struct HarnessView: View {
             if let setup {
                 content(setup, harnesses: harnesses)
             } else {
-                ContentUnavailableView(
-                    "No harness",
-                    systemImage: "text.book.closed",
-                    description: Text("Pick the repo the org keeps its plans and requirements in, or create one, in Settings.")
-                )
+                ContentUnavailableView {
+                    Label("No harness", systemImage: "text.book.closed")
+                } description: {
+                    Text("Create a repo for the org's plans and requirements, or link one it has.")
+                } actions: {
+                    SetUpHarnessButton()
+                }
             }
         }
         .loadsHarness(org: org)
@@ -1295,12 +1297,11 @@ struct HarnessIssueSection: View {
 
 // MARK: - Settings
 
-/// Settings › Harness: with no harness, adding or creating the first
-/// project's; then where the team's data is kept, the window's project's
-/// prompts, drafting, and where every project's harness is checked out on
-/// this Mac. Projects themselves are under Projects.
+/// Settings › Harness: with no harness, setting up the first project's;
+/// then where the team's data is kept, the window's project's prompts,
+/// drafting, and where every project's harness is checked out on this Mac.
+/// Projects themselves are under Projects.
 struct HarnessSettingsSection: View {
-    @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     let org: String
 
@@ -1321,41 +1322,25 @@ struct HarnessSettingsSection: View {
             .loadsHarness(org: org)
             SandboxGitHubTokenSection(org: org)
         } else {
-            let repos = (harness.repositories[org] ?? [])
-                .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
-            FirstHarnessSection(org: org, repos: repos)
-                .task { await harness.loadRepositories(org: org) }
+            FirstHarnessSection(org: org)
         }
     }
 }
 
-/// With no harness yet: Add one the org has, or Create one, as its first
-/// project, home.
+/// With no harness yet: Set Up Harness, to create one or link one the org
+/// has, as its first project, home.
 struct FirstHarnessSection: View {
-    @Environment(OrgConfigStore.self) private var configs
     let org: String
-    /// Every repo in the org, for picking from.
-    let repos: [String]
-    @State private var isCreating = false
+    @State private var isSettingUp = false
 
     var body: some View {
         Section {
-            Text("A harness is a repo of plans, requirements, findings, skills and prompts beside the code, where Claude Code sessions run and the team's settings are kept. Each is a project; add one \(org) has, or create one.")
+            Text("A harness is a repo of plans, requirements, findings, skills and prompts beside the code, where Claude Code sessions run and the team's settings are kept. Each is a project; create one, or link one \(org) has.")
                 .foregroundStyle(.secondary)
-            HStack {
-                Menu("Add Harness") {
-                    ForEach(repos, id: \.self) { repo in
-                        Button(repo) {
-                            configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: repo)) }
-                        }
-                    }
-                }
-                .fixedSize()
-                Button("Create Harness") { isCreating = true }
-            }
+            Button("Set Up Harness") { isSettingUp = true }
         } header: {
             Text("Harness")
         }
-        .sheet(isPresented: $isCreating) { CreateHarnessSheet(org: org) }
+        .sheet(isPresented: $isSettingUp) { SetUpHarnessSheet(org: org) }
     }
 }

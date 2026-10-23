@@ -14,7 +14,7 @@ Pick a project in the list to edit it in the sections below. The first project i
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | Add Project | No projects | Opens a searchable list of the org's repos. Picking one makes that repo a project's harness. | This Mac |
-| Create Harness | Not applied | Opens the Create Harness sheet to make a new repo for a project's harness, with its starter files, and make it a project. | This Mac (the new repo is on GitHub) |
+| Create Harness | Not applied | Opens [Set Up Harness](/docs/get-started/create-a-harness/) to make a new repo for a project's harness, with its starter files, or link one you have, and make it a project. | This Mac (a new repo is on GitHub) |
 | Remove Project | Not applied | The minus button on a row, then Remove Project in the confirmation. Gannin stops reading that harness, but the repo and everything in it are untouched. If it was Home, the next project becomes Home. | This Mac |
 
 Which harnesses are your projects is your own choice, so it stays on this Mac. Everything inside a project is kept in its harness.
@@ -25,7 +25,7 @@ The header is the project's name. The footer says where it is saved: `.gannin/pr
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Name | The name given in Create Harness, else the harness repo's name | Renames the project. | Harness (`.gannin/project.json`) |
+| Name | The name given in Set Up Harness, else the harness repo's name | Renames the project. | Harness (`.gannin/project.json`) |
 | Repositories | None yet, which means every repo | The code repos the project covers. Use the plus button to add one and the cross on a repo to remove it. With a project picked, every other repo is left out of the workload, the stats, CI and the issue pages. | Harness (`.gannin/project.json`) |
 
 ## Boards

@@ -19,7 +19,7 @@ Within an org, a window works in a **project**: a name, the repos it covers, and
 
 A project that names no repos covers every repo in the org.
 
-Projects are set up in [Org settings › Projects](/docs/settings/org/projects/), where you can add a harness the org already has, or [create one](/docs/get-started/create-a-harness/).
+An org with no project yet offers [Set Up Harness](/docs/get-started/create-a-harness/), which creates a harness or links one you have. Projects are then managed in [Org settings › Projects](/docs/settings/org/projects/).
 
 ## Leaving things out
 

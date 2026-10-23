@@ -120,7 +120,13 @@ struct OnboardingView: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
-                ContentUnavailableView("No harness", systemImage: "text.book.closed", description: Text("Onboarding maps the project's harness, which it doesn't have yet."))
+                ContentUnavailableView {
+                    Label("No harness", systemImage: "text.book.closed")
+                } description: {
+                    Text("Onboarding maps the project's harness, which it doesn't have yet.")
+                } actions: {
+                    SetUpHarnessButton()
+                }
             }
         }
         .loadsHarness(org: org)
