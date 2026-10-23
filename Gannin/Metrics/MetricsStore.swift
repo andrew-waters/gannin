@@ -50,7 +50,8 @@ final class MetricsStore {
         )
         let isFresh = !SyncSettings.isDue(.metrics, since: history.syncedAt, now: now)
         let lackingFiles = history.lackingChangedFiles
-        if !force && isFresh && history.coveredFrom <= start && lackingFiles.isEmpty { return }
+        let lackingRefs = history.lackingHeadRefs
+        if !force && isFresh && history.coveredFrom <= start && lackingFiles.isEmpty && lackingRefs.isEmpty { return }
         // Wait out a low rate limit unless asked, as long as there's history to show.
         if auth.shouldWaitForBudget(force: force, hasData: histories[org] != nil) { return }
 
@@ -77,6 +78,10 @@ final class MetricsStore {
         if !lackingFiles.isEmpty {
             run.add("files", title: "Files changed", detail: "PRs stored before it was fetched")
             run.setTotal(lackingFiles.count, for: "files")
+        }
+        if !lackingRefs.isEmpty {
+            run.add("refs", title: "Head branches", detail: "PRs stored before it was fetched, to match CI runs")
+            run.setTotal(lackingRefs.count, for: "refs")
         }
 
         syncing.insert(org)
@@ -160,6 +165,19 @@ final class MetricsStore {
                     return lackingFiles.count
                 }
                 history.filledChangedFiles = true
+            }
+            if !lackingRefs.isEmpty {
+                _ = try await run.track("refs", count: { $0 }) { progress in
+                    try await api.headRefs(ids: lackingRefs) { refs, done in
+                        for (id, ref) in refs {
+                            history.pullRequests[id]?.headRef = ref
+                            unsaved[id] = history.pullRequests[id]
+                        }
+                        progress(done, lackingRefs.count)
+                    }
+                    return lackingRefs.count
+                }
+                history.filledHeadRefs = true
             }
 
             history.syncedAt = now

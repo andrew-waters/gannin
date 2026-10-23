@@ -89,6 +89,7 @@ struct OverviewView: View {
         Scorecard.Sources(
             openPullRequests: orgs.snapshot(for: org)?.openPullRequests ?? [],
             runs: actionsStore.history(for: org).map { Array($0.runs.values) },
+            defaultBranches: actionsStore.history(for: org)?.repositories.compactMapValues(\.defaultBranch) ?? [:],
             issues: issueStore.history(for: org)
         )
     }

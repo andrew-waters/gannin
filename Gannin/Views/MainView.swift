@@ -18,6 +18,10 @@ enum DetailSelection: Hashable {
     case workflowRun(Int)
     /// A job across a workflow's runs, by its name without matrix values.
     case workflowJob(workflow: String, name: String)
+    /// A PR's CI runs, by `PullRequestCI.id` (`owner/name#number`).
+    case pullRequestCI(String)
+    /// Someone's PRs and the CI they took, by login.
+    case personCI(String)
     /// A document in the org's harness, by path.
     case harnessDocument(String)
     /// Milestones with this title across repos (`MilestoneGroup`).
@@ -604,6 +608,10 @@ struct PageTitles {
             return actions?.runs[id].map { "\($0.name) #\($0.runNumber)" } ?? "Run"
         case .workflowJob(_, let name):
             return name
+        case .pullRequestCI(let id):
+            return id.split(separator: "/").last.map(String.init) ?? id
+        case .personCI(let login):
+            return "\(login)'s CI"
         case .harnessDocument(let path):
             return harness?.document(at: path)?.title ?? path.split(separator: "/").last.map(String.init) ?? path
         case .milestone(let title):
@@ -622,6 +630,8 @@ struct PageTitles {
 /// what it links to in a new tab or window with the trail that led there.
 private struct PageStack: View {
     @Environment(ActionsStore.self) private var actionsStore
+    @Environment(MetricsStore.self) private var metricsStore
+    @Environment(OrgStore.self) private var orgs
     @Environment(HarnessStore.self) private var harnessStore
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
@@ -793,7 +803,7 @@ private struct PageStack: View {
     /// Pages whose numbers follow the metrics window keep its picker.
     private func usesWindow(_ item: DetailSelection?) -> Bool {
         switch item {
-        case .metric, .actionsRepository, .workflow, .workflowJob: true
+        case .metric, .actionsRepository, .workflow, .workflowJob, .pullRequestCI, .personCI: true
         default: false
         }
     }
@@ -1100,6 +1110,15 @@ private struct PageStack: View {
         actionsStore.history(for: org).map { ActionsMetrics(history: $0, window: MetricsWindow(code: windowDays), config: configs.config(for: org)) }
     }
 
+    private var pullRequestCI: PullRequestCIMetrics? {
+        actionsStore.history(for: org).map {
+            PullRequestCIMetrics(
+                history: $0, merged: metricsStore.history(for: org).map { Array($0.pullRequests.values) } ?? [],
+                open: orgs.snapshot(for: org)?.openPullRequests ?? [], window: MetricsWindow(code: windowDays), config: configs.config(for: org)
+            )
+        }
+    }
+
     @ViewBuilder
     private func page(for item: DetailSelection, index: Int) -> some View {
         let selection = selection(at: index + 1)
@@ -1151,6 +1170,18 @@ private struct PageStack: View {
                 JobPage(org: org, workflow: workflow, name: name, navigate: push.perform)
             } else {
                 gone("No runs of this workflow in \(MetricsWindow(code: windowDays).span).")
+            }
+        case .pullRequestCI(let id):
+            if let ci = pullRequestCI, let pr = ci.pullRequest(id) {
+                PullRequestCIPage(org: org, pr: pr, metrics: ci, navigate: push.perform)
+            } else {
+                gone("No CI runs for this pull request in \(MetricsWindow(code: windowDays).span).")
+            }
+        case .personCI(let login):
+            if let ci = pullRequestCI, let person = ci.person(login) {
+                PersonCIPage(org: org, person: person, metrics: ci, navigate: push.perform)
+            } else {
+                gone("No pull requests of theirs with CI runs in \(MetricsWindow(code: windowDays).span).")
             }
         case .harnessDocument(let path):
             HarnessDocumentPage(org: org, path: path)

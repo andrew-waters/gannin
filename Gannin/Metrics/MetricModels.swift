@@ -27,6 +27,9 @@ struct MetricPullRequest: Codable, Hashable, Identifiable {
     var changedFiles: Int? = nil
     /// When GitHub last updated it; nil for PRs stored before it was fetched.
     var updatedAt: Date? = nil
+    /// The branch it was merged from, which CI runs are matched on once
+    /// GitHub stops linking them; nil for PRs stored before it was fetched.
+    var headRef: String? = nil
     /// When the PR started waiting for review.
     var reviewableAt: Date { readyAt ?? createdAt }
 
@@ -79,12 +82,14 @@ struct MetricsHistory: Codable {
     /// Set once the PRs stored before `changedFiles` was fetched have been
     /// looked up for it, so those GitHub can't find aren't asked for again.
     var filledChangedFiles: Bool?
+    /// The same for `headRef`.
+    var filledHeadRefs: Bool?
     /// How many PRs the store held for this history when it was saved, so a
     /// store that has since been cleared isn't taken as covering them.
     var storedCount: Int?
 
     enum CodingKeys: String, CodingKey {
-        case formatVersion, orgLogin, coveredFrom, syncedAt, openedPerWeek, filledChangedFiles, storedCount
+        case formatVersion, orgLogin, coveredFrom, syncedAt, openedPerWeek, filledChangedFiles, filledHeadRefs, storedCount
     }
 
     /// The format before PRs moved to `PullRequestStore`, read to carry them over.
@@ -97,5 +102,10 @@ struct MetricsHistory: Codable {
     /// Stored PRs still without a file count.
     var lackingChangedFiles: [String] {
         filledChangedFiles == true ? [] : pullRequests.values.filter { $0.changedFiles == nil }.map(\.id)
+    }
+
+    /// Stored PRs still without a head branch.
+    var lackingHeadRefs: [String] {
+        filledHeadRefs == true ? [] : pullRequests.values.filter { $0.headRef == nil }.map(\.id)
     }
 }

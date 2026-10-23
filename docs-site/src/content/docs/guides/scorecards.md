@@ -27,7 +27,7 @@ Each goal has a tile showing its last whole period's value, the change on the on
 
 Periods run newest first, with the one under way shaded. Cells are green on target and red off it. N/A means nothing to measure, and a dash means before the history starts. **HIT** counts whole periods on target. The name, target and hit columns stay put when you scroll sideways.
 
-Click a metric's name to expand it into a row per person (the author, the reviewer for review requests, the assignee for issues). Counts such as PRs merged aren't judged per person. Flaky CI runs expand per repo instead, opening its CI page. Clicking a person opens their PRs and reviews.
+Click a metric's name to expand it into a row per person (the author, the reviewer for review requests, the assignee for issues). Counts such as PRs merged aren't judged per person. Flaky CI runs expand per repo instead, opening its CI page. CI time per PR expands per author. Clicking a person opens their PRs and reviews.
 
 ## Adding and editing goals
 

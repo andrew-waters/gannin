@@ -264,6 +264,7 @@ private struct RawRunsPage: Decodable {
 
 private struct RawRun: Decodable {
     struct Actor: Decodable { let login: String }
+    struct PullRequest: Decodable { let number: Int }
 
     let id: Int
     let name: String?
@@ -281,6 +282,7 @@ private struct RawRun: Decodable {
     let updatedAt: Date
     let actor: Actor?
     let htmlUrl: URL
+    let pullRequests: [Lossy<PullRequest>]?
 
     func model(repo: String) -> WorkflowRun {
         WorkflowRun(
@@ -302,7 +304,8 @@ private struct RawRun: Decodable {
             startedAt: runStartedAt,
             updatedAt: updatedAt,
             actor: actor?.login,
-            url: htmlUrl
+            url: htmlUrl,
+            pullRequests: pullRequests.map { $0.compactMap(\.value?.number) }
         )
     }
 }

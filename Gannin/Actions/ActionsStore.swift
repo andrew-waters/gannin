@@ -129,7 +129,14 @@ final class ActionsStore {
             }
 
             for result in results {
-                for workflowRun in result.runs { history.runs[workflowRun.id] = workflowRun }
+                for var workflowRun in result.runs {
+                    // GitHub stops listing a PR once it merges: keep the one
+                    // listed when the run was fetched before.
+                    if workflowRun.pullRequests?.isEmpty ?? true, let held = history.runs[workflowRun.id]?.pullRequests, !held.isEmpty {
+                        workflowRun.pullRequests = held
+                    }
+                    history.runs[workflowRun.id] = workflowRun
+                }
                 var repo = result.repo
                 repo.coveredFrom = min(repo.coveredFrom, start)
                 repo.syncedAt = now

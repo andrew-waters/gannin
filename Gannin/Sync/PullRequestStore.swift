@@ -52,6 +52,8 @@ struct MetricsExtras: Codable, Hashable {
     let readyAt: Date?
     var reviews: [MetricReview]
     var reviewRequests: [MetricReviewRequest]
+    /// The branch it came from; nil for PRs stored before it was fetched.
+    var headRef: String? = nil
 }
 
 /// What only the work log fetch reads, kept beside the core.
@@ -288,7 +290,7 @@ extension StoredPullRequest {
             mergedAt: pr.mergedAt, updatedAt: pr.updatedAt,
             additions: pr.additions, deletions: pr.deletions, changedFiles: pr.changedFiles
         )
-        metrics = MetricsExtras(updatedAt: pr.updatedAt, firstCommitAt: pr.firstCommitAt, readyAt: pr.readyAt, reviews: pr.reviews, reviewRequests: pr.reviewRequests)
+        metrics = MetricsExtras(updatedAt: pr.updatedAt, firstCommitAt: pr.firstCommitAt, readyAt: pr.readyAt, reviews: pr.reviews, reviewRequests: pr.reviewRequests, headRef: pr.headRef)
     }
 
     /// Nil until a metrics sync has fetched it, or while it isn't merged.
@@ -300,7 +302,7 @@ extension StoredPullRequest {
             firstCommitAt: metrics.firstCommitAt, readyAt: metrics.readyAt,
             reviews: metrics.reviews, reviewRequests: metrics.reviewRequests,
             additions: core.additions ?? 0, deletions: core.deletions ?? 0, changedFiles: core.changedFiles,
-            updatedAt: metrics.updatedAt
+            updatedAt: metrics.updatedAt, headRef: metrics.headRef
         )
     }
 

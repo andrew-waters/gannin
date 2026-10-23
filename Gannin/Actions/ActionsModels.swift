@@ -27,6 +27,10 @@ nonisolated struct WorkflowRun: Codable, Hashable, Identifiable {
     let updatedAt: Date
     let actor: String?
     let url: URL
+    /// The open PRs GitHub listed for the run when it was fetched. GitHub
+    /// lists only open PRs from branches in the same repo, so this is empty
+    /// for runs fetched after their PR merged, and for forks.
+    var pullRequests: [Int]? = nil
 
     /// Identifies the workflow across its runs.
     var workflowKey: String { WorkflowRun.key(repo: repo, workflowID: workflowID) }
@@ -52,6 +56,9 @@ nonisolated struct WorkflowRun: Codable, Hashable, Identifiable {
         let seconds = updatedAt.timeIntervalSince(startedAt)
         return seconds >= 0 ? seconds : nil
     }
+
+    /// When the latest attempt ended, for completed runs.
+    var finishedAt: Date? { isCompleted ? updatedAt : nil }
 
     /// Passed only after being re-run, the usual sign of a flaky job.
     var passedOnRetry: Bool { outcome == .success && attempt > 1 }
