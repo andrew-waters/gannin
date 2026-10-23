@@ -37,7 +37,7 @@ struct ApprovalQueueTests {
         #expect(!SessionStore.holdsForApproval(review(nil, findings: findings), draft: ReviewDraft(), isReady: true))
     }
 
-    private func record(_ verdict: String?, draft: ReviewDraft = ReviewDraft(), posting: Bool = false) -> ReviewRecord? {
+    private func reviewSession(_ verdict: String?) -> CodeSession {
         let pr = PullRequestReference(
             org: "acme", id: "PR_1", number: 7, title: "Plan", repo: "acme/harness",
             url: URL(string: "https://github.com/acme/harness/pull/7")!
@@ -47,7 +47,36 @@ struct ApprovalQueueTests {
             repo: "acme/harness", branch: "review", createdAt: .now
         )
         session.reviewOf = pr
-        return ReviewRecord.updated(nil, session: session, review: review(verdict), draft: draft, reviewer: "andrew", posting: posting, automatically: posting, outcome: nil)
+        session.reviewResult = review(verdict)
+        return session
+    }
+
+    private func record(_ verdict: String?, draft: ReviewDraft = ReviewDraft(), posting: Bool = false, state: String? = nil) -> ReviewRecord? {
+        let outcome = state.map { ReviewOutcome(title: nil, author: nil, state: $0, mergedAt: nil, threads: []) }
+        return ReviewRecord.updated(nil, session: reviewSession(verdict), review: review(verdict), draft: draft, reviewer: "andrew", posting: posting, automatically: posting, outcome: outcome)
+    }
+
+    @Test func recordDoesNotHoldAnApprovalOnceMergedOrClosed() {
+        #expect(record("approve", state: "OPEN")?.approvalHeld == true)
+        #expect(record("approve", state: "MERGED")?.approvalHeld == nil)
+        #expect(record("approve", state: "CLOSED")?.approvalHeld == nil)
+    }
+
+    @Test func dismissedApprovalLeavesTheQueueUntilANewResult() {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "ApprovalQueueTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60), defaults: UserDefaults(suiteName: "ApprovalQueueTests-\(UUID().uuidString)")!)
+        let session = reviewSession("approve")
+        store.add(session)
+        #expect(store.readyForApproval("PR_1")?.id == session.id)
+        var draft = ReviewDraft()
+        draft.resultAt = Date(timeIntervalSince1970: 100)
+        draft.approvalDismissedAt = Date(timeIntervalSince1970: 200)
+        store.reviewDrafts[session.id] = draft
+        #expect(store.readyForApproval("PR_1") == nil)
+        // Claude reviews again: a new approval to give or dismiss.
+        store.reviewDrafts[session.id]?.resultAt = Date(timeIntervalSince1970: 300)
+        #expect(store.readyForApproval("PR_1")?.id == session.id)
     }
 
     @Test func recordMarksAnApprovalNotGivenAsHeld() {

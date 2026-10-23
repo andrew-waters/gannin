@@ -416,7 +416,7 @@ struct ReviewedPullRequest: Equatable {
 
     /// Added to a comment that goes up for a review Claude would approve, so
     /// the summary isn't read as an approval.
-    static let approvalHeldNote = "This is a comment, not an approval: Claude would approve this, and the approval is waiting for the reviewer to give it."
+    static let approvalHeldNote = "This is a comment, not an approval: Claude would approve this, but giving the approval is up to the reviewer."
 
     /// A review's body: the summary, then findings that can't go on a line,
     /// then `approvalHeldNote` when the review is a held approval.

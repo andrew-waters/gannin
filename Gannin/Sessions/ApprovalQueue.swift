@@ -66,7 +66,10 @@ extension SessionStore {
     /// Dashboard and the waiting count, and its record stops saying it's held.
     func dismissApproval(_ id: UUID) {
         reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].approvalDismissedAt = .now
-        unflag(id)
+        // Only the flag the approval raised: a question or permission prompt
+        // from the same session is still waiting.
+        if approvalNoticedAt[id] != nil, state(id) != .needsYou { unflag(id) }
+        approvalNoticedAt[id] = nil
         Task { await recordReview(id) }
     }
 
