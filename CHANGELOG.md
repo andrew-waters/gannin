@@ -11,6 +11,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Changed
 - An automatic review Claude would approve is no longer posted by itself, even with findings, while the PR is ready for your approval: it waits in Ready for your approval, and your approval posts its comments once, as one review
+- Planning sessions ask Claude for a few larger tasks, by default one per repository that needs changing, instead of a task per step, so Agree makes fewer sub-issues
 
 ### Fixed
 - Check for Changes on a review's tab also refreshes the PR's checks shown on its card in the sessions grid

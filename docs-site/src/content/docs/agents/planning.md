@@ -35,6 +35,8 @@ Documents dropped on the terminal or picked are each confirmed, as to whether to
 
 ## Agree
 
+Claude is asked to keep tasks few and large, by default one per repository that needs changing, with the finer steps as a checklist in the task rather than tasks of their own. Each task becomes a sub-issue, so check them in Agree, where you can edit them.
+
 Agree shows what isn't approved or covered, lets you tick who was here, and lets you edit the tasks. It then makes the parent issue (the planned one, or a new one) and a sub-issue per task on the workflow board, and commits the plan and the requirement in one commit.
 
 ## Ending a plan
