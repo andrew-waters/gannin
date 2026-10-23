@@ -107,17 +107,19 @@ struct HarnessTreeView: View {
     }
 }
 
-/// The steps of creating a project's harness: what a project is, what's in
-/// its harness, then its name and repos. Someone with no project yet starts
-/// at the beginning; anyone else at the name, with the tour a click away.
+/// The steps of setting up a project's harness: what a project is, what's
+/// in its harness, creating or linking one, then what's left to finish.
+/// Someone with no project yet starts at the beginning; anyone else at
+/// creating or linking, with the tour a click away.
 enum HarnessOnboardingStep: Int, CaseIterable {
-    case intro, layout, create
+    case intro, layout, setUp, finish
 
     var title: String {
         switch self {
         case .intro: "Projects"
         case .layout: "The harness"
-        case .create: "Create"
+        case .setUp: "Create or link"
+        case .finish: "Finish"
         }
     }
 }

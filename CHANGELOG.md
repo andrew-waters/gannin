@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Set Up Harness guides a new user through creating a harness or linking one they have, then adds any starter files it lacks and says where it's checked out. It opens by itself for an org with no project until Not Now, and is in the sidebar, on the Harness and Onboarding pages, and under Gannin › Set Up Harness
 - File › New Window and New Tab ask which org and project the window opens on, starting on the window you were in. Turn it off in Settings › General › Windows to open a copy of that window's org and project instead
 - Org settings › Issues › Where issues go: choose whether the org files every issue in one central repo or each in its own repo collected on a project. It's kept in the home harness (`.gannin/issue-strategy.json`) for the whole team, and planning follows it. A Mac on an older Gannin ignores it
 - Pull Requests filter menus end with Hide These, which hides the values ticked (a repository, an author and so on) instead of showing only them

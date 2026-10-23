@@ -512,12 +512,14 @@ extension GitHubAPI {
     }
 }
 
-/// Creates a project's harness, as onboarding: what a project is, what's in
-/// its harness, then the project's name, the harness repo's and the code
-/// repos it's for. The repo is private, its layout (`HarnessSkeleton`) and
-/// `.gannin/project.json` one commit, and it's a project from then on
-/// (home, if it's the first).
-struct CreateHarnessSheet: View {
+/// Sets up a project's harness, as onboarding: what a project is, what's in
+/// its harness, then either a new one (the project's name, the harness
+/// repo's and the code repos it's for) or one the user already has, and
+/// last what's left: starter files a harness lacks, and where it's checked
+/// out on this Mac. A new repo is private, its layout (`HarnessSkeleton`)
+/// and `.gannin/project.json` one commit. Either way it's a project from
+/// then on (home, if it's the first).
+struct SetUpHarnessSheet: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
     @Environment(OrgStore.self) private var orgs
@@ -525,42 +527,67 @@ struct CreateHarnessSheet: View {
     @Environment(AuthStore.self) private var auth
     @Environment(\.dismiss) private var dismiss
     let org: String
+    /// The repo, once it's a project.
+    var onLinked: (String) -> Void = { _ in }
+
+    enum Choice: Hashable { case create, link }
+
     @State private var step: HarnessOnboardingStep?
+    @State private var choice: Choice = .create
     @State private var projectName = ""
     @State private var name = ""
     /// The code repos it's for; none for every repo.
     @State private var picked: Set<String> = []
-    @State private var isCreating = false
+    /// The repo to link, as picked.
+    @State private var linking: String?
+    @State private var isWorking = false
     @State private var status: String?
     @State private var error: String?
+    /// The harness set up here, once it's a project.
+    @State private var linked: String?
+    /// The code repos the starter CLAUDE.md lists.
+    @State private var starterRepos: [String] = []
+    /// Starter files the harness lacks; nil until checked.
+    @State private var missing: [String]?
+    @State private var isConfirmingMissing = false
 
-    /// No project yet: the tour comes first.
-    private var isFirst: Bool { configs.harnesses(for: org).isEmpty }
+    /// No project when the sheet opened: the tour comes first.
+    @State private var isFirst: Bool?
 
     var body: some View {
-        let current = step ?? (isFirst ? .intro : .create)
+        let isFirst = isFirst ?? configs.harnesses(for: org).isEmpty
+        let current = step ?? (isFirst ? .intro : .setUp)
         VStack(alignment: .leading, spacing: 0) {
             ScrollView {
                 Group {
                     switch current {
                     case .intro: HarnessIntroView(org: org, isFirst: isFirst)
                     case .layout: HarnessLayoutView()
-                    case .create: form
+                    case .setUp: setUp(isFirst: isFirst)
+                    case .finish: finish
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(24)
             }
             Divider()
-            footer(current)
+            footer(current, isFirst: isFirst)
                 .padding(16)
         }
         .frame(width: 640, height: 600)
-        .interactiveDismissDisabled(isCreating)
-        .task { await harness.loadRepositories(org: org) }
+        .interactiveDismissDisabled(isWorking)
+        .task {
+            if self.isFirst == nil { self.isFirst = configs.harnesses(for: org).isEmpty }
+            await harness.loadRepositories(org: org)
+        }
+        .confirmationDialog("Add \(missing?.count ?? 0) starter files to \(linked ?? "")?", isPresented: $isConfirmingMissing) {
+            Button("Add Missing Files") { Task { await addMissing() } }
+        } message: {
+            Text("One commit, of files the harness doesn't have. Nothing already there is changed.")
+        }
     }
 
-    private func footer(_ current: HarnessOnboardingStep) -> some View {
+    private func footer(_ current: HarnessOnboardingStep, isFirst: Bool) -> some View {
         HStack {
             HStack(spacing: 6) {
                 ForEach(HarnessOnboardingStep.allCases, id: \.self) { item in
@@ -573,33 +600,73 @@ struct CreateHarnessSheet: View {
                     }
                     .buttonStyle(.plain)
                     .help(item.title)
-                    .disabled(isCreating)
+                    // Finish once there's a harness, and nothing before it after.
+                    .disabled(isWorking || (item == .finish) == (linked == nil))
                 }
             }
-            if isCreating {
+            if isWorking {
                 ProgressView().controlSize(.small).padding(.leading, 8)
                 Text(status ?? "").foregroundStyle(.secondary).lineLimit(1)
             }
             Spacer()
-            Button("Cancel", role: .cancel) { dismiss() }
-                .keyboardShortcut(.cancelAction)
-                .disabled(isCreating)
-            if current != .intro {
-                Button("Back") { step = HarnessOnboardingStep(rawValue: current.rawValue - 1) }
-                    .disabled(isCreating)
-            }
-            if current == .create {
-                Button("Create Project") { Task { await create() } }
+            if current == .finish {
+                Button("Done") { dismiss() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(isCreating || isTaken || !Self.isValid(repoName) || trimmedProjectName.isEmpty)
+                    .disabled(isWorking)
             } else {
-                Button("Continue") { step = HarnessOnboardingStep(rawValue: current.rawValue + 1) }
-                    .keyboardShortcut(.defaultAction)
+                // Not Now puts off its opening by itself; it's in the Gannin menu after.
+                Button(isFirst ? "Not Now" : "Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                    .disabled(isWorking)
+                if current != .intro {
+                    Button("Back") { step = HarnessOnboardingStep(rawValue: current.rawValue - 1) }
+                        .disabled(isWorking)
+                }
+                if current == .setUp {
+                    switch choice {
+                    case .create:
+                        Button("Create Harness") { Task { await create() } }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(isWorking || isTaken || !Self.isValid(repoName) || trimmedProjectName.isEmpty)
+                    case .link:
+                        Button("Link Harness") { Task { await link() } }
+                            .keyboardShortcut(.defaultAction)
+                            .disabled(isWorking || linking == nil)
+                    }
+                } else {
+                    Button("Continue") { step = HarnessOnboardingStep(rawValue: current.rawValue + 1) }
+                        .keyboardShortcut(.defaultAction)
+                }
             }
         }
     }
 
-    // MARK: The form
+    // MARK: Create or link
+
+    private func setUp(isFirst: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(isFirst ? "Set up your first project" : "New project")
+                .font(.title2.weight(.semibold))
+            if !isFirst {
+                Button("What's in a harness?") { step = .layout }
+                    .linkButton()
+            }
+            Picker("Harness", selection: $choice) {
+                Text("Create a new harness").tag(Choice.create)
+                Text("Link one you have").tag(Choice.link)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .disabled(isWorking)
+            switch choice {
+            case .create: form
+            case .link: linkForm
+            }
+            if let error {
+                Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
 
     private var trimmedProjectName: String { projectName.trimmingCharacters(in: .whitespaces) }
 
@@ -617,50 +684,70 @@ struct CreateHarnessSheet: View {
     }
 
     private var form: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(isFirst ? "Name your first project" : "New project")
-                .font(.title2.weight(.semibold))
-            if !isFirst {
-                Button("What's in a harness?") { step = .layout }
-                    .linkButton()
+        Form {
+            TextField("Project", text: $projectName, prompt: Text("Platform, Mobile app"))
+            TextField("Harness repo", text: $name, prompt: Text(repoName))
+            if isTaken {
+                Text("\(org) already has a repo called \(repoName). Link it instead.")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            } else {
+                Text("Gannin creates \(org)/\(repoName) as a private repo.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            Form {
-                TextField("Project", text: $projectName, prompt: Text("Platform, Mobile app"))
-                TextField("Harness repo", text: $name, prompt: Text(repoName))
-                if isTaken {
-                    Text("\(org) already has a repo called \(repoName). Add it under Settings › Projects instead.")
-                        .font(.caption)
-                        .foregroundStyle(.red)
-                } else {
-                    Text("Gannin creates \(org)/\(repoName) as a private repo.")
-                        .font(.caption)
+            Section {
+                let choices = repoChoices
+                if choices.isEmpty {
+                    Text("No repos with recent pull requests yet. Add them later under Settings › Projects.")
                         .foregroundStyle(.secondary)
                 }
-                Section {
-                    let choices = repoChoices
-                    if choices.isEmpty {
-                        Text("No repos with recent pull requests yet. Add them later under Settings › Projects.")
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(choices, id: \.self) { repo in
-                        Toggle(repo, isOn: Binding(
-                            get: { picked.contains(repo) },
-                            set: { if $0 { picked.insert(repo) } else { picked.remove(repo) } }
-                        ))
-                        .checkboxToggle()
-                    }
-                } header: {
-                    Text("Code repos")
-                } footer: {
-                    Text(picked.isEmpty ? "None picked: the project covers every repo. A window on it shows only its repos." : "A window on the project shows only these. CLAUDE.md lists them for Claude Code.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                ForEach(choices, id: \.self) { repo in
+                    Toggle(repo, isOn: Binding(
+                        get: { picked.contains(repo) },
+                        set: { if $0 { picked.insert(repo) } else { picked.remove(repo) } }
+                    ))
+                    .checkboxToggle()
                 }
+            } header: {
+                Text("Code repos")
+            } footer: {
+                Text(picked.isEmpty ? "None picked: the project covers every repo. A window on it shows only its repos." : "A window on the project shows only these. CLAUDE.md lists them for Claude Code.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .formStyle(.grouped)
-            .disabled(isCreating)
-            if let error {
-                Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+        }
+        .formStyle(.grouped)
+        .disabled(isWorking)
+    }
+
+    /// A repo of the org's, or any `owner/name` the token can push to.
+    private var linkForm: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Pick the repo the team keeps its harness in. Gannin reads it from GitHub, and offers any starter files it doesn't have on the next step.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            let taken = Set(configs.harnesses(for: org).map(\.repo))
+            SearchableList(
+                choices: Set(harness.repositories[org] ?? []).subtracting(taken)
+                    .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+                    .map { SearchableChoice(value: $0, title: $0) },
+                selection: linking,
+                prompt: "Search repositories, or type owner/name",
+                isLoading: harness.repositories[org] == nil,
+                typedChoice: { query in
+                    HarnessRepoEntry.parse(query, taken: taken)
+                        .map { SearchableChoice(value: $0, title: "Link \($0)", section: "Not listed") }
+                }
+            ) { repo in
+                linking = repo
+                error = nil
+            }
+            .frame(height: 300)
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.separatorLine))
+            .disabled(isWorking)
+            if let linking {
+                Text("Links \(linking).").font(.caption).foregroundStyle(.secondary)
             }
         }
     }
@@ -681,11 +768,12 @@ struct CreateHarnessSheet: View {
 
     private func create() async {
         guard let api = auth.api else { return }
-        isCreating = true
+        isWorking = true
         error = nil
-        defer { isCreating = false }
+        defer { isWorking = false }
         let name = repoName
         let repos = repoChoices.filter(picked.contains)
+        starterRepos = repos.isEmpty ? Array(repoChoices.prefix(12)) : repos
         do {
             status = "Creating \(org)/\(name)"
             let created = try await api.createRepository(org: org, name: name, description: "Plans, requirements, findings and skills beside the code, kept with Gannin.")
@@ -693,7 +781,7 @@ struct CreateHarnessSheet: View {
             // It's a project from here, even if the layout fails.
             configs.updateHarnesses(org) { $0.addHarness(setup) }
             status = "Committing the layout"
-            var files = HarnessSkeleton.files(org: org, repo: created.nameWithOwner, projects: repos.isEmpty ? Array(repoChoices.prefix(12)) : repos)
+            var files = HarnessSkeleton.files(org: org, repo: created.nameWithOwner, projects: starterRepos)
             files[TeamFile.project] = TeamCoding.encode(ProjectFile(name: trimmedProjectName, repos: repos))
             // The first commit GitHub makes can take a moment to show.
             var attempt = 0
@@ -706,13 +794,135 @@ struct CreateHarnessSheet: View {
                 } catch where attempt < 3 {
                     attempt += 1
                     try await Task.sleep(for: .seconds(attempt * 2))
+                } catch {
+                    // The repo's there: finish offers what's missing.
+                    self.error = "Created \(created.nameWithOwner), but couldn't commit its layout: \(error.localizedDescription)"
+                    break
                 }
             }
-            dismiss()
+            finish(created.nameWithOwner)
         } catch {
-            self.error = !configs.harnesses(for: org).contains { $0.repo == "\(org)/\(name)" }
-                ? error.localizedDescription
-                : "Created \(org)/\(name), but couldn't commit its layout: \(error.localizedDescription)"
+            self.error = error.localizedDescription
         }
+    }
+
+    private func link() async {
+        guard let repo = linking, let api = auth.api else { return }
+        isWorking = true
+        error = nil
+        defer { isWorking = false }
+        status = "Checking \(repo)"
+        do {
+            let found = try await api.writableHarnessRepo(repo)
+            configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: found)) }
+            starterRepos = []
+            finish(found)
+        } catch {
+            self.error = error.localizedDescription
+        }
+    }
+
+    private func finish(_ repo: String) {
+        linked = repo
+        step = .finish
+        onLinked(repo)
+        Task { await checkMissing() }
+    }
+
+    // MARK: Finish
+
+    private var setup: HarnessConfig? {
+        linked.map { repo in configs.harnesses(for: org).first { $0.repo == repo } ?? HarnessConfig(repo: repo) }
+    }
+
+    @ViewBuilder
+    private var finish: some View {
+        if let linked {
+            let isHome = configs.harnesses(for: org).first?.repo == linked
+            VStack(alignment: .leading, spacing: 14) {
+                Text("\(linked) is set up")
+                    .font(.title2.weight(.semibold))
+                Text(isHome
+                    ? "It's home, the project windows open on, and keeps what's the org's as well as the project's."
+                    : "It's a project now: pick it from the project menu at the foot of the sidebar.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let error {
+                    Text(error).font(.callout).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
+                Form {
+                    starterFiles
+                    HarnessCheckoutSection(org: org, repo: linked, showsReviewRequests: isHome)
+                }
+                .formStyle(.grouped)
+                Text("Claude Code sessions run in the checkout on this Mac; Gannin clones it there when the first one starts, or choose one you have. Boards, code repos and the rest are under Settings › Projects.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var starterFiles: some View {
+        Section {
+            if let missing {
+                if missing.isEmpty {
+                    Label("Has every starter file", systemImage: "checkmark.circle")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Not in the harness yet: \(missing.joined(separator: ", ")).")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Add Missing Files") { isConfirmingMissing = true }
+                        .disabled(isWorking)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Checking the harness").foregroundStyle(.secondary)
+                }
+            }
+        } header: {
+            Text("Starter files")
+        } footer: {
+            Text("What Gannin starts a harness with: a README, CLAUDE.md, STANDARDS.md and a folder for each kind of document. Skip them if the harness is laid out its own way.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func checkMissing() async {
+        guard let setup, let api = auth.api else { return }
+        missing = nil
+        let parts = setup.repo.split(separator: "/").map(String.init)
+        guard parts.count == 2 else { return }
+        do {
+            let head = try await api.harnessHead(owner: parts[0], name: parts[1], branch: setup.branch)
+            missing = try await api.missingStarterFiles(repo: setup.repo, commit: head.commit)
+        } catch {
+            missing = []
+            self.error = "Couldn't check \(setup.repo) for starter files: \(error.localizedDescription)"
+        }
+    }
+
+    /// Commits only the starter files the head lacks, checked again at the
+    /// head it commits onto, so nothing there is overwritten.
+    private func addMissing() async {
+        guard let setup, let api = auth.api else { return }
+        isWorking = true
+        error = nil
+        defer { isWorking = false }
+        status = "Adding starter files"
+        let files = HarnessSkeleton.files(org: org, repo: setup.repo, projects: starterRepos)
+        do {
+            try await harness.commit(org: org, setup: setup) { head in
+                let missing = try await api.missingStarterFiles(repo: setup.repo, commit: head)
+                guard !missing.isEmpty else { return nil }
+                return HarnessChange(message: "Harness starter files, from Gannin", files: files.filter { missing.contains($0.key) })
+            }
+        } catch {
+            self.error = error.localizedDescription
+        }
+        await checkMissing()
     }
 }

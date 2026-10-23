@@ -241,6 +241,7 @@ struct GanninApp: App {
         .commands {
             CommandGroup(after: .appInfo) {
                 CheckForUpdatesCommand()
+                SetUpHarnessCommand()
             }
             // ⌘N is New Issue; New Window moves to ⌥⌘N, as Mail's does.
             CommandGroup(replacing: .newItem) {

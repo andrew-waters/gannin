@@ -15,8 +15,7 @@ You only see this section while the org has no harness yet. It is the way in.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Add Harness | No harness | A menu of the org's repos. Picking one makes it the org's first project, and Home. | This Mac |
-| Create Harness | Not applied | Opens the Create Harness sheet, which makes a new private repo with starter files and makes it the first project. | This Mac (the new repo is on GitHub) |
+| Set Up Harness | Not applied | Opens [Set Up Harness](/docs/get-started/create-a-harness/), which creates a new private repo with starter files or links one you have, and makes it the first project, Home. | This Mac (a new repo is on GitHub) |
 
 ## Team data
 

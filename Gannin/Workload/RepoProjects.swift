@@ -158,7 +158,7 @@ struct ProjectsSettingsSection: View {
         }
         .task { await harness.loadRepositories(org: org) }
         .loadsHarness(org: org)
-        .sheet(isPresented: $isCreatingHarness) { CreateHarnessSheet(org: org) }
+        .sheet(isPresented: $isCreatingHarness) { SetUpHarnessSheet(org: org) { selectedID = $0 } }
         .confirmationDialog("Remove \(removing?.name ?? "")?", isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } })) {
             if let project = removing {
                 Button("Remove Project", role: .destructive) { remove(project, from: projects) }
@@ -252,24 +252,15 @@ struct ProjectsSettingsSection: View {
             selectedID = repo
             return
         }
-        let parts = repo.split(separator: "/").map(String.init)
-        guard parts.count == 2, let api = auth.api else { return }
+        guard let api = auth.api else { return }
         addProjectError = nil
         isCheckingHarnessRepo = true
         Task {
             defer { isCheckingHarnessRepo = false }
             do {
-                let (found, reason) = try await api.repository(owner: parts[0], name: parts[1])
-                guard let found else {
-                    addProjectError = reason ?? "GitHub couldn't find \(repo), or this token can't read it."
-                    return
-                }
-                guard found.hasWriteAccess else {
-                    addProjectError = "You don't have write access to \(found.nameWithOwner), so Gannin can't commit a harness there."
-                    return
-                }
-                configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: found.nameWithOwner)) }
-                selectedID = found.nameWithOwner
+                let found = try await api.writableHarnessRepo(repo)
+                configs.updateHarnesses(org) { $0.addHarness(HarnessConfig(repo: found)) }
+                selectedID = found
             } catch {
                 addProjectError = error.localizedDescription
             }

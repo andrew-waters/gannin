@@ -10,6 +10,7 @@ paths:
 - Binary `data` is capped at `HarnessChange.maxDataBytes`; refuse before sending.
 - A branch whose rules require a pull request gets one instead of a direct commit: ask first with `GET repos/{repo}/rules/branches/{branch}` (rulesets only, advisory, so a failed lookup means try a direct commit), and retry once as a pull request if a direct commit is refused for needing one. `APIError.requiresPullRequest` treats both classic branch protection's named refusal and a ruleset's generic "repository rule violations" (GH013) refusal as needing one, since GitHub doesn't always say which rule blocked the push.
 - Once the pull request exists the write is done. A merge GitHub refuses (405 or 422) leaves it open and notifies (`HarnessStore.onPullRequestOpened`); never turn that into an error, or a retry opens a second pull request.
+- Set Up Harness's Add Missing Files works out what's missing again at the head it commits onto and adds only absent paths: a linked harness is someone's own, so never overwrite a file in it.
 - After a commit, refetch the index until GitHub reports the new head (`load(expecting:)`) so writes show without a Refresh.
 
 ## Team data (`.gannin/*.json`, `HarnessTeamData.swift`)
@@ -39,4 +40,4 @@ paths:
 - Learnings live at `learnings/<repo>/<date>-<slug>.md` with front matter `repo`, `paths` (folders end `/`), `commit`, `source`, `author`, `status` (`active`/`retired`) and `## Rule`, `## Reason`, `## Source`. Only active ones reach prompts. Editors commit one file, only when asked.
 
 ## Testing
-- Covered: `HarnessPullRequestTests`, `HarnessRefinesTests`, `HarnessRepoEntryTests`, `HarnessDecisionsTests` (decisions, Suggest Decisions), `OnboardingMapTests` (the map and read marks). Nothing covers `TeamCoding.merge`, front matter parsing or `harness(covering:)`; check by hand: edit team data, commit, and confirm another harness copy survives the merge.
+- Covered: `HarnessPullRequestTests`, `HarnessRefinesTests`, `HarnessRepoEntryTests`, `HarnessDecisionsTests` (decisions, Suggest Decisions), `OnboardingMapTests` (the map and read marks), `HarnessSetupTests` (starter files missing). Nothing covers `TeamCoding.merge`, front matter parsing or `harness(covering:)`; check by hand: edit team data, commit, and confirm another harness copy survives the merge.

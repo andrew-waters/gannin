@@ -262,6 +262,10 @@ struct MainView: View {
     /// A palette result for the page stack to open: a drawer, New Issue.
     @State private var paletteDelivery: PaletteDestination?
     @Environment(\.controlActiveState) private var activeState
+    /// The org Set Up Harness was last opened for, kept after it closes
+    /// for its dismissal.
+    @State private var harnessSetupOrg: String?
+    @State private var isSettingUpHarness = false
 
     var body: some View {
         NavigationSplitView {
@@ -307,6 +311,16 @@ struct MainView: View {
         .windowSubtitle(selectedOrg.map { orgs.org(login: $0)?.displayName ?? $0 } ?? "")
         .focusedSceneValue(\.renameTab, RenameTabAction(window: windowID, perform: startRenaming))
         .focusedSceneValue(\.windowPlace, selectedOrg.map { WindowPlace(org: $0, workspace: workspace) })
+        .environment(\.setUpHarness, setUpHarnessAction)
+        .focusedSceneValue(\.setUpHarness, setUpHarnessAction)
+        .sheet(isPresented: $isSettingUpHarness, onDismiss: putOffHarnessSetup) {
+            if let org = harnessSetupOrg {
+                SetUpHarnessSheet(org: org) { repo in
+                    if org == selectedOrg { workspace = repo }
+                }
+            }
+        }
+        .task(id: selectedOrg) { offerHarnessSetup() }
         .commandPalette(homeOrg: { selectedOrg }, open: openFromPalette)
         .investmentPrompt()
         .environment(orgConfigs)
@@ -359,6 +373,30 @@ struct MainView: View {
         .onChange(of: workspaceID) {
             if let selectedOrg { UserDefaults.standard.set(workspaceID, forKey: "lastWorkspace.\(selectedOrg)") }
         }
+    }
+
+    private var setUpHarnessAction: SetUpHarnessAction {
+        SetUpHarnessAction(window: windowID) {
+            guard let selectedOrg else { return }
+            harnessSetupOrg = selectedOrg
+            isSettingUpHarness = true
+        }
+    }
+
+    /// Set Up Harness, by itself, for an org with no project: once a launch,
+    /// until Not Now.
+    private func offerHarnessSetup() {
+        guard !NetworkGate.isSealed, let selectedOrg, !isSettingUpHarness,
+              rootConfigs.baseConfig(for: selectedOrg).repoProjects.isEmpty,
+              HarnessSetupPrompt.claim(selectedOrg) else { return }
+        harnessSetupOrg = selectedOrg
+        isSettingUpHarness = true
+    }
+
+    /// Closed with no project: it doesn't open by itself for the org again.
+    private func putOffHarnessSetup() {
+        guard let org = harnessSetupOrg, rootConfigs.baseConfig(for: org).repoProjects.isEmpty else { return }
+        HarnessSetupPrompt.putOff(org)
     }
 
     /// Takes the request this window was opened for, if any: its org, then
@@ -1610,6 +1648,7 @@ private struct SidebarFooter: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(OrgConfigStore.self) private var configs
     @Environment(\.openURL) private var openURL
+    @Environment(\.setUpHarness) private var setUpHarness
     @Binding var selectedOrg: String?
     @Binding var workspace: String?
     @Binding var selection: SidebarItem?
@@ -1629,6 +1668,15 @@ private struct SidebarFooter: View {
                     accountMenu
                 }
             } else {
+                // No project yet: where the project menu goes, a way to one.
+                if current != nil, let setUpHarness {
+                    Button { setUpHarness() } label: {
+                        Label("Set Up Harness", systemImage: "text.book.closed")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .controlSize(.large)
+                    .help("Create a harness for a project, or link one you have")
+                }
                 HStack(spacing: 8) {
                     orgMenu
                     if let current {
