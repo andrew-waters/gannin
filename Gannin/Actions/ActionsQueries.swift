@@ -264,7 +264,14 @@ private struct RawRunsPage: Decodable {
 
 private struct RawRun: Decodable {
     struct Actor: Decodable { let login: String }
-    struct PullRequest: Decodable { let number: Int }
+    struct PullRequest: Decodable {
+        struct Base: Decodable {
+            struct Repo: Decodable { let url: String }
+            let repo: Repo
+        }
+        let number: Int
+        let base: Base?
+    }
 
     let id: Int
     let name: String?
@@ -305,7 +312,11 @@ private struct RawRun: Decodable {
             updatedAt: updatedAt,
             actor: actor?.login,
             url: htmlUrl,
-            pullRequests: pullRequests.map { $0.compactMap(\.value?.number) }
+            // Only PRs into this repo: GitHub also lists other repos' PRs
+            // whose head is this branch, such as an upstream's from a fork.
+            pullRequests: pullRequests.map { prs in
+                prs.compactMap(\.value).filter { $0.base?.repo.url.lowercased().hasSuffix("/repos/\(repo.lowercased())") ?? false }.map(\.number)
+            }
         )
     }
 }

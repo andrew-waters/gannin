@@ -467,6 +467,9 @@ enum Scorecard {
         /// matched to PRs.
         var defaultBranches: [String: String] = [:]
         var issues: IssueHistory?
+        /// Match runs to PRs, only when a goal measures CI time per PR: it
+        /// goes over every stored run.
+        var matchesPullRequests = false
     }
 
     struct Data {
@@ -519,12 +522,13 @@ enum Scorecard {
             let runs = sources.runs?.filter { !config.repoExclusion.contains($0.repo) && $0.createdAt >= earliest }
             self.runs = runs
             runsFrom = sources.runs?.map(\.createdAt).min()
-            pullRequestCI = sources.runs.map { runs in
-                PullRequestCI.all(
+            pullRequestCI = sources.runs.flatMap { runs in
+                guard sources.matchesPullRequests else { return nil }
+                return PullRequestCI.all(
                     runs: runs, merged: history?.pullRequests.values.map { $0 } ?? [], open: sources.openPullRequests,
                     defaultBranches: sources.defaultBranches, config: config
                 )
-                .filter { !$0.isBot && !config.excludes($0.author ?? "") }
+                .filter { PullRequestCI.isPerson($0, config: config) }
             }
             let workflow = config.workflow
             issues = sources.issues.map { history in
@@ -811,7 +815,8 @@ struct ScorecardView: View {
                     openPullRequests: orgs.snapshot(for: org)?.openPullRequests ?? [],
                     runs: actionsStore.history(for: org).map { Array($0.runs.values) },
                     defaultBranches: actionsStore.history(for: org)?.repositories.compactMapValues(\.defaultBranch) ?? [:],
-                    issues: issueStore.history(for: org)
+                    issues: issueStore.history(for: org),
+                    matchesPullRequests: measurables.contains { $0.metric == .ciTimePerPR }
                 )
                 let data = Scorecard.Data(history: history, periods: periods, resolution: resolution, config: config, hidden: hidden.keys, teams: teams, sources: sources)
                 // The tiles' last whole period, what it's compared with and

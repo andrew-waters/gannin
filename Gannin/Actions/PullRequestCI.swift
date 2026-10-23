@@ -54,6 +54,13 @@ struct PullRequestCI: Identifiable, Hashable {
     var mergedOnCI: Bool { mergeAfterCI.map { $0 >= 0 && $0 <= Self.mergedOnCIWithin } ?? false }
     static let mergedOnCIWithin: TimeInterval = 15 * 60
 
+    /// Counted as someone's: not excluded, and not a bot unless it's one
+    /// brought back in the org's settings.
+    static func isPerson(_ pr: PullRequestCI, config: OrgConfig) -> Bool {
+        let author = pr.author ?? ""
+        return !config.excludes(author) && (!pr.isBot || config.includedAuthors.contains(author))
+    }
+
     /// Lines changed at or under which a PR counts as small.
     static let smallLines = 20
 
@@ -80,11 +87,11 @@ struct PullRequestCI: Identifiable, Hashable {
 
         var matched: [String: [WorkflowRun]] = [:]
         for run in runs where events.contains(run.event) && run.outcome != .skipped {
+            guard let branch = run.branch, branch != defaultBranches[run.repo] else { continue }
             if let number = run.pullRequests?.first {
                 matched[id(repo: run.repo, number: number), default: []].append(run)
                 continue
             }
-            guard let branch = run.branch, branch != defaultBranches[run.repo] else { continue }
             let key = "\(run.repo) \(branch)"
             // A minute's grace for a run created as the PR merged.
             if let pr = byBranch[key]?.first(where: { $0.mergedAt.addingTimeInterval(60) >= run.createdAt }) {
@@ -111,15 +118,16 @@ struct PullRequestCI: Identifiable, Hashable {
         let merged = merged.filter { !config.repoExclusion.contains($0.repo) }
         let mergedByID = Dictionary(merged.map { (id(repo: $0.repo, number: $0.number), $0) }, uniquingKeysWith: { first, _ in first })
         let openByID = Dictionary(open.map { (id(repo: $0.repo, number: $0.number), $0) }, uniquingKeysWith: { first, _ in first })
-        return match(runs, merged: merged, defaultBranches: defaultBranches).map { key, runs in
-            build(runs: runs, merged: mergedByID[key], open: openByID[key])
+        return match(runs, merged: merged, defaultBranches: defaultBranches).compactMap { key, runs in
+            guard let number = key.split(separator: "#").last.flatMap({ Int($0) }) else { return nil }
+            return build(number: number, runs: runs, merged: mergedByID[key], open: openByID[key])
         }
     }
 
-    static func build(runs: [WorkflowRun], merged: MetricPullRequest?, open: PullRequest?) -> PullRequestCI {
+    /// `number` is the PR's, as `match` keyed its runs.
+    static func build(number: Int, runs: [WorkflowRun], merged: MetricPullRequest?, open: PullRequest?) -> PullRequestCI {
         let runs = runs.sorted { $0.createdAt > $1.createdAt }
         let first = runs[0]
-        let number = merged?.number ?? open?.number ?? first.pullRequests?.first ?? 0
         let latest = first.headSha
         func time(_ runs: some Sequence<WorkflowRun>) -> TimeInterval { runs.reduce(0) { $0 + ($1.duration ?? 0) } }
 
@@ -129,9 +137,11 @@ struct PullRequestCI: Identifiable, Hashable {
         // Who pushed most often to it, when the PR itself isn't known.
         let actors = Dictionary(grouping: runs.compactMap(\.actor), by: { $0 }).max { ($0.value.count, $1.key) < ($1.value.count, $0.key) }?.key
         let author = merged?.author?.login ?? open?.author?.login ?? actors
+        // Run actors only when the PR isn't known: automation can push to a
+        // person's branch.
         let isBot = merged?.authorIsBot == true
             || author.map(OrgConfig.looksLikeBot) == true
-            || runs.allSatisfy { $0.actor.map(OrgConfig.looksLikeBot) ?? false }
+            || (merged == nil && open == nil && runs.allSatisfy { $0.actor.map(OrgConfig.looksLikeBot) ?? false })
 
         var finalWait: TimeInterval?
         var mergeAfterCI: TimeInterval?
@@ -311,8 +321,8 @@ struct PullRequestCIMetrics {
         let end = interval.end
         let defaultBranches = history.repositories.compactMapValues(\.defaultBranch)
         let all = PullRequestCI.all(runs: history.runs.values, merged: merged, open: open, defaultBranches: defaultBranches, config: config, before: end)
-        func isPerson(_ pr: PullRequestCI) -> Bool { !pr.isBot && !config.excludes(pr.author ?? "") }
-        func isBot(_ pr: PullRequestCI) -> Bool { pr.isBot && !(pr.author.map(config.includedAuthors.contains) ?? false) }
+        func isPerson(_ pr: PullRequestCI) -> Bool { PullRequestCI.isPerson(pr, config: config) }
+        func isBot(_ pr: PullRequestCI) -> Bool { pr.isBot && !isPerson(pr) }
         let inWindow = all.filter { $0.lastRunAt >= interval.start }
         let before = all.filter { $0.lastRunAt >= previousInterval.start && $0.lastRunAt < previousInterval.end && isPerson($0) }
 
@@ -391,7 +401,8 @@ struct PullRequestCIMetrics {
         let matchedIDs = Set(all.flatMap(\.runs).map(\.id))
         unmatchedTime = history.runs.values
             .filter {
-                $0.event.hasPrefix("pull_request") && $0.createdAt >= interval.start && $0.createdAt < end
+                ($0.event == "pull_request" || $0.event == "pull_request_target") && $0.outcome != .skipped
+                    && $0.createdAt >= interval.start && $0.createdAt < end
                     && !config.repoExclusion.contains($0.repo) && !matchedIDs.contains($0.id)
             }
             .reduce(0) { $0 + ($1.duration ?? 0) }

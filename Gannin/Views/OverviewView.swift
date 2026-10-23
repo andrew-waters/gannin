@@ -90,7 +90,8 @@ struct OverviewView: View {
             openPullRequests: orgs.snapshot(for: org)?.openPullRequests ?? [],
             runs: actionsStore.history(for: org).map { Array($0.runs.values) },
             defaultBranches: actionsStore.history(for: org)?.repositories.compactMapValues(\.defaultBranch) ?? [:],
-            issues: issueStore.history(for: org)
+            issues: issueStore.history(for: org),
+            matchesPullRequests: configs.config(for: org).measurables.contains { $0.metric == .ciTimePerPR }
         )
     }
 

@@ -485,6 +485,8 @@ struct ActionsMetrics {
                 guard let finished = run.finishedAt,
                       let next = sorted[(index + 1)...].first(where: { $0.headSha != run.headSha }),
                       next.createdAt < finished else { continue }
+                // Re-run after the newer push: started again, not left running.
+                if let started = run.startedAt, started >= next.createdAt { continue }
                 if run.outcome == .cancelled {
                     cancelled += 1
                 } else {
