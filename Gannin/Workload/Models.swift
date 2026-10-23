@@ -59,6 +59,43 @@ struct LinkedItem: Codable, Hashable, Identifiable {
     let state: String
 }
 
+/// One reviewer on a PR and where their review stands.
+struct ReviewerEntry: Hashable, Identifiable {
+    enum Standing: Hashable {
+        /// Asked, and hasn't reviewed since.
+        case waiting
+        case approved
+        case changesRequested
+        case commented
+        /// A review in any other state (dismissed and the like).
+        case reviewed
+
+        init(reviewState: String?) {
+            switch reviewState {
+            case "APPROVED": self = .approved
+            case "CHANGES_REQUESTED": self = .changesRequested
+            case "COMMENTED": self = .commented
+            default: self = .reviewed
+            }
+        }
+
+        var words: String {
+            switch self {
+            case .waiting: "review requested"
+            case .approved: "approved"
+            case .changesRequested: "changes requested"
+            case .commented: "commented"
+            case .reviewed: "reviewed"
+            }
+        }
+    }
+
+    let person: Person
+    let standing: Standing
+
+    var id: String { person.login }
+}
+
 struct PullRequest: Codable, Hashable, Identifiable {
     enum ReviewState: String, Codable {
         case approved = "APPROVED"
@@ -101,8 +138,23 @@ struct PullRequest: Codable, Hashable, Identifiable {
     /// The latest of the author's own reviews (thread replies arrive as
     /// `COMMENTED` reviews) and conversation comments.
     var authorRepliedAt: Date? = nil
+    /// Teams asked to review, as `org/slug`; nil in snapshots cached before
+    /// team requests were fetched.
+    var requestedTeams: [String]? = nil
 
     var isMerged: Bool { mergedAt != nil }
+
+    /// Everyone asked to review it or who has, once each: those asked (again)
+    /// and still waiting first, then each reviewer's latest review.
+    var reviewerEntries: [ReviewerEntry] {
+        let requested = Set(requestedReviewers.map(\.login))
+        var seen: Set<String> = []
+        let waiting = requestedReviewers.filter { seen.insert($0.login).inserted }
+            .map { ReviewerEntry(person: $0, standing: .waiting) }
+        let reviewed = reviewers.filter { !requested.contains($0.login) && seen.insert($0.login).inserted }
+            .map { ReviewerEntry(person: $0, standing: ReviewerEntry.Standing(reviewState: reviewStates?[$0.login])) }
+        return waiting + reviewed
+    }
 
     /// `reviewStates` with automation accounts (coderabbitai and the like)
     /// left out, so their reviews don't read as a teammate's.

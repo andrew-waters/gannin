@@ -33,6 +33,88 @@ struct AvatarStack: View {
     }
 }
 
+/// A PR's reviewers, each with a badge for where their review stands, and
+/// the teams asked to review; "None" when nobody has been asked or reviewed.
+struct ReviewerStack: View {
+    let pr: PullRequest
+    var size: CGFloat = 18
+    /// How many faces to show before "+n".
+    var limit = 4
+
+    var body: some View {
+        let entries = pr.reviewerEntries
+        let teams = pr.requestedTeams ?? []
+        let waiting = entries.filter { $0.standing == .waiting }
+        let reviewed = entries.filter { $0.standing != .waiting }
+        // Those still to act first: people asked, then teams asked.
+        let shownWaiting = Array(waiting.prefix(limit))
+        let shownTeams = Array(teams.prefix(limit - shownWaiting.count))
+        let shownReviewed = Array(reviewed.prefix(limit - shownWaiting.count - shownTeams.count))
+        let hidden = entries.count + teams.count - shownWaiting.count - shownTeams.count - shownReviewed.count
+        if entries.isEmpty, teams.isEmpty {
+            Text("None").foregroundStyle(.tertiary)
+        } else {
+            HStack(spacing: 3) {
+                ForEach(shownWaiting) { face($0) }
+                ForEach(shownTeams, id: \.self) { _ in
+                    badged(Image(systemName: "person.2.circle.fill").resizable().foregroundStyle(.secondary), .waiting)
+                }
+                ForEach(shownReviewed) { face($0) }
+                if hidden > 0 {
+                    Text(verbatim: "+\(hidden)").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .help(Self.summary(entries: entries, teams: teams))
+        }
+    }
+
+    private func face(_ entry: ReviewerEntry) -> some View {
+        badged(Avatar(url: entry.person.avatarUrl, size: size), entry.standing)
+    }
+
+    private func badged(_ face: some View, _ standing: ReviewerEntry.Standing) -> some View {
+        face
+            .frame(width: size, height: size)
+            .overlay(alignment: .bottomTrailing) {
+                if let symbol = standing.symbol {
+                    Image(systemName: symbol)
+                        .font(.system(size: size * 0.45, weight: .bold))
+                        .foregroundStyle(standing.color)
+                        .background(Circle().fill(.background).padding(-1))
+                        .offset(x: 2, y: 2)
+                }
+            }
+    }
+
+    /// "Alice: review requested, @acme/backend: review requested, Bob: approved".
+    static func summary(entries: [ReviewerEntry], teams: [String]) -> String {
+        let waiting = entries.filter { $0.standing == .waiting }.map { "\($0.person.displayName): \($0.standing.words)" }
+        let asked = teams.map { "@\($0): \(ReviewerEntry.Standing.waiting.words)" }
+        let reviewed = entries.filter { $0.standing != .waiting }.map { "\($0.person.displayName): \($0.standing.words)" }
+        return (waiting + asked + reviewed).joined(separator: ", ")
+    }
+}
+
+extension ReviewerEntry.Standing {
+    var symbol: String? {
+        switch self {
+        case .waiting: "clock"
+        case .approved: "checkmark.circle.fill"
+        case .changesRequested: "exclamationmark.circle.fill"
+        case .commented: "text.bubble"
+        case .reviewed: nil
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .approved: .green
+        case .changesRequested: .orange
+        case .waiting, .commented, .reviewed: .secondary
+        }
+    }
+}
+
 struct CountBadge: View {
     let count: Int
     let systemImage: String

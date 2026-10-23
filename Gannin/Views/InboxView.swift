@@ -240,8 +240,12 @@ struct InboxView: View {
             .width(min: 50, ideal: 70)
             .customizationID("number")
             TableColumn("Who", value: \.whoSort) { row in
-                AvatarStack(people: row.people)
-                    .help(row.people.map(\.displayName).joined(separator: ", "))
+                if let pr = row.reviewersOf {
+                    ReviewerStack(pr: pr)
+                } else {
+                    AvatarStack(people: row.people)
+                        .help(row.people.map(\.displayName).joined(separator: ", "))
+                }
             }
             .width(min: 50, ideal: 70)
             .customizationID("who")
@@ -372,7 +376,7 @@ struct InboxView: View {
                 people: pr.requestedReviewers + pr.reviewers.filter { reviewer in !pr.requestedReviewers.contains { $0.login == reviewer.login } },
                 checks: checks(pr), state: standing.text, stateColor: standing.color,
                 tint: standing.color, since: pr.updatedAt, sinceLabel: "Last updated", size: (pr.additions, pr.deletions),
-                page: .pullRequest(pr.id)
+                page: .pullRequest(pr.id), reviewersOf: pr
             )
         })) }
         if shown.contains(.issues) { sections.append((InboxSection.issues.rawValue, inbox.issues.map { item in
@@ -501,6 +505,8 @@ struct InboxRow: Identifiable {
     let size: (added: Int, removed: Int)?
     let page: DetailSelection?
     var session: UUID? = nil
+    /// Set on a PR row, so Who marks who's been asked and who's reviewed.
+    var reviewersOf: PullRequest? = nil
     /// The review to finish from the row's menu: set once its PR has merged.
     var finishableReview: UUID? = nil
     var flags: [IssueSignals.Flag] = []
@@ -656,7 +662,7 @@ struct Inbox {
         default:
             if Workload.isStale(pr) { return ("Stale", .orange) }
             if pr.hasBeenReviewed { return ("Commented", ChartPalette.blue) }
-            let waiting = pr.requestedReviewers.map(\.displayName)
+            let waiting = pr.requestedReviewers.map(\.displayName) + (pr.requestedTeams ?? []).map { "@\($0)" }
             if waiting.isEmpty, !needsReview { return ("No review needed", .secondary) }
             return (waiting.isEmpty ? "No reviewer" : "Waiting on \(waiting.joined(separator: ", "))", waiting.isEmpty ? .orange : ChartPalette.blue)
         }

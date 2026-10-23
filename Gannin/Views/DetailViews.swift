@@ -382,38 +382,45 @@ struct PullRequestColumn: View {
 }
 
 /// Everyone asked to review a PR or who has, once each, marked with where
-/// their review stands: asked (again) and waiting, or their latest review.
+/// their review stands: asked (again) and waiting, or their latest review;
+/// then teams asked.
 private struct ReviewersGridRow: View {
     let pr: PullRequest
     let workload: Workload
     @Binding var selection: DetailSelection?
 
     var body: some View {
-        let requested = Set(pr.requestedReviewers.map(\.login))
-        let people = pr.reviewers.filter { !requested.contains($0.login) } + pr.requestedReviewers
+        let entries = pr.reviewerEntries
+        let teams = pr.requestedTeams ?? []
         GridRow {
             Text("Reviewers").foregroundStyle(.secondary)
             HStack(spacing: 10) {
-                if people.isEmpty {
+                if entries.isEmpty, teams.isEmpty {
                     Text("None").foregroundStyle(.tertiary)
                 } else {
                     HStack(spacing: 10) {
-                        ForEach(people) { person in
-                            let mark = Self.mark(requested.contains(person.login) ? nil : pr.reviewStates?[person.login],
-                                                 waiting: requested.contains(person.login))
+                        ForEach(entries) { entry in
                             Button {
-                                selection = .person(person.login)
+                                selection = .person(entry.person.login)
                             } label: {
                                 HStack(spacing: 4) {
-                                    Avatar(url: person.avatarUrl, size: 18)
-                                    Text(person.login)
-                                    if let mark {
-                                        Image(systemName: mark.symbol).foregroundStyle(mark.color)
+                                    Avatar(url: entry.person.avatarUrl, size: 18)
+                                    Text(entry.person.login)
+                                    if let symbol = entry.standing.symbol {
+                                        Image(systemName: symbol).foregroundStyle(entry.standing.color)
                                     }
                                 }
                             }
                             .buttonStyle(.plain)
-                            .help("\(person.login): \(mark?.words ?? "reviewed")")
+                            .help("\(entry.person.login): \(entry.standing.words)")
+                        }
+                        ForEach(teams, id: \.self) { team in
+                            HStack(spacing: 4) {
+                                Image(systemName: "person.2.circle.fill").foregroundStyle(.secondary)
+                                Text(verbatim: "@\(team)")
+                                Image(systemName: "clock").foregroundStyle(.secondary)
+                            }
+                            .help("@\(team): \(ReviewerEntry.Standing.waiting.words)")
                         }
                     }
                 }
@@ -421,15 +428,6 @@ private struct ReviewersGridRow: View {
                     ReviewerPickerButton(pr: pr, org: workload.snapshot.orgLogin, members: workload.snapshot.members)
                 }
             }
-        }
-    }
-
-    private static func mark(_ state: String?, waiting: Bool) -> (symbol: String, color: Color, words: String)? {
-        if waiting { return ("clock", .secondary, "review requested") }
-        switch state.flatMap(PullRequest.ReviewState.init(rawValue:)) {
-        case .approved: return ("checkmark.circle.fill", .green, "approved")
-        case .changesRequested: return ("exclamationmark.circle.fill", .orange, "changes requested")
-        default: return state == "COMMENTED" ? ("text.bubble", .secondary, "commented") : nil
         }
     }
 }

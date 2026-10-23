@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Changed
+- The Reviewers column on Pull Requests, and Who on Your pull requests in the Inbox, mark each reviewer as asked and waiting, approved, changes requested or commented, show teams asked to review, and say None when nobody has been asked or reviewed
 - An automatic review Claude would approve is no longer posted by itself, even with findings, while the PR is ready for your approval: it waits in Ready for your approval, and your approval posts its comments once, as one review
 - Planning sessions ask Claude for a few larger tasks, by default one per repository that needs changing, instead of a task per step, so Agree makes fewer sub-issues
 

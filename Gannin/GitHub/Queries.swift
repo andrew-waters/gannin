@@ -830,7 +830,11 @@ private struct RawLinked: Decodable {
 }
 
 private struct RawPullRequest: Decodable {
-    struct ReviewRequest: Decodable { let requestedReviewer: RawActor? }
+    struct ReviewRequest: Decodable {
+        /// A user (login) or a team (combinedSlug).
+        struct Reviewer: Decodable { let login: String?; let avatarUrl: URL?; let combinedSlug: String? }
+        let requestedReviewer: Reviewer?
+    }
     struct RequestedEvent: Decodable {
         let createdAt: Date?
         let requestedReviewer: RawActor?
@@ -877,7 +881,7 @@ private struct RawPullRequest: Decodable {
           repository { nameWithOwner }
           author { login avatarUrl }
           assignees(first: 10) { nodes { login avatarUrl } }
-          reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login avatarUrl } } } }
+          reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login avatarUrl } ... on Team { combinedSlug } } } }
           latestReviews(first: 10) { nodes { state submittedAt author { login avatarUrl } } }
           closingIssuesReferences(first: 10) { nodes { \(RawLinked.fields) } }
           timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) {
@@ -920,7 +924,9 @@ private struct RawPullRequest: Decodable {
             deletions: deletions,
             changedFiles: changedFiles,
             assignees: assignees.nodes.compactMap(\.person),
-            requestedReviewers: (reviewRequests?.nodes ?? []).compactMap { $0.requestedReviewer?.person },
+            requestedReviewers: (reviewRequests?.nodes ?? []).compactMap { request in
+                request.requestedReviewer?.login.map { Person(login: $0, name: nil, avatarUrl: request.requestedReviewer?.avatarUrl) }
+            },
             reviewRequestedAt: requestedAt,
             reviewers: (latestReviews?.nodes ?? []).compactMap { $0.author?.person },
             linkedIssues: (closingIssuesReferences?.nodes ?? []).map(\.model),
@@ -938,7 +944,8 @@ private struct RawPullRequest: Decodable {
                 uniquingKeysWith: { first, _ in first }
             ),
             lastCommitAt: commits?.nodes.first?.commit.committedDate,
-            authorRepliedAt: authorRepliedAt
+            authorRepliedAt: authorRepliedAt,
+            requestedTeams: (reviewRequests?.nodes ?? []).compactMap { $0.requestedReviewer?.combinedSlug }
         )
     }
 }
