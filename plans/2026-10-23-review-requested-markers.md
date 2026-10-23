@@ -35,4 +35,4 @@ weren't fetched: `reviewRequests` read `... on User` only.
       and lists teams
 - [x] Tests for `reviewerEntries` and the No Reviewer filter
 - [x] Docs (Issues and Pull Requests, App tour), CHANGELOG
-- [ ] Try it in the app: a PR with a team asked, one with someone asked again, one with nobody
+- [x] Try it in the app: a PR with a team asked, one with someone asked again, one with nobody
