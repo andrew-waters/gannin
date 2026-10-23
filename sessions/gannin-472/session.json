@@ -3,7 +3,7 @@
   "branch" : "472-planning-only-suggests-repos-that-accept",
   "issue" : "andrew-waters/gannin#472",
   "pullRequests" : [
-
+    "https://github.com/andrew-waters/gannin/pull/486"
   ],
   "repos" : [
 
