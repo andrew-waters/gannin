@@ -11,6 +11,7 @@
       "line" : 206,
       "path" : "Gannin/Sessions/PlanningWorkspace.swift",
       "posted_at" : "2026-10-23T11:17:35Z",
+      "resolved_at" : "2026-10-23T11:29:06Z",
       "severity" : "minor"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 206,
       "path" : "Gannin/Sessions/PlanningWorkspace.swift",
       "posted_at" : "2026-10-23T11:17:35Z",
+      "resolved_at" : "2026-10-23T11:29:06Z",
       "severity" : "minor"
     },
     {
@@ -31,6 +33,7 @@
       "line" : 206,
       "path" : "Gannin/Sessions/PlanningWorkspace.swift",
       "posted_at" : "2026-10-23T11:17:35Z",
+      "resolved_at" : "2026-10-23T11:29:06Z",
       "severity" : "nit"
     }
   ],
@@ -42,6 +45,6 @@
   "started_at" : "2026-10-23T11:16:37Z",
   "state" : "OPEN",
   "title" : "Ask planning sessions for a few larger tasks instead of one per step",
-  "updated_at" : "2026-10-23T11:17:36Z",
-  "verdict" : "comment"
+  "updated_at" : "2026-10-23T11:29:06Z",
+  "verdict" : "approve"
 }
