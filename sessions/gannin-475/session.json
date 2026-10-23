@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "475-option-to-exclude-draft-pull-requests",
+  "finishedAt" : "2026-10-23T13:52:18Z",
   "issue" : "andrew-waters/gannin#475",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/477"
