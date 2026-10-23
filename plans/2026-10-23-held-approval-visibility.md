@@ -11,7 +11,7 @@ owner: andrew-waters
 
 ## Approach
 
-`verdict` stays Claude's and `event` stays what reached GitHub; a new `approvalHeld` in the record joins them, so a reader doesn't have to compare the two. It is derived in `ReviewRecord.updated` (verdict is approve, event isn't `APPROVE`, not dismissed) rather than set by `postAutomatically`, so every write path, including a merge noted later, agrees.
+`verdict` stays Claude's and `event` stays what reached GitHub; a new `approvalHeld` in the record joins them, so a reader doesn't have to compare the two. It is derived in `ReviewRecord.updated` (verdict is approve, event isn't `APPROVE`, not dismissed, and the PR isn't `MERGED` or `CLOSED`, which is read after the outcome is applied) rather than set by `postAutomatically`, so every write path, including a merge noted later, agrees.
 
 The summary is Claude's text and can't be reliably rewritten, so the posted comment gets a fixed line after it, and the reviewer prompt tells Claude not to write that it approves.
 
