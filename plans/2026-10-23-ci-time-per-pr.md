@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: Show each PR's CI time on the CI page, with the median per PR, who uses it, what drives it and how it follows the size of change, plus a Scorecard goal for it.
 issues: [andrew-waters/gannin#476]
 domains: [metrics, ci]
@@ -43,4 +43,4 @@ PRs need their head branch to be matched.
 - [x] Superseded runs in Needs attention
 - [x] CI time per PR as a Scorecard goal
 - [x] Tests, docs (CI guide, glossary, Scorecards), rule, CHANGELOG
-- [ ] Try it in the app against a real org
+- [x] Try it in the app against a real org
