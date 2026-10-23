@@ -9,9 +9,6 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
-### Changed
-- Work on This tells Claude to ask its questions with the AskUserQuestion tool, so they appear as a question card instead of plain text in the terminal
-
 ### Added
 - Hide drafts on the Pull Requests page's bar leaves draft pull requests out of that window's list, without changing counts elsewhere
 - CI time per pull request on Delivery › CI: the median and p75 per PR against the period before, how much went on replaced commits and failures, the wait on a PR's final CI, small PRs that run the full suite, and bots' share
@@ -21,6 +18,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - CI time per PR as a Scorecard goal, expanding per author
 
 ### Changed
+- Work on This tells Claude to ask its questions with the AskUserQuestion tool, so they appear as a question card instead of plain text in the terminal
 - The Reviewers column on Pull Requests, and Who on Your pull requests in the Inbox, mark each reviewer as asked and waiting, approved, changes requested or commented, show teams asked to review, and say None when nobody has been asked or reviewed
 - An automatic review Claude would approve is no longer posted by itself, even with findings, while the PR is ready for your approval: it waits in Ready for your approval, and your approval posts its comments once, as one review
 - Planning sessions ask Claude for a few larger tasks, by default one per repository that needs changing, instead of a task per step, so Agree makes fewer sub-issues
