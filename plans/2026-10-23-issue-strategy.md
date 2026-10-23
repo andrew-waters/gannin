@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: Planning's Agree never offers a repo with issues turned off, and files issues by an org-wide issue strategy kept in the home harness, either one central repo or each in its own repo collected on a project.
 issues: [andrew-waters/gannin#472]
 domains: [planning, issues, harness]
