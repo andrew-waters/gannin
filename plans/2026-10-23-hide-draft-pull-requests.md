@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: A Hide drafts checkbox on the Pull Requests page's bar, kept per window, that leaves draft PRs out of that list only.
 issues: [andrew-waters/gannin#475]
 domains: [pull-requests]
