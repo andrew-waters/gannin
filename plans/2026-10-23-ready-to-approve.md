@@ -36,4 +36,4 @@ off-diff findings again (the duplicate check covers inline comments only).
 - [x] Show the held finding count in the Inbox row and the Dashboard's Act now
 - [x] Tests for `holdsForApproval` and `heldFindings`
 - [x] Docs (Auto review, Settings › General), rule, CHANGELOG
-- [ ] Try it in the app: an automatic review that would approve with comments, then approve it
+- [x] Try it in the app: an automatic review that would approve with comments, then approve it
