@@ -24,6 +24,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Fixed
 - Check for Changes on a review's tab also refreshes the PR's checks shown on its card in the sessions grid
+- When Junie's reply has no list of findings, it is asked once more for the list, in the same session, instead of the review failing straight away
 - A Junie review whose list of findings ends without the closing code fence is read instead of reported as having no list
 
 ## [0.0.4] - 2026-10-22
