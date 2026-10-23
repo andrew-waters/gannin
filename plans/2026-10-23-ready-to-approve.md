@@ -31,7 +31,8 @@ off-diff findings again (the duplicate check covers inline comments only).
 
 ## Tasks
 
-- [x] Hold every approve verdict in `postAutomatically`, noting how many findings are held
+- [x] Hold an approve verdict in `postAutomatically` while it's ready for approval (or has nothing to say),
+      noting how many findings are held
 - [x] Show the held finding count in the Inbox row and the Dashboard's Act now
 - [x] Tests for `holdsForApproval` and `heldFindings`
 - [x] Docs (Auto review, Settings › General), rule, CHANGELOG
