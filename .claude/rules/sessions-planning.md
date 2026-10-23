@@ -7,6 +7,7 @@ paths:
 
 - The current stage is the `phase` claude writes into `planning.json` (`PlanningState.phase`), not something Gannin tracks, so claude can move stages itself. Read it leniently; never crash or drop state on an unknown value.
 - `.worktrees/<branch>/planning.json` is snake case. Update `PlanningState.instructions` (told to claude after the team's guidance) whenever its shape changes.
+- Agree files issues by the org's `IssueStrategy` (`OrgConfig.filing`): under a central repo a task's `repo` is where its work is, not where its issue goes, so keep it for the plan's `touches` and never overwrite it with the central repo. The issues-off lookup is advisory; a failed one filters nothing.
 - Every task must name the criteria it `satisfies`; Agree must surface criteria no task covers (`PlanningState.uncovered`).
 - Moving back reopens a stage and marks later ones Recheck; moving forward approves the stages passed. Send claude the reason when going back.
 - Copy context documents into `.worktrees/<branch>/docs/` before claude starts (`SessionStore.copyDocuments`).
@@ -16,4 +17,4 @@ paths:
 - An ended plan (`archivedAt` set, `SessionStore.endPlan`) keeps its session and worktree, since `planning.json` is re-read from it. Never start claude when its workspace opens (`.onAppear`).
 
 ## Testing
-- `EndPlanTests` covers ending a plan. No tests cover `PlanningState`, stages or Agree. Add tests for lenient decoding if you change it.
+- `EndPlanTests` covers ending a plan; `IssueStrategyTests` covers the strategy's file, Agree's repo choices and the instructions' repo rule. Nothing else covers `PlanningState`, stages or Agree. Add tests for lenient decoding if you change it.

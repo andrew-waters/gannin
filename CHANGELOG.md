@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Added
+- Org settings › Issues › Where issues go: choose whether the org files every issue in one central repo or each in its own repo collected on a project. It's kept in the home harness (`.gannin/issue-strategy.json`) for the whole team, and planning follows it. A Mac on an older Gannin ignores it
 - Pull Requests filter menus end with Hide These, which hides the values ticked (a repository, an author and so on) instead of showing only them
 - Hide reviewed on the Pull Requests page's bar leaves out pull requests you've reviewed and haven't been asked to review again
 - A Checks column and menu on the Pull Requests page show and narrow the list by passing, failing, running or no checks
@@ -21,6 +22,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - CI time per PR as a Scorecard goal, expanding per author
 
 ### Changed
+- Planning's Agree no longer offers repos with issues turned off, and moves a task that named one to a repo that accepts issues
 - Work on This tells Claude to ask its questions with the AskUserQuestion tool, so they appear as a question card instead of plain text in the terminal
 - The Reviewers column on Pull Requests, and Who on Your pull requests in the Inbox, mark each reviewer as asked and waiting, approved, changes requested or commented, show teams asked to review, and say None when nobody has been asked or reviewed
 - An automatic review Claude would approve is no longer posted by itself, even with findings, while the PR is ready for your approval: it waits in Ready for your approval, and your approval posts its comments once, as one review

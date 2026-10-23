@@ -36,6 +36,7 @@ Where each kind of setting is kept:
 | What counts as R&D, how its time is found and issues marked by hand ([R&D](/docs/settings/org/rd-time/)) | Harness, `.gannin/rnd.json` |
 | Accounting year and periods ([Working Time](/docs/settings/org/working-time/#accounting-periods)) | Home harness, `.gannin/accounting.json` |
 | Issue workflow ([Issues](/docs/settings/org/issues/)) | Harness, `.gannin/workflow.json` |
+| Where issues go ([Issues](/docs/settings/org/issues/#where-issues-go)) | Home's harness, `.gannin/issue-strategy.json` |
 | Goals ([Goals](/docs/settings/org/goals/)) | Harness, `.gannin/goals.json` |
 | Scorecard, recap cadence, committed date field and notes from the field | Harness, `.gannin/scorecard.json`, `recap.json`, `prioritisation.json` and `field-notes.json` |
 | Repos and people left out, repos without review, repos that need the Mac ([Repositories](/docs/settings/org/repositories/), [People](/docs/settings/org/people/)) | Home's harness, `.gannin/exclusions.json` |

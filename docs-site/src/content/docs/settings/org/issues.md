@@ -1,11 +1,25 @@
 ---
 title: Issues settings
-description: Every option in Org settings › Issues, which says how issues move through your board so cycle time can be worked out.
+description: Every option in Org settings › Issues, which says where the org files its issues and how they move through your board so cycle time can be worked out.
 sidebar:
   order: 5
 ---
 
-Org settings › Issues tells Gannin which project board, and which of its statuses, mean an issue is in progress. That is what issue cycle time is built from. Open it with the cog beside the account menu in the sidebar's footer, then pick Issues in the toolbar.
+Org settings › Issues tells Gannin where the org files its issues, and which project board, and which of its statuses, mean an issue is in progress. That is what issue cycle time is built from. Open it with the cog beside the account menu in the sidebar's footer, then pick Issues in the toolbar.
+
+## Where issues go
+
+How the org keeps its issues, which [planning](/docs/agents/planning/#agree) follows when it files a plan's tasks. This is an org-wide team file: the home project's harness keeps it as `.gannin/issue-strategy.json`, whichever project your window is in, so everyone working on the org reads the same choice. Changes wait in the sidebar ("N changes to commit") until you review and commit them. An org with no harness keeps it on this Mac.
+
+| Option | Default | What it changes | Kept |
+| --- | --- | --- | --- |
+| Strategy | Per repo, collected on a project | **Per repo, collected on a project**: each issue goes in the repo its work is in, and repos with issues turned off, or archived, are never offered. **Central repo**: every issue goes in one repo (a `product` repo, say), whichever repo the work is in, and the issue says which repo that is. | Home harness (`.gannin/issue-strategy.json`) |
+| Repository | None picked | With Central repo, the repo every issue goes in. If it has issues turned off or is archived, a warning says so here and in planning's Agree. | Home harness (`.gannin/issue-strategy.json`) |
+| Project | The Issue workflow board | With Per repo, the board each new issue is added to. The Issue workflow board is the Board picked below; with Any board there, issues aren't added to one. | Home harness (`.gannin/issue-strategy.json`) |
+
+Under Central repo, planning still adds each issue to the Issue workflow board, when one is picked.
+
+## Issue workflow settings
 
 Cycle time is the time an issue spends in the statuses you tick. The clock stops when it moves to any other status (Done, or back to Backlog) or is closed, and starts again if it comes back. This is a team file, and it belongs to the project your window is working in: a project's harness keeps it as `.gannin/workflow.json`, and changes wait in the sidebar ("N changes to commit") until you review and commit them. An org with no harness keeps it on this Mac.
 

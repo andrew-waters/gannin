@@ -121,6 +121,7 @@ struct OrgSettingsView: View {
             AccountingSection(org: org)
             PeopleDatesSection(org: org, people: (snapshot?.members ?? []).sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending })
         case .issues:
+            IssueStrategySection(org: org)
             IssueWorkflowSection(org: org)
         case .investments:
             InvestmentCategoriesSection(org: org)
