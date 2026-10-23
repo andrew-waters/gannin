@@ -270,7 +270,7 @@ struct MainView: View {
                 .environment(\.openElsewhere, sidebarOpenElsewhere)
         } detail: {
             if let blank {
-                WindowChooser(start: blank.from ?? defaultOrg.map { WindowPlace(org: $0, workspace: Self.lastWorkspace(for: $0)) }, open: open)
+                WindowChooser(from: blank.from, fallback: defaultOrg.map { WindowPlace(org: $0, workspace: Self.lastWorkspace(for: $0)) }, open: open)
             } else if let selectedOrg {
                 PageStack(
                     org: selectedOrg,
@@ -315,7 +315,7 @@ struct MainView: View {
         .environment(\.showSidebarItem, ShowSidebarAction { item in sidebarSelection.wrappedValue = item })
         .background(WindowAccessor { window in
             TabMenuRename.shared.register(window, action: startRenaming)
-            PaletteRouter.register(windowID, PaletteRouter.MainWindow(org: { selectedOrg }, open: openFromPalette, window: window))
+            PaletteRouter.register(windowID, PaletteRouter.MainWindow(org: { selectedOrg }, place: { selectedOrg.map { WindowPlace(org: $0, workspace: workspace) } }, open: openFromPalette, window: window))
             if window.isKeyWindow { PaletteRouter.activate(windowID) }
         })
         .onChange(of: activeState) {
@@ -337,6 +337,8 @@ struct MainView: View {
             // The project last picked for this org, until a request says otherwise.
             workspace = selectedOrg.flatMap(Self.lastWorkspace(for:))
             if let selectedOrg { lastOrg = selectedOrg }
+            // An org picked from the sidebar or the palette answers the chooser too.
+            if selectedOrg != nil { blank = nil }
             teamID = nil
             person = nil
             peopleView = nil

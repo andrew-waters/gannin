@@ -77,10 +77,11 @@ enum WindowRequest {
     /// New Window and New Tab's request, claimed the same way.
     @MainActor static var blank: BlankWindowRequest?
 
-    /// Opens a main window that asks where to open, starting on `from`.
-    @MainActor static func openBlank(from: WindowPlace?, placement: OpenPlacement, openWindow: OpenWindowAction) {
+    /// Opens a main window that asks where to open, starting on `from`. A
+    /// tab joins `parent`, else the key window.
+    @MainActor static func openBlank(from: WindowPlace?, placement: OpenPlacement, parent: NSWindow? = nil, openWindow: OpenWindowAction) {
         blank = BlankWindowRequest(from: from)
-        if placement == .tab { TabRequest.parent = NSApp.keyWindow }
+        if placement == .tab { TabRequest.parent = parent ?? NSApp.keyWindow }
         openWindow(id: "main")
     }
 }

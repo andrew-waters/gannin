@@ -27,9 +27,12 @@ struct BlankWindowRequest {
 struct WindowChooser: View {
     @Environment(OrgStore.self) private var orgs
     @Environment(OrgConfigStore.self) private var configs
-    /// What it starts on, and what Esc opens.
-    let start: WindowPlace?
+    /// The window it was opened from: what it starts on, and what Esc opens.
+    let from: WindowPlace?
+    /// What it starts on with no window to copy: the last org picked.
+    let fallback: WindowPlace?
     let open: (WindowPlace) -> Void
+    private var start: WindowPlace? { from ?? fallback }
     @State private var org: String?
     @State private var workspace: String?
 
@@ -56,8 +59,8 @@ struct WindowChooser: View {
                 }
             }
             HStack {
-                if let start {
-                    Button("Same as Last Window") { open(start) }
+                if let from {
+                    Button("Same as Last Window") { open(from) }
                         .keyboardShortcut(.cancelAction)
                 }
                 Button("Open") {
