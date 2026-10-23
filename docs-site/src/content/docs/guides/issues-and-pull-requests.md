@@ -29,7 +29,7 @@ The bar at the top of the page has a search and filter menus. The search needs e
 
 Menus show counts, and you can pick several values in one. Not on a board puts its board picker first.
 
-Pull Requests has its own bar: search, **Author**, **Reviewer** (Me first, then No Reviewer), **Status** (draft, needs review, changes requested, approved, merged), **Repository**, and Open, Merged or All. Open covers open PRs and Merged those merged within the lookback ([Sync settings](/docs/settings/app/sync/)). The Files and Size columns show files changed and lines added and removed.
+Pull Requests has its own bar: search, **Author**, **Reviewer** (Me first, then No Reviewer), **Status** (draft, needs review, changes requested, approved, merged), **Repository**, **Hide mine**, **Hide drafts**, and Open, Merged or All. Open covers open PRs and Merged those merged within the lookback ([Sync settings](/docs/settings/app/sync/)). The Files and Size columns show files changed and lines added and removed. Hide drafts leaves draft PRs out of this page only; to leave them out of every list and count, turn on Exclude draft PRs in [General settings](/docs/settings/app/general/), which ticks Hide drafts and greys it out.
 
 Filters are kept per window, so two tabs can look at different slices.
 

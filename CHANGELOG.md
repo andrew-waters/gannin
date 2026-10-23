@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Added
+- Hide drafts on the Pull Requests page's bar leaves draft pull requests out of that window's list, without changing counts elsewhere
+
 ### Changed
 - The Reviewers column on Pull Requests, and Who on Your pull requests in the Inbox, mark each reviewer as asked and waiting, approved, changes requested or commented, show teams asked to review, and say None when nobody has been asked or reviewed
 - An automatic review Claude would approve is no longer posted by itself, even with findings, while the PR is ready for your approval: it waits in Ready for your approval, and your approval posts its comments once, as one review
