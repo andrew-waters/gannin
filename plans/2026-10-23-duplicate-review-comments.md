@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In Review
+status: Done
 summary: Leave out findings a follow-up review would repeat, checking body findings against earlier reviews, allowing a few lines' leeway and counting the viewer's own outdated comments.
 issues: [andrew-waters/gannin#467]
 domains: [sessions, reviews]
