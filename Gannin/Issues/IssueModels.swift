@@ -167,3 +167,73 @@ struct IssueWorkflow: Codable, Hashable {
         projectNumber == nil || change.projectNumber == projectNumber
     }
 }
+
+/// Where an org files its issues (Org settings › Issues › Where issues go).
+/// A missing field or a kind this Gannin doesn't know reads as per repo, so
+/// the file still decodes.
+struct IssueStrategy: Codable, Hashable {
+    enum Kind: String, Codable, CaseIterable, Identifiable {
+        /// Each issue in the repo it touches, collected on a board.
+        case perRepo
+        /// Every issue in one named repo, whichever repo the work is in.
+        case central
+
+        var id: Self { self }
+
+        var name: String {
+            switch self {
+            case .perRepo: "Per repo, collected on a project"
+            case .central: "Central repo"
+            }
+        }
+    }
+
+    var kind: Kind = .perRepo
+    /// `owner/name` every issue goes in, under `central`.
+    var repo: String?
+    /// The board each issue is added to under `perRepo`; nil means the
+    /// project's Issue workflow board.
+    var projectNumber: Int?
+
+    init(kind: Kind = .perRepo, repo: String? = nil, projectNumber: Int? = nil) {
+        self.kind = kind
+        self.repo = repo
+        self.projectNumber = projectNumber
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        kind = (try? container.decodeIfPresent(Kind.self, forKey: .kind)) ?? .perRepo
+        repo = try? container.decodeIfPresent(String.self, forKey: .repo)
+        projectNumber = try? container.decodeIfPresent(Int.self, forKey: .projectNumber)
+    }
+
+    /// The repo every issue goes in, when that's the strategy and one is named.
+    var centralRepo: String? {
+        guard kind == .central, let repo = repo?.trimmingCharacters(in: .whitespaces), repo.contains("/") else { return nil }
+        return repo
+    }
+
+    /// The board a new issue is added to: under per repo the strategy's
+    /// own, else the Issue workflow board.
+    func board(workflow: IssueWorkflow) -> Int? {
+        kind == .perRepo ? projectNumber ?? workflow.projectNumber : workflow.projectNumber
+    }
+
+    /// The repos an issue can be filed in, in order: the central repo
+    /// first, then `repos` without those with issues turned off (`issuesOff`,
+    /// lowercased). The central repo stays even with issues off, so the
+    /// choice is visible and its warning explains it.
+    func filingRepos(_ repos: [String], issuesOff: Set<String>) -> [String] {
+        let open = repos.filter { !issuesOff.contains($0.lowercased()) }
+        guard let central = centralRepo else { return open }
+        return [central] + open.filter { $0.caseInsensitiveCompare(central) != .orderedSame }
+    }
+
+    /// Where a task's issue is filed: the central repo, else the task's own
+    /// repo when it's one of `choices`, else the first choice.
+    func filingRepo(for task: String?, in choices: [String]) -> String {
+        if let central = centralRepo { return central }
+        return task.flatMap { repo in choices.first { $0.caseInsensitiveCompare(repo) == .orderedSame } } ?? choices.first ?? ""
+    }
+}

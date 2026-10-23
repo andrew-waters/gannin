@@ -37,7 +37,14 @@ Documents dropped on the terminal or picked are each confirmed, as to whether to
 
 Claude is asked to keep tasks few and large, by default one per repository that needs changing, with the finer steps as a checklist in the task rather than tasks of their own. Each task becomes a sub-issue, so check them in Agree, where you can edit them.
 
-Agree shows what isn't approved or covered, lets you tick who was here, and lets you edit the tasks. It then makes the parent issue (the planned one, or a new one) and a sub-issue per task on the workflow board, and commits the plan and the requirement in one commit.
+Agree shows what isn't approved or covered, lets you tick who was here, and lets you edit the tasks. It then makes the parent issue (the planned one, or a new one) and a sub-issue per task, adds each to the board, and commits the plan and the requirement in one commit.
+
+Where the issues go follows the org's choice in [Org settings › Issues › Where issues go](/docs/settings/org/issues/#where-issues-go), which Claude is told when the session starts:
+
+- **Per repo, collected on a project**: each task's issue goes in the repo its work is in. Agree never offers a repo with issues turned off: a task that named one moves to another repo, with a note saying why. Each issue is added to the project picked there, or the Issue workflow board.
+- **Central repo**: every issue, the parent included, goes in the named repo, and each issue says which repo the work is in. If that repo has issues turned off, Agree warns before you write. Each issue is added to the Issue workflow board, when one is picked.
+
+You can still pick another repo for any issue before Agree and Write.
 
 ## Ending a plan
 

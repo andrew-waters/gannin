@@ -98,7 +98,7 @@ extension SessionStore {
     /// `guidance` is the org's planning prompt (`HarnessAuthoring`), its
     /// placeholders still to fill.
     func startPlanning(org: String, topic: String, documentPath: String?, issue: IssueReference? = nil, harness setup: HarnessConfig, harnessPath: String, guidance: String, choice: PromptChoice? = nil,
-                       documents: [PlanningInfo.Document] = [], links: [PlanningLink] = [], sources: String? = nil) -> CodeSession {
+                       documents: [PlanningInfo.Document] = [], links: [PlanningLink] = [], sources: String? = nil, filing: IssueStrategy = IssueStrategy()) -> CodeSession {
         let slug = Self.slug(topic)
         let branch = "plan-\(slug)"
         var info = PlanningInfo(topic: topic, documentPath: documentPath, slug: slug, issue: issue)
@@ -111,7 +111,7 @@ extension SessionStore {
             id: UUID(), issue: IssueReference(org: org, id: "plan-\(UUID().uuidString)", number: 0, title: topic, repo: setup.repo, url: url),
             repo: setup.repo, branch: branch, createdAt: .now,
             connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
-            role: "Plan", prompt: Self.planningPrompt(info, branch: branch, guidance: guidance), instructions: instructions, planning: info
+            role: "Plan", prompt: Self.planningPrompt(info, branch: branch, guidance: guidance, filing: filing), instructions: instructions, planning: info
         )
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -128,7 +128,7 @@ extension SessionStore {
         ["title": topic, "topic": topic, "repo": harness, "branch": branch]
     }
 
-    static func planningPrompt(_ info: PlanningInfo, branch: String, guidance: String) -> String {
+    static func planningPrompt(_ info: PlanningInfo, branch: String, guidance: String, filing: IssueStrategy = IssueStrategy()) -> String {
         var start: [String] = []
         if let path = info.documentPath { start.append("Then read \(path), which we're starting from.") }
         if let issue = info.issue {
@@ -141,7 +141,7 @@ extension SessionStore {
             "assets": "plans/assets/\(info.slug)/",
             "starting_point": start.joined(separator: " "),
         ])
-        return [filled, PlanningState.instructions(path: statePath(branch: branch)), contextBrief(info, branch: branch)]
+        return [filled, PlanningState.instructions(path: statePath(branch: branch), filing: filing), contextBrief(info, branch: branch)]
             .compactMap { $0 }.joined(separator: "\n\n")
     }
 
@@ -762,7 +762,7 @@ struct NewPlanningView: View {
         let start = source.flatMap { ($0.repo ?? harnesses.first?.repo) == setup.repo ? $0.path : nil }
         let session = sessions.startPlanning(org: org, topic: topic, documentPath: start, issue: issue, harness: setup, harnessPath: path,
                                               guidance: HarnessAuthoring.guidance(for: .plans, config: configs.config(for: org), org: org), choice: choice,
-                                              documents: documents, links: links, sources: notes.joined(separator: "\n"))
+                                              documents: documents, links: links, sources: notes.joined(separator: "\n"), filing: configs.config(for: org).filing)
         sessions.replaceDraft(draftID, with: session.id)
     }
 }

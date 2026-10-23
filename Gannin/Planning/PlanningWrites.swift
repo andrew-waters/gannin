@@ -62,6 +62,30 @@ extension GitHubAPI {
         return (created.createIssue.issue.id, created.createIssue.issue.number, created.createIssue.issue.url)
     }
 
+    /// Of `repos` (`owner/name`), those with issues turned off, lowercased,
+    /// in one query. A repo this token can't read isn't among them, so
+    /// `createIssue` reports it. A read.
+    func reposWithIssuesOff(_ repos: [String]) async throws -> Set<String> {
+        struct Node: Decodable { let nameWithOwner: String; let hasIssuesEnabled: Bool }
+        let pairs = repos.compactMap { repo -> (owner: String, name: String)? in
+            let parts = repo.split(separator: "/").map(String.init)
+            return parts.count == 2 ? (parts[0], parts[1]) : nil
+        }
+        guard !pairs.isEmpty else { return [] }
+        var values: [String: Any] = [:]
+        var fields: [String] = []
+        var arguments: [String] = []
+        for (index, pair) in pairs.enumerated() {
+            values["o\(index)"] = pair.owner
+            values["n\(index)"] = pair.name
+            arguments.append("$o\(index): String!, $n\(index): String!")
+            fields.append("r\(index): repository(owner: $o\(index), name: $n\(index)) { nameWithOwner hasIssuesEnabled }")
+        }
+        let (found, _): ([String: Node?], [String: String]) = try await queryReportingReasonsByField(
+            "query(\(arguments.joined(separator: ", "))) {\n\(fields.joined(separator: "\n"))\n}", values: values)
+        return Set(found.values.compactMap { $0 }.filter { !$0.hasIssuesEnabled }.map { $0.nameWithOwner.lowercased() })
+    }
+
     /// Makes `child` a sub-issue of `parent`. A write.
     func addSubIssue(parent: String, child: String) async throws {
         // Nullable, as closeIssue is: an empty Response would mask a

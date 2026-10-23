@@ -23,6 +23,8 @@ struct OrgConfig: Codable, Hashable {
     var accounting: AccountingCalendar?
     /// How issues move through the org's board; nil means the defaults.
     var issueWorkflow: IssueWorkflow?
+    /// Where the org files its issues; nil means per repo.
+    var issueStrategy: IssueStrategy?
     /// Working days and hours; nil means Monday to Friday, 9 to 5.
     var workWeek: WorkWeek?
 
@@ -187,6 +189,8 @@ struct OrgConfig: Codable, Hashable {
 
     var workflow: IssueWorkflow { issueWorkflow ?? IssueWorkflow() }
 
+    var filing: IssueStrategy { issueStrategy ?? IssueStrategy() }
+
     var investmentConfig: InvestmentConfig { investments ?? .default }
 
     var rndConfig: RDConfig { rnd ?? RDConfig() }
@@ -207,6 +211,7 @@ struct OrgConfig: Codable, Hashable {
         rnd = try? container.decodeIfPresent(RDConfig.self, forKey: .rnd)
         accounting = try? container.decodeIfPresent(AccountingCalendar.self, forKey: .accounting)
         issueWorkflow = try container.decodeIfPresent(IssueWorkflow.self, forKey: .issueWorkflow)
+        issueStrategy = try? container.decodeIfPresent(IssueStrategy.self, forKey: .issueStrategy)
         workWeek = try container.decodeIfPresent(WorkWeek.self, forKey: .workWeek)
         leave = try container.decodeIfPresent(LeavePolicy.self, forKey: .leave)
         harness = try container.decodeIfPresent(HarnessConfig.self, forKey: .harness)
@@ -224,7 +229,7 @@ struct OrgConfig: Codable, Hashable {
         priorityScheme = try? container.decodeIfPresent(PriorityScheme.self, forKey: .priorityScheme)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && rnd == nil && accounting == nil && issueWorkflow == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil && priorityScheme == nil }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && rnd == nil && accounting == nil && issueWorkflow == nil && issueStrategy == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil && priorityScheme == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.

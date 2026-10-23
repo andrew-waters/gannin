@@ -20,6 +20,9 @@ struct PlanningAgreeSheet: View {
         let id = UUID()
         var include = true
         var repo: String
+        /// The repo the task's work is in, as the plan named it; under a
+        /// central repo the issue goes elsewhere and its body names this.
+        var taskRepo: String?
         var title: String
         /// The task's title in `planning.json`, which the sheet's editable
         /// `title` starts as: what a made issue is remembered by.
@@ -35,6 +38,8 @@ struct PlanningAgreeSheet: View {
         var failed: String?
         /// The issue was made, but couldn't be added to the workflow board.
         var boardWarning: String?
+        /// Why the repo isn't the one the plan named.
+        var repoNote: String?
     }
 
     @State private var drafts: [Draft] = []
@@ -47,6 +52,8 @@ struct PlanningAgreeSheet: View {
     @State private var writesRequirement = true
     @State private var working = false
     @State private var status: String?
+    /// Repos with issues turned off, lowercased, once looked up.
+    @State private var issuesOff: Set<String> = []
 
     private var org: String { session.org }
     private var planning: PlanningInfo? { session.planning }
@@ -62,10 +69,20 @@ struct PlanningAgreeSheet: View {
     /// Started from a requirement, which is linked rather than rewritten.
     private var startedFromRequirement: Bool { planning?.documentPath?.hasPrefix("requirements/") == true }
 
-    /// Repos to pick from: those the plan names, the project's, then the
-    /// busiest in the snapshot and issue history (which this window may not
-    /// have loaded), and the harness itself so there's always one.
+    /// Where the org files issues (Org settings › Issues), org-wide.
+    private var strategy: IssueStrategy { projectConfig.filing }
+
+    /// Repos to pick from: the central repo under that strategy, then the
+    /// candidates that accept issues.
     private var repos: [String] {
+        let found = strategy.filingRepos(candidates, issuesOff: issuesOff)
+        return found.isEmpty ? [harnessRepo] : found
+    }
+
+    /// Repos an issue might go in: those the plan names, the project's, then
+    /// the busiest in the snapshot and issue history (which this window may
+    /// not have loaded), and the harness itself so there's always one.
+    private var candidates: [String] {
         let config = projectConfig
         let named = (state?.tasks ?? []).compactMap(\.repo) + (state?.scouting ?? []).compactMap(\.repo) + [planning?.issue?.repo].compactMap { $0 }
         let ownRepos = config.repoProjects.first { $0.id == harnessRepo }?.repos ?? config.harness(repo: harnessRepo)?.repos ?? []
@@ -147,6 +164,7 @@ struct PlanningAgreeSheet: View {
         }
         .frame(minWidth: 720, idealWidth: 800, minHeight: 620, idealHeight: 760)
         .onAppear(perform: fill)
+        .task { await checkIssuesOff() }
     }
 
     // MARK: Sections
@@ -157,8 +175,13 @@ struct PlanningAgreeSheet: View {
     private var readiness: some View {
         let unapproved = PlanningStep.allCases.filter { step in step.isLoop && !(planning?.isApproved(step) ?? false) }
         let uncovered = state?.uncovered ?? []
-        if !unapproved.isEmpty || !uncovered.isEmpty {
+        let centralClosed = strategy.centralRepo.flatMap { issuesOff.contains($0.lowercased()) ? $0 : nil }
+        if !unapproved.isEmpty || !uncovered.isEmpty || centralClosed != nil {
             Section {
+                if let centralClosed {
+                    Label("Issues go in \(centralClosed) (Org settings › Issues), but it has issues turned off. Pick another repo below, or turn them on.", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                }
                 if !unapproved.isEmpty {
                     Label("Not approved: \(unapproved.map(\.rawValue).joined(separator: ", ")).", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -255,6 +278,9 @@ struct PlanningAgreeSheet: View {
             if let failed = draft.wrappedValue.failed {
                 Text(failed).font(.caption).foregroundStyle(.red)
             }
+            if let repoNote = draft.wrappedValue.repoNote, draft.wrappedValue.made == nil {
+                Text(repoNote).font(.caption).foregroundStyle(.secondary)
+            }
             if let boardWarning = draft.wrappedValue.boardWarning {
                 Text(boardWarning).font(.caption).foregroundStyle(.orange)
             }
@@ -276,7 +302,7 @@ struct PlanningAgreeSheet: View {
         guard drafts.isEmpty else { return }
         let madeIssues = planning?.madeIssues ?? [:]
         drafts = (state?.tasks ?? []).enumerated().map { index, task in
-            var draft = Draft(repo: task.repo.flatMap { repos.contains($0) ? $0 : nil } ?? repos.first ?? "", title: task.title, taskTitle: task.title, body: task.body ?? "", labels: task.labels.joined(separator: ", "), satisfies: task.satisfies)
+            var draft = Draft(repo: strategy.filingRepo(for: task.repo, in: repos), taskRepo: task.repo, title: task.title, taskTitle: task.title, body: task.body ?? "", labels: task.labels.joined(separator: ", "), satisfies: task.satisfies)
             if let stored = madeIssues[index] {
                 switch stored.restore(forTitle: task.title) {
                 case .done: draft.made = (stored.reference, stored.url)
@@ -286,6 +312,7 @@ struct PlanningAgreeSheet: View {
             }
             return draft
         }
+        refile()
         parentTitle = title
         parentRepo = repos.first ?? ""
         if let madeParent = planning?.madeParent { parent = (id: madeParent.id, reference: madeParent.reference, url: madeParent.url) }
@@ -326,7 +353,7 @@ struct PlanningAgreeSheet: View {
         guard let parent else { return }
 
         let config = projectConfig
-        let boardID = config.workflow.projectNumber.flatMap { number in projects.boardLists[org]?.first { $0.number == number }?.id }
+        let boardID = config.filing.board(workflow: config.workflow).flatMap { number in projects.boardLists[org]?.first { $0.number == number }?.id }
         for index in drafts.indices where drafts[index].include && drafts[index].made == nil {
             let draft = drafts[index]
             drafts[index].failed = nil
@@ -336,7 +363,7 @@ struct PlanningAgreeSheet: View {
                 if let created = draft.created {
                     issue = created
                 } else {
-                    let made = try await api.createIssue(repo: draft.repo, title: draft.title, body: draft.body + satisfies(draft) + planLink, labels: labels(draft.labels))
+                    let made = try await api.createIssue(repo: draft.repo, title: draft.title, body: draft.body + workIn(draft) + satisfies(draft) + planLink, labels: labels(draft.labels))
                     issue = PlanningMadeIssue(id: made.id, reference: "\(draft.repo)#\(made.number)", url: made.url, title: draft.taskTitle ?? draft.title, linked: false)
                     drafts[index].created = issue
                     remember(issue, at: index)
@@ -412,6 +439,43 @@ struct PlanningAgreeSheet: View {
             made[index] = issue
             $0.planning?.madeIssues = made
         }
+    }
+
+    /// Looks up which repos to pick from have issues turned off, then moves
+    /// drafts off them. A failed lookup leaves every repo in: `createIssue`
+    /// still says why one can't take an issue.
+    private func checkIssuesOff() async {
+        let central = strategy.centralRepo.map { [$0] } ?? []
+        guard let api = auth.api, let off = try? await api.reposWithIssuesOff(central + candidates) else { return }
+        issuesOff = off
+        refile()
+        if issuesOff.contains(parentRepo.lowercased()) { parentRepo = repos.first ?? "" }
+    }
+
+    /// Points drafts not yet made at a repo that takes issues, saying why
+    /// when it isn't the one the plan named.
+    private func refile() {
+        for index in drafts.indices where drafts[index].made == nil && drafts[index].created == nil {
+            let draft = drafts[index]
+            if issuesOff.contains(draft.repo.lowercased()), strategy.centralRepo == nil {
+                drafts[index].repo = strategy.filingRepo(for: nil, in: repos)
+            }
+            drafts[index].repoNote = Self.repoNote(task: draft.taskRepo, filed: drafts[index].repo, central: strategy.centralRepo, issuesOff: issuesOff)
+        }
+    }
+
+    /// Why an issue isn't filed in the repo its task named, if it isn't.
+    static func repoNote(task: String?, filed: String, central: String?, issuesOff: Set<String>) -> String? {
+        guard let task, task.caseInsensitiveCompare(filed) != .orderedSame else { return nil }
+        if issuesOff.contains(task.lowercased()) { return "\(task) has issues turned off, so this goes in \(filed)." }
+        if let central, central.caseInsensitiveCompare(filed) == .orderedSame { return "The work is in \(task); issues go in \(filed)." }
+        return nil
+    }
+
+    /// Under a central repo, which repo the work is in, as the issue says it.
+    private func workIn(_ draft: Draft) -> String {
+        guard let task = draft.taskRepo, strategy.centralRepo != nil, task.caseInsensitiveCompare(draft.repo) != .orderedSame else { return "" }
+        return "\n\nThe work is in `\(task)`."
     }
 
     /// The criteria a task satisfies, as its issue says them.
