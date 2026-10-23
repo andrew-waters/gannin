@@ -692,6 +692,7 @@ enum SessionBrief {
         case .rework: "PRs changed after their first review: check the work before asking for one."
         case .unreviewed: "PRs merged without a review: never merge your own PR unreviewed."
         case .flakyRuns: "CI runs that pass only on a re-run: don't add tests that pass or fail by chance."
+        case .ciTimePerPR: "CI time per PR: run what you can locally before pushing, and push fewer, finished commits rather than many small ones."
         case .firstReview, .answered, .slowReviews, .openPullRequests, .issueCycleTime: nil
         }
     }

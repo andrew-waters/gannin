@@ -264,6 +264,14 @@ private struct RawRunsPage: Decodable {
 
 private struct RawRun: Decodable {
     struct Actor: Decodable { let login: String }
+    struct PullRequest: Decodable {
+        struct Base: Decodable {
+            struct Repo: Decodable { let url: String }
+            let repo: Repo
+        }
+        let number: Int
+        let base: Base?
+    }
 
     let id: Int
     let name: String?
@@ -281,6 +289,7 @@ private struct RawRun: Decodable {
     let updatedAt: Date
     let actor: Actor?
     let htmlUrl: URL
+    let pullRequests: [Lossy<PullRequest>]?
 
     func model(repo: String) -> WorkflowRun {
         WorkflowRun(
@@ -302,7 +311,12 @@ private struct RawRun: Decodable {
             startedAt: runStartedAt,
             updatedAt: updatedAt,
             actor: actor?.login,
-            url: htmlUrl
+            url: htmlUrl,
+            // Only PRs into this repo: GitHub also lists other repos' PRs
+            // whose head is this branch, such as an upstream's from a fork.
+            pullRequests: pullRequests.map { prs in
+                prs.compactMap(\.value).filter { $0.base?.repo.url.lowercased().hasSuffix("/repos/\(repo.lowercased())") ?? false }.map(\.number)
+            }
         )
     }
 }

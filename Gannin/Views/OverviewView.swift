@@ -89,7 +89,9 @@ struct OverviewView: View {
         Scorecard.Sources(
             openPullRequests: orgs.snapshot(for: org)?.openPullRequests ?? [],
             runs: actionsStore.history(for: org).map { Array($0.runs.values) },
-            issues: issueStore.history(for: org)
+            defaultBranches: actionsStore.history(for: org)?.repositories.compactMapValues(\.defaultBranch) ?? [:],
+            issues: issueStore.history(for: org),
+            matchesPullRequests: configs.config(for: org).measurables.contains { $0.metric == .ciTimePerPR }
         )
     }
 

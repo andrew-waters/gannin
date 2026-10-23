@@ -50,6 +50,20 @@ extension GitHubAPI {
         }
     }
 
+    /// Head branches of PRs by node ID, for those stored before it was
+    /// fetched, handed over a batch at a time.
+    func headRefs(ids: [String], onBatch: (_ refs: [String: String], _ done: Int) -> Void) async throws {
+        struct Node: Decodable { let id: String; let headRefName: String }
+        struct Response: Decodable { let nodes: [Lossy<Node>] }
+        for start in stride(from: 0, to: ids.count, by: 100) {
+            let batch = Array(ids[start..<min(start + 100, ids.count)])
+            let response: Response = try await query("""
+                query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequest { id headRefName } } }
+                """, values: ["ids": batch])
+            onBatch(Dictionary(response.nodes.compactMap(\.value).map { ($0.id, $0.headRefName) }, uniquingKeysWith: { first, _ in first }), start + batch.count)
+        }
+    }
+
     /// The search for PRs merged in `[from, to]`, by day, or from the exact
     /// time `since` (to the second) when it's given, so a top-up doesn't fetch
     /// the rest of the day it starts in again.
@@ -153,6 +167,7 @@ private struct RawMetricPullRequest: Decodable {
     let additions: Int
     let deletions: Int
     let changedFiles: Int?
+    let headRefName: String?
     let repository: Repository
     let author: Author?
     let commits: Connection<CommitNode>
@@ -162,7 +177,7 @@ private struct RawMetricPullRequest: Decodable {
 
     static let fields = """
         ... on PullRequest {
-          id number title url createdAt mergedAt updatedAt additions deletions changedFiles
+          id number title url createdAt mergedAt updatedAt additions deletions changedFiles headRefName
           repository { nameWithOwner }
           author { __typename login avatarUrl }
           commits(first: 1) { nodes { commit { authoredDate } } }
@@ -224,7 +239,8 @@ private struct RawMetricPullRequest: Decodable {
             additions: additions,
             deletions: deletions,
             changedFiles: changedFiles,
-            updatedAt: updatedAt
+            updatedAt: updatedAt,
+            headRef: headRefName
         )
     }
 }

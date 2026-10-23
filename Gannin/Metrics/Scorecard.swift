@@ -170,6 +170,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
     case openPullRequests
     case issueCycleTime
     case flakyRuns
+    case ciTimePerPR
 
     var id: Self { self }
 
@@ -179,7 +180,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         case .throughput, .cycleTime, .prSize, .prFiles, .openPullRequests: "Pull requests"
         case .firstReview, .rework, .unreviewed, .answered, .slowReviews: "Reviews"
         case .issueCycleTime: "Issues"
-        case .flakyRuns: "CI"
+        case .flakyRuns, .ciTimePerPR: "CI"
         }
     }
 
@@ -214,6 +215,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         case .openPullRequests: "Open PRs"
         case .issueCycleTime: "Issue cycle time"
         case .flakyRuns: "Flaky CI runs"
+        case .ciTimePerPR: "CI time per PR"
         }
     }
 
@@ -231,6 +233,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         case .openPullRequests: "Open at the period's end, or now"
         case .issueCycleTime: "Median time in progress, of issues completed"
         case .flakyRuns: "Passed only on a re-run, or a commit both failed and passed"
+        case .ciTimePerPR: "Median wall-clock CI time of a PR, in the period of its latest run"
         }
     }
 
@@ -238,7 +241,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
     var unit: Measurable.Unit {
         switch self {
         case .throughput, .prSize, .prFiles, .slowReviews, .openPullRequests, .flakyRuns: .number
-        case .cycleTime, .firstReview, .issueCycleTime: .hours
+        case .cycleTime, .firstReview, .issueCycleTime, .ciTimePerPR: .hours
         case .rework, .unreviewed, .answered: .percent
         }
     }
@@ -252,7 +255,7 @@ enum ScorecardMetric: String, Codable, CaseIterable, Identifiable {
         case .slowReviews: "requests a \(cadence.noun)"
         case .openPullRequests: "PRs"
         case .flakyRuns: "runs a \(cadence.noun)"
-        case .cycleTime, .firstReview, .rework, .unreviewed, .answered, .issueCycleTime: ""
+        case .cycleTime, .firstReview, .rework, .unreviewed, .answered, .issueCycleTime, .ciTimePerPR: ""
         }
     }
 
@@ -460,7 +463,13 @@ enum Scorecard {
     struct Sources {
         var openPullRequests: [PullRequest] = []
         var runs: [WorkflowRun]?
+        /// Repos' default branches, by `owner/name`, so runs there aren't
+        /// matched to PRs.
+        var defaultBranches: [String: String] = [:]
         var issues: IssueHistory?
+        /// Match runs to PRs, only when a goal measures CI time per PR: it
+        /// goes over every stored run.
+        var matchesPullRequests = false
     }
 
     struct Data {
@@ -474,6 +483,8 @@ enum Scorecard {
         let runs: [WorkflowRun]?
         /// The first run fetched: periods before it aren't covered.
         let runsFrom: Date?
+        /// People's PRs with CI runs, nil until runs are fetched.
+        let pullRequestCI: [PullRequestCI]?
         let issues: [IssueTiming]?
         let issuesFrom: Date?
         let coveredFrom: Date?
@@ -511,6 +522,14 @@ enum Scorecard {
             let runs = sources.runs?.filter { !config.repoExclusion.contains($0.repo) && $0.createdAt >= earliest }
             self.runs = runs
             runsFrom = sources.runs?.map(\.createdAt).min()
+            pullRequestCI = sources.runs.flatMap { runs in
+                guard sources.matchesPullRequests else { return nil }
+                return PullRequestCI.all(
+                    runs: runs, merged: history?.pullRequests.values.map { $0 } ?? [], open: sources.openPullRequests,
+                    defaultBranches: sources.defaultBranches, config: config
+                )
+                .filter { PullRequestCI.isPerson($0, config: config) }
+            }
             let workflow = config.workflow
             issues = sources.issues.map { history in
                 history.issues.values
@@ -563,6 +582,10 @@ enum Scorecard {
             let period = periods[index]
             func inTeam(_ login: String?) -> Bool { logins.map { login.map($0.contains) ?? false } ?? true }
             switch metric {
+            case .ciTimePerPR:
+                guard let pullRequestCI, let runsFrom, runsFrom <= period.start else { return nil }
+                let prs = pullRequestCI.filter { $0.lastRunAt >= period.start && $0.lastRunAt < period.end && inTeam($0.author) && (repo == nil || $0.repo == repo) }
+                return (PercentileStat(prs.map(\.runTime)).median, prs.count)
             case .flakyRuns:
                 guard let runs, let runsFrom, runsFrom <= period.start else { return nil }
                 let inPeriod = runs.filter { $0.createdAt >= period.start && $0.createdAt < period.end && (repo == nil || $0.repo == repo) }
@@ -626,6 +649,8 @@ enum Scorecard {
             switch metric {
             case .flakyRuns:
                 break
+            case .ciTimePerPR:
+                logins.formUnion((pullRequestCI ?? []).compactMap(\.author))
             case .issueCycleTime:
                 for issue in issues ?? [] { logins.formUnion(issue.record.assignees) }
             case .answered, .slowReviews:
@@ -702,7 +727,7 @@ enum Scorecard {
                     }
                 }
                 return (requests == 0 ? nil : Double(answered) / Double(requests), requests)
-            case .slowReviews, .openPullRequests, .issueCycleTime, .flakyRuns:
+            case .slowReviews, .openPullRequests, .issueCycleTime, .flakyRuns, .ciTimePerPR:
                 // Not from the PRs merged in the period: `measure(_:index:)`.
                 return (nil, 0)
             }
@@ -789,7 +814,9 @@ struct ScorecardView: View {
                 let sources = Scorecard.Sources(
                     openPullRequests: orgs.snapshot(for: org)?.openPullRequests ?? [],
                     runs: actionsStore.history(for: org).map { Array($0.runs.values) },
-                    issues: issueStore.history(for: org)
+                    defaultBranches: actionsStore.history(for: org)?.repositories.compactMapValues(\.defaultBranch) ?? [:],
+                    issues: issueStore.history(for: org),
+                    matchesPullRequests: measurables.contains { $0.metric == .ciTimePerPR }
                 )
                 let data = Scorecard.Data(history: history, periods: periods, resolution: resolution, config: config, hidden: hidden.keys, teams: teams, sources: sources)
                 // The tiles' last whole period, what it's compared with and
@@ -841,7 +868,7 @@ struct ScorecardView: View {
             let metrics = Set(measurables.compactMap(\.metric))
             async let merged: Void = metricsStore.sync(org, windowDays: days)
             // CI runs and the issue history only when a goal needs them.
-            async let runs: Void = metrics.contains(.flakyRuns) ? actionsStore.sync(org, windowDays: days, excluding: config.unfetchedRepos) : ()
+            async let runs: Void = metrics.contains(.flakyRuns) || metrics.contains(.ciTimePerPR) ? actionsStore.sync(org, windowDays: days, excluding: config.unfetchedRepos) : ()
             async let issues: Void = metrics.contains(.issueCycleTime) ? issueStore.sync(org, windowDays: days) : ()
             _ = await (merged, runs, issues)
         }

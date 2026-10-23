@@ -64,7 +64,7 @@ Each goal has a cadence (weekly, monthly, quarterly, annual), a source and a tar
 - A count's target is held to the column's length, rounded down: 20 a week is 2 a day when viewed by day.
 - **Hit** is how many whole periods were on target.
 - Hand-entered numbers are judged only in their own periods, and added up (unjudged) in longer ones, or averaged for percentages.
-- From other sources: reviews waiting over a day (requested in the period and answered after a day, never, or still pending on an open PR), open PRs at the period's end, issue cycle time (as above), and flaky CI runs (below).
+- From other sources: reviews waiting over a day (requested in the period and answered after a day, never, or still pending on an open PR), open PRs at the period's end, issue cycle time (as above), and flaky CI runs and CI time per PR (below).
 
 ## CI (GitHub Actions)
 
@@ -76,6 +76,14 @@ Each goal has a cadence (weekly, monthly, quarterly, annual), a source and a tar
 | Re-runs | Runs with more than one attempt. | |
 | Flaky | A run that passed only on a re-run, or a commit with both a failed and a passing run. | |
 | Default branch health | Runs on the default branch outside PRs: red now and since when, and time back to green. | |
-| Needs attention | Red default branches, often-failing ones, flaky workflows, and workflows with a median of a minute or more that ran 25% slower in the window's second half. | Failures on PRs alone: that's CI doing its job. |
+| Needs attention | Red default branches, often-failing ones, flaky workflows, workflows with a median of a minute or more that ran 25% slower in the window's second half, and workflows where at least 5 runs (10 minutes or more in all) kept going after a newer push to the same branch, more often than they were cancelled. | Failures on PRs alone: that's CI doing its job. |
+| CI time per PR | Run time of the PR's runs: its own and pushes to its branch. A PR counts in the period of its latest run, with all its runs; median and p75. | Bots' PRs (counted apart), excluded authors, runs on the default branch, and PRs from forks, which GitHub doesn't link. Earlier attempts of re-run runs. |
+| Wasted | Run time on commits a later push replaced, plus failed or cancelled runs of the last commit, as a share of PR CI time. | |
+| Waiting on CI | Merged PRs: the first run on the final commit to its last run finishing (or the merge, if sooner). Its share of cycle time is the median of each PR's. | |
+| Merged on CI | Merged PRs merged within 15 minutes after their final CI finished. | PRs merged before CI finished. |
+| Small, full CI | PRs of 20 lines or fewer with more CI time than the median PR. | Open PRs, whose size isn't known. |
+| People's share and Weight | Each author's share of PR CI time and of PRs with CI; Weight is the first over the second. | |
+| Size and CI | Spearman rank correlation of lines changed and CI time over merged PRs (shown from 8 PRs). Per 100 lines is the median of each PR's CI time per 100 lines changed. | |
+| CI per 1,000 lines | CI time of PR runs created in the period over lines changed by PRs merged in it, in the repos CI is fetched for. | |
 
 Runs older than 190 days are dropped, and excluded repos aren't fetched.

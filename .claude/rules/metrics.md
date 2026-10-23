@@ -32,6 +32,7 @@ paths:
 - Fetch runs back to `coverageStart` so the previous period is comparable; show changes only when every repo reaches back (`hasPrevious`).
 - Stop job fetching under the REST budget floor (`jobBudgetFloor`).
 - Never flag failures on PRs alone: that is CI doing its job. Never use colour alone for outcomes.
+- Match runs to PRs with `PullRequestCI.match` only: GitHub lists a run's PRs only while they're open and from the same repo, so merged PRs are matched by `MetricPullRequest.headRef`, and a refetched run keeps the numbers it was first listed with (`ActionsStore.sync`).
 
 ## Testing
-- No tests cover `OrgMetrics`, `Scorecard`, `ActionsMetrics` or `InvestmentConfig` (only `SessionBriefGoalsTests.swift` touches goals). Check by hand against the glossary after changing a definition.
+- `PullRequestCITests` covers run matching, a PR's time split, the rank correlation, size bands and overtaken runs. No tests cover `OrgMetrics`, `Scorecard`, the rest of `ActionsMetrics` or `InvestmentConfig` (only `SessionBriefGoalsTests.swift` touches goals). Check by hand against the glossary after changing a definition.

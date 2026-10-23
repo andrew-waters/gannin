@@ -134,6 +134,14 @@ nonisolated struct WorkflowStats: Identifiable, Hashable {
     let passedOnRetry: Int
     /// Commits with both a failed and a successful run of this workflow.
     let mixedCommits: Int
+    /// Runs on a branch that a newer push overtook before they finished,
+    /// and which ran on to the end rather than being cancelled.
+    let keptGoing: Int
+    /// Time those runs spent after the newer push.
+    let keptGoingTime: TimeInterval
+    /// Runs a newer push overtook that were cancelled, as
+    /// `concurrency: cancel-in-progress` does.
+    let cancelledOnPush: Int
     let defaultBranch: BranchHealth?
     /// Median of the later half of the window over the earlier half, when
     /// both have enough runs to compare.
@@ -262,7 +270,7 @@ nonisolated struct EventStats: Identifiable, Hashable {
 /// Something worth a look, most urgent first.
 nonisolated struct ActionsAttention: Identifiable, Hashable {
     enum Kind: Int, Comparable {
-        case red, flaky, slower, failing
+        case red, flaky, slower, failing, superseded
 
         static func < (a: Kind, b: Kind) -> Bool { a.rawValue < b.rawValue }
     }
@@ -341,6 +349,7 @@ struct ActionsMetrics {
                 group.contains { $0.outcome == .failure } && group.contains { $0.outcome == .success }
             }.count
             let defaultBranch = history.repositories[latest.repo]?.defaultBranch
+            let overtaken = Self.overtaken(runs, defaultBranch: defaultBranch)
             workflows.append(WorkflowStats(
                 id: key,
                 repo: latest.repo,
@@ -354,6 +363,9 @@ struct ActionsMetrics {
                 retried: runs.filter { $0.attempt > 1 }.count,
                 passedOnRetry: runs.filter(\.passedOnRetry).count,
                 mixedCommits: mixed,
+                keptGoing: overtaken.keptGoing,
+                keptGoingTime: overtaken.time,
+                cancelledOnPush: overtaken.cancelled,
                 defaultBranch: defaultBranch.flatMap { Self.health(all, branch: $0, windowStart: windowStart) },
                 durationChange: change,
                 previous: PeriodSummary(all.filter { $0.createdAt >= previousStart && $0.createdAt < previousEnd }),
@@ -459,6 +471,33 @@ struct ActionsMetrics {
         )
     }
 
+    /// Runs on branches other than the default that a newer commit on the
+    /// same branch overtook while they ran: those that ran on (and the time
+    /// they spent after the newer push) and those that were cancelled.
+    static func overtaken(_ runs: [WorkflowRun], defaultBranch: String?) -> (keptGoing: Int, time: TimeInterval, cancelled: Int) {
+        var keptGoing = 0
+        var time: TimeInterval = 0
+        var cancelled = 0
+        let byBranch = Dictionary(grouping: runs.filter { $0.branch != nil && $0.branch != defaultBranch && $0.outcome != .skipped }, by: \.branch)
+        for branchRuns in byBranch.values {
+            let sorted = branchRuns.sorted { $0.createdAt < $1.createdAt }
+            for (index, run) in sorted.enumerated() {
+                guard let finished = run.finishedAt,
+                      let next = sorted[(index + 1)...].first(where: { $0.headSha != run.headSha }),
+                      next.createdAt < finished else { continue }
+                // Re-run after the newer push: started again, not left running.
+                if let started = run.startedAt, started >= next.createdAt { continue }
+                if run.outcome == .cancelled {
+                    cancelled += 1
+                } else {
+                    keptGoing += 1
+                    time += finished.timeIntervalSince(next.createdAt)
+                }
+            }
+        }
+        return (keptGoing, time, cancelled)
+    }
+
     /// Red on the default branch, flaky, getting slower, and failing on the
     /// default branch more than now and then. Failures on PRs alone are CI
     /// doing its job, so they're not flagged.
@@ -476,6 +515,11 @@ struct ActionsMetrics {
             }
             if let change = workflow.durationChange, change >= 0.25, let median = workflow.duration.median, median >= 60 {
                 items.append(ActionsAttention(kind: .slower, workflow: workflow, message: "\(change.formatted(.percent.precision(.fractionLength(0)))) slower in the second half of the window"))
+            }
+            // Mostly left to run on after a newer push, and for long enough
+            // to matter: cancel-in-progress would stop them.
+            if workflow.keptGoing >= 5, workflow.keptGoingTime >= 10 * 60, workflow.cancelledOnPush < workflow.keptGoing {
+                items.append(ActionsAttention(kind: .superseded, workflow: workflow, message: "\(workflow.keptGoing) runs kept going after a newer push, \(workflow.keptGoingTime.compactDuration) spent on commits already replaced"))
             }
         }
         return items.sorted { ($0.kind, $1.workflow.runs.count) < ($1.kind, $0.workflow.runs.count) }

@@ -8,6 +8,8 @@ import SwiftUI
 struct ActionsView: View {
     @Environment(ActionsStore.self) private var store
     @Environment(OrgConfigStore.self) private var configs
+    @Environment(MetricsStore.self) private var metricsStore
+    @Environment(OrgStore.self) private var orgs
     @SceneStorage(MetricsStore.windowKey) private var windowDays = MetricsStore.defaultWindowDays
     @State private var sort: StatsSort?
     @State private var eventSort: StatsSort?
@@ -32,8 +34,14 @@ struct ActionsView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 if let history = store.history(for: org) {
-                    let metrics = ActionsMetrics(history: history, window: MetricsWindow(code: windowDays), config: configs.config(for: org))
-                    content(metrics)
+                    let window = MetricsWindow(code: windowDays)
+                    let config = configs.config(for: org)
+                    let metrics = ActionsMetrics(history: history, window: window, config: config)
+                    let ci = PullRequestCIMetrics(
+                        history: history, merged: metricsStore.history(for: org).map { Array($0.pullRequests.values) } ?? [],
+                        open: orgs.snapshot(for: org)?.openPullRequests ?? [], window: window, config: config
+                    )
+                    content(metrics, ci: ci)
                 } else {
                     Section {
                         Group {
@@ -61,7 +69,12 @@ struct ActionsView: View {
     }
 
     private func sync(force: Bool) async {
-        await store.sync(org, windowDays: (MetricsWindow(code: windowDays).syncDays() + 1) / 2, excluding: configs.config(for: org).unfetchedRepos, force: force)
+        let window = MetricsWindow(code: windowDays)
+        // Merged PRs too, for each PR's title, author and size, and the
+        // branch its runs are matched on once it's merged.
+        async let runs: Void = store.sync(org, windowDays: (window.syncDays() + 1) / 2, excluding: configs.config(for: org).unfetchedRepos, force: force)
+        async let merged: Void = metricsStore.sync(org, windowDays: window.syncDays())
+        _ = await (runs, merged)
     }
 
     @ViewBuilder
@@ -75,7 +88,7 @@ struct ActionsView: View {
     }
 
     @ViewBuilder
-    private func content(_ metrics: ActionsMetrics) -> some View {
+    private func content(_ metrics: ActionsMetrics, ci: PullRequestCIMetrics) -> some View {
         Section {
             VStack(alignment: .leading, spacing: 16) {
                 if let error = store.errors[org] {
@@ -122,6 +135,7 @@ struct ActionsView: View {
                     }
                 }
             }
+            PullRequestCISections(org: org, ci: ci, hasPrevious: metrics.hasPrevious, navigate: navigate)
             Section {
                 RepositoriesTable(org: org, metrics: metrics, sort: $repoSort) { navigate(.actionsRepository($0)) }
                     .sectionContent()
@@ -251,6 +265,7 @@ struct AttentionList: View {
         case .failing: "exclamationmark.triangle.fill"
         case .flaky: "arrow.triangle.2.circlepath"
         case .slower: "tortoise.fill"
+        case .superseded: "forward.fill"
         }
     }
 
@@ -258,7 +273,7 @@ struct AttentionList: View {
         switch kind {
         case .red: ChartPalette.critical
         case .failing, .flaky: ChartPalette.warning
-        case .slower: .secondary
+        case .slower, .superseded: .secondary
         }
     }
 
@@ -268,6 +283,7 @@ struct AttentionList: View {
         case .failing: "Often failing"
         case .flaky: "Flaky"
         case .slower: "Slower"
+        case .superseded: "Superseded"
         }
     }
 }
@@ -742,6 +758,13 @@ extension ColumnGuideButton {
                 ("Share", "Of the org's run time"),
                 ("Run time trend", "Week by week"),
                 ("Distribution", "Runs up to 60s, 5, 10, 20, 60 minutes, longer"),
+            ]),
+            Group(title: "Pull requests", entries: [
+                ("CI time", "Run time of its runs and pushes to its branch"),
+                ("Pushes", "Commits CI ran on"),
+                ("Wasted", "Replaced commits, and failures on the last"),
+                ("Wait", "Final push to CI finishing, merged PRs"),
+                ("Weight", "Share of CI time over share of PRs"),
             ]),
             Group(title: "Workflows", entries: [
                 ("Main", "Latest default-branch run outside PRs"),
