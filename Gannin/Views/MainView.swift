@@ -202,7 +202,7 @@ struct MainView: View {
     @AppStorage("lastOrg") private var lastOrg = ""
 
     /// The last project picked for an org in any window, on this Mac.
-    private static func lastWorkspace(for org: String) -> String? {
+    static func lastWorkspace(for org: String) -> String? {
         UserDefaults.standard.string(forKey: "lastWorkspace.\(org)").flatMap { $0.isEmpty ? nil : $0 }
     }
 
@@ -224,6 +224,9 @@ struct MainView: View {
     @State private var path: [DetailSelection] = []
     /// A new window or tab's request, applied once its org is selected.
     @State private var request: NavigationRequest?
+    /// Set while a window from New Window or New Tab asks where to open.
+    @State private var blank: BlankWindowRequest?
+    @AppStorage(BlankWindowRequest.asksKey) private var asksWhereNewWindowsOpen = true
     /// The person picked under People in the sidebar, shown as the main view.
     @State private var person: String?
     /// The work log, threads or punchcards, picked under People.
@@ -266,7 +269,9 @@ struct MainView: View {
                 .navigationSplitViewColumnWidth(min: 220, ideal: 260, max: 500)
                 .environment(\.openElsewhere, sidebarOpenElsewhere)
         } detail: {
-            if let selectedOrg {
+            if let blank {
+                WindowChooser(start: blank.from ?? defaultOrg.map { WindowPlace(org: $0, workspace: Self.lastWorkspace(for: $0)) }, open: open)
+            } else if let selectedOrg {
                 PageStack(
                     org: selectedOrg,
                     workload: workload,
@@ -301,6 +306,7 @@ struct MainView: View {
         .navigationTitle(customTitle.isEmpty ? automaticTitle : customTitle)
         .windowSubtitle(selectedOrg.map { orgs.org(login: $0)?.displayName ?? $0 } ?? "")
         .focusedSceneValue(\.renameTab, RenameTabAction(window: windowID, perform: startRenaming))
+        .focusedSceneValue(\.windowPlace, selectedOrg.map { WindowPlace(org: $0, workspace: workspace) })
         .commandPalette(homeOrg: { selectedOrg }, open: openFromPalette)
         .investmentPrompt()
         .environment(orgConfigs)
@@ -346,11 +352,7 @@ struct MainView: View {
             }
         }
         .onChange(of: orgs.orgs, initial: true) {
-            if selectedOrg == nil {
-                // The last one picked, else an org before your own account,
-                // unless that's starred.
-                selectedOrg = (orgs.orgs.first { $0.login == lastOrg } ?? orgs.starredOrgs.first ?? orgs.orgs.first { !$0.isPersonal } ?? orgs.orgs.first)?.login
-            }
+            if selectedOrg == nil, blank == nil { selectedOrg = defaultOrg }
         }
         .onChange(of: workspaceID) {
             if let selectedOrg { UserDefaults.standard.set(workspaceID, forKey: "lastWorkspace.\(selectedOrg)") }
@@ -360,8 +362,35 @@ struct MainView: View {
     /// Takes the request this window was opened for, if any: its org, then
     /// (once that's selected) its sidebar item and trail.
     private func claimRequest() {
+        if let pending = WindowRequest.blank {
+            WindowRequest.blank = nil
+            if asksWhereNewWindowsOpen {
+                // No org until one's chosen, so nothing loads for another.
+                blank = pending
+                selectedOrg = nil
+            } else if let from = pending.from {
+                open(from)
+            }
+            return
+        }
         guard let pending = WindowRequest.pending else { return }
         WindowRequest.pending = nil
+        take(pending)
+    }
+
+    /// The last org picked, else an org before your own account, unless
+    /// that's starred.
+    private var defaultOrg: String? {
+        (orgs.orgs.first { $0.login == lastOrg } ?? orgs.starredOrgs.first ?? orgs.orgs.first { !$0.isPersonal } ?? orgs.orgs.first)?.login
+    }
+
+    /// Opens the window on the org and project chosen (or copied).
+    private func open(_ place: WindowPlace) {
+        blank = nil
+        take(NavigationRequest(org: place.org, sidebar: .tab(tab), path: [], workspace: place.workspace))
+    }
+
+    private func take(_ pending: NavigationRequest) {
         if selectedOrg == pending.org {
             apply(pending)
         } else {

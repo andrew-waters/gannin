@@ -39,6 +39,7 @@ struct GeneralSettings: View {
     @AppStorage("excludeDrafts") private var excludeDrafts = false
     @AppStorage("showHidden") private var showHidden = false
     @AppStorage(AppAppearance.key) private var appearance: AppAppearance = .system
+    @AppStorage(BlankWindowRequest.asksKey) private var asksWhereNewWindowsOpen = true
 
     var body: some View {
         Form {
@@ -63,6 +64,15 @@ struct GeneralSettings: View {
                 Text("Font")
             } footer: {
                 Text("Diffs (Repositories, sessions and PR reviews) and the Claude Code terminal.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Ask which organisation and project new windows open", isOn: $asksWhereNewWindowsOpen)
+            } header: {
+                Text("Windows")
+            } footer: {
+                Text("File › New Window and New Tab. Off, they open on the same ones as the window you were in.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

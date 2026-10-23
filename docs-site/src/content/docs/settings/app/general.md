@@ -20,6 +20,12 @@ Settings › General is where you set how Gannin looks, who you are signed in as
 | Reset | Only shown once you have chosen a font | Puts the font back to the default. | This Mac |
 | Change Font | The system monospaced font at 12 pt | Opens the macOS font panel. The font is used for diffs (Repositories, sessions and PR reviews) and the Claude Code terminal. | This Mac |
 
+## Windows
+
+| Option | Default | What it changes | Kept |
+| --- | --- | --- | --- |
+| Ask which organisation and project new windows open | On | File › New Window and File › New Tab ask which org and project to open on, starting on the window you were in. Off, they open on the same org and project as that window. | This Mac |
+
 ## Account
 
 | Option | Default | What it changes | Kept |

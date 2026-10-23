@@ -31,8 +31,8 @@ A page whose data source is turned off in [Settings › Sync](/docs/settings/app
 
 Windows are independent. Each window or tab remembers its own org, project, section and metrics window, so you can look at two orgs side by side.
 
-- File › New Window and File › New Tab open another one.
-- A window that opens with no org takes the last one you picked.
+- File › New Window and File › New Tab open another one, and ask which org and project it should show. It starts on the window you were in; see [Orgs and projects](/docs/get-started/orgs-and-projects/#orgs).
+- A window that opens with no org, such as the first one after a fresh install, takes the last one you picked.
 - Picking an org takes the project you last used for it on this Mac.
 
 Right-click almost anything in a list for **Open in New Tab** and **Open in New Window**. A PR or issue opened in a new window gets a window of its own. Anything else opens a main window on the same org, sidebar row and page.

@@ -11,11 +11,11 @@ enum TabRequest {
 
 struct NewTabCommand: View {
     @Environment(\.openWindow) private var openWindow
+    @FocusedValue(\.windowPlace) private var place
 
     var body: some View {
         Button("New Tab") {
-            TabRequest.parent = NSApp.keyWindow
-            openWindow(id: "main")
+            WindowRequest.openBlank(from: place, placement: .tab, openWindow: openWindow)
         }
         .keyboardShortcut("t")
     }
