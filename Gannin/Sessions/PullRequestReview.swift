@@ -229,23 +229,36 @@ struct ReviewedPullRequest: Equatable {
     let state: String
     let files: [File]
     var existingComments: [ExistingComment] = []
+    /// Reviews already submitted on the PR, anyone's, whose bodies carry
+    /// the findings that couldn't go on a line.
+    var earlierReviews: [PostedReview] = []
     /// Set when the comments were fetched leniently and that failed, so
-    /// `existingComments` may be missing some.
+    /// `existingComments` and `earlierReviews` may be missing some.
     var existingCommentsError: String?
+    /// The signed-in user, whose outdated comments still count as said.
+    var viewer: String?
 
-    /// A finding left out of a review because a comment saying much the same
-    /// is already on its line.
+    /// How far, in lines, a finding can be from a comment saying the same
+    /// and still be covered by it: a push or a re-run often moves the
+    /// point a line or two.
+    static let lineLeeway = 3
+
+    /// A finding left out of a review because a comment or an earlier
+    /// review already says much the same.
     struct Omitted {
         let path: String
-        let line: Int
+        let line: Int?
         /// What the finding said, as it would have been posted.
         let comment: String
-        let existing: ExistingComment
+        /// Who said it before, and what they said.
+        let author: String
+        let said: String
+        let url: URL?
     }
 
     /// The inline comments GitHub will take (findings kept or edited on
     /// lines the diff shows, and your own), the findings it won't, and the
-    /// findings left out because their line already carries the same comment.
+    /// findings left out because the PR already says the same.
     func comments(for review: SessionTranscript.ReviewResult?, draft: ReviewDraft) -> ([[String: Any]], [SessionTranscript.Finding], [Omitted]) {
         var inline: [[String: Any]] = []
         var general: [SessionTranscript.Finding] = []
@@ -256,11 +269,15 @@ struct ReviewedPullRequest: Equatable {
             var text = finding.comment
             if case .edited(let edited) = decision { text = edited }
             guard let line = finding.line, let file = files.first(where: { $0.path == finding.path }), file.hasLine(line, isOld: false) else {
-                general.append(.init(path: finding.path, line: finding.line, comment: text, severity: finding.severity))
+                if let earlier = said(text, path: finding.path, line: nil) {
+                    omitted.append(.init(path: finding.path, line: finding.line, comment: text, author: earlier.author, said: earlier.said, url: earlier.url))
+                } else {
+                    general.append(.init(path: finding.path, line: finding.line, comment: text, severity: finding.severity))
+                }
                 continue
             }
-            if let existing = existingComments.first(where: { !$0.isOld && !$0.isOutdated && $0.path == finding.path && $0.line == line && Self.isSameComment(existing: $0.body, finding: text) }) {
-                omitted.append(.init(path: finding.path, line: line, comment: text, existing: existing))
+            if let earlier = said(text, path: finding.path, line: line) {
+                omitted.append(.init(path: finding.path, line: line, comment: text, author: earlier.author, said: earlier.said, url: earlier.url))
                 continue
             }
             if let suggestion = finding.suggestion, decision == nil {
@@ -272,6 +289,42 @@ struct ReviewedPullRequest: Equatable {
             inline.append(["path": comment.path, "line": comment.line, "side": comment.isOld ? "LEFT" : "RIGHT", "body": comment.body])
         }
         return (inline, general, omitted)
+    }
+
+    /// Who already said `text` about `path`, and where: a review comment on
+    /// the new side near `line` (anywhere in the file for a finding with
+    /// no `line` on the diff), or a line of an earlier review's body that
+    /// names the path. An outdated comment counts only when it's the
+    /// viewer's: GitHub hides it, but it was still sent, while someone
+    /// else's may be about code that has since changed.
+    private func said(_ text: String, path: String, line: Int?) -> (author: String, said: String, url: URL?)? {
+        let comment = existingComments.first { comment in
+            guard !comment.isOld, comment.path == path, Self.isSameComment(existing: comment.body, finding: text) else { return false }
+            if comment.isOutdated {
+                guard let viewer, comment.author.caseInsensitiveCompare(viewer) == .orderedSame else { return false }
+                return true
+            }
+            guard let line else { return true }
+            return abs(comment.line - line) <= Self.lineLeeway
+        }
+        if let comment { return (comment.author, comment.body, comment.url) }
+        for review in earlierReviews {
+            // Gannin writes a body finding as "- `path:line`: comment".
+            let lines = review.body.split(separator: "\n").map(String.init).filter { $0.contains(path) }
+            if let match = lines.first(where: { Self.isSameComment(existing: Self.withoutLocation($0, path: path), finding: text) }) {
+                return (review.author, match, review.url)
+            }
+        }
+        return nil
+    }
+
+    /// A body line with its "- `path:line`:" lead taken off, so its words
+    /// are only what was said.
+    private static func withoutLocation(_ line: String, path: String) -> String {
+        guard let range = line.range(of: path) else { return line }
+        var rest = line[range.upperBound...].drop { $0 == ":" || $0.isNumber || $0 == "`" }
+        rest = rest.drop { $0 == ":" || $0.isWhitespace }
+        return String(rest)
     }
 
     /// Whether an existing comment already says what a finding says: the
@@ -317,6 +370,8 @@ struct PostedReview: Equatable {
     let commit: String
     let url: URL?
     let submittedAt: Date
+    /// Who submitted it; empty when only the viewer's reviews were read.
+    var author = ""
 
     /// The latest of `reviews` whose body begins with a review's summary:
     /// that review, posted from here or from elsewhere.
@@ -421,18 +476,22 @@ extension GitHubAPI {
             return ReviewedPullRequest.File(path: file.filename, status: file.status, additions: file.additions, deletions: file.deletions, lines: GitDiff.lines(of: diff).0)
         }
         var existing: [ReviewedPullRequest.ExistingComment] = []
+        var earlier: [PostedReview] = []
         var existingError: String?
         do {
             existing = try await existingComments(repo: repo, number: number)
+            earlier = try await reviews(repo: repo, number: number)
         } catch {
             if !lenientComments { throw error }
             existingError = error.localizedDescription
         }
+        let me = try? await viewer().login
         return ReviewedPullRequest(
             title: pull.title, body: pull.body ?? "", author: pull.user?.login, headSHA: pull.head.sha,
             additions: pull.additions, deletions: pull.deletions,
             state: pull.merged == true ? "merged" : pull.state, files: files,
-            existingComments: existing, existingCommentsError: existingError
+            existingComments: existing, earlierReviews: earlier, existingCommentsError: existingError,
+            viewer: me
         )
     }
 
@@ -482,6 +541,13 @@ extension GitHubAPI {
     /// The reviews you've submitted on a PR, oldest first. Pending and
     /// dismissed ones aren't counted.
     func myReviews(repo: String, number: Int) async throws -> [PostedReview] {
+        let me = try await viewer().login
+        return try await reviews(repo: repo, number: number).filter { $0.author.caseInsensitiveCompare(me) == .orderedSame }
+    }
+
+    /// Everyone's submitted reviews on a PR, oldest first. Pending and
+    /// dismissed ones aren't counted.
+    func reviews(repo: String, number: Int) async throws -> [PostedReview] {
         struct Review: Decodable {
             struct User: Decodable { let login: String }
             let state: String
@@ -491,15 +557,14 @@ extension GitHubAPI {
             let submittedAt: Date?
             let user: User?
         }
-        let me = try await viewer().login
         var reviews: [PostedReview] = []
         for page in 1...30 {
             let batch: [Review] = try await rest("repos/\(repo)/pulls/\(number)/reviews", query: ["per_page": "100", "page": "\(page)"])
             reviews += batch.compactMap { review in
-                guard let login = review.user?.login, login.caseInsensitiveCompare(me) == .orderedSame,
+                guard let login = review.user?.login,
                       let event = ["APPROVED": "APPROVE", "CHANGES_REQUESTED": "REQUEST_CHANGES", "COMMENTED": "COMMENT"][review.state],
                       let at = review.submittedAt else { return nil }
-                return PostedReview(event: event, body: review.body ?? "", commit: review.commitId ?? "", url: review.htmlUrl, submittedAt: at)
+                return PostedReview(event: event, body: review.body ?? "", commit: review.commitId ?? "", url: review.htmlUrl, submittedAt: at, author: login)
             }
             if batch.count < 100 { break }
         }
@@ -2213,9 +2278,11 @@ private struct PostReviewSheet: View {
     /// tries those again.
     @State private var isPosted = false
     @AppStorage(SessionStore.recordReviewsKey) private var recordsReview = true
-    /// The PR's review comments as of pressing Post, fetched once before the
-    /// review goes, since the sheet's own copy dates from when it opened.
+    /// The PR's review comments and reviews as of pressing Post, fetched
+    /// once before the review goes, since the sheet's own copy dates from
+    /// when it opened.
     @State private var latestComments: [ReviewedPullRequest.ExistingComment]?
+    @State private var latestReviews: [PostedReview]?
     /// Whether Post has already checked for new comments, or tried to, so
     /// pressing it again after a failed check posts without one.
     @State private var checkedComments = false
@@ -2223,12 +2290,14 @@ private struct PostReviewSheet: View {
 
     private var reference: PullRequestReference { session.reviewOf! }
 
-    /// The PR with the latest comments in place of the ones it was opened with.
-    /// Only its comments change: the review is posted against the commit it saw.
+    /// The PR with the latest comments and reviews in place of the ones it
+    /// was opened with. Only those change: the review is posted against the
+    /// commit it saw.
     private var current: ReviewedPullRequest {
-        guard let latestComments else { return pullRequest }
+        guard let latestComments, let latestReviews else { return pullRequest }
         var pull = pullRequest
         pull.existingComments = latestComments
+        pull.earlierReviews = latestReviews
         return pull
     }
 
@@ -2289,13 +2358,13 @@ private struct PostReviewSheet: View {
                 Section {
                     ForEach(Array(omitted.enumerated()), id: \.offset) { _, item in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("\(item.path):\(item.line)")
+                            Text("\(item.path)\(item.line.map { ":\($0)" } ?? "")")
                                 .font(.caption.monospaced())
                                 .foregroundStyle(.secondary)
                             Text(item.comment)
                                 .font(.callout)
                                 .lineLimit(3)
-                            Text("\(item.existing.author): \(item.existing.body)")
+                            Text("\(item.author): \(item.said)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
@@ -2304,7 +2373,7 @@ private struct PostReviewSheet: View {
                 } header: {
                     Text("\(omitted.count) finding\(omitted.count == 1 ? "" : "s") left out")
                 } footer: {
-                    Text("\(omitted.count == 1 ? "It has" : "They have") a comment on the same line saying much the same, so \(omitted.count == 1 ? "it isn't" : "they aren't") posted again.")
+                    Text("A comment near \(omitted.count == 1 ? "its line" : "their lines"), or an earlier review, already says much the same, so \(omitted.count == 1 ? "it isn't" : "they aren't") posted again.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -2414,16 +2483,18 @@ private struct PostReviewSheet: View {
                 if !checkedComments {
                     // Comments left since the sheet opened. Findings they
                     // duplicate drop out, and the user sees that before it goes.
-                    let shown = Set(comments().2.map { "\($0.path):\($0.line)" })
+                    let shown = Set(comments().2.map { "\($0.path):\($0.line ?? 0):\($0.comment)" })
                     checkedComments = true
                     do {
-                        latestComments = try await api.existingComments(repo: reference.repo, number: reference.number)
+                        let comments = try await api.existingComments(repo: reference.repo, number: reference.number)
+                        latestReviews = try await api.reviews(repo: reference.repo, number: reference.number)
+                        latestComments = comments
                     } catch {
-                        self.error = "Couldn't check the pull request for comments added since this review was drafted: \(error.localizedDescription). Post again to send it without that check."
+                        self.error = "Couldn't check the pull request for comments and reviews added since this review was drafted: \(error.localizedDescription). Post again to send it without that check."
                         sending = false
                         return
                     }
-                    if shown != Set(comments().2.map { "\($0.path):\($0.line)" }) {
+                    if shown != Set(comments().2.map { "\($0.path):\($0.line ?? 0):\($0.comment)" }) {
                         notice = "The findings left out changed: someone has commented since this review was drafted. Check the list, then post again. To send one that's wrongly left out, add it as a comment of your own."
                         sending = false
                         return
