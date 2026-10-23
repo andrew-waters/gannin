@@ -37,14 +37,15 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-23T11:39:12Z",
   "number" : 471,
   "posted_at" : "2026-10-23T11:17:35Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-23T11:16:37Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Ask planning sessions for a few larger tasks instead of one per step",
-  "updated_at" : "2026-10-23T11:29:06Z",
+  "updated_at" : "2026-10-23T11:39:44Z",
   "verdict" : "approve"
 }
