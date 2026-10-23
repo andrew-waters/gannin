@@ -41,8 +41,8 @@ Agree shows what isn't approved or covered, lets you tick who was here, and lets
 
 Where the issues go follows the org's choice in [Org settings › Issues › Where issues go](/docs/settings/org/issues/#where-issues-go), which Claude is told when the session starts:
 
-- **Per repo, collected on a project**: each task's issue goes in the repo its work is in. Agree never offers a repo with issues turned off: a task that named one moves to another repo, with a note saying why. Each issue is added to the project picked there, or the Issue workflow board.
-- **Central repo**: every issue, the parent included, goes in the named repo, and each issue says which repo the work is in. If that repo has issues turned off, Agree warns before you write. Each issue is added to the Issue workflow board, when one is picked.
+- **Per repo, collected on a project**: each task's issue goes in the repo its work is in. Agree never offers a repo with issues turned off or an archived one: a task that named one moves to another repo, with a note saying why. Each issue is added to the project picked there, or the Issue workflow board.
+- **Central repo**: every issue, the parent included, goes in the named repo, and each issue says which repo the work is in. If that repo has issues turned off or is archived, Agree warns before you write. Each issue is added to the Issue workflow board, when one is picked.
 
 You can still pick another repo for any issue before Agree and Write.
 

@@ -223,7 +223,7 @@ struct PlanningState: Codable, Hashable {
         if let central = filing.centralRepo {
             return "the repository its work is in. The org files every issue in `\(central)`, so Gannin files each task's issue there whatever its `repo`, and you needn't check which repos accept issues."
         }
-        return "where its issue is filed, so it must be a repository with issues turned on (check with `gh repo view owner/name --json hasIssuesEnabled`). When the work is in a repository with issues turned off, give the task the closest repository that accepts them and name the other in its `body`."
+        return "where its issue is filed, so it must be a repository with issues turned on that isn't archived (check with `gh repo view owner/name --json hasIssuesEnabled,isArchived`). When the work is in a repository that can't take issues, give the task the closest repository that accepts them and name the other in its `body`."
     }
 }
 

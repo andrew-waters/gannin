@@ -27,7 +27,7 @@ struct IssueStrategySection: View {
                     ForEach(repoChoices(strategy), id: \.self) { Text($0).tag(Optional($0)) }
                 }
                 if centralClosed, let repo = strategy.centralRepo {
-                    Text("\(repo) has issues turned off, so issues can't be filed there. Turn them on in its settings on GitHub, or pick another repo.")
+                    Text("\(repo) has issues turned off or is archived, so issues can't be filed there. Turn issues on in its settings on GitHub, or pick another repo.")
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -52,8 +52,8 @@ struct IssueStrategySection: View {
         }
         .task(id: strategy.centralRepo) {
             centralClosed = false
-            guard let repo = strategy.centralRepo, let off = try? await auth.api?.reposWithIssuesOff([repo]) else { return }
-            centralClosed = off.contains(repo.lowercased())
+            guard let repo = strategy.centralRepo, let api = auth.api else { return }
+            centralClosed = await api.reposWithIssuesOff([repo]).contains(repo.lowercased())
         }
     }
 

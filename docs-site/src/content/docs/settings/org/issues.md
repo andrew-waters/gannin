@@ -13,8 +13,8 @@ How the org keeps its issues, which [planning](/docs/agents/planning/#agree) fol
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| Strategy | Per repo, collected on a project | **Per repo, collected on a project**: each issue goes in the repo its work is in, and repos with issues turned off are never offered. **Central repo**: every issue goes in one repo (a `product` repo, say), whichever repo the work is in, and the issue says which repo that is. | Home harness (`.gannin/issue-strategy.json`) |
-| Repository | None picked | With Central repo, the repo every issue goes in. If it has issues turned off, a warning says so here and in planning's Agree. | Home harness (`.gannin/issue-strategy.json`) |
+| Strategy | Per repo, collected on a project | **Per repo, collected on a project**: each issue goes in the repo its work is in, and repos with issues turned off, or archived, are never offered. **Central repo**: every issue goes in one repo (a `product` repo, say), whichever repo the work is in, and the issue says which repo that is. | Home harness (`.gannin/issue-strategy.json`) |
+| Repository | None picked | With Central repo, the repo every issue goes in. If it has issues turned off or is archived, a warning says so here and in planning's Agree. | Home harness (`.gannin/issue-strategy.json`) |
 | Project | The Issue workflow board | With Per repo, the board each new issue is added to. The Issue workflow board is the Board picked below; with Any board there, issues aren't added to one. | Home harness (`.gannin/issue-strategy.json`) |
 
 Under Central repo, planning still adds each issue to the Issue workflow board, when one is picked.

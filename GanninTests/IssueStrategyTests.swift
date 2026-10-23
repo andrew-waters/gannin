@@ -60,7 +60,7 @@ struct IssueStrategyTests {
     }
 
     @Test func agreeSaysWhyARepoChanged() {
-        #expect(PlanningAgreeSheet.repoNote(task: "acme/docs", filed: "acme/api", central: nil, issuesOff: ["acme/docs"]) == "acme/docs has issues turned off, so this goes in acme/api.")
+        #expect(PlanningAgreeSheet.repoNote(task: "acme/docs", filed: "acme/api", central: nil, issuesOff: ["acme/docs"]) == "acme/docs can't take issues (turned off, or archived), so this goes in acme/api.")
         #expect(PlanningAgreeSheet.repoNote(task: "acme/api", filed: "acme/product", central: "acme/product", issuesOff: []) == "The work is in acme/api; issues go in acme/product.")
         #expect(PlanningAgreeSheet.repoNote(task: "acme/api", filed: "acme/api", central: nil, issuesOff: []) == nil)
         #expect(PlanningAgreeSheet.repoNote(task: nil, filed: "acme/api", central: nil, issuesOff: []) == nil)
@@ -68,6 +68,14 @@ struct IssueStrategyTests {
 
     @Test func planningInstructionsFollowTheStrategy() {
         #expect(PlanningState.instructions(path: "p.json", filing: central).contains("files every issue in `acme/product`"))
-        #expect(PlanningState.instructions(path: "p.json").contains("hasIssuesEnabled"))
+        #expect(PlanningState.instructions(path: "p.json").contains("hasIssuesEnabled,isArchived"))
+    }
+
+    /// GitHub answers `rateLimit` beside the aliased repos, and it must
+    /// decode too, or the whole lookup fails and nothing is filtered.
+    @Test func readsReposThatWontTakeIssues() throws {
+        let json = #"{"rateLimit": {"cost": 1, "remaining": 4999, "limit": 5000, "resetAt": "2026-10-23T20:00:00Z"}, "r0": {"nameWithOwner": "acme/Docs", "hasIssuesEnabled": false, "isArchived": false}, "r1": {"nameWithOwner": "acme/api", "hasIssuesEnabled": true, "isArchived": false}, "r2": {"nameWithOwner": "acme/old", "hasIssuesEnabled": true, "isArchived": true}, "r3": null}"#
+        let response = try JSONDecoder().decode([String: IssuesEnabledNode?].self, from: Data(json.utf8))
+        #expect(IssuesEnabledNode.closed(response) == ["acme/docs", "acme/old"])
     }
 }

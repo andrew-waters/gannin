@@ -38,8 +38,6 @@ struct PlanningAgreeSheet: View {
         var failed: String?
         /// The issue was made, but couldn't be added to the workflow board.
         var boardWarning: String?
-        /// Why the repo isn't the one the plan named.
-        var repoNote: String?
     }
 
     @State private var drafts: [Draft] = []
@@ -52,7 +50,8 @@ struct PlanningAgreeSheet: View {
     @State private var writesRequirement = true
     @State private var working = false
     @State private var status: String?
-    /// Repos with issues turned off, lowercased, once looked up.
+    /// Repos that won't take an issue (turned off, or archived), lowercased,
+    /// once looked up.
     @State private var issuesOff: Set<String> = []
 
     private var org: String { session.org }
@@ -81,7 +80,8 @@ struct PlanningAgreeSheet: View {
 
     /// Repos an issue might go in: those the plan names, the project's, then
     /// the busiest in the snapshot and issue history (which this window may
-    /// not have loaded), and the harness itself so there's always one.
+    /// not have loaded), and the harness itself so there's always one. At
+    /// most 100, the busiest last, so the issues-off lookup covers them all.
     private var candidates: [String] {
         let config = projectConfig
         let named = (state?.tasks ?? []).compactMap(\.repo) + (state?.scouting ?? []).compactMap(\.repo) + [planning?.issue?.repo].compactMap { $0 }
@@ -92,8 +92,8 @@ struct PlanningAgreeSheet: View {
             + (issueStore.history(for: org)?.issues.values.map(\.repo) ?? [])
         let busiest = Dictionary(grouping: active, by: { $0 }).mapValues(\.count).sorted { $0.value > $1.value }.map(\.key)
         var seen: Set<String> = []
-        let found = (named + project + busiest).filter { seen.insert($0).inserted && !config.repoExclusion.contains($0) }
-        return found.isEmpty ? [harnessRepo] : found
+        let found = (named + project + busiest).filter { seen.insert($0).inserted && !config.repoExclusion.contains($0) }.prefix(100)
+        return found.isEmpty ? [harnessRepo] : Array(found)
     }
 
     private var members: [Person] {
@@ -179,7 +179,7 @@ struct PlanningAgreeSheet: View {
         if !unapproved.isEmpty || !uncovered.isEmpty || centralClosed != nil {
             Section {
                 if let centralClosed {
-                    Label("Issues go in \(centralClosed) (Org settings › Issues), but it has issues turned off. Pick another repo below, or turn them on.", systemImage: "exclamationmark.triangle.fill")
+                    Label("Issues go in \(centralClosed) (Org settings › Issues), but it has issues turned off or is archived. Pick another repo below, or turn issues on.", systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                 }
                 if !unapproved.isEmpty {
@@ -278,7 +278,7 @@ struct PlanningAgreeSheet: View {
             if let failed = draft.wrappedValue.failed {
                 Text(failed).font(.caption).foregroundStyle(.red)
             }
-            if let repoNote = draft.wrappedValue.repoNote, draft.wrappedValue.made == nil {
+            if draft.wrappedValue.made == nil, let repoNote = Self.repoNote(task: draft.wrappedValue.taskRepo, filed: draft.wrappedValue.repo, central: strategy.centralRepo, issuesOff: issuesOff) {
                 Text(repoNote).font(.caption).foregroundStyle(.secondary)
             }
             if let boardWarning = draft.wrappedValue.boardWarning {
@@ -446,28 +446,24 @@ struct PlanningAgreeSheet: View {
     /// still says why one can't take an issue.
     private func checkIssuesOff() async {
         let central = strategy.centralRepo.map { [$0] } ?? []
-        guard let api = auth.api, let off = try? await api.reposWithIssuesOff(central + candidates) else { return }
-        issuesOff = off
+        guard let api = auth.api else { return }
+        issuesOff = await api.reposWithIssuesOff(central + candidates)
         refile()
         if issuesOff.contains(parentRepo.lowercased()) { parentRepo = repos.first ?? "" }
     }
 
-    /// Points drafts not yet made at a repo that takes issues, saying why
-    /// when it isn't the one the plan named.
+    /// Points drafts not yet made at a repo that takes issues.
     private func refile() {
-        for index in drafts.indices where drafts[index].made == nil && drafts[index].created == nil {
-            let draft = drafts[index]
-            if issuesOff.contains(draft.repo.lowercased()), strategy.centralRepo == nil {
-                drafts[index].repo = strategy.filingRepo(for: nil, in: repos)
-            }
-            drafts[index].repoNote = Self.repoNote(task: draft.taskRepo, filed: drafts[index].repo, central: strategy.centralRepo, issuesOff: issuesOff)
+        guard strategy.centralRepo == nil else { return }
+        for index in drafts.indices where drafts[index].made == nil && drafts[index].created == nil && issuesOff.contains(drafts[index].repo.lowercased()) {
+            drafts[index].repo = strategy.filingRepo(for: nil, in: repos)
         }
     }
 
     /// Why an issue isn't filed in the repo its task named, if it isn't.
     static func repoNote(task: String?, filed: String, central: String?, issuesOff: Set<String>) -> String? {
         guard let task, task.caseInsensitiveCompare(filed) != .orderedSame else { return nil }
-        if issuesOff.contains(task.lowercased()) { return "\(task) has issues turned off, so this goes in \(filed)." }
+        if issuesOff.contains(task.lowercased()) { return "\(task) can't take issues (turned off, or archived), so this goes in \(filed)." }
         if let central, central.caseInsensitiveCompare(filed) == .orderedSame { return "The work is in \(task); issues go in \(filed)." }
         return nil
     }

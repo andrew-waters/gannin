@@ -62,28 +62,31 @@ extension GitHubAPI {
         return (created.createIssue.issue.id, created.createIssue.issue.number, created.createIssue.issue.url)
     }
 
-    /// Of `repos` (`owner/name`), those with issues turned off, lowercased,
-    /// in one query. A repo this token can't read isn't among them, so
-    /// `createIssue` reports it. A read.
-    func reposWithIssuesOff(_ repos: [String]) async throws -> Set<String> {
-        struct Node: Decodable { let nameWithOwner: String; let hasIssuesEnabled: Bool }
+    /// Of `repos` (`owner/name`), those that won't take a new issue
+    /// (issues turned off, or archived), lowercased, 50 to a query. A repo
+    /// this token can't read isn't among them, so `createIssue` reports it,
+    /// and a batch that fails filters nothing. A read.
+    func reposWithIssuesOff(_ repos: [String]) async -> Set<String> {
         let pairs = repos.compactMap { repo -> (owner: String, name: String)? in
             let parts = repo.split(separator: "/").map(String.init)
             return parts.count == 2 ? (parts[0], parts[1]) : nil
         }
-        guard !pairs.isEmpty else { return [] }
-        var values: [String: Any] = [:]
-        var fields: [String] = []
-        var arguments: [String] = []
-        for (index, pair) in pairs.enumerated() {
-            values["o\(index)"] = pair.owner
-            values["n\(index)"] = pair.name
-            arguments.append("$o\(index): String!, $n\(index): String!")
-            fields.append("r\(index): repository(owner: $o\(index), name: $n\(index)) { nameWithOwner hasIssuesEnabled }")
+        var off: Set<String> = []
+        for start in stride(from: 0, to: pairs.count, by: 50) {
+            var values: [String: Any] = [:]
+            var fields: [String] = []
+            var arguments: [String] = []
+            for (index, pair) in pairs[start..<min(start + 50, pairs.count)].enumerated() {
+                values["o\(index)"] = pair.owner
+                values["n\(index)"] = pair.name
+                arguments.append("$o\(index): String!, $n\(index): String!")
+                fields.append("r\(index): repository(owner: $o\(index), name: $n\(index)) { nameWithOwner hasIssuesEnabled isArchived }")
+            }
+            let answer: ([String: IssuesEnabledNode?], [String: String])? = try? await queryReportingReasonsByField(
+                "query(\(arguments.joined(separator: ", "))) {\n\(fields.joined(separator: "\n"))\n}", values: values)
+            if let answer { off.formUnion(IssuesEnabledNode.closed(answer.0)) }
         }
-        let (found, _): ([String: Node?], [String: String]) = try await queryReportingReasonsByField(
-            "query(\(arguments.joined(separator: ", "))) {\n\(fields.joined(separator: "\n"))\n}", values: values)
-        return Set(found.values.compactMap { $0 }.filter { !$0.hasIssuesEnabled }.map { $0.nameWithOwner.lowercased() })
+        return off
     }
 
     /// Makes `child` a sub-issue of `parent`. A write.
@@ -115,5 +118,21 @@ extension GitHubAPI {
               addComment(input: { subjectId: $subject, body: $body }) { subject { id } }
             }
             """, variables: ["subject": subjectID, "body": body])
+    }
+}
+
+/// A repo in `reposWithIssuesOff`'s answer. Every field is optional so the
+/// `rateLimit` GitHub answers beside the aliases decodes too, to all nils.
+struct IssuesEnabledNode: Decodable {
+    let nameWithOwner: String?
+    let hasIssuesEnabled: Bool?
+    let isArchived: Bool?
+
+    /// The repos in `response` that won't take a new issue, lowercased.
+    static func closed(_ response: [String: IssuesEnabledNode?]) -> Set<String> {
+        Set(response.values.compactMap { node in
+            guard let node, let name = node.nameWithOwner, node.hasIssuesEnabled == false || node.isArchived == true else { return nil }
+            return name.lowercased()
+        })
     }
 }
