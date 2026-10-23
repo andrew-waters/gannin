@@ -85,9 +85,12 @@ struct PullRequestFilters {
     }
 
     /// Whether `login` has reviewed it and hasn't been asked again since, as
-    /// the Reviewers column reads it.
+    /// the Reviewers column reads it. Never the author's own PR: their thread
+    /// replies arrive as reviews. Asked again only through a team still reads
+    /// as reviewed, as who's in a team isn't on the PR.
     static func isReviewed(_ pr: PullRequest, by login: String) -> Bool {
-        pr.reviewers.contains { $0.login == login } && !pr.requestedReviewers.contains { $0.login == login }
+        pr.author?.login != login && pr.reviewers.contains { $0.login == login }
+            && !pr.requestedReviewers.contains { $0.login == login }
     }
 
     /// Everything but the state, less `key` (so a menu counts what picking
@@ -186,8 +189,8 @@ struct PullRequestsView: View {
         let filters = stored.wrappedValue
         let pool = (workload.openPullRequests + workload.mergedPullRequests).filter(filters.inState)
         let shown = pool.filter { filters.matches($0, viewerLogin: auth.viewer?.login, checks: checks) }
-        let open = shown.filter { !$0.isMerged }.sorted { $0.updatedAt > $1.updatedAt }.map(PullRequestTableRow.init)
-        let merged = shown.filter(\.isMerged).sorted { ($0.mergedAt ?? $0.updatedAt) > ($1.mergedAt ?? $1.updatedAt) }.map(PullRequestTableRow.init)
+        let open = shown.filter { !$0.isMerged }.sorted { $0.updatedAt > $1.updatedAt }.map { PullRequestTableRow(pr: $0, checks: checks($0)) }
+        let merged = shown.filter(\.isMerged).sorted { ($0.mergedAt ?? $0.updatedAt) > ($1.mergedAt ?? $1.updatedAt) }.map { PullRequestTableRow(pr: $0, checks: checks($0)) }
         var sections: [(title: String, rows: [PullRequestTableRow])] = []
         if filters.state != .merged, !open.isEmpty { sections.append(("Open", open)) }
         if filters.state != .open, !merged.isEmpty { sections.append(("Merged in the last \(workload.snapshot.lookbackDays) days", merged)) }
@@ -298,6 +301,11 @@ struct PullRequestsView: View {
                 }
                 .width(min: 70, ideal: 90)
                 .customizationID("size")
+                TableColumn("Checks", value: \PullRequestTableRow.checksSort) { row in
+                    if let checks = row.checks { ChecksBadge(state: checks).lineLimit(1) }
+                }
+                .width(min: 70, ideal: 90)
+                .customizationID("checks")
             }
         } rows: {
             ForEach(sections, id: \.title) { section in
@@ -333,7 +341,7 @@ struct PullRequestsView: View {
                 .help(excludeDrafts ? "Drafts are left out everywhere by Settings › General › Exclude draft PRs" : "")
             Toggle("Hide reviewed", isOn: stored.projectedValue.hideReviewed)
                 .checkboxToggle()
-                .help("Leave out PRs you've reviewed and haven't been asked to review again")
+                .help("Leave out PRs you've reviewed and haven't been asked by name to review again")
             Spacer(minLength: 0)
             if clearable.isNarrowed {
                 Button("Clear All") {
@@ -417,6 +425,8 @@ struct PullRequestsView: View {
 /// A PR as the Pull Requests table shows it, with what its columns sort by.
 struct PullRequestTableRow: Identifiable {
     let pr: PullRequest
+    /// The freshest checks, the drawer's when it has them.
+    let checks: ItemDetail.CheckState?
 
     var id: String { pr.id }
     var title: String { pr.title }
@@ -435,4 +445,13 @@ struct PullRequestTableRow: Identifiable {
     var size: Int { pr.additions + pr.deletions }
     /// Files changed, those not yet known sorting first.
     var files: Int { pr.changedFiles ?? -1 }
+    /// Failing first, then running, then passing, then none.
+    var checksSort: Int {
+        switch checks {
+        case .failure, .error: 0
+        case .pending, .expected: 1
+        case .success: 2
+        case nil: 3
+        }
+    }
 }

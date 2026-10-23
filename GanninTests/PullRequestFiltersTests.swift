@@ -66,6 +66,8 @@ struct PullRequestFiltersTests {
         #expect(filters.matches(pr("again", requested: ["me"], reviewers: ["me"]), viewerLogin: "me"))
         #expect(filters.matches(pr("asked", requested: ["me"]), viewerLogin: "me"))
         #expect(filters.matches(pr("other", reviewers: ["sam"]), viewerLogin: "me"))
+        // The author's thread replies arrive as reviews; Hide mine is for those.
+        #expect(filters.matches(pr("mine", author: "me", reviewers: ["me"]), viewerLogin: "me"))
     }
 
     @Test func checksPreferTheFresherState() {

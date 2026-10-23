@@ -34,7 +34,7 @@ show only them, a way to hide what the viewer has already reviewed, and CI.
 
 - [x] `excluding` and `hideReviewed` in `PullRequestFilters`, stored per window, counted by `isNarrowed` and cleared by Clear All
 - [x] Hide These switch in `FilterMenu`, opt-in, used by every PR menu
-- [x] Checks key and menu, reading fresher checks from `DetailStore`
+- [x] Checks key, menu and column, reading fresher checks from `DetailStore`
 - [x] Hide reviewed checkbox on the bar
 - [x] Tests for exclusion, Hide reviewed and Checks
 - [x] Docs (Issues and Pull Requests) and CHANGELOG
