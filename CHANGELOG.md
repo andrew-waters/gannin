@@ -9,6 +9,8 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-23
+
 ### Added
 - Set Up Harness guides a new user through creating a harness or linking one they have, then adds any starter files it lacks and says where it's checked out. It opens by itself for an org with no project until Not Now, and is in the sidebar, on the Harness and Onboarding pages, and under Gannin › Set Up Harness
 - File › New Window and New Tab ask which org and project the window opens on, starting on the window you were in. Turn it off in Settings › General › Windows to open a copy of that window's org and project instead
