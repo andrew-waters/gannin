@@ -306,14 +306,23 @@ jobs:
             exit 0
           fi
           SHA=$(cut -d' ' -f1 "Gannin-$VERSION.dmg.sha256")
+          trap 'rm -f "$RUNNER_TEMP/tap_key"' EXIT
           printf '%s\n' "$TAP_DEPLOY_KEY" > "$RUNNER_TEMP/tap_key"
           chmod 600 "$RUNNER_TEMP/tap_key"
-          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/tap_key -o IdentitiesOnly=yes"
+          # GitHub's published host key (api.github.com/meta), so the clone
+          # doesn't rest on the runner image's known_hosts.
+          echo "github.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" > "$RUNNER_TEMP/known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/tap_key -o IdentitiesOnly=yes -o UserKnownHostsFile=$RUNNER_TEMP/known_hosts -o StrictHostKeyChecking=yes"
           git clone --depth 1 git@github.com:andrew-waters/homebrew-tap.git tap
           sed -i '' -E \
             -e "s/^  version \".*\"$/  version \"$VERSION\"/" \
             -e "s/^  sha256 \".*\"$/  sha256 \"$SHA\"/" \
             tap/Casks/gannin.rb
+          # A pattern that no longer matches would leave the cask as it was.
+          if ! grep -qxF "  version \"$VERSION\"" tap/Casks/gannin.rb || ! grep -qxF "  sha256 \"$SHA\"" tap/Casks/gannin.rb; then
+            echo "::error::Casks/gannin.rb didn't take $VERSION; bump it by hand (docs/RELEASING.md)."
+            exit 1
+          fi
           git -C tap diff
           if git -C tap diff --quiet; then
             echo "The cask is already on $VERSION."
@@ -322,4 +331,3 @@ jobs:
               commit -am "gannin $VERSION"
             git -C tap push origin HEAD
           fi
-          rm -f "$RUNNER_TEMP/tap_key"

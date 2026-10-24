@@ -2,8 +2,9 @@
 
 A release is a tag. Pushing `v1.2.0` runs `.github/workflows/release.yml`, which archives the
 Mac app, signs it with Developer ID, notarises and staples it, packs it in a DMG, signs that
-for Sparkle, publishes it to gannin.ai, and moves the Homebrew cask to it. Gannin's copies already installed see it in their
-next update check, or straight away from Gannin › Check for Updates.
+for Sparkle, publishes it to gannin.ai, and moves the Homebrew cask to it. Gannin's copies
+already installed see it in their next update check, or straight away from Gannin › Check for
+Updates.
 
 Every release has its section in [`CHANGELOG.md`](../CHANGELOG.md), which becomes its notes.
 
@@ -65,9 +66,9 @@ fails the release: when the key is missing or the push fails, it warns, and the 
 on the last version until it's bumped by hand:
 
 ```bash
-gh repo clone andrew-waters/homebrew-tap && cd homebrew-tap
+brew tap andrew-waters/tap && cd "$(brew --repository andrew-waters/tap)" && git pull
 # set version and sha256 (the release's Gannin-<version>.dmg.sha256) in Casks/gannin.rb
-brew style Casks/gannin.rb && brew audit --cask --online andrew-waters/tap/gannin
+brew style andrew-waters/tap/gannin && brew audit --cask --online andrew-waters/tap/gannin
 git commit -am "gannin 1.2.0" && git push
 ```
 
