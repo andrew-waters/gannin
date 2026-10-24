@@ -1,0 +1,36 @@
+{
+  "author" : "andrew-waters",
+  "effort" : 5,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "The model IDs look wrong. `claude-sonnet-5` and `claude-haiku-4-5-20251001` are ",
+      "key" : "Gannin/Agents/ClaudeCodeProvider.swift:407:The model IDs look wrong. `claude-sonnet-5` and `claude-haik",
+      "line" : 407,
+      "path" : "Gannin/Agents/ClaudeCodeProvider.swift",
+      "posted_at" : "2026-10-24T09:11:53Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "This PR's diff removes the `pullRequests` entry (the PR URL) from `sessions/gann",
+      "key" : "sessions/gannin-466/session.json:6:This PR's diff removes the `pullRequests` entry (the PR URL)",
+      "line" : 6,
+      "path" : "sessions/gannin-466/session.json",
+      "posted_at" : "2026-10-24T09:11:53Z",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 495,
+  "posted_at" : "2026-10-24T09:11:53Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-24T09:08:40Z",
+  "state" : "OPEN",
+  "title" : "Workflows for every agent activity, with specialist agents and any provider",
+  "updated_at" : "2026-10-24T09:11:55Z",
+  "verdict" : "comment"
+}
