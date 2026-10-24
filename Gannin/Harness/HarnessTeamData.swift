@@ -24,6 +24,7 @@ enum TeamFile {
     static let prioritisation = ".gannin/prioritisation.json"
     static let fieldNotes = ".gannin/field-notes.json"
     static let triage = ".gannin/triage.json"
+    static let standup = ".gannin/standup.json"
     static let issueStrategy = ".gannin/issue-strategy.json"
     /// Agent workflows and routing (`AgentWorkflows`); not `workflow.json`,
     /// which is the issue workflow.
@@ -62,6 +63,7 @@ enum TeamFile {
         case prioritisation: "the committed date field"
         case fieldNotes: "notes from the field"
         case triage: "the priority scheme"
+        case standup: "how the team runs standup"
         case issueStrategy: "where issues go"
         case agentWorkflows: "agent workflows and routing"
         default: login(path).map { "dates for \($0)" } ?? path
@@ -108,6 +110,7 @@ struct HarnessTeamData {
     var prioritisation: TeamPrioritisation?
     var fieldNotes: [FieldNote]?
     var triage: PriorityScheme?
+    var standup: StandupConfig?
     var issueStrategy: IssueStrategy?
     var agentWorkflows: AgentWorkflows?
     var people: [String: PersonDates] = [:]
@@ -130,6 +133,7 @@ struct HarnessTeamData {
         prioritisation = files[TeamFile.prioritisation].flatMap { TeamCoding.decode(TeamPrioritisation.self, $0) }
         fieldNotes = files[TeamFile.fieldNotes].flatMap { TeamCoding.decode([FieldNote].self, $0) }
         triage = files[TeamFile.triage].flatMap { TeamCoding.decode(PriorityScheme.self, $0) }
+        standup = files[TeamFile.standup].flatMap { TeamCoding.decode(StandupConfig.self, $0) }
         issueStrategy = files[TeamFile.issueStrategy].flatMap { TeamCoding.decode(IssueStrategy.self, $0) }
         agentWorkflows = files[TeamFile.agentWorkflows].flatMap { TeamCoding.decode(AgentWorkflows.self, $0) }
         for (path, text) in files {
@@ -168,6 +172,7 @@ struct HarnessTeamData {
         config.scorecard = scorecard
         config.committedDateField = prioritisation?.committedDateField
         config.priorityScheme = triage
+        config.standup = standup
         return config
     }
 
@@ -192,6 +197,7 @@ struct HarnessTeamData {
             files[TeamFile.prioritisation] = after.committedDateField.flatMap { TeamCoding.encode(TeamPrioritisation(committedDateField: $0)) }
         }
         if before.priorityScheme != after.priorityScheme { files[TeamFile.triage] = after.priorityScheme.flatMap(TeamCoding.encode) }
+        if before.standup != after.standup { files[TeamFile.standup] = after.standup.flatMap(TeamCoding.encode) }
         if before.issueStrategy != after.issueStrategy { files[TeamFile.issueStrategy] = after.issueStrategy.flatMap(TeamCoding.encode) }
         if before.excludedRepos != after.excludedRepos || before.excludedAuthors != after.excludedAuthors || before.includedAuthors != after.includedAuthors
             || before.reposWithoutReview != after.reposWithoutReview || before.reposNeedingMac != after.reposNeedingMac {

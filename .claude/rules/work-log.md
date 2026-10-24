@@ -15,6 +15,8 @@ paths:
 - Show authored PRs only in Threads: "Update branch" and merges from main add others' commits.
 - Leave merges out of punchcards: merge queues land them whenever CI finishes.
 - Always start weeks on Monday.
+- Build Standup's Triage column and Prioritisation's Triage list (and its count) from `TriageQueue`, never a filter of their own: they must show the same issues.
+- Read `StandupConfig` leniently: a style or stage this Gannin doesn't know reads as the default, so the team's other choices survive.
 - Never let an outside repo through `OrgConfig.excludesForIssueHistoryPages`, or `outsideReposNotice` becomes wrong.
 - Never count bank holidays as time off; count them as out of hours. Time-off counts and tints cover working days only (`WorkingCalendar`).
 - Send only country and year to date.nager.at (`BankHolidayStore`).
@@ -22,4 +24,5 @@ paths:
 - `Absence.half` is for single days only. `Absence.approval` applies to holiday only.
 
 ## Testing
+- `StandupStagesTests.swift` covers stage guessing, the board's columns, discussion, triage matching Prioritisation's and `standup.json`. The views and Present stepping have no tests; check by hand.
 - `OutsideRepoTests.swift` covers outside-repo exclusion; `WorkLogIssuesTests.swift` covers issue events, the work log filter and the grid. Leave and calendar logic have no tests; check by hand, including a cache from before a field was added.

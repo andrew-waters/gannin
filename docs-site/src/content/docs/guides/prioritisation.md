@@ -11,7 +11,7 @@ A bar at the top has a search and a menu for which of the board's date fields is
 
 ## Triage
 
-Open issues that have no Status on the workflow board, or aren't on it, newest first.
+Open issues that have no Status on the workflow board, or aren't on it, newest first. [Standup](/docs/guides/standup/)'s Triage column shows the same issues.
 
 The Triage button asks Claude to read up to the newest 20 and suggest board fields, an investment category, and whether the issue suits an agent. You choose which suggestions to apply. Board fields are written to GitHub, and you confirm before anything is written.
 

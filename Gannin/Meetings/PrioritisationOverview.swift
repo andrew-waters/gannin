@@ -56,10 +56,7 @@ struct PrioritisationOverview: View {
         let inProgress = open.filter { issue in
             (issue.fields(onProject: board)?.values["Status"]?.display).map(workflow.isInProgress) ?? false
         }.count
-        let triage = open.filter { issue in
-            guard let fields = issue.fields(onProject: board) else { return true }
-            return fields.values["Status"] == nil
-        }.count
+        let triage = TriageQueue.untriaged(TriageQueue.counted(open, config: config, hidden: hidden.keys, team: workload.team), board: board).count
         let calendar = Calendar.current
         let today = calendar.startOfDay(for: .now)
         let weekOut = calendar.date(byAdding: .day, value: 7, to: today) ?? today
