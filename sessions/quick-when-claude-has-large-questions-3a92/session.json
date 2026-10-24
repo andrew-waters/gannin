@@ -1,0 +1,14 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "quick-when-claude-has-large-questions-3a92",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+    "andrew-waters/gannin"
+  ],
+  "startedAt" : "2026-10-24T18:26:09Z",
+  "startedBy" : "andrew-waters",
+  "title" : "when claude has large questions they are cvut off",
+  "url" : "https://github.com/andrew-waters/gannin"
+}
