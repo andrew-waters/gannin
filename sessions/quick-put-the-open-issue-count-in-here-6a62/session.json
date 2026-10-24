@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "quick-put-the-open-issue-count-in-here-6a62",
+  "finishedAt" : "2026-10-24T15:08:14Z",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/501"
   ],
