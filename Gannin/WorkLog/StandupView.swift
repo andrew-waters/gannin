@@ -158,8 +158,10 @@ struct StandupPage: View {
     /// team's.
     @State private var chosenStyle: StandupConfig.Style?
     /// On screen in the meeting: larger, one column or person at a time.
-    @AppStorage("standupPresenting") private var presenting = false
-    /// The column or person on screen while presenting.
+    /// For this meeting only, so Standup doesn't open presenting tomorrow.
+    @State private var presenting = false
+    /// The column or person on screen while presenting. Only `StepReader`s
+    /// read it, so a step doesn't rebuild the board and the day.
     @State private var step = 0
     @State private var showsNotes = false
     @State private var discussing: StandupDiscussion?
@@ -167,17 +169,20 @@ struct StandupPage: View {
 
     var body: some View {
         let day = dayInterval
-        let standup = standup(day)
+        let calendars = calendars(day)
+        let standup = standup(day, calendars: calendars)
         let board = board()
-        let steps = stepCount(standup: standup, board: board)
-        let current = min(step, steps - 1)
+        let shown = standup.map { shown($0, board: board) } ?? []
+        let steps = stepCount(shown: shown, board: board)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 Section {
-                    content(day, standup: standup, board: board, step: current)
-                        .sectionContent()
+                    StepReader(step: $step, steps: steps) { current in
+                        content(day, standup: standup, board: board, shown: shown, calendars: calendars, step: current)
+                    }
+                    .sectionContent()
                 } header: {
-                    PinnedHeader { header(day, steps: steps, step: current) }
+                    PinnedHeader { header(day, steps: steps) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -187,11 +192,13 @@ struct StandupPage: View {
         .focusEffectDisabled()
         .focused($isFocused)
         .onKeyPress(.leftArrow) {
+            let current = min(step, steps - 1)
             guard presenting, current > 0 else { return .ignored }
             step = current - 1
             return .handled
         }
         .onKeyPress(.rightArrow) {
+            let current = min(step, steps - 1)
             guard presenting, current < steps - 1 else { return .ignored }
             step = current + 1
             return .handled
@@ -205,7 +212,7 @@ struct StandupPage: View {
             if presenting { isFocused = true }
         }
         .onAppear { if presenting { isFocused = true } }
-        .toolbar { toolbar(steps: steps, step: current) }
+        .toolbar { toolbar(steps: steps) }
         .sheet(isPresented: $showsNotes) {
             let date = day.start.formatted(.iso8601.year().month().day())
             NotesSheet(
@@ -240,10 +247,10 @@ struct StandupPage: View {
 
     /// What presenting steps through: the board's columns, or the people
     /// with something to say; one page otherwise.
-    private func stepCount(standup: Standup?, board: StandupBoard?) -> Int {
+    private func stepCount(shown: [StandupEntry], board: StandupBoard?) -> Int {
         switch style {
         case .board: board == nil ? 1 : StandupBoard.Column.allCases.count
-        case .people: max(1, standup.map { shown($0, board: board).count } ?? 1)
+        case .people: max(1, shown.count)
         case .changelog, .written: 1
         }
     }
@@ -297,7 +304,7 @@ struct StandupPage: View {
     }
 
     /// The day's standup, once the work log has loaded.
-    private func standup(_ day: DateInterval) -> Standup? {
+    private func standup(_ day: DateInterval, calendars: [String: WorkingCalendar]) -> Standup? {
         guard let history = workLog.history(for: org) else { return nil }
         let config = configs.config(for: org)
         return Standup(
@@ -306,7 +313,7 @@ struct StandupPage: View {
             pullRequests: history.pullRequests(config: config, hidden: hidden.keys),
             issues: issueStore.history(for: org).map { Array($0.issues.values) } ?? [],
             config: config,
-            marks: marks(day, calendars: calendars(day))
+            marks: marks(day, calendars: calendars)
         )
     }
 
@@ -320,7 +327,7 @@ struct StandupPage: View {
     }
 
     @ToolbarContentBuilder
-    private func toolbar(steps: Int, step current: Int) -> some ToolbarContent {
+    private func toolbar(steps: Int) -> some ToolbarContent {
         ToolbarItem {
             Button {
                 showsNotes = true
@@ -352,19 +359,21 @@ struct StandupPage: View {
         }
         if presenting && steps > 1 {
             ToolbarItem {
-                ControlGroup {
-                    Button { step = current - 1 } label: {
-                        Label("Previous", systemImage: "arrow.left.circle")
+                StepReader(step: $step, steps: steps) { current in
+                    ControlGroup {
+                        Button { step = current - 1 } label: {
+                            Label("Previous", systemImage: "arrow.left.circle")
+                        }
+                        .disabled(current == 0)
+                        .help("The column or person before (Left Arrow)")
+                        Button { step = current + 1 } label: {
+                            Label("Next", systemImage: "arrow.right.circle")
+                        }
+                        .disabled(current >= steps - 1)
+                        .help("The next column or person (Right Arrow)")
                     }
-                    .disabled(current == 0)
-                    .help("The column or person before (Left Arrow)")
-                    Button { step = current + 1 } label: {
-                        Label("Next", systemImage: "arrow.right.circle")
-                    }
-                    .disabled(current >= steps - 1)
-                    .help("The next column or person (Right Arrow)")
+                    .fixedSize()
                 }
-                .fixedSize()
             }
         }
         ToolbarItem {
@@ -390,7 +399,7 @@ struct StandupPage: View {
         }
     }
 
-    private func header(_ day: DateInterval, steps: Int, step current: Int) -> some View {
+    private func header(_ day: DateInterval, steps: Int) -> some View {
         HStack(spacing: 10) {
             Text(day.start.formatted(.dateTime.weekday(.wide).day().month(.wide)))
             if Calendar.current.isDateInToday(day.start) {
@@ -402,18 +411,20 @@ struct StandupPage: View {
             Spacer(minLength: 0)
             if presenting && steps > 1 {
                 // Where the walk has got to; a dot jumps there.
-                HStack(spacing: 6) {
-                    ForEach(0..<steps, id: \.self) { index in
-                        Button { step = index } label: {
-                            Circle()
-                                .fill(index == current ? Color.primary : Color.secondary.opacity(0.3))
-                                .frame(width: 8, height: 8)
-                                .contentShape(Rectangle().inset(by: -3))
+                StepReader(step: $step, steps: steps) { current in
+                    HStack(spacing: 6) {
+                        ForEach(0..<steps, id: \.self) { index in
+                            Button { step = index } label: {
+                                Circle()
+                                    .fill(index == current ? Color.primary : Color.secondary.opacity(0.3))
+                                    .frame(width: 8, height: 8)
+                                    .contentShape(Rectangle().inset(by: -3))
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
                     }
+                    .accessibilityLabel("Step \(current + 1) of \(steps)")
                 }
-                .accessibilityLabel("Step \(current + 1) of \(steps)")
             }
         }
     }
@@ -452,7 +463,9 @@ struct StandupPage: View {
     }
 
     @ViewBuilder
-    private func content(_ day: DateInterval, standup: Standup?, board: StandupBoard?, step current: Int) -> some View {
+    private func content(
+        _ day: DateInterval, standup: Standup?, board: StandupBoard?, shown: [StandupEntry], calendars: [String: WorkingCalendar], step current: Int
+    ) -> some View {
         switch style {
         case .changelog:
             changelog(day)
@@ -469,7 +482,7 @@ struct StandupPage: View {
             }
         case .people:
             if let standup {
-                peopleContent(day, standup: standup, board: board, step: current)
+                peopleContent(day, standup: standup, board: board, shown: shown, calendars: calendars, step: current)
             } else {
                 workLogStatus
             }
@@ -509,8 +522,9 @@ struct StandupPage: View {
     /// Each person with something to say: their tickets by stage, then
     /// their day. Presenting shows one at a time, and who was off or quiet
     /// with the last.
-    private func peopleContent(_ day: DateInterval, standup: Standup, board: StandupBoard?, step current: Int) -> some View {
-        let shown = shown(standup, board: board)
+    private func peopleContent(
+        _ day: DateInterval, standup: Standup, board: StandupBoard?, shown: [StandupEntry], calendars: [String: WorkingCalendar], step current: Int
+    ) -> some View {
         let quiet = standup.entries.filter { entry in !shown.contains { $0.id == entry.id } }
         return VStack(alignment: .leading, spacing: 20) {
             if shown.isEmpty {
@@ -518,7 +532,7 @@ struct StandupPage: View {
             } else {
                 StandupRows(
                     org: org, day: day, entries: presenting ? [shown[current]] : shown, range: standupHourRange(shown, day: day),
-                    calendars: calendars(day), board: board, showCommits: showCommits, presenting: presenting, onDiscuss: discuss
+                    calendars: calendars, board: board, showCommits: showCommits, presenting: presenting, onDiscuss: discuss
                 )
             }
             if !quiet.isEmpty && (!presenting || current == shown.count - 1 || shown.isEmpty) { quietList(quiet) }
@@ -1358,4 +1372,14 @@ enum StandupNotes {
         }
         return lines.joined(separator: "\n")
     }
+}
+
+/// Hands its content the step on screen, so only it redraws when the step
+/// changes, not the page that worked out what it shows.
+private struct StepReader<Content: View>: View {
+    @Binding var step: Int
+    let steps: Int
+    @ViewBuilder let content: (Int) -> Content
+
+    var body: some View { content(min(step, steps - 1)) }
 }

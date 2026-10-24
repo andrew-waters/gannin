@@ -256,7 +256,7 @@ struct StandupDiscussion: Identifiable {
     /// missing, then records the issue's labels.
     func write(org: String, api: GitHubAPI, issues: IssueStore, projects: ProjectStore) async throws {
         let parts = issue.repo.split(separator: "/").map(String.init)
-        guard parts.count == 2 else { return }
+        guard parts.count == 2 else { throw InvestmentWriteError.message("Couldn't read the repo \(issue.repo)") }
         let found = try await api.repositoryLabel(owner: parts[0], repo: parts[1], name: label)
         var labels = issue.labels.filter { $0.caseInsensitiveCompare(label) != .orderedSame }
         if adding {

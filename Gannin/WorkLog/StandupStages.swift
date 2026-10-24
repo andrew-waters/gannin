@@ -86,8 +86,13 @@ struct StandupConfig: Codable, Hashable {
     }
 
     /// The status's stage: the team's choice, else a guess from its name.
+    /// The exact name first, then the first case-insensitive match by name,
+    /// so keys differing only by case (two Macs' edits merged) always give
+    /// the same stage.
     func stage(for status: String, workflow: IssueWorkflow) -> Stage {
-        stages.first { $0.key.caseInsensitiveCompare(status) == .orderedSame }?.value ?? Self.guess(status, workflow: workflow)
+        if let stage = stages[status] { return stage }
+        let key = stages.keys.sorted().first { $0.caseInsensitiveCompare(status) == .orderedSame }
+        return key.flatMap { stages[$0] } ?? Self.guess(status, workflow: workflow)
     }
 
     /// Done-like names are done and review names in review (before in

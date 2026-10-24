@@ -48,6 +48,10 @@ struct StandupStagesTests {
         #expect(standup.stage(for: "qa", workflow: workflow) == .review)
         #expect(standup.stage(for: "Done", workflow: workflow) == .hidden)
         #expect(standup.stage(for: "In progress", workflow: workflow) == .progress)
+        // The exact name wins over a case variant, whatever the order.
+        let merged = StandupConfig(stages: ["qa": .done, "QA": .review, "Qa": .progress])
+        #expect(merged.stage(for: "QA", workflow: workflow) == .review)
+        #expect(merged.stage(for: "qA", workflow: workflow) == .review)
     }
 
     @Test func columnsFollowTheBoard() {
