@@ -1791,6 +1791,11 @@ private struct SessionPanel: View {
             if session.isQuickChange {
                 QuickChangeSection(session: session)
             }
+            if let workflow = session.workflow {
+                Section("Workflow") {
+                    SessionWorkflowSection(workflow: workflow)
+                }
+            }
             if session.isHelper {
                 HelperParentSection(session: session)
             } else if !session.isPlanning && !session.isAsk && !session.isRefine && !session.hasNoIssue {
@@ -2041,7 +2046,8 @@ struct WorkOnThisLauncher: ViewModifier {
                 if let initial = setup(for: reference) {
                     SessionLaunchSheet(
                         title: "Work on \(reference.reference)", org: reference.org, harnesses: config.harnesses, initial: initial,
-                        use: .work, repos: Self.repos(reference, issues: issues), values: Self.values(reference), startTitle: "Work on This"
+                        use: .work, repos: Self.repos(reference, issues: issues), values: Self.values(reference), startTitle: "Work on This",
+                        activity: .work, subject: sessions.codingSubject(reference, record: issues.history(for: reference.org)?.issues[reference.id])
                     ) { choice, picked in
                         start(reference, recording: SessionStore.recordsWithoutAsking(repo: picked.repo) || recording, choice: choice, setup: picked)
                     } extra: {
@@ -2097,7 +2103,8 @@ struct WorkOnThisLauncher: ViewModifier {
         let config = configs.config(for: reference.org)
         let setup = setup(for: reference)
         // With sandboxing on, always asked, so this one can run on the Mac.
-        if let setup, SandboxCredentials.isEnabled || SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .work, harnesses: config.harnesses) {
+        if let setup, SandboxCredentials.isEnabled || SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .work, harnesses: config.harnesses,
+                                                                                              workflows: sessions.agentWorkflows(reference.org, setup).workflows(for: .work).count) {
             recording = true
             sandboxed = placement(for: reference).isSandboxed
             choosing = reference
@@ -2161,7 +2168,9 @@ struct WorkOnThisLauncher: ViewModifier {
         let decided = placement(for: reference)
         // Picked in the sheet: the Mac over a sandbox, never the other way.
         let chosen: SandboxPlacement = decided.isSandboxed && !sandboxed ? .host(SandboxPlacement.pickedHost) : decided
-        let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions, placement: chosen) { session in
+        let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions, placement: chosen,
+                                     subject: sessions.codingSubject(reference, record: record),
+                                     workflow: sessions.pickedWorkflow(choice?.workflow, org: reference.org, setup: setup, activity: .work)) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index, goals: goals)
         }
         guard recording else {
@@ -2190,7 +2199,7 @@ struct SessionSidebarRows: View {
 
     var body: some View {
         let all = sessions.sessions(for: org)
-        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
+        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && $0.reviewStep == nil && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
         // Active reviews, newest first, then the history.
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }
@@ -2273,7 +2282,7 @@ struct SessionSidebarRows: View {
 struct SessionSettingsSection: View {
     @AppStorage(SessionStore.workspaceKey) private var workspace = SessionStore.defaultWorkspace
     @AppStorage(SessionStore.connectKey) private var connect = ""
-    @AppStorage(SessionStore.providerKey) private var provider: AIProvider = .anthropic
+    @AppStorage(SessionStore.providerKey) private var provider: ProviderID = .claudeCode
     @AppStorage(SessionStore.modelKey) private var model = ""
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
     @AppStorage(SessionStore.sendsFeedbackKey) private var sendsFeedback = false
@@ -2285,33 +2294,12 @@ struct SessionSettingsSection: View {
     @AppStorage(AutoReview.watchKey) private var watchesReviews = true
     @AppStorage(AutoReview.postKey) private var postsReviews = false
     @AppStorage(SessionStore.recordReviewsKey) private var recordsReviews = true
-    /// Typing a model ID of your own, rather than picking one.
-    @State private var customModel = false
-
-    private static let custom = "\u{0}custom"
-
     var body: some View {
         Section {
             Picker("Provider", selection: $provider) {
-                ForEach(AIProvider.allCases) { Text($0.name).tag($0) }
+                ForEach(ProviderID.allCases.filter(\.isInteractive)) { Text($0.title).tag($0) }
             }
-            let known = provider.models.contains { $0.id == model }
-            Picker("Model", selection: Binding(
-                get: { customModel || (!model.isEmpty && !known) ? Self.custom : model },
-                set: { picked in
-                    customModel = picked == Self.custom
-                    if !customModel { model = picked }
-                }
-            )) {
-                Text("Claude Code's default").tag("")
-                Divider()
-                ForEach(provider.models) { Text($0.name).tag($0.id) }
-                Divider()
-                Text("Other").tag(Self.custom)
-            }
-            if customModel || (!model.isEmpty && !known) {
-                TextField("Model ID", text: $model, prompt: Text("claude-opus-5-5"))
-            }
+            ModelPicker(provider: provider, model: $model, inherited: "\(provider.title)'s default")
             Text("Sessions run Claude Code with this model (--model), from their next start or Resume. Its default is what Claude Code's own settings say; /model in a session changes it there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

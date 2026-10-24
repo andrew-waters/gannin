@@ -85,6 +85,9 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
     /// (`refines/<date>-<slug>/`) with its screenshots beside the README,
     /// which is the document.
     case refines = "Refines"
+    /// The team's specialists (`HarnessSpecialist`): agents a workflow step
+    /// names, each with its soul, `specialists/<name>.md`.
+    case specialists = "Specialists"
 
     var id: Self { self }
 
@@ -99,11 +102,12 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .learnings: "lightbulb"
         case .research: "archivebox"
         case .refines: "pencil.and.outline"
+        case .specialists: "person.crop.rectangle.stack"
         }
     }
 
     /// A front matter `type`: `plan`, `requirement`, `decision`, `finding`, `skill`,
-    /// `prompt`, `learning`, `research`, `refine`.
+    /// `prompt`, `learning`, `research`, `refine`, `specialist`.
     init?(type: String) {
         guard let kind = Self.allCases.first(where: { $0.singular == type.lowercased() }) else { return nil }
         self = kind
@@ -120,6 +124,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case .learnings: "learning"
         case .research: "research"
         case .refines: "refine"
+        case .specialists: "specialist"
         }
     }
 
@@ -129,7 +134,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
 
     /// The harness's layout: `plans/` for plans (and, until they're moved,
     /// `requirements/<module>/plans/`), the rest of `requirements/` for
-    /// requirements, `decisions/`, `findings/`, `skills/`, `prompts/` and `learnings/`. READMEs and templates
+    /// requirements, `decisions/`, `findings/`, `skills/`, `prompts/`, `learnings/` and `specialists/`. READMEs and templates
     /// describe the layout rather than being part of it, except in
     /// `research/` and `refines/`, where each folder's README is its document.
     init?(path: String) {
@@ -149,6 +154,7 @@ nonisolated enum HarnessKind: String, Codable, CaseIterable, Identifiable, Senda
         case "skills": self = .skills
         case "prompts": self = .prompts
         case "learnings": self = .learnings
+        case "specialists": self = .specialists
         default: return nil
         }
     }
@@ -208,7 +214,7 @@ nonisolated struct HarnessDocument: Codable, Hashable, Identifiable, Sendable {
 
     /// Bumped when reading documents changes, so a cached index is read
     /// again rather than kept.
-    static let parserVersion = 10
+    static let parserVersion = 11
 
     /// The status in a word or two, for a table: an older document's
     /// sentence cut at its first clause.

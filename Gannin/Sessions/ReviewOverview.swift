@@ -226,6 +226,9 @@ struct ReviewOverview: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
                     heading
+                    if let run = session.reviewRun {
+                        ReviewRunSection(run: run)
+                    }
                     attention
                     configChecks
                     walkthrough

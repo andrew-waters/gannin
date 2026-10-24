@@ -152,13 +152,21 @@ struct PairReview: Codable, Hashable {
     /// unlabelled; with one, every finding says who raised it.
     static func merge(claude: [SessionTranscript.Finding], extras: [(reviewer: String, findings: [SessionTranscript.Finding])]) -> [SessionTranscript.Finding] {
         guard !extras.isEmpty else { return claude }
+        return merge(labelled: [("claude", claude)] + extras)
+    }
+
+    /// The same for any reviewers' lists, in order: a review workflow's
+    /// steps too. `labelsEveryComment` puts the reviewer's name before a
+    /// finding only one of them raised as well, as a posted review needs
+    /// to say whose each is.
+    static func merge(labelled lists: [(reviewer: String, findings: [SessionTranscript.Finding])], labelsEveryComment: Bool = false) -> [SessionTranscript.Finding] {
         /// A finding and who said what about it.
         struct Merged {
             var finding: SessionTranscript.Finding
             var says: [(reviewer: String, comment: String)]
         }
         var merged: [Merged] = []
-        for (reviewer, findings) in [("claude", claude)] + extras.map({ ($0.reviewer, $0.findings) }) {
+        for (reviewer, findings) in lists {
             for finding in findings {
                 let match: Int? = finding.line == nil ? nil : merged.firstIndex { entry in
                     entry.finding.path == finding.path && entry.finding.line == finding.line && !entry.says.contains { $0.reviewer == reviewer }
@@ -175,7 +183,9 @@ struct PairReview: Codable, Hashable {
             labelled.reviewer = entry.says.map(\.reviewer).joined(separator: " and ")
             let comments = entry.says.map(\.comment)
             // Said the same by all of them, or each in their own words.
-            labelled.comment = Set(comments).count == 1 ? comments[0] : entry.says.map { "\($0.reviewer): \($0.comment)" }.joined(separator: " ")
+            labelled.comment = Set(comments).count == 1
+                ? (labelsEveryComment ? "\(labelled.reviewer ?? ""): \(comments[0])" : comments[0])
+                : entry.says.map { "\($0.reviewer): \($0.comment)" }.joined(separator: " ")
             return labelled
         }
     }
@@ -365,7 +375,7 @@ extension SessionStore {
             guard let run = sessions[session.id]?.pairing?.extras?[reviewer.id]?.run else { continue }
             Task {
                 let outcome = await reviewer.review(folder: folder, prompt: prompt, tag: run.uuidString) { script in
-                    await Task.detached { ClaudeRunner.run(script, place: .local) }.value
+                    await Task.detached { ScriptRunner.run(script, place: .local) }.value
                 }
                 extraFinished(reviewer, run: run, outcome: outcome, for: session.id)
             }
@@ -379,7 +389,7 @@ extension SessionStore {
         for (id, extra) in pairing?.extras ?? [:] where extra.state == .running {
             guard let reviewer = ExtraReviewer(rawValue: id) else { continue }
             let script = reviewer.cancelScript(tag: extra.run.uuidString)
-            Task.detached { _ = ClaudeRunner.run(script, place: .local) }
+            Task.detached { _ = ScriptRunner.run(script, place: .local) }
         }
     }
 

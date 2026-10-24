@@ -630,7 +630,7 @@ struct RecapSpeechSheet: View {
         let key = cacheKey
         Task {
             do {
-                let reply = try await ClaudeRunner.ask(prompt, org: org)
+                let reply = try await AgentProviders.asking.ask(prompt, org: org)
                 text = reply
                 Self.written[key] = reply
                 status = "Written by Claude from the period's closed issues. Read it through before you say it."

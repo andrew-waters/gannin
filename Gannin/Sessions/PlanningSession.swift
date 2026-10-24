@@ -107,12 +107,13 @@ extension SessionStore {
         info.sources = sources.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         let url = URL(string: "https://github.com/\(setup.repo)")!
         let instructions = launchInstructions(org: org, setup: setup, use: .planning, repos: [], choice: choice, values: Self.planningValues(topic: topic, harness: setup.repo, branch: branch))
-        let session = CodeSession(
+        var session = CodeSession(
             id: UUID(), issue: IssueReference(org: org, id: "plan-\(UUID().uuidString)", number: 0, title: topic, repo: setup.repo, url: url),
             repo: setup.repo, branch: branch, createdAt: .now,
             connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
             role: "Plan", prompt: Self.planningPrompt(info, branch: branch, guidance: guidance, filing: filing), instructions: instructions, planning: info
         )
+        applyWorkflow(.planning, to: &session, org: org, setup: setup, subject: nil, workflow: pickedWorkflow(choice?.workflow, org: org, setup: setup, activity: .planning))
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let brief = "# Planning: \(topic)\n\n" + (documentPath.map { "Starting from `\($0)` in the harness.\n" } ?? "")
@@ -218,7 +219,7 @@ extension SessionStore {
             shared.append(.init(name: name, commit: file.commit, sharedAt: .now))
         }
         guard !shared.isEmpty else { return ([], false) }
-        let place: ClaudeRunner.Place
+        let place: ScriptRunner.Place
         if let connect {
             guard let arguments = Shell.sshArguments(connect) else { throw SessionError.message("The server isn't reached with ssh, so documents can't be copied to it.") }
             place = .remote(arguments)
@@ -226,7 +227,7 @@ extension SessionStore {
             place = .local
         }
         let body = script.joined(separator: "\n") + "\n"
-        let result = await Task.detached { ClaudeRunner.run(body, place: place) }.value
+        let result = await Task.detached { ScriptRunner.run(body, place: place) }.value
         guard result.status == 0 else { throw SessionError.message(result.error.isEmpty ? "Couldn't copy the documents." : result.error) }
         return (shared, converted)
     }
@@ -300,6 +301,8 @@ struct NewPlanningView: View {
     @State private var promptTitle = ""
     @State private var savesPrompt = true
     @State private var skills: Set<String> = []
+    /// The workflow picked for this session, if not the default.
+    @State private var workflowChoice = PromptChoice()
     @State private var skillSearch = ""
     @State private var saving = false
     @State private var error: String?
@@ -390,6 +393,7 @@ struct NewPlanningView: View {
             contextSection
             promptSection(library: library, setup: setup)
             skillsSection(library)
+            WorkflowPickerSection(org: org, setup: setup, activity: .planning, choice: $workflowChoice)
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
@@ -741,7 +745,8 @@ struct NewPlanningView: View {
                 return
             }
         }
-        let choice = PromptChoice(prompts: [], skills: skills, note: trimmedPrompt.isEmpty ? "" : HarnessAuthoring.fill(trimmedPrompt, values))
+        var choice = PromptChoice(prompts: [], skills: skills, note: trimmedPrompt.isEmpty ? "" : HarnessAuthoring.fill(trimmedPrompt, values))
+        choice.workflow = workflowChoice.workflow
         // A link typed but not added yet is meant too.
         addContext()
         var documents: [PlanningInfo.Document] = []

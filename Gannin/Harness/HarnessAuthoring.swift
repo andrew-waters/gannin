@@ -76,6 +76,12 @@ enum HarnessAuthoring {
         case .refines:
             // Committed when a Design and Refine session is agreed, never drafted.
             ""
+        case .specialists:
+            """
+            You're writing a specialist for {{org}}'s harness, {{harness}}: an agent Gannin's workflows run as one step of reviewing a pull request or working on an issue, such as a security reviewer or a documentation reviewer.
+
+            Write its soul as direct prose to the agent: who it is, what it knows about this team's code, what it looks for and what it leaves to others, in a few short paragraphs. Gannin's own prompt already covers the PR or issue, the worktrees and, for reviews, the JSON the review ends with, so don't repeat those or ask for another format. Give it a short name (kebab case), a one-line summary, and a default focus in a sentence. Leave the provider and model out unless I name them.
+            """
         case .plans:
             """
             Let's plan "{{topic}}" together, here in the team's harness. Read STANDARDS.md and plans/_template.md first. {{starting_point}}
@@ -119,6 +125,7 @@ enum HarnessAuthoring {
         case .findings: #"{"title": "...", "summary": "a sentence or two", "status": "open", "severity": "low" | "medium" | "high" | "critical", "domains": ["..."], "issues": ["owner/repo#123"], "body": "..."}"#
         case .decisions: #"{"title": "...", "summary": "the decision, in a sentence or two", "status": "proposed" | "accepted", "domains": ["..."], "issues": ["owner/repo#123"], "plans": ["plans/....md"], "body": "..."}"#
         case .learnings: #"{"title": "...", "summary": "the rule, in a sentence", "repos": ["owner/name"], "paths": ["folder/", "file", "file#L10-L24"], "reason": "why, in Markdown"}"#
+        case .specialists: #"{"title": "...", "name": "kebab-case", "summary": "one line", "focus": "a sentence", "body": "..."}"#
         default: #"{"title": "...", "summary": "a sentence or two", "status": "draft", "domains": ["..."], "issues": ["owner/repo#123"], "body": "..."}"#
         }
     }
@@ -141,13 +148,15 @@ enum HarnessAuthoring {
         var issues: [String]?
         /// A decision's plans it came from, by path.
         var plans: [String]?
+        /// A specialist's default focus.
+        var focus: String?
         var body: String?
         /// What Claude says to you: questions, or what it did.
         var message: String?
 
         /// Whether it drafted anything, rather than only asking.
         var hasDraft: Bool {
-            [name, title, description, summary, status, severity, body, reason].contains { $0 != nil }
+            [name, title, description, summary, status, severity, body, reason, focus].contains { $0 != nil }
                 || [repos, uses, skills, paths, domains, issues, plans].contains { $0 != nil }
         }
     }
@@ -195,6 +204,7 @@ struct HarnessDocumentDraft {
         case .learnings: ["active", "retired"]
         case .research: []
         case .refines: ["agreed"]
+        case .specialists: []
         case .decisions: ["proposed", "accepted", "rejected", "superseded"]
         case .plans, .requirements: ["draft", "in-progress", "done"]
         }

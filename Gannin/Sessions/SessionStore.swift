@@ -103,6 +103,20 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// Files dropped or pasted on its panel for claude, copied into
     /// `.gannin/attachments/` on its box (`SessionAttachments.swift`).
     var attachments: [SessionAttachment]? = nil
+    /// The provider its terminal runs (`AgentProvider`); nil for sessions
+    /// from before providers, which ran Claude Code.
+    var provider: ProviderID? = nil
+    /// The model its workflow step names, over the one in Settings; nil
+    /// for Settings' (`SessionStore.model`).
+    var model: String? = nil
+    /// The workflow it was started through, when it isn't the activity's
+    /// built-in one (`WorkflowLaunch.swift`).
+    var workflow: SessionWorkflow? = nil
+    /// A review run through a workflow of more than Gannin's one step, on
+    /// its lead review (`ReviewRuns.swift`).
+    var reviewRun: ReviewRun? = nil
+    /// A step of another review's run, on that step's helper.
+    var reviewStep: ReviewStepReference? = nil
 
     var isRemote: Bool { connect != nil }
     var isSandboxed: Bool { sandbox != nil }
@@ -166,6 +180,12 @@ extension CodeSession {
         hostReason = try container.decodeIfPresent(String.self, forKey: .hostReason)
         routineRun = try? container.decodeIfPresent(RoutineRunInfo.self, forKey: .routineRun)
         attachments = try? container.decodeIfPresent([SessionAttachment].self, forKey: .attachments)
+        // A provider this build doesn't know reads as none.
+        provider = try? container.decodeIfPresent(ProviderID.self, forKey: .provider)
+        model = try? container.decodeIfPresent(String.self, forKey: .model)
+        workflow = try? container.decodeIfPresent(SessionWorkflow.self, forKey: .workflow)
+        reviewRun = try? container.decodeIfPresent(ReviewRun.self, forKey: .reviewRun)
+        reviewStep = try? container.decodeIfPresent(ReviewStepReference.self, forKey: .reviewStep)
     }
 }
 
@@ -457,7 +477,7 @@ final class SessionStore {
     @ObservationIgnored var startingReviews: [String: Task<CodeSession, Never>] = [:]
     /// What each session's transcript says, read while its terminal runs.
     var transcripts: [UUID: SessionTranscript] = [:]
-    @ObservationIgnored var readers: [UUID: TranscriptReader] = [:]
+    @ObservationIgnored var readers: [UUID: any TranscriptParsing] = [:]
     @ObservationIgnored var transcriptFiles: [UUID: URL] = [:]
     @ObservationIgnored var readingTranscript: Set<UUID> = []
     @ObservationIgnored private var transcriptWaiters: [UUID: [() -> Void]] = [:]
@@ -482,6 +502,12 @@ final class SessionStore {
     /// The extra pair reviewers turned on for a session's project; set by
     /// the app, from the user's own settings.
     @ObservationIgnored var extraReviewers: (CodeSession) -> [ExtraReviewer] = { _ in [] }
+    /// A project's agent workflows: the team's, from its harness's team
+    /// data (with what's pending on top), and the user's own; set by the app.
+    @ObservationIgnored var agentWorkflows: (String, HarnessConfig) -> WorkflowLibrary = { _, _ in WorkflowLibrary() }
+    /// The user's own specialists in an org, by lower-cased reference; set
+    /// by the app.
+    @ObservationIgnored var personalSpecialists: (String) -> [String: HarnessSpecialist] = { _ in [:] }
     /// The budget is low or GitHub has refused: background PR checks wait.
     @ObservationIgnored var holdsOff: () -> Bool = { false }
     /// Gannin's view of an org as files (`OrgContext`), for an Ask session
@@ -750,6 +776,8 @@ final class SessionStore {
 
     /// Adds a session made elsewhere (a helper), and saves.
     func add(_ session: CodeSession) {
+        var session = session
+        if session.provider == nil { session.provider = Self.provider }
         Self.noteFolder(of: session)
         sessions[session.id] = session
         noteSandboxedHarnesses()
@@ -764,14 +792,19 @@ final class SessionStore {
 
     /// The issue's session, made in the harness checkout at `harnessPath` if
     /// it has none, with its brief written afresh from what Gannin knows now.
-    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, placement: SandboxPlacement = .host(nil), brief: (CodeSession) -> String) -> CodeSession {
+    /// A new one runs the coding workflow routed for `subject`, or
+    /// `workflow` when one was picked.
+    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, placement: SandboxPlacement = .host(nil),
+               subject: WorkflowSubject? = nil, workflow: AgentWorkflow? = nil, brief: (CodeSession) -> String) -> CodeSession {
         let session = session(forIssue: issue.id) ?? {
             let id = UUID()
-            return CodeSession(
+            var made = CodeSession(
                 id: id, issue: issue, repo: harness.repo, branch: Self.branchName(issue), createdAt: .now,
                 connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath, instructions: instructions,
                 sandbox: placement.isSandboxed ? SandboxPlacement.containerName(for: id) : nil, hostReason: placement.reason
             )
+            self.applyWorkflow(.work, to: &made, org: issue.org, setup: harness, subject: subject ?? WorkflowSubject(repo: issue.repo), workflow: workflow)
+            return made
         }()
         sessions[session.id] = session
         noteSandboxedHarnesses()
@@ -912,6 +945,13 @@ final class SessionStore {
 
     /// Ends the session and forgets it. The clone and worktree stay on disk.
     func remove(_ id: UUID) {
+        // A run's lead going ends the run, so its helpers going below don't
+        // start more; a step's helper going marks its step, while it still
+        // says whose it is.
+        if sessions[id]?.reviewRun.map({ $0.finishedAt == nil }) ?? false {
+            update(id) { $0.reviewRun?.finishedAt = .now }
+        }
+        if sessions[id]?.reviewStep != nil { stepClosed(id) }
         // Helpers work in its folder, so they go with it.
         for helper in helpers(of: id) { remove(helper.id) }
         // A helper showing in its session's tab goes back to the work.
@@ -921,6 +961,7 @@ final class SessionStore {
         }
         if let session = sessions[id] {
             cancelRunningExtras(of: session.pairing)
+            cancelRunSteps(of: session)
             deleteSandbox(of: session)
             deleteAttachmentsOnBox((session.attachments ?? []).map(\.name), of: session)
         }
@@ -991,7 +1032,7 @@ final class SessionStore {
                 directory: remoteDirectory,
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
-                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: remoteDirectory, branch: session.branch), sandboxed: session.isSandboxed),
+                settings: session.agent.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: remoteDirectory, branch: session.branch), sandboxed: session.isSandboxed),
                 files: session.isSandboxed ? ["inner.sh": SandboxLaunch.innerScript(session)] : [:]
             )
             command = SessionScript.connecting(connect, to: remote)
@@ -1013,7 +1054,7 @@ final class SessionStore {
             let local = SessionScript.quoted(real.path)
             if session.isSandboxed { prepareSandbox(session, directory: real) }
             // A sandbox's statusLine can't run the user's own command, which is on the Mac.
-            try? Data(SessionScript.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed).utf8).write(to: directory.appending(path: "settings.json"))
+            try? Data(session.agent.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"
@@ -1299,11 +1340,15 @@ final class SessionStore {
         sessions[id]?.pullRequests.append(url)
         saveNow()
         recordPullRequest(url, for: id)
+        runStepsAfter(url, for: id)
     }
 
     private func terminated(_ id: UUID) {
         unwatchHooks(id)
         setState(.stopped, for: id)
+        stepEnded(id)
+        // An automatic review's slot may be free now.
+        if automaticRuns.contains(id) { advanceWaitingRuns() }
         stopSandboxIfIdle(id)
     }
 
@@ -1396,10 +1441,8 @@ final class SessionStore {
         guard !readingRemote.contains(session.id), let connect = session.connect,
               let arguments = Shell.sshArguments(connect) else { return }
         readingRemote.insert(session.id)
-        let reader = readers[session.id] ?? TranscriptReader()
-        // A sandbox's claude keeps its transcripts in its issue's claude-home there.
-        let homes = (session.isSandboxed ? Self.remoteIssueDirectory(for: session) + "/claude-home/projects/*/" + session.claudeID + ".jsonl " : "")
-            + #""$HOME"/.claude/projects/*/"# + session.claudeID + ".jsonl"
+        let reader = readers[session.id] ?? session.agent.transcriptReader()
+        let homes = session.agent.remoteTranscripts(for: session, sandboxDirectory: session.isSandboxed ? Self.remoteIssueDirectory(for: session) : nil)
         let script = "d=" + Self.remoteDirectory(for: session) + "\n"
             + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)" "$(head -n 1 "$d/review-request" 2>/dev/null)" "$(cat "$d/sandbox" 2>/dev/null)""# + "\n"
             + "f=$(ls " + homes + #" 2>/dev/null | head -n 1)"# + "\n"
@@ -1407,7 +1450,7 @@ final class SessionStore {
             + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c "# + "\(Self.transcriptChunk)" + #"; else echo -1; fi; exit 0"#
         let id = session.id
         Task {
-            let result = await Task.detached { () -> (Shell.Result, TranscriptReader?, Bool) in
+            let result = await Task.detached { () -> (Shell.Result, (any TranscriptParsing)?, Bool) in
                 let result = Shell.run(script, .ssh(arguments))
                 // After seven lines (state, PR, change, statusline, review
                 // request, sandbox, size), the new bytes.
@@ -1444,19 +1487,19 @@ final class SessionStore {
             return
         }
         if transcriptFiles[id] == nil {
-            // A sandbox's claude keeps its transcripts in the session's claude-home.
-            // Helpers share their issue's.
-            let home = session.isSandboxed ? Self.directory(for: session.parentID ?? id).appending(path: "claude-home/projects", directoryHint: .isDirectory) : nil
-            transcriptFiles[id] = Self.findTranscript(session.claudeID, in: home)
+            // A sandbox's agent keeps its transcripts in the session's
+            // config folder. Helpers share their issue's.
+            let home = session.isSandboxed ? session.agent.sandbox.map { Self.directory(for: session.parentID ?? id).appending(path: "\($0.homeFolder)/projects", directoryHint: .isDirectory) } : nil
+            transcriptFiles[id] = session.agent.transcript(for: session, home: home)
         }
         guard let file = transcriptFiles[id] else {
             done?()
             return
         }
         readingTranscript.insert(id)
-        let reader = readers[id] ?? TranscriptReader()
+        let reader = readers[id] ?? session.agent.transcriptReader()
         Task {
-            let read = await Task.detached { () -> (TranscriptReader, Bool)? in
+            let read = await Task.detached { () -> ((any TranscriptParsing), Bool)? in
                 guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
                 defer { try? handle.close() }
                 try? handle.seek(toOffset: UInt64(reader.offset))
@@ -1476,11 +1519,18 @@ final class SessionStore {
     /// review result found part-way through a long transcript can be an
     /// earlier round's, so it's left until the last chunk: replacing the
     /// kept result with it and back would count as two new results.
-    private func store(_ reader: TranscriptReader, for id: UUID, moreToRead: Bool) {
+    private func store(_ reader: any TranscriptParsing, for id: UUID, moreToRead: Bool) {
         readers[id] = reader
         var summary = reader.summary
         if let limit = contextWindows[id] { summary.contextLimit = limit }
         if transcripts[id] != summary { transcripts[id] = summary }
+        // A step of a review workflow's run: its round goes to the run,
+        // which makes the review once every step has finished.
+        if let session = sessions[id], session.reviewStep != nil || (session.reviewRun.map { $0.finishedAt == nil } ?? false) {
+            if !moreToRead, let review = reader.summary.review { stepResult(review, from: id) }
+            pairRoundRead(id)
+            return
+        }
         // A review's result is kept with it, for the history.
         if sessions[id]?.isPullRequestReview == true, !moreToRead, let review = reader.summary.review, sessions[id]?.reviewResult != review {
             sessions[id]?.reviewResult = review
@@ -1489,14 +1539,6 @@ final class SessionStore {
             reviewFinished(id)
         }
         pairRoundRead(id)
-    }
-
-    /// `~/.claude/projects/<folder>/<id>.jsonl`, whichever folder claude
-    /// filed it under.
-    private static func findTranscript(_ claudeID: String, in home: URL? = nil) -> URL? {
-        let projects = home ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)
-        let folders = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
-        return folders.lazy.map { $0.appending(path: "\(claudeID).jsonl") }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     /// `wake` restarts a loop that's asleep, for a session that needs a

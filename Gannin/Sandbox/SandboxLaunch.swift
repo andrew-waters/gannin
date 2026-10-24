@@ -7,9 +7,6 @@ import Foundation
 /// hooks, Changes and editors keep working, and execs `inner.sh` there,
 /// which takes the credentials Gannin left in `secrets.env` and runs claude.
 enum SandboxLaunch {
-    /// Inside the container: claude's config, transcripts included, kept in
-    /// the session's `claude-home` on the Mac.
-    static let claudeHome = "/root/.claude"
     /// Where the signing key is written inside, outside every mount.
     static let signingKeyPath = "/run/gannin-signing-key"
     /// The labels on every sandbox: Gannin's own, for cleanup, and the ones
@@ -48,6 +45,7 @@ enum SandboxLaunch {
             : "Set it up in Gannin's Settings, under Sandbox."
         let minimum = SandboxSupport.minimum
         let claudeFolder = session.isRemote ? SandboxCredentials.remoteClaudeFolder : SessionScript.quoted(SandboxCredentials.claudeFolder.path)
+        let setup = Self.setup(session)
         let harnessRepo = session.harnessRepo ?? session.repo
         let repos = cloneRepos(session).filter { $0.lowercased() != harnessRepo.lowercased() }
         let labelArguments = labels.map { "--label \(SandboxRuntime.quoted($0))" }.joined(separator: " ")
@@ -104,7 +102,7 @@ enum SandboxLaunch {
             s=$(cd "$session" && pwd -P)
             si=$(cd \(issueFolder) && pwd -P) || sandbox_failed "The issue's session folder isn't there."
             f="$h"/\(SandboxRuntime.quoted(folder))
-            mkdir -p "$s/claude-home" "$si/claude-home"
+            mkdir -p "$s/\(setup.homeFolder)" "$si/\(setup.homeFolder)"
             log="$si/\(activityLogName)"
             touch "$log"
             name=\(SandboxRuntime.quoted(name))
@@ -189,9 +187,9 @@ enum SandboxLaunch {
               fi
               # Claude's config every sandbox shares (its own login among it),
               # with this issue's transcripts over its projects/.
-              mkdir -p \(claudeFolder)/projects "$si/claude-home/projects"
+              mkdir -p \(claudeFolder)/projects "$si/\(setup.homeFolder)/projects"
               cf=$(cd \(claudeFolder) && pwd -P)
-              args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$cf,target=\(claudeHome)" --mount "type=bind,source=$si/claude-home/projects,target=\(claudeHome)/projects")
+              args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$cf,target=\(setup.configHome)" --mount "type=bind,source=$si/\(setup.homeFolder)/projects,target=\(setup.configHome)/projects")
               note "Starting the sandbox $name ($image)"
               # Its own process follows the activity log, so container logs
               # says what's going on in here (the last 200 lines, then more).
@@ -199,7 +197,7 @@ enum SandboxLaunch {
             fi
             sandbox_unlock
             printf running > "$session/sandbox"
-            exec "$c" exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e CLAUDE_CONFIG_DIR=\(claudeHome) "$name" bash "$s/inner.sh" "$s" "$h" "$log"
+            exec "$c" exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e \(setup.configVariable)=\(setup.configHome) "$name" bash "$s/inner.sh" "$s" "$h" "$log"
             """
     }
 
@@ -212,19 +210,11 @@ enum SandboxLaunch {
         #"c=$(command -v container 2>/dev/null || echo /usr/local/bin/container); "$c" delete --force "# + SandboxRuntime.quoted(name) + " >/dev/null 2>&1; true"
     }
 
-    /// Claude Code's shared config, kept past first-run prompts: onboarding
-    /// done, this harness trusted (added beside others'), and an API key
-    /// approved when one is passed in. Nothing comes from anyone's own
-    /// `~/.claude`. Needs `$harness` and `$CLAUDE_CONFIG_DIR`.
-    static let seedClaudeConfig = """
-        cfg="$CLAUDE_CONFIG_DIR/.claude.json"
-        [ -s "$cfg" ] || echo '{}' > "$cfg"
-        jq --arg h "$harness" --arg k "${ANTHROPIC_API_KEY: -20}" \\
-          '.hasCompletedOnboarding = true | .theme = (.theme // "dark")
-           | .projects[$h] = ((.projects[$h] // {}) + {hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true})
-           | if $k == "" then . else .customApiKeyResponses.approved = (((.customApiKeyResponses.approved // []) + [$k]) | unique) end' \\
-          "$cfg" > "$cfg.$$" && mv "$cfg.$$" "$cfg"
-        """
+    /// What the session's provider needs in a sandbox: Claude Code's, as
+    /// the only provider that runs in one.
+    static func setup(_ session: CodeSession) -> any ProviderSandbox {
+        session.agent.sandbox ?? AgentProviders.claudeCode
+    }
 
     /// `find_clone owner/name`: the real path of the repo's clone's git dir in
     /// `$harness/projects/` or a group under it, matched by its origin rather
@@ -310,13 +300,7 @@ enum SandboxLaunch {
             fi
             unset GANNIN_CLAUDE_MD
             cd "$harness" || fail "The harness isn't mounted."
-            \(seedClaudeConfig)
-            # One Claude credential at most: an API key, or claude's own login.
-            unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
-            if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
-              note "Claude isn't signed in in your sandboxes yet. When it asks, choose your Claude account, open the link it shows, sign in, and paste the code back. Your other sandboxes stay signed in."
-              activity "Waiting for you: Claude needs signing in, in the session's terminal"
-            fi
+            \(setup(session).prepare)
             activity "Starting Claude Code"
 
             \(SessionScript.claudeSteps(session, settings: #""$folder/.gannin/"# + SessionScript.settingsName(session) + #"""#, shellNote: "", afterExit: "activity \"Claude Code has exited\"\nnote \"Claude Code has exited, so its sandbox stops once nothing else uses it. Resume the session to go on.\"\nexit 0"))

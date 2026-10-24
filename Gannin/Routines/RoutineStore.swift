@@ -50,8 +50,7 @@ enum RoutineKind: String, Codable, CaseIterable, Identifiable {
 
     var label: String {
         switch self {
-        case .report: "Report"
-        case .code: "Maintenance"
+        case .report, .code: "Routine"
         case .issueQueue: "Queue window"
         case .pinned: "Pinned issue"
         case .reviewQueue: "Review window"
@@ -70,6 +69,48 @@ enum RoutineKind: String, Codable, CaseIterable, Identifiable {
 
     /// Whether its runs work on code, so the push limit applies.
     var touchesCode: Bool { self == .code || self == .issueQueue || self == .pinned }
+
+    /// A routine on a schedule: a report or maintenance, one choice in the
+    /// editor (`Routine.reach`).
+    var isScheduledTask: Bool { self == .report || self == .code }
+}
+
+/// How far a scheduled routine may go, as one choice: a report (read and
+/// write up, in an Ask session) or maintenance on a limit.
+enum RoutineReach: String, CaseIterable, Identifiable {
+    case report
+    case localOnly
+    case draftPR
+    case readyPR
+
+    var id: Self { self }
+
+    var label: String {
+        switch self {
+        case .report: "Report only"
+        case .localOnly: RoutineLimit.localOnly.label
+        case .draftPR: RoutineLimit.draftPR.label
+        case .readyPR: RoutineLimit.readyPR.label
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .report: "Reads the harness and the repos' shared clones, and writes up what it finds. It changes nothing; what it writes stays with the run, to open or Commit to Harness."
+        case .localOnly: "Works in worktrees of the repos and commits there, on a branch of its own. It never pushes."
+        case .draftPR: "Works in worktrees of the repos, may push its branch and open a draft pull request."
+        case .readyPR: "Works in worktrees of the repos, may push its branch and open a pull request ready for review."
+        }
+    }
+
+    var limit: RoutineLimit? {
+        switch self {
+        case .report: nil
+        case .localOnly: .localOnly
+        case .draftPR: .draftPR
+        case .readyPR: .readyPR
+        }
+    }
 }
 
 /// A recurring agent session, a queue window or a pinned issue, the
@@ -101,6 +142,20 @@ struct Routine: Codable, Identifiable, Hashable {
     var issue: IssueReference?
     var isEnabled = true
     let createdAt: Date
+    /// A scheduled routine's agent: a Routines workflow by id, or a
+    /// specialist by name (`personal/<name>` for the user's own). Neither
+    /// is Gannin's own prompt, or the user's default Routines workflow.
+    var workflow: String?
+    var specialist: String?
+
+    /// A report, or maintenance on its limit.
+    var reach: RoutineReach {
+        get { kind == .report ? .report : RoutineReach(rawValue: limit.rawValue) ?? .localOnly }
+        set {
+            kind = newValue == .report ? .report : .code
+            if let limit = newValue.limit { self.limit = limit }
+        }
+    }
 
     static let defaultMaxMinutes = 60
     static let defaultMaxCost = 5.0

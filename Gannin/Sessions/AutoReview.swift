@@ -195,10 +195,23 @@ extension SessionStore {
     /// Automatic reviews whose claude is running, every org's, and those just
     /// started whose claude hasn't come up yet (`automaticStartedAt`), so a
     /// review between its start and its terminal still holds its place.
+    /// A workflow run's step sessions count one each, as they're reviews
+    /// running too.
+    /// A run's lead counts only while its own step runs: once that's done
+    /// it holds the run, not a slot, or two runs' leads could fill the cap
+    /// and leave both waiting for ever.
     var automaticReviewsRunning: Int {
-        automaticRuns.filter { id in
-            isRunning(id) || automaticStartedAt[id].map { Date.now.timeIntervalSince($0) < AutoReview.launchGrace } ?? false
+        let leads = automaticRuns.filter { id in
+            guard isRunning(id) || automaticStartedAt[id].map({ Date.now.timeIntervalSince($0) < AutoReview.launchGrace }) ?? false else { return false }
+            guard let run = sessions[id]?.reviewRun, run.finishedAt == nil else { return true }
+            return run.steps.contains { $0.session == id && $0.state == .running }
         }.count
+        // From when each starts, not once its claude runs, as for a review.
+        let steps = automaticRuns.reduce(0) { count, lead in
+            guard let run = sessions[lead]?.reviewRun, run.finishedAt == nil else { return count }
+            return count + run.steps.filter { $0.state == .running && $0.session != lead }.count
+        }
+        return leads + steps
     }
 
     /// Auto review of a request found, when it's on for the PR's org: in the
@@ -285,7 +298,7 @@ extension SessionStore {
         // task's added its session.
         guard review(of: pr.id) == nil, startingReviews[pr.id] == nil else { return nil }
         guard automaticReviewsRunning < limit else { return nil }
-        let session = await startReview(of: pr, harness: setup, harnessPath: harnessPath, reveals: false)
+        let session = await startReview(of: pr, harness: setup, harnessPath: harnessPath, reveals: false, automatic: true)
         automaticRuns.insert(session.id)
         automaticStartedAt[session.id] = .now
         _ = open(session)
@@ -315,7 +328,10 @@ extension SessionStore {
         // Ready for you whether it started by itself or by hand.
         noticeApproval(id)
         automaticStartedAt[id] = nil
-        guard automaticRuns.remove(id) != nil else { return }
+        let wasAutomatic = automaticRuns.remove(id) != nil
+        // Its slot is free: a workflow run's step waiting for one can start.
+        advanceWaitingRuns()
+        guard wasAutomatic else { return }
         let verdict = switch session.reviewResult?.verdict {
         case "approve": "would approve"
         case "request_changes": "would request changes"

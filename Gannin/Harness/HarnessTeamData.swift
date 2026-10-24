@@ -25,6 +25,9 @@ enum TeamFile {
     static let fieldNotes = ".gannin/field-notes.json"
     static let triage = ".gannin/triage.json"
     static let issueStrategy = ".gannin/issue-strategy.json"
+    /// Agent workflows and routing (`AgentWorkflows`); not `workflow.json`,
+    /// which is the issue workflow.
+    static let agentWorkflows = ".gannin/agent-workflows.json"
     static let peoplePrefix = ".gannin/people/"
 
     /// The org's, in the home harness, rather than each project's.
@@ -60,6 +63,7 @@ enum TeamFile {
         case fieldNotes: "notes from the field"
         case triage: "the priority scheme"
         case issueStrategy: "where issues go"
+        case agentWorkflows: "agent workflows and routing"
         default: login(path).map { "dates for \($0)" } ?? path
         }
     }
@@ -105,6 +109,7 @@ struct HarnessTeamData {
     var fieldNotes: [FieldNote]?
     var triage: PriorityScheme?
     var issueStrategy: IssueStrategy?
+    var agentWorkflows: AgentWorkflows?
     var people: [String: PersonDates] = [:]
 
     init(files: [String: String]) {
@@ -126,6 +131,7 @@ struct HarnessTeamData {
         fieldNotes = files[TeamFile.fieldNotes].flatMap { TeamCoding.decode([FieldNote].self, $0) }
         triage = files[TeamFile.triage].flatMap { TeamCoding.decode(PriorityScheme.self, $0) }
         issueStrategy = files[TeamFile.issueStrategy].flatMap { TeamCoding.decode(IssueStrategy.self, $0) }
+        agentWorkflows = files[TeamFile.agentWorkflows].flatMap { TeamCoding.decode(AgentWorkflows.self, $0) }
         for (path, text) in files {
             if let login = TeamFile.login(path), let dates = TeamCoding.decode(PersonDates.self, text) {
                 people[login] = dates

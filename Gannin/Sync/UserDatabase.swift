@@ -82,6 +82,19 @@ final class OrgConfigRecord {
     }
 }
 
+/// An org's personal specialists and workflows, as its `PersonalAgents`
+/// JSON: edited as a whole, like org settings.
+@Model
+final class PersonalAgentsRecord {
+    var org: String = ""
+    var updatedAt: Date = Date.distantPast
+    var agents: Data?
+
+    init(org: String) {
+        self.org = org
+    }
+}
+
 @Model
 final class HiddenRecord {
     /// A PR or issue node ID, or an old `person:` key.
@@ -116,7 +129,7 @@ final class UserDatabase {
     @ObservationIgnored private var reloadTask: Task<Void, Never>?
 
     init() {
-        let schema = Schema([PersonRecord.self, AbsenceRecord.self, OrgConfigRecord.self, HiddenRecord.self, StarRecord.self])
+        let schema = Schema([PersonRecord.self, AbsenceRecord.self, OrgConfigRecord.self, PersonalAgentsRecord.self, HiddenRecord.self, StarRecord.self])
         let memory = { try! ModelContainer(for: schema, configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)) }
         if NetworkGate.isSealed {
             // The demo build keeps nothing it's given between launches.
@@ -275,6 +288,42 @@ final class UserDatabase {
 
     func deleteAllConfigs() {
         try? context.delete(model: OrgConfigRecord.self)
+        save()
+    }
+
+    // MARK: Personal specialists and workflows
+
+    func loadPersonalAgents() -> [String: PersonalAgents] {
+        let records = (try? context.fetch(FetchDescriptor<PersonalAgentsRecord>())) ?? []
+        var agents: [String: PersonalAgents] = [:]
+        for group in Dictionary(grouping: records, by: \.org).values {
+            let sorted = group.sorted { $0.updatedAt > $1.updatedAt }
+            sorted.dropFirst().forEach(context.delete)
+            if let data = sorted[0].agents, let decoded = try? JSONDecoder().decode(PersonalAgents.self, from: data) {
+                agents[sorted[0].org] = decoded
+            }
+        }
+        if records.count != agents.count { save() }
+        return agents
+    }
+
+    func savePersonalAgents(org: String, _ agents: PersonalAgents?) {
+        let records = (try? context.fetch(FetchDescriptor<PersonalAgentsRecord>(predicate: #Predicate { $0.org == org }))) ?? []
+        guard let agents else {
+            records.forEach(context.delete)
+            save()
+            return
+        }
+        let record = records.first ?? PersonalAgentsRecord(org: org)
+        if records.isEmpty { context.insert(record) }
+        records.dropFirst().forEach(context.delete)
+        record.agents = try? JSONEncoder().encode(agents)
+        record.updatedAt = .now
+        save()
+    }
+
+    func deleteAllPersonalAgents() {
+        try? context.delete(model: PersonalAgentsRecord.self)
         save()
     }
 

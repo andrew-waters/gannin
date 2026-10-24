@@ -796,8 +796,8 @@ struct NewIssueSheet: View {
         Task {
             defer { drafting = false }
             do {
-                let reply = try await ClaudeRunner.ask(prompt, org: org, files: files, tools: files.isEmpty ? [] : ["Read", "Glob", "Grep"])
-                guard let draft = ClaudeRunner.json(Draft.self, in: reply) else {
+                let reply = try await AgentProviders.asking.ask(prompt, org: org, files: files, tools: files.isEmpty ? [] : ["Read", "Glob", "Grep"])
+                guard let draft = ScriptRunner.json(Draft.self, in: reply) else {
                     conversation.append((request, "That reply wasn't a draft. Say a little more and try again."))
                     return
                 }

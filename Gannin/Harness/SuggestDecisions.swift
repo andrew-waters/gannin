@@ -294,11 +294,11 @@ struct SuggestDecisionsSheet: View {
                 if Task.isCancelled { break }
                 progress = (number, batches.count)
                 do {
-                    let reply = try await ClaudeRunner.ask(
+                    let reply = try await AgentProviders.asking.ask(
                         DecisionSuggestions.prompt(batch, existing: existing), org: org,
                         files: DecisionSuggestions.files(batch), tools: ["Read", "Glob", "Grep"]
                     )
-                    if let parsed = ClaudeRunner.json(DecisionSuggestions.Reply.self, in: reply) {
+                    if let parsed = ScriptRunner.json(DecisionSuggestions.Reply.self, in: reply) {
                         drafts += parsed.decisions.map { DecisionSuggestions.Draft($0, batch: batch) }
                     } else {
                         failed += 1

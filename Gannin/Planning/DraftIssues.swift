@@ -150,8 +150,8 @@ struct DraftIssuesSheet: View {
             \(document.text.prefix(40_000))
             """
         do {
-            let reply = try await ClaudeRunner.ask(prompt, org: org)
-            guard let parsed = ClaudeRunner.json(Reply.self, in: reply) else {
+            let reply = try await AgentProviders.asking.ask(prompt, org: org)
+            guard let parsed = ScriptRunner.json(Reply.self, in: reply) else {
                 status = "Claude's reply wasn't a list of issues. Add them by hand, or close and try again."
                 working = false
                 return

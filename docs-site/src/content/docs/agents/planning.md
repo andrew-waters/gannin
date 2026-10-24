@@ -13,6 +13,8 @@ Open a New Plan tab in the Claude Code window, or use Plan This on an issue. Rit
 
 The tab has an editable prompt. Start from fills it with one of the team's planning prompts (and its skills), a suggested one, or nothing. What's in the box is what Claude is told. Saving commits it as a planning prompt for next time.
 
+The session runs through the project's Planning [workflow](/docs/agents/workflows/). With none set up, it's the session described here. A workflow can have a [specialist](/docs/concepts/specialists-and-workflows/) run the session, on its own model, told who it is before the team's prompts.
+
 ## Stages
 
 The tab is a spec built in stages, each looped until the room approves it:

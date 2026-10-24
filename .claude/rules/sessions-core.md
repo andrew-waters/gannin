@@ -1,8 +1,14 @@
 ---
 paths:
   - "Gannin/Sessions/**"
+  - "Gannin/Agents/**"
 ---
 # Sessions: shared invariants
+
+## Providers (`Gannin/Agents/`)
+- Never run claude from a feature directly: start a session through `CodeSession.agent` (`InteractiveProvider`) and ask one-off questions through `AgentProviders.asking`, so another provider can take its place.
+- The Claude provider's start scripts, settings and sandbox scripts are pinned byte for byte by `ProviderSnapshotTests` (`GanninTests/Snapshots/`). Change one only on purpose: delete its snapshot, run the test once to write it, and read the diff before committing.
+- `CodeSession.provider` nil means Claude Code. Decode it with `try?`, so a provider a newer build knows doesn't lose the session.
 
 ## Talking to claude
 - Never drive claude's menus to answer a question. `SessionStore.answer` sends Esc, then every answer as one message.
@@ -10,7 +16,7 @@ paths:
 - Never trust hook escape codes (OSC 7777) to arrive: hooks run with no terminal. State comes from the files hooks write in the session folder, which `HookFileWatcher` reports changes to and `SessionStore.refreshLocal` reads.
 - Never watch only the session folder: hooks write with `>`, which rewrites an existing file in place and raises no folder event. `HookFileWatcher` watches each file too.
 - Never read hook files or scan the terminal screen on a timer on the main actor. Reads run detached; the screen is scanned only after it changes (`OutputReportingTerminalView`), once a second at most. `SessionStore.poll` stays as the safety net, and as the only reader of server sessions and of sandboxed ones, whose mounted folder isn't known to raise file events.
-- Never record a PR from a tool call that merely mentions one: `SessionScript.pullRequestHook` reads only the result of `gh pr create`, a `gh api` POST to `/pulls` or a `create_pull_request` tool, or a session picks up every PR it views or lists. It splits the hook's JSON at `tool_response`, so it depends on Claude Code writing `tool_name` and `tool_input` first; `SessionPullRequestHookTests` is the guard, so run it when changing hooks or upgrading Claude Code.
+- Never record a PR from a tool call that merely mentions one: `ClaudeCodeProvider.pullRequestHook` reads only the result of `gh pr create`, a `gh api` POST to `/pulls` or a `create_pull_request` tool, or a session picks up every PR it views or lists. It splits the hook's JSON at `tool_response`, so it depends on Claude Code writing `tool_name` and `tool_input` first; `SessionPullRequestHookTests` is the guard, so run it when changing hooks or upgrading Claude Code.
 - Read the mode from the terminal footer (`ClaudeMode.fromFooter`) even for server sessions; that terminal is local.
 
 ## Trust boundaries

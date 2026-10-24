@@ -11,7 +11,7 @@ paths:
 - Keep demo-only seams in the shipped code behind `#if DEMO` or `NetworkGate.isSealed`, never a
   runtime flag a user could set: the demo mode isn't something the app offers.
 - A new way to start a process (claude, git, gh, a shell) checks `NetworkGate` first, as
-  `ClaudeRunner` and `Shell.run` do: a click in the demo would otherwise run claude as the user.
+  `ScriptRunner` and `Shell.run` do: a click in the demo would otherwise run claude as the user.
 - Every name in the fixture must be in `DemoFixture.people`, `org` or `repos`, and avatars drawn
   locally (`DemoAvatars`): screenshots are public, and a real login or avatar would put a real
   person on them.

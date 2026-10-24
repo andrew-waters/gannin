@@ -47,6 +47,7 @@ struct HarnessView: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(OrgStore.self) private var orgs
+    @Environment(PersonalAgentsStore.self) private var personalAgents
     @Environment(\.openURL) private var openURL
     /// Picked under Harness in the sidebar, which writes the same key.
     @SceneStorage("harnessKind") private var kind: HarnessKind = .plans
@@ -62,6 +63,7 @@ struct HarnessView: View {
     @State private var suggestingIn: HarnessChoice?
     @State private var editingSkill: HarnessEdit<HarnessDocument>?
     @State private var editingPrompt: HarnessEdit<HarnessPrompt>?
+    @State private var editingSpecialist: HarnessEdit<HarnessSpecialist>?
 
     /// New on the page: a plan opens as a new plan's tab in the Claude
     /// Code window, in that harness; anything else, its editor.
@@ -172,6 +174,9 @@ struct HarnessView: View {
         .sheet(item: $editingPrompt) { edit in
             HarnessPromptEditor(org: org, setup: edit.setup, library: HarnessPromptLibrary(index: harness.index(for: org, edit.setup)), prompt: edit.item)
         }
+        .sheet(item: $editingSpecialist) { edit in
+            HarnessSpecialistEditor(org: org, setup: edit.setup, specialist: edit.item)
+        }
     }
 
     /// The harness a document in the combined index is in, and the
@@ -190,12 +195,13 @@ struct HarnessView: View {
         if let index = harness.combined(org: org, harnesses) {
             let lookup = IssueLookup(history: issueStore.history(for: org))
             let linkable = kind == .plans || kind == .requirements
-            let pool = index.documents(kind).filter(\.followsStandard)
+            // A specialist with prose only still runs, so it's listed too.
+            let pool = index.documents(kind).filter { $0.followsStandard || kind == .specialists }
                 .filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
                 .filter { harnessFilter == nil || ($0.harnessRepo ?? setup.repo) == harnessFilter }
                 .filter { matches($0) }
             // Only what follows the standard; older documents aren't listed.
-            let documents = pool.filter { $0.followsStandard && matchesPicked($0) }
+            let documents = pool.filter { ($0.followsStandard || kind == .specialists) && matchesPicked($0) }
             VStack(spacing: 0) {
                 bar(linkable: linkable, pool: pool, harnesses: harnesses)
                 Divider()
@@ -344,6 +350,37 @@ struct HarnessView: View {
         return words.allSatisfy { word in fields.contains { $0.localizedCaseInsensitiveContains(word) } }
     }
 
+    /// Your own specialists, above the team's: on this Mac, never in the
+    /// harness.
+    @ViewBuilder
+    private func personalSpecialists(setup: HarnessConfig) -> some View {
+        let mine = personalAgents.specialists(org: org).values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        if !mine.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.crop.circle")
+                    Text("Just me").font(.headline)
+                    Text("On this Mac only, never committed. Only your own workflows can use them.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(mine) { specialist in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(specialist.title)
+                            if let summary = specialist.summary { Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                        }
+                        Spacer()
+                        Button("Edit") { editingSpecialist = HarnessEdit(setup: setup, item: specialist, id: specialist.path) }
+                    }
+                    .padding(8)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                }
+                Text("The team's").font(.headline).padding(.top, 6)
+            }
+            .padding(.horizontal, 14)
+        }
+    }
+
     private func list(documents: [HarnessDocument], index: HarnessIndex, lookup: IssueLookup, linkable: Bool, setup: HarnessConfig, showsHarness: Bool) -> some View {
         let repo = setup.repo
         let newestFirst = documents.sorted { a, b in
@@ -357,6 +394,9 @@ struct HarnessView: View {
                         Task { await harness.load(org: org, setup: setup, force: true) }
                     }
                     .padding(.horizontal, 14)
+                }
+                if kind == .specialists {
+                    personalSpecialists(setup: setup)
                 }
                 if documents.isEmpty {
                     Text(!search.isEmpty || picked.values.contains(where: { !$0.isEmpty }) ? "Nothing matches." : unlinkedOnly ? "Every one names an issue." : "No \(kind.rawValue.lowercased()) in \(repo).")
@@ -376,6 +416,9 @@ struct HarnessView: View {
                                 }
                                 if document.kind == .prompts, let (setup, own) = source(of: document), let prompt = HarnessPrompt(document: own) {
                                     Button("Edit Prompt") { editingPrompt = HarnessEdit(setup: setup, item: prompt, id: document.path) }
+                                }
+                                if document.kind == .specialists, let (setup, own) = source(of: document), let specialist = HarnessSpecialist(document: own) {
+                                    Button("Edit Specialist") { editingSpecialist = HarnessEdit(setup: setup, item: specialist, id: document.path) }
                                 }
                                 if let url = index.url(for: document) {
                                     Button("Open on GitHub") { openURL(url) }
@@ -410,6 +453,12 @@ struct HarnessView: View {
         // whether they're ticked to start with, and the skills they bring.
         if kind == .prompts {
             columns += promptColumns
+            if showsHarness { columns.append(harnessColumn(primary: primary)) }
+            return columns
+        }
+        // Specialists: their defaults, which a workflow step can override.
+        if kind == .specialists {
+            columns += specialistColumns
             if showsHarness { columns.append(harnessColumn(primary: primary)) }
             return columns
         }
@@ -505,6 +554,26 @@ struct HarnessView: View {
         ]
     }
 
+    private var specialistColumns: [StatsColumn<HarnessDocument>] {
+        func specialist(_ document: HarnessDocument) -> HarnessSpecialist? { HarnessSpecialist(document: document) }
+        func runsOn(_ specialist: HarnessSpecialist?) -> String {
+            guard let specialist else { return "" }
+            let provider = ProviderID(name: specialist.provider)?.title ?? specialist.provider ?? ProviderID.claudeCode.title
+            return specialist.model.map { "\(provider), \($0)" } ?? provider
+        }
+        return [
+            StatsColumn(id: "name", title: "Name", help: "What a workflow step names it by", width: 160,
+                        sortKey: { .text(specialist($0)?.name ?? "") },
+                        cell: { document in AnyView(Text(specialist(document)?.name ?? "").font(.body.monospaced()).lineLimit(1)) }),
+            StatsColumn(id: "runs", title: "Runs on", help: "Its provider and model, unless a step says otherwise", width: 200,
+                        sortKey: { .text(runsOn(specialist($0))) },
+                        cell: { document in AnyView(Text(runsOn(specialist(document))).lineLimit(1)) }),
+            StatsColumn(id: "focus", title: "Focus", help: "What it looks at when a step doesn't say", width: 260,
+                        sortKey: { .text(specialist($0)?.focus ?? "") },
+                        cell: { document in AnyView(Text(specialist(document)?.focus ?? "").foregroundStyle(.secondary).lineLimit(2)) }),
+        ]
+    }
+
     /// `data-capture` as "Data capture"; short names like `cdm` in capitals.
     static func prettify(_ name: String) -> String {
         if name.count <= 3 { return name.uppercased() }
@@ -581,6 +650,7 @@ struct HarnessDocumentPage: View {
     @State private var width: CGFloat = 1000
     @State private var draftingIssues = false
     @State private var editingDetails = false
+    @State private var editingSpecialist: HarnessView.HarnessEdit<HarnessSpecialist>?
     /// Folded sections, by index.
     @State private var folded: Set<Int> = []
     @AppStorage("harnessReadingSize") private var size: Double = 14
@@ -597,6 +667,9 @@ struct HarnessDocumentPage: View {
                         header(document, index: index, sections: sections, proxy: proxy)
                             .sheet(isPresented: $draftingIssues) {
                                 DraftIssuesSheet(org: org, document: document, index: index)
+                            }
+                            .sheet(item: $editingSpecialist) { edit in
+                                HarnessSpecialistEditor(org: org, setup: edit.setup, specialist: edit.item)
                             }
                             .sheet(isPresented: $editingDetails) {
                                 if let (setup, own) = source(of: document) {
@@ -648,6 +721,11 @@ struct HarnessDocumentPage: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
+            if document.kind == .specialists, let (setup, own) = source(of: document),
+               let file = harness.index(for: org, setup)?.document(at: own), let specialist = HarnessSpecialist(document: file) {
+                Button("Edit Specialist") { editingSpecialist = HarnessView.HarnessEdit(setup: setup, item: specialist, id: own) }
+                    .help("Change its defaults (provider, model, focus) or soul, and commit it")
+            }
             if document.kind == .plans || document.kind == .requirements {
                 Button("Draft Issues") { draftingIssues = true }
                     .help("Claude breaks it into issues for you to edit, then makes them on GitHub")

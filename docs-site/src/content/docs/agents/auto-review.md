@@ -11,6 +11,8 @@ Gannin can start a [review](/docs/agents/reviews/) for you when someone asks for
 
 Settings › General › Agent has Review requests automatically. An org can choose its own in Settings › Harness: on, off, or the default. These are yours alone, on this Mac.
 
+An automatic review uses the review [workflow](/docs/agents/workflows/) the routing rules pick for the PR (your own, then the project's), else your default. Each specialist running in a workflow counts as a review running, against the limit below and a window's Reviews at once; a step that doesn't fit waits for one to finish.
+
 A review request is reviewed this way once. Drafts, ones you've dismissed, ones already reviewed, and PRs whose title contains a skip keyword (see below) are left alone. Reviews run in the background with no tab, two at a time. Others wait for a later check. Review requests are found every few minutes (Settings › Sync, Your reviews and PRs).
 
 ## Review windows

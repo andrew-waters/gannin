@@ -51,11 +51,11 @@ struct DemoSealTests {
     }
 
     @Test func claudeIsNeverAsked() async {
-        await #expect(throws: NetworkGate.Sealed.self) { try await ClaudeRunner.ask("hello", org: DemoFixture.org) }
+        await #expect(throws: NetworkGate.Sealed.self) { try await AgentProviders.asking.ask("hello", org: DemoFixture.org) }
     }
 
     @Test func claudeScriptsDontRun() {
-        let result = ClaudeRunner.run("echo ran", place: .local)
+        let result = ScriptRunner.run("echo ran", place: .local)
         #expect(result.status == -1)
         #expect(result.output.isEmpty)
         #expect(result.error == NetworkGate.Sealed.process)

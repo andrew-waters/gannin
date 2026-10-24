@@ -1,6 +1,7 @@
 ---
 paths:
   - "Gannin/Harness/**"
+  - "Gannin/Agents/AgentWorkflows*"
 ---
 
 # Harness
@@ -14,7 +15,7 @@ paths:
 - After a commit, refetch the index until GitHub reports the new head (`load(expecting:)`) so writes show without a Refresh.
 
 ## Team data (`.gannin/*.json`, `HarnessTeamData.swift`)
-- Per project: `project.json`, `investments.json`, `rnd.json`, `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json`, `triage.json`, `field-notes.json`. Home only (`TeamFile.isOrgWide`): `views.json`, `working-week.json`, `leave.json`, `accounting.json`, `exclusions.json`, `authoring.json`, `issue-strategy.json`, `people/<login>.json`. A missing file means the default.
+- Per project: `project.json`, `investments.json`, `rnd.json`, `workflow.json`, `goals.json`, `recap.json`, `scorecard.json`, `prioritisation.json`, `triage.json`, `field-notes.json`, `agent-workflows.json`. `workflow.json` is the issue workflow; agent workflows are `agent-workflows.json`, so never put them in it. Home only (`TeamFile.isOrgWide`): `views.json`, `working-week.json`, `leave.json`, `accounting.json`, `exclusions.json`, `authoring.json`, `issue-strategy.json`, `people/<login>.json`. A missing file means the default.
 - Keys sorted, days as `2026-10-03` (`TeamCoding`). An older Gannin re-encodes a file it changes with only the keys it knows, so a new field is dropped by any Mac not yet updated; say so in the changelog when adding one. Add new fields as optional (`decodeIfPresent`) so older files still decode: `TeamCoding.decode` returns nil on any failure, which reads as the default and drops that file's settings.
 - Edits stay pending (`HarnessTeamStore.pending`) until reviewed. Commit merges three ways onto the head's copy (`TeamCoding.merge`: objects by key, object lists by `id`, ours wins), so others' changes survive.
 - `update` stages org-wide files to home and the rest to the window's project (`HarnessTeamStore.stage`).
@@ -34,6 +35,13 @@ paths:
 - `research/` and `refines/` are records (`isRecord`): no New, written by Ask's Commit to Harness and Refine's Agree.
 - Decisions' `superseded_by` and `plans` are paths in their own harness: resolve them with `HarnessIndex.resolve(_:from:)`, never compare them raw, or a combined index's `owner/name:` prefix breaks the link.
 - Onboarding read marks (`HarnessReadMarks`) never leave this Mac: don't commit, sync or report them. Keep their cache out of observation (only `version` is observed), since reading defaults mid-draw must not count as a change.
+
+## Specialists and agent workflows
+- A specialist (`specialists/<name>.md`) loads with prose only: list and run it whether or not it follows the standard. Front matter `name`, `provider`, `model`, `focus`; keep unknown fields.
+- `agent-workflows.json` is keyed by activity at its top level; skip a workflow or rule this build can't read rather than failing the whole file (`Leniently`), since `TeamCoding.decode` returning nil reads as no workflows at all. A skipped entry is dropped if this Mac saves the file, so say so in the changelog when the shape changes. Every workflow, stage, step and rule has an `id`, which the three-way merge matches lists by.
+- A missing file, activity or default is the built-in workflow (`AgentWorkflow.builtIn`), and a plain workflow (`isPlain`) must start exactly what the activity started before workflows.
+- Personal specialists, workflows, rules and defaults (`PersonalAgents`, in `UserDatabase`) never go in a harness. Never stage a team `agent-workflows.json` that names a `personal/` specialist (`usesPersonalSpecialist`): it would publish one person's specialist to the team. Defaults are per person: ignore the team file's `default` (`WorkflowLibrary`), so someone new gets the built-in. A team rule only reaches team workflows.
+- Never post or record a personal specialist's title: a review names it `ReviewRun.postedTitle` ("Reviewer"), in comments, the summary and the findings later steps see, or the person it's aimed at reads it on their PR.
 
 ## Prompts and learnings
 - Prompt front matter: `use`, `default`, `repos`, `skills`. Placeholders `{{issue}}`, `{{title}}`, `{{url}}`, `{{repo}}`, `{{number}}`, `{{branch}}`; keep the code that fills them in step (a quick change leaves `{{number}}` and `{{url}}` empty).

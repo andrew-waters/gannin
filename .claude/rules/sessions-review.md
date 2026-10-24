@@ -4,6 +4,7 @@ paths:
   - "Gannin/Sessions/Review*"
   - "Gannin/Sessions/AutoReview*"
   - "Gannin/Sessions/ApprovalQueue*"
+  - "Gannin/Agents/ReviewRuns*"
   - "Gannin/Sessions/EngineerWatch*"
   - "Gannin/Git/DiffHighlighter*"
   - "Gannin/Git/DiffLanguage*"
@@ -23,6 +24,16 @@ paths:
 ## Reading claude's output
 - Read the review JSON leniently (`SessionTranscript.review`, and `applied`, `learnings`, `checks`, `resolved`); a malformed entry must never lose the review. Add new fields the same way.
 - Reviews run in the harness with edits disallowed (`--disallowedTools`). Keep that when changing `startReview`.
+
+## Review workflow runs (`Gannin/Agents/ReviewRuns.swift`)
+- A plain workflow starts no run (`reviewRun` nil): the review is exactly as before workflows.
+- One review per PR: the lead session (`review(of:)`) runs the first stage's first Claude Code step and holds `reviewRun`; other steps are helpers with `reviewStep` and no `reviewOf`, so they never show as reviews of their own. Never set `reviewResult` on the lead before the run finishes: `finishRun` sets the merged result and calls `reviewFinished` once, which posting, approval and records act on.
+- Route every round's result through `stepResult`; a result read again (the same as the last) must not count as a round. Every way a step's session can go must finish its step, or the run waits for ever: it ends (`stepEnded`), it's removed (`stepClosed`, before the session is cleared, while `reviewStep` still names the lead), or Gannin quit (`resumeReviewRuns` at launch). Every path that frees a slot calls `advanceWaitingRuns`: a step finishing, `reviewFinished`, and an automatic review's terminal ending.
+- Mark an automatic run in `automaticRuns` before `advanceRun` starts its steps (`startReview(automatic:)`), or its first stage starts uncapped. `automaticRuns` isn't saved, so the run keeps `ReviewRun.automatic` and `resumeReviewRuns` puts it back before opening or advancing anything. A lead counts against the cap only while its own step runs, or two runs' leads fill it and neither can start a step.
+- A step's findings are one per `Finding.key` (line and the start of the comment): two points on one line are two findings, and a new point on a flagged line counts as new for the round rule.
+- Steps never edit or post: helpers are `isReviewer` (edits disallowed); one-shot CLIs run in a throwaway copy of a detached checkout, removed after, and only on this Mac.
+- Merge with `PairReview.merge(labelled:)`, by file and line. A step's earlier stages' findings go into its prompt; those beside it never do.
+- After a run finishes, Look Again asks the lead alone, and its result replaces the run's.
 
 ## Diff highlighting
 - Never hand `DiffHighlighter` a line's `+`, `-` or space marker, and never change `DiffLine` ids: it would read the marker as code, and comments anchor to lines by id. `DiffRow` and `DiffPaneRow` draw the marker themselves.

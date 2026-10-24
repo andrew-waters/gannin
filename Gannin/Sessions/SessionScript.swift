@@ -19,19 +19,6 @@ enum SessionScript {
         session.isHelper ? "settings-\(session.id.uuidString.prefix(8)).json" : "settings.json"
     }
 
-    /// `--model` with the model picked in Settings, applied on each start
-    /// and resume (nothing when it's left to Claude Code), and a reviewer's
-    /// tools taken away.
-    private static func options(_ session: CodeSession) -> String {
-        var options = SessionStore.model.map { " --model \(quoted($0))" } ?? ""
-        // A reviewer reads and reports; it can't change the code.
-        var disallowed = session.isReviewer ? ["Edit", "MultiEdit", "Write", "NotebookEdit"] : []
-        // A scheduled run goes only as far as its routine's limit lets it.
-        if let run = session.routineRun { disallowed += run.disallowedTools }
-        if !disallowed.isEmpty { options += " --disallowedTools \(quoted(disallowed.joined(separator: ",")))" }
-        return options
-    }
-
     /// Claude's first prompt: the helper's or the issue's, then what was
     /// picked from the team's prompts and skills.
     private static func firstPrompt(_ session: CodeSession, otherwise issuePrompt: String) -> String {
@@ -175,14 +162,9 @@ enum SessionScript {
     static func claudeSteps(_ session: CodeSession, settings: String, shellNote: String, afterExit: String? = nil) -> String {
         // A scheduled run starts with no prompt: Gannin switches it to auto
         // mode first, then pastes it (`SessionStore.startUnattended`).
-        let prompt = session.routineRun == nil ? " " + quoted(openingPrompt(session)) : ""
+        let prompt = session.routineRun == nil ? openingPrompt(session) : nil
         return """
-            command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Resume the session."
-            if [ -e "$session/started" ]; then
-              claude --resume "$id"\(options(session)) --settings \(settings)
-            else
-              claude --session-id "$id"\(options(session)) --settings \(settings)\(prompt)
-            fi
+            \(prepareSteps(session))\(session.agent.launch(session, settings: settings, prompt: prompt))
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
             \(afterExit ?? "note \"Claude Code has exited. \(shellNote); run claude --resume $id to go on.\"\nexec \"${SHELL:-bash}\" -l")
@@ -284,163 +266,12 @@ enum SessionScript {
             mkdir -p "$(dirname "$exclude")"
             grep -qx '.gannin/' "$exclude" 2>/dev/null || echo '.gannin/' >> "$exclude"
 
-            command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Resume the session."
-            if [ -e "$session/started" ]; then
-              claude --resume "$id"\(options(session)) --settings .gannin/\(settingsName(session))
-            else
-              claude --session-id "$id"\(options(session)) --settings .gannin/\(settingsName(session)) \(quoted(prompt))
-            fi
+            \(session.agent.launch(session, settings: ".gannin/" + settingsName(session), prompt: prompt))
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
             note "Claude Code has exited. This shell is in the worktree; run claude --resume $id to go on."
             exec "${SHELL:-bash}" -l
             """
-    }
-
-    /// The PostToolUse command that records a PR the session opens in `dir`'s
-    /// `pr` file. A new PR's URL is in the result of a call that creates one;
-    /// only those results are read, since any other call that mentions a PR
-    /// (viewing or listing them, a file naming one) would otherwise be
-    /// recorded as the session's own. A creating call is a Bash command that
-    /// runs, at the start of a command (after `&&`, `;`, `|`, `(`, `$(`, a
-    /// backtick or a newline, and any `VAR=value` words):
-    /// - `gh pr create`: its result is the new PR's URL, so every URL in it is
-    ///   kept.
-    /// - `gh api` to a path ending in `/pulls` with `-X POST`, `--method POST`,
-    ///   or a `-f`, `-F`, `--field`, `--raw-field` or `--input` (which make gh
-    ///   POST), and no `-X GET`, all in that one `gh api` command (up to the
-    ///   next `&&`, `;`, `|`, unescaped quote or newline), not elsewhere in
-    ///   the call. Its result is the whole PR, body included, so only its
-    ///   `html_url` or `url` is kept (a REST object's `url` is on
-    ///   api.github.com, so it never matches).
-    /// A PR-creating MCP tool (`create_pull_request`) is read the same way: the
-    ///   GitHub MCP server's result is a short `{id, url}` object.
-    /// Left out, so the session records no PR: a wrapper script, a `gh`
-    /// reached through `xargs`, `env` or `then`, a quoted `VAR="a b"` prefix,
-    /// and `gh api` with its method or path in a variable.
-    ///
-    /// Claude Code writes tool_name and tool_input before tool_response, and
-    /// the command relies on that order: `SessionPullRequestHookTests` runs it
-    /// against JSON in that order and is what would show it change. A tool
-    /// call can open more than one PR (one per repo in one command), so every
-    /// URL seen is kept, one per line, not just the last.
-    static func pullRequestHook(directory dir: String) -> String {
-        #"""
-        input=$(cat)
-        call=$(printf '%s' "$input" | sed 's/"tool_response".*//')
-        has() { printf '%s' "$call" | grep -Eq -- "$1"; }
-        # Each `gh api` command on its own line, ending at a separator, an
-        # unescaped quote or a newline, so a flag on another command in the same
-        # call isn't taken as this one's.
-        creates() { printf '%s' "$call" | grep -Eo 'gh api ([^&;|`"\\]|\\[^n])*' | grep -E '/pulls([ ]|\\|$)' | grep -Ei '(-X ?|--method[ =])POST| (-[fF]|--field|--raw-field|--input)[ =]' | grep -Eiv '(-X ?|--method[ =])GET' | grep -q .; }
-        start='"tool_name": ?"Bash".*"command": ?"(.*(&&|;|\||\\n|\(|`))? *([A-Za-z_][A-Za-z0-9_]*=[^ ]+ +)*'
-        url='https://github\.com/[^"\\ ]+/pull/[0-9]+'
-        if has "$start"'gh pr create'; then
-          re=$url
-        elif has '"tool_name": ?"[^"]*create_pull_request"' || { has "$start"'gh api ' && creates; }; then
-          re='"(html_)?url\\*": ?\\*"'"$url"
-        else
-          exit 0
-        fi
-        printf '%s' "$input" | sed 's/.*"tool_response"//' | grep -Eo "$re" | grep -Eo "$url" | while IFS= read -r found; do grep -qxF "$found" \#(dir)/pr 2>/dev/null || { printf '%s\n' "$found" >> \#(dir)/pr; printf '\033]\#(signalCode);pr:%s\007' "$found" > /dev/tty 2>/dev/null; }; done
-        exit 0
-        """#
-    }
-
-    /// Claude Code settings for the session: hooks that write its state to
-    /// the session's folder and send it through the terminal, the PR it
-    /// opens, and a statusLine command that saves Claude Code's own
-    /// context-window stats for `SessionTranscript.contextLimit(from:)`.
-    /// `isRemote` is whether this runs on a server: the user's own
-    /// statusLine command, read from this Mac, wouldn't exist there.
-    /// `allowing` is commands it runs without asking (the pair review's
-    /// script). `rules` is the session rules' hook command
-    /// (`SessionRules.hookCommand`), nil with none set. `sandboxed` adds hooks
-    /// that write what claude's doing to the sandbox's activity log
-    /// (`SandboxLaunch.activityScript`).
-    static func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], rules: String? = nil, sandboxed: Bool = false) -> String {
-        func signal(_ payload: String) -> String {
-            #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
-        }
-        func write(_ state: SessionState) -> [String: Any] {
-            ["type": "command", "command": "printf \(state.rawValue) > \(dir)/state 2>/dev/null; \(signal("state:" + state.rawValue)); exit 0"] as [String: Any]
-        }
-        let pullRequest = pullRequestHook(directory: dir)
-        func command(_ command: String) -> [String: Any] { ["type": "command", "command": command] }
-        func group(_ hooks: [[String: Any]], matcher: String? = nil) -> [String: Any] {
-            var group: [String: Any] = ["hooks": hooks]
-            group["matcher"] = matcher
-            return group
-        }
-        // Session rules: Claude Code runs every matching hook at once, and a
-        // deny wins whatever the order.
-        let ruleGroups = rules.map { [group([command($0)], matcher: SessionRules.matcher)] } ?? []
-        var hooks: [String: Any] = [
-            "SessionStart": [group([write(.idle)])],
-            "UserPromptSubmit": [group([command("touch \(dir)/started"), write(.working)])],
-            "PostToolUse": [
-                group([write(.working)], matcher: "*"),
-                group([command(pullRequest)], matcher: "*"),
-                // So the Changes pane reads the worktrees now, not on its
-                // next slow look.
-                // A new value each time, for Gannin to compare.
-                group([command("printf %s \"$(date +%s)-$$\" > \(dir)/changed 2>/dev/null; \(signal("changed")); exit 0")], matcher: "Edit|MultiEdit|Write|NotebookEdit|Bash"),
-            ],
-            // A permission prompt or a dialog, not the reminder after a
-            // minute idle, which is still your turn.
-            "Notification": [group([write(.needsYou)], matcher: "permission_prompt|elicitation_dialog")],
-            // A permission prompt clears the moment its tool is let through,
-            // not once it's finished running: a slow command would otherwise
-            // leave the card up for as long as the command takes.
-            "PreToolUse": ruleGroups + [
-                group([write(.working)], matcher: "*"),
-                // Its questions, as they're shown; listed after "*" so this
-                // wins when both match AskUserQuestion's own tool call.
-                group([write(.needsYou)], matcher: "AskUserQuestion"),
-            ],
-            "Stop": [group([write(.idle)])],
-            "SessionEnd": [group([write(.exited)])],
-        ]
-        if sandboxed {
-            // Events and tool names only, never what's in them.
-            let activity = [command("[ -x \(SandboxLaunch.activityScriptPath) ] && \(SandboxLaunch.activityScriptPath) hook; exit 0")]
-            let matchers: [String: String?] = [
-                "SessionStart": nil, "UserPromptSubmit": nil, "PreToolUse": "*", "PostToolUseFailure": "*",
-                "Notification": "permission_prompt|elicitation_dialog", "Stop": nil, "SessionEnd": nil,
-            ]
-            for (event, matcher) in matchers {
-                hooks[event] = ((hooks[event] as? [[String: Any]]) ?? []) + [group(activity, matcher: matcher)]
-            }
-        }
-        // Its `context_window` tells Gannin the model's real limit.
-        // `--settings` replaces rather than merges a scalar key like
-        // `statusLine`, so this would otherwise blank out a statusLine the
-        // user set up themselves: run theirs in turn, on the same input,
-        // and print its output instead of the model's name. Only for a
-        // local session: a server's own command (and its own statusLine)
-        // live on that box, not this Mac's `~/.claude/settings.json`.
-        let render = (isRemote ? nil : usersStatusLineCommand()).map { #"printf '%s' "$input" | { "# + $0 + "\n}" }
-            ?? #"printf '%s' "$input" | sed -n 's/.*"display_name":"\([^"]*\)".*/\1/p' | head -n1"#
-        let statusLine = #"input=$(cat); printf '%s' "$input" | tr -d '\n' > \#(dir)/statusline 2>/dev/null; \#(render)"#
-        var object: [String: Any] = ["hooks": hooks, "statusLine": ["type": "command", "command": statusLine]]
-        if !allowing.isEmpty { object["permissions"] = ["allow": allowing.map { "Bash(\($0):*)" }] }
-        let data = (try? JSONSerialization.data(
-            withJSONObject: object,
-            options: [.prettyPrinted, .sortedKeys]
-        )) ?? Data()
-        return String(decoding: data, as: UTF8.self)
-    }
-
-    /// The command behind the user's own statusLine, if they've set one in
-    /// `~/.claude/settings.json`.
-    private static func usersStatusLineCommand() -> String? {
-        let url = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/settings.json")
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let statusLine = object["statusLine"] as? [String: Any],
-              statusLine["type"] as? String == "command",
-              let command = statusLine["command"] as? String else { return nil }
-        return command
     }
 
     /// What the terminal runs on a server: unpack the script, brief and

@@ -61,7 +61,7 @@ extension SessionStore {
     @discardableResult
     func startQuickChange(org: String, repo: String, title: String, note: String, attachments: [(name: String, data: Data)], issue: IssueReference?,
                           boardError: String? = nil, harness setup: HarnessConfig, harnessPath: String, instructions: String?, placement: SandboxPlacement,
-                          brief: (CodeSession) -> String) -> CodeSession {
+                          workflow: AgentWorkflow? = nil, brief: (CodeSession) -> String) -> CodeSession {
         let id = UUID()
         let names = Self.attachmentNames(attachments.map(\.name))
         let reference = issue ?? IssueReference(org: org, id: "quick-\(id.uuidString)", number: 0, title: title, repo: repo,
@@ -74,6 +74,7 @@ extension SessionStore {
         )
         session.quickChange = QuickChangeInfo(note: note, attachments: names, hasIssue: issue != nil, boardError: boardError)
         session.prompt = Self.quickChangePrompt(session)
+        applyWorkflow(.quickChange, to: &session, org: org, setup: setup, subject: WorkflowSubject(repo: repo), workflow: workflow)
         let directory = Self.directory(for: id)
         let folder = directory.appending(path: Self.attachmentsFolder, directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
@@ -319,6 +320,7 @@ struct NewQuickChangeView: View {
                     whatSection(setup: setup)
                     screenshotsSection
                     issueSection(workflow: workflow, setup: setup)
+                    WorkflowPickerSection(org: org, setup: setup, activity: .quickChange, choice: $choice)
                     PromptPickerSections(library: library, use: .work,
                                          values: ["title": effectiveTitle, "repo": repo], choice: $choice)
                     runSection
@@ -778,7 +780,8 @@ struct NewQuickChangeView: View {
             let instructions = sessions.launchInstructions(org: org, setup: setup, use: .work, repos: [repo], choice: choice, values: values)
             let session = sessions.startQuickChange(
                 org: org, repo: repo, title: title, note: note, attachments: attachments.map { (name: $0.name, data: $0.data) }, issue: issue, boardError: boardError,
-                harness: setup, harnessPath: path, instructions: instructions, placement: chosen
+                harness: setup, harnessPath: path, instructions: instructions, placement: chosen,
+                workflow: sessions.pickedWorkflow(choice.workflow, org: org, setup: setup, activity: .quickChange)
             ) { session in
                 SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: index, goals: goals)
             }

@@ -333,8 +333,8 @@ struct TriageWithClaudeSheet: View {
             Reply with only a JSON list: [{"number": 123, "repo": "owner/name", "fields": {"Field": "Option"}, "category": "Name", "agent": true, "why": "..."}]
             """
         do {
-            let reply = try await ClaudeRunner.ask(prompt, org: org)
-            guard let list = ClaudeRunner.json([Lenient<Suggestion>].self, in: reply)?.compactMap(\.value), !list.isEmpty else {
+            let reply = try await AgentProviders.asking.ask(prompt, org: org)
+            guard let list = ScriptRunner.json([Lenient<Suggestion>].self, in: reply)?.compactMap(\.value), !list.isEmpty else {
                 error = "Claude's reply wasn't a list of suggestions. Try again, or see what it said below."
                 rawReply = String(reply.prefix(4000))
                 working = false

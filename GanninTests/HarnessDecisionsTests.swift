@@ -129,7 +129,7 @@ struct HarnessDecisionsTests {
         let plan = HarnessDocument(path: "plans/2026-10-01-p.md", sha: "abc", kind: .plans, text: "---\ntype: plan\nsummary: x\ndomains: [sessions]\n---\n\n# P\n")
         let existing = Self.decision("decisions/2026-10-12-use-the-harness.md", status: "accepted")
         let json = #"{"decisions": [{"title": "Use the harness", "summary": "S", "plan": "plans/2026-10-01-p.md", "context": "C", "decision": "D", "alternatives": "- A", "consequences": "Q"}, {"title": "Use the harness", "plan": "plans/unknown.md"}]}"#
-        let reply = try #require(ClaudeRunner.json(DecisionSuggestions.Reply.self, in: json))
+        let reply = try #require(ScriptRunner.json(DecisionSuggestions.Reply.self, in: json))
         var drafts = reply.decisions.map { DecisionSuggestions.Draft($0, batch: [plan]) }
         // A plan it didn't read isn't guessed at: the person picks one, or it cites none.
         #expect(drafts[1].plan == "")

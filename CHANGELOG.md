@@ -11,6 +11,16 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Added
 - Gannin can be installed with Homebrew: `brew install --cask andrew-waters/tap/gannin`. It keeps updating itself as before
+- Specialists: the team's own agents, each with a soul saying who it is and what it looks for, and a default provider, model and focus. Harness › Specialists lists them; New Specialist and Edit Specialist commit `specialists/<name>.md` to the project's harness
+- Workflows: reviews, Work on This, Quick Change, Ask, Planning and Design and Refine each run through a workflow of specialists, kept in the project's harness (`.gannin/agent-workflows.json`). A review workflow runs specialists in stages, side by side or one after another, each for one or more rounds, and posts one review with each finding labelled by the specialist that raised it. Reviews and coding can be routed to a workflow by repo, author, labels, changed paths or issue type. With no workflows set up, everything runs as before. A Mac on an older Gannin ignores the file, and drops any workflow it can't read if it saves it
+- Specialists, workflows, routing rules and defaults of your own, marked Just me: kept in Gannin on this Mac, never committed to the harness. Your rules are checked before the team's, and the default workflow is each person's, so someone new runs Gannin's until they pick one; a team workflow can't use your specialists, and a posted review calls one of yours "Reviewer" rather than by name
+- Routines: New Report and New Maintenance are one New Routine, with Report only beside Local only, Draft PR and Ready PR, and Run with a specialist or a workflow (Harness › Workflows has Routines). A report can name repos to read. Repos are picked from the project's and the org's, and Draft with Claude sets a routine up from what you say it's for
+- Edit Specialist on a specialist's page and in a workflow step's inspector, as well as its right-click menu
+- Harness › Workflows builds each activity's workflows as nodes (stages left to right, steps side by side), with a step inspector, the most passes a workflow can make, its default and routing rules, whose repos, authors, labels and issue types can be picked from what Gannin knows or typed. Review with Claude, Work on This, Quick Change and Ask can pick another workflow for one run, and a review's Overview shows each step's rounds and findings, and which didn't run and why
+
+### Changed
+- Settings › General's Provider lists Claude Code by name, as sessions now reach it through a provider that others can join later
+- Model, in Settings › General, a specialist and a workflow step, is one menu: Gannin's list (now Claude Sonnet 5.5 and Claude Haiku 5.5 in place of Sonnet 5 and Haiku 4.5), the models Claude Code has run with on this Mac lately, the newest of each family (Latest Opus and so on), and Other to type any ID. A model picked before that isn't offered stays as typed, under Other
 
 ## [0.0.5] - 2026-10-23
 

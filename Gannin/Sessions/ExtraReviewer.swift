@@ -180,7 +180,7 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
         guard let output = try? JSONDecoder().decode(Output.self, from: Data(run.output.utf8)), let reply = output.result else {
             return .failed("\(title) didn't write a result.", output: Self.shown(run.output))
         }
-        guard let findings = ClaudeRunner.json([SessionTranscript.Finding].self, in: reply) else {
+        guard let findings = ScriptRunner.json([SessionTranscript.Finding].self, in: reply) else {
             return .failed("\(title) replied with no list of findings.", output: Self.shown(reply))
         }
         return .findings(findings)
@@ -207,6 +207,17 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
         guard let finished else { return .failed("\(title) timed out after \(Int(Self.timeout / 60)) minutes.") }
         return outcome(for: finished)
     }
+}
+
+extension ExtraReviewer: OneShotReviewer {
+    var providerID: ProviderID {
+        switch self {
+        case .junie: .junie
+        }
+    }
+
+    /// It picks its own.
+    var models: [AIModel] { [] }
 }
 
 /// True once, to whoever asks first.

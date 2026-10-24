@@ -296,7 +296,7 @@ extension SessionStore {
             data = await Task.detached { try? Data(contentsOf: url) }.value
         } else {
             let path = SessionScript.shellPath(Self.worktreePath(for: session) + "/planning.json")
-            let result = await ClaudeRunner.runScript("cat \(path) 2>/dev/null\n", for: session)
+            let result = await ScriptRunner.runScript("cat \(path) 2>/dev/null\n", for: session)
             data = result.status == 0 ? Data(result.output.utf8) : nil
         }
         guard let data, !data.isEmpty, let state = PlanningState.read(data),

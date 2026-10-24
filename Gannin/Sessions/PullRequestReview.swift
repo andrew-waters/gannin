@@ -81,7 +81,11 @@ extension SessionStore {
     /// `choice` is what was picked from the team's prompts and skills; nil
     /// takes the defaults for the PR's repo.
     /// `reveals` false starts it without showing its tab (an automatic review).
-    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true) async -> CodeSession {
+    /// `workflow` is the one picked for this run; nil takes the one the
+    /// project's review routing rules give the PR (`ReviewRuns.swift`).
+    /// `automatic` marks it as an automatic run before any of its workflow's
+    /// steps start, so they count against the cap from the first.
+    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true, workflow picked: AgentWorkflow? = nil, automatic: Bool = false) async -> CodeSession {
         if let existing = review(of: pr.id) {
             if reveals { reveal(existing.id) }
             return existing
@@ -110,11 +114,35 @@ extension SessionStore {
                 instructions: instructions.map(Self.reviewInstructions), isReviewer: true, reviewOf: pr
             )
             session.reviewConfig = config.isEmpty ? nil : config
+            // A workflow of more than Gannin's one step: the lead runs its
+            // first step, with the rest started beside and after it.
+            let workflow: AgentWorkflow
+            if let picked = picked ?? pickedWorkflow(choice?.workflow, org: pr.org, setup: setup, activity: .review) {
+                workflow = picked
+            } else {
+                workflow = routedWorkflow(org: pr.org, setup: setup, activity: .review, subject: await reviewSubject(pr, org: pr.org, setup: setup))
+            }
+            if var run = reviewRun(for: workflow, org: pr.org, setup: setup), let lead = Self.leadStep(of: run) {
+                run.steps[lead].session = session.id
+                run.steps[lead].state = .running
+                let step = run.steps[lead]
+                let specialist = step.specialist.flatMap { specialists(org: pr.org, setup: setup)[$0.lowercased()] }
+                let added = Self.stepInstructions(step, of: run, specialist: specialist)
+                if !added.isEmpty { session.prompt = (session.prompt ?? "") + "\n\n" + added }
+                session.model = step.model
+                run.automatic = automatic ? true : nil
+                session.reviewRun = run
+            }
             let directory = Self.directory(for: session.id)
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let brief = "# Review of \(pr.repo)#\(pr.number): \(pr.title)\n\n\(pr.url.absoluteString)\n"
             try? Data(brief.utf8).write(to: directory.appending(path: "brief.md"))
             add(session)
+            if automatic {
+                automaticRuns.insert(session.id)
+                automaticStartedAt[session.id] = .now
+            }
+            if session.reviewRun != nil { advanceRun(session.id) }
             return session
         }
         startingReviews[pr.id] = task
@@ -687,7 +715,8 @@ struct ReviewWithClaudeButton: View {
             let config = configs.config(for: reference.org)
             let setup = config.harness(covering: [reference.repo])
             Button {
-                if let setup, SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .review, harnesses: config.harnesses) {
+                if let setup, SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .review, harnesses: config.harnesses,
+                                                                        workflows: sessions.agentWorkflows(reference.org, setup).workflows(for: .review).count) {
                     choosing = true
                 } else {
                     start(choice: nil, setup: setup)
@@ -703,7 +732,7 @@ struct ReviewWithClaudeButton: View {
                         title: "Review \(reference.repo)#\(reference.number)", org: reference.org, harnesses: config.harnesses, initial: setup,
                         use: .review, repos: [reference.repo],
                         values: HarnessPromptLibrary.values(reference: "\(reference.repo)#\(reference.number)", title: reference.title, url: reference.url, repo: reference.repo, number: reference.number, branch: SessionStore.reviewBranch(reference)),
-                        startTitle: "Start Review"
+                        startTitle: "Start Review", activity: .review, subject: WorkflowSubject(repo: reference.repo)
                     ) { choice, picked in
                         start(choice: choice, setup: picked)
                     }
@@ -758,7 +787,7 @@ struct ExplainPullRequestButton: View {
 }
 
 /// Claude's explanation of a PR, asked fresh each time the window opens
-/// (`ClaudeRunner.ask`, not a session): what it reads with `gh`, and what
+/// (`AgentProviders.asking`, not a session): what it reads with `gh`, and what
 /// it's told to reply with. The window holds one conversation (`--resume`
 /// in the same folder), so a follow-up question is answered from the diff
 /// and discussion already read, not a fresh `gh` lookup.
@@ -903,7 +932,7 @@ struct ExplainPullRequestWindow: View {
             """
         Task {
             do {
-                text = try await ClaudeRunner.ask(
+                text = try await AgentProviders.asking.ask(
                     prompt, org: reference.org, folder: "gannin-explain-\(id)", tools: ["Bash"], session: (id, false)
                 ) { chunk in
                     text += chunk
@@ -927,7 +956,7 @@ struct ExplainPullRequestWindow: View {
         let id = conversation.uuidString.lowercased()
         Task {
             do {
-                let reply = try await ClaudeRunner.ask(
+                let reply = try await AgentProviders.asking.ask(
                     question, org: reference.org, folder: "gannin-explain-\(id)", tools: ["Bash"], session: (id, true)
                 ) { chunk in
                     if let index = turns.firstIndex(where: { $0.id == replyID }) { turns[index].text += chunk }

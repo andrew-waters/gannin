@@ -39,6 +39,10 @@ struct SessionLaunchSheet<Extra: View>: View {
     let repos: [String]
     let values: [String: String]
     var startTitle = "Start"
+    /// The activity whose workflow can be picked for this run, if any.
+    var activity: WorkflowActivity? = nil
+    /// The PR or issue, for the workflow its routing rules give it.
+    var subject: WorkflowSubject? = nil
     let start: (PromptChoice, HarnessConfig) -> Void
     @ViewBuilder var extra: () -> Extra
     @State private var choice = PromptChoice()
@@ -65,6 +69,9 @@ struct SessionLaunchSheet<Extra: View>: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            if let activity {
+                WorkflowPickerSection(org: org, setup: setup, activity: activity, subject: subject, choice: $choice)
+            }
             PromptPickerSections(library: library, use: use, values: values, choice: $choice)
             extra()
         }
@@ -82,18 +89,23 @@ struct SessionLaunchSheet<Extra: View>: View {
                 .help(SessionStore.unavailable(org: org, harness: setup) ?? "")
             }
         }
-        .onAppear { choice = library.defaults(for: use, repos: repos) }
+        .onAppear {
+            let workflow = choice.workflow
+            choice = library.defaults(for: use, repos: repos)
+            choice.workflow = workflow
+        }
     }
 
-    /// Whether there's anything to ask before starting.
-    static func hasChoices(_ library: HarnessPromptLibrary, use: PromptUse, harnesses: [HarnessConfig]) -> Bool {
-        harnesses.count > 1 || library.hasChoices(for: use)
+    /// Whether there's anything to ask before starting: `workflows` is how
+    /// many the activity has to pick from.
+    static func hasChoices(_ library: HarnessPromptLibrary, use: PromptUse, harnesses: [HarnessConfig], workflows: Int = 0) -> Bool {
+        harnesses.count > 1 || library.hasChoices(for: use) || workflows > 1
     }
 }
 
 extension SessionLaunchSheet where Extra == EmptyView {
-    init(title: String, org: String, harnesses: [HarnessConfig], initial: HarnessConfig, use: PromptUse, repos: [String], values: [String: String], startTitle: String = "Start", start: @escaping (PromptChoice, HarnessConfig) -> Void) {
-        self.init(title: title, org: org, harnesses: harnesses, initial: initial, use: use, repos: repos, values: values, startTitle: startTitle, start: start) { EmptyView() }
+    init(title: String, org: String, harnesses: [HarnessConfig], initial: HarnessConfig, use: PromptUse, repos: [String], values: [String: String], startTitle: String = "Start", activity: WorkflowActivity? = nil, subject: WorkflowSubject? = nil, start: @escaping (PromptChoice, HarnessConfig) -> Void) {
+        self.init(title: title, org: org, harnesses: harnesses, initial: initial, use: use, repos: repos, values: values, startTitle: startTitle, activity: activity, subject: subject, start: start) { EmptyView() }
     }
 }
 

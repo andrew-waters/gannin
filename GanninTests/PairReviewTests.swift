@@ -101,11 +101,11 @@ struct PairReviewTests {
     }
 
     @Test func settingsAllowTheScript() throws {
-        let json = SessionScript.settings(directory: "/tmp/s", isRemote: true, allowing: [".gannin/ready-for-review"])
+        let json = AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true, allowing: [".gannin/ready-for-review"])
         let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         let allow = (object["permissions"] as? [String: Any])?["allow"] as? [String]
         #expect(allow == ["Bash(.gannin/ready-for-review:*)"])
-        let none = SessionScript.settings(directory: "/tmp/s", isRemote: true)
+        let none = AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true)
         #expect(!none.contains("permissions"))
     }
 

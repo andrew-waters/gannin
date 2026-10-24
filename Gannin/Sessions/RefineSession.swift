@@ -135,7 +135,7 @@ extension SessionStore {
     /// runs on this Mac, even with Connect with set, since the page opens in
     /// a web view here.
     @discardableResult
-    func startRefine(org: String, name: String, url: URL, repos: [String], attendees: [RefineInfo.Attendee], harness setup: HarnessConfig) -> CodeSession {
+    func startRefine(org: String, name: String, url: URL, repos: [String], attendees: [RefineInfo.Attendee], harness setup: HarnessConfig, workflow: AgentWorkflow? = nil) -> CodeSession {
         let harnessPath = Self.localHarnessPath(org: org, repo: setup.repo)
         let title = Self.refineTitle(name: name, url: url)
         let id = UUID()
@@ -150,6 +150,7 @@ extension SessionStore {
         )
         session.refine = info
         session.prompt = Self.refinePrompt(session)
+        applyWorkflow(.refine, to: &session, org: org, setup: setup, subject: nil, workflow: workflow)
         let directory = Self.directory(for: id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(Self.refineBrief(session).utf8).write(to: directory.appending(path: "brief.md"))
@@ -342,6 +343,8 @@ struct NewRefineView: View {
     @State private var guests: [String] = []
     @State private var guest = ""
     @State private var search = ""
+    /// The workflow picked for this session, if not the default.
+    @State private var workflowChoice = PromptChoice()
 
     private var org: String { draft.org }
 
@@ -392,6 +395,7 @@ struct NewRefineView: View {
                         Text("Where the page's code is, for Claude to look through.").font(.caption).foregroundStyle(.secondary)
                     }
                     attendeesSection
+                    WorkflowPickerSection(org: org, setup: setup, activity: .refine, choice: $workflowChoice)
                     Section {
                         HStack {
                             Spacer()
@@ -480,7 +484,8 @@ struct NewRefineView: View {
             .map { RefineInfo.Attendee(name: $0.displayName, login: $0.login) }
         let ordered = repoChoices(setup: setup).filter(repos.contains)
         let session = sessions.startRefine(org: org, name: name, url: url, repos: ordered,
-                                           attendees: people + guests.map { RefineInfo.Attendee(name: $0) }, harness: setup)
+                                           attendees: people + guests.map { RefineInfo.Attendee(name: $0) }, harness: setup,
+                                           workflow: sessions.pickedWorkflow(workflowChoice.workflow, org: org, setup: setup, activity: .refine))
         sessions.replaceDraft(draftID, with: session.id)
     }
 

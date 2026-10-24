@@ -217,7 +217,8 @@ private extension String {
 
 /// Glob matching for paths: `**` any folders, `*` within a name, `?` one
 /// character; a pattern ending `/` is a folder and everything in it.
-enum Glob {
+/// Review config's paths and workflow routing rules both use it.
+nonisolated enum Glob {
     static func matches(_ pattern: String, _ path: String) -> Bool {
         var pattern = pattern.trimmingCharacters(in: .whitespaces)
         guard !pattern.isEmpty else { return false }

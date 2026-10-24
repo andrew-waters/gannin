@@ -49,6 +49,8 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
     /// The project's decisions, requirements and plans by area, first
     /// under Harness.
     case onboarding = "Onboarding"
+    /// The project's agent workflows and routing, last under Harness.
+    case agentWorkflows = "Workflows"
     case views = "Views"
     /// The morning session with CS, under Meetings.
     case prioritisation = "Prioritisation"
@@ -109,6 +111,7 @@ enum WorkloadTab: String, CaseIterable, Identifiable {
         case .projects: "rectangle.split.3x1"
         case .harness: "text.book.closed"
         case .onboarding: "map"
+        case .agentWorkflows: "point.3.connected.trianglepath.dotted"
         case .views: "square.grid.3x3"
         case .prioritisation: "list.number"
         case .planning: "list.bullet.clipboard"
@@ -1433,6 +1436,7 @@ struct OrgSidebar: View {
                                 .tag(SidebarItem.harnessKind(kind))
                                 .contextMenu { OpenElsewhereItems(sidebar: .harnessKind(kind)) }
                         }
+                        row(.agentWorkflows)
                     }
                 }
 
@@ -1628,7 +1632,7 @@ struct OrgSidebar: View {
         case .agents:
             guard let selectedOrg else { return 0 }
             return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
-        case .dashboard, .issues, .people, .repositories, .actions, .investments, .rdTime, .projects, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
+        case .dashboard, .issues, .people, .repositories, .actions, .investments, .rdTime, .projects, .harness, .onboarding, .agentWorkflows, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
         case .routines:
             guard let selectedOrg else { return 0 }
             let ids = Set(routines.routines(for: selectedOrg).map(\.id))

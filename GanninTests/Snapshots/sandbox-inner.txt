@@ -1,0 +1,94 @@
+# Written by Gannin for acme/api#12. Runs inside its sandbox.
+session=$1
+harness=$2
+# What it's doing goes to the sandbox's activity log, names and
+# events only (activityScript).
+export GANNIN_ACTIVITY_LOG=${3:-}
+export GANNIN_ACTIVITY_LABEL='#12'
+( umask 022; printf %s IyEvYmluL2Jhc2gKIyBXcml0dGVuIGJ5IEdhbm5pbjogb25lIGxpbmUgaW4gdGhlIHNhbmRib3gncyBhY3Rpdml0eSBsb2cuIEV2ZW50cyBhbmQgbmFtZXMgb25seS4KbG9nPSR7R0FOTklOX0FDVElWSVRZX0xPRzotfQpbIC1uICIkbG9nIiBdIHx8IGV4aXQgMAppZiBbICIkezE6LX0iID0gaG9vayBdOyB0aGVuCiAgSUZTPSQnXHQnIHJlYWQgLXIgZXZlbnQgdG9vbCA8IDwoanEgLXIgJ1suaG9va19ldmVudF9uYW1lIC8vICIiLCAudG9vbF9uYW1lIC8vICIiXSB8IEB0c3YnIDI+L2Rldi9udWxsKQogIHRvb2w9JChwcmludGYgJyVzJyAiJHRvb2wiIHwgdHIgLWNkICdBLVphLXowLTlfLjotJyB8IGN1dCAtYzEtODApCiAgY2FzZSAiJGV2ZW50IiBpbgogICAgU2Vzc2lvblN0YXJ0KSBtZXNzYWdlPSJDbGF1ZGUgQ29kZSBpcyByZWFkeSIgOzsKICAgIFVzZXJQcm9tcHRTdWJtaXQpIG1lc3NhZ2U9Ildvcmtpbmcgb24gYSBwcm9tcHQiIDs7CiAgICBQcmVUb29sVXNlKSBtZXNzYWdlPSJVc2luZyAke3Rvb2w6LWEgdG9vbH0iIDs7CiAgICBQb3N0VG9vbFVzZUZhaWx1cmUpIG1lc3NhZ2U9IiR7dG9vbDotQSB0b29sfSBmYWlsZWQiIDs7CiAgICBOb3RpZmljYXRpb24pIG1lc3NhZ2U9IldhaXRpbmcgZm9yIHlvdTogYSBwZXJtaXNzaW9uIHByb21wdCBvciBxdWVzdGlvbiIgOzsKICAgIFN0b3ApIG1lc3NhZ2U9IlR1cm4gZW5kZWQ7IHdhaXRpbmcgZm9yIGEgcHJvbXB0IiA7OwogICAgU2Vzc2lvbkVuZCkgbWVzc2FnZT0iQ2xhdWRlIENvZGUgaXMgZW5kaW5nIiA7OwogICAgKikgZXhpdCAwIDs7CiAgZXNhYwplbHNlCiAgbWVzc2FnZT0iJCoiCmZpCiMgQ29udHJvbCBjaGFyYWN0ZXJzIG91dCBmaXJzdCwgc28gbm9uZSBjYW4gc3BsaXQgYSB0b2tlbjsgYm90aAojIHJlZGFjdGlvbnMgYmVmb3JlIHRoZSBjdXQsIHNvIG5vbmUgc3RyYWRkbGVzIGl0LgptZXNzYWdlPSQocHJpbnRmICclcycgIiRtZXNzYWdlIiB8IHRyIC1kICdcMDAwLVwwMzdcMTc3JykKZm9yIHNlY3JldCBpbiAiJHtHSF9UT0tFTjotfSIgIiR7QU5USFJPUElDX0FQSV9LRVk6LX0iOyBkbwogIFsgJHsjc2VjcmV0fSAtZ2UgOCBdICYmIG1lc3NhZ2U9JHttZXNzYWdlLy8iJHNlY3JldCIvW3JlZGFjdGVkXX0KZG9uZQptZXNzYWdlPSQocHJpbnRmICclcycgIiRtZXNzYWdlIiB8IHNlZCAtRSAncy8oZ2hbb3BzdXJdX3xnaXRodWJfcGF0X3xzay1hbnQtKVtBLVphLXowLTlfLV0rL1tyZWRhY3RlZF0vZzsgcy8tLS0tLUJFR0lOIFtBLVogXSpQUklWQVRFIEtFWS0tLS0tLiovW3JlZGFjdGVkXS8nIHwgY3V0IC1jMS01MDApCnByaW50ZiAnJXMgWyVzXSAlc1xuJyAiJChkYXRlIC11ICslWS0lbS0lZFQlSDolTTolU1opIiAiJHtHQU5OSU5fQUNUSVZJVFlfTEFCRUw6LXNlc3Npb259IiAiJG1lc3NhZ2UiID4+ICIkbG9nIiAyPi9kZXYvbnVsbApleGl0IDA= | base64 -d > /run/gannin-activity.$$ && chmod +x /run/gannin-activity.$$ && mv /run/gannin-activity.$$ /run/gannin-activity ) || rm -f /run/gannin-activity.$$
+activity() { [ -x /run/gannin-activity ] && /run/gannin-activity "$@"; true; }
+id='3f9a2c1d-0000-4000-8000-000000000012'
+folder="$harness"/'.worktrees/12-fix-the-thing'
+
+note() { printf '\033[90m%s\033[0m\n' "$1"; }
+warn() { printf '\033[33mGannin: %s\033[0m\n' "$1"; }
+fail() {
+  printf '\033[31mGannin: %s\033[0m\n' "$1"
+  if [ -d "$harness" ]; then cd "$harness"; else cd; fi
+  exec "${SHELL:-bash}" -l
+}
+# Nothing stays open in here: ending the terminal is what lets Gannin
+# stop the sandbox once no session uses it.
+fail() {
+  printf '\033[31mGannin: %s\033[0m\n' "$1"
+  printf 'failed: %s' "$1" > "$session/sandbox" 2>/dev/null
+  activity "Failed: $1"
+  exit 1
+}
+activity "Sandbox session starting"
+
+[ -f "$session/secrets.env" ] || fail "There are no credentials for this sandbox. Resume the session in Gannin."
+set -a
+. "$session/secrets.env"
+set +a
+rm -f "$session/secrets.env"
+activity "Credentials taken; setting up git and Claude Code"
+( umask 077; printf %s "$GANNIN_SIGNING_KEY" | base64 -d > /run/gannin-signing-key )
+unset GANNIN_SIGNING_KEY
+git config --global user.name "$GANNIN_GIT_NAME"
+git config --global user.email "$GANNIN_GIT_EMAIL"
+git config --global user.signingkey /run/gannin-signing-key
+git config --global commit.gpgsign true
+git config --global tag.gpgsign true
+# The repos' git dirs are read-only bar what commits and worktrees
+# write: no tracking written on branching, no gc or maintenance.
+git config --global branch.autoSetupMerge false
+git config --global gc.auto 0
+git config --global maintenance.auto false
+unset GANNIN_GIT_NAME GANNIN_GIT_EMAIL
+# The house rules from Settings › Sandbox, in a file of their own
+# that claude's memory in the shared config imports, so what
+# claude saved in CLAUDE.md is never touched. Written whole and
+# moved into place, as other sandboxes may be reading it.
+rules="$CLAUDE_CONFIG_DIR/gannin-house-rules.md"
+if [ -n "${GANNIN_CLAUDE_MD:-}" ] || [ -f "$rules" ]; then
+  if printf %s "${GANNIN_CLAUDE_MD:-}" | base64 -d > "$rules.$$"; then
+    mv "$rules.$$" "$rules"
+  else
+    rm -f "$rules.$$"
+    note "Gannin couldn't write your house rules for Claude, so this sandbox has the ones it had before."
+  fi
+fi
+if [ -n "${GANNIN_CLAUDE_MD:-}" ]; then
+  memory="$CLAUDE_CONFIG_DIR/CLAUDE.md"
+  grep -qxF '@gannin-house-rules.md' "$memory" 2>/dev/null \
+    || { { cat "$memory" 2>/dev/null; printf '\n@gannin-house-rules.md\n'; } > "$memory.$$" && mv "$memory.$$" "$memory"; }
+fi
+unset GANNIN_CLAUDE_MD
+cd "$harness" || fail "The harness isn't mounted."
+cfg="$CLAUDE_CONFIG_DIR/.claude.json"
+[ -s "$cfg" ] || echo '{}' > "$cfg"
+jq --arg h "$harness" --arg k "${ANTHROPIC_API_KEY: -20}" \
+  '.hasCompletedOnboarding = true | .theme = (.theme // "dark")
+   | .projects[$h] = ((.projects[$h] // {}) + {hasTrustDialogAccepted: true, hasCompletedProjectOnboarding: true})
+   | if $k == "" then . else .customApiKeyResponses.approved = (((.customApiKeyResponses.approved // []) + [$k]) | unique) end' \
+  "$cfg" > "$cfg.$$" && mv "$cfg.$$" "$cfg"
+# One Claude credential at most: an API key, or claude's own login.
+unset CLAUDE_CODE_OAUTH_TOKEN ANTHROPIC_AUTH_TOKEN
+if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ ! -f "$CLAUDE_CONFIG_DIR/.credentials.json" ]; then
+  note "Claude isn't signed in in your sandboxes yet. When it asks, choose your Claude account, open the link it shows, sign in, and paste the code back. Your other sandboxes stay signed in."
+  activity "Waiting for you: Claude needs signing in, in the session's terminal"
+fi
+activity "Starting Claude Code"
+
+command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Resume the session."
+if [ -e "$session/started" ]; then
+  claude --resume "$id" --settings "$folder/.gannin/settings.json"
+else
+  claude --session-id "$id" --settings "$folder/.gannin/settings.json" 'You'\''re picking up acme/api#12, "Fix the thing'\''s "edge"", in the team'\''s harness. Read .worktrees/12-fix-the-thing/.gannin/brief.md first: it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches (those under projects/, or the harness itself when it'\''s the code repo and has no projects/) and look through their code, then propose a plan before changing anything. Make the changes in a worktree per repo under .worktrees/12-fix-the-thing/, as the brief says, never in projects/ or the harness checkout itself. If you have questions for me, ask them with the AskUserQuestion tool rather than as plain text.'
+fi
+printf exited > "$session/state"
+printf '\033]7777;state:exited\007' > /dev/tty 2>/dev/null
+activity "Claude Code has exited"
+note "Claude Code has exited, so its sandbox stops once nothing else uses it. Resume the session to go on."
+exit 0

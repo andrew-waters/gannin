@@ -132,7 +132,7 @@ struct SandboxLaunchTests {
         defer { try? FileManager.default.removeItem(atPath: folder) }
         _ = Shell.run("mkdir -p \(SessionScript.quoted(folder)) && printf '%s' '{\"oauthAccount\":{\"emailAddress\":\"a@b\"},\"theme\":\"light\"}' > \(SessionScript.quoted(folder))/.claude.json", .local)
         func seed(_ harness: String, key: String? = nil) {
-            let result = Shell.run("CLAUDE_CONFIG_DIR=\(SessionScript.quoted(folder)); harness=\(SessionScript.quoted(harness)); \(key.map { "ANTHROPIC_API_KEY=\($0);" } ?? "unset ANTHROPIC_API_KEY;")\n\(SandboxLaunch.seedClaudeConfig)", .local)
+            let result = Shell.run("CLAUDE_CONFIG_DIR=\(SessionScript.quoted(folder)); harness=\(SessionScript.quoted(harness)); \(key.map { "ANTHROPIC_API_KEY=\($0);" } ?? "unset ANTHROPIC_API_KEY;")\n\(ClaudeCodeProvider.seedConfig)", .local)
             #expect(result.ok, "\(result.failure)")
         }
         seed("/Users/me/Code/acme/harness")
@@ -306,14 +306,14 @@ struct SandboxLaunchTests {
             let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
             return try #require(object["hooks"] as? [String: Any])
         }
-        let sandboxed = try hooks(SessionScript.settings(directory: "/tmp/s", isRemote: true, sandboxed: true))
+        let sandboxed = try hooks(AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true, sandboxed: true))
         let commands = { (event: String) in
             ((sandboxed[event] as? [[String: Any]]) ?? []).flatMap { ($0["hooks"] as? [[String: Any]]) ?? [] }.compactMap { $0["command"] as? String }
         }
         for event in ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUseFailure", "Notification", "Stop", "SessionEnd"] {
             #expect(commands(event).contains { $0.contains("\(SandboxLaunch.activityScriptPath) hook") }, "\(event)")
         }
-        let onTheMac = SessionScript.settings(directory: "/tmp/s", isRemote: false)
+        let onTheMac = AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: false)
         #expect(!onTheMac.contains("gannin-activity"))
     }
 

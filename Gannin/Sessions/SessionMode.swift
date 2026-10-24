@@ -157,7 +157,8 @@ extension SessionStore {
     }
 
     private func footerMode(_ id: UUID) -> ClaudeMode? {
-        terminals[id].flatMap { ClaudeMode.fromFooter($0.screenLines(last: 24)) }
+        guard let modes = sessions[id]?.agent.modes else { return nil }
+        return terminals[id].flatMap { modes.mode(fromFooter: $0.screenLines(last: 24)) }
     }
 
     /// Reads the session's mode again each time its screen changes, so a
@@ -176,6 +177,10 @@ extension SessionStore {
     @discardableResult
     func switchMode(_ id: UUID, to target: ClaudeMode) async -> Bool {
         guard let terminal = terminals[id], terminal.isRunning, !switchingMode.contains(id) else { return false }
+        guard let control = sessions[id]?.agent.modes else {
+            modeNotes[id] = "This session's agent has no modes to switch."
+            return false
+        }
         switchingMode.insert(id)
         defer { switchingMode.remove(id) }
         // The prompt box can take a moment to draw again after a prompt.
@@ -196,7 +201,7 @@ extension SessionStore {
         var cycle = ModeCycle(from: start, to: target)
         var previous = start
         while true {
-            terminal.press(TerminalKeys.shiftTab)
+            terminal.press(control.cycleKey)
             var mode: ClaudeMode?
             for _ in 0..<10 {
                 try? await Task.sleep(for: .milliseconds(100))
