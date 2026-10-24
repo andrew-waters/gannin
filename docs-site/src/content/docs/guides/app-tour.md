@@ -14,7 +14,7 @@ At the foot of the sidebar are the account menu, the project menu and the org's 
 The rows are grouped by what you're trying to do.
 
 - **Dashboard** and **Inbox** sit at the top. Dashboard is the page a window opens on. Under them, **New Ask** and **Quick Change** start Claude Code work.
-- **Work**: Pull Requests; Issues (with All and Not on a board); Epics; Repositories ([local git](/docs/guides/repositories/)); Projects (your GitHub boards); and Views.
+- **Work**: Pull Requests; Issues, with its open issue count (and All and Not on a board under it); Epics; Repositories ([local git](/docs/guides/repositories/)); Projects (your GitHub boards); and Views.
 - **Delivery**: Scorecards, PR flow, Issue flow, Releases, Investments, R&D Time and CI.
 - **Team**: Everyone and each team (open one to see its members), then Activity and Time off.
 - **Rituals**: Standup, Recap, Prioritisation, Planning, Design and Refine, and Board Hygiene.
