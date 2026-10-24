@@ -32,6 +32,19 @@ struct SessionsWindow: View {
     @Environment(\.controlActiveState) private var activeState
     /// ⌘W asked to wrap up the last tab: the window goes once it has.
     @State private var closesWindow = false
+    /// New Issue, while its sheet is open.
+    @State private var newIssue: NewIssueContext?
+    @State private var windowID = UUID()
+
+    /// New Issue from this window, in the org of the session showing, and
+    /// in its issue's repo when it has one. Nil with no session to go on.
+    private var newIssueAction: NewIssueAction? {
+        let session = sessions.selectedTab.flatMap { sessions.sessions[$0] } ?? sessions.sessions.values.first
+        guard let session else { return nil }
+        return NewIssueAction(window: windowID) { context in
+            newIssue = context ?? NewIssueContext(org: session.org, repo: session.hasNoIssue ? nil : session.issue.repo)
+        }
+    }
 
     var body: some View {
         let selected = sessions.selectedTab.flatMap { sessions.sessions[$0] }
@@ -73,6 +86,17 @@ struct SessionsWindow: View {
         .navigationTitle(sessions.showingOverview ? "Claude Code" : selected.map { $0.routineRun?.kind == .report ? "Report" : $0.isAsk ? "Ask" : $0.isRefine ? "Design and Refine" : $0.isMaintenance ? "Maintenance" : $0.hasNoIssue ? "Quick Change" : $0.issue.reference } ?? "Claude Code")
         .windowSubtitle(sessions.showingOverview ? "Every session" : selected?.title ?? sessions.selectedTab.flatMap { sessions.planningDrafts[$0] }.map { $0.isAsk ? "New ask" : $0.isQuickChange ? "New quick change" : $0.isRefine ? "New design and refine" : "New plan" } ?? "")
         .background { shortcuts }
+        .environment(\.newIssue, newIssueAction)
+        .focusedSceneValue(\.newIssue, newIssueAction)
+        .sheet(item: $newIssue) { context in
+            NewIssueSheet(context: context) { created in
+                // The new issue, in a drawer in the main window, as New
+                // Issue there opens it.
+                guard let created, let main = PaletteRouter.mostRecent else { return }
+                main.window?.makeKeyAndOrderFront(nil)
+                main.open(PaletteDestination(org: created.org, target: .page(.issueReference(created))), .thisWindow)
+            }
+        }
         .sheet(item: Binding(
             // Gone elsewhere while asking: nothing left to wrap up.
             get: { sessions.wrappingUp.flatMap { sessions.sessions[$0] == nil ? nil : WrapUpRequest(id: $0) } },
@@ -224,7 +248,7 @@ private struct SessionTabBar: View {
         }
     }
 
-    /// New Ask, Quick Change and Plan, and the sessions already started
+    /// New Ask, Quick Change, Plan and Issue, and the sessions already started
     /// that have no tab open.
     private var addMenu: some View {
         Button {
@@ -233,7 +257,7 @@ private struct SessionTabBar: View {
             Image(systemName: "plus")
         }
         .buttonStyle(.borderless)
-        .help("Start an Ask, Quick Change or Plan, or open a session that has no tab")
+        .help("Start an Ask, Quick Change or Plan, write a new issue, or open a session that has no tab")
         .popover(isPresented: $showingAdd, arrowEdge: .bottom) {
             NewSessionPopover { showingAdd = false }
         }
@@ -331,6 +355,7 @@ private struct TabGroupDivider: View {
 /// already started that have no tab open, filtered as you type.
 private struct NewSessionPopover: View {
     @Environment(SessionStore.self) private var sessions
+    @Environment(\.newIssue) private var newIssue
     let dismiss: () -> Void
     @State private var search = ""
     @State private var highlighted: CodeSession.ID?
@@ -402,6 +427,12 @@ private struct NewSessionPopover: View {
                 action("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", help: "Step through a web page with the room and note what to improve") {
                     PlanningDraft(org: org, harnessRepo: harness, isRefine: true)
                 }
+                if let newIssue {
+                    tile("New Issue", symbol: "square.and.pencil", help: "Write a new issue with Claude (⌘N)") {
+                        dismiss()
+                        newIssue()
+                    }
+                }
             }
         } else {
             Text("New Ask, Quick Change and Plan start from the sidebar of a main window once there's an org.")
@@ -412,10 +443,14 @@ private struct NewSessionPopover: View {
     }
 
     private func action(_ title: String, symbol: String, help: String, draft: @escaping () -> PlanningDraft) -> some View {
-        Button {
+        tile(title, symbol: symbol, help: help) {
             sessions.openDraft(draft())
             dismiss()
-        } label: {
+        }
+    }
+
+    private func tile(_ title: String, symbol: String, help: String, perform: @escaping () -> Void) -> some View {
+        Button(action: perform) {
             VStack(spacing: 6) {
                 Image(systemName: symbol)
                     .font(.system(size: 18))
