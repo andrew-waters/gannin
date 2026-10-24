@@ -30,18 +30,20 @@ These came from questions answered on 24 October 2026.
   `.gannin/standup.json` (`StandupConfig`): the style it opens on, a stage per board Status, and
   the discussion label. Read leniently, so an unknown style or stage reads as the default.
 - **"Needs discussion" is a GitHub label**, "needs discussion" unless the team names another.
-  Everyone sees it on GitHub too. Issues with it (open, or completed since the day began) are
-  listed first under Done and needs discussion, and never again in Done's own list. Open ones
-  also stay in their own column with a mark, so Triage still matches Prioritisation.
+  Everyone sees it on GitHub too. Open issues with it are listed first under Done and needs
+  discussion, and never again in Done's own list. They also stay in their own column with a
+  mark, so Triage still matches Prioritisation.
   Needs Discussion and Discussed in an issue's menu add or remove it, after a confirmation, like
   every GitHub write; the label is created in the repo if it's missing.
 - **Columns are mapped per project, in Settings.** Org settings › Issues › Standup columns has a
   stage for each Status option on the Issue workflow board: Done, In review, In progress or Not
   shown. Until picked, each is guessed from its name (done-like names, then "review", then the
   issue workflow's in-progress statuses or "progress"). No Status is always Triage.
-- **Date range.** In review, In progress and Triage are the board as it is now. Done is what was
-  completed, or moved to a done status, since the start of the day picked (the last working day
-  by default).
+- **The board as it is now.** Every column shows open issues only, as they are now: Done is
+  the open issues in a done status, however long they've been there, and closing an issue takes
+  it off. The day picked (the last working day by default) is for Person by Person's day.
+- **Grouped by assignee, as tiles.** Walk the Board groups each column's issues under each
+  assignee (both, for two), the unassigned last, and draws each issue as a tile like a board card.
 - **Triage is shared.** `TriageQueue` (`Meetings/TriageQueue.swift`) is the one place the triage
   issues are worked out, for Prioritisation's list and count and Standup's column.
 - **Shareable means Present plus stepping.** Present makes the page larger and shows one board
@@ -85,3 +87,4 @@ every style but Changelog, and now includes tickets in flight.
 - [x] Docs: `guides/standup` rewritten; `guides/app-tour`, `guides/prioritisation`, `guides/weekly-digest`, `settings/org/issues`, `settings/org/harness`, `concepts/where-things-are-kept`
 - [x] CHANGELOG and rules
 - [x] Review round 1: a labelled issue done since is listed once, under To discuss, with its mark and Discussed; Esc through `onEscape`
+- [x] After trying it: Done is open issues in a done status, closed ones left out; Walk the Board groups by assignee, with tiles

@@ -61,11 +61,12 @@ struct StandupTickets: View {
     }
 }
 
-/// A column of the board: its title and count, then its issues. Done lists
-/// what's to discuss first.
+/// A column of the board: its title and count, then its issues, under each
+/// assignee when there's a workload to name them. Done lists what's to
+/// discuss first.
 struct StandupColumn: View {
     let org: String
-    /// For the assignees' avatars; nil leaves them off.
+    /// Groups the issues by assignee; nil lists them as they are.
     let workload: Workload?
     let column: StandupBoard.Column
     let board: StandupBoard
@@ -85,10 +86,10 @@ struct StandupColumn: View {
             }
             if column == .done && !board.discussion.isEmpty {
                 subheading("To discuss")
-                ForEach(board.discussion) { card($0) }
-                if !board.items(.done).isEmpty { subheading("Done since \(sinceName)") }
+                cards(board.discussion)
+                if !board.items(.done).isEmpty { subheading("Done") }
             }
-            ForEach(board.items(column)) { card($0) }
+            cards(board.items(column))
             if count == 0 {
                 Text(emptyText)
                     .font(presenting ? .title3 : .callout)
@@ -101,12 +102,54 @@ struct StandupColumn: View {
         .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
     }
 
+    @ViewBuilder
+    private func cards(_ items: [StandupBoard.Item]) -> some View {
+        if let workload {
+            ForEach(Self.byAssignee(items), id: \.login) { group in
+                VStack(alignment: .leading, spacing: 6) {
+                    assignee(group.login.map(workload.person(login:)), count: group.items.count)
+                    ForEach(group.items) { card($0) }
+                }
+                .padding(.top, 2)
+            }
+        } else {
+            ForEach(items) { card($0) }
+        }
+    }
+
+    /// The items under each assignee, by name, then the unassigned; an
+    /// issue with two assignees is under both.
+    static func byAssignee(_ items: [StandupBoard.Item]) -> [(login: String?, items: [StandupBoard.Item])] {
+        var groups: [String: [StandupBoard.Item]] = [:]
+        var unassigned: [StandupBoard.Item] = []
+        for item in items {
+            if item.record.assignees.isEmpty { unassigned.append(item) }
+            for login in item.record.assignees { groups[login, default: []].append(item) }
+        }
+        let named: [(login: String?, items: [StandupBoard.Item])] = groups.keys
+            .sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+            .map { ($0, groups[$0] ?? []) }
+        return unassigned.isEmpty ? named : named + [(nil, unassigned)]
+    }
+
+    private func assignee(_ person: Person?, count: Int) -> some View {
+        HStack(spacing: 6) {
+            if let person {
+                Avatar(url: person.avatarUrl, size: presenting ? 24 : 18)
+                Text(person.displayName)
+            } else {
+                Image(systemName: "person.crop.circle.badge.questionmark")
+                    .foregroundStyle(.secondary)
+                Text("Unassigned").foregroundStyle(.secondary)
+            }
+            Text("\(count)").foregroundStyle(.secondary).monospacedDigit()
+        }
+        .font(presenting ? .headline : .subheadline.weight(.medium))
+        .lineLimit(1)
+    }
+
     private func card(_ item: StandupBoard.Item) -> some View {
-        StandupIssueCard(
-            org: org, item: item, column: column,
-            assignees: workload.map { workload in item.record.assignees.map { workload.person(login: $0) } } ?? [],
-            presenting: presenting, onDiscuss: onDiscuss
-        )
+        StandupIssueCard(org: org, item: item, presenting: presenting, isCompact: isCompact, onDiscuss: onDiscuss)
     }
 
     private func subheading(_ text: String) -> some View {
@@ -116,16 +159,9 @@ struct StandupColumn: View {
             .padding(.top, 2)
     }
 
-    /// "yesterday", or the weekday.
-    private var sinceName: String {
-        Calendar.current.isDateInYesterday(board.since) ? "yesterday"
-            : Calendar.current.isDateInToday(board.since) ? "this morning"
-            : board.since.formatted(.dateTime.weekday(.wide))
-    }
-
     private var emptyText: String {
         switch column {
-        case .done: "Nothing done since \(sinceName), and nothing to discuss."
+        case .done: "Nothing in a done status, and nothing to discuss."
         case .review: "Nothing in review."
         case .progress: "Nothing in progress."
         case .triage: "Nothing to triage: every open issue has a Status."
@@ -144,17 +180,15 @@ extension StandupBoard.Column {
     }
 }
 
-/// An issue on the standup: its title, then where it is and since when,
-/// with a mark when it's to discuss. Opens in the drawer; its menu marks it
-/// for discussion, or discussed.
+/// An issue on the standup, as a tile like a board card: its title, then
+/// where it is and since when, with a mark when it's to discuss. Opens in
+/// the drawer; its menu marks it for discussion, or discussed.
 struct StandupIssueCard: View {
     @Environment(\.navigate) private var navigate
     let org: String
     let item: StandupBoard.Item
-    let column: StandupBoard.Column
-    /// Empty leaves the avatars off.
-    let assignees: [Person]
     let presenting: Bool
+    var isCompact = false
     let onDiscuss: ((StandupBoard.Item) -> Void)?
 
     var body: some View {
@@ -162,28 +196,29 @@ struct StandupIssueCard: View {
         Button {
             navigate?(.issueReference(reference))
         } label: {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 4) {
                     Text(item.record.title)
                         .font(presenting ? .title3 : .body)
-                        .lineLimit(2)
+                        .lineLimit(presenting ? 3 : 2)
                         .multilineTextAlignment(.leading)
                     Text(verbatim: detail)
                         .font(presenting ? .callout : .caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
-                Spacer(minLength: 6)
+                Spacer(minLength: 0)
                 if item.needsDiscussion {
                     Image(systemName: "bubble.left.and.bubble.right.fill")
                         .foregroundStyle(.orange)
                         .help("To discuss")
                 }
-                if !assignees.isEmpty {
-                    AvatarStack(people: assignees, size: presenting ? 24 : 18)
-                }
             }
             .fixedSize(horizontal: false, vertical: true)
+            .padding(isCompact ? 8 : presenting ? 14 : 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.background, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(.quaternary))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -197,15 +232,12 @@ struct StandupIssueCard: View {
 
     /// "api#12 · In Review · moved 3 days ago".
     private var detail: String {
-        var parts = [StandupRow.number(item.record.repo, item.record.number)]
         let when = item.since.formatted(.relative(presentation: .named))
-        if item.record.closedAt != nil {
-            parts.append("closed \(when)")
-        } else {
-            parts.append(item.status ?? (item.isOnBoard ? "No status" : "Not on the board"))
-            parts.append(item.since == item.record.createdAt ? "opened \(when)" : "moved \(when)")
-        }
-        return parts.joined(separator: " · ")
+        return [
+            StandupRow.number(item.record.repo, item.record.number),
+            item.status ?? (item.isOnBoard ? "No status" : "Not on the board"),
+            item.since == item.record.createdAt ? "opened \(when)" : "moved \(when)",
+        ].joined(separator: " · ")
     }
 }
 

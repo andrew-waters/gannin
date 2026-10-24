@@ -168,7 +168,7 @@ struct StandupPage: View {
     var body: some View {
         let day = dayInterval
         let standup = standup(day)
-        let board = board(day)
+        let board = board()
         let steps = stepCount(standup: standup, board: board)
         let current = min(step, steps - 1)
         ScrollView {
@@ -310,13 +310,13 @@ struct StandupPage: View {
         )
     }
 
-    /// The workflow board since the day began, once issues have loaded; nil
+    /// The workflow board as it is now, once issues have loaded; nil
     /// with no workflow board picked.
-    private func board(_ day: DateInterval) -> StandupBoard? {
+    private func board() -> StandupBoard? {
         let config = configs.config(for: org)
         guard let number = config.workflow.projectNumber, let history = issueStore.history(for: org) else { return nil }
         let issues = TriageQueue.counted(Array(history.issues.values), config: config, hidden: hidden.keys, team: workload?.team)
-        return StandupBoard(issues: issues, board: number, config: config, since: day.start)
+        return StandupBoard(issues: issues, board: number, config: config)
     }
 
     @ToolbarContentBuilder

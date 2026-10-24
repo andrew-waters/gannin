@@ -59,7 +59,7 @@ struct StandupStagesTests {
             issue(5),
             issue(6, onBoard: false),
         ]
-        let standup = StandupBoard(issues: issues, board: board, config: config(), since: since)
+        let standup = StandupBoard(issues: issues, board: board, config: config())
         // The longest in review first.
         #expect(standup.items(.review).map(\.record.number) == [2, 1])
         #expect(standup.items(.progress).map(\.record.number) == [3])
@@ -68,17 +68,16 @@ struct StandupStagesTests {
         #expect(standup.items(.done).isEmpty)
     }
 
-    @Test func doneIsWhatChangedSince() {
+    @Test func doneIsOpenInADoneStatus() {
         let issues = [
             issue(1, closed: since.addingTimeInterval(3600)),
-            issue(2, closed: since.addingTimeInterval(-3600)),
-            issue(3, closed: since.addingTimeInterval(3600), completed: false),
-            issue(4, status: "Done", moves: [("Done", since.addingTimeInterval(7200))]),
-            issue(5, status: "Done", moves: [("Done", since.addingTimeInterval(-86_400))]),
+            issue(2, status: "Done", closed: since.addingTimeInterval(3600)),
+            issue(3, status: "Done", moves: [("Done", since.addingTimeInterval(7200))]),
+            issue(4, status: "Done", moves: [("Done", since.addingTimeInterval(-86_400))]),
         ]
-        let standup = StandupBoard(issues: issues, board: board, config: config(), since: since)
-        // Newest first; closed before, not planned and old Done left out.
-        #expect(standup.items(.done).map(\.record.number) == [4, 1])
+        let standup = StandupBoard(issues: issues, board: board, config: config())
+        // Closed left out, however recent; open in Done shown, however old.
+        #expect(standup.items(.done).map(\.record.number) == [3, 4])
     }
 
     @Test func discussionComesFirstAndStaysInItsColumn() {
@@ -88,20 +87,33 @@ struct StandupStagesTests {
             issue(3, status: "In progress", labels: ["talk"]),
             issue(4, labels: ["needs discussion"], closed: since.addingTimeInterval(60)),
             issue(5, status: "Done", labels: ["needs discussion"], moves: [("Done", since.addingTimeInterval(30))]),
-            issue(6, closed: since.addingTimeInterval(90)),
+            issue(6, status: "Done"),
         ]
-        let standup = StandupBoard(issues: issues, board: board, config: config(), since: since)
-        // Done since and labelled is to discuss, and only that.
-        #expect(standup.discussion.map(\.record.number).sorted() == [1, 2, 4, 5])
+        let standup = StandupBoard(issues: issues, board: board, config: config())
+        // Open and labelled is to discuss, and in Done only there.
+        #expect(standup.discussion.map(\.record.number).sorted() == [1, 2, 5])
         #expect(standup.discussion.allSatisfy { $0.needsDiscussion })
         #expect(standup.items(.done).map(\.record.number) == [6])
-        #expect(standup.count(.done) == 5)
+        #expect(standup.count(.done) == 4)
         #expect(standup.items(.progress).map(\.record.number).sorted() == [1, 3])
         #expect(standup.items(.progress).first { $0.record.number == 1 }?.needsDiscussion == true)
         #expect(standup.items(.triage).map(\.record.number) == [2])
 
-        let own = StandupBoard(issues: issues, board: board, config: config(StandupConfig(discussionLabel: "talk")), since: since)
+        let own = StandupBoard(issues: issues, board: board, config: config(StandupConfig(discussionLabel: "talk")))
         #expect(own.discussion.map(\.record.number) == [3])
+    }
+
+    @Test func groupsByAssignee() {
+        let issues = [
+            issue(1, status: "In progress", assignees: ["sam"]),
+            issue(2, status: "In progress", assignees: ["kim", "sam"]),
+            issue(3, status: "In progress"),
+        ]
+        let items = StandupBoard(issues: issues, board: board, config: config()).items(.progress)
+        let groups = StandupColumn.byAssignee(items)
+        // By login, both assignees, then the unassigned.
+        #expect(groups.map(\.login) == ["kim", "sam", nil])
+        #expect(groups.map { $0.items.map(\.record.number).sorted() } == [[2], [1, 2], [3]])
     }
 
     @Test func triageIsPrioritisations() {
@@ -116,7 +128,7 @@ struct StandupStagesTests {
         let counted = TriageQueue.counted(issues, config: config, hidden: ["I_1"], team: Team(id: "T", slug: "app", name: "App", members: ["kim"]))
         // Hidden and the other team's left out; newest first.
         #expect(TriageQueue.untriaged(counted, board: board).map(\.number) == [2])
-        let standup = StandupBoard(issues: counted, board: board, config: config, since: since)
+        let standup = StandupBoard(issues: counted, board: board, config: config)
         #expect(standup.items(.triage).map(\.record.number) == TriageQueue.untriaged(counted, board: board).map(\.number))
         #expect(TriageQueue.untriaged(issues, board: board).map(\.number) == [2, 1, 5])
     }
@@ -127,7 +139,7 @@ struct StandupStagesTests {
             issue(2, status: "In progress", assignees: ["sam"]),
             issue(3, assignees: ["kim", "sam"]),
         ]
-        let kim = StandupBoard(issues: issues, board: board, config: config(), since: since).assigned(to: "kim")
+        let kim = StandupBoard(issues: issues, board: board, config: config()).assigned(to: "kim")
         #expect(kim.items(.progress).map(\.record.number) == [1])
         #expect(kim.items(.triage).map(\.record.number) == [3])
         #expect(!kim.isEmpty)

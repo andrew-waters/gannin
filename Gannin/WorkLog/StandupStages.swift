@@ -102,10 +102,11 @@ struct StandupConfig: Codable, Hashable {
     }
 }
 
-/// The workflow board as a standup walks it, column by column: what's been
-/// done since the last working day and what needs discussing, what's in
-/// review, what's in progress, and what's waiting for triage (the same
-/// issues as Prioritisation's, `TriageQueue.untriaged`).
+/// The workflow board as a standup walks it, column by column: what's in a
+/// done status and what needs discussing, what's in review, what's in
+/// progress, and what's waiting for triage (the same issues as
+/// Prioritisation's, `TriageQueue.untriaged`). Open issues only: closing an
+/// issue takes it off the standup.
 struct StandupBoard {
     enum Column: Int, CaseIterable, Identifiable {
         case done
@@ -139,18 +140,16 @@ struct StandupBoard {
         /// Its Status on the board; nil with none, or off the board.
         let status: String?
         let isOnBoard: Bool
-        /// When it got here: closed or moved to Done, for done; its last
-        /// move on the board, else when it was opened.
+        /// Its last move on the board, else when it was opened.
         let since: Date
         let needsDiscussion: Bool
 
         var id: String { record.id }
     }
 
-    let since: Date
-    /// Issues with the discussion label: open ones whatever their column,
-    /// and those completed since. Shown first under Done, and open ones in
-    /// their own column too; never in Done's own list as well.
+    /// Open issues with the discussion label, whatever their column. Shown
+    /// first under Done and in their own column too; never in Done's own
+    /// list as well.
     private(set) var discussion: [Item] = []
     private(set) var columns: [Column: [Item]] = [:]
 
@@ -163,11 +162,9 @@ struct StandupBoard {
 
     var isEmpty: Bool { discussion.isEmpty && columns.values.allSatisfy(\.isEmpty) }
 
-    /// `issues` are those the workload counts (`TriageQueue.counted`), open
-    /// and closed; done is what was completed, or moved to a done status, at
-    /// or after `since`.
-    init(issues: [IssueRecord], board: Int, config: OrgConfig, since: Date) {
-        self.since = since
+    /// `issues` are those the workload counts (`TriageQueue.counted`); closed
+    /// ones are left out.
+    init(issues: [IssueRecord], board: Int, config: OrgConfig) {
         let standup = config.standupConfig
         let workflow = config.workflow
         var positions: [String: Int] = [:]
@@ -182,22 +179,12 @@ struct StandupBoard {
             // No status is triage, below.
             guard let status else { continue }
             switch standup.stage(for: status, workflow: workflow) {
-            case .done:
-                // Only what moved there since; older Done is old news. To
-                // discuss lists it already.
-                if !discussed, let lastMove, lastMove.at >= since, lastMove.status.caseInsensitiveCompare(status) == .orderedSame {
-                    columns[.done, default: []].append(item)
-                }
+            // To discuss lists it already.
+            case .done: if !discussed { columns[.done, default: []].append(item) }
             case .review: columns[.review, default: []].append(item)
             case .progress: columns[.progress, default: []].append(item)
             case .hidden: break
             }
-        }
-        for issue in issues where issue.isCompleted {
-            guard let closed = issue.closedAt, closed >= since else { continue }
-            let discussed = standup.isDiscussed(issue)
-            let item = Item(record: issue, status: nil, isOnBoard: issue.fields(onProject: board) != nil, since: closed, needsDiscussion: discussed)
-            if discussed { discussion.append(item) } else { columns[.done, default: []].append(item) }
         }
         columns[.triage] = TriageQueue.untriaged(issues, board: board).map { issue in
             Item(record: issue, status: nil, isOnBoard: issue.fields(onProject: board) != nil, since: issue.createdAt, needsDiscussion: standup.isDiscussed(issue))

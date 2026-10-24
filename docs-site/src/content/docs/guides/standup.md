@@ -12,12 +12,12 @@ Rituals › Standup is built for the team's morning standup round a shared scree
 Teams run standup differently, so Standup has a style for each way. The **Style** menu in the toolbar picks one for today's standup. The style it opens on is the team's own, set in [Org settings › Issues](/docs/settings/org/issues/#standup) under Standup, and it starts as Walk the Board.
 
 - **Walk the Board**: the workflow board, a column at a time, in this order:
-  1. **Done and needs discussion**: anything to discuss first, then what was completed or moved to a done status since the day began.
+  1. **Done and needs discussion**: anything to discuss first, then the open issues in a done status. Closed issues aren't shown, so closing an issue takes it off the standup.
   2. **In review**
   3. **In progress**
   4. **Triage**: open issues with no Status on the board, or not on it at all. These are the same issues as [Prioritisation](/docs/guides/prioritisation/)'s Triage list.
 
-  In review and In progress show the board as it is now, in board order, with whatever has been there longest at the top.
+  Every column shows the board as it is now. In each one, the issues are grouped under each assignee, by name, with the unassigned last; an issue with two assignees is under both. Each issue is a tile with its title, then its repo and number, its status and when it last moved. In review and In progress keep board order, with whatever has been there longest at the top.
 - **Person by Person**: a section for each person. It shows their tickets in the same four columns, then their day: their counts, a strip of when things happened on one hour axis shared by everyone (with their working hours shaded), and a timeline of what they did. People who were off, or who have nothing to show, are listed at the end.
 - **Changelog**: the issues closed that day, from the issue history. Completed ones are grouped by investment category, followed by those closed as not planned.
 - **Written**: everyone's day and tickets in flight as Markdown, followed by what's to discuss and how many issues wait for triage. It suits a team that posts its standup rather than meeting.
@@ -28,7 +28,7 @@ Click an issue to open it in the drawer.
 
 ## Needs discussion
 
-To raise an issue at standup, give it the team's discussion label on GitHub. The label is "needs discussion" unless your team has named another one. Issues with the label are listed first under Done and needs discussion, under To discuss, with a speech-bubble mark: every open one, and any completed since the day began. Open ones are also kept in their own column, with the same mark.
+To raise an issue at standup, give it the team's discussion label on GitHub. The label is "needs discussion" unless your team has named another one. Open issues with the label are listed first under Done and needs discussion, under To discuss, with a speech-bubble mark. They're also kept in their own column, with the same mark.
 
 Right-click an issue and choose **Needs Discussion** to add the label, or **Discussed** to take it off. Gannin asks you to confirm before it writes to GitHub, and it creates the label in the repo if the repo doesn't have one yet.
 
@@ -40,7 +40,7 @@ Changelog and Written have no steps; presenting just makes them larger.
 
 ## Changing the day
 
-The toolbar has arrows for the working day before and after, a button for the last working day (named Yesterday, or the weekday), and Today, which previews today so far. You can't go past today. Done and each person's day count from the start of the day picked.
+The toolbar has arrows for the working day before and after, a button for the last working day (named Yesterday, or the weekday), and Today, which previews today so far. You can't go past today. Each person's day counts from the start of the day picked; the board's columns are as they are now, whatever the day.
 
 ## Commits
 
