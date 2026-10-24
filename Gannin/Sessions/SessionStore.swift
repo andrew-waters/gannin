@@ -502,9 +502,12 @@ final class SessionStore {
     /// The extra pair reviewers turned on for a session's project; set by
     /// the app, from the user's own settings.
     @ObservationIgnored var extraReviewers: (CodeSession) -> [ExtraReviewer] = { _ in [] }
-    /// A project's agent workflows, from its harness's team data (with
-    /// what's pending on top); set by the app.
-    @ObservationIgnored var agentWorkflows: (String, HarnessConfig) -> AgentWorkflows = { _, _ in AgentWorkflows() }
+    /// A project's agent workflows: the team's, from its harness's team
+    /// data (with what's pending on top), and the user's own; set by the app.
+    @ObservationIgnored var agentWorkflows: (String, HarnessConfig) -> WorkflowLibrary = { _, _ in WorkflowLibrary() }
+    /// The user's own specialists in an org, by lower-cased reference; set
+    /// by the app.
+    @ObservationIgnored var personalSpecialists: (String) -> [String: HarnessSpecialist] = { _ in [:] }
     /// The budget is low or GitHub has refused: background PR checks wait.
     @ObservationIgnored var holdsOff: () -> Bool = { false }
     /// Gannin's view of an org as files (`OrgContext`), for an Ask session

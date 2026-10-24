@@ -47,6 +47,7 @@ struct HarnessView: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(IssueStore.self) private var issueStore
     @Environment(OrgStore.self) private var orgs
+    @Environment(PersonalAgentsStore.self) private var personalAgents
     @Environment(\.openURL) private var openURL
     /// Picked under Harness in the sidebar, which writes the same key.
     @SceneStorage("harnessKind") private var kind: HarnessKind = .plans
@@ -349,6 +350,37 @@ struct HarnessView: View {
         return words.allSatisfy { word in fields.contains { $0.localizedCaseInsensitiveContains(word) } }
     }
 
+    /// Your own specialists, above the team's: on this Mac, never in the
+    /// harness.
+    @ViewBuilder
+    private func personalSpecialists(setup: HarnessConfig) -> some View {
+        let mine = personalAgents.specialists(org: org).values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        if !mine.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "person.crop.circle")
+                    Text("Just me").font(.headline)
+                    Text("On this Mac only, never committed. Only your own workflows can use them.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(mine) { specialist in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(specialist.title)
+                            if let summary = specialist.summary { Text(summary).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                        }
+                        Spacer()
+                        Button("Edit") { editingSpecialist = HarnessEdit(setup: setup, item: specialist, id: specialist.path) }
+                    }
+                    .padding(8)
+                    .background(.quaternary.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+                }
+                Text("The team's").font(.headline).padding(.top, 6)
+            }
+            .padding(.horizontal, 14)
+        }
+    }
+
     private func list(documents: [HarnessDocument], index: HarnessIndex, lookup: IssueLookup, linkable: Bool, setup: HarnessConfig, showsHarness: Bool) -> some View {
         let repo = setup.repo
         let newestFirst = documents.sorted { a, b in
@@ -362,6 +394,9 @@ struct HarnessView: View {
                         Task { await harness.load(org: org, setup: setup, force: true) }
                     }
                     .padding(.horizontal, 14)
+                }
+                if kind == .specialists {
+                    personalSpecialists(setup: setup)
                 }
                 if documents.isEmpty {
                     Text(!search.isEmpty || picked.values.contains(where: { !$0.isEmpty }) ? "Nothing matches." : unlinkedOnly ? "Every one names an issue." : "No \(kind.rawValue.lowercased()) in \(repo).")
@@ -615,6 +650,7 @@ struct HarnessDocumentPage: View {
     @State private var width: CGFloat = 1000
     @State private var draftingIssues = false
     @State private var editingDetails = false
+    @State private var editingSpecialist: HarnessView.HarnessEdit<HarnessSpecialist>?
     /// Folded sections, by index.
     @State private var folded: Set<Int> = []
     @AppStorage("harnessReadingSize") private var size: Double = 14
@@ -631,6 +667,9 @@ struct HarnessDocumentPage: View {
                         header(document, index: index, sections: sections, proxy: proxy)
                             .sheet(isPresented: $draftingIssues) {
                                 DraftIssuesSheet(org: org, document: document, index: index)
+                            }
+                            .sheet(item: $editingSpecialist) { edit in
+                                HarnessSpecialistEditor(org: org, setup: edit.setup, specialist: edit.item)
                             }
                             .sheet(isPresented: $editingDetails) {
                                 if let (setup, own) = source(of: document) {
@@ -682,6 +721,11 @@ struct HarnessDocumentPage: View {
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 12)
+            if document.kind == .specialists, let (setup, own) = source(of: document),
+               let file = harness.index(for: org, setup)?.document(at: own), let specialist = HarnessSpecialist(document: file) {
+                Button("Edit Specialist") { editingSpecialist = HarnessView.HarnessEdit(setup: setup, item: specialist, id: own) }
+                    .help("Change its defaults (provider, model, focus) or soul, and commit it")
+            }
             if document.kind == .plans || document.kind == .requirements {
                 Button("Draft Issues") { draftingIssues = true }
                     .help("Claude breaks it into issues for you to edit, then makes them on GitHub")

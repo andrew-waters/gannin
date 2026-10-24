@@ -31,9 +31,10 @@ extension SessionStore {
         agentWorkflows(org, setup).resolve(activity, for: subject)
     }
 
-    /// The project's specialists, by lower-cased name.
+    /// The project's specialists and the user's own, by lower-cased name
+    /// (`personal/<name>` for the user's).
     func specialists(org: String, setup: HarnessConfig) -> [String: HarnessSpecialist] {
-        harnessStore.index(for: org, setup)?.specialists ?? [:]
+        (harnessStore.index(for: org, setup)?.specialists ?? [:]).merging(personalSpecialists(org)) { team, _ in team }
     }
 
     /// Starts the session as its activity's workflow says (`workflow`, else

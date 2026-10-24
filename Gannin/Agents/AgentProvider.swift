@@ -52,6 +52,17 @@ protocol AgentProvider {
     /// The models offered, most capable first; any other ID can be typed.
     /// Empty for one that picks its own.
     var models: [AIModel] { get }
+    /// Aliases that always mean the newest of a family. Empty for none.
+    var latest: [AIModel] { get }
+    /// Model IDs it has run with on this Mac, newest first, so a picker
+    /// can offer those `models` doesn't list yet. Empty where it leaves
+    /// nothing to find them by.
+    func detectModels() async -> [String]
+}
+
+extension AgentProvider {
+    var latest: [AIModel] { [] }
+    func detectModels() async -> [String] { [] }
 }
 
 /// A provider that runs a session in a terminal: how it starts and
@@ -174,6 +185,14 @@ enum AgentProviders {
     /// session from before providers, and for any this build can't run.
     static func interactive(_ id: ProviderID?) -> any InteractiveProvider {
         claudeCode
+    }
+
+    /// Any provider, for what they all declare.
+    static func provider(_ id: ProviderID) -> any AgentProvider {
+        switch id {
+        case .claudeCode: claudeCode
+        case .junie: ExtraReviewer.junie
+        }
     }
 
     /// Who answers one-off questions.

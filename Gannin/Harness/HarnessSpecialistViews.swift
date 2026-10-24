@@ -1,15 +1,20 @@
 import SwiftUI
 
 /// A specialist's name, summary, defaults (provider, model, focus) and soul.
-/// Saving commits `specialists/<name>.md` to the harness; Delete removes it,
-/// after asking.
+/// A team one is committed to the harness as `specialists/<name>.md`; one
+/// kept for just you is saved on this Mac (`PersonalAgentsStore`) and never
+/// reaches the harness. Delete removes it, after asking.
 struct HarnessSpecialistEditor: View {
     @Environment(HarnessStore.self) private var harness
+    @Environment(PersonalAgentsStore.self) private var personalAgents
     @Environment(\.dismiss) private var dismiss
     let org: String
     let setup: HarnessConfig
     /// Nil for a new one.
     let specialist: HarnessSpecialist?
+    /// Kept for just you rather than the team: fixed for one being edited,
+    /// a choice for a new one.
+    @State var personal = false
 
     @State private var title = ""
     @State private var name = ""
@@ -33,14 +38,28 @@ struct HarnessSpecialistEditor: View {
                 if let value = reply.body { soul = value }
             }
             Section {
-                TextField("Title", text: $title, prompt: Text("Security reviewer"))
-                if let specialist {
+                if specialist == nil {
+                    Picker("Kept for", selection: $personal) {
+                        Text("The team").tag(false)
+                        Text("Just me").tag(true)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                Text(personal
+                     ? "Just yours: saved in Gannin on this Mac, never committed to the harness, and only your own workflows can use it. A review it takes part in calls it \"Reviewer\" on GitHub and in review records, so its name isn't shown to the person it's aimed at."
+                     : "The team's: committed to \(setup.repo), for everyone's workflows.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                TextField("Title", text: $title, prompt: Text(personal ? "Coaching for Alex" : "Security reviewer"))
+                if let specialist, !personal {
                     LabeledContent("File", value: specialist.path)
-                } else {
+                } else if specialist == nil {
                     TextField("Name", text: $name, prompt: Text(HarnessSpecialist.fileName(for: title)))
-                    Text("Saved as \(path). Workflow steps name it by this.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if !personal {
+                        Text("Saved as \(path). Workflow steps name it by this.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 TextField("Summary", text: $summary, prompt: Text("What it's for, in a line"), axis: .vertical)
                     .lineLimit(1...3)
@@ -54,8 +73,7 @@ struct HarnessSpecialistEditor: View {
                         Text(provider).tag(provider)
                     }
                 }
-                TextField("Model", text: $model, prompt: Text(modelPrompt))
-                    .leadingTextBox("Model")
+                ModelPicker(provider: ProviderID(name: provider) ?? .claudeCode, model: $model, inherited: "Each person's, from Settings › General")
                 TextField("Focus", text: $focus, prompt: Text("What it looks at when a step doesn't say"), axis: .vertical)
                     .lineLimit(1...4)
                     .leadingTextBox("Focus")
@@ -93,27 +111,23 @@ struct HarnessSpecialistEditor: View {
                 }
             }
             ToolbarItem(placement: .confirmationAction) {
-                Button(saving ? "Committing" : "Commit to Harness") { save() }
+                Button(personal ? "Save" : saving ? "Committing" : "Commit to Harness") { save() }
                     .disabled(saving || !isComplete)
-                    .help("Commits \(path) to \(setup.repo)")
+                    .help(personal ? "Saves it on this Mac, for your own workflows" : "Commits \(path) to \(setup.repo)")
             }
         }
         .confirmationDialog("Delete \(specialist?.title ?? "this specialist")?", isPresented: $confirmingDelete) {
-            Button("Delete from Harness", role: .destructive) { delete() }
+            Button(personal ? "Delete" : "Delete from Harness", role: .destructive) { delete() }
         } message: {
-            Text("Gannin commits \(path)'s removal to \(setup.repo). Workflow steps that name it run Gannin's own prompt instead, and runs already started keep what they were told.")
+            Text(personal
+                 ? "Your workflow steps that name it run Gannin's own prompt instead, and runs already started keep what they were told."
+                 : "Gannin commits \(path)'s removal to \(setup.repo). Workflow steps that name it run Gannin's own prompt instead, and runs already started keep what they were told.")
         }
         .onAppear(perform: load)
     }
 
-    private var modelPrompt: String {
-        let provider = ProviderID(name: provider) ?? .claudeCode
-        guard provider.isInteractive else { return "Its own" }
-        return AgentProviders.interactive(provider).models.first?.id ?? "The provider's default"
-    }
-
     private var fileStem: String {
-        if let specialist { return specialist.name }
+        if let specialist { return PersonalSpecialist(specialist).name }
         let typed = name.trimmingCharacters(in: .whitespaces)
         return HarnessSpecialist.fileName(for: typed.isEmpty ? title : typed)
     }
@@ -128,6 +142,7 @@ struct HarnessSpecialistEditor: View {
 
     private func load() {
         guard let specialist else { return }
+        personal = specialist.isPersonal
         title = specialist.title
         name = specialist.name
         summary = specialist.summary ?? ""
@@ -151,6 +166,16 @@ struct HarnessSpecialistEditor: View {
     }
 
     private func save() {
+        if personal {
+            let saved = PersonalSpecialist(edited)
+            if specialist == nil, personalAgents.specialists(org: org)[saved.specialist.name.lowercased()] != nil {
+                error = "You already have a specialist called \(saved.name). Pick another name."
+                return
+            }
+            personalAgents.change(org: org) { $0.save(saved) }
+            dismiss()
+            return
+        }
         let path = path
         if specialist == nil, harness.index(for: org, setup)?.document(at: path) != nil {
             error = "There's already a \(path). Pick another name."
@@ -162,6 +187,12 @@ struct HarnessSpecialistEditor: View {
 
     private func delete() {
         guard let specialist else { return }
+        if personal {
+            let name = PersonalSpecialist(specialist).name
+            personalAgents.change(org: org) { $0.specialists.removeAll { $0.name == name } }
+            dismiss()
+            return
+        }
         commit(HarnessChange(message: "Gannin: remove the \(specialist.title) specialist", files: [specialist.path: nil]))
     }
 

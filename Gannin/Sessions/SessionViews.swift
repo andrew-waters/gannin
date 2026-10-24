@@ -2294,34 +2294,12 @@ struct SessionSettingsSection: View {
     @AppStorage(AutoReview.watchKey) private var watchesReviews = true
     @AppStorage(AutoReview.postKey) private var postsReviews = false
     @AppStorage(SessionStore.recordReviewsKey) private var recordsReviews = true
-    /// Typing a model ID of your own, rather than picking one.
-    @State private var customModel = false
-
-    private static let custom = "\u{0}custom"
-
     var body: some View {
         Section {
             Picker("Provider", selection: $provider) {
                 ForEach(ProviderID.allCases.filter(\.isInteractive)) { Text($0.title).tag($0) }
             }
-            let models = AgentProviders.interactive(provider).models
-            let known = models.contains { $0.id == model }
-            Picker("Model", selection: Binding(
-                get: { customModel || (!model.isEmpty && !known) ? Self.custom : model },
-                set: { picked in
-                    customModel = picked == Self.custom
-                    if !customModel { model = picked }
-                }
-            )) {
-                Text("Claude Code's default").tag("")
-                Divider()
-                ForEach(models) { Text($0.name).tag($0.id) }
-                Divider()
-                Text("Other").tag(Self.custom)
-            }
-            if customModel || (!model.isEmpty && !known) {
-                TextField("Model ID", text: $model, prompt: Text("claude-opus-5-5"))
-            }
+            ModelPicker(provider: provider, model: $model, inherited: "\(provider.title)'s default")
             Text("Sessions run Claude Code with this model (--model), from their next start or Resume. Its default is what Claude Code's own settings say; /model in a session changes it there.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

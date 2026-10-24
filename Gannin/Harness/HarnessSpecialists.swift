@@ -73,7 +73,8 @@ nonisolated struct HarnessSpecialist: Identifiable, Hashable, Sendable {
     /// What the agent is told first: who it is, then the step's focus (or
     /// its own).
     func instructions(focus stepFocus: String?) -> String {
-        var parts = ["You are \(title), one of the team's specialists. This is who you are and what you look for:\n\n\(soul)"]
+        let who = isPersonal ? "a specialist one of the team wrote for their own reviews" : "one of the team's specialists"
+        var parts = ["You are \(title), \(who). This is who you are and what you look for:\n\n\(soul)"]
         if let focus = Self.focus(step: stepFocus, specialist: focus) { parts.append("Your focus for this step: \(focus)") }
         return parts.joined(separator: "\n\n")
     }

@@ -23,12 +23,24 @@ struct ReviewRun: Codable, Hashable {
 
     func steps(inStage stage: Int) -> [Int] { steps.indices.filter { steps[$0].stage == stage } }
 
+    /// A step as the posted review and its harness record name it: a
+    /// personal specialist's title would tell the PR's author (and the
+    /// team) who it was aimed at, so it's "Reviewer 1", "Reviewer 2" and
+    /// so on instead.
+    func postedTitle(_ step: ReviewStepRun) -> String {
+        guard step.personal == true else { return step.title }
+        let personal = steps.filter { $0.personal == true }
+        let number = (personal.firstIndex { $0.id == step.id } ?? 0) + 1
+        return personal.count == 1 ? "Reviewer" : "Reviewer \(number)"
+    }
+
     /// Findings from every step before `stage`, labelled, for the steps in
     /// it: a step sees earlier stages', never those beside it.
     func earlierFindings(before stage: Int) -> [SessionTranscript.Finding] {
         steps.filter { $0.stage < stage }.flatMap { step in step.findings.map { finding in
             var labelled = finding
-            labelled.reviewer = step.title
+            // Later steps may quote it, and what they write is posted.
+            labelled.reviewer = postedTitle(step)
             return labelled
         } }
     }
@@ -46,6 +58,9 @@ struct ReviewStepRun: Codable, Hashable, Identifiable {
     /// The specialist's title, else "Gannin's review".
     var title: String
     var specialist: String?
+    /// Run by the user's own specialist, whose title stays in Gannin: what's
+    /// posted or recorded calls it by `ReviewRun.postedTitle`.
+    var personal: Bool?
     /// A `ProviderID`, as the step named it.
     var provider: String
     var model: String?
@@ -118,7 +133,7 @@ enum ReviewRunMerge {
         func latest<T>(_ field: (SessionTranscript.ReviewResult) -> T?) -> T? {
             leadRounds.lazy.compactMap(field).first ?? answered.lazy.flatMap { $0.results.reversed() }.compactMap(field).first
         }
-        let findings = PairReview.merge(labelled: answered.map { (reviewer: $0.title, findings: $0.findings) }, labelsEveryComment: answered.count > 1)
+        let findings = PairReview.merge(labelled: answered.map { (reviewer: run.postedTitle($0), findings: $0.findings) }, labelsEveryComment: answered.count > 1)
             .sorted { $0.severityRank < $1.severityRank }
         /// Every round's summary, in order.
         func said(_ step: ReviewStepRun) -> String { step.results.map(\.summary).filter { !$0.isEmpty }.joined(separator: " ") }
@@ -126,11 +141,11 @@ enum ReviewRunMerge {
         if answered.count == 1, let only = answered.first {
             summary.append(said(only))
         } else {
-            summary += answered.map { "**\($0.title)**: \(said($0))" }
+            summary += answered.map { "**\(run.postedTitle($0))**: \(said($0))" }
         }
         let skipped = run.steps.filter { $0.state == .skipped }
         if !skipped.isEmpty {
-            summary.append("Not run: " + skipped.map { "\($0.title)\($0.note.map { " (\($0))" } ?? "")" }.joined(separator: "; ") + ".")
+            summary.append("Not run: " + skipped.map { "\(run.postedTitle($0))\($0.note.map { " (\($0))" } ?? "")" }.joined(separator: "; ") + ".")
         }
         var result = SessionTranscript.ReviewResult(
             summary: summary.joined(separator: "\n\n"),
@@ -175,7 +190,10 @@ extension SessionStore {
                     focus: HarnessSpecialist.focus(step: step.focus, specialist: specialist?.focus),
                     rounds: step.roundCount
                 )
-                if let name = step.specialist, specialist == nil {
+                run.personal = specialist?.isPersonal == true || step.namesPersonalSpecialist ? true : nil
+                if step.namesPersonalSpecialist, specialist == nil {
+                    run.note = "A personal specialist this Mac doesn't have, so Gannin's own prompt ran."
+                } else if let name = step.specialist, specialist == nil {
                     run.note = "The specialist \(name) isn't in \(setup.repo), so Gannin's own prompt ran."
                 }
                 steps.append(run)
@@ -601,7 +619,7 @@ extension SessionStore {
     /// a failed lookup matches on the repo alone.
     func reviewSubject(_ pr: PullRequestReference, org: String, setup: HarnessConfig) async -> WorkflowSubject {
         var subject = WorkflowSubject(repo: pr.repo)
-        guard !(agentWorkflows(org, setup)[.review].rules ?? []).isEmpty else { return subject }
+        guard !agentWorkflows(org, setup).rules(for: .review).isEmpty else { return subject }
         if let facts = try? await chargingTo(.details, { try await api()?.pullRequestFacts(repo: pr.repo, number: pr.number) }) {
             subject.author = facts.author
             subject.labels = facts.labels

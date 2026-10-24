@@ -301,7 +301,7 @@ nonisolated struct PassCount: Hashable, Sendable {
 }
 
 /// One item of a list, nil when it doesn't decode, so the rest still do.
-private nonisolated struct Leniently<Value: Decodable>: Decodable {
+nonisolated struct Leniently<Value: Decodable>: Decodable {
     let value: Value?
     init(from decoder: Decoder) throws { value = try? Value(from: decoder) }
 }

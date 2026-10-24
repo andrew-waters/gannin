@@ -22,6 +22,7 @@ struct GanninApp: App {
     @State private var activity: SyncActivity
     @State private var harness: HarnessStore
     @State private var team: HarnessTeamStore
+    @State private var personal: PersonalAgentsStore
     @State private var sessions: SessionStore
     @State private var routines: RoutineStore
     @State private var scheduler: RoutineScheduler
@@ -48,6 +49,8 @@ struct GanninApp: App {
         _hidden = State(initialValue: hidden)
         let orgConfigs = OrgConfigStore(database: database)
         let peopleDates = PeopleDatesStore(database: database)
+        let personal = PersonalAgentsStore(database: database)
+        _personal = State(initialValue: personal)
         _orgConfigs = State(initialValue: orgConfigs)
         _peopleDates = State(initialValue: peopleDates)
         let bankHolidays = BankHolidayStore()
@@ -110,7 +113,11 @@ struct GanninApp: App {
             return orgConfigs?.harnesses(for: session.org).first { $0.repo == repo }?.enabledExtraReviewers ?? []
         }
         sessions.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
-        sessions.agentWorkflows = { [weak team] org, setup in team?.data(for: org, in: setup).agentWorkflows ?? AgentWorkflows() }
+        sessions.agentWorkflows = { [weak team, weak personal] org, setup in
+            WorkflowLibrary(team: team?.data(for: org, in: setup).agentWorkflows ?? AgentWorkflows(),
+                            personal: personal?.workflows(org: org, project: setup.repo) ?? AgentWorkflows())
+        }
+        sessions.personalSpecialists = { [weak personal] org in personal?.specialists(org: org) ?? [:] }
         // An Ask's org data, written when it starts or resumes.
         sessions.orgContext = { [weak orgs, weak metrics, weak issues, weak orgConfigs, weak harness, weak peopleDates, weak hidden] org, repo in
             guard let orgs, let metrics, let issues, let orgConfigs, let harness, let peopleDates, let hidden else { return [:] }
@@ -232,6 +239,7 @@ struct GanninApp: App {
                 .environment(orgConfigs)
                 .environment(harness)
                 .environment(team)
+                .environment(personal)
                 .environment(peopleDates)
                 .environment(bankHolidays)
                 .environment(activity)
@@ -288,6 +296,8 @@ struct GanninApp: App {
                     .environment(orgConfigs)
                     .environment(harness)
                     .environment(team)
+                    .environment(personal)
+                .environment(personal)
                     .environment(activity)
             }
         }
@@ -323,6 +333,8 @@ struct GanninApp: App {
                     .environment(orgConfigs)
                     .environment(harness)
                     .environment(team)
+                    .environment(personal)
+                .environment(personal)
                     .environment(activity)
                     .environment(sessions)
                     .environment(routines)
@@ -353,6 +365,7 @@ struct GanninApp: App {
                 .environment(orgConfigs)
                 .environment(harness)
                 .environment(team)
+                .environment(personal)
                 .environment(projects)
                 .environment(routines)
                 .environment(scheduler)
@@ -387,6 +400,7 @@ struct GanninApp: App {
                 .environment(orgConfigs)
                 .environment(harness)
                 .environment(team)
+                .environment(personal)
                 .environment(hidden)
                 .environment(database)
                 .environment(sessions)

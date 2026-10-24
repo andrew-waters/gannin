@@ -40,6 +40,8 @@ paths:
 - A specialist (`specialists/<name>.md`) loads with prose only: list and run it whether or not it follows the standard. Front matter `name`, `provider`, `model`, `focus`; keep unknown fields.
 - `agent-workflows.json` is keyed by activity at its top level; skip a workflow or rule this build can't read rather than failing the whole file (`Leniently`), since `TeamCoding.decode` returning nil reads as no workflows at all. A skipped entry is dropped if this Mac saves the file, so say so in the changelog when the shape changes. Every workflow, stage, step and rule has an `id`, which the three-way merge matches lists by.
 - A missing file, activity or default is the built-in workflow (`AgentWorkflow.builtIn`), and a plain workflow (`isPlain`) must start exactly what the activity started before workflows.
+- Personal specialists, workflows, rules and defaults (`PersonalAgents`, in `UserDatabase`) never go in a harness. Never stage a team `agent-workflows.json` that names a `personal/` specialist (`usesPersonalSpecialist`): it would publish one person's specialist to the team. Defaults are per person: ignore the team file's `default` (`WorkflowLibrary`), so someone new gets the built-in. A team rule only reaches team workflows.
+- Never post or record a personal specialist's title: a review names it `ReviewRun.postedTitle` ("Reviewer"), in comments, the summary and the findings later steps see, or the person it's aimed at reads it on their PR.
 
 ## Prompts and learnings
 - Prompt front matter: `use`, `default`, `repos`, `skills`. Placeholders `{{issue}}`, `{{title}}`, `{{url}}`, `{{repo}}`, `{{number}}`, `{{branch}}`; keep the code that fills them in step (a quick change leaves `{{number}}` and `{{url}}` empty).

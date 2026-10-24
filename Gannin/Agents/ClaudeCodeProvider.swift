@@ -17,6 +17,66 @@ struct ClaudeCodeProvider: InteractiveProvider, AskingProvider {
         ]
     }
 
+    var latest: [AIModel] {
+        [
+            AIModel(id: "fable", name: "Latest Fable"),
+            AIModel(id: "opus", name: "Latest Opus"),
+            AIModel(id: "sonnet", name: "Latest Sonnet"),
+            AIModel(id: "haiku", name: "Latest Haiku"),
+        ]
+    }
+
+    /// Read off the ends of this Mac's most recent transcripts: claude has
+    /// no command that lists its models.
+    func detectModels() async -> [String] {
+        let projects = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)
+        return await Task.detached { Self.modelsSeen(in: projects) }.value
+    }
+
+    /// The model IDs in the newest `limit` transcripts under `projects`,
+    /// newest first.
+    nonisolated static func modelsSeen(in projects: URL, limit: Int = 40) -> [String] {
+        let manager = FileManager.default
+        let keys: Set<URLResourceKey> = [.contentModificationDateKey]
+        let folders = (try? manager.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
+        var files: [(url: URL, modified: Date)] = []
+        for folder in folders {
+            let found = (try? manager.contentsOfDirectory(at: folder, includingPropertiesForKeys: Array(keys))) ?? []
+            for url in found where url.pathExtension == "jsonl" {
+                files.append((url, (try? url.resourceValues(forKeys: keys).contentModificationDate) ?? .distantPast))
+            }
+        }
+        files.sort { $0.modified > $1.modified }
+        var seen: [String] = []
+        for (url, _) in files.prefix(limit) {
+            for id in modelIDs(in: tail(of: url)) where !seen.contains(id) { seen.append(id) }
+        }
+        return seen
+    }
+
+    /// The claude model IDs that transcript text's `"model"` keys name,
+    /// last first.
+    nonisolated static func modelIDs(in text: String) -> [String] {
+        let marker = #""model":""#
+        var ids: [String] = []
+        for range in text.ranges(of: marker + "claude-").reversed() {
+            let start = text.index(range.lowerBound, offsetBy: marker.count)
+            guard let end = text[start...].firstIndex(of: "\"") else { continue }
+            let id = String(text[start..<end])
+            if !ids.contains(id) { ids.append(id) }
+        }
+        return ids
+    }
+
+    /// The last `bytes` of a file: a long transcript's newest turns.
+    private nonisolated static func tail(of url: URL, bytes: UInt64 = 262_144) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        let size = (try? handle.seekToEnd()) ?? 0
+        try? handle.seek(toOffset: size > bytes ? size - bytes : 0)
+        return String(decoding: (try? handle.readToEnd()) ?? Data(), as: UTF8.self)
+    }
+
     // MARK: Launch
 
     /// `--model` with the session's workflow step's model, else the one
