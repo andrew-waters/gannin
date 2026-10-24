@@ -229,7 +229,7 @@ nonisolated struct SessionTranscript: Sendable, Equatable {
 }
 
 /// Reads a transcript line by line as it grows, keeping where it got to.
-nonisolated struct TranscriptReader: Sendable {
+nonisolated struct TranscriptReader: TranscriptParsing {
     private static let eventLimit = 400
     private(set) var summary = SessionTranscript()
     /// Bytes read so far: whole lines only.

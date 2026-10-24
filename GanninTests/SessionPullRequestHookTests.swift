@@ -13,7 +13,7 @@ struct SessionPullRequestHookTests {
         for input in inputs {
             let process = Process()
             process.executableURL = URL(filePath: "/bin/sh")
-            process.arguments = ["-c", SessionScript.pullRequestHook(directory: folder.path)]
+            process.arguments = ["-c", ClaudeCodeProvider.pullRequestHook(directory: folder.path)]
             let stdin = Pipe()
             process.standardInput = stdin
             process.standardOutput = FileHandle.nullDevice

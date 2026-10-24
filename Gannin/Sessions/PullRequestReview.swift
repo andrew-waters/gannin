@@ -758,7 +758,7 @@ struct ExplainPullRequestButton: View {
 }
 
 /// Claude's explanation of a PR, asked fresh each time the window opens
-/// (`ClaudeRunner.ask`, not a session): what it reads with `gh`, and what
+/// (`AgentProviders.asking`, not a session): what it reads with `gh`, and what
 /// it's told to reply with. The window holds one conversation (`--resume`
 /// in the same folder), so a follow-up question is answered from the diff
 /// and discussion already read, not a fresh `gh` lookup.
@@ -903,7 +903,7 @@ struct ExplainPullRequestWindow: View {
             """
         Task {
             do {
-                text = try await ClaudeRunner.ask(
+                text = try await AgentProviders.asking.ask(
                     prompt, org: reference.org, folder: "gannin-explain-\(id)", tools: ["Bash"], session: (id, false)
                 ) { chunk in
                     text += chunk
@@ -927,7 +927,7 @@ struct ExplainPullRequestWindow: View {
         let id = conversation.uuidString.lowercased()
         Task {
             do {
-                let reply = try await ClaudeRunner.ask(
+                let reply = try await AgentProviders.asking.ask(
                     question, org: reference.org, folder: "gannin-explain-\(id)", tools: ["Bash"], session: (id, true)
                 ) { chunk in
                     if let index = turns.firstIndex(where: { $0.id == replyID }) { turns[index].text += chunk }

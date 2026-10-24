@@ -1,0 +1,240 @@
+# Written by Gannin for acme/api#12. Run in the session's terminal.
+session="$HOME"/.gannin/sessions/abc
+harness="$HOME"/'Code/acme/harness'
+harness_repo='acme/harness'
+id='3f9a2c1d-0000-4000-8000-000000000012'
+folder="$harness"/'.worktrees/12-fix-the-thing'
+
+note() { printf '\033[90m%s\033[0m\n' "$1"; }
+warn() { printf '\033[33mGannin: %s\033[0m\n' "$1"; }
+fail() {
+  printf '\033[31mGannin: %s\033[0m\n' "$1"
+  if [ -d "$harness" ]; then cd "$harness"; else cd; fi
+  exec "${SHELL:-bash}" -l
+}
+
+if [ ! -e "$harness/.git" ]; then
+  note "Cloning the harness, $harness_repo, into $harness"
+  mkdir -p "$(dirname "$harness")"
+  if command -v gh >/dev/null 2>&1; then
+    gh repo clone "$harness_repo" "$harness" || fail "Couldn't clone the harness, $harness_repo."
+  else
+    git clone "https://github.com/$harness_repo.git" "$harness" || fail "Couldn't clone the harness, $harness_repo."
+  fi
+else
+  note "Updating the harness"
+  why=$(
+# As if given with -c, which git passes on to the repos it runs git in
+# for submodules too: no hooks, no fsmonitor, and no submodule (a repo
+# a sandbox nested in a worktree, with a config of its own) looked into.
+export GIT_CONFIG_PARAMETERS="'core.hooksPath'='/dev/null' 'core.fsmonitor'='false' 'diff.ignoreSubmodules'='all' 'submodule.recurse'='false' 'status.submoduleSummary'='false'"
+gannin_untrusted() {
+  git config --file "$1/config" --name-only --list 2>/dev/null | grep -viE '^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode|symlinks|autocrlf|eol|safecrlf|hookspath|fsmonitor|untrackedcache|sparsecheckout|commentchar)|remote\.[^.]+\.(url|fetch|tagopt|prune)|branch\..+\.(remote|merge|rebase|pushremote|description)|extensions\.(objectformat|refstorage)|user\.(name|email)|lfs\.repositoryformatversion|pull\.rebase|push\.default|fetch\.prune|gc\.auto|maintenance\.(auto|strategy))$'
+}
+gannin_check() {
+  local w=$1 g common bad
+  if [ -d "$w/.git" ]; then
+    common=$(cd "$w/.git" && pwd -P)
+  elif [ -f "$w/.git" ]; then
+    g=$(sed -n 's/^gitdir: //p' "$w/.git")
+    g=$(cd "$w" 2>/dev/null && cd "$g" 2>/dev/null && pwd -P) || { echo "${w##*/}'s .git points to a folder that isn't there."; return 1; }
+    [ "$(cat "$g/commondir" 2>/dev/null)" = ../.. ] || { echo "${w##*/}'s git dir ($g) isn't a worktree's."; return 1; }
+    common=$(cd "$g/../.." && pwd -P)
+    # Patterns opened with ( as well, so this parses inside $( ).
+    case "$g" in ("$common"/worktrees/*) ;; (*) echo "${w##*/}'s .git doesn't lead back to a clone."; return 1 ;; esac
+  else
+    return 0
+  fi
+  # The clones and the harness are mounted read-only, so their config is
+  # the user's own. A git dir in an issue's folder, though, a sandbox
+  # made itself, and its config can name filters or an sshCommand.
+  case "$common" in (*/.worktrees/*) ;; (*) return 0 ;; esac
+  bad=$(gannin_untrusted "$common" | tr '\n' ' ')
+  [ -z "$bad" ] || { echo "Gannin won't run git in ${w##*/}: $common/config has ${bad}which a sandbox could have set. Look at it, remove them if they aren't yours, then try again."; return 1; }
+}
+gannin_check "$harness"
+) || fail "$why"
+  git -C "$harness" -c core.hooksPath=/dev/null -c core.fsmonitor=false pull --ff-only --quiet || warn "Couldn't fast-forward the harness, so it's as it was. Pull it when you can."
+fi
+exclude="$(git -C "$harness" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+mkdir -p "$(dirname "$exclude")"
+for kept in projects .worktrees; do
+  git -C "$harness" check-ignore -q "$kept/x" || echo "/$kept/" >> "$exclude"
+done
+
+mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
+cp "$session/brief.md" "$folder/.gannin/"
+printf %s IyEvYmluL2Jhc2gKIyBXcml0dGVuIGJ5IEdhbm5pbiBmb3IgYWNtZS9hcGkjMTIuIFJ1biBpdCB3aGVuIHRoZSBjaGFuZ2UgaXMgcmVhZHkgZm9yIGEgc2Vjb25kIGFnZW50CiMgdG8gcmV2aWV3LCB3aXRoIGEgbm90ZSBvbiB3aGF0IGNoYW5nZWQgYW5kIHdoZXJlIHRvIGxvb2suCm5vdGU9JChwcmludGYgJyVzJyAiJCoiIHwgdHIgJ1xuJyAnICcpCnByaW50ZiAnJXMgJXNcbicgIiQoZGF0ZSArJXMpLSQkIiAiJG5vdGUiID4gIiRIT01FIi8uZ2FubmluL3Nlc3Npb25zL2FiYy9yZXZpZXctcmVxdWVzdCB8fCB7IGVjaG8gIkNvdWxkbid0IHRlbGwgR2FubmluLiIgPiYyOyBleGl0IDE7IH0KZWNobyAiR2FubmluIGhhcyBpdC4gV2l0aCBwYWlyIHJldmlldyBvbiwgYSBzZWNvbmQgYWdlbnQgcmV2aWV3cyB0aGUgY2hhbmdlIGFuZCBpdHMgZmluZGluZ3MgY29tZSB0byB5b3UgYXMgYSBtZXNzYWdlOyBvdGhlcndpc2UgeW91J2xsIGJlIHRvbGQgdG8gY2Fycnkgb24uIEVuZCB5b3VyIHR1cm4gYW5kIHdhaXQgZm9yIHRoYXQgbWVzc2FnZS4iCg== | base64 -d > "$folder/.gannin"/ready-for-review && chmod +x "$folder/.gannin"/ready-for-review
+cp "$session/settings.json" "$folder/.gannin/settings.json"
+cd "$harness" || fail "The harness isn't there."
+# fail and the final exec replace this shell, so no EXIT trap would
+# run to release the lock.
+sandbox_unlock() {
+  # Only a lock that's still this start's.
+  [ -z "${locked:-}" ] || [ "$(readlink "$lock" 2>/dev/null)" != "$me" ] || rm -f "$lock"
+  locked=
+}
+sandbox_failed() {
+  sandbox_unlock
+  # Its credentials go with it, not left for the next start.
+  rm -f "$session/secrets.env"
+  printf 'failed: %s' "$1" > "$session/sandbox" 2>/dev/null
+  fail "$1"
+}
+printf starting > "$session/sandbox"
+c=$(command -v container 2>/dev/null || true)
+[ -n "$c" ] || c=/usr/local/bin/container
+[ "$(uname -s)" = Darwin ] && [ "$(uname -m)" = arm64 ] || sandbox_failed "Sandboxes need a Mac with Apple Silicon, and this Mac isn't one. Start this issue on the Mac instead."
+[ "$(sw_vers -productVersion | cut -d. -f1)" -ge 26 ] 2>/dev/null || sandbox_failed "Sandboxes need macOS 26 or later on this Mac. Update macOS there, or start this issue on the Mac instead."
+[ -x "$c" ] || sandbox_failed "Apple container isn't installed on this Mac. Set it up in Gannin's Settings, under Sandbox."
+v=$("$c" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -n1)
+IFS=. read -r v1 v2 v3 <<< "$v"
+[ $(( ${v1:-0} * 1000000 + ${v2:-0} * 1000 + ${v3:-0} )) -ge 1004001 ] || sandbox_failed "Apple container ${v:-of an unknown version} on this Mac is older than 1.4.1, the oldest Gannin works with. Set it up in Gannin's Settings, under Sandbox."
+if ! "$c" system status --format json 2>/dev/null | grep -q '"status":"running"'; then
+  note "Starting Apple container"
+  "$c" system start --disable-kernel-install --timeout 60 >/dev/null 2>&1 || sandbox_failed "Apple container's service won't start on this Mac. Run container system start there to see why."
+fi
+if [ ! -e "$HOME/Library/Application Support/com.apple.container/kernels/default.kernel-$(uname -m)" ]; then
+  note "Setting Apple container's Linux kernel"
+  "$c" system kernel set --recommended || sandbox_failed "Apple container's Linux kernel couldn't be set on this Mac."
+fi
+[ -f "$session/secrets.env" ] || sandbox_failed "Gannin had no credentials to hand this sandbox. Check Settings, under Sandbox, and the org's GitHub token under Harness, then Resume."
+
+# The issue's repos' clones in projects/ (or projects/<group>/), found by
+# their origin rather than their folder's name; read, never run.
+find_clone() {
+  local g url
+  for g in "$harness"/projects/*/.git "$harness"/projects/*/*/.git; do
+    [ -d "$g" ] || continue
+    url=$(git config --file "$g/config" --get remote.origin.url 2>/dev/null)
+    printf '%s
+' "$url" | grep -qiE "[/:]$1(\.git)?/?$" && { (cd "$g" && pwd -P); return 0; }
+  done
+  return 1
+}
+for repo in 'acme/api'; do
+  find_clone "$repo" >/dev/null && continue
+  clone="$harness/projects/${repo##*/}"
+  [ -e "$clone" ] && { warn "projects/${repo##*/} is another repo, so $repo isn't in the sandbox."; continue; }
+  note "Cloning $repo into projects/"
+  mkdir -p "$harness/projects"
+  if command -v gh >/dev/null 2>&1; then gh repo clone "$repo" "$clone" -- --quiet || warn "Couldn't clone $repo."
+  else git clone --quiet "https://github.com/$repo.git" "$clone" || warn "Couldn't clone $repo."; fi
+done
+
+# Mounted at their real paths, as git recorded them.
+h=$(cd "$harness" && pwd -P)
+s=$(cd "$session" && pwd -P)
+si=$(cd '~HOME/Library/Application Support/dev.andon.gannin/Sessions/3F9A2C1D-0000-4000-8000-000000000012' && pwd -P) || sandbox_failed "The issue's session folder isn't there."
+f="$h"/'.worktrees/12-fix-the-thing'
+mkdir -p "$s/claude-home" "$si/claude-home"
+log="$si/sandbox.log"
+touch "$log"
+name='gannin-3f9a2c1d-0000-4000-8000-000000000012'
+# Starts of this container take turns: a session and its helper
+# starting together would both see it missing, and the loser's
+# delete could remove the winner's container. The lock is a
+# symlink to its owner's process ID and start time, so it's taken
+# and named in one step (no flock, here or over ssh). A start that
+# was killed leaves one whose owner is gone, or, after a reboot,
+# whose process ID names another process: the start time tells
+# them apart. A live owner is waited for however long its image
+# build takes.
+lock="$si/sandbox.lock"
+owner_token() { printf '%s:%s' "$1" "$(LC_ALL=C ps -o lstart= -p "$1" 2>/dev/null | tr ' ' _)"; }
+me=$(owner_token "$$")
+waited=
+until ln -s "$me" "$lock" 2>/dev/null; do
+  owner=$(readlink "$lock" 2>/dev/null || true)
+  if [ -n "$owner" ] && [ "$(owner_token "${owner%%:*}")" != "$owner" ]; then
+    # Clearing it is taken in turns too, and the owner read again
+    # once it's this start's turn: nothing else removes a live
+    # lock, so what still names the dead owner is safe to remove.
+    if ln -s "$me" "$lock.clearing" 2>/dev/null; then
+      [ "$(readlink "$lock" 2>/dev/null)" != "$owner" ] || rm -f "$lock"
+      rm -f "$lock.clearing"
+      continue
+    fi
+    clearer=$(readlink "$lock.clearing" 2>/dev/null || true)
+    if [ -n "$clearer" ] && [ "$(owner_token "${clearer%%:*}")" != "$clearer" ]; then rm -f "$lock.clearing"; continue; fi
+  fi
+  [ -n "$waited" ] || note "Waiting for another start of this sandbox (if none is, remove $lock)"
+  waited=1
+  sleep 1
+done
+locked=1
+if "$c" list --format json 2>/dev/null | grep -q "\"id\":\"$name\""; then
+  note "The sandbox is running; claude starts in it"
+else
+  "$c" delete --force "$name" >/dev/null 2>&1 || true
+  images=$(mktemp)
+  ( set -e
+  if ! "$c" image inspect gannin-base:96dbd90240b7 >/dev/null 2>&1; then
+    d=$(mktemp -d "${TMPDIR:-/tmp}/gannin-base.XXXXXX")
+    trap 'rm -rf "$d"' EXIT
+    printf %s IyBHYW5uaW4ncyBzYW5kYm94IGJhc2UgaW1hZ2U6IHdoYXQgYSBDbGF1ZGUgQ29kZSBzZXNzaW9uIG5lZWRzIHRvIHdvcmsgb24KIyBtb3N0IHJlcG9zIGluIExpbnV4LiBBIHJlcG8gZXh0ZW5kcyBpdCB3aXRoIGEgQ29udGFpbmVyZmlsZSBvZiBpdHMgb3duIGluCiMgdGhlIGhhcm5lc3MsIHN0YXJ0aW5nIEZST00gZ2FubmluLWJhc2UuCkZST00gZG9ja2VyLmlvL2xpYnJhcnkvbm9kZToyMi1ib29rd29ybS1zbGltCkxBQkVMIGRldi5hbmRvbi5nYW5uaW49MQpFTlYgREVCSUFOX0ZST05URU5EPW5vbmludGVyYWN0aXZlClJVTiBhcHQtZ2V0IHVwZGF0ZSBcCiAgICAmJiBhcHQtZ2V0IGluc3RhbGwgLXkgLS1uby1pbnN0YWxsLXJlY29tbWVuZHMgXAogICAgICAgIGNhLWNlcnRpZmljYXRlcyBjdXJsIGdpdCBvcGVuc3NoLWNsaWVudCBnbnVwZyBidWlsZC1lc3NlbnRpYWwgcGtnLWNvbmZpZyBcCiAgICAgICAgcHl0aG9uMyBweXRob24zLXBpcCBweXRob24zLXZlbnYganEgcmlwZ3JlcCB1bnppcCB6aXAgbGVzcyBwcm9jcHMgXAogICAgJiYgaW5zdGFsbCAtZCAtbSAwNzU1IC9ldGMvYXB0L2tleXJpbmdzIFwKICAgICYmIGN1cmwgLWZzU0wgaHR0cHM6Ly9jbGkuZ2l0aHViLmNvbS9wYWNrYWdlcy9naXRodWJjbGktYXJjaGl2ZS1rZXlyaW5nLmdwZyAtbyAvZXRjL2FwdC9rZXlyaW5ncy9naXRodWJjbGktYXJjaGl2ZS1rZXlyaW5nLmdwZyBcCiAgICAmJiBjaG1vZCBnbytyIC9ldGMvYXB0L2tleXJpbmdzL2dpdGh1YmNsaS1hcmNoaXZlLWtleXJpbmcuZ3BnIFwKICAgICYmIGVjaG8gImRlYiBbYXJjaD0kKGRwa2cgLS1wcmludC1hcmNoaXRlY3R1cmUpIHNpZ25lZC1ieT0vZXRjL2FwdC9rZXlyaW5ncy9naXRodWJjbGktYXJjaGl2ZS1rZXlyaW5nLmdwZ10gaHR0cHM6Ly9jbGkuZ2l0aHViLmNvbS9wYWNrYWdlcyBzdGFibGUgbWFpbiIgPiAvZXRjL2FwdC9zb3VyY2VzLmxpc3QuZC9naXRodWItY2xpLmxpc3QgXAogICAgJiYgYXB0LWdldCB1cGRhdGUgXAogICAgJiYgYXB0LWdldCBpbnN0YWxsIC15IC0tbm8taW5zdGFsbC1yZWNvbW1lbmRzIGdoIFwKICAgICYmIHJtIC1yZiAvdmFyL2xpYi9hcHQvbGlzdHMvKgpSVU4gbnBtIGluc3RhbGwgLWcgQGFudGhyb3BpYy1haS9jbGF1ZGUtY29kZSAmJiBucG0gY2FjaGUgY2xlYW4gLS1mb3JjZQojIEZpbGVzIGJlbG9uZyB0byB0aGUgTWFjIHVzZXIsIG5vdCByb290OyBHSF9UT0tFTiBzaWducyBnaXQgaW4gdGhyb3VnaCBnaDsKIyBjb21taXRzIGFyZSBzaWduZWQgd2l0aCB0aGUgc2FuZGJveCdzIFNTSCBrZXksIHNldCB3aGVuIGl0IHN0YXJ0cy4KUlVOIGdpdCBjb25maWcgLS1zeXN0ZW0gc2FmZS5kaXJlY3RvcnkgJyonIFwKICAgICYmIGdpdCBjb25maWcgLS1zeXN0ZW0gY3JlZGVudGlhbC5odHRwczovL2dpdGh1Yi5jb20uaGVscGVyICcnIFwKICAgICYmIGdpdCBjb25maWcgLS1zeXN0ZW0gLS1hZGQgY3JlZGVudGlhbC5odHRwczovL2dpdGh1Yi5jb20uaGVscGVyICchZ2ggYXV0aCBnaXQtY3JlZGVudGlhbCcgXAogICAgJiYgZ2l0IGNvbmZpZyAtLXN5c3RlbSBncGcuZm9ybWF0IHNzaApFTlYgRElTQUJMRV9BVVRPVVBEQVRFUj0xCkNNRCBbInNsZWVwIiwgImluZmluaXR5Il0K | base64 -d > "$d/Containerfile"
+    "$c" build --progress plain -f "$d/Containerfile" -t gannin-base:96dbd90240b7 --label dev.andon.gannin=1 "$d"
+  fi
+  "$c" image tag gannin-base:96dbd90240b7 gannin-base:latest ) || { rm -f "$images"; sandbox_failed "Gannin's base image didn't build. What container said is above."; }
+  ( set -e
+  f="$h"/'.gannin/sandbox/api.Containerfile'
+  if [ ! -f "$f" ]; then echo "image=gannin-base:96dbd90240b7"; exit 0; fi
+  h=$({ cat "$f"; echo gannin-base:96dbd90240b7; } | /usr/bin/shasum -a 256 | cut -c1-12)
+  tag=gannin-api:$h
+  if ! "$c" image inspect "$tag" >/dev/null 2>&1; then
+    "$c" build --progress plain -f "$f" -t "$tag" --label dev.andon.gannin=1 "$(dirname "$f")"
+  fi
+  echo "image=$tag" ) | tee "$images" || true
+  image=$(sed -n 's/^image=//p' "$images" | tail -n1)
+  rm -f "$images"
+  [ -n "$image" ] || sandbox_failed "The sandbox's image didn't build. What container said is above."
+  args=(run --detach --name "$name" --label 'dev.andon.gannin=1' --label 'com.orchard.sandbox=true' --label 'com.orchard.sandbox.owner=dev.andon.gannin' --label 'com.orchard.sandbox.network=nat' --cpus 2 --memory 2G
+    --mount "type=bind,source=$h,target=$h,readonly")
+  # A repo's git dir, writable so commits and worktrees work, with
+  # its hooks read-only; what it says is checked before git on the
+  # Mac trusts it (SandboxGitGuard).
+  # A repo's git dir read-only, so its config and hooks can't be
+  # changed for git on the Mac to run, with only what commits,
+  # fetches and worktrees write read-write inside it. FETCH_HEAD
+  # goes into logs/ through a link made here, as git writes it at
+  # the top. Deleting a branch still can't (packed-refs.lock).
+  git_dir() {
+    mkdir -p "$1/worktrees" "$1/logs"
+    if [ ! -L "$1/FETCH_HEAD" ]; then
+      [ -f "$1/FETCH_HEAD" ] && mv "$1/FETCH_HEAD" "$1/logs/FETCH_HEAD"
+      ln -s logs/FETCH_HEAD "$1/FETCH_HEAD"
+    fi
+    args+=(--mount "type=bind,source=$1,target=$1,readonly")
+    for part in objects refs logs worktrees; do args+=(--mount "type=bind,source=$1/$part,target=$1/$part"); done
+    # Other sessions' and checkouts' worktrees read-only, so their
+    # commondir and gitdir can't be pointed elsewhere; this issue's
+    # are in its folder, and new ones it makes will be too.
+    for w in "$1"/worktrees/*/; do
+      w=${w%/}
+      [ -d "$w" ] || continue
+      case "$(cat "$w/gitdir" 2>/dev/null)" in ("$f"/*) ;; (*) args+=(--mount "type=bind,source=$w,target=$w,readonly") ;; esac
+    done
+  }
+  # The harness's own git only when it's the code repo too.
+  [ -d "$h/.git" ] && [ ! -d "$h/projects" ] && git_dir "$h/.git"
+  args+=(--tmpfs "$h/.worktrees" --mount "type=bind,source=$f,target=$f")
+  if [ -d "$h/projects" ]; then
+    args+=(--tmpfs "$h/projects")
+    # Only the issue's repos, not every clone (and others' branches).
+    for repo in 'acme/api'; do
+      g=$(find_clone "$repo") && git_dir "$g"
+    done
+  fi
+  # Claude's config every sandbox shares (its own login among it),
+  # with this issue's transcripts over its projects/.
+  mkdir -p '~HOME/Library/Application Support/dev.andon.gannin/Sandbox/claude'/projects "$si/claude-home/projects"
+  cf=$(cd '~HOME/Library/Application Support/dev.andon.gannin/Sandbox/claude' && pwd -P)
+  args+=(--mount "type=bind,source=$si,target=$si" --mount "type=bind,source=$cf,target=/root/.claude" --mount "type=bind,source=$si/claude-home/projects,target=/root/.claude/projects")
+  note "Starting the sandbox $name ($image)"
+  # Its own process follows the activity log, so container logs
+  # says what's going on in here (the last 200 lines, then more).
+  "$c" "${args[@]}" "$image" sh -c 'trap "exit 0" TERM; tail -n 200 -F "$0" & wait' "$log" >/dev/null || sandbox_failed "The sandbox didn't start. Run container logs $name to see why."
+fi
+sandbox_unlock
+printf running > "$session/sandbox"
+exec "$c" exec -it -e TERM=xterm-256color -e COLORTERM=truecolor -e LANG=C.UTF-8 -e CLAUDE_CONFIG_DIR=/root/.claude "$name" bash "$s/inner.sh" "$s" "$h" "$log"

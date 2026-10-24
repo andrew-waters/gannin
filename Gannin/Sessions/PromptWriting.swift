@@ -4,7 +4,7 @@ import SwiftUI
 /// (andrew-waters/gannin#145): house rules for sandboxes, saved prompts and
 /// the org's drafting guidance. Claude asks what it needs, drafts the whole
 /// text and refines it; nothing reaches the setting until Use This Draft.
-/// One `claude -p` conversation per sheet (`ClaudeRunner`, `--resume`), run
+/// One `claude -p` conversation per sheet (`AgentProviders.asking`, `--resume`), run
 /// as you with no tools, forgotten when the sheet closes.
 enum PromptWriting {
     /// What's being written, for Claude and for the sheet.
@@ -105,7 +105,7 @@ enum PromptWriting {
         func given(_ value: String?) -> String? {
             value.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         }
-        if let parsed = ClaudeRunner.json(Reply.self, in: text) {
+        if let parsed = ScriptRunner.json(Reply.self, in: text) {
             let reply = Reply(message: given(parsed.message), draft: given(parsed.draft), title: given(parsed.title))
             if reply.message != nil || reply.draft != nil || reply.title != nil { return reply }
         }
@@ -337,7 +337,7 @@ struct PromptWritingSheet: View {
         Task {
             defer { working = false }
             do {
-                let answer = try await ClaudeRunner.ask(
+                let answer = try await AgentProviders.asking.ask(
                     prompt, org: "", folder: "gannin-prompt-\(conversation.uuidString)",
                     session: (conversation.uuidString.lowercased(), !isFirst)
                 )

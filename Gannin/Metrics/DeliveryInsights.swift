@@ -520,7 +520,7 @@ struct NotesSheet: View {
         let prompt = rewrite + " Keep every fact, number and link. Use Markdown headings and bullets. Reply with the text only, no preamble.\n\n" + text
         Task {
             do {
-                text = try await ClaudeRunner.ask(prompt, org: org)
+                text = try await AgentProviders.asking.ask(prompt, org: org)
                 status = "Rewritten by Claude"
             } catch {
                 status = error.localizedDescription

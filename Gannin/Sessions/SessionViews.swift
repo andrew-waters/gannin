@@ -2273,7 +2273,7 @@ struct SessionSidebarRows: View {
 struct SessionSettingsSection: View {
     @AppStorage(SessionStore.workspaceKey) private var workspace = SessionStore.defaultWorkspace
     @AppStorage(SessionStore.connectKey) private var connect = ""
-    @AppStorage(SessionStore.providerKey) private var provider: AIProvider = .anthropic
+    @AppStorage(SessionStore.providerKey) private var provider: ProviderID = .claudeCode
     @AppStorage(SessionStore.modelKey) private var model = ""
     @AppStorage(SessionStore.notifiesKey) private var notifies = true
     @AppStorage(SessionStore.sendsFeedbackKey) private var sendsFeedback = false
@@ -2293,9 +2293,10 @@ struct SessionSettingsSection: View {
     var body: some View {
         Section {
             Picker("Provider", selection: $provider) {
-                ForEach(AIProvider.allCases) { Text($0.name).tag($0) }
+                ForEach(ProviderID.allCases.filter(\.isInteractive)) { Text($0.title).tag($0) }
             }
-            let known = provider.models.contains { $0.id == model }
+            let models = AgentProviders.interactive(provider).models
+            let known = models.contains { $0.id == model }
             Picker("Model", selection: Binding(
                 get: { customModel || (!model.isEmpty && !known) ? Self.custom : model },
                 set: { picked in
@@ -2305,7 +2306,7 @@ struct SessionSettingsSection: View {
             )) {
                 Text("Claude Code's default").tag("")
                 Divider()
-                ForEach(provider.models) { Text($0.name).tag($0.id) }
+                ForEach(models) { Text($0.name).tag($0.id) }
                 Divider()
                 Text("Other").tag(Self.custom)
             }

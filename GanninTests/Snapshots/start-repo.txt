@@ -1,0 +1,57 @@
+# Written by Gannin for acme/api#12. Run in the session's terminal.
+session="$HOME"/.gannin/sessions/abc
+repo='acme/api'
+branch='12-fix-the-thing'
+id='3f9a2c1d-0000-4000-8000-000000000012'
+clone="$HOME"/'Code/acme/harness'/"$repo"
+worktree="$clone.worktrees/$branch"
+
+note() { printf '\033[90m%s\033[0m\n' "$1"; }
+fail() {
+  printf '\033[31mGannin: %s\033[0m\n' "$1"
+  mkdir -p "$(dirname "$clone")" && cd "$(dirname "$clone")"
+  exec "${SHELL:-bash}" -l
+}
+
+if [ ! -d "$clone/.git" ]; then
+  note "Cloning $repo into $clone"
+  mkdir -p "$(dirname "$clone")"
+  if command -v gh >/dev/null 2>&1; then
+    gh repo clone "$repo" "$clone" || fail "Couldn't clone $repo."
+  else
+    git clone "https://github.com/$repo.git" "$clone" || fail "Couldn't clone $repo."
+  fi
+fi
+
+if [ ! -d "$worktree" ]; then
+  note "Making a worktree for $branch"
+  git -C "$clone" fetch --quiet origin || fail "Couldn't fetch $repo."
+  base=$(git -C "$clone" symbolic-ref --quiet --short refs/remotes/origin/HEAD) || base=origin/main
+  if git -C "$clone" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$clone" worktree add "$worktree" "$branch" || fail "Couldn't make the worktree."
+  elif git -C "$clone" show-ref --verify --quiet "refs/remotes/origin/$branch"; then
+    git -C "$clone" worktree add --track -b "$branch" "$worktree" "origin/$branch" || fail "Couldn't make the worktree."
+  else
+    git -C "$clone" worktree add --no-track -b "$branch" "$worktree" "$base" || fail "Couldn't make the worktree."
+  fi
+fi
+
+cd "$worktree" || fail "The worktree isn't there."
+mkdir -p .gannin
+cp "$session/brief.md" .gannin/
+printf %s IyEvYmluL2Jhc2gKIyBXcml0dGVuIGJ5IEdhbm5pbiBmb3IgYWNtZS9hcGkjMTIuIFJ1biBpdCB3aGVuIHRoZSBjaGFuZ2UgaXMgcmVhZHkgZm9yIGEgc2Vjb25kIGFnZW50CiMgdG8gcmV2aWV3LCB3aXRoIGEgbm90ZSBvbiB3aGF0IGNoYW5nZWQgYW5kIHdoZXJlIHRvIGxvb2suCm5vdGU9JChwcmludGYgJyVzJyAiJCoiIHwgdHIgJ1xuJyAnICcpCnByaW50ZiAnJXMgJXNcbicgIiQoZGF0ZSArJXMpLSQkIiAiJG5vdGUiID4gIiRIT01FIi8uZ2FubmluL3Nlc3Npb25zL2FiYy9yZXZpZXctcmVxdWVzdCB8fCB7IGVjaG8gIkNvdWxkbid0IHRlbGwgR2FubmluLiIgPiYyOyBleGl0IDE7IH0KZWNobyAiR2FubmluIGhhcyBpdC4gV2l0aCBwYWlyIHJldmlldyBvbiwgYSBzZWNvbmQgYWdlbnQgcmV2aWV3cyB0aGUgY2hhbmdlIGFuZCBpdHMgZmluZGluZ3MgY29tZSB0byB5b3UgYXMgYSBtZXNzYWdlOyBvdGhlcndpc2UgeW91J2xsIGJlIHRvbGQgdG8gY2Fycnkgb24uIEVuZCB5b3VyIHR1cm4gYW5kIHdhaXQgZm9yIHRoYXQgbWVzc2FnZS4iCg== | base64 -d > .gannin/ready-for-review && chmod +x .gannin/ready-for-review
+cp "$session/settings.json" .gannin/settings.json
+exclude="$(git rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+mkdir -p "$(dirname "$exclude")"
+grep -qx '.gannin/' "$exclude" 2>/dev/null || echo '.gannin/' >> "$exclude"
+
+command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Resume the session."
+if [ -e "$session/started" ]; then
+  claude --resume "$id" --settings .gannin/settings.json
+else
+  claude --session-id "$id" --settings .gannin/settings.json 'You'\''re picking up acme/api#12, "Fix the thing'\''s "edge"", in acme/api. Read .gannin/brief.md first: it has the issue, its discussion, where it sits on the board and any plans for it. Then look through the code and propose a plan before changing anything. If you have questions for me, ask them with the AskUserQuestion tool rather than as plain text.'
+fi
+printf exited > "$session/state"
+printf '\033]7777;state:exited\007' > /dev/tty 2>/dev/null
+note "Claude Code has exited. This shell is in the worktree; run claude --resume $id to go on."
+exec "${SHELL:-bash}" -l

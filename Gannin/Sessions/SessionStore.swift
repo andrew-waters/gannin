@@ -103,6 +103,9 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// Files dropped or pasted on its panel for claude, copied into
     /// `.gannin/attachments/` on its box (`SessionAttachments.swift`).
     var attachments: [SessionAttachment]? = nil
+    /// The provider its terminal runs (`AgentProvider`); nil for sessions
+    /// from before providers, which ran Claude Code.
+    var provider: ProviderID? = nil
 
     var isRemote: Bool { connect != nil }
     var isSandboxed: Bool { sandbox != nil }
@@ -166,6 +169,8 @@ extension CodeSession {
         hostReason = try container.decodeIfPresent(String.self, forKey: .hostReason)
         routineRun = try? container.decodeIfPresent(RoutineRunInfo.self, forKey: .routineRun)
         attachments = try? container.decodeIfPresent([SessionAttachment].self, forKey: .attachments)
+        // A provider this build doesn't know reads as none.
+        provider = try? container.decodeIfPresent(ProviderID.self, forKey: .provider)
     }
 }
 
@@ -457,7 +462,7 @@ final class SessionStore {
     @ObservationIgnored var startingReviews: [String: Task<CodeSession, Never>] = [:]
     /// What each session's transcript says, read while its terminal runs.
     var transcripts: [UUID: SessionTranscript] = [:]
-    @ObservationIgnored var readers: [UUID: TranscriptReader] = [:]
+    @ObservationIgnored var readers: [UUID: any TranscriptParsing] = [:]
     @ObservationIgnored var transcriptFiles: [UUID: URL] = [:]
     @ObservationIgnored var readingTranscript: Set<UUID> = []
     @ObservationIgnored private var transcriptWaiters: [UUID: [() -> Void]] = [:]
@@ -750,6 +755,8 @@ final class SessionStore {
 
     /// Adds a session made elsewhere (a helper), and saves.
     func add(_ session: CodeSession) {
+        var session = session
+        if session.provider == nil { session.provider = Self.provider }
         Self.noteFolder(of: session)
         sessions[session.id] = session
         noteSandboxedHarnesses()
@@ -991,7 +998,7 @@ final class SessionStore {
                 directory: remoteDirectory,
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
-                settings: SessionScript.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: remoteDirectory, branch: session.branch), sandboxed: session.isSandboxed),
+                settings: session.agent.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: remoteDirectory, branch: session.branch), sandboxed: session.isSandboxed),
                 files: session.isSandboxed ? ["inner.sh": SandboxLaunch.innerScript(session)] : [:]
             )
             command = SessionScript.connecting(connect, to: remote)
@@ -1013,7 +1020,7 @@ final class SessionStore {
             let local = SessionScript.quoted(real.path)
             if session.isSandboxed { prepareSandbox(session, directory: real) }
             // A sandbox's statusLine can't run the user's own command, which is on the Mac.
-            try? Data(SessionScript.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed).utf8).write(to: directory.appending(path: "settings.json"))
+            try? Data(session.agent.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"
@@ -1396,10 +1403,8 @@ final class SessionStore {
         guard !readingRemote.contains(session.id), let connect = session.connect,
               let arguments = Shell.sshArguments(connect) else { return }
         readingRemote.insert(session.id)
-        let reader = readers[session.id] ?? TranscriptReader()
-        // A sandbox's claude keeps its transcripts in its issue's claude-home there.
-        let homes = (session.isSandboxed ? Self.remoteIssueDirectory(for: session) + "/claude-home/projects/*/" + session.claudeID + ".jsonl " : "")
-            + #""$HOME"/.claude/projects/*/"# + session.claudeID + ".jsonl"
+        let reader = readers[session.id] ?? session.agent.transcriptReader()
+        let homes = session.agent.remoteTranscripts(for: session, sandboxDirectory: session.isSandboxed ? Self.remoteIssueDirectory(for: session) : nil)
         let script = "d=" + Self.remoteDirectory(for: session) + "\n"
             + #"printf '%s\n' "$(cat "$d/state" 2>/dev/null)" "$(tr '\n' ' ' < "$d/pr" 2>/dev/null)" "$(cat "$d/changed" 2>/dev/null)" "$(cat "$d/statusline" 2>/dev/null)" "$(head -n 1 "$d/review-request" 2>/dev/null)" "$(cat "$d/sandbox" 2>/dev/null)""# + "\n"
             + "f=$(ls " + homes + #" 2>/dev/null | head -n 1)"# + "\n"
@@ -1407,7 +1412,7 @@ final class SessionStore {
             + #" ] && tail -c +"# + "\(reader.offset + 1)" + #" "$f" | head -c "# + "\(Self.transcriptChunk)" + #"; else echo -1; fi; exit 0"#
         let id = session.id
         Task {
-            let result = await Task.detached { () -> (Shell.Result, TranscriptReader?, Bool) in
+            let result = await Task.detached { () -> (Shell.Result, (any TranscriptParsing)?, Bool) in
                 let result = Shell.run(script, .ssh(arguments))
                 // After seven lines (state, PR, change, statusline, review
                 // request, sandbox, size), the new bytes.
@@ -1444,19 +1449,19 @@ final class SessionStore {
             return
         }
         if transcriptFiles[id] == nil {
-            // A sandbox's claude keeps its transcripts in the session's claude-home.
-            // Helpers share their issue's.
-            let home = session.isSandboxed ? Self.directory(for: session.parentID ?? id).appending(path: "claude-home/projects", directoryHint: .isDirectory) : nil
-            transcriptFiles[id] = Self.findTranscript(session.claudeID, in: home)
+            // A sandbox's agent keeps its transcripts in the session's
+            // config folder. Helpers share their issue's.
+            let home = session.isSandboxed ? session.agent.sandbox.map { Self.directory(for: session.parentID ?? id).appending(path: "\($0.homeFolder)/projects", directoryHint: .isDirectory) } : nil
+            transcriptFiles[id] = session.agent.transcript(for: session, home: home)
         }
         guard let file = transcriptFiles[id] else {
             done?()
             return
         }
         readingTranscript.insert(id)
-        let reader = readers[id] ?? TranscriptReader()
+        let reader = readers[id] ?? session.agent.transcriptReader()
         Task {
-            let read = await Task.detached { () -> (TranscriptReader, Bool)? in
+            let read = await Task.detached { () -> ((any TranscriptParsing), Bool)? in
                 guard let handle = try? FileHandle(forReadingFrom: file) else { return nil }
                 defer { try? handle.close() }
                 try? handle.seek(toOffset: UInt64(reader.offset))
@@ -1476,7 +1481,7 @@ final class SessionStore {
     /// review result found part-way through a long transcript can be an
     /// earlier round's, so it's left until the last chunk: replacing the
     /// kept result with it and back would count as two new results.
-    private func store(_ reader: TranscriptReader, for id: UUID, moreToRead: Bool) {
+    private func store(_ reader: any TranscriptParsing, for id: UUID, moreToRead: Bool) {
         readers[id] = reader
         var summary = reader.summary
         if let limit = contextWindows[id] { summary.contextLimit = limit }
@@ -1489,14 +1494,6 @@ final class SessionStore {
             reviewFinished(id)
         }
         pairRoundRead(id)
-    }
-
-    /// `~/.claude/projects/<folder>/<id>.jsonl`, whichever folder claude
-    /// filed it under.
-    private static func findTranscript(_ claudeID: String, in home: URL? = nil) -> URL? {
-        let projects = home ?? FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/projects", directoryHint: .isDirectory)
-        let folders = (try? FileManager.default.contentsOfDirectory(at: projects, includingPropertiesForKeys: nil)) ?? []
-        return folders.lazy.map { $0.appending(path: "\(claudeID).jsonl") }.first { FileManager.default.fileExists(atPath: $0.path) }
     }
 
     /// `wake` restarts a loop that's asleep, for a session that needs a

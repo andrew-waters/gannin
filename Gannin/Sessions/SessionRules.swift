@@ -5,7 +5,7 @@ import SwiftUI
 /// decides (andrew-waters/gannin#129, `plans/2026-10-10-session-rules.md`).
 /// The user's own, on this Mac, off until one is set. Enforced by a
 /// `PreToolUse` hook in the settings Gannin writes on every start and
-/// resume (`SessionScript.settings`), here, on a server and in a sandbox:
+/// resume (`InteractiveProvider.settings`), here, on a server and in a sandbox:
 /// Claude Code snapshots hooks as it starts, and a hook's deny wins over any
 /// allow. The check is inline in the hook's command, so there's no script for
 /// a session to edit; the comment count is the one file it keeps.

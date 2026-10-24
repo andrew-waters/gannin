@@ -365,7 +365,7 @@ extension SessionStore {
             guard let run = sessions[session.id]?.pairing?.extras?[reviewer.id]?.run else { continue }
             Task {
                 let outcome = await reviewer.review(folder: folder, prompt: prompt, tag: run.uuidString) { script in
-                    await Task.detached { ClaudeRunner.run(script, place: .local) }.value
+                    await Task.detached { ScriptRunner.run(script, place: .local) }.value
                 }
                 extraFinished(reviewer, run: run, outcome: outcome, for: session.id)
             }
@@ -379,7 +379,7 @@ extension SessionStore {
         for (id, extra) in pairing?.extras ?? [:] where extra.state == .running {
             guard let reviewer = ExtraReviewer(rawValue: id) else { continue }
             let script = reviewer.cancelScript(tag: extra.run.uuidString)
-            Task.detached { _ = ClaudeRunner.run(script, place: .local) }
+            Task.detached { _ = ScriptRunner.run(script, place: .local) }
         }
     }
 

@@ -481,12 +481,12 @@ struct DraftWithClaudeSection: View {
                 prompt = "\(text)\(editor)\n\nReply with only the JSON, as before."
             }
             do {
-                let reply = try await ClaudeRunner.ask(
+                let reply = try await AgentProviders.asking.ask(
                     prompt, org: org, files: files, folder: "gannin-draft-\(conversation.uuidString)",
                     tools: ["Read", "Glob", "Grep"], session: (conversation.uuidString.lowercased(), !isFirst)
                 )
                 started = true
-                guard let parsed = ClaudeRunner.json(HarnessAuthoring.Reply.self, in: reply) else {
+                guard let parsed = ScriptRunner.json(HarnessAuthoring.Reply.self, in: reply) else {
                     // Not the JSON: it's talking, so show it as said.
                     turns.append(Turn(fromClaude: true, text: reply))
                     return

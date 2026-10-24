@@ -24,6 +24,7 @@ Work on This sessions and their helpers run claude in an Apple `container` VM, o
 - Helpers share their issue's container, with their folders under the issue's (`SessionStore.sandboxHelperParents`); every start must mount them.
 
 ## Starting
+- Take the agent's config folder, its variable and first-run seeding from the session's provider (`SandboxLaunch.setup`, `ProviderSandbox`), never by name: a sandbox mounts that folder and nothing else of the agent's.
 - In the start script, never delete or run a container outside `sandbox.lock` (in the issue's folder), and check that it's running only after taking it: a session and its helper starting together both see it missing, and the loser's `delete --force` removes the winner's container.
 - Release the lock explicitly (`sandbox_unlock`), not with a trap: `fail` and the final `exec` replace the shell.
 

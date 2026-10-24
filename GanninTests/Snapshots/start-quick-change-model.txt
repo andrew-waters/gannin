@@ -1,0 +1,54 @@
+# Written by Gannin for a quick change in acme/api. Run in the session's terminal.
+session="$HOME"/.gannin/sessions/abc
+harness="$HOME"/'Code/acme/harness'
+harness_repo='acme/harness'
+id='3f9a2c1d-0000-4000-8000-000000000012'
+folder="$harness"/'.worktrees/12-fix-the-thing'
+
+note() { printf '\033[90m%s\033[0m\n' "$1"; }
+warn() { printf '\033[33mGannin: %s\033[0m\n' "$1"; }
+fail() {
+  printf '\033[31mGannin: %s\033[0m\n' "$1"
+  if [ -d "$harness" ]; then cd "$harness"; else cd; fi
+  exec "${SHELL:-bash}" -l
+}
+
+if [ ! -e "$harness/.git" ]; then
+  note "Cloning the harness, $harness_repo, into $harness"
+  mkdir -p "$(dirname "$harness")"
+  if command -v gh >/dev/null 2>&1; then
+    gh repo clone "$harness_repo" "$harness" || fail "Couldn't clone the harness, $harness_repo."
+  else
+    git clone "https://github.com/$harness_repo.git" "$harness" || fail "Couldn't clone the harness, $harness_repo."
+  fi
+else
+  note "Updating the harness"
+  git -C "$harness" pull --ff-only --quiet || warn "Couldn't fast-forward the harness, so it's as it was. Pull it when you can."
+fi
+exclude="$(git -C "$harness" rev-parse --path-format=absolute --git-common-dir)/info/exclude"
+mkdir -p "$(dirname "$exclude")"
+for kept in projects .worktrees; do
+  git -C "$harness" check-ignore -q "$kept/x" || echo "/$kept/" >> "$exclude"
+done
+
+mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
+cp "$session/brief.md" "$folder/.gannin/"
+if [ -d "$session/attachments" ]; then
+  mkdir -p "$folder/.gannin/attachments" && cp -R "$session/attachments/." "$folder/.gannin/attachments/" || warn "Couldn't copy the screenshots into the session's folder."
+fi
+for name in 'a.png'; do
+  [ -e "$folder/.gannin/attachments/$name" ] || warn "The screenshot $name didn't reach this box, so Claude can't see it. Resume the session to send it again."
+done
+printf %s IyEvYmluL2Jhc2gKIyBXcml0dGVuIGJ5IEdhbm5pbiBmb3IgYSBxdWljayBjaGFuZ2UgaW4gYWNtZS9hcGkuIFJ1biBpdCB3aGVuIHRoZSBjaGFuZ2UgaXMgcmVhZHkgZm9yIGEgc2Vjb25kIGFnZW50CiMgdG8gcmV2aWV3LCB3aXRoIGEgbm90ZSBvbiB3aGF0IGNoYW5nZWQgYW5kIHdoZXJlIHRvIGxvb2suCm5vdGU9JChwcmludGYgJyVzJyAiJCoiIHwgdHIgJ1xuJyAnICcpCnByaW50ZiAnJXMgJXNcbicgIiQoZGF0ZSArJXMpLSQkIiAiJG5vdGUiID4gIiRIT01FIi8uZ2FubmluL3Nlc3Npb25zL2FiYy9yZXZpZXctcmVxdWVzdCB8fCB7IGVjaG8gIkNvdWxkbid0IHRlbGwgR2FubmluLiIgPiYyOyBleGl0IDE7IH0KZWNobyAiR2FubmluIGhhcyBpdC4gV2l0aCBwYWlyIHJldmlldyBvbiwgYSBzZWNvbmQgYWdlbnQgcmV2aWV3cyB0aGUgY2hhbmdlIGFuZCBpdHMgZmluZGluZ3MgY29tZSB0byB5b3UgYXMgYSBtZXNzYWdlOyBvdGhlcndpc2UgeW91J2xsIGJlIHRvbGQgdG8gY2Fycnkgb24uIEVuZCB5b3VyIHR1cm4gYW5kIHdhaXQgZm9yIHRoYXQgbWVzc2FnZS4iCg== | base64 -d > "$folder/.gannin"/ready-for-review && chmod +x "$folder/.gannin"/ready-for-review
+cp "$session/settings.json" "$folder/.gannin/settings.json"
+cd "$harness" || fail "The harness isn't there."
+command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Resume the session."
+if [ -e "$session/started" ]; then
+  claude --resume "$id" --model 'claude-opus-5-5' --settings "$folder/.gannin/settings.json"
+else
+  claude --session-id "$id" --model 'claude-opus-5-5' --settings "$folder/.gannin/settings.json" 'You'\''re picking up acme/api#12, "Fix the thing'\''s "edge"", in the team'\''s harness. Read .worktrees/12-fix-the-thing/.gannin/brief.md first: it has the issue, its discussion, where it sits on the board and any plans for it. Work out which repos it touches (those under projects/, or the harness itself when it'\''s the code repo and has no projects/) and look through their code, then propose a plan before changing anything. Make the changes in a worktree per repo under .worktrees/12-fix-the-thing/, as the brief says, never in projects/ or the harness checkout itself. If you have questions for me, ask them with the AskUserQuestion tool rather than as plain text.'
+fi
+printf exited > "$session/state"
+printf '\033]7777;state:exited\007' > /dev/tty 2>/dev/null
+note "Claude Code has exited. This shell is in the harness; run claude --resume $id to go on."
+exec "${SHELL:-bash}" -l

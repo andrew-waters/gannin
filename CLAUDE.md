@@ -85,8 +85,8 @@ xcodebuild test -project Gannin.xcodeproj -scheme Gannin -destination 'platform=
 | `rd-time` | R&D time, its strategies, report and exports (`RDTime/`) |
 | `issues-projects` | Issue history, New Issue, boards, Views, Board Hygiene (`Issues/`, `Projects/`, `FieldViews/`, `Planning/`) |
 | `meetings` | Prioritisation, Recap, Triage (`Meetings/`, `Triage/`) |
-| `sessions-core` | Claude Code sessions: terminal, polling, modes, session rules, helpers (`Sessions/`) |
-| `sessions-store` | `SessionStore`, start script, brief, wrap-up, quit guard, `ClaudeRunner` |
+| `sessions-core` | Claude Code sessions: terminal, polling, modes, session rules, helpers, providers (`Sessions/`, `Agents/`) |
+| `sessions-store` | `SessionStore`, start script, brief, wrap-up, quit guard, `ScriptRunner` |
 | `sessions-ask-quick` | Ask, Quick Change, Write with Claude |
 | `sessions-pair-review` | Pair review loop |
 | `sessions-review` | PR reviews, auto review, records, config, approval queue |

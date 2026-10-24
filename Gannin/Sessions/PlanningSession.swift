@@ -218,7 +218,7 @@ extension SessionStore {
             shared.append(.init(name: name, commit: file.commit, sharedAt: .now))
         }
         guard !shared.isEmpty else { return ([], false) }
-        let place: ClaudeRunner.Place
+        let place: ScriptRunner.Place
         if let connect {
             guard let arguments = Shell.sshArguments(connect) else { throw SessionError.message("The server isn't reached with ssh, so documents can't be copied to it.") }
             place = .remote(arguments)
@@ -226,7 +226,7 @@ extension SessionStore {
             place = .local
         }
         let body = script.joined(separator: "\n") + "\n"
-        let result = await Task.detached { ClaudeRunner.run(body, place: place) }.value
+        let result = await Task.detached { ScriptRunner.run(body, place: place) }.value
         guard result.status == 0 else { throw SessionError.message(result.error.isEmpty ? "Couldn't copy the documents." : result.error) }
         return (shared, converted)
     }

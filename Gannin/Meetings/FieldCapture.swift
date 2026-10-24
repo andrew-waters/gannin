@@ -468,8 +468,8 @@ struct WriteIssueSheet: View {
             """
         Task {
             do {
-                let reply = try await ClaudeRunner.ask(prompt, org: org)
-                if let draft = ClaudeRunner.json(Draft.self, in: reply) {
+                let reply = try await AgentProviders.asking.ask(prompt, org: org)
+                if let draft = ScriptRunner.json(Draft.self, in: reply) {
                     if let suggested = draft.repo, knownRepos.contains(suggested) { repo = suggested }
                     title = draft.title
                     bodyText = draft.body

@@ -5,10 +5,10 @@ paths:
   - "Gannin/Sessions/SessionLaunch*"
   - "Gannin/Sessions/WrapUp*"
   - "Gannin/Sessions/QuitGuard*"
-  - "Gannin/Sessions/ClaudeRunner*"
+  - "Gannin/Sessions/ScriptRunner*"
 ---
 
-# SessionStore, scripts, wrap-up, quit, ClaudeRunner
+# SessionStore, scripts, wrap-up, quit, ScriptRunner
 
 ## Start and recording
 - Record the session in the harness (`sessions/<issue repo>-<number>/brief.md` and `session.json`, one commit) before the terminal starts, so the harness pull brings them; a server session reads its brief from there. Layer a PR claude reports onto the harness's `session.json`.
@@ -36,8 +36,8 @@ paths:
 ## Quit
 - Sandboxes stop only after the quit question is answered (`stopSandboxesForQuit`).
 
-## ClaudeRunner
-- `ClaudeRunner` runs `claude -p` locally if installed, else on the Connect with server with only the tools given; follow-ups use `--resume` in the same folder.
+## One-off questions
+- `ClaudeCodeProvider.ask` runs `claude -p` locally if installed, else on the Connect with server with only the tools given; follow-ups use `--resume` in the same folder. `ScriptRunner` runs the script on its box and strips inherited `CLAUDE_CODE_*` variables.
 
 ## Testing
 - `SessionTabGroupsTests.swift`, `WrapUpTests.swift`, `SessionBriefGoalsTests.swift`, `SessionModeTests.swift`, `SessionRulesTests.swift`. `SandboxLaunchTests.swift` covers script generation for sandboxes. Nothing covers `SessionStore.record` or the quit guard.

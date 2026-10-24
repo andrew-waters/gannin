@@ -53,7 +53,7 @@ struct SessionRulesTests {
     @Test func noRulesMeansNoHook() {
         #expect(SessionRules().isEmpty)
         #expect(SessionRules().hookCommand(directory: "/tmp/s", branch: branch) == nil)
-        let json = SessionScript.settings(directory: "/tmp/s", isRemote: true)
+        let json = AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true)
         #expect(!json.contains("base64 -d"))
         var blank = SessionRules()
         blank.custom = [.init(name: "Nothing", pattern: "  ")]
@@ -62,7 +62,7 @@ struct SessionRulesTests {
 
     @Test func settingsCheckRulesFirst() throws {
         let hook = try #require(everything().hookCommand(directory: "/tmp/s", branch: branch))
-        let json = SessionScript.settings(directory: "/tmp/s", isRemote: true, rules: hook)
+        let json = AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true, rules: hook)
         let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
         let pre = try #require((object["hooks"] as? [String: Any])?["PreToolUse"] as? [[String: Any]])
         #expect(pre.count == 3)
