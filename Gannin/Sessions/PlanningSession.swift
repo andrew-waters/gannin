@@ -113,7 +113,7 @@ extension SessionStore {
             connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
             role: "Plan", prompt: Self.planningPrompt(info, branch: branch, guidance: guidance, filing: filing), instructions: instructions, planning: info
         )
-        applyWorkflow(.planning, to: &session, org: org, setup: setup, subject: nil)
+        applyWorkflow(.planning, to: &session, org: org, setup: setup, subject: nil, workflow: pickedWorkflow(choice?.workflow, org: org, setup: setup, activity: .planning))
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let brief = "# Planning: \(topic)\n\n" + (documentPath.map { "Starting from `\($0)` in the harness.\n" } ?? "")

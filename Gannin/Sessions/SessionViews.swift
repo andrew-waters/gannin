@@ -1791,6 +1791,11 @@ private struct SessionPanel: View {
             if session.isQuickChange {
                 QuickChangeSection(session: session)
             }
+            if let workflow = session.workflow {
+                Section("Workflow") {
+                    SessionWorkflowSection(workflow: workflow)
+                }
+            }
             if session.isHelper {
                 HelperParentSection(session: session)
             } else if !session.isPlanning && !session.isAsk && !session.isRefine && !session.hasNoIssue {
@@ -2041,7 +2046,8 @@ struct WorkOnThisLauncher: ViewModifier {
                 if let initial = setup(for: reference) {
                     SessionLaunchSheet(
                         title: "Work on \(reference.reference)", org: reference.org, harnesses: config.harnesses, initial: initial,
-                        use: .work, repos: Self.repos(reference, issues: issues), values: Self.values(reference), startTitle: "Work on This"
+                        use: .work, repos: Self.repos(reference, issues: issues), values: Self.values(reference), startTitle: "Work on This",
+                        activity: .work
                     ) { choice, picked in
                         start(reference, recording: SessionStore.recordsWithoutAsking(repo: picked.repo) || recording, choice: choice, setup: picked)
                     } extra: {
@@ -2097,7 +2103,8 @@ struct WorkOnThisLauncher: ViewModifier {
         let config = configs.config(for: reference.org)
         let setup = setup(for: reference)
         // With sandboxing on, always asked, so this one can run on the Mac.
-        if let setup, SandboxCredentials.isEnabled || SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .work, harnesses: config.harnesses) {
+        if let setup, SandboxCredentials.isEnabled || SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .work, harnesses: config.harnesses,
+                                                                                              workflows: sessions.agentWorkflows(reference.org, setup).workflows(for: .work).count) {
             recording = true
             sandboxed = placement(for: reference).isSandboxed
             choosing = reference
@@ -2162,7 +2169,8 @@ struct WorkOnThisLauncher: ViewModifier {
         // Picked in the sheet: the Mac over a sandbox, never the other way.
         let chosen: SandboxPlacement = decided.isSandboxed && !sandboxed ? .host(SandboxPlacement.pickedHost) : decided
         let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions, placement: chosen,
-                                     subject: sessions.codingSubject(reference, record: record)) { session in
+                                     subject: sessions.codingSubject(reference, record: record),
+                                     workflow: sessions.pickedWorkflow(choice?.workflow, org: reference.org, setup: setup, activity: .work)) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index, goals: goals)
         }
         guard recording else {

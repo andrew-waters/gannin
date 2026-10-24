@@ -5,9 +5,9 @@ sidebar:
   order: 40
 ---
 
-Once a project has a [harness](/docs/concepts/projects-and-harnesses/), its documents are listed under Harness in the sidebar: Plans, Requirements, Decisions, Findings, Skills, Prompts, Learnings, Research and Refines, each with a count. Onboarding, first under Harness, maps the project's decisions, requirements and plans by area for someone new ([Onboarding and decisions](/docs/guides/onboarding-and-decisions/)). The Harness row shows whichever you picked last. Refresh in the sidebar fetches the harness again.
+Once a project has a [harness](/docs/concepts/projects-and-harnesses/), its documents are listed under Harness in the sidebar: Plans, Requirements, Decisions, Findings, Skills, Prompts, Learnings, Research, Refines and Specialists, each with a count, then Workflows ([Specialists and workflows](/docs/agents/workflows/)). Onboarding, first under Harness, maps the project's decisions, requirements and plans by area for someone new ([Onboarding and decisions](/docs/guides/onboarding-and-decisions/)). The Harness row shows whichever you picked last. Refresh in the sidebar fetches the harness again.
 
-Only documents that follow the harness's `STANDARDS.md` (front matter with a summary) are listed. Older ones aren't shown, though sessions still read them.
+Only documents that follow the harness's `STANDARDS.md` (front matter with a summary) are listed, except specialists, which are listed whatever their front matter. Older ones aren't shown, though sessions still read them.
 
 ## Finding documents
 
@@ -25,7 +25,7 @@ Issues named in the text, such as `owner/repo#123`, open in a drawer. An issue's
 
 ## Making documents
 
-New in the toolbar makes one: a skill, prompt, learning, requirement, decision or finding. Decisions also have Suggest Decisions, where Claude proposes them from the harness's plans ([Onboarding and decisions](/docs/guides/onboarding-and-decisions/#suggest-decisions)). Plans use Plan with Claude, which starts a [planning session](/docs/agents/planning/). Each new document is committed as one file. Draft with Claude can write it with you ([Write with Claude](/docs/agents/write-with-claude/)). Learnings are usually saved from [reviews](/docs/agents/learnings/). Research comes from an Ask session's Commit to Harness, and Refines from a Design and Refine session, so neither has New.
+New in the toolbar makes one: a skill, prompt, specialist, learning, requirement, decision or finding. Decisions also have Suggest Decisions, where Claude proposes them from the harness's plans ([Onboarding and decisions](/docs/guides/onboarding-and-decisions/#suggest-decisions)). Plans use Plan with Claude, which starts a [planning session](/docs/agents/planning/). Each new document is committed as one file. Draft with Claude can write it with you ([Write with Claude](/docs/agents/write-with-claude/)). Learnings are usually saved from [reviews](/docs/agents/learnings/). Research comes from an Ask session's Commit to Harness, and Refines from a Design and Refine session, so neither has New.
 
 ## Changes to commit
 

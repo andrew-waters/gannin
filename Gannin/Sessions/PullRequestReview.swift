@@ -115,7 +115,7 @@ extension SessionStore {
             // A workflow of more than Gannin's one step: the lead runs its
             // first step, with the rest started beside and after it.
             let workflow: AgentWorkflow
-            if let picked {
+            if let picked = picked ?? pickedWorkflow(choice?.workflow, org: pr.org, setup: setup, activity: .review) {
                 workflow = picked
             } else {
                 workflow = routedWorkflow(org: pr.org, setup: setup, activity: .review, subject: await reviewSubject(pr, org: pr.org, setup: setup))
@@ -711,7 +711,8 @@ struct ReviewWithClaudeButton: View {
             let config = configs.config(for: reference.org)
             let setup = config.harness(covering: [reference.repo])
             Button {
-                if let setup, SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .review, harnesses: config.harnesses) {
+                if let setup, SessionLaunchSheet<EmptyView>.hasChoices(sessions.promptLibrary(org: reference.org, setup: setup), use: .review, harnesses: config.harnesses,
+                                                                        workflows: sessions.agentWorkflows(reference.org, setup).workflows(for: .review).count) {
                     choosing = true
                 } else {
                     start(choice: nil, setup: setup)
@@ -727,7 +728,7 @@ struct ReviewWithClaudeButton: View {
                         title: "Review \(reference.repo)#\(reference.number)", org: reference.org, harnesses: config.harnesses, initial: setup,
                         use: .review, repos: [reference.repo],
                         values: HarnessPromptLibrary.values(reference: "\(reference.repo)#\(reference.number)", title: reference.title, url: reference.url, repo: reference.repo, number: reference.number, branch: SessionStore.reviewBranch(reference)),
-                        startTitle: "Start Review"
+                        startTitle: "Start Review", activity: .review
                     ) { choice, picked in
                         start(choice: choice, setup: picked)
                     }

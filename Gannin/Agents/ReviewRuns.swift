@@ -253,7 +253,9 @@ extension SessionStore {
                 continue
             }
             update(lead) { $0.reviewRun = run }
-            for index in indices where run.steps[index].state == .waiting {
+            // Read afresh each time: a step skipped as it starts moves the
+            // run on itself, which may already have started the next.
+            for index in indices where sessions[lead]?.reviewRun?.steps[safe: index]?.state == .waiting {
                 guard hasRoomForStep(of: lead) else { break }
                 startStep(index, of: lead)
             }
@@ -281,7 +283,8 @@ extension SessionStore {
     }
 
     private func startStep(_ index: Int, of leadID: UUID) {
-        guard let lead = sessions[leadID], var run = lead.reviewRun, let pr = lead.reviewOf else { return }
+        guard let lead = sessions[leadID], var run = lead.reviewRun, let pr = lead.reviewOf,
+              run.steps.indices.contains(index), run.steps[index].state == .waiting else { return }
         var step = run.steps[index]
         if step.session == leadID {
             // The lead's own: its claude started with the review.

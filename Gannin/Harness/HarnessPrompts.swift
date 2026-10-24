@@ -156,6 +156,8 @@ nonisolated struct PromptChoice: Hashable, Sendable {
     var prompts: Set<String> = []
     var skills: Set<String> = []
     var note = ""
+    /// The workflow picked for this run, by id; nil for the routed one.
+    var workflow: String?
 }
 
 /// The org's prompts and skills from its harness index.

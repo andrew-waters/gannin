@@ -63,7 +63,7 @@ extension SessionStore {
             connect: nil, harnessRepo: setup.repo, harnessPath: harnessPath,
             prompt: Self.askPrompt(message, branch: branch), instructions: instructions, ask: info
         )
-        applyWorkflow(.ask, to: &session, org: org, setup: setup, subject: nil)
+        applyWorkflow(.ask, to: &session, org: org, setup: setup, subject: nil, workflow: pickedWorkflow(choice?.workflow, org: org, setup: setup, activity: .ask))
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(Self.askBrief(session).utf8).write(to: directory.appending(path: "brief.md"))
@@ -211,6 +211,7 @@ struct NewAskForm: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            WorkflowPickerSection(org: currentOrg, setup: setup, activity: .ask, choice: $choice)
             PromptPickerSections(library: library, use: .ask, values: ["title": SessionStore.askTitle(message), "repo": setup?.repo ?? ""], choice: $choice)
             Section {
                 HStack {

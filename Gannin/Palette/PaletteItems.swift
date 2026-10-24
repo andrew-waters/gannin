@@ -357,7 +357,7 @@ struct PaletteSources {
         // Pages, as the sidebar lists them.
         // Ask is the New Ask action, not a page; Onboarding is with the
         // harness's pages, only when there's a harness.
-        for tab in WorkloadTab.allCases where tab != .harness && tab != .ask && tab != .onboarding {
+        for tab in WorkloadTab.allCases where tab != .harness && tab != .ask && tab != .onboarding && tab != .agentWorkflows {
             items.append(PaletteItem(id: "page:\(org):\(tab.rawValue)", group: .pages, title: tab.title, systemImage: tab.systemImage, org: org, keywords: [tab.rawValue], action: go(.sidebar(.tab(tab)))))
         }
         for list in IssueList.allCases {
@@ -372,6 +372,8 @@ struct PaletteSources {
             for kind in HarnessKind.allCases {
                 items.append(PaletteItem(id: "page:\(org):harness:\(kind.rawValue)", group: .pages, title: kind.rawValue, systemImage: kind.systemImage, org: org, keywords: ["harness"], action: go(.sidebar(.harnessKind(kind)))))
             }
+            let workflows = WorkloadTab.agentWorkflows
+            items.append(PaletteItem(id: "page:\(org):\(workflows.rawValue)", group: .pages, title: workflows.title, systemImage: workflows.systemImage, org: org, keywords: ["harness", "agents", "routing", "specialists"], action: go(.sidebar(.tab(workflows)))))
         }
         for pane in OrgSettingsView.Pane.allCases {
             items.append(PaletteItem(id: "settings:\(org):\(pane.rawValue)", group: .pages, title: "Settings › \(pane.rawValue)", systemImage: "gearshape", org: org, keywords: ["settings", "preferences"], action: go(.settings(pane))))
