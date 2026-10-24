@@ -1,0 +1,23 @@
+{
+  "author" : "andrew-waters",
+  "effort" : 3,
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Done is now every open issue in a done status, however long it has been there. A",
+      "key" : "Gannin/WorkLog/StandupStages.swift:187:Done is now every open issue in a done status, however long ",
+      "line" : 187,
+      "path" : "Gannin/WorkLog/StandupStages.swift",
+      "severity" : "nit"
+    }
+  ],
+  "number" : 506,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-24T20:37:53Z",
+  "state" : "OPEN",
+  "title" : "Standup: walk the board, person by person, a style per team",
+  "updated_at" : "2026-10-24T20:52:56Z",
+  "verdict" : "approve"
+}
