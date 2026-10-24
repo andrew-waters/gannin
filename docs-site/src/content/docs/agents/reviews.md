@@ -17,9 +17,9 @@ A review runs through the project's review [workflow](/docs/agents/workflows/). 
 - A specialist in a later stage is told what earlier stages found, so it doesn't raise the same points. Specialists side by side don't see each other's findings.
 - A step with more than one round looks again after each round for what it missed, and stops early when a round finds nothing new.
 - A step on a one-shot CLI, such as Junie, runs on this Mac in a throwaway copy of the PR. Where it isn't installed or signed in, or the review runs on a server, it's skipped and the review's summary says so. The other steps still run.
-- When every step has finished, their findings become one review: findings on the same line are joined, each says which specialist raised it, the summary has a paragraph from each, and the verdict is the strictest any step gave. Post Review, approvals and automatic posting work on that one review as usual.
+- When every step has finished, their findings become one review: findings on the same line are joined, each says which specialist raised it (one of your own [Just me](/docs/agents/workflows/#specialists) specialists is called "Reviewer", so its name isn't posted), the summary has a paragraph from each, and the verdict is the strictest any step gave. Post Review, approvals and automatic posting work on that one review as usual.
 
-Which workflow a PR gets is set by the project's routing rules (by repo, author, labels or changed paths), else the project's default. Review with Claude shows the workflow it will use and lets you pick another for this review, with the most passes it can make. Review Again and Look Again ask the review's first specialist only.
+Which workflow a PR gets is set by routing rules (by repo, author, labels or changed paths), your own first, then the project's, else your default. Review with Claude shows the workflow it will use and lets you pick another for this review, with the most passes it can make. Review Again and Look Again ask the review's first specialist only.
 
 ## Overview
 

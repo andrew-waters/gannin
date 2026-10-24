@@ -52,7 +52,7 @@ Your rules are checked first, in order, then the team's, and the first that matc
 
 ## Picking one for a run
 
-When the activity has workflows of your own, starting it by hand (Review with Claude, Work on This, Quick Change, Ask, a new plan and New Design and Refine) has a **Workflow** choice: as routed (naming the workflow the rules give this PR or issue), or any of the activity's workflows for this run only, with the most passes it can make. For a review, rules on authors, labels and paths are checked as it starts, so the choice names the workflow its repo alone would get.
+When the activity has workflows besides Gannin's (the team's or yours), starting it by hand (Review with Claude, Work on This, Quick Change, Ask, a new plan and New Design and Refine) has a **Workflow** choice: as routed (naming the workflow the rules give this PR or issue), or any of the activity's workflows (yours marked "just me") for this run only, with the most passes it can make. For a review, rules on authors, labels and paths are checked as it starts, so the choice names the workflow its repo alone would get.
 
 ## Sharing with the team
 
