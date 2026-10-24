@@ -11,7 +11,7 @@ The symbols are the usual Mac ones: ⌘ Command, ⇧ Shift, ⌥ Option, ⌃ Cont
 
 | Shortcut | What it does | Where |
 | --- | --- | --- |
-| ⌘N | Starts a new issue in the window you are in | File › New Issue |
+| ⌘N | Starts a new issue in the window you are in, a main window or the Claude Code window | File › New Issue |
 | ⌥⌘N | Opens a new main window | File › New Window |
 | ⌘T | Opens a new tab, joined to the current window | File › New Tab |
 | ⇧⌘R | Renames the current window or tab | File › Rename Tab |

@@ -9,12 +9,13 @@ New Issue creates a GitHub issue, or a draft item on a board, without leaving Ga
 
 ## Open it
 
-- File › New Issue (⌘N).
+- File › New Issue (⌘N), in a main window or the Claude Code window.
+- New Issue in the + menu of the Claude Code window's tab bar.
 - New Issue in the toolbar of the issue pages, Inbox, Epics, Prioritisation, Board Hygiene, Views and boards.
 - The + on a board column, which presets that column's value.
 - New Sub-issue in an issue's context menu or drawer.
 
-The new issue opens in a drawer once it's created.
+The new issue opens in a drawer once it's created (in a main window, when you started from the Claude Code window).
 
 ## Two steps
 

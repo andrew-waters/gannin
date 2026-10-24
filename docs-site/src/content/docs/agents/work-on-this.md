@@ -27,7 +27,7 @@ The session runs through the project's coding [workflow](/docs/agents/workflows/
 Every session opens as a tab in the one Claude Code window. Tabs are remembered across launches.
 
 - Each tab shows an icon for its kind, and the issue or PR above its title.
-- **+** opens a popover with New Ask, Quick Change and Plan buttons over a list of sessions you've started that have no tab open.
+- **+** opens a popover with New Ask, Quick Change, Plan and New Issue buttons over a list of sessions you've started that have no tab open.
 - Review tabs sit together after the work tabs (issue work, plans, Asks, Quick Changes and new drafts), with a divider between the groups when both are open.
 - Drag tabs into order within their group; dropping one across the divider leaves it in its own group. Rename Tab (or double-click) names one; clearing the name goes back to the title.
 - When Claude has quit, whether its shell is still open or the terminal has ended, a Resume button over the terminal ends the shell and starts Claude again where the conversation left off.
