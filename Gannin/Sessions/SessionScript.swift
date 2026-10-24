@@ -164,7 +164,7 @@ enum SessionScript {
         // mode first, then pastes it (`SessionStore.startUnattended`).
         let prompt = session.routineRun == nil ? openingPrompt(session) : nil
         return """
-            \(session.agent.launch(session, settings: settings, prompt: prompt))
+            \(prepareSteps(session))\(session.agent.launch(session, settings: settings, prompt: prompt))
             printf exited > "$session/state"
             printf '\\033]\(signalCode);state:exited\\007' > /dev/tty 2>/dev/null
             \(afterExit ?? "note \"Claude Code has exited. \(shellNote); run claude --resume $id to go on.\"\nexec \"${SHELL:-bash}\" -l")

@@ -19,6 +19,8 @@ Open **Rituals › Design and Refine** and press **New Design and Refine** (it's
 
 **Start** (⌘↩) opens the session in its tab. It always runs on this Mac, in the project's harness, in its own folder `.worktrees/refine-<date>-<name>/`, which is kept out of git. Claude is told it's a co-reviewer: it reads the code and never changes it.
 
+The session runs through the project's Design and Refine [workflow](/docs/agents/workflows/). With none set up, it's the session described here. A workflow can have a [specialist](/docs/concepts/specialists-and-workflows/) run the session, on its own model, told who it is before the team's prompts, and still a co-reviewer that changes nothing.
+
 ## Stepping through the page
 
 The session's tab shows the page in a browser inside Gannin, with the findings beside it. Above the page are **Back**, **Forward**, **Reload** and the address: type a new one and press Return to go there. Links work as they would in a browser. **Terminal** opens Claude's terminal below, with its composer.

@@ -110,6 +110,7 @@ struct GanninApp: App {
             return orgConfigs?.harnesses(for: session.org).first { $0.repo == repo }?.enabledExtraReviewers ?? []
         }
         sessions.holdsOff = { [weak auth] in auth?.shouldHoldOff ?? false }
+        sessions.agentWorkflows = { [weak team] org, setup in team?.data(for: org, in: setup).agentWorkflows ?? AgentWorkflows() }
         // An Ask's org data, written when it starts or resumes.
         sessions.orgContext = { [weak orgs, weak metrics, weak issues, weak orgConfigs, weak harness, weak peopleDates, weak hidden] org, repo in
             guard let orgs, let metrics, let issues, let orgConfigs, let harness, let peopleDates, let hidden else { return [:] }

@@ -19,11 +19,11 @@ struct ClaudeCodeProvider: InteractiveProvider, AskingProvider {
 
     // MARK: Launch
 
-    /// `--model` with the model picked in Settings, applied on each start
-    /// and resume (nothing when it's left to Claude Code), and a reviewer's
-    /// tools taken away.
+    /// `--model` with the session's workflow step's model, else the one
+    /// picked in Settings, applied on each start and resume (nothing when
+    /// it's left to Claude Code), and a reviewer's tools taken away.
     private func options(_ session: CodeSession) -> String {
-        var options = SessionStore.model.map { " --model \(SessionScript.quoted($0))" } ?? ""
+        var options = (session.model ?? SessionStore.model).map { " --model \(SessionScript.quoted($0))" } ?? ""
         // A reviewer reads and reports; it can't change the code.
         var disallowed = session.isReviewer ? ["Edit", "MultiEdit", "Write", "NotebookEdit"] : []
         // A scheduled run goes only as far as its routine's limit lets it.
@@ -42,6 +42,11 @@ struct ClaudeCodeProvider: InteractiveProvider, AskingProvider {
               claude --session-id "$id"\(options(session)) --settings \(settings)\(prompt)
             fi
             """
+    }
+
+    func oneShotCommand(promptFile: String, model: String?) -> String {
+        let model = model.map { " --model \(SessionScript.quoted($0))" } ?? ""
+        return "claude -p --output-format text --allowedTools 'Read,Glob,Grep'\(model) < \(promptFile)"
     }
 
     // MARK: Settings and hooks

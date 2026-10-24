@@ -62,6 +62,7 @@ struct HarnessView: View {
     @State private var suggestingIn: HarnessChoice?
     @State private var editingSkill: HarnessEdit<HarnessDocument>?
     @State private var editingPrompt: HarnessEdit<HarnessPrompt>?
+    @State private var editingSpecialist: HarnessEdit<HarnessSpecialist>?
 
     /// New on the page: a plan opens as a new plan's tab in the Claude
     /// Code window, in that harness; anything else, its editor.
@@ -172,6 +173,9 @@ struct HarnessView: View {
         .sheet(item: $editingPrompt) { edit in
             HarnessPromptEditor(org: org, setup: edit.setup, library: HarnessPromptLibrary(index: harness.index(for: org, edit.setup)), prompt: edit.item)
         }
+        .sheet(item: $editingSpecialist) { edit in
+            HarnessSpecialistEditor(org: org, setup: edit.setup, specialist: edit.item)
+        }
     }
 
     /// The harness a document in the combined index is in, and the
@@ -190,12 +194,13 @@ struct HarnessView: View {
         if let index = harness.combined(org: org, harnesses) {
             let lookup = IssueLookup(history: issueStore.history(for: org))
             let linkable = kind == .plans || kind == .requirements
-            let pool = index.documents(kind).filter(\.followsStandard)
+            // A specialist with prose only still runs, so it's listed too.
+            let pool = index.documents(kind).filter { $0.followsStandard || kind == .specialists }
                 .filter { !(linkable && unlinkedOnly) || $0.subjects.isEmpty }
                 .filter { harnessFilter == nil || ($0.harnessRepo ?? setup.repo) == harnessFilter }
                 .filter { matches($0) }
             // Only what follows the standard; older documents aren't listed.
-            let documents = pool.filter { $0.followsStandard && matchesPicked($0) }
+            let documents = pool.filter { ($0.followsStandard || kind == .specialists) && matchesPicked($0) }
             VStack(spacing: 0) {
                 bar(linkable: linkable, pool: pool, harnesses: harnesses)
                 Divider()
@@ -377,6 +382,9 @@ struct HarnessView: View {
                                 if document.kind == .prompts, let (setup, own) = source(of: document), let prompt = HarnessPrompt(document: own) {
                                     Button("Edit Prompt") { editingPrompt = HarnessEdit(setup: setup, item: prompt, id: document.path) }
                                 }
+                                if document.kind == .specialists, let (setup, own) = source(of: document), let specialist = HarnessSpecialist(document: own) {
+                                    Button("Edit Specialist") { editingSpecialist = HarnessEdit(setup: setup, item: specialist, id: document.path) }
+                                }
                                 if let url = index.url(for: document) {
                                     Button("Open on GitHub") { openURL(url) }
                                 }
@@ -410,6 +418,12 @@ struct HarnessView: View {
         // whether they're ticked to start with, and the skills they bring.
         if kind == .prompts {
             columns += promptColumns
+            if showsHarness { columns.append(harnessColumn(primary: primary)) }
+            return columns
+        }
+        // Specialists: their defaults, which a workflow step can override.
+        if kind == .specialists {
+            columns += specialistColumns
             if showsHarness { columns.append(harnessColumn(primary: primary)) }
             return columns
         }
@@ -502,6 +516,26 @@ struct HarnessView: View {
                                 .foregroundStyle(.secondary)
                                 .lineLimit(1))
                         }),
+        ]
+    }
+
+    private var specialistColumns: [StatsColumn<HarnessDocument>] {
+        func specialist(_ document: HarnessDocument) -> HarnessSpecialist? { HarnessSpecialist(document: document) }
+        func runsOn(_ specialist: HarnessSpecialist?) -> String {
+            guard let specialist else { return "" }
+            let provider = ProviderID(name: specialist.provider)?.title ?? specialist.provider ?? ProviderID.claudeCode.title
+            return specialist.model.map { "\(provider), \($0)" } ?? provider
+        }
+        return [
+            StatsColumn(id: "name", title: "Name", help: "What a workflow step names it by", width: 160,
+                        sortKey: { .text(specialist($0)?.name ?? "") },
+                        cell: { document in AnyView(Text(specialist(document)?.name ?? "").font(.body.monospaced()).lineLimit(1)) }),
+            StatsColumn(id: "runs", title: "Runs on", help: "Its provider and model, unless a step says otherwise", width: 200,
+                        sortKey: { .text(runsOn(specialist($0))) },
+                        cell: { document in AnyView(Text(runsOn(specialist(document))).lineLimit(1)) }),
+            StatsColumn(id: "focus", title: "Focus", help: "What it looks at when a step doesn't say", width: 260,
+                        sortKey: { .text(specialist($0)?.focus ?? "") },
+                        cell: { document in AnyView(Text(specialist(document)?.focus ?? "").foregroundStyle(.secondary).lineLimit(2)) }),
         ]
     }
 

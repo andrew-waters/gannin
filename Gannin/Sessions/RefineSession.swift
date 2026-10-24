@@ -150,6 +150,7 @@ extension SessionStore {
         )
         session.refine = info
         session.prompt = Self.refinePrompt(session)
+        applyWorkflow(.refine, to: &session, org: org, setup: setup, subject: nil)
         let directory = Self.directory(for: id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(Self.refineBrief(session).utf8).write(to: directory.appending(path: "brief.md"))

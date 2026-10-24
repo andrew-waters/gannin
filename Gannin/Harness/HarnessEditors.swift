@@ -27,6 +27,8 @@ struct HarnessNewDocumentSheet: View {
         case .refines:
             // Committed when a Design and Refine session is agreed instead.
             EmptyView()
+        case .specialists:
+            HarnessSpecialistEditor(org: org, setup: setup, specialist: nil)
         }
     }
 
@@ -445,6 +447,7 @@ struct DraftWithClaudeSection: View {
         switch kind {
         case .skills: "Rotate a tenant's API keys and check nothing breaks"
         case .prompts: "Reviews of the billing service should check money handling and idempotency"
+        case .specialists: "A security reviewer who knows our auth middleware and looks for injection and leaked secrets"
         case .findings: "Exports time out for orgs with over 10k jobs; it's the N+1 in job_exports"
         case .learnings: "Sync writes go through the actor in SyncStore because two windows can refresh at once"
         case .decisions: "We run every session in the harness root rather than in the code repo, so plans sit beside the code"

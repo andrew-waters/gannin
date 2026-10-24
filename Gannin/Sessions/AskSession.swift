@@ -56,13 +56,14 @@ extension SessionStore {
         let info = AskInfo(title: title, slug: slug, message: message)
         let instructions = launchInstructions(org: org, setup: setup, use: .ask, repos: [], choice: choice,
                                               values: ["title": title, "repo": setup.repo, "branch": branch])
-        let session = CodeSession(
+        var session = CodeSession(
             id: id, issue: IssueReference(org: org, id: "ask-\(id.uuidString)", number: 0, title: title, repo: setup.repo,
                                               url: URL(string: "https://github.com/\(setup.repo)")!),
             repo: setup.repo, branch: branch, createdAt: .now,
             connect: nil, harnessRepo: setup.repo, harnessPath: harnessPath,
             prompt: Self.askPrompt(message, branch: branch), instructions: instructions, ask: info
         )
+        applyWorkflow(.ask, to: &session, org: org, setup: setup, subject: nil)
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data(Self.askBrief(session).utf8).write(to: directory.appending(path: "brief.md"))

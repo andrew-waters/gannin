@@ -106,6 +106,17 @@ struct CodeSession: Codable, Identifiable, Hashable {
     /// The provider its terminal runs (`AgentProvider`); nil for sessions
     /// from before providers, which ran Claude Code.
     var provider: ProviderID? = nil
+    /// The model its workflow step names, over the one in Settings; nil
+    /// for Settings' (`SessionStore.model`).
+    var model: String? = nil
+    /// The workflow it was started through, when it isn't the activity's
+    /// built-in one (`WorkflowLaunch.swift`).
+    var workflow: SessionWorkflow? = nil
+    /// A review run through a workflow of more than Gannin's one step, on
+    /// its lead review (`ReviewRuns.swift`).
+    var reviewRun: ReviewRun? = nil
+    /// A step of another review's run, on that step's helper.
+    var reviewStep: ReviewStepReference? = nil
 
     var isRemote: Bool { connect != nil }
     var isSandboxed: Bool { sandbox != nil }
@@ -171,6 +182,10 @@ extension CodeSession {
         attachments = try? container.decodeIfPresent([SessionAttachment].self, forKey: .attachments)
         // A provider this build doesn't know reads as none.
         provider = try? container.decodeIfPresent(ProviderID.self, forKey: .provider)
+        model = try? container.decodeIfPresent(String.self, forKey: .model)
+        workflow = try? container.decodeIfPresent(SessionWorkflow.self, forKey: .workflow)
+        reviewRun = try? container.decodeIfPresent(ReviewRun.self, forKey: .reviewRun)
+        reviewStep = try? container.decodeIfPresent(ReviewStepReference.self, forKey: .reviewStep)
     }
 }
 
@@ -487,6 +502,9 @@ final class SessionStore {
     /// The extra pair reviewers turned on for a session's project; set by
     /// the app, from the user's own settings.
     @ObservationIgnored var extraReviewers: (CodeSession) -> [ExtraReviewer] = { _ in [] }
+    /// A project's agent workflows, from its harness's team data (with
+    /// what's pending on top); set by the app.
+    @ObservationIgnored var agentWorkflows: (String, HarnessConfig) -> AgentWorkflows = { _, _ in AgentWorkflows() }
     /// The budget is low or GitHub has refused: background PR checks wait.
     @ObservationIgnored var holdsOff: () -> Bool = { false }
     /// Gannin's view of an org as files (`OrgContext`), for an Ask session
@@ -771,14 +789,19 @@ final class SessionStore {
 
     /// The issue's session, made in the harness checkout at `harnessPath` if
     /// it has none, with its brief written afresh from what Gannin knows now.
-    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, placement: SandboxPlacement = .host(nil), brief: (CodeSession) -> String) -> CodeSession {
+    /// A new one runs the coding workflow routed for `subject`, or
+    /// `workflow` when one was picked.
+    func start(_ issue: IssueReference, harness: HarnessConfig, harnessPath: String, instructions: String? = nil, placement: SandboxPlacement = .host(nil),
+               subject: WorkflowSubject? = nil, workflow: AgentWorkflow? = nil, brief: (CodeSession) -> String) -> CodeSession {
         let session = session(forIssue: issue.id) ?? {
             let id = UUID()
-            return CodeSession(
+            var made = CodeSession(
                 id: id, issue: issue, repo: harness.repo, branch: Self.branchName(issue), createdAt: .now,
                 connect: Self.connectCommand, harnessRepo: harness.repo, harnessPath: harnessPath, instructions: instructions,
                 sandbox: placement.isSandboxed ? SandboxPlacement.containerName(for: id) : nil, hostReason: placement.reason
             )
+            self.applyWorkflow(.work, to: &made, org: issue.org, setup: harness, subject: subject ?? WorkflowSubject(repo: issue.repo), workflow: workflow)
+            return made
         }()
         sessions[session.id] = session
         noteSandboxedHarnesses()
@@ -928,6 +951,7 @@ final class SessionStore {
         }
         if let session = sessions[id] {
             cancelRunningExtras(of: session.pairing)
+            cancelRunSteps(of: session)
             deleteSandbox(of: session)
             deleteAttachmentsOnBox((session.attachments ?? []).map(\.name), of: session)
         }
@@ -1306,11 +1330,13 @@ final class SessionStore {
         sessions[id]?.pullRequests.append(url)
         saveNow()
         recordPullRequest(url, for: id)
+        runStepsAfter(url, for: id)
     }
 
     private func terminated(_ id: UUID) {
         unwatchHooks(id)
         setState(.stopped, for: id)
+        stepEnded(id)
         stopSandboxIfIdle(id)
     }
 
@@ -1486,6 +1512,13 @@ final class SessionStore {
         var summary = reader.summary
         if let limit = contextWindows[id] { summary.contextLimit = limit }
         if transcripts[id] != summary { transcripts[id] = summary }
+        // A step of a review workflow's run: its round goes to the run,
+        // which makes the review once every step has finished.
+        if let session = sessions[id], session.reviewStep != nil || (session.reviewRun.map { $0.finishedAt == nil } ?? false) {
+            if !moreToRead, let review = reader.summary.review { stepResult(review, from: id) }
+            pairRoundRead(id)
+            return
+        }
         // A review's result is kept with it, for the history.
         if sessions[id]?.isPullRequestReview == true, !moreToRead, let review = reader.summary.review, sessions[id]?.reviewResult != review {
             sessions[id]?.reviewResult = review

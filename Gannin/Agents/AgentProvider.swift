@@ -68,6 +68,11 @@ protocol InteractiveProvider: AgentProvider {
     /// later. Needs `$session`, `$id` and the start script's `fail`.
     func launch(_ session: CodeSession, settings: String, prompt: String?) -> String
 
+    /// A shell command that answers the prompt in `promptFile` once, on
+    /// this box, printing the reply: a workflow's one-shot step before the
+    /// session (`SessionWorkflow.before`). Read-only tools only.
+    func oneShotCommand(promptFile: String, model: String?) -> String
+
     /// The settings file the session is started with: hooks writing its
     /// state into `directory` (a shell expression on its box), the PR it
     /// opens, the statusline, and the session rules' hook when there are

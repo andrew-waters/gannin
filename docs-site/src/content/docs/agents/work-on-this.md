@@ -15,6 +15,8 @@ If the harness records sessions, Gannin asks before committing the session's bri
 
 An issue that already has a session shows Open Session instead.
 
+The session runs through the project's coding [workflow](/docs/agents/workflows/). With none set up, it's the session described here. A workflow can have a [specialist](/docs/concepts/specialists-and-workflows/) run the session, on its own model, told who it is before the team's prompts. The project can route issues to a workflow by repo, labels or issue type. Steps before the session prepare its brief first (shown as "Preparing the session" in the terminal), and steps after it review each pull request the session opens, in the background: the session's panel says when one has started.
+
 ## The Claude Code window
 
 <figure class="screenshot">

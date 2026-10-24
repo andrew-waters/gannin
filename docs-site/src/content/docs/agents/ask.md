@@ -13,6 +13,8 @@ New Ask is at the top of the sidebar, in the Claude Code window's **+**, on the 
 
 An Ask always runs on this Mac, in the project's harness checkout, in a folder of its own. Claude can read Gannin's view of your org there.
 
+The session runs through the project's Ask [workflow](/docs/agents/workflows/). With none set up, it's the session described here. A workflow can have a [specialist](/docs/concepts/specialists-and-workflows/) run the session, on its own model, told who it is before the team's prompts.
+
 ## The side panel
 
 An Ask's panel is Session, then PRs once it has some, then Activity (there are no Changes).

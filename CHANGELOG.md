@@ -11,6 +11,11 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Added
 - Gannin can be installed with Homebrew: `brew install --cask andrew-waters/tap/gannin`. It keeps updating itself as before
+- Specialists: the team's own agents, each with a soul saying who it is and what it looks for, and a default provider, model and focus. Harness › Specialists lists them; New Specialist and Edit Specialist commit `specialists/<name>.md` to the project's harness
+- Workflows: reviews, Work on This, Quick Change, Ask, Planning and Design and Refine each run through a workflow of specialists, kept in the project's harness (`.gannin/agent-workflows.json`). A review workflow runs specialists in stages, side by side or one after another, each for one or more rounds, and posts one review with each finding labelled by the specialist that raised it. Reviews and coding can be routed to a workflow by repo, author, labels, changed paths or issue type. With no workflows set up, everything runs as before. A Mac on an older Gannin ignores the file, and drops any workflow it can't read if it saves it
+
+### Changed
+- Settings › General's Provider lists Claude Code by name, as sessions now reach it through a provider that others can join later
 
 ## [0.0.5] - 2026-10-23
 

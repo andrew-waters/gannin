@@ -84,6 +84,8 @@ enum HarnessSkeleton {
                 - `skills/`: reusable workflows for Claude Code (`skills/README.md`).
                 - `prompts/`: the team's prompts for Claude Code sessions, offered by Gannin when work, a
                   review or planning starts (`prompts/README.md`).
+                - `specialists/`: the team's specialist agents, which Gannin's workflows run as steps of a
+                  review or other agent work (`specialists/README.md`).
                 - `learnings/<repo>/`: rules and reasons people gave in review, scoped to the code they're
                   about, which reviews follow (`learnings/README.md`).
                 - `refines/`: a record of each Design and Refine session, its screenshots beside it
@@ -119,7 +121,7 @@ enum HarnessSkeleton {
 
                 | Field | For | What it holds |
                 | ----- | --- | ------------- |
-                | `type` | all | `requirement`, `plan`, `decision`, `finding`, `skill`, `learning` or `refine` |
+                | `type` | all | `requirement`, `plan`, `decision`, `finding`, `skill`, `prompt`, `specialist`, `learning` or `refine` |
                 | `status` | all but skills | One value from the list below, never a sentence |
                 | `summary` | all | A sentence or two for deciding whether to open it, as a `>` block |
                 | `domains` | all | The product areas it belongs to, from the list below, the main one first |
@@ -129,6 +131,7 @@ enum HarnessSkeleton {
                 | `repo`, `paths`, `commit`, `source`, `author` | learnings | See `learnings/README.md` |
                 | `url`, `attendees` | refines | See `refines/README.md` |
                 | `superseded_by`, `plans` | decisions | See `decisions/README.md` |
+                | `name`, `provider`, `model`, `focus` | specialists | See `specialists/README.md` |
                 | `key` | optional | `true` puts it first in its area on Gannin's Onboarding map |
 
                 Statuses:
@@ -150,6 +153,7 @@ enum HarnessSkeleton {
                 findings/YYYY-MM-DD-<slug>.md
                 skills/<name>.md
                 prompts/<name>.md
+                specialists/<name>.md
                 learnings/<repo>/YYYY-MM-DD-<slug>.md
                 refines/YYYY-MM-DD-<slug>/README.md
                 ```
@@ -363,6 +367,50 @@ enum HarnessSkeleton {
                 # Title
 
                 What Claude is told.
+
+                """,
+            "specialists/README.md": """
+                # Specialists
+
+                The team's specialist agents: a security reviewer, a documentation reviewer, whoever the team
+                wants. Gannin's workflows (Harness › Workflows) run them as steps, one after another or side
+                by side, when a pull request is reviewed or other agent work starts. Edit them in Gannin
+                (Harness › Specialists) or here, one file each:
+
+                ```markdown
+                ---
+                type: specialist
+                name: security-reviewer   # what a workflow step names it by
+                summary: >
+                  What it's for, in a line.
+                provider: claude-code     # or a one-shot CLI such as junie; Claude Code when left out
+                model: claude-opus-5-5    # the provider's default when left out
+                focus: >
+                  What it looks at when a step doesn't say.
+                ---
+
+                # Security reviewer
+
+                Its soul: who it is, what it knows about the team's code, what it looks for and what it
+                leaves to others.
+                ```
+
+                A workflow step can set its own provider, model and focus, which win over these.
+
+                """,
+            "specialists/_template.md": """
+                ---
+                type: specialist
+                name: {name}
+                summary: >
+                  What it's for, in a line.
+                focus: >
+                  What it looks at when a step doesn't say.
+                ---
+
+                # Title
+
+                Who it is and what it looks for.
 
                 """,
             "learnings/README.md": """

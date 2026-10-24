@@ -20,6 +20,8 @@ New Quick Change is beside New Ask in the sidebar, in the Claude Code window's *
 
 What you've typed stays in the tab while you look at another.
 
+The session runs through the project's Quick Change [workflow](/docs/agents/workflows/). With none set up, it's the session described here. A workflow can have a [specialist](/docs/concepts/specialists-and-workflows/) run the session, on its own model, told who it is before the team's prompts.
+
 ## With an issue
 
 Starting files an issue from your note, assigned to you, and adds it to the project's workflow board with Status set to its first in-progress option. If the board step fails, the error shows in the panel and the session starts anyway. From then on the session is that issue's, like [Work on This](/docs/agents/work-on-this/).

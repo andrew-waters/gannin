@@ -2161,7 +2161,8 @@ struct WorkOnThisLauncher: ViewModifier {
         let decided = placement(for: reference)
         // Picked in the sheet: the Mac over a sandbox, never the other way.
         let chosen: SandboxPlacement = decided.isSandboxed && !sandboxed ? .host(SandboxPlacement.pickedHost) : decided
-        let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions, placement: chosen) { session in
+        let session = sessions.start(reference, harness: setup, harnessPath: path, instructions: instructions, placement: chosen,
+                                     subject: sessions.codingSubject(reference, record: record)) { session in
             SessionBrief.make(session: session, record: record, detail: detail, parent: parent, harness: index, goals: goals)
         }
         guard recording else {
@@ -2190,7 +2191,7 @@ struct SessionSidebarRows: View {
 
     var body: some View {
         let all = sessions.sessions(for: org)
-        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
+        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && $0.reviewStep == nil && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
         // Active reviews, newest first, then the history.
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }

@@ -81,7 +81,9 @@ extension SessionStore {
     /// `choice` is what was picked from the team's prompts and skills; nil
     /// takes the defaults for the PR's repo.
     /// `reveals` false starts it without showing its tab (an automatic review).
-    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true) async -> CodeSession {
+    /// `workflow` is the one picked for this run; nil takes the one the
+    /// project's review routing rules give the PR (`ReviewRuns.swift`).
+    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true, workflow picked: AgentWorkflow? = nil) async -> CodeSession {
         if let existing = review(of: pr.id) {
             if reveals { reveal(existing.id) }
             return existing
@@ -110,11 +112,33 @@ extension SessionStore {
                 instructions: instructions.map(Self.reviewInstructions), isReviewer: true, reviewOf: pr
             )
             session.reviewConfig = config.isEmpty ? nil : config
+            // A workflow of more than Gannin's one step: the lead runs its
+            // first step, with the rest started beside and after it.
+            let workflow: AgentWorkflow
+            if let picked {
+                workflow = picked
+            } else {
+                workflow = routedWorkflow(org: pr.org, setup: setup, activity: .review, subject: await reviewSubject(pr, org: pr.org, setup: setup))
+            }
+            if var run = reviewRun(for: workflow, org: pr.org, setup: setup), let lead = Self.leadStep(of: run) {
+                run.steps[lead].session = session.id
+                run.steps[lead].state = .running
+                let step = run.steps[lead]
+                let specialist = step.specialist.flatMap { specialists(org: pr.org, setup: setup)[$0.lowercased()] }
+                let added = Self.stepInstructions(step, of: run, specialist: specialist)
+                if !added.isEmpty { session.prompt = (session.prompt ?? "") + "\n\n" + added }
+                session.model = step.model
+                session.reviewRun = run
+            }
             let directory = Self.directory(for: session.id)
             try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             let brief = "# Review of \(pr.repo)#\(pr.number): \(pr.title)\n\n\(pr.url.absoluteString)\n"
             try? Data(brief.utf8).write(to: directory.appending(path: "brief.md"))
             add(session)
+            if session.reviewRun != nil {
+                // After the caller has marked an automatic one, so its steps count.
+                Task { advanceRun(session.id) }
+            }
             return session
         }
         startingReviews[pr.id] = task

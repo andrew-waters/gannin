@@ -74,6 +74,7 @@ extension SessionStore {
         )
         session.quickChange = QuickChangeInfo(note: note, attachments: names, hasIssue: issue != nil, boardError: boardError)
         session.prompt = Self.quickChangePrompt(session)
+        applyWorkflow(.quickChange, to: &session, org: org, setup: setup, subject: WorkflowSubject(repo: repo))
         let directory = Self.directory(for: id)
         let folder = directory.appending(path: Self.attachmentsFolder, directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)

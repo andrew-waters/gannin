@@ -107,12 +107,13 @@ extension SessionStore {
         info.sources = sources.flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
         let url = URL(string: "https://github.com/\(setup.repo)")!
         let instructions = launchInstructions(org: org, setup: setup, use: .planning, repos: [], choice: choice, values: Self.planningValues(topic: topic, harness: setup.repo, branch: branch))
-        let session = CodeSession(
+        var session = CodeSession(
             id: UUID(), issue: IssueReference(org: org, id: "plan-\(UUID().uuidString)", number: 0, title: topic, repo: setup.repo, url: url),
             repo: setup.repo, branch: branch, createdAt: .now,
             connect: Self.connectCommand, harnessRepo: setup.repo, harnessPath: harnessPath,
             role: "Plan", prompt: Self.planningPrompt(info, branch: branch, guidance: guidance, filing: filing), instructions: instructions, planning: info
         )
+        applyWorkflow(.planning, to: &session, org: org, setup: setup, subject: nil)
         let directory = Self.directory(for: session.id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let brief = "# Planning: \(topic)\n\n" + (documentPath.map { "Starting from `\($0)` in the harness.\n" } ?? "")

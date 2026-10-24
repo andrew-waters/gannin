@@ -195,10 +195,18 @@ extension SessionStore {
     /// Automatic reviews whose claude is running, every org's, and those just
     /// started whose claude hasn't come up yet (`automaticStartedAt`), so a
     /// review between its start and its terminal still holds its place.
+    /// A workflow run's step sessions count one each, as they're reviews
+    /// running too.
     var automaticReviewsRunning: Int {
-        automaticRuns.filter { id in
+        let leads = automaticRuns.filter { id in
             isRunning(id) || automaticStartedAt[id].map { Date.now.timeIntervalSince($0) < AutoReview.launchGrace } ?? false
         }.count
+        // From when each starts, not once its claude runs, as for a review.
+        let steps = automaticRuns.reduce(0) { count, lead in
+            guard let run = sessions[lead]?.reviewRun, run.finishedAt == nil else { return count }
+            return count + run.steps.filter { $0.state == .running && $0.session != lead }.count
+        }
+        return leads + steps
     }
 
     /// Auto review of a request found, when it's on for the PR's org: in the
