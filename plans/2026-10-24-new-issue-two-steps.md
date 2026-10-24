@@ -1,6 +1,6 @@
 ---
 type: plan
-status: In progress
+status: Done
 summary: New Issue opens on Claude, with the conversation on the left and a read-only preview of the draft on the right, then moves to today's form, filled from the draft, to check the details and create it.
 issues: [andrew-waters/gannin#500]
 domains: [issues]
@@ -36,3 +36,4 @@ issues start as a rough line. The sheet is `Gannin/Issues/NewIssue.swift` (`NewI
 - [x] CHANGELOG
 - [x] Review round 1: Escape only cancels a blank sheet, a note of what Create Another made, wrapping labels, the latest reply scrolled to, template footers, the shortcuts page
 - [x] Review round 2: Cancel leaves the cancellation placement once there's a draft
+- [x] New Issue in the Claude Code window: the + menu tile and ⌘N
