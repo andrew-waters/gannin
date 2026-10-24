@@ -28,7 +28,7 @@ Click an issue to open it in the drawer.
 
 ## Needs discussion
 
-To raise an issue at standup, give it the team's discussion label on GitHub. The label is "needs discussion" unless your team has named another one. Open issues with the label are listed first under Done and needs discussion, and they're also kept in their own column with a speech-bubble mark.
+To raise an issue at standup, give it the team's discussion label on GitHub. The label is "needs discussion" unless your team has named another one. Issues with the label are listed first under Done and needs discussion, under To discuss, with a speech-bubble mark: every open one, and any completed since the day began. Open ones are also kept in their own column, with the same mark.
 
 Right-click an issue and choose **Needs Discussion** to add the label, or **Discussed** to take it off. Gannin asks you to confirm before it writes to GitHub, and it creates the label in the repo if the repo doesn't have one yet.
 

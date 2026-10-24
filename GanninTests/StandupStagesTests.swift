@@ -87,13 +87,18 @@ struct StandupStagesTests {
             issue(2, labels: ["needs discussion"]),
             issue(3, status: "In progress", labels: ["talk"]),
             issue(4, labels: ["needs discussion"], closed: since.addingTimeInterval(60)),
+            issue(5, status: "Done", labels: ["needs discussion"], moves: [("Done", since.addingTimeInterval(30))]),
+            issue(6, closed: since.addingTimeInterval(90)),
         ]
         let standup = StandupBoard(issues: issues, board: board, config: config(), since: since)
-        #expect(standup.discussion.map(\.record.number).sorted() == [1, 2])
+        // Done since and labelled is to discuss, and only that.
+        #expect(standup.discussion.map(\.record.number).sorted() == [1, 2, 4, 5])
+        #expect(standup.discussion.allSatisfy { $0.needsDiscussion })
+        #expect(standup.items(.done).map(\.record.number) == [6])
+        #expect(standup.count(.done) == 5)
         #expect(standup.items(.progress).map(\.record.number).sorted() == [1, 3])
         #expect(standup.items(.progress).first { $0.record.number == 1 }?.needsDiscussion == true)
         #expect(standup.items(.triage).map(\.record.number) == [2])
-        #expect(standup.count(.done) == 3)
 
         let own = StandupBoard(issues: issues, board: board, config: config(StandupConfig(discussionLabel: "talk")), since: since)
         #expect(own.discussion.map(\.record.number) == [3])

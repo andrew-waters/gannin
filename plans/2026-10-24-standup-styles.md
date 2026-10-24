@@ -30,8 +30,9 @@ These came from questions answered on 24 October 2026.
   `.gannin/standup.json` (`StandupConfig`): the style it opens on, a stage per board Status, and
   the discussion label. Read leniently, so an unknown style or stage reads as the default.
 - **"Needs discussion" is a GitHub label**, "needs discussion" unless the team names another.
-  Everyone sees it on GitHub too. Open issues with it are listed first under Done and needs
-  discussion, and stay in their own column with a mark, so Triage still matches Prioritisation.
+  Everyone sees it on GitHub too. Issues with it (open, or completed since the day began) are
+  listed first under Done and needs discussion, and never again in Done's own list. Open ones
+  also stay in their own column with a mark, so Triage still matches Prioritisation.
   Needs Discussion and Discussed in an issue's menu add or remove it, after a confirmation, like
   every GitHub write; the label is created in the repo if it's missing.
 - **Columns are mapped per project, in Settings.** Org settings › Issues › Standup columns has a
@@ -83,3 +84,4 @@ every style but Changelog, and now includes tickets in flight.
 - [x] Tests: `StandupStagesTests.swift`
 - [x] Docs: `guides/standup` rewritten; `guides/app-tour`, `guides/prioritisation`, `guides/weekly-digest`, `settings/org/issues`, `settings/org/harness`, `concepts/where-things-are-kept`
 - [x] CHANGELOG and rules
+- [x] Review round 1: a labelled issue done since is listed once, under To discuss, with its mark and Discussed; Esc through `onEscape`

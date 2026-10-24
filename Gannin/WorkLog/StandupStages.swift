@@ -148,8 +148,9 @@ struct StandupBoard {
     }
 
     let since: Date
-    /// Open issues with the discussion label, whatever their column: shown
-    /// first, and in their own column too.
+    /// Issues with the discussion label: open ones whatever their column,
+    /// and those completed since. Shown first under Done, and open ones in
+    /// their own column too; never in Done's own list as well.
     private(set) var discussion: [Item] = []
     private(set) var columns: [Column: [Item]] = [:]
 
@@ -182,8 +183,9 @@ struct StandupBoard {
             guard let status else { continue }
             switch standup.stage(for: status, workflow: workflow) {
             case .done:
-                // Only what moved there since; older Done is old news.
-                if let lastMove, lastMove.at >= since, lastMove.status.caseInsensitiveCompare(status) == .orderedSame {
+                // Only what moved there since; older Done is old news. To
+                // discuss lists it already.
+                if !discussed, let lastMove, lastMove.at >= since, lastMove.status.caseInsensitiveCompare(status) == .orderedSame {
                     columns[.done, default: []].append(item)
                 }
             case .review: columns[.review, default: []].append(item)
@@ -193,7 +195,9 @@ struct StandupBoard {
         }
         for issue in issues where issue.isCompleted {
             guard let closed = issue.closedAt, closed >= since else { continue }
-            columns[.done, default: []].append(Item(record: issue, status: nil, isOnBoard: issue.fields(onProject: board) != nil, since: closed, needsDiscussion: false))
+            let discussed = standup.isDiscussed(issue)
+            let item = Item(record: issue, status: nil, isOnBoard: issue.fields(onProject: board) != nil, since: closed, needsDiscussion: discussed)
+            if discussed { discussion.append(item) } else { columns[.done, default: []].append(item) }
         }
         columns[.triage] = TriageQueue.untriaged(issues, board: board).map { issue in
             Item(record: issue, status: nil, isOnBoard: issue.fields(onProject: board) != nil, since: issue.createdAt, needsDiscussion: standup.isDiscussed(issue))

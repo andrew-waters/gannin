@@ -182,8 +182,7 @@ struct StandupPage: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        // The arrows step and Esc stops presenting, when nothing inside
-        // wants them.
+        // The arrows step, when nothing inside wants them.
         .focusable()
         .focusEffectDisabled()
         .focused($isFocused)
@@ -197,10 +196,8 @@ struct StandupPage: View {
             step = current + 1
             return .handled
         }
-        .onKeyPress(.escape) {
-            guard presenting else { return .ignored }
-            presenting = false
-            return .handled
+        .onEscape {
+            if presenting { presenting = false }
         }
         .onChange(of: style) { step = 0 }
         .onChange(of: presenting) {

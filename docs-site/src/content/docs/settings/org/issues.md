@@ -47,7 +47,7 @@ How the project runs [Standup](/docs/guides/standup/). This is a team file, and 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
 | Style | Walk the Board | The style Standup opens on: Walk the Board, Person by Person, Changelog or Written. Anyone can pick another from Standup's toolbar for the day, without changing this. | Harness (`.gannin/standup.json`) |
-| Discussion label | needs discussion | The GitHub label that marks an issue to discuss at standup. Open issues with it are listed first under Done and needs discussion. Standup's Needs Discussion and Discussed add and remove it. | Harness (`.gannin/standup.json`) |
+| Discussion label | needs discussion | The GitHub label that marks an issue to discuss at standup. Issues with it (open, or completed since the day began) are listed first under Done and needs discussion. Standup's Needs Discussion and Discussed add and remove it. | Harness (`.gannin/standup.json`) |
 
 ## Standup columns
 
