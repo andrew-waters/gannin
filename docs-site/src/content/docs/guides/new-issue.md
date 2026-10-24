@@ -27,13 +27,13 @@ The left side is the conversation:
 - **Make**: an issue, or a draft on a board.
 - **Repository**: the project's first repo by default.
 - **Board**: the workflow board by default. Claude suggests values for its fields.
-- **Template**: the repo's issue templates, if it has any (Markdown or forms). Claude keeps its headings.
+- **Template**: the repo's issue templates, if it has any (Markdown or forms). Claude keeps its headings. Picking one replaces the description.
 - **Images**: drop, paste or add them here or on the form (see [Images](#images)).
 - Say what the issue is about and press **Draft with Claude** (or Return). Ask for changes and press **Revise**. **Skills** chooses the harness skills Claude follows; the ones about issues are ticked to start with.
 
 The right side is a read-only preview of the draft: the title, labels, suggested board fields and the description. It updates with each reply.
 
-Press **Next** (⌘↩) when the draft looks right, or **Skip** to go straight to an empty form. Cancel or Escape closes the sheet.
+Press **Next** (⌘↩) when the draft looks right, or **Skip** to go straight to an empty form. Cancel closes the sheet; so does Escape, until you've asked or written anything.
 
 ### 2. Confirm
 
@@ -41,7 +41,7 @@ The form, filled from the draft. The left column is the issue itself: Make, Repo
 
 **Back** (or Escape) returns to Claude and keeps what you changed on the form: the next revision improves on it rather than starting over. Cancel closes the sheet.
 
-Tick **Create Another** to go back to Claude after each one, with the repo, board and parent kept.
+Tick **Create Another** to go back to Claude after each one, with the repo, board and parent kept. The Claude step says which issue was just created.
 
 ## What gets written
 

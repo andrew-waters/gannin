@@ -368,6 +368,8 @@ struct NewIssueSheet: View {
     @State private var labels: Set<String> = []
     @State private var parent: IssueReference?
     @State private var createAnother = false
+    /// What Create Another made last, said on the Claude step it returns to.
+    @State private var lastCreated: String?
     @State private var images = IssueImageSet()
 
     @State private var repoLabels: [RepoLabel] = []
@@ -397,12 +399,12 @@ struct NewIssueSheet: View {
         .frame(minWidth: 900, idealWidth: 960, minHeight: 640, idealHeight: 760)
         .navigationTitle(context.parent.map { "New Sub-issue of #\($0.number)" } ?? "New Issue")
         .toolbar {
-            // Escape is Cancel on the Claude step and Back on the form, so
-            // it never throws away a filled-in form.
+            // Escape is Back on the form, and Cancel on the Claude step only
+            // while there's nothing to lose, so it never throws away a draft.
             switch step {
             case .claude:
                 ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button("Cancel") { dismiss() }.keyboardShortcut(isBlank ? .cancelAction : nil)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(conversation.isEmpty ? "Skip" : "Next") { step = .confirm }
@@ -439,6 +441,13 @@ struct NewIssueSheet: View {
         .task { await harness.loadRepositories(org: org) }
     }
 
+    /// Nothing asked, drafted or written yet.
+    private var isBlank: Bool {
+        conversation.isEmpty && ask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && title.trimmingCharacters(in: .whitespaces).isEmpty && bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && images.isEmpty
+    }
+
     private var canCreate: Bool {
         guard !working, !title.trimmingCharacters(in: .whitespaces).isEmpty, images.isEmpty || imageHarness != nil else { return false }
         return kind == .issue ? !repo.isEmpty : board != nil
@@ -451,13 +460,18 @@ struct NewIssueSheet: View {
     private func claudeStep(board: Board?) -> some View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
-                Form {
-                    whatSection(showsBoard: true)
-                    if kind == .issue, !templates.isEmpty { templateSection }
-                    conversationSection
-                    imagesSection
+                ScrollViewReader { reader in
+                    Form {
+                        whatSection(showsBoard: true)
+                        if kind == .issue, !templates.isEmpty { templateSection(onClaudeStep: true) }
+                        imagesSection
+                        conversationSection
+                    }
+                    .formStyle(.grouped)
+                    .onChange(of: conversation.count) { _, count in
+                        withAnimation { reader.scrollTo(count - 1, anchor: .bottom) }
+                    }
                 }
-                .formStyle(.grouped)
                 Divider()
                 composer(board: board)
             }
@@ -470,16 +484,20 @@ struct NewIssueSheet: View {
 
     private var conversationSection: some View {
         Section {
+            if let lastCreated {
+                Label("Created \(lastCreated)", systemImage: "checkmark.circle.fill").foregroundStyle(.secondary)
+            }
             if conversation.isEmpty {
                 Text("Say what it's about: a rough line is enough. Claude writes the title, description and labels, and suggests board fields, following the template and the skills picked. Or Skip and write it yourself.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            ForEach(Array(conversation.enumerated()), id: \.offset) { _, turn in
+            ForEach(Array(conversation.enumerated()), id: \.offset) { index, turn in
                 VStack(alignment: .leading, spacing: 4) {
                     Text(turn.ask).frame(maxWidth: .infinity, alignment: .trailing).foregroundStyle(.secondary)
                     Text(turn.reply).font(.callout)
                 }
+                .id(index)
             }
         } header: {
             Text("Claude")
@@ -542,7 +560,7 @@ struct NewIssueSheet: View {
                     .foregroundStyle(trimmed.isEmpty ? .tertiary : .primary)
                     .textSelection(.enabled)
                 if kind == .issue, !labels.isEmpty {
-                    HStack(spacing: 4) {
+                    FlowRow(spacing: 4) {
                         ForEach(labels.sorted(), id: \.self) { name in
                             Pill(text: name, color: repoLabels.first { $0.name == name }.flatMap { Color(hex: $0.color) } ?? .secondary)
                         }
@@ -578,7 +596,7 @@ struct NewIssueSheet: View {
         HStack(spacing: 0) {
             Form {
                 whatSection(showsBoard: false)
-                if kind == .issue, !templates.isEmpty { templateSection }
+                if kind == .issue, !templates.isEmpty { templateSection(onClaudeStep: false) }
                 textSection
                 imagesSection
             }
@@ -622,7 +640,7 @@ struct NewIssueSheet: View {
         }
     }
 
-    private var templateSection: some View {
+    private func templateSection(onClaudeStep: Bool) -> some View {
         Section {
             Picker("Template", selection: Binding(get: { template }, set: { apply(template: $0) })) {
                 Text("None").tag(String?.none)
@@ -632,7 +650,9 @@ struct NewIssueSheet: View {
                 Text(about).font(.caption).foregroundStyle(.secondary)
             }
         } footer: {
-            Text("From \(repo)'s .github/ISSUE_TEMPLATE. Picking one fills in its description, labels and assignees.")
+            Text(onClaudeStep
+                 ? "From \(repo)'s .github/ISSUE_TEMPLATE. Claude keeps its headings. Picking one replaces the description, and adds its labels and assignees."
+                 : "From \(repo)'s .github/ISSUE_TEMPLATE. Picking one replaces the description, and adds its labels and assignees.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -1014,6 +1034,7 @@ struct NewIssueSheet: View {
                     conversation = []
                     ask = ""
                     images = IssueImageSet()
+                    lastCreated = reference.map { "\($0.repo)#\($0.number)" } ?? "a draft on \(definition?.title ?? "the board")"
                     steps = []
                     step = .claude
                 } else {

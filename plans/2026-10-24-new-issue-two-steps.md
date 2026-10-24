@@ -33,3 +33,4 @@ issues start as a rough line. The sheet is `Gannin/Issues/NewIssue.swift` (`NewI
 - [x] Toolbar per step: Cancel and Skip/Next; Back, Cancel, Create Another and Create
 - [x] Docs: `guides/new-issue.md` (the other pages that say Draft with Claude are about other editors)
 - [x] CHANGELOG
+- [x] Review round 1: Escape only cancels a blank sheet, a note of what Create Another made, wrapping labels, the latest reply scrolled to, template footers, the shortcuts page

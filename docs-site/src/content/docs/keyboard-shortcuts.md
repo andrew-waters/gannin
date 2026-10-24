@@ -29,7 +29,8 @@ In the Claude Code window, a focused terminal keeps ⌘K for itself, so the key 
 | ⌘[ | Goes back one page | Not in a menu |
 | Esc | Closes the top drawer if one is open, otherwise goes back one page | Not in a menu |
 | ⌘S | Saves the unsaved board field changes on an issue | Not in a menu |
-| ⌘↩ | Creates the issue in the New Issue sheet | Not in a menu |
+| ⌘↩ | In the New Issue sheet, Skip or Next on the Claude step, and Create on the form | Not in a menu |
+| Esc | In the New Issue sheet, Back on the form, and Cancel on the Claude step while nothing's been asked or written | Not in a menu |
 | Esc | Clears the selected days on the Time off calendar | Not in a menu |
 | Esc | Clears the filter box in an organisation's Settings (when it has text in it) | Not in a menu |
 | Return and Esc | Confirm or cancel the sheet or dialogue in front of you (Start, Save, Done, Cancel and so on) | Not in a menu |
