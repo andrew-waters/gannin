@@ -118,6 +118,51 @@ struct ApprovalQueueTests {
         #expect(held.contains(ReviewedPullRequest.approvalHeldNote))
     }
 
+    private func openPullRequest(author: String = "author", requested: Bool = false, draft: Bool = false, checks: ItemDetail.CheckState? = nil) -> PullRequest {
+        PullRequest(
+            id: "PR_1", number: 7, title: "Plan", url: URL(string: "https://github.com/acme/harness/pull/7")!, repo: "acme/harness",
+            author: Person(login: author, name: nil, avatarUrl: nil), isDraft: draft, state: "OPEN", createdAt: Date(timeIntervalSince1970: 100),
+            updatedAt: .now, mergedAt: nil, reviewDecision: nil, additions: 0, deletions: 0, changedFiles: 0, assignees: [],
+            requestedReviewers: requested ? [Person(login: "andrew", name: nil, avatarUrl: nil)] : [], reviewRequestedAt: [:], reviewers: [],
+            linkedIssues: [], checks: checks, reviewStates: nil, reviewedAt: nil, lastCommitAt: nil, authorRepliedAt: nil
+        )
+    }
+
+    private func queueStore(posted: Bool) -> SessionStore {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "ApprovalQueueTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        let store = SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60), defaults: UserDefaults(suiteName: "ApprovalQueueTests-\(UUID().uuidString)")!)
+        var session = reviewSession("approve")
+        if posted {
+            // An automatic comment: GitHub then stops listing the PR as asking for your review.
+            var draft = ReviewDraft()
+            draft.postedEvent = "COMMENT"
+            draft.postedAt = Date(timeIntervalSince1970: 200)
+            session.reviewDraft = draft
+        }
+        store.add(session)
+        return store
+    }
+
+    /// A comment posted for an approve verdict makes GitHub drop the review request, which mustn't drop the approval.
+    @Test func approvalStaysInTheQueueAfterItsReviewRequestIsDropped() {
+        let store = queueStore(posted: true)
+        let asked = store.approvalQueue(in: [openPullRequest(requested: true)], login: "andrew")
+        let dropped = store.approvalQueue(in: [openPullRequest(requested: false)], login: "andrew")
+        #expect(asked.count == 1)
+        #expect(dropped.count == 1)
+        #expect(dropped.first?.askedAt == Date(timeIntervalSince1970: 200))
+    }
+
+    @Test func approvalIsNotQueuedWhileItsPullRequestIsNotReady() {
+        let store = queueStore(posted: true)
+        #expect(store.approvalQueue(in: [openPullRequest(draft: true)], login: "andrew").isEmpty)
+        #expect(store.approvalQueue(in: [openPullRequest(checks: .failure)], login: "andrew").isEmpty)
+        #expect(store.approvalQueue(in: [openPullRequest(author: "andrew")], login: "andrew").isEmpty)
+        #expect(store.approvalQueue(in: [openPullRequest()], login: nil).isEmpty)
+        // The checks pass: it comes back with no review request on it.
+        #expect(store.approvalQueue(in: [openPullRequest(checks: .success)], login: "andrew").count == 1)
+    }
+
     /// `findingEntries` reads every line after a finding as part of it, so the note can't follow the list.
     @Test func approvalHeldNoteComesBeforeTheFindingsList() throws {
         let body = ReviewedPullRequest.body(summary: "Looks good.", general: [findings[1]], approvalHeld: true)
@@ -132,6 +177,17 @@ struct ApprovalQueueTests {
         #expect(SessionStore.isDueReminder(noticed: nil, now: now))
         #expect(!SessionStore.isDueReminder(noticed: now.addingTimeInterval(-3600), now: now))
         #expect(SessionStore.isDueReminder(noticed: now.addingTimeInterval(-SessionStore.approvalReminderInterval), now: now))
+    }
+
+    /// Kept with the review, so a relaunch doesn't restart the 24 hours or notify again at once.
+    @Test func theNotifiedTimeSurvivesBeingSaved() throws {
+        var draft = ReviewDraft()
+        draft.approvalNoticedAt = Date(timeIntervalSince1970: 500)
+        let decoded = try JSONDecoder().decode(ReviewDraft.self, from: JSONEncoder().encode(draft))
+        #expect(decoded.approvalNoticedAt == Date(timeIntervalSince1970: 500))
+        // A draft saved before it existed has no such key.
+        let older = try JSONDecoder().decode(ReviewDraft.self, from: JSONEncoder().encode(ReviewDraft()))
+        #expect(older.approvalNoticedAt == nil)
     }
 
     @Test func recordDoesNotHoldAnApprovalGivenOnGitHubByHand() {

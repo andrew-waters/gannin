@@ -30,6 +30,9 @@ struct ReviewDraft: Hashable, Codable {
     var resultAt: Date?
     /// When the reviewer put away a held approval without giving it.
     var approvalDismissedAt: Date?
+    /// When the notification for the held approval was last sent, kept so the
+    /// 24 hours between reminders carry across launches (`remindApprovals`).
+    var approvalNoticedAt: Date?
 
     /// Whether the reviewer has put away the approval the latest result
     /// holds; a later result is a new approval to give or dismiss.
