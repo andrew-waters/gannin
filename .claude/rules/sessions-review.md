@@ -20,7 +20,7 @@ paths:
 - Resolve only unresolved threads on that PR that the viewer started (`GitHubAPI.resolvableThreads`), whatever IDs claude returns, and only after the review is posted.
 - A PR is `readyForApproval` only if its review says approve, covers the latest commits, has no draft, failing checks or conflicts, and the reviewer hasn't dismissed it (`ReviewDraft.approvalDismissed`). Keep that in step with `ApprovalQueue.swift`.
 - Never write `ReviewRecord.approvalHeld` from one place only: it is derived in `ReviewRecord.updated` from verdict, event and dismissal, so that every writer of the record agrees.
-- An automatic comment posted for an approve verdict carries `ReviewedPullRequest.approvalHeldNote` (`postAutomatically` passes `approvalHeld`): the summary is written for an approval and, alone, reads as one on GitHub. A Comment posted by hand from Post Review doesn't, as the reviewer chose it.
+- An automatic comment posted for an approve verdict carries `ReviewedPullRequest.approvalHeldNote` (`postAutomatically` passes `approvalHeld`): the summary is written for an approval and, alone, reads as one on GitHub. A Comment posted by hand from Post Review doesn't, as the reviewer chose it. The note goes before the body findings: `findingEntries` reads every line after a finding as part of it, so a note after the list would change what `said` compares.
 
 ## Reading claude's output
 - Read the review JSON leniently (`SessionTranscript.review`, and `applied`, `learnings`, `checks`, `resolved`); a malformed entry must never lose the review. Add new fields the same way.
@@ -45,4 +45,4 @@ paths:
 - A review snapshots its config in `CodeSession.reviewConfig`; don't re-read it mid-review.
 
 ## Testing
-- Only `PairReviewTests.swift` (the pair loop), `DiffQuestionTests.swift` (the question Ask Claude sends from a diff line), `ReviewGateTests.swift` (review windows) and `ApprovalQueueTests.swift` (which automatic reviews are held) touch review code. Nothing covers records, config layering, the rest of auto review or `readyForApproval`; add tests beside them.
+- Only `PairReviewTests.swift` (the pair loop), `DiffQuestionTests.swift` (the question Ask Claude sends from a diff line), `ReviewGateTests.swift` (review windows) and `ApprovalQueueTests.swift` (which automatic reviews are held) touch review code. `ApprovalQueueTests.swift` also covers `ReviewRecord.updated`'s `approvalHeld`, the dismissal check in `readyForApproval` and the reminder's timing. Nothing covers the rest of records, config layering, the rest of auto review or `readyForApproval`'s other checks; add tests beside them.

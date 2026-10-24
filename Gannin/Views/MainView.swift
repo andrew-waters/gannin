@@ -1627,7 +1627,10 @@ struct OrgSidebar: View {
         // Issues' lists under it have their own counts.
         case .agents:
             guard let selectedOrg else { return 0 }
-            return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
+            let waiting = Set(sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.map(\.id))
+            // A held approval counts until it's given or dismissed, even once looking at its tab has cleared its flag.
+            let approvals = Set(sessions.approvalQueue(org: selectedOrg).map(\.session.id))
+            return waiting.union(approvals).count
         case .dashboard, .issues, .people, .repositories, .actions, .investments, .rdTime, .projects, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
         case .routines:
             guard let selectedOrg else { return 0 }
