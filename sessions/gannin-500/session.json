@@ -1,0 +1,15 @@
+{
+  "box" : "Andrew’s MacBook Air",
+  "branch" : "500-new-issue-start-with-claude-then-confirm",
+  "issue" : "andrew-waters/gannin#500",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+
+  ],
+  "startedAt" : "2026-10-24T15:07:13Z",
+  "startedBy" : "andrew-waters",
+  "title" : "New Issue: start with Claude, then confirm the details",
+  "url" : "https://github.com/andrew-waters/gannin/issues/500"
+}
