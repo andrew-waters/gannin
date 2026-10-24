@@ -179,10 +179,12 @@ struct AgentWorkflowsPage: View {
     }
 
     private func passes(_ workflow: AgentWorkflow, specialists: [String: HarnessSpecialist]) -> some View {
-        let counts = PassCount.of(workflow, specialists: specialists, defaultModel: SessionStore.model)
+        let counts = PassCount.of(workflow, specialists: specialists, defaultModel: SessionStore.model, activity: activity)
         let total = counts.reduce(0) { $0 + $1.passes }
+        let leadAdded = counts.reduce(0) { $0 + $1.passes } > workflow.steps.reduce(0) { $0 + ($1.isInteractive ? 1 : $1.roundCount) }
         return HStack {
-            Text("At most \(total) pass\(total == 1 ? "" : "es"): " + counts.map { "\($0.label) \u{00D7}\($0.passes)" }.joined(separator: ", "))
+            Text("At most \(total) pass\(total == 1 ? "" : "es"): " + counts.map { "\($0.label) \u{00D7}\($0.passes)" }.joined(separator: ", ")
+                 + (leadAdded ? ". The first stage has no Claude Code step, so Gannin's own reviewer runs there too, to hold the review." : ""))
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Spacer()
@@ -653,6 +655,8 @@ struct WorkflowPickerSection: View {
     let org: String
     let setup: HarnessConfig?
     let activity: WorkflowActivity
+    /// The PR or issue, for the workflow its routing rules give it.
+    var subject: WorkflowSubject? = nil
     @Binding var choice: PromptChoice
 
     var body: some View {
@@ -660,13 +664,16 @@ struct WorkflowPickerSection: View {
             let file = sessions.agentWorkflows(org, setup)
             let options = file.workflows(for: activity)
             if options.count > 1 {
-                let routed = file.defaultWorkflow(for: activity)
+                let rules = activity.isRouted ? file[activity].rules ?? [] : []
+                let routed = file.resolve(activity, for: subject)
                 let shown = options.first { $0.id == choice.workflow } ?? routed
-                let counts = PassCount.of(shown, specialists: sessions.specialists(org: org, setup: setup), defaultModel: SessionStore.model)
+                let counts = PassCount.of(shown, specialists: sessions.specialists(org: org, setup: setup), defaultModel: SessionStore.model, activity: activity)
                 let total = counts.reduce(0) { $0 + $1.passes }
+                // A review's author, labels and paths are looked up as it starts.
+                let laterRules = activity == .review && rules.contains { !($0.authors ?? []).isEmpty || !($0.labels ?? []).isEmpty || !($0.paths ?? []).isEmpty }
                 Section {
                     Picker("Workflow", selection: Binding(get: { choice.workflow }, set: { choice.workflow = $0 })) {
-                        Text(activity.isRouted && !(file[activity].rules ?? []).isEmpty ? "As routed (\(routed.name) unless a rule matches)" : "Default (\(routed.name))").tag(String?.none)
+                        Text(rules.isEmpty ? "Default (\(routed.name))" : laterRules ? "As routed (\(routed.name) by repo; author, label and path rules are checked as it starts)" : "As routed (\(routed.name))").tag(String?.none)
                         Divider()
                         ForEach(options) { Text($0.name).tag(Optional($0.id)) }
                     }

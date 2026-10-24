@@ -147,8 +147,12 @@ struct AgentWorkflowsTests {
         var step = ReviewStepRun(id: "a", stage: 0, title: "Sec", provider: "claude-code", rounds: 3)
         step.results = [result([finding("a.swift", 1, "x")])]
         #expect(ReviewRunMerge.wantsAnotherRound(step))
-        step.results.append(result([finding("a.swift", 1, "x, again")]))
+        step.results.append(result([finding("a.swift", 1, "x")]))
         #expect(!ReviewRunMerge.wantsAnotherRound(step))
+        // Another point on a line already flagged is new.
+        step.results = [result([finding("a.swift", 1, "x")]), result([finding("a.swift", 1, "Also leaks the token")])]
+        #expect(ReviewRunMerge.wantsAnotherRound(step))
+        #expect(step.findings.count == 2)
         step.results = [result([])]
         #expect(!ReviewRunMerge.wantsAnotherRound(step))
         step.rounds = 1
@@ -187,6 +191,14 @@ struct AgentWorkflowsTests {
         // Earlier stages' findings go to later ones, labelled.
         #expect(run.earlierFindings(before: 1).map(\.reviewer) == ["Sec", "Sec"])
         #expect(run.earlierFindings(before: 0).isEmpty)
+    }
+
+    @Test func theLeadsOwnPassIsCountedWhenTheFirstStageHasNoClaudeStep() {
+        let junieFirst = AgentWorkflow(id: "j", name: "J", stages: [AgentStage(steps: [AgentStep(id: "a", provider: "junie")])])
+        let counts = PassCount.of(junieFirst, specialists: [:], defaultModel: nil, activity: .review)
+        #expect(counts == [PassCount(label: "Claude Code", passes: 1), PassCount(label: "Junie", passes: 1)])
+        #expect(PassCount.of(junieFirst, specialists: [:], defaultModel: nil) == [PassCount(label: "Junie", passes: 1)])
+        #expect(PassCount.of(review, specialists: [:], defaultModel: nil, activity: .review).reduce(0) { $0 + $1.passes } == 4)
     }
 
     @Test func pairReviewsMergeAsBefore() {

@@ -276,10 +276,19 @@ nonisolated struct PassCount: Hashable, Sendable {
     let label: String
     let passes: Int
 
-    static func of(_ workflow: AgentWorkflow, specialists: [String: HarnessSpecialist], defaultModel: String?) -> [PassCount] {
+    /// A review whose first stage has no Claude Code step gets Gannin's own
+    /// step there too (its lead runs one), so that pass is counted.
+    static func of(_ workflow: AgentWorkflow, specialists: [String: HarnessSpecialist], defaultModel: String?, activity: WorkflowActivity? = nil) -> [PassCount] {
         var counts: [String: Int] = [:]
         var order: [String] = []
-        for step in workflow.steps {
+        var steps = workflow.steps
+        if activity == .review, !workflow.isPlain, let first = workflow.stages.first, !first.steps.contains(where: { step in
+            let specialist = step.specialist.flatMap { specialists[$0.lowercased()] }
+            return ProviderID(name: step.provider ?? specialist?.provider)?.isInteractive ?? (step.provider ?? specialist?.provider == nil)
+        }) {
+            steps.insert(AgentStep(id: AgentWorkflow.builtInID), at: 0)
+        }
+        for step in steps {
             let specialist = step.specialist.flatMap { specialists[$0.lowercased()] }
             let provider = ProviderID(name: step.provider ?? specialist?.provider) ?? .claudeCode
             let model = (step.model ?? specialist?.model ?? (provider == .claudeCode ? defaultModel : nil)).flatMap { $0.isEmpty ? nil : $0 }

@@ -41,6 +41,8 @@ struct SessionLaunchSheet<Extra: View>: View {
     var startTitle = "Start"
     /// The activity whose workflow can be picked for this run, if any.
     var activity: WorkflowActivity? = nil
+    /// The PR or issue, for the workflow its routing rules give it.
+    var subject: WorkflowSubject? = nil
     let start: (PromptChoice, HarnessConfig) -> Void
     @ViewBuilder var extra: () -> Extra
     @State private var choice = PromptChoice()
@@ -68,7 +70,7 @@ struct SessionLaunchSheet<Extra: View>: View {
                 }
             }
             if let activity {
-                WorkflowPickerSection(org: org, setup: setup, activity: activity, choice: $choice)
+                WorkflowPickerSection(org: org, setup: setup, activity: activity, subject: subject, choice: $choice)
             }
             PromptPickerSections(library: library, use: use, values: values, choice: $choice)
             extra()
@@ -102,8 +104,8 @@ struct SessionLaunchSheet<Extra: View>: View {
 }
 
 extension SessionLaunchSheet where Extra == EmptyView {
-    init(title: String, org: String, harnesses: [HarnessConfig], initial: HarnessConfig, use: PromptUse, repos: [String], values: [String: String], startTitle: String = "Start", activity: WorkflowActivity? = nil, start: @escaping (PromptChoice, HarnessConfig) -> Void) {
-        self.init(title: title, org: org, harnesses: harnesses, initial: initial, use: use, repos: repos, values: values, startTitle: startTitle, activity: activity, start: start) { EmptyView() }
+    init(title: String, org: String, harnesses: [HarnessConfig], initial: HarnessConfig, use: PromptUse, repos: [String], values: [String: String], startTitle: String = "Start", activity: WorkflowActivity? = nil, subject: WorkflowSubject? = nil, start: @escaping (PromptChoice, HarnessConfig) -> Void) {
+        self.init(title: title, org: org, harnesses: harnesses, initial: initial, use: use, repos: repos, values: values, startTitle: startTitle, activity: activity, subject: subject, start: start) { EmptyView() }
     }
 }
 

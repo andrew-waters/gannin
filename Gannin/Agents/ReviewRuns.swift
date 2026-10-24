@@ -77,9 +77,10 @@ struct ReviewStepReference: Codable, Hashable {
 /// Turning a run's steps into the one review it posts.
 enum ReviewRunMerge {
     /// What makes two findings one across rounds of the same reviewer: the
-    /// line, else the start of what it says.
+    /// same line and the same start to what it says. Two different points
+    /// on one line stay two.
     static func identity(_ finding: SessionTranscript.Finding) -> String {
-        finding.line.map { "\(finding.path):\($0)" } ?? finding.key
+        finding.key
     }
 
     /// The findings a round adds to those before it.
@@ -304,10 +305,11 @@ extension SessionStore {
         let specialist = step.specialist.flatMap { specialists(org: lead.org, setup: setup)[$0.lowercased()] }
         step.state = .running
         if let extra = provider.extraReviewer {
-            step.run = UUID()
+            let tag = UUID()
+            step.run = tag
             run.steps[index] = step
             update(leadID) { $0.reviewRun = run }
-            runOneShotStep(index, extra, lead: lead, pr: pr, specialist: specialist)
+            runOneShotStep(index, extra, tag: tag, lead: leadID, pr: pr, specialist: specialist)
             return
         }
         let id = UUID()
@@ -390,6 +392,45 @@ extension SessionStore {
             run.steps[index].state = .done
             update(lead) { $0.reviewRun = run }
             advanceRun(lead)
+            advanceWaitingRuns()
+        }
+    }
+
+    /// A step's helper is being removed while its step runs: the step is
+    /// marked as not run (or done, with the rounds it gave), so the run
+    /// goes on. Called before the session goes, while it still says whose
+    /// step it is.
+    func stepClosed(_ sessionID: UUID) {
+        guard let lead = sessions[sessionID]?.reviewStep?.lead, var run = sessions[lead]?.reviewRun, run.finishedAt == nil,
+              let index = run.steps.firstIndex(where: { $0.session == sessionID && $0.state == .running }) else { return }
+        if run.steps[index].results.isEmpty {
+            skipStep(index, of: lead, because: "its session was closed")
+        } else {
+            run.steps[index].state = .done
+            update(lead) { $0.reviewRun = run }
+            advanceRun(lead)
+            advanceWaitingRuns()
+        }
+    }
+
+    /// After a relaunch: one-shot steps that were running died with the
+    /// app, so they're marked as not run; steps whose session is gone are
+    /// too. A running step's session is opened again, so a review it had
+    /// written is read, and each unfinished run moves on.
+    func resumeReviewRuns() {
+        for (lead, session) in sessions where session.reviewRun.map({ $0.finishedAt == nil }) ?? false {
+            guard var run = session.reviewRun else { continue }
+            for index in run.steps.indices where run.steps[index].state == .running {
+                if let id = run.steps[index].session, sessions[id] != nil { continue }
+                run.steps[index].state = .skipped
+                run.steps[index].note = run.steps[index].session == nil ? "Gannin quit while it ran" : "its session is gone"
+                run.steps[index].run = nil
+            }
+            update(lead) { $0.reviewRun = run }
+            for step in run.steps where step.state == .running {
+                if let id = step.session, let running = sessions[id], !isRunning(id) { _ = open(running) }
+            }
+            advanceRun(lead)
         }
     }
 
@@ -425,15 +466,15 @@ extension SessionStore {
     /// A step on a one-shot CLI (Junie): run on this Mac in a throwaway copy
     /// of the PR checked out in the harness, as Pair review's extras are.
     /// Skipped, and marked so, on a server or where the CLI can't run.
-    private func runOneShotStep(_ index: Int, _ reviewer: ExtraReviewer, lead: CodeSession, pr: PullRequestReference, specialist: HarnessSpecialist?) {
-        guard lead.connect == nil, !lead.isSandboxed, let harnessRepo = lead.harnessRepo, let run = lead.reviewRun, let tag = run.steps[index].run else {
-            skipStep(index, of: lead.id, because: "\(reviewer.title) runs only on this Mac")
+    private func runOneShotStep(_ index: Int, _ reviewer: ExtraReviewer, tag: UUID, lead leadID: UUID, pr: PullRequestReference, specialist: HarnessSpecialist?) {
+        guard let lead = sessions[leadID], let run = lead.reviewRun, run.steps[safe: index]?.run == tag else { return }
+        guard lead.connect == nil, !lead.isSandboxed, let harnessRepo = lead.harnessRepo else {
+            skipStep(index, of: leadID, because: "\(reviewer.title) runs only on this Mac")
             return
         }
         let step = run.steps[index]
         let checkout = Self.oneShotCheckout(pr, harness: Self.localHarnessPath(org: lead.org, repo: harnessRepo), branch: lead.branch, tag: tag)
         let prompt = Self.oneShotPrompt(pr, step: step, run: run, specialist: specialist)
-        let leadID = lead.id
         Task {
             let made = await Task.detached { ScriptRunner.run(checkout.make, place: .local) }.value
             let folder = made.output.split(separator: "\n").last.map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""

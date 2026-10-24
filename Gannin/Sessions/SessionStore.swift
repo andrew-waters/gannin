@@ -942,6 +942,13 @@ final class SessionStore {
 
     /// Ends the session and forgets it. The clone and worktree stay on disk.
     func remove(_ id: UUID) {
+        // A run's lead going ends the run, so its helpers going below don't
+        // start more; a step's helper going marks its step, while it still
+        // says whose it is.
+        if sessions[id]?.reviewRun.map({ $0.finishedAt == nil }) ?? false {
+            update(id) { $0.reviewRun?.finishedAt = .now }
+        }
+        if sessions[id]?.reviewStep != nil { stepClosed(id) }
         // Helpers work in its folder, so they go with it.
         for helper in helpers(of: id) { remove(helper.id) }
         // A helper showing in its session's tab goes back to the work.

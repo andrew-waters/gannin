@@ -26,7 +26,7 @@ Harness › Workflows shows the workflows for one activity at a time: pick Revie
 - The workflow is drawn as nodes, left to right: where it starts, each stage as a column, and where it ends. Steps in one column run at the same time and join before the next column. A step is told what earlier columns found, never what the steps beside it found.
 - **Beside** adds a step to a column, and **Stage** adds a column at the end. Right-click a step to move it earlier or later, or remove it.
 - Click a step to set it in the inspector: its **Specialist** (or none, for Gannin's own prompt), **Provider**, **Model** and **Focus**, and for a review step its **Rounds**.
-- Beneath, the most passes the workflow can make: each step's rounds, added up by provider and model. There's no estimate of cost or time.
+- Beneath, the most passes the workflow can make: each step's rounds, added up by provider and model. There's no estimate of cost or time. A review workflow whose first stage has no Claude Code step (only Junie, say) also runs Gannin's own reviewer there, as a review needs one Claude Code session to hold it, and that pass is counted too.
 
 ### Review steps and rounds
 
@@ -47,7 +47,7 @@ Rules are checked in order and the first that matches picks the workflow; with n
 
 ## Picking one for a run
 
-When the activity has workflows of your own, starting it by hand (Review with Claude, Work on This, Quick Change and Ask) has a **Workflow** choice: as routed, or any of the activity's workflows for this run only, with the most passes it can make.
+When the activity has workflows of your own, starting it by hand (Review with Claude, Work on This, Quick Change, Ask, a new plan and New Design and Refine) has a **Workflow** choice: as routed (naming the workflow the rules give this PR or issue), or any of the activity's workflows for this run only, with the most passes it can make. For a review, rules on authors, labels and paths are checked as it starts, so the choice names the workflow its repo alone would get.
 
 ## Sharing with the team
 

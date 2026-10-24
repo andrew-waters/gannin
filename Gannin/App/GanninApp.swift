@@ -121,6 +121,8 @@ struct GanninApp: App {
         // update checks, review requests or routines.
         let demo = NetworkGate.isSealed
         if !demo { sessions.watchPullRequests() }
+        // Review workflow runs left unfinished when Gannin last quit.
+        if !demo { sessions.resumeReviewRuns() }
         // Sparkle starts checking now, not when a menu is first built.
         if !demo { _ = Updater.shared }
         let watch = EngineerWatch.shared

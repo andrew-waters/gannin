@@ -2047,7 +2047,7 @@ struct WorkOnThisLauncher: ViewModifier {
                     SessionLaunchSheet(
                         title: "Work on \(reference.reference)", org: reference.org, harnesses: config.harnesses, initial: initial,
                         use: .work, repos: Self.repos(reference, issues: issues), values: Self.values(reference), startTitle: "Work on This",
-                        activity: .work
+                        activity: .work, subject: sessions.codingSubject(reference, record: issues.history(for: reference.org)?.issues[reference.id])
                     ) { choice, picked in
                         start(reference, recording: SessionStore.recordsWithoutAsking(repo: picked.repo) || recording, choice: choice, setup: picked)
                     } extra: {

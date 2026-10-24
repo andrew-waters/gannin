@@ -301,6 +301,8 @@ struct NewPlanningView: View {
     @State private var promptTitle = ""
     @State private var savesPrompt = true
     @State private var skills: Set<String> = []
+    /// The workflow picked for this session, if not the default.
+    @State private var workflowChoice = PromptChoice()
     @State private var skillSearch = ""
     @State private var saving = false
     @State private var error: String?
@@ -391,6 +393,7 @@ struct NewPlanningView: View {
             contextSection
             promptSection(library: library, setup: setup)
             skillsSection(library)
+            WorkflowPickerSection(org: org, setup: setup, activity: .planning, choice: $workflowChoice)
         }
         .formStyle(.grouped)
         .scrollDisabled(true)
@@ -742,7 +745,8 @@ struct NewPlanningView: View {
                 return
             }
         }
-        let choice = PromptChoice(prompts: [], skills: skills, note: trimmedPrompt.isEmpty ? "" : HarnessAuthoring.fill(trimmedPrompt, values))
+        var choice = PromptChoice(prompts: [], skills: skills, note: trimmedPrompt.isEmpty ? "" : HarnessAuthoring.fill(trimmedPrompt, values))
+        choice.workflow = workflowChoice.workflow
         // A link typed but not added yet is meant too.
         addContext()
         var documents: [PlanningInfo.Document] = []

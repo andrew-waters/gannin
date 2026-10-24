@@ -83,7 +83,9 @@ extension SessionStore {
     /// `reveals` false starts it without showing its tab (an automatic review).
     /// `workflow` is the one picked for this run; nil takes the one the
     /// project's review routing rules give the PR (`ReviewRuns.swift`).
-    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true, workflow picked: AgentWorkflow? = nil) async -> CodeSession {
+    /// `automatic` marks it as an automatic run before any of its workflow's
+    /// steps start, so they count against the cap from the first.
+    func startReview(of pr: PullRequestReference, harness setup: HarnessConfig, harnessPath: String, choice: PromptChoice? = nil, reveals: Bool = true, workflow picked: AgentWorkflow? = nil, automatic: Bool = false) async -> CodeSession {
         if let existing = review(of: pr.id) {
             if reveals { reveal(existing.id) }
             return existing
@@ -135,10 +137,11 @@ extension SessionStore {
             let brief = "# Review of \(pr.repo)#\(pr.number): \(pr.title)\n\n\(pr.url.absoluteString)\n"
             try? Data(brief.utf8).write(to: directory.appending(path: "brief.md"))
             add(session)
-            if session.reviewRun != nil {
-                // After the caller has marked an automatic one, so its steps count.
-                Task { advanceRun(session.id) }
+            if automatic {
+                automaticRuns.insert(session.id)
+                automaticStartedAt[session.id] = .now
             }
+            if session.reviewRun != nil { advanceRun(session.id) }
             return session
         }
         startingReviews[pr.id] = task
@@ -728,7 +731,7 @@ struct ReviewWithClaudeButton: View {
                         title: "Review \(reference.repo)#\(reference.number)", org: reference.org, harnesses: config.harnesses, initial: setup,
                         use: .review, repos: [reference.repo],
                         values: HarnessPromptLibrary.values(reference: "\(reference.repo)#\(reference.number)", title: reference.title, url: reference.url, repo: reference.repo, number: reference.number, branch: SessionStore.reviewBranch(reference)),
-                        startTitle: "Start Review", activity: .review
+                        startTitle: "Start Review", activity: .review, subject: WorkflowSubject(repo: reference.repo)
                     ) { choice, picked in
                         start(choice: choice, setup: picked)
                     }
