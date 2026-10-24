@@ -24,5 +24,5 @@ paths:
 - `Absence.half` is for single days only. `Absence.approval` applies to holiday only.
 
 ## Testing
-- `StandupStagesTests.swift` covers stage guessing, the board's columns, discussion, grouping by assignee, triage matching Prioritisation's and `standup.json`. The views and Present stepping have no tests; check by hand.
+- `StandupStagesTests.swift` covers stage guessing, the board's columns, discussion, grouping by assignee, the backlog's order, who needs work, triage matching Prioritisation's and `standup.json`. The views and Present stepping have no tests; check by hand.
 - `OutsideRepoTests.swift` covers outside-repo exclusion; `WorkLogIssuesTests.swift` covers issue events, the work log filter and the grid. Leave and calendar logic have no tests; check by hand, including a cache from before a field was added.

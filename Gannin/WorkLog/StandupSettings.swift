@@ -1,9 +1,9 @@
 import SwiftUI
 
 /// Settings sections: how the window's project runs standup. The style it
-/// opens on, the label that marks an issue for discussion, and which stage
-/// each of the workflow board's statuses falls in, guessed from its name
-/// until picked.
+/// opens on, the label that marks an issue for discussion, which stage each
+/// of the workflow board's statuses falls in (guessed from its name until
+/// picked), and how Up next sorts the backlog and says who needs work.
 struct StandupSettingsSection: View {
     @Environment(OrgConfigStore.self) private var configs
     @Environment(ProjectStore.self) private var projects
@@ -11,7 +11,12 @@ struct StandupSettingsSection: View {
 
     var body: some View {
         let config = configs.config(for: org)
-        let options = config.workflow.projectNumber.flatMap { projects.cache(org: org, number: $0)?.board.field(named: "Status")?.options } ?? []
+        let definition = config.workflow.projectNumber.flatMap { projects.cache(org: org, number: $0)?.board }
+        let options = definition?.field(named: "Status")?.options ?? []
+        let sortable = (definition?.fields ?? []).filter { field in
+            Self.sortableTypes.contains(field.dataType) && field.name.caseInsensitiveCompare("Status") != .orderedSame
+        }
+        let standup = config.standupConfig
         Section {
             Picker("Style", selection: binding(\.openingStyleSetting)) {
                 ForEach(StandupConfig.Style.allCases) { Text($0.name).tag($0) }
@@ -49,7 +54,28 @@ struct StandupSettingsSection: View {
         } header: {
             Text("Standup columns")
         } footer: {
-            Text("Done shows issues moved to the status since the last working day; In review and In progress show the board as it is. Issues with no Status are Triage, the same as Prioritisation's. Until you pick one, each status's column is guessed from its name.")
+            Text("Every column shows the open issues on the board as it is now. Issues with no Status are Triage, the same as Prioritisation's, and Backlog statuses are Up next's backlog. Until you pick one, each status's column is guessed from its name.")
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        Section {
+            Picker("Backlog sorted by", selection: binding(\.backlogField)) {
+                Text("Oldest first").tag(String?.none)
+                // A field picked before the board loaded, or since removed.
+                if let field = standup.backlogField, !sortable.contains(where: { $0.name == field }) {
+                    Text(field).tag(String?.some(field))
+                }
+                ForEach(sortable) { Text($0.name).tag(String?.some($0.name)) }
+            }
+            Toggle("Highest first", isOn: binding(\.highestFirst))
+                .disabled(standup.backlogField == nil)
+            Picker("Needs work when", selection: binding(\.needsWorkSetting)) {
+                ForEach(StandupConfig.NeedsWork.allCases) { Text($0.name).tag($0) }
+            }
+        } header: {
+            Text("Up next")
+        } footer: {
+            Text("After Triage, Standup lists who needs work, with the backlog already assigned to them, and then the whole backlog to find them more. The backlog is sorted by the field picked, lowest value first unless Highest first is on, and issues without a value go last. Assign to, in a backlog issue's menu, assigns it on GitHub after you confirm.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -57,6 +83,9 @@ struct StandupSettingsSection: View {
             if let number = config.workflow.projectNumber { await projects.loadDefinition(org: org, number: number) }
         }
     }
+
+    /// Fields a backlog can be sorted by: one value an issue can have.
+    private static let sortableTypes: Set<String> = ["NUMBER", "SINGLE_SELECT", "DATE", "TEXT", "ITERATION"]
 
     private func binding<Value>(_ keyPath: WritableKeyPath<StandupConfig, Value>) -> Binding<Value> {
         Binding {
@@ -89,6 +118,16 @@ private extension StandupConfig {
     var openingStyleSetting: Style {
         get { openingStyle }
         set { style = newValue }
+    }
+
+    var highestFirst: Bool {
+        get { backlogHighestFirst ?? false }
+        set { backlogHighestFirst = newValue ? true : nil }
+    }
+
+    var needsWorkSetting: NeedsWork {
+        get { needsWork ?? .nothingInProgress }
+        set { needsWork = newValue == .nothingInProgress ? nil : newValue }
     }
 
     /// The discussion label as typed.

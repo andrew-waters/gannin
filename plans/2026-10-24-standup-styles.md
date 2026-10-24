@@ -53,11 +53,18 @@ These came from questions answered on 24 October 2026.
 - **Style is per project, switchable on the day.** Settings sets the style Standup opens on; the
   toolbar's Style menu picks another for that standup without saving it.
 
+- **Up next, after Triage.** Who needs work (nothing in progress, or nothing in progress or in
+  review, as the team sets it), with the backlog already theirs; then the whole backlog, open
+  issues in a Backlog stage, sorted by a board field the team picks (lowest first unless Highest
+  first), oldest first with none. Assign to in a backlog issue's menu adds them as an assignee,
+  confirmed first. The field, its direction and the rule are project settings in `standup.json`,
+  under Up next in Org settings › Issues.
+
 ### Styles and what carried over
 
 | Style | What it is | From the old view |
 | --- | --- | --- |
-| Walk the Board | The workflow board's four columns, side by side, or one at a time presenting | New |
+| Walk the Board | The workflow board's four columns, side by side, then Up next; or one at a time presenting | New |
 | Person by Person | Each person's tickets by stage, then their day strip and timeline | By Person, with tickets added |
 | Changelog | Issues closed that day by investment category | Changelog, unchanged |
 | Written | Each person's day and tickets in flight as Markdown, then to discuss and the triage count | Notes, shown on the page |
@@ -88,3 +95,5 @@ every style but Changelog, and now includes tickets in flight.
 - [x] CHANGELOG and rules
 - [x] Review round 1: a labelled issue done since is listed once, under To discuss, with its mark and Discussed; Esc through `onEscape`
 - [x] After trying it: Done is open issues in a done status, closed ones left out; Walk the Board groups by assignee, with tiles
+- [x] PR review: throw on an unreadable repo, exact stage name first, Present for the meeting only, steps don't rebuild the board
+- [x] Up next: the Backlog stage, who needs work, the sorted backlog, Assign to, and its settings

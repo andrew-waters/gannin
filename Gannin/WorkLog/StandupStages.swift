@@ -1,8 +1,8 @@
 import Foundation
 
 /// How a team runs its standup (Rituals › Standup): the style it opens on,
-/// which stage each of the workflow board's statuses falls in, and the label
-/// that marks an issue for discussion. Kept in the project's harness
+/// which stage each of the workflow board's statuses falls in, the label
+/// that marks an issue for discussion, and how Up next finds work. Kept in the project's harness
 /// (`.gannin/standup.json`) and read leniently: a style or stage this Gannin
 /// doesn't know reads as the default, so the rest of the file isn't lost.
 struct StandupConfig: Codable, Hashable {
@@ -35,6 +35,8 @@ struct StandupConfig: Codable, Hashable {
         case done
         case review
         case progress
+        /// Up next's backlog, offered to whoever needs work.
+        case backlog
         case hidden
 
         var id: Self { self }
@@ -44,7 +46,24 @@ struct StandupConfig: Codable, Hashable {
             case .done: "Done"
             case .review: "In review"
             case .progress: "In progress"
+            case .backlog: "Backlog"
             case .hidden: "Not shown"
+            }
+        }
+    }
+
+    /// Who Up next says needs work.
+    enum NeedsWork: String, Codable, CaseIterable, Identifiable {
+        case nothingInProgress
+        /// Review counts as work too.
+        case nothingInProgressOrReview
+
+        var id: Self { self }
+
+        var name: String {
+            switch self {
+            case .nothingInProgress: "Nothing in progress"
+            case .nothingInProgressOrReview: "Nothing in progress or in review"
             }
         }
     }
@@ -58,11 +77,23 @@ struct StandupConfig: Codable, Hashable {
     var stages: [String: Stage] = [:]
     /// Nil or blank means `needs discussion`.
     var discussionLabel: String?
+    /// The board field the backlog is sorted by; nil is oldest first.
+    var backlogField: String?
+    /// Sorts the backlog highest value first; nil or false is lowest first.
+    var backlogHighestFirst: Bool?
+    /// Nil is nothing in progress.
+    var needsWork: NeedsWork?
 
-    init(style: Style? = nil, stages: [String: Stage] = [:], discussionLabel: String? = nil) {
+    init(
+        style: Style? = nil, stages: [String: Stage] = [:], discussionLabel: String? = nil,
+        backlogField: String? = nil, backlogHighestFirst: Bool? = nil, needsWork: NeedsWork? = nil
+    ) {
         self.style = style
         self.stages = stages
         self.discussionLabel = discussionLabel
+        self.backlogField = backlogField
+        self.backlogHighestFirst = backlogHighestFirst
+        self.needsWork = needsWork
     }
 
     init(from decoder: Decoder) throws {
@@ -71,6 +102,9 @@ struct StandupConfig: Codable, Hashable {
         let stages = (try? container.decodeIfPresent([String: String].self, forKey: .stages)) ?? [:]
         self.stages = stages.compactMapValues(Stage.init(rawValue:))
         discussionLabel = try? container.decodeIfPresent(String.self, forKey: .discussionLabel)
+        backlogField = try? container.decodeIfPresent(String.self, forKey: .backlogField)
+        backlogHighestFirst = try? container.decodeIfPresent(Bool.self, forKey: .backlogHighestFirst)
+        needsWork = (try? container.decodeIfPresent(String.self, forKey: .needsWork)).flatMap(NeedsWork.init(rawValue:))
     }
 
     var openingStyle: Style { style ?? .board }
@@ -97,12 +131,14 @@ struct StandupConfig: Codable, Hashable {
 
     /// Done-like names are done and review names in review (before in
     /// progress, as a team may count review towards cycle time); the issue
-    /// workflow's in-progress statuses, and names saying so, are in progress.
+    /// workflow's in-progress statuses, and names saying so, are in progress;
+    /// names like Backlog, Todo or Ready are the backlog.
     static func guess(_ status: String, workflow: IssueWorkflow) -> Stage {
         let name = status.lowercased()
         if ["done", "complete", "shipped", "released", "closed"].contains(where: name.contains) { return .done }
         if name.contains("review") { return .review }
         if workflow.isInProgress(status) || name.contains("progress") || name.contains("doing") { return .progress }
+        if ["backlog", "todo", "to do", "ready", "next"].contains(where: name.contains) { return .backlog }
         return .hidden
     }
 }
@@ -110,8 +146,9 @@ struct StandupConfig: Codable, Hashable {
 /// The workflow board as a standup walks it, column by column: what's in a
 /// done status and what needs discussing, what's in review, what's in
 /// progress, and what's waiting for triage (the same issues as
-/// Prioritisation's, `TriageQueue.untriaged`). Open issues only: closing an
-/// issue takes it off the standup.
+/// Prioritisation's, `TriageQueue.untriaged`); then Up next, who needs work
+/// and the backlog. Open issues only: closing an issue takes it off the
+/// standup.
 struct StandupBoard {
     enum Column: Int, CaseIterable, Identifiable {
         case done
@@ -148,6 +185,8 @@ struct StandupBoard {
         /// Its last move on the board, else when it was opened.
         let since: Date
         let needsDiscussion: Bool
+        /// Its value of the backlog's sort field, for the backlog.
+        var sortValue: IssueFieldValue? = nil
 
         var id: String { record.id }
     }
@@ -157,6 +196,9 @@ struct StandupBoard {
     /// list as well.
     private(set) var discussion: [Item] = []
     private(set) var columns: [Column: [Item]] = [:]
+    /// Open issues in a backlog status, in the team's order.
+    private(set) var backlog: [Item] = []
+    let needsWorkRule: StandupConfig.NeedsWork
 
     func items(_ column: Column) -> [Item] { columns[column] ?? [] }
 
@@ -172,6 +214,7 @@ struct StandupBoard {
     init(issues: [IssueRecord], board: Int, config: OrgConfig) {
         let standup = config.standupConfig
         let workflow = config.workflow
+        needsWorkRule = standup.needsWork ?? .nothingInProgress
         var positions: [String: Int] = [:]
         for issue in issues where issue.isOpen {
             let fields = issue.fields(onProject: board)
@@ -188,6 +231,12 @@ struct StandupBoard {
             case .done: if !discussed { columns[.done, default: []].append(item) }
             case .review: columns[.review, default: []].append(item)
             case .progress: columns[.progress, default: []].append(item)
+            case .backlog:
+                var item = item
+                item.sortValue = standup.backlogField.flatMap { field in
+                    fields?.values.first { $0.key.caseInsensitiveCompare(field) == .orderedSame }?.value
+                }
+                backlog.append(item)
             case .hidden: break
             }
         }
@@ -205,6 +254,39 @@ struct StandupBoard {
             }
         }
         discussion.sort { $0.since < $1.since }
+        backlog = Self.ordered(backlog, highestFirst: standup.backlogHighestFirst == true)
+    }
+
+    /// By the sort field's value, those without one last; the oldest first
+    /// otherwise.
+    static func ordered(_ items: [Item], highestFirst: Bool) -> [Item] {
+        items.sorted { a, b in
+            switch (a.sortValue, b.sortValue) {
+            case (let x?, let y?) where IssueFieldValue.ascending(x, y) || IssueFieldValue.ascending(y, x):
+                return highestFirst ? IssueFieldValue.ascending(y, x) : IssueFieldValue.ascending(x, y)
+            case (.some, nil): return true
+            case (nil, .some): return false
+            default: return a.record.createdAt < b.record.createdAt
+            }
+        }
+    }
+
+    /// Someone with nothing to work on, as the team counts it, and the
+    /// backlog already assigned to them.
+    struct Idle: Identifiable {
+        let login: String
+        let backlog: [Item]
+
+        var id: String { login }
+    }
+
+    /// Of `logins`, those who need work, in the order given.
+    func needingWork(_ logins: [String]) -> [Idle] {
+        let busy: [Column] = needsWorkRule == .nothingInProgressOrReview ? [.progress, .review] : [.progress]
+        return logins.compactMap { login in
+            let working = busy.contains { column in items(column).contains { $0.record.assignees.contains(login) } }
+            return working ? nil : Idle(login: login, backlog: backlog.filter { $0.record.assignees.contains(login) })
+        }
     }
 
     /// Only the issues assigned to `login`.
@@ -212,6 +294,7 @@ struct StandupBoard {
         var board = self
         board.discussion = discussion.filter { $0.record.assignees.contains(login) }
         board.columns = columns.mapValues { $0.filter { $0.record.assignees.contains(login) } }
+        board.backlog = backlog.filter { $0.record.assignees.contains(login) }
         return board
     }
 }

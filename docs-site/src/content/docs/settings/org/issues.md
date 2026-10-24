@@ -51,8 +51,18 @@ How the project runs [Standup](/docs/guides/standup/). This is a team file, and 
 
 ## Standup columns
 
-A menu for each Status option on the Issue workflow board, in board order, with the board's colour: Done, In review, In progress or Not shown. Pick the Board under Issue workflow first; the options appear once the board has loaded.
+A menu for each Status option on the Issue workflow board, in board order, with the board's colour: Done, In review, In progress, Backlog or Not shown. Pick the Board under Issue workflow first; the options appear once the board has loaded.
 
 | Option | Default | What it changes | Kept |
 | --- | --- | --- | --- |
-| A status name | Guessed from its name | Which Standup column the status's issues are in. Done shows issues moved to the status since the last working day; In review and In progress show the board as it is; Not shown leaves them off. Until you pick one, names like Done, Shipped or Complete are Done, names with "review" are In review, and the in-progress statuses above, or names with "progress", are In progress. Issues with no Status are always Triage. | Harness (`.gannin/standup.json`) |
+| A status name | Guessed from its name | Which Standup column the status's issues are in. Every column shows the open issues on the board as it is now. Backlog puts them in Up next's backlog; Not shown leaves them off. Until you pick one, names like Done, Shipped or Complete are Done, names with "review" are In review, the in-progress statuses above, or names with "progress", are In progress, and names like Backlog, Todo or Ready are Backlog. Issues with no Status are always Triage. | Harness (`.gannin/standup.json`) |
+
+## Up next
+
+How Standup's Up next step, after Triage, finds work for people. It's in the same team file as Standup.
+
+| Option | Default | What it changes | Kept |
+| --- | --- | --- | --- |
+| Backlog sorted by | Oldest first | A field on the Issue workflow board to sort the backlog by, such as a priority score. Issues without a value go last. | Harness (`.gannin/standup.json`) |
+| Highest first | Off | Sorts the backlog by the field's highest value first, rather than its lowest. For a single-select field, lowest is the board's first option. Only with a field picked. | Harness (`.gannin/standup.json`) |
+| Needs work when | Nothing in progress | Who Up next says needs work: anyone with nothing assigned In progress, or with nothing In progress or in review. | Harness (`.gannin/standup.json`) |

@@ -189,6 +189,13 @@ struct StandupIssueCard: View {
     let item: StandupBoard.Item
     let presenting: Bool
     var isCompact = false
+    /// Shown as avatars, where the issues aren't grouped by person.
+    var assignees: [Person] = []
+    /// The backlog's sort field, named beside its value.
+    var sortField: String?
+    /// Who the menu offers to assign it to.
+    var assignable: [Person] = []
+    var onAssign: ((StandupBoard.Item, Person) -> Void)?
     let onDiscuss: ((StandupBoard.Item) -> Void)?
 
     var body: some View {
@@ -213,6 +220,9 @@ struct StandupIssueCard: View {
                         .foregroundStyle(.orange)
                         .help("To discuss")
                 }
+                if !assignees.isEmpty {
+                    AvatarStack(people: assignees, size: presenting ? 22 : 16)
+                }
             }
             .fixedSize(horizontal: false, vertical: true)
             .padding(isCompact ? 8 : presenting ? 14 : 10)
@@ -227,17 +237,181 @@ struct StandupIssueCard: View {
             if let onDiscuss {
                 Button(item.needsDiscussion ? "Discussed" : "Needs Discussion") { onDiscuss(item) }
             }
+            let candidates = assignable.filter { !item.record.assignees.contains($0.login) }
+            if let onAssign, !candidates.isEmpty {
+                Menu("Assign to") {
+                    ForEach(candidates) { person in
+                        Button(person.displayName) { onAssign(item, person) }
+                    }
+                }
+            }
         }
     }
 
     /// "api#12 · In Review · moved 3 days ago".
     private var detail: String {
         let when = item.since.formatted(.relative(presentation: .named))
-        return [
+        var parts = [
             StandupRow.number(item.record.repo, item.record.number),
             item.status ?? (item.isOnBoard ? "No status" : "Not on the board"),
-            item.since == item.record.createdAt ? "opened \(when)" : "moved \(when)",
-        ].joined(separator: " · ")
+        ]
+        if let sortField, let value = item.sortValue { parts.append("\(sortField) \(value.display)") }
+        parts.append(item.since == item.record.createdAt ? "opened \(when)" : "moved \(when)")
+        return parts.joined(separator: " · ")
+    }
+}
+
+// MARK: - Up next
+
+/// After Triage: who needs work, as the team counts it, with the backlog
+/// already theirs, and the whole backlog in the team's order to find more.
+/// A backlog issue's menu assigns it, after a confirmation.
+struct StandupUpNext: View {
+    let org: String
+    let workload: Workload?
+    let board: StandupBoard
+    let sortField: String?
+    let presenting: Bool
+    let onAssign: (StandupBoard.Item, Person) -> Void
+    @State private var showsAll = false
+    @State private var width: CGFloat = 1200
+
+    /// Enough to pick from; the rest behind Show All.
+    private static let shortList = 12
+
+    var body: some View {
+        let people = workload?.people.map(\.person) ?? []
+        let idle = board.needingWork(people.map(\.login))
+        let idlePeople = idle.compactMap { idle in people.first { $0.login == idle.login } }
+        // Who needs work first, then everyone else.
+        let assignable = idlePeople + people.filter { person in !idle.contains { $0.login == person.login } }
+        let layout = width >= 900 ? AnyLayout(HStackLayout(alignment: .top, spacing: 14)) : AnyLayout(VStackLayout(alignment: .leading, spacing: 14))
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "arrow.forward.circle.fill").foregroundStyle(.teal)
+                Text("Up next")
+                    .font(presenting ? .title2.weight(.semibold) : .headline)
+                Spacer(minLength: 0)
+            }
+            layout {
+                needsWork(idle, people: people)
+                backlog(assignable: assignable)
+            }
+        }
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
+    }
+
+    private func needsWork(_ idle: [StandupBoard.Idle], people: [Person]) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Needs work").font(presenting ? .title3.weight(.semibold) : .subheadline.weight(.semibold))
+                Text("\(idle.count)").foregroundStyle(.secondary).monospacedDigit()
+            }
+            if idle.isEmpty {
+                Text(board.needsWorkRule == .nothingInProgressOrReview ? "Everyone has something in progress or in review." : "Everyone has something in progress.")
+                    .font(presenting ? .title3 : .callout)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(idle) { idle in
+                let person = people.first { $0.login == idle.login }
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Avatar(url: person?.avatarUrl, size: presenting ? 24 : 18)
+                        Text(person?.displayName ?? idle.login)
+                    }
+                    .font(presenting ? .headline : .subheadline.weight(.medium))
+                    if idle.backlog.isEmpty {
+                        Label("Nothing in the backlog is theirs: find them something below.", systemImage: "exclamationmark.circle.fill")
+                            .font(presenting ? .callout : .caption)
+                            .foregroundStyle(.orange)
+                    } else {
+                        ForEach(idle.backlog) { card($0, assignable: []) }
+                    }
+                }
+            }
+        }
+        .padding(presenting ? 18 : 14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func backlog(assignable: [Person]) -> some View {
+        let shown = showsAll ? board.backlog : Array(board.backlog.prefix(Self.shortList))
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Backlog").font(presenting ? .title3.weight(.semibold) : .subheadline.weight(.semibold))
+                Text("\(board.backlog.count)").foregroundStyle(.secondary).monospacedDigit()
+                Spacer(minLength: 0)
+                if let sortField {
+                    Text("by \(sortField)").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            if board.backlog.isEmpty {
+                Text("Nothing in a Backlog status. Pick which statuses are the backlog in Org settings › Issues, under Standup columns.")
+                    .font(presenting ? .title3 : .callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            ForEach(shown) { card($0, assignable: assignable) }
+            if board.backlog.count > Self.shortList {
+                Button(showsAll ? "Show Fewer" : "Show All \(board.backlog.count)") { showsAll.toggle() }
+                    .buttonStyle(.link)
+            }
+        }
+        .padding(presenting ? 18 : 14)
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func card(_ item: StandupBoard.Item, assignable: [Person]) -> some View {
+        StandupIssueCard(
+            org: org, item: item, presenting: presenting,
+            assignees: assignable.isEmpty ? [] : item.record.assignees.compactMap { workload?.person(login: $0) },
+            sortField: sortField, assignable: assignable, onAssign: onAssign, onDiscuss: nil
+        )
+    }
+}
+
+/// A backlog issue being assigned to someone who needs work.
+struct StandupAssignment: Identifiable {
+    let issue: IssueRecord
+    let person: Person
+
+    var id: String { issue.id }
+}
+
+/// Confirms the assignment before it's written to GitHub.
+struct StandupAssignmentSheet: View {
+    @Environment(AuthStore.self) private var auth
+    @Environment(IssueStore.self) private var issues
+    @Environment(ProjectStore.self) private var projects
+    @Environment(OrgStore.self) private var orgs
+    let org: String
+    let change: StandupAssignment
+    let onClose: () -> Void
+
+    var body: some View {
+        BulkWriteSheet(
+            title: "Assign the issue to \(change.person.displayName)?",
+            explanation: "Adds \(change.person.displayName) to its assignees on GitHub. Anyone already assigned stays.",
+            action: "Assign",
+            rows: [.init(id: change.issue.id, title: change.issue.title, detail: "\(change.issue.repo)#\(String(change.issue.number))")]
+        ) { _ in
+            guard let api = auth.api else { throw InvestmentWriteError.message("Not signed in") }
+            let logins = try await api.addAssignees(issueID: change.issue.id, logins: [change.person.login])
+            guard logins.contains(change.person.login) else {
+                throw InvestmentWriteError.message("GitHub didn't assign \(change.person.displayName): they may not have access to \(change.issue.repo)")
+            }
+            IssueEdits.setAssignees(org: org, issueID: change.issue.id, assignees: logins.sorted().map(person), issues: issues, projects: projects, orgs: orgs)
+        } onClose: {
+            onClose()
+        }
+    }
+
+    private func person(_ login: String) -> Person {
+        login == change.person.login ? change.person
+            : orgs.snapshot(for: org)?.members.first { $0.login == login }
+            ?? Person(login: login, name: nil, avatarUrl: URL(string: "https://github.com/\(login).png?size=64"))
     }
 }
 

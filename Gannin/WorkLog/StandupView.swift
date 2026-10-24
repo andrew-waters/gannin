@@ -165,6 +165,7 @@ struct StandupPage: View {
     @State private var step = 0
     @State private var showsNotes = false
     @State private var discussing: StandupDiscussion?
+    @State private var assigning: StandupAssignment?
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -225,6 +226,9 @@ struct StandupPage: View {
         .sheet(item: $discussing) { change in
             StandupDiscussionSheet(org: org, change: change) { discussing = nil }
         }
+        .sheet(item: $assigning) { change in
+            StandupAssignmentSheet(org: org, change: change) { assigning = nil }
+        }
         .syncOffNotice(.workLog)
         .outsideReposNotice(org: org)
         .task(id: "\(org) \(day.start.timeIntervalSince1970)") {
@@ -249,7 +253,8 @@ struct StandupPage: View {
     /// with something to say; one page otherwise.
     private func stepCount(shown: [StandupEntry], board: StandupBoard?) -> Int {
         switch style {
-        case .board: board == nil ? 1 : StandupBoard.Column.allCases.count
+        // The columns, then Up next.
+        case .board: board == nil ? 1 : StandupBoard.Column.allCases.count + 1
         case .people: max(1, shown.count)
         case .changelog, .written: 1
         }
@@ -473,10 +478,22 @@ struct StandupPage: View {
             if configs.config(for: org).workflow.projectNumber == nil {
                 noBoard
             } else if let board {
-                StandupBoardColumns(
-                    org: org, workload: workload, board: board, presenting: presenting,
-                    column: presenting ? StandupBoard.Column.allCases[current] : nil, onDiscuss: discuss
+                let columns = StandupBoard.Column.allCases
+                let upNext = StandupUpNext(
+                    org: org, workload: workload, board: board, sortField: standupConfig.backlogField, presenting: presenting,
+                    onAssign: { assigning = StandupAssignment(issue: $0.record, person: $1) }
                 )
+                if presenting && current >= columns.count {
+                    upNext
+                } else {
+                    VStack(alignment: .leading, spacing: 14) {
+                        StandupBoardColumns(
+                            org: org, workload: workload, board: board, presenting: presenting,
+                            column: presenting ? columns[current] : nil, onDiscuss: discuss
+                        )
+                        if !presenting { upNext }
+                    }
+                }
             } else {
                 issuesStatus
             }
@@ -1366,6 +1383,10 @@ enum StandupNotes {
         }
         if let triage = board?.items(.triage).count, triage > 0 {
             lines += [triage == 1 ? "1 issue waiting for triage." : "\(triage) issues waiting for triage.", ""]
+        }
+        if let idle = board?.needingWork(standup.entries.map(\.id)), !idle.isEmpty {
+            let names = idle.compactMap { idle in standup.entries.first { $0.id == idle.login }?.person.displayName }
+            lines += ["Needs work: " + names.joined(separator: ", "), ""]
         }
         if !quiet.isEmpty {
             lines += ["Off, or nothing recorded: " + quiet.joined(separator: ", "), ""]

@@ -10,10 +10,12 @@ struct StandupStagesTests {
 
     private func issue(
         _ number: Int, status: String? = nil, onBoard: Bool = true, assignees: [String] = [], labels: [String] = [],
-        created: Date? = nil, closed: Date? = nil, completed: Bool = true, moves: [(String, Date)] = [], position: Int = 0
+        created: Date? = nil, closed: Date? = nil, completed: Bool = true, moves: [(String, Date)] = [], position: Int = 0,
+        priority: Double? = nil
     ) -> IssueRecord {
         var values: [String: IssueFieldValue] = [:]
         if let status { values["Status"] = .option(name: status, position: position) }
+        if let priority { values["Priority"] = .number(priority) }
         return IssueRecord(
             id: "I_\(number)", number: number, title: "Issue \(number)", url: URL(string: "https://github.com/acme/api/issues/\(number)")!, repo: "acme/api",
             author: "alex", assignees: assignees, labels: labels, issueType: nil, milestone: nil, parentID: nil,
@@ -39,7 +41,9 @@ struct StandupStagesTests {
         #expect(StandupConfig.guess("In Review", workflow: workflow) == .review)
         #expect(StandupConfig.guess("Building", workflow: workflow) == .progress)
         #expect(StandupConfig.guess("In progress", workflow: workflow) == .progress)
-        #expect(StandupConfig.guess("Backlog", workflow: workflow) == .hidden)
+        #expect(StandupConfig.guess("Backlog", workflow: workflow) == .backlog)
+        #expect(StandupConfig.guess("Ready", workflow: workflow) == .backlog)
+        #expect(StandupConfig.guess("Blocked", workflow: workflow) == .hidden)
     }
 
     @Test func theTeamsChoiceWins() {
@@ -120,6 +124,45 @@ struct StandupStagesTests {
         #expect(groups.map { $0.items.map(\.record.number).sorted() } == [[2], [1, 2], [3]])
     }
 
+    @Test func backlogInTheTeamsOrder() {
+        let issues = [
+            issue(1, status: "Backlog", created: since.addingTimeInterval(-60), priority: 3),
+            issue(2, status: "Todo", created: since.addingTimeInterval(-120)),
+            issue(3, status: "Backlog", priority: 1),
+            issue(4, status: "Backlog", created: since.addingTimeInterval(-30)),
+            issue(5, status: "Backlog", priority: 5),
+            issue(6, status: "Blocked", priority: 1),
+        ]
+        // Lowest first, those without a value last and oldest first.
+        let lowest = StandupBoard(issues: issues, board: board, config: config(StandupConfig(backlogField: "priority")))
+        #expect(lowest.backlog.map(\.record.number) == [3, 1, 5, 2, 4])
+        #expect(lowest.backlog.first?.sortValue == .number(1))
+        let highest = StandupBoard(issues: issues, board: board, config: config(StandupConfig(backlogField: "Priority", backlogHighestFirst: true)))
+        #expect(highest.backlog.map(\.record.number) == [5, 1, 3, 2, 4])
+        // No field: oldest first.
+        let created = StandupBoard(issues: issues, board: board, config: config()).backlog.map(\.record.createdAt)
+        #expect(created == created.sorted())
+        #expect(created.count == 5)
+    }
+
+    @Test func needsWorkAsTheTeamCountsIt() {
+        let issues = [
+            issue(1, status: "In progress", assignees: ["kim"]),
+            issue(2, status: "In Review", assignees: ["sam"]),
+            issue(3, status: "Backlog", assignees: ["sam"], priority: 2),
+            issue(4, status: "Backlog", assignees: ["sam", "lee"], priority: 1),
+            issue(5, status: "Backlog"),
+        ]
+        let people = ["kim", "sam", "lee", "ash"]
+        let progress = StandupBoard(issues: issues, board: board, config: config(StandupConfig(backlogField: "Priority")))
+        let idle = progress.needingWork(people)
+        // Review isn't work by default; each with the backlog that's theirs.
+        #expect(idle.map(\.login) == ["sam", "lee", "ash"])
+        #expect(idle.map { $0.backlog.map(\.record.number) } == [[4, 3], [4], []])
+        let review = StandupBoard(issues: issues, board: board, config: config(StandupConfig(needsWork: .nothingInProgressOrReview)))
+        #expect(review.needingWork(people).map(\.login) == ["lee", "ash"])
+    }
+
     @Test func triageIsPrioritisations() {
         let issues = [
             issue(1, created: since.addingTimeInterval(-60)),
@@ -152,7 +195,10 @@ struct StandupStagesTests {
     @Test func travelsInTheTeamFile() throws {
         let before = OrgConfig()
         var after = before
-        after.standup = StandupConfig(style: .people, stages: ["QA": .review], discussionLabel: "discuss")
+        after.standup = StandupConfig(
+            style: .people, stages: ["QA": .review], discussionLabel: "discuss",
+            backlogField: "Priority", backlogHighestFirst: true, needsWork: .nothingInProgressOrReview
+        )
         let files = HarnessTeamData.changedFiles(from: before, to: after)
         #expect(files.keys.sorted() == [TeamFile.standup])
         let text = try #require(files[TeamFile.standup] ?? nil)
@@ -163,11 +209,13 @@ struct StandupStagesTests {
     }
 
     @Test func readsLeniently() throws {
-        let standup = try #require(TeamCoding.decode(StandupConfig.self, #"{"style":"huddle","stages":{"QA":"review","Odd":"sideways"},"discussionLabel":"  "}"#))
+        let standup = try #require(TeamCoding.decode(StandupConfig.self, #"{"style":"huddle","stages":{"QA":"review","Odd":"sideways"},"discussionLabel":"  ","needsWork":"never","backlogHighestFirst":"yes"}"#))
         #expect(standup.style == nil)
         #expect(standup.openingStyle == .board)
         #expect(standup.stages == ["QA": .review])
         #expect(standup.discussion == StandupConfig.defaultDiscussionLabel)
+        #expect(standup.needsWork == nil)
+        #expect(standup.backlogHighestFirst == nil)
         let config = try JSONDecoder().decode(OrgConfig.self, from: Data(#"{"excludedRepos":[]}"#.utf8))
         #expect(config.standup == nil)
         #expect(config.isEmpty)
