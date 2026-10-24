@@ -1,6 +1,7 @@
 {
   "box" : "Andrew’s MacBook Air",
   "branch" : "500-new-issue-start-with-claude-then-confirm",
+  "finishedAt" : "2026-10-24T17:03:13Z",
   "issue" : "andrew-waters/gannin#500",
   "pullRequests" : [
     "https://github.com/andrew-waters/gannin/pull/503"
