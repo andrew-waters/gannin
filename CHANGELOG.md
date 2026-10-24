@@ -17,6 +17,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Changed
 - Settings › General's Provider lists Claude Code by name, as sessions now reach it through a provider that others can join later
+- Settings › General's Model, and a workflow step's, offers Claude Sonnet 5.5 and Claude Haiku 5.5 in place of Sonnet 5 and Haiku 4.5. A model picked before stays as typed, under Other
 
 ## [0.0.5] - 2026-10-23
 
