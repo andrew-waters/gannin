@@ -1,6 +1,6 @@
 ---
 type: plan
-status: in-progress
+status: done
 summary: "Make workflows the way Gannin runs agent work: reviewing, coding on an issue, Ask, Quick Change, Planning and Design and Refine each run through a workflow (a single-step default to start), whose steps name user-defined agents on any supported provider. Reviews and coding can be routed to a workflow by rules."
 issues: [andrew-waters/gannin#466, andrew-waters/gannin#492, andrew-waters/gannin#493, andrew-waters/gannin#494]
 touches: [andrew-waters/gannin]

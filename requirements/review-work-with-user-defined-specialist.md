@@ -1,6 +1,6 @@
 ---
 type: requirement
-status: in-progress
+status: done
 summary: "Decouple Gannin's agent work from Claude by running every activity through workflows of user-defined agents on any supported provider, starting from single-step defaults that behave as today, so the team can try specialist reviewers, other providers and chained steps without changing how each activity works."
 issues: [andrew-waters/gannin#466]
 plans: [plans/2026-10-24-review-work-with-user-defined-specialist.md]
