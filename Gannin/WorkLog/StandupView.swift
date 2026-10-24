@@ -173,13 +173,13 @@ struct StandupPage: View {
         let calendars = calendars(day)
         let standup = standup(day, calendars: calendars)
         let board = board()
-        let shown = standup.map { shown($0, board: board) } ?? []
-        let steps = stepCount(shown: shown, board: board)
+        let speakers = standup.map { shown($0, board: board) } ?? []
+        let steps = stepCount(shown: speakers, board: board)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 Section {
                     StepReader(step: $step, steps: steps) { current in
-                        content(day, standup: standup, board: board, shown: shown, calendars: calendars, step: current)
+                        content(day, standup: standup, board: board, shown: speakers, calendars: calendars, step: current)
                     }
                     .sectionContent()
                 } header: {
