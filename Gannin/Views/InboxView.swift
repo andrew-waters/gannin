@@ -313,18 +313,19 @@ struct InboxView: View {
         var sections: [(title: String, rows: [InboxRow])] = []
         let shown = shown
         // Claude would approve: first, and out of Needs your review.
-        let approvals = shown.contains(.approvals)
-            ? inbox.reviews.filter { !$0.pr.isDraft }.compactMap { item in sessions.readyForApproval(item.pr.id).map { (item, $0) } }
-            : []
-        let approving = Set(approvals.map(\.0.pr.id))
+        let login = auth.viewer?.login
+        let approvals = shown.contains(.approvals) ? sessions.approvalQueue(in: workload.openPullRequests, login: login) : []
+        let approving = Set(approvals.map(\.pr.id))
         if !approvals.isEmpty {
-            sections.append((InboxSection.approvals.rawValue, approvals.map { item, session in
-                InboxRow(
-                    id: "approve-\(item.pr.id)", title: item.pr.title, reference: Self.number(item.pr.repo, item.pr.number),
-                    people: item.pr.author.map { [$0] } ?? [], checks: checks(item.pr),
+            sections.append((InboxSection.approvals.rawValue, approvals.map { pr, session, askedAt in
+                // GitHub stops listing you as asked once you've reviewed it, even as a comment.
+                let asked = pr.requestedReviewers.contains { $0.login == login }
+                return InboxRow(
+                    id: "approve-\(pr.id)", title: pr.title, reference: Self.number(pr.repo, pr.number),
+                    people: pr.author.map { [$0] } ?? [], checks: checks(pr),
                     state: sessions.approvalState(session), stateColor: ChartPalette.good,
-                    tint: ChartPalette.good, since: item.askedAt, sinceLabel: "Asked", size: (item.pr.additions, item.pr.deletions),
-                    page: .pullRequest(item.pr.id), session: session.id, dismissableApproval: session.id
+                    tint: ChartPalette.good, since: askedAt, sinceLabel: asked ? "Asked" : "Reviewed", size: (pr.additions, pr.deletions),
+                    page: .pullRequest(pr.id), session: session.id, dismissableApproval: session.id
                 )
             }))
         }

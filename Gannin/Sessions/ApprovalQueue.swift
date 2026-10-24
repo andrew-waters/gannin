@@ -20,59 +20,85 @@ extension SessionStore {
               (reviewDrafts[session.id] ?? session.reviewDraft)?.postedEvent != "APPROVE",
               (reviewDrafts[session.id] ?? session.reviewDraft)?.approvalDismissed != true else { return nil }
         if !whileBusy, isRunning(session.id), [.working, .starting].contains(state(session.id)) { return nil }
-        if let request = EngineerWatch.shared.reviewRequests.first(where: { $0.id == pullRequestID }),
-           request.isDraft || request.isFailing || request.mergeable == "CONFLICTING" { return nil }
+        if let request = EngineerWatch.shared.reviewRequests.first(where: { $0.id == pullRequestID }) {
+            if request.isDraft || request.isFailing || request.mergeable == "CONFLICTING" { return nil }
+        } else if let known = workloadPullRequest(pullRequestID, org: session.org) {
+            // GitHub drops your review request once you've posted a review,
+            // even a comment, so the workload's copy is all there is: it
+            // knows drafts and checks, not conflicts.
+            if known.state != "OPEN" || known.isDraft || known.checks == .failure || known.checks == .error { return nil }
+        }
         let failsAnError = (result.checks ?? []).contains { check in
             check.result.lowercased() == "fail" && session.reviewConfig?.mode(of: check.name) == .error
         }
         return failsAnError ? nil : session
     }
 
-    /// Every review ready for approval among your review requests, longest
-    /// waiting first.
-    func approvalQueue(org: String? = nil) -> [(request: EngineerWatch.PullRequestItem, session: CodeSession)] {
-        EngineerWatch.shared.waitingReviews
-            .filter { org == nil || $0.org.caseInsensitiveCompare(org!) == .orderedSame }
-            .compactMap { request in readyForApproval(request.id).map { (request, $0) } }
-            .sorted { $0.request.createdAt < $1.request.createdAt }
+    /// The PR as the workload last fetched it; nil if it hasn't.
+    private func workloadPullRequest(_ id: String, org: String) -> PullRequest? {
+        PullRequestStore.shared.pullRequests(org: org)[id]?.workloadPullRequest
+    }
+
+    /// Every review ready for approval among `pullRequests` (the open PRs the
+    /// workload has), longest waiting first: those asking for your review,
+    /// and those you've reviewed already, which GitHub no longer lists as
+    /// asking once the review is posted, even as a comment. Without the
+    /// second kind an approval that went up as a comment would never come
+    /// back to you.
+    func approvalQueue(in pullRequests: [PullRequest], login: String?) -> [(pr: PullRequest, session: CodeSession, askedAt: Date)] {
+        pullRequests.compactMap { pr in
+            guard !pr.isDraft, pr.checks != .failure, pr.checks != .error,
+                  let login, pr.author?.login.caseInsensitiveCompare(login) != .orderedSame,
+                  let session = readyForApproval(pr.id) else { return nil }
+            let draft = reviewDrafts[session.id] ?? session.reviewDraft
+            return (pr, session, pr.reviewRequestedAt[login] ?? draft?.postedAt ?? pr.createdAt)
+        }
+        .sorted { $0.askedAt < $1.askedAt }
     }
 
     /// A review's result is in: when it's ready for you, it's flagged as
     /// waiting on you with a notification saying so.
     func noticeApproval(_ id: UUID, now: Date = .now) {
         guard let pr = sessions[id]?.reviewOf, readyForApproval(pr.id, whileBusy: true) != nil else { return }
-        approvalNoticedAt[id] = now
+        reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].approvalNoticedAt = now
         flag(id, title: "Ready for your approval", body: "Claude would approve \(pr.repo)#\(pr.number). Look over the review, then approve it.", replies: false)
     }
 
     /// How long a held approval waits before its notification is sent again.
     static let approvalReminderInterval: TimeInterval = 24 * 3600
 
-    /// Whether an approval last notified about at `noticed` is due another
-    /// notification. One never notified about is: it became ready after its
-    /// review finished, or the app was relaunched since.
+    /// Whether an approval last notified about at `noticed` (kept with the
+    /// review, so across launches) is due another notification. One never
+    /// notified about is: it became ready after its review finished.
     static func isDueReminder(noticed: Date?, now: Date) -> Bool {
         guard let noticed else { return true }
         return now.timeIntervalSince(noticed) >= approvalReminderInterval
     }
 
-    /// Notifies again for each approval in the queue that's due
-    /// (`isDueReminder`), until it's given or dismissed. Run on each check of
-    /// the watched reviews.
+    /// Notifies again for each approval that's due (`isDueReminder`), until
+    /// it's given or dismissed. Run on each check of the watched reviews,
+    /// over the open PRs the workload last fetched for the orgs reviewed.
     func remindApprovals(now: Date = .now) {
-        for (_, session) in approvalQueue() where Self.isDueReminder(noticed: approvalNoticedAt[session.id], now: now) {
-            noticeApproval(session.id, now: now)
+        guard let login = viewerLogin() else { return }
+        let orgs = Set(sessions.values.filter { $0.reviewOf != nil }.map(\.org))
+        let open = orgs.flatMap { PullRequestStore.shared.pullRequests(org: $0).values.compactMap(\.workloadPullRequest) }.filter { $0.state == "OPEN" }
+        for (_, session, _) in approvalQueue(in: open, login: login) {
+            let noticed = (reviewDrafts[session.id] ?? session.reviewDraft)?.approvalNoticedAt
+            if Self.isDueReminder(noticed: noticed, now: now) { noticeApproval(session.id, now: now) }
         }
     }
 
     /// Puts a held approval away without giving it: it leaves the Inbox, the
     /// Dashboard and the waiting count, and its record stops saying it's held.
     func dismissApproval(_ id: UUID) {
-        reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].approvalDismissedAt = .now
+        var draft = reviewDrafts[id] ?? sessions[id]?.reviewDraft ?? ReviewDraft()
+        draft.approvalDismissedAt = .now
         // Only the flag the approval raised: a question or permission prompt
         // from the same session is still waiting.
-        if approvalNoticedAt[id] != nil, state(id) != .needsYou { unflag(id) }
-        approvalNoticedAt[id] = nil
+        let raised = draft.approvalNoticedAt != nil
+        draft.approvalNoticedAt = nil
+        reviewDrafts[id] = draft
+        if raised, state(id) != .needsYou { unflag(id) }
         // Supersedes the log's "waiting for you".
         note(id, .reviewed, text: "You dismissed the approval Claude was holding for you", seen: true)
         Task { await recordReview(id) }
