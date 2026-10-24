@@ -75,6 +75,24 @@ struct ReviewRunStoreTests {
         #expect(sessions.sessions[made.id]?.reviewRun?.finishedAt == nil)
     }
 
+    @Test func anAutomaticRunIsAutomaticAgainAfterAQuit() throws {
+        defer { clean() }
+        let sessions = store()
+        var made = lead { [step("lead", session: $0, state: .done), step("next")] }
+        made.reviewRun?.automatic = true
+        sessions.add(made)
+        // Two other automatic reviews just started fill the cap.
+        for _ in 0..<AutoReview.maxRunning {
+            let other = UUID()
+            sessions.automaticRuns.insert(other)
+            sessions.automaticStartedAt[other] = .now
+        }
+        sessions.resumeReviewRuns()
+        #expect(sessions.automaticRuns.contains(made.id))
+        // Capped, so its next step waits for a slot.
+        #expect(sessions.sessions[made.id]?.reviewRun?.steps[1].state == .waiting)
+    }
+
     @Test func aRunLeftByAQuitIsPickedUp() throws {
         defer { clean() }
         let sessions = store()

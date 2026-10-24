@@ -130,6 +130,7 @@ extension SessionStore {
                 let added = Self.stepInstructions(step, of: run, specialist: specialist)
                 if !added.isEmpty { session.prompt = (session.prompt ?? "") + "\n\n" + added }
                 session.model = step.model
+                run.automatic = automatic ? true : nil
                 session.reviewRun = run
             }
             let directory = Self.directory(for: session.id)

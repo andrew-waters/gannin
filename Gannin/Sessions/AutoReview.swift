@@ -328,7 +328,10 @@ extension SessionStore {
         // Ready for you whether it started by itself or by hand.
         noticeApproval(id)
         automaticStartedAt[id] = nil
-        guard automaticRuns.remove(id) != nil else { return }
+        let wasAutomatic = automaticRuns.remove(id) != nil
+        // Its slot is free: a workflow run's step waiting for one can start.
+        advanceWaitingRuns()
+        guard wasAutomatic else { return }
         let verdict = switch session.reviewResult?.verdict {
         case "approve": "would approve"
         case "request_changes": "would request changes"

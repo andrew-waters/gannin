@@ -1344,6 +1344,8 @@ final class SessionStore {
         unwatchHooks(id)
         setState(.stopped, for: id)
         stepEnded(id)
+        // An automatic review's slot may be free now.
+        if automaticRuns.contains(id) { advanceWaitingRuns() }
         stopSandboxIfIdle(id)
     }
 

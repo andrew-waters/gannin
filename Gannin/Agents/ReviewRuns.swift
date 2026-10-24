@@ -15,6 +15,9 @@ struct ReviewRun: Codable, Hashable {
     var stage: Int = 0
     var startedAt: Date = .now
     var finishedAt: Date?
+    /// Started by auto review, so a relaunch puts it back among the
+    /// automatic runs (capped, and posted as one).
+    var automatic: Bool?
 
     var stageCount: Int { (steps.map(\.stage).max() ?? 0) + 1 }
 
@@ -413,13 +416,17 @@ extension SessionStore {
         }
     }
 
-    /// After a relaunch: one-shot steps that were running died with the
-    /// app, so they're marked as not run; steps whose session is gone are
-    /// too. A running step's session is opened again, so a review it had
-    /// written is read, and each unfinished run moves on.
+    /// After a relaunch: an automatic run is one again; one-shot steps that
+    /// were running died with the app, so they're marked as not run; steps
+    /// whose session is gone are too. A running step's session is opened
+    /// again, so a review it had written is read, and each unfinished run
+    /// moves on.
     func resumeReviewRuns() {
         for (lead, session) in sessions where session.reviewRun.map({ $0.finishedAt == nil }) ?? false {
             guard var run = session.reviewRun else { continue }
+            // `automaticRuns` isn't saved: before anything starts, so its
+            // steps are capped and its review is posted as an automatic one.
+            if run.automatic == true { automaticRuns.insert(lead) }
             for index in run.steps.indices where run.steps[index].state == .running {
                 if let id = run.steps[index].session, sessions[id] != nil { continue }
                 run.steps[index].state = .skipped
