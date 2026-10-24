@@ -2,8 +2,9 @@ import SwiftUI
 
 // New Issue: an issue in a repo (or a draft item on a board), with its
 // board fields, assignees, labels and parent, written in one go when
-// Create is pressed. Claude can draft it with you, following the harness
-// skills picked, and a repo's issue templates can start it. Images are
+// Create is pressed. It's two steps: Claude drafts it with you, following
+// the harness skills picked (or you skip that), then you check the details
+// on the form and create it. A repo's issue templates can start it. Images are
 // committed to the project's harness and shown in it from there
 // (`IssueImages`).
 
@@ -331,9 +332,10 @@ extension BoardField {
 
 // MARK: - The sheet
 
-/// Two columns: what it says (kind, repo, template, title, description,
-/// and Claude drafting it with you) and where it goes (board and its
-/// fields, assignees, labels, parent). Create writes it all, step by step.
+/// Claude first, with a preview of the draft beside the conversation, then
+/// the form, filled from the draft. Both steps edit the same state, so going
+/// back keeps the form's edits and the next revision improves on them.
+/// Create writes it all, step by step.
 struct NewIssueSheet: View {
     @Environment(AuthStore.self) private var auth
     @Environment(OrgStore.self) private var orgs
@@ -351,6 +353,9 @@ struct NewIssueSheet: View {
         case draft = "Draft on the board"
     }
 
+    enum Step { case claude, confirm }
+
+    @State private var step: Step = .claude
     @State private var kind: Kind = .issue
     @State private var repo = ""
     @State private var title = ""
@@ -383,43 +388,47 @@ struct NewIssueSheet: View {
 
     var body: some View {
         let boardDefinition = board.flatMap { projects.cache(org: org, number: $0)?.board }
-        HStack(spacing: 0) {
-            Form {
-                whatSection
-                if kind == .issue, !templates.isEmpty { templateSection }
-                textSection
-                IssueImagesSection(images: images, harness: imageHarness, repo: repo, added: { image in
-                    bodyText = IssueImages.appendingPlaceholder(for: image.name, to: bodyText)
-                }, removed: { image in
-                    bodyText = IssueImages.removingPlaceholder(for: image.name, from: bodyText)
-                })
-                claudeSection(board: boardDefinition)
+        Group {
+            switch step {
+            case .claude: claudeStep(board: boardDefinition)
+            case .confirm: confirmStep(board: boardDefinition)
             }
-            .formStyle(.grouped)
-            .frame(minWidth: 480, maxWidth: .infinity)
-            Divider()
-            Form {
-                boardSection(boardDefinition)
-                peopleSection
-                if !steps.isEmpty || error != nil { progressSection }
-            }
-            .formStyle(.grouped)
-            .frame(width: 380)
         }
         .frame(minWidth: 900, idealWidth: 960, minHeight: 640, idealHeight: 760)
         .navigationTitle(context.parent.map { "New Sub-issue of #\($0.number)" } ?? "New Issue")
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-            ToolbarItem {
-                Toggle("Create Another", isOn: $createAnother)
-                    .toggleStyle(.checkbox)
-                    .help("Keep the sheet open for the next one, with the repo, board and parent kept")
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button(working ? "Creating" : IssueImages.createTitle(kind == .issue ? "Create Issue" : "Add Draft", count: images.count)) { create(board: boardDefinition) }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!canCreate)
-                    .help(createHelp)
+            // Escape is Cancel on the Claude step and Back on the form, so
+            // it never throws away a filled-in form.
+            switch step {
+            case .claude:
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(conversation.isEmpty ? "Skip" : "Next") { step = .confirm }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(drafting)
+                        .help(conversation.isEmpty ? "Fill in the issue yourself (⌘↩)" : "Check the details and create it (⌘↩)")
+                }
+            case .confirm:
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Back") { step = .claude }
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(working)
+                        .help("Back to Claude, keeping what's written here")
+                }
+                ToolbarItem { Button("Cancel") { dismiss() }.disabled(working) }
+                ToolbarItem {
+                    Toggle("Create Another", isOn: $createAnother)
+                        .toggleStyle(.checkbox)
+                        .help("Keep the sheet open for the next one, with the repo, board and parent kept")
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button(working ? "Creating" : IssueImages.createTitle(kind == .issue ? "Create Issue" : "Add Draft", count: images.count)) { create(board: boardDefinition) }
+                        .keyboardShortcut(.return, modifiers: .command)
+                        .disabled(!canCreate)
+                        .help(createHelp)
+                }
             }
         }
         .onAppear(perform: start)
@@ -435,9 +444,160 @@ struct NewIssueSheet: View {
         return kind == .issue ? !repo.isEmpty : board != nil
     }
 
-    // MARK: Left: what it says
+    // MARK: Step 1: Claude
 
-    private var whatSection: some View {
+    /// The conversation, with what shapes the draft above it, on the left;
+    /// the draft as it stands on the right.
+    private func claudeStep(board: Board?) -> some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                Form {
+                    whatSection(showsBoard: true)
+                    if kind == .issue, !templates.isEmpty { templateSection }
+                    conversationSection
+                    imagesSection
+                }
+                .formStyle(.grouped)
+                Divider()
+                composer(board: board)
+            }
+            .frame(minWidth: 460, maxWidth: .infinity)
+            Divider()
+            preview(board: board)
+                .frame(width: 420)
+        }
+    }
+
+    private var conversationSection: some View {
+        Section {
+            if conversation.isEmpty {
+                Text("Say what it's about: a rough line is enough. Claude writes the title, description and labels, and suggests board fields, following the template and the skills picked. Or Skip and write it yourself.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            ForEach(Array(conversation.enumerated()), id: \.offset) { _, turn in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(turn.ask).frame(maxWidth: .infinity, alignment: .trailing).foregroundStyle(.secondary)
+                    Text(turn.reply).font(.callout)
+                }
+            }
+        } header: {
+            Text("Claude")
+        }
+    }
+
+    /// What to ask, below the conversation so it stays in view.
+    private func composer(board: Board?) -> some View {
+        let library = skillLibrary
+        let isEmpty = ask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return VStack(alignment: .leading, spacing: 8) {
+            TextField("Ask Claude", text: $ask, prompt: Text(conversation.isEmpty ? "What's it about? A rough line is enough." : "What to change"), axis: .vertical)
+                .lineLimit(2...6)
+                .textFieldStyle(.roundedBorder)
+                .labelsHidden()
+                .onSubmit { if !drafting, !isEmpty { draft(board: board) } }
+            HStack {
+                if !library.isEmpty {
+                    Menu {
+                        ForEach(library) { skill in
+                            Toggle(isOn: Binding(get: { skills.contains(skill.path) }, set: { on in
+                                if on { skills.insert(skill.path) } else { skills.remove(skill.path) }
+                            })) {
+                                Text(skill.name)
+                                if let summary = skill.summary { Text(summary) }
+                            }
+                        }
+                    } label: {
+                        Label(skills.isEmpty ? "Skills" : "Skills: \(skills.count)", systemImage: "sparkles")
+                    }
+                    .fixedSize()
+                    .help("Harness skills Claude follows while drafting")
+                }
+                Spacer()
+                if drafting { ProgressView().controlSize(.small) }
+                Button(conversation.isEmpty ? "Draft with Claude" : "Revise") { draft(board: board) }
+                    .disabled(drafting || isEmpty)
+            }
+            Text("Nothing's sent to GitHub until you create it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(12)
+    }
+
+    /// The draft as it stands, read-only: it changes with each reply, and
+    /// with what's written on the form.
+    private func preview(board: Board?) -> some View {
+        let trimmed = title.trimmingCharacters(in: .whitespaces)
+        let suggested = (board?.fields ?? []).filter(\.isSettable).compactMap { field in
+            fields[field.name].map { (name: field.name, value: $0) }
+        }
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text(kind == .issue ? (repo.isEmpty ? "No repository yet" : repo) : "Draft on \(board?.title ?? "a board")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(trimmed.isEmpty ? "No title yet" : trimmed)
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(trimmed.isEmpty ? .tertiary : .primary)
+                    .textSelection(.enabled)
+                if kind == .issue, !labels.isEmpty {
+                    HStack(spacing: 4) {
+                        ForEach(labels.sorted(), id: \.self) { name in
+                            Pill(text: name, color: repoLabels.first { $0.name == name }.flatMap { Color(hex: $0.color) } ?? .secondary)
+                        }
+                    }
+                }
+                if !suggested.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        ForEach(suggested, id: \.name) { field in
+                            Text("\(field.name): \(field.value)").font(.callout).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                Divider()
+                if bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    Text("The description shows here once Claude has drafted it.")
+                        .foregroundStyle(.tertiary)
+                } else {
+                    MarkdownText(source: bodyText).textSelection(.enabled)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(20)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+    }
+
+    // MARK: Step 2: Confirm
+
+    /// Two columns: what it says (kind, repo, template, title, description,
+    /// images) and where it goes (board and its fields, assignees, labels,
+    /// parent).
+    private func confirmStep(board: Board?) -> some View {
+        HStack(spacing: 0) {
+            Form {
+                whatSection(showsBoard: false)
+                if kind == .issue, !templates.isEmpty { templateSection }
+                textSection
+                imagesSection
+            }
+            .formStyle(.grouped)
+            .frame(minWidth: 480, maxWidth: .infinity)
+            Divider()
+            Form {
+                boardSection(board)
+                peopleSection
+                if !steps.isEmpty || error != nil { progressSection }
+            }
+            .formStyle(.grouped)
+            .frame(width: 380)
+        }
+    }
+
+    // MARK: What it says
+
+    private func whatSection(showsBoard: Bool) -> some View {
         Section {
             Picker("Make", selection: $kind) {
                 ForEach(Kind.allCases, id: \.self) { Text($0.rawValue).tag($0) }
@@ -450,10 +610,11 @@ struct NewIssueSheet: View {
                     }
                 }
             }
+            if showsBoard { boardPicker }
         } footer: {
             if kind == .draft {
                 Text(board == nil
-                     ? "A draft lives only on a board: pick one on the right."
+                     ? "A draft lives only on a board: pick one."
                      : "A draft lives only on the board until it's converted to an issue there. Gannin's issue pages see it once it is.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -495,62 +656,31 @@ struct NewIssueSheet: View {
         }
     }
 
-    // MARK: Claude
+    /// One image set for both steps, with its placeholders kept in the
+    /// description.
+    private var imagesSection: some View {
+        IssueImagesSection(images: images, harness: imageHarness, repo: repo, added: { image in
+            bodyText = IssueImages.appendingPlaceholder(for: image.name, to: bodyText)
+        }, removed: { image in
+            bodyText = IssueImages.removingPlaceholder(for: image.name, from: bodyText)
+        })
+    }
 
-    private func claudeSection(board: Board?) -> some View {
-        let library = skillLibrary
-        return Section {
-            ForEach(Array(conversation.enumerated()), id: \.offset) { _, turn in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(turn.ask).frame(maxWidth: .infinity, alignment: .trailing).foregroundStyle(.secondary)
-                    Text(turn.reply).font(.callout)
-                }
+    // MARK: Where it goes
+
+    private var boardPicker: some View {
+        let boards = projects.boards(org: org, repo: configs.config(for: org).boardsRepo)
+        return Picker("Board", selection: $board) {
+            Text("None").tag(Int?.none)
+            ForEach(boards.contains { $0.number == board } || board == nil ? boards : boards + [OrgProject(id: "", number: board ?? 0, title: "Board \(board ?? 0)")]) {
+                Text($0.title).tag(Optional($0.number))
             }
-            TextField("Ask Claude", text: $ask, prompt: Text(conversation.isEmpty ? "What's it about? A rough line is enough." : "What to change"), axis: .vertical)
-                .lineLimit(2...6)
-                .leadingTextBox("Ask Claude")
-            HStack {
-                if !library.isEmpty {
-                    Menu {
-                        ForEach(library) { skill in
-                            Toggle(isOn: Binding(get: { skills.contains(skill.path) }, set: { on in
-                                if on { skills.insert(skill.path) } else { skills.remove(skill.path) }
-                            })) {
-                                Text(skill.name)
-                                if let summary = skill.summary { Text(summary) }
-                            }
-                        }
-                    } label: {
-                        Label(skills.isEmpty ? "Skills" : "Skills: \(skills.count)", systemImage: "sparkles")
-                    }
-                    .fixedSize()
-                    .help("Harness skills Claude follows while drafting")
-                }
-                Spacer()
-                if drafting { ProgressView().controlSize(.small) }
-                Button(conversation.isEmpty ? "Draft with Claude" : "Revise") { draft(board: board) }
-                    .disabled(drafting || ask.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        } header: {
-            Text("Draft with Claude")
-        } footer: {
-            Text("Claude writes the title, description and labels, and suggests board fields, from what you say, what's written so far, the template and the skills picked. Ask again to change it. Nothing's sent to GitHub until you create it.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
-    // MARK: Right: where it goes
-
     private func boardSection(_ definition: Board?) -> some View {
-        let boards = projects.boards(org: org, repo: configs.config(for: org).boardsRepo)
-        return Section {
-            Picker("Board", selection: $board) {
-                Text("None").tag(Int?.none)
-                ForEach(boards.contains { $0.number == board } || board == nil ? boards : boards + [OrgProject(id: "", number: board ?? 0, title: "Board \(board ?? 0)")]) {
-                    Text($0.title).tag(Optional($0.number))
-                }
-            }
+        Section {
+            boardPicker
             if board != nil {
                 if let definition {
                     ForEach(definition.fields.filter(\.isSettable)) { field in
@@ -882,7 +1012,10 @@ struct NewIssueSheet: View {
                     bodyText = ""
                     template = nil
                     conversation = []
+                    ask = ""
                     images = IssueImageSet()
+                    steps = []
+                    step = .claude
                 } else {
                     dismiss()
                     created(reference)

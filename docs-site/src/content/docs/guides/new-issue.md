@@ -16,18 +16,32 @@ New Issue creates a GitHub issue, or a draft item on a board, without leaving Ga
 
 The new issue opens in a drawer once it's created.
 
-## The sheet
+## Two steps
 
-The left column is the issue itself:
+New Issue and New Sub-issue open on Claude. Most issues start as a rough line, so Claude writes it with you first, and the form comes second, for checking the details.
 
+### 1. Write it with Claude
+
+The left side is the conversation:
+
+- **Make**: an issue, or a draft on a board.
 - **Repository**: the project's first repo by default.
-- **Template**: the repo's issue templates, if it has any (Markdown or forms).
-- **Title** and description.
-- **Draft with Claude**: a conversation where Claude writes the description and you ask for changes (the button becomes Revise). Skills from your harness about issues are ticked to start with.
+- **Board**: the workflow board by default. Claude suggests values for its fields.
+- **Template**: the repo's issue templates, if it has any (Markdown or forms). Claude keeps its headings.
+- **Images**: drop, paste or add them here or on the form (see [Images](#images)).
+- Say what the issue is about and press **Draft with Claude** (or Return). Ask for changes and press **Revise**. **Skills** chooses the harness skills Claude follows; the ones about issues are ticked to start with.
 
-The right column is where it goes: the board (the workflow board by default) and its fields, **Assignees**, **Labels**, **Parent**, and **Images**. Choosing a board with no repo makes a draft item on the board rather than an issue.
+The right side is a read-only preview of the draft: the title, labels, suggested board fields and the description. It updates with each reply.
 
-Tick **Create Another** to keep the sheet open after each one, with the repo, board and parent kept.
+Press **Next** (⌘↩) when the draft looks right, or **Skip** to go straight to an empty form. Cancel or Escape closes the sheet.
+
+### 2. Confirm
+
+The form, filled from the draft. The left column is the issue itself: Make, Repository, Template, **Title**, the description and Images. The right column is where it goes: the board and its fields, **Assignees**, **Labels** and **Parent**. A draft on a board needs a board.
+
+**Back** (or Escape) returns to Claude and keeps what you changed on the form: the next revision improves on it rather than starting over. Cancel closes the sheet.
+
+Tick **Create Another** to go back to Claude after each one, with the repo, board and parent kept.
 
 ## What gets written
 
@@ -41,6 +55,6 @@ GitHub gives apps no way to attach images to an issue, so Gannin commits them to
 - The Create button names them, for example "Commit 2 Images and Create Issue". That button is the confirmation.
 - With no harness, you can't attach images.
 
-Drop pictures on the sheet, paste them with ⌘V when the clipboard holds only pictures (or press Paste), or choose Add Images. Each adds a placeholder at the end of the description, which you can move. PNG, JPEG, GIF and WebP are kept as they are, other pictures become PNG, and one over 5 MB becomes a JPEG when that makes it fit. If GitHub refuses the issue after the images were committed, retrying doesn't commit them again.
+Drop pictures on the sheet (on either step), paste them with ⌘V when the clipboard holds only pictures (or press Paste), or choose Add Images. Each adds a placeholder at the end of the description, which you can move. PNG, JPEG, GIF and WebP are kept as they are, other pictures become PNG, and one over 5 MB becomes a JPEG when that makes it fit. If GitHub refuses the issue after the images were committed, retrying doesn't commit them again.
 
 Your harness is described in [Projects and harnesses](/docs/concepts/projects-and-harnesses/).

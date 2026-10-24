@@ -19,6 +19,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Harness › Workflows builds each activity's workflows as nodes (stages left to right, steps side by side), with a step inspector, the most passes a workflow can make, its default and routing rules, whose repos, authors, labels and issue types can be picked from what Gannin knows or typed. Review with Claude, Work on This, Quick Change and Ask can pick another workflow for one run, and a review's Overview shows each step's rounds and findings, and which didn't run and why
 
 ### Changed
+- New Issue opens on Claude: the conversation on the left and a preview of the draft on the right, with Skip to write it yourself. Next takes you to the form, filled from the draft, to check the details and create it; Back returns to Claude and keeps your edits
 - The Issues row in the sidebar shows the open issue count, the same as All under it
 - Settings › General's Provider lists Claude Code by name, as sessions now reach it through a provider that others can join later
 - Model, in Settings › General, a specialist and a workflow step, is one menu: Gannin's list (now Claude Sonnet 5.5 and Claude Haiku 5.5 in place of Sonnet 5 and Haiku 4.5), the models Claude Code has run with on this Mac lately, the newest of each family (Latest Opus and so on), and Other to type any ID. A model picked before that isn't offered stays as typed, under Other
