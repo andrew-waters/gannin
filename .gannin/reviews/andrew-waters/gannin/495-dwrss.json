@@ -24,13 +24,14 @@
       "severity" : "nit"
     }
   ],
+  "merged_at" : "2026-10-24T13:09:45Z",
   "number" : 495,
   "posted_at" : "2026-10-24T09:11:53Z",
   "repo" : "andrew-waters/gannin",
   "reviewer" : "dwrss",
   "started_at" : "2026-10-24T09:08:40Z",
-  "state" : "OPEN",
+  "state" : "MERGED",
   "title" : "Workflows for every agent activity, with specialist agents and any provider",
-  "updated_at" : "2026-10-24T09:11:55Z",
-  "verdict" : "comment"
+  "updated_at" : "2026-10-24T13:12:54Z",
+  "verdict" : "approve"
 }
