@@ -22,8 +22,9 @@ issues start as a rough line. The sheet is `Gannin/Issues/NewIssue.swift` (`NewI
 - **Claude step pickers**: Make, Repository, Board and Template, with Skills by the Ask field:
   everything that shapes the draft. The form keeps them too, on the same bindings.
 - **Images on both steps**, one image set; their placeholders live in the description either way.
-- **Escape**: Cancel on the Claude step, Back on the form, so it never throws a filled form away.
-  Cancel always closes. Create Another returns to the Claude step with the conversation cleared and
+- **Escape**: Back on the form, and Cancel on the Claude step only while nothing's been asked or
+  written (Cancel leaves the cancellation placement otherwise, as that gives Escape by itself), so it
+  never throws a draft away. The Cancel button always closes. Create Another returns to the Claude step with the conversation cleared and
   the repo, board and parent kept.
 - Nothing is written to GitHub before Create, as before.
 
@@ -34,3 +35,4 @@ issues start as a rough line. The sheet is `Gannin/Issues/NewIssue.swift` (`NewI
 - [x] Docs: `guides/new-issue.md` (the other pages that say Draft with Claude are about other editors)
 - [x] CHANGELOG
 - [x] Review round 1: Escape only cancels a blank sheet, a note of what Create Another made, wrapping labels, the latest reply scrolled to, template footers, the shortcuts page
+- [x] Review round 2: Cancel leaves the cancellation placement once there's a draft

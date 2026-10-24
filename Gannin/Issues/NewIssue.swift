@@ -403,8 +403,14 @@ struct NewIssueSheet: View {
             // while there's nothing to lose, so it never throws away a draft.
             switch step {
             case .claude:
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }.keyboardShortcut(isBlank ? .cancelAction : nil)
+                // The cancellation placement gives Escape by itself, so Cancel
+                // only sits there while there's nothing to lose.
+                if isBlank {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
+                    }
+                } else {
+                    ToolbarItem { Button("Cancel") { dismiss() } }
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(conversation.isEmpty ? "Skip" : "Next") { step = .confirm }
