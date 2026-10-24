@@ -2,7 +2,7 @@
   "box" : "Andrew’s MacBook Air",
   "branch" : "quick-put-the-open-issue-count-in-here-6a62",
   "pullRequests" : [
-
+    "https://github.com/andrew-waters/gannin/pull/501"
   ],
   "repos" : [
     "andrew-waters/gannin"
