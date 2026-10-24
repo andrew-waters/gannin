@@ -70,6 +70,8 @@ extension SessionStore {
         // from the same session is still waiting.
         if approvalNoticedAt[id] != nil, state(id) != .needsYou { unflag(id) }
         approvalNoticedAt[id] = nil
+        // Supersedes the log's "waiting for you".
+        note(id, .reviewed, text: "You dismissed the approval Claude was holding for you", seen: true)
         Task { await recordReview(id) }
     }
 
