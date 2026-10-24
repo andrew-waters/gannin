@@ -22,6 +22,14 @@ recently merged work, with PRs linked to the tickets they close.
 The screenshots are of the demo build, on invented data; `scripts/capture-screenshots.sh`
 refreshes them ([docs/SCREENSHOTS.md](docs/SCREENSHOTS.md)).
 
+## Installing
+
+Download Gannin from [gannin.ai](https://gannin.ai), or install it with Homebrew:
+
+```bash
+brew install --cask andrew-waters/tap/gannin
+```
+
 ## Running
 
 Requires Xcode 26 or later and [XcodeGen](https://github.com/yonaskolb/XcodeGen).

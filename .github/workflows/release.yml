@@ -5,7 +5,8 @@ name: Release
 # as a GitHub release here: the DMG, its checksum, the same DMG as Gannin.dmg
 # (gannin.ai's Download button, through releases/latest/download) and the
 # appcast, whose enclosure is the release's DMG, so every download counts on
-# the release. pages.yml then deploys gannin.ai with the new appcast.xml.
+# the release. pages.yml then deploys gannin.ai with the new appcast.xml, and
+# the Homebrew cask in andrew-waters/homebrew-tap moves to the new version.
 #
 # The notes are the version's section of CHANGELOG.md, shown on GitHub and
 # in Sparkle's update panel; a tag without one isn't released. The tag
@@ -19,6 +20,7 @@ name: Release
 #   ASC_KEY_ID, ASC_ISSUER_ID, ASC_KEY_P8  App Store Connect API key, for
 #     Developer ID signing and notarisation
 #   SPARKLE_PRIVATE_KEY  the update signing key (account "gannin")
+#   HOMEBREW_TAP_DEPLOY_KEY  write deploy key on andrew-waters/homebrew-tap
 on:
   push:
     tags: ["v*"]
@@ -289,3 +291,35 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
+
+      # The Homebrew cask (Casks/gannin.rb in andrew-waters/homebrew-tap) takes
+      # the new version and the DMG's checksum. Last, and never failing the
+      # release: the app is out by now, and docs/RELEASING.md bumps it by hand.
+      - name: Bump the Homebrew cask
+        continue-on-error: true
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.HOMEBREW_TAP_DEPLOY_KEY }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          if [[ -z "$TAP_DEPLOY_KEY" ]]; then
+            echo "::warning::HOMEBREW_TAP_DEPLOY_KEY isn't set, so the cask is still on the last version. See docs/RELEASING.md."
+            exit 0
+          fi
+          SHA=$(cut -d' ' -f1 "Gannin-$VERSION.dmg.sha256")
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$RUNNER_TEMP/tap_key"
+          chmod 600 "$RUNNER_TEMP/tap_key"
+          export GIT_SSH_COMMAND="ssh -i $RUNNER_TEMP/tap_key -o IdentitiesOnly=yes"
+          git clone --depth 1 git@github.com:andrew-waters/homebrew-tap.git tap
+          sed -i '' -E \
+            -e "s/^  version \".*\"$/  version \"$VERSION\"/" \
+            -e "s/^  sha256 \".*\"$/  sha256 \"$SHA\"/" \
+            tap/Casks/gannin.rb
+          git -C tap diff
+          if git -C tap diff --quiet; then
+            echo "The cask is already on $VERSION."
+          else
+            git -C tap -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+              commit -am "gannin $VERSION"
+            git -C tap push origin HEAD
+          fi
+          rm -f "$RUNNER_TEMP/tap_key"

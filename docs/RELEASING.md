@@ -2,7 +2,7 @@
 
 A release is a tag. Pushing `v1.2.0` runs `.github/workflows/release.yml`, which archives the
 Mac app, signs it with Developer ID, notarises and staples it, packs it in a DMG, signs that
-for Sparkle, and publishes it to gannin.ai. Gannin's copies already installed see it in their
+for Sparkle, publishes it to gannin.ai, and moves the Homebrew cask to it. Gannin's copies already installed see it in their
 next update check, or straight away from Gannin › Check for Updates.
 
 Every release has its section in [`CHANGELOG.md`](../CHANGELOG.md), which becomes its notes.
@@ -55,6 +55,28 @@ brings its preferences, Application Support folder and token across once.
   deploys on every push to `main` that touches `site/` or `docs-site/`, and a release starts it once the
   release is up, so the appcast never points at a file that isn't there.
 
+## Homebrew
+
+`brew install --cask andrew-waters/tap/gannin` installs from
+[andrew-waters/homebrew-tap](https://github.com/andrew-waters/homebrew-tap), whose
+`Casks/gannin.rb` names the version and the DMG's sha256. The release's last step clones the
+tap with the `HOMEBREW_TAP_DEPLOY_KEY` deploy key and moves both to the new release. It never
+fails the release: when the key is missing or the push fails, it warns, and the cask stays
+on the last version until it's bumped by hand:
+
+```bash
+gh repo clone andrew-waters/homebrew-tap && cd homebrew-tap
+# set version and sha256 (the release's Gannin-<version>.dmg.sha256) in Casks/gannin.rb
+brew style Casks/gannin.rb && brew audit --cask --online andrew-waters/tap/gannin
+git commit -am "gannin 1.2.0" && git push
+```
+
+The cask is `auto_updates true`, because Sparkle updates the app: `brew upgrade` skips it, and
+Homebrew's record of the version can lag the installed app, which is expected. Its `livecheck`
+reads gannin.ai's appcast. The official homebrew/cask repo wants a more widely used app (it
+counts stars and forks); moving there later means submitting the same cask and
+pointing the tap at it with a `tap_migrations.json` entry.
+
 ## Secrets
 
 Set on this repo (Settings › Secrets and variables › Actions), or with `gh secret set`:
@@ -64,6 +86,7 @@ Set on this repo (Settings › Secrets and variables › Actions), or with `gh s
 | `DEVELOPER_ID_CERTIFICATE_P12` | The Developer ID Application certificate and key, exported as .p12, base64 encoded (`base64 -i cert.p12`). The same one Orchard uses. |
 | `DEVELOPER_ID_CERTIFICATE_PASSWORD` | Its export password. |
 | `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` | An App Store Connect API key (Users and Access › Integrations › App Store Connect API, Admin role): its ID, the issuer ID and the .p8's contents. xcodebuild signs the Developer ID export with it, and notarytool notarises with it. |
+| `HOMEBREW_TAP_DEPLOY_KEY` | The private half of an SSH deploy key with write access on andrew-waters/homebrew-tap, for the cask bump. A new one: `ssh-keygen -t ed25519 -N "" -f tap_key`, `gh repo deploy-key add tap_key.pub --repo andrew-waters/homebrew-tap --allow-write`, `gh secret set HOMEBREW_TAP_DEPLOY_KEY < tap_key`, then delete both files. |
 | `SPARKLE_PRIVATE_KEY` | The update signing key, kept in the login keychain under the account `gannin` (`generate_keys --account gannin -x key.txt` exports it). Its public half is `SUPublicEDKey` in `Gannin/Info.plist`. |
 
 ## Before the first release
