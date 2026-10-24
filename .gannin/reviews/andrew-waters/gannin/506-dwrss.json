@@ -1,0 +1,66 @@
+{
+  "author" : "andrew-waters",
+  "effort" : 4,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "stability",
+      "decision" : "kept",
+      "excerpt" : "A repo string that doesn't split into owner/name returns silently, so the confir",
+      "key" : "Gannin/WorkLog/StandupBoardViews.swift:227:A repo string that doesn't split into owner/name returns sil",
+      "line" : 227,
+      "path" : "Gannin/WorkLog/StandupBoardViews.swift",
+      "posted_at" : "2026-10-24T20:39:49Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Completed issues are counted when `closedAt >= since` with no upper bound, and t",
+      "key" : "Gannin/WorkLog/StandupStages.swift:197:Completed issues are counted when `closedAt >= since` with n",
+      "line" : 197,
+      "path" : "Gannin/WorkLog/StandupStages.swift",
+      "posted_at" : "2026-10-24T20:39:49Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`stages.first { ... }` on a Dictionary is order-undefined. If the merge of two M",
+      "key" : "Gannin/WorkLog/StandupStages.swift:90:`stages.first { ... }` on a Dictionary is order-undefined. I",
+      "line" : 90,
+      "path" : "Gannin/WorkLog/StandupStages.swift",
+      "posted_at" : "2026-10-24T20:39:49Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "`presenting` is an AppStorage value, so Gannin reopens Standup already in Presen",
+      "key" : "Gannin/WorkLog/StandupView.swift:161:`presenting` is an AppStorage value, so Gannin reopens Stand",
+      "line" : 161,
+      "path" : "Gannin/WorkLog/StandupView.swift",
+      "posted_at" : "2026-10-24T20:39:49Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "performance",
+      "decision" : "kept",
+      "excerpt" : "`body` rebuilds the whole `StandupBoard`, scanning the issue history and every i",
+      "key" : "Gannin/WorkLog/StandupView.swift:172:`body` rebuilds the whole `StandupBoard`, scanning the issue",
+      "line" : 172,
+      "path" : "Gannin/WorkLog/StandupView.swift",
+      "posted_at" : "2026-10-24T20:39:49Z",
+      "severity" : "minor"
+    }
+  ],
+  "number" : 506,
+  "posted_at" : "2026-10-24T20:39:49Z",
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "dwrss",
+  "started_at" : "2026-10-24T20:37:53Z",
+  "state" : "OPEN",
+  "title" : "Standup: walk the board, person by person, a style per team",
+  "updated_at" : "2026-10-24T20:39:50Z",
+  "verdict" : "comment"
+}
