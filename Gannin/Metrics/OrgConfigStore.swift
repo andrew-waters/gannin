@@ -61,6 +61,11 @@ struct OrgConfig: Codable, Hashable {
     /// How the project marks loose priority (Rituals › Triage); nil until
     /// one is set.
     var priorityScheme: PriorityScheme?
+    /// How the project runs its standup (Rituals › Standup); nil for the
+    /// defaults.
+    var standup: StandupConfig?
+
+    var standupConfig: StandupConfig { standup ?? StandupConfig() }
     /// Projects, one a harness, home first, as `OrgConfigStore` reads them
     /// from their harnesses; never saved. A window works in one.
     var repoProjects: [RepoProject] = []
@@ -227,9 +232,10 @@ struct OrgConfig: Codable, Hashable {
         for setup in (legacy ?? []).compactMap(\.harness) { addHarness(HarnessConfig(repo: setup.repo, branch: setup.branch)) }
         committedDateField = try container.decodeIfPresent(String.self, forKey: .committedDateField)
         priorityScheme = try? container.decodeIfPresent(PriorityScheme.self, forKey: .priorityScheme)
+        standup = try? container.decodeIfPresent(StandupConfig.self, forKey: .standup)
     }
 
-    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && rnd == nil && accounting == nil && issueWorkflow == nil && issueStrategy == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil && priorityScheme == nil }
+    var isEmpty: Bool { excludedRepos.isEmpty && excludedAuthors.isEmpty && includedAuthors.isEmpty && reposWithoutReview.isEmpty && reposNeedingMac.isEmpty && investments == nil && rnd == nil && accounting == nil && issueWorkflow == nil && issueStrategy == nil && workWeek == nil && leave == nil && harness == nil && otherHarnesses.isEmpty && fieldViews.isEmpty && goals == nil && authoring == nil && recap == nil && scorecard == nil && repoProjects.isEmpty && committedDateField == nil && priorityScheme == nil && standup == nil }
 
     /// Automation accounts that are ordinary GitHub users (so GraphQL doesn't
     /// type them as `Bot`) usually follow these naming conventions.
@@ -265,7 +271,7 @@ struct OrgConfig: Codable, Hashable {
 /// (`HarnessTeamStore`): the org-wide parts (views, working week, leave
 /// policy, exclusions, drafting prompts) in the home project's, and each
 /// project's own (investments, issue workflow, goals, scorecard, recap
-/// cadence, committed date field, priority scheme, name and repos) in its own; changes wait
+/// cadence, committed date field, priority scheme, standup, name and repos) in its own; changes wait
 /// to be committed there. Which harnesses are its projects stays the
 /// user's own.
 ///
@@ -356,6 +362,7 @@ final class OrgConfigStore {
         config.scorecard = nil
         config.committedDateField = nil
         config.priorityScheme = nil
+        config.standup = nil
         config.repoProjects = projects(org, own: own, team: team)
         config.outsideRepos = OrgConfig.outsideRepos(org, in: config.repoProjects)
         return config

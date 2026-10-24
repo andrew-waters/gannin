@@ -15,4 +15,4 @@ In the sheet you can:
 
 ## Standup notes
 
-Standup has a **Notes** button too (disabled in the Changelog layout). It writes the day as notes per person, with the same choices: copy, rewrite with Claude, or commit to the harness under `standups/`. See [Standup](/docs/guides/standup/).
+Standup has a **Notes** button too (disabled in the Changelog style). It writes the day as notes per person, with the same choices: copy, rewrite with Claude, or commit to the harness under `standups/`. See [Standup](/docs/guides/standup/).

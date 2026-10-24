@@ -133,11 +133,13 @@ struct Standup {
     }
 }
 
-/// Meetings › Standup: everything each person did on one day (the last
-/// working day by default, as a standup looks back; Today previews today so
-/// far, and the arrows step through working days), on one page, with the PRs, commits and issues
-/// behind it. People who did nothing recorded, or were off, are listed at
-/// the end.
+/// Rituals › Standup, for the team round a shared screen each morning, in
+/// the style the team picks (`StandupConfig.Style`): the workflow board
+/// column by column, each person's tickets and day, the issues closed as a
+/// changelog, or everyone's day written out. It looks back on one day, the
+/// last working day by default (Today previews today so far, and the arrows
+/// step through working days). Presenting makes it larger and steps through
+/// one column, or one person, at a time.
 struct StandupPage: View {
     @Environment(WorkLogStore.self) private var workLog
     @Environment(IssueStore.self) private var issueStore
@@ -152,31 +154,80 @@ struct StandupPage: View {
     @State private var chosenDay: Date?
     /// Every PR's commits listed, rather than folded under it.
     @AppStorage("standupShowCommits") private var showCommits = false
-    @AppStorage("standupLayout") private var layout: StandupLayout = .people
+    /// The style picked in the toolbar, for this standup only; nil is the
+    /// team's.
+    @State private var chosenStyle: StandupConfig.Style?
+    /// On screen in the meeting: larger, one column or person at a time.
+    /// For this meeting only, so Standup doesn't open presenting tomorrow.
+    @State private var presenting = false
+    /// The column or person on screen while presenting. Only `StepReader`s
+    /// read it, so a step doesn't rebuild the board and the day.
+    @State private var step = 0
     @State private var showsNotes = false
+    @State private var discussing: StandupDiscussion?
+    @State private var assigning: StandupAssignment?
+    @FocusState private var isFocused: Bool
 
     var body: some View {
         let day = dayInterval
+        let calendars = calendars(day)
+        let standup = standup(day, calendars: calendars)
+        let board = board()
+        let speakers = standup.map { shown($0, board: board) } ?? []
+        let steps = stepCount(shown: speakers, board: board)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0, pinnedViews: [.sectionHeaders]) {
                 Section {
-                    content(day)
-                        .sectionContent()
+                    StepReader(step: $step, steps: steps) { current in
+                        content(day, standup: standup, board: board, shown: speakers, calendars: calendars, step: current)
+                    }
+                    .sectionContent()
                 } header: {
-                    PinnedHeader { header(day) }
+                    PinnedHeader { header(day, steps: steps) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .toolbar { toolbar }
+        // The arrows step, when nothing inside wants them.
+        .focusable()
+        .focusEffectDisabled()
+        .focused($isFocused)
+        .onKeyPress(.leftArrow) {
+            let current = min(step, steps - 1)
+            guard presenting, current > 0 else { return .ignored }
+            step = current - 1
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            let current = min(step, steps - 1)
+            guard presenting, current < steps - 1 else { return .ignored }
+            step = current + 1
+            return .handled
+        }
+        .onEscape {
+            if presenting { presenting = false }
+        }
+        .onChange(of: style) { step = 0 }
+        .onChange(of: presenting) {
+            step = 0
+            if presenting { isFocused = true }
+        }
+        .onAppear { if presenting { isFocused = true } }
+        .toolbar { toolbar(steps: steps) }
         .sheet(isPresented: $showsNotes) {
             let date = day.start.formatted(.iso8601.year().month().day())
             NotesSheet(
                 title: "Standup notes, \(day.start.formatted(.dateTime.weekday(.wide).day().month(.wide)))",
                 org: org, path: "standups/\(date).md", message: "Gannin: standup notes, \(date)",
                 rewrite: "Rewrite these standup notes as a short summary per person of what they got done and what's in flight, then anything the team should know.",
-                build: { standup(day).map(StandupNotes.markdown) ?? "The work log hasn't loaded yet." }
+                build: { standup.map { StandupNotes.markdown($0, board: board) } ?? "The work log hasn't loaded yet." }
             )
+        }
+        .sheet(item: $discussing) { change in
+            StandupDiscussionSheet(org: org, change: change) { discussing = nil }
+        }
+        .sheet(item: $assigning) { change in
+            StandupAssignmentSheet(org: org, change: change) { assigning = nil }
         }
         .syncOffNotice(.workLog)
         .outsideReposNotice(org: org)
@@ -190,6 +241,32 @@ struct StandupPage: View {
             let year = Calendar.current.component(.year, from: day.start)
             await holidayStore.load(regions, years: year...year)
         }
+    }
+
+    // MARK: Style
+
+    private var standupConfig: StandupConfig { configs.config(for: org).standupConfig }
+
+    private var style: StandupConfig.Style { chosenStyle ?? standupConfig.openingStyle }
+
+    /// What presenting steps through: the board's columns, or the people
+    /// with something to say; one page otherwise.
+    private func stepCount(shown: [StandupEntry], board: StandupBoard?) -> Int {
+        switch style {
+        // The columns, then Up next.
+        case .board: board == nil ? 1 : StandupBoard.Column.allCases.count + 1
+        case .people: max(1, shown.count)
+        case .changelog, .written: 1
+        }
+    }
+
+    /// People who did something that day or have tickets on the board.
+    private func shown(_ standup: Standup, board: StandupBoard?) -> [StandupEntry] {
+        standup.entries.filter { entry in !entry.isEmpty || board.map { !$0.assigned(to: entry.id).isEmpty } ?? false }
+    }
+
+    private func discuss(_ item: StandupBoard.Item) {
+        discussing = StandupDiscussion(issue: item.record, label: standupConfig.discussion, adding: !item.needsDiscussion)
     }
 
     // MARK: Day
@@ -232,7 +309,7 @@ struct StandupPage: View {
     }
 
     /// The day's standup, once the work log has loaded.
-    private func standup(_ day: DateInterval) -> Standup? {
+    private func standup(_ day: DateInterval, calendars: [String: WorkingCalendar]) -> Standup? {
         guard let history = workLog.history(for: org) else { return nil }
         let config = configs.config(for: org)
         return Standup(
@@ -241,12 +318,21 @@ struct StandupPage: View {
             pullRequests: history.pullRequests(config: config, hidden: hidden.keys),
             issues: issueStore.history(for: org).map { Array($0.issues.values) } ?? [],
             config: config,
-            marks: marks(day, calendars: calendars(day))
+            marks: marks(day, calendars: calendars)
         )
     }
 
+    /// The workflow board as it is now, once issues have loaded; nil
+    /// with no workflow board picked.
+    private func board() -> StandupBoard? {
+        let config = configs.config(for: org)
+        guard let number = config.workflow.projectNumber, let history = issueStore.history(for: org) else { return nil }
+        let issues = TriageQueue.counted(Array(history.issues.values), config: config, hidden: hidden.keys, team: workload?.team)
+        return StandupBoard(issues: issues, board: number, config: config)
+    }
+
     @ToolbarContentBuilder
-    private var toolbar: some ToolbarContent {
+    private func toolbar(steps: Int) -> some ToolbarContent {
         ToolbarItem {
             Button {
                 showsNotes = true
@@ -254,22 +340,46 @@ struct StandupPage: View {
                 Label("Notes", systemImage: "note.text")
             }
             .help("The day as notes, per person, to copy, rewrite with Claude, or commit to the harness")
-            .disabled(layout == .changelog)
+            .disabled(style == .changelog)
         }
         ToolbarItem {
-            Picker("Layout", selection: $layout) {
-                ForEach(StandupLayout.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            Picker("Style", selection: Binding { style } set: { chosenStyle = $0 }) {
+                ForEach(StandupConfig.Style.allCases) { Text($0.name).tag($0) }
             }
-            .pickerStyle(.segmented)
             .fixedSize()
-            .help("A row per person, the whole team on one timeline, or the issues closed as a changelog")
+            .help("How this standup runs. The team's own is set in Org settings › Issues, under Standup")
         }
         ToolbarItem {
             Toggle(isOn: $showCommits) {
                 Label("Commits", systemImage: "list.bullet.indent")
             }
             .help(showCommits ? "Fold each PR's commits" : "List each PR's commits")
-            .disabled(layout == .changelog)
+            .disabled(style != .people)
+        }
+        ToolbarItem {
+            Toggle(isOn: $presenting) {
+                Label("Present", systemImage: "rectangle.on.rectangle")
+            }
+            .help(presenting ? "Back to the whole page" : "For sharing on screen: larger, one column or person at a time, stepped with the arrow keys")
+        }
+        if presenting && steps > 1 {
+            ToolbarItem {
+                StepReader(step: $step, steps: steps) { current in
+                    ControlGroup {
+                        Button { step = current - 1 } label: {
+                            Label("Previous", systemImage: "arrow.left.circle")
+                        }
+                        .disabled(current == 0)
+                        .help("The column or person before (Left Arrow)")
+                        Button { step = current + 1 } label: {
+                            Label("Next", systemImage: "arrow.right.circle")
+                        }
+                        .disabled(current >= steps - 1)
+                        .help("The next column or person (Right Arrow)")
+                    }
+                    .fixedSize()
+                }
+            }
         }
         ToolbarItem {
             ControlGroup {
@@ -294,7 +404,7 @@ struct StandupPage: View {
         }
     }
 
-    private func header(_ day: DateInterval) -> some View {
+    private func header(_ day: DateInterval, steps: Int) -> some View {
         HStack(spacing: 10) {
             Text(day.start.formatted(.dateTime.weekday(.wide).day().month(.wide)))
             if Calendar.current.isDateInToday(day.start) {
@@ -302,6 +412,24 @@ struct StandupPage: View {
             }
             if workLog.syncing.contains(org) || issueStore.syncing.contains(org) {
                 ProgressView().controlSize(.small)
+            }
+            Spacer(minLength: 0)
+            if presenting && steps > 1 {
+                // Where the walk has got to; a dot jumps there.
+                StepReader(step: $step, steps: steps) { current in
+                    HStack(spacing: 6) {
+                        ForEach(0..<steps, id: \.self) { index in
+                            Button { step = index } label: {
+                                Circle()
+                                    .fill(index == current ? Color.primary : Color.secondary.opacity(0.3))
+                                    .frame(width: 8, height: 8)
+                                    .contentShape(Rectangle().inset(by: -3))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .accessibilityLabel("Step \(current + 1) of \(steps)")
+                }
             }
         }
     }
@@ -316,13 +444,6 @@ struct StandupPage: View {
     private var regions: Set<BankHolidayRegion> {
         let orgRegion = week.holidays
         return Set(people.compactMap { peopleDates.region(for: $0.login, in: org, default: orgRegion) })
-    }
-
-    /// The org's working hours that day, for the team's strip; nil on a
-    /// day off.
-    private func teamHours(_ day: DateInterval) -> WorkWeek.Hours? {
-        guard week.isWorkingDay(day.start) else { return nil }
-        return week.hours(on: Calendar.current.component(.weekday, from: day.start))
     }
 
     /// Each person's working calendar that day: their pattern or the org's
@@ -347,54 +468,122 @@ struct StandupPage: View {
     }
 
     @ViewBuilder
-    private func content(_ day: DateInterval) -> some View {
-        if layout == .changelog {
-            // Only the issue history; the work log needn't be in.
-            if let history = issueStore.history(for: org) {
-                VStack(alignment: .leading, spacing: 22) {
-                    let closed = ClosedIssuesList.closed(in: day, history: history, config: configs.config(for: org))
-                    let completed = closed.filter(\.isCompleted).count
-                    HStack(spacing: 6) {
-                        Text(completed == 1 ? "1 issue completed" : "\(completed) issues completed").fontWeight(.medium)
-                        if closed.count > completed {
-                            Text("· \(closed.count - completed) closed as not planned").foregroundStyle(.secondary)
-                        }
-                    }
-                    .font(.callout)
-                    ClosedIssuesList(org: org, range: day, history: history, config: configs.config(for: org), members: people)
-                }
-            } else if let error = issueStore.errors[org] {
-                Banner(message: "Couldn't load issues: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red)
-            } else {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Fetching the issue history.").foregroundStyle(.secondary)
-                }
-            }
-        } else if let standup = standup(day) {
-            let calendars = calendars(day)
-            let active = standup.entries.filter { !$0.isEmpty }
-            let quiet = standup.entries.filter(\.isEmpty)
-            VStack(alignment: .leading, spacing: 20) {
-                if active.isEmpty {
-                    Text("Nothing recorded on this day.").foregroundStyle(.secondary)
+    private func content(
+        _ day: DateInterval, standup: Standup?, board: StandupBoard?, shown: [StandupEntry], calendars: [String: WorkingCalendar], step current: Int
+    ) -> some View {
+        switch style {
+        case .changelog:
+            changelog(day)
+        case .board:
+            if configs.config(for: org).workflow.projectNumber == nil {
+                noBoard
+            } else if let board {
+                let columns = StandupBoard.Column.allCases
+                let upNext = StandupUpNext(
+                    org: org, workload: workload, board: board, sortField: standupConfig.backlogField, presenting: presenting,
+                    onAssign: { assigning = StandupAssignment(issue: $0.record, person: $1) }
+                )
+                if presenting && current >= columns.count {
+                    upNext
                 } else {
-                    switch layout {
-                    case .people:
-                        StandupRows(org: org, day: day, entries: active, calendars: calendars, showCommits: showCommits)
-                    case .team:
-                        StandupTeam(org: org, day: day, entries: active, hours: teamHours(day), showCommits: showCommits)
-                    case .changelog:
-                        // Shown without the work log, above.
-                        EmptyView()
+                    VStack(alignment: .leading, spacing: 14) {
+                        StandupBoardColumns(
+                            org: org, workload: workload, board: board, presenting: presenting,
+                            column: presenting ? columns[current] : nil, onDiscuss: discuss
+                        )
+                        if !presenting { upNext }
                     }
                 }
-                if !quiet.isEmpty { quietList(quiet) }
-                Text("From the work log and issue history. Commits count for their author when the email is linked to GitHub, else the PR's; issue closes and board moves count for the issue's assignees.")
+            } else {
+                issuesStatus
+            }
+        case .people:
+            if let standup {
+                peopleContent(day, standup: standup, board: board, shown: shown, calendars: calendars, step: current)
+            } else {
+                workLogStatus
+            }
+        case .written:
+            if let standup {
+                MarkdownText(source: StandupNotes.markdown(standup, board: board), reading: presenting ? 20 : 15)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: 820, alignment: .leading)
+            } else {
+                workLogStatus
+            }
+        }
+    }
+
+    /// The issues closed that day: only the issue history, so the work log
+    /// needn't be in.
+    @ViewBuilder
+    private func changelog(_ day: DateInterval) -> some View {
+        if let history = issueStore.history(for: org) {
+            VStack(alignment: .leading, spacing: 22) {
+                let closed = ClosedIssuesList.closed(in: day, history: history, config: configs.config(for: org))
+                let completed = closed.filter(\.isCompleted).count
+                HStack(spacing: 6) {
+                    Text(completed == 1 ? "1 issue completed" : "\(completed) issues completed").fontWeight(.medium)
+                    if closed.count > completed {
+                        Text("· \(closed.count - completed) closed as not planned").foregroundStyle(.secondary)
+                    }
+                }
+                .font(presenting ? .title3 : .callout)
+                ClosedIssuesList(org: org, range: day, history: history, config: configs.config(for: org), members: people)
+            }
+        } else {
+            issuesStatus
+        }
+    }
+
+    /// Each person with something to say: their tickets by stage, then
+    /// their day. Presenting shows one at a time, and who was off or quiet
+    /// with the last.
+    private func peopleContent(
+        _ day: DateInterval, standup: Standup, board: StandupBoard?, shown: [StandupEntry], calendars: [String: WorkingCalendar], step current: Int
+    ) -> some View {
+        let quiet = standup.entries.filter { entry in !shown.contains { $0.id == entry.id } }
+        return VStack(alignment: .leading, spacing: 20) {
+            if shown.isEmpty {
+                Text("Nothing recorded on this day, and nobody has tickets in flight.").foregroundStyle(.secondary)
+            } else {
+                StandupRows(
+                    org: org, day: day, entries: presenting ? [shown[current]] : shown, range: standupHourRange(shown, day: day),
+                    calendars: calendars, board: board, showCommits: showCommits, presenting: presenting, onDiscuss: discuss
+                )
+            }
+            if !quiet.isEmpty && (!presenting || current == shown.count - 1 || shown.isEmpty) { quietList(quiet) }
+            if !presenting {
+                Text("From the workflow board, the work log and the issue history. Commits count for their author when the email is linked to GitHub, else the PR's; issue closes and board moves count for the issue's assignees.")
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
-        } else if let error = workLog.errors[org] {
+        }
+    }
+
+    private var noBoard: some View {
+        ContentUnavailableView(
+            "No board",
+            systemImage: "rectangle.split.3x1",
+            description: Text("Pick the board issues move across in the org's Settings, under Issues, to walk it at standup.")
+        )
+    }
+
+    @ViewBuilder
+    private var issuesStatus: some View {
+        if let error = issueStore.errors[org] {
+            Banner(message: "Couldn't load issues: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red)
+        } else {
+            HStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Fetching the issue history.").foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var workLogStatus: some View {
+        if let error = workLog.errors[org] {
             Banner(message: "Couldn't load the work log: \(error)", systemImage: "exclamationmark.triangle.fill", tint: .red) {
                 Task { await workLog.sync(org, force: true) }
             }
@@ -461,15 +650,6 @@ private struct FlowPeople: View {
 
 // MARK: - Layouts
 
-/// The standup by person (a row each), for the whole team (one timeline),
-/// or as a changelog of the issues closed.
-enum StandupLayout: String, CaseIterable {
-    case people = "By Person"
-    case team = "Team"
-    /// The issues closed that day, by investment category.
-    case changelog = "Changelog"
-}
-
 /// From 7:00 (or earlier, if anyone started earlier) to 19:00 (or later),
 /// in hours after midnight, but no wider than 6:00 to 22:00: a stray
 /// commit after midnight would squash everyone's day, so ticks outside sit
@@ -481,23 +661,31 @@ private func standupHourRange(_ entries: [StandupEntry], day: DateInterval) -> C
     return from...to
 }
 
-/// A row per person, all on one time axis: the day strips line up, so
-/// reading down the page compares when people worked.
+/// A section per person, all on one time axis so the day strips line up
+/// down the page: their tickets on the board by stage, then their day.
 private struct StandupRows: View {
     let org: String
     let day: DateInterval
     let entries: [StandupEntry]
+    /// The hours the strips span, from everyone with something to show,
+    /// so it holds while presenting steps through them.
+    let range: ClosedRange<Double>
     let calendars: [String: WorkingCalendar]
+    let board: StandupBoard?
     let showCommits: Bool
+    let presenting: Bool
+    let onDiscuss: (StandupBoard.Item) -> Void
     @State private var width: CGFloat = 1200
 
     var body: some View {
-        let range = standupHourRange(entries, day: day)
         VStack(alignment: .leading, spacing: 0) {
             ForEach(entries) { entry in
                 Divider()
-                StandupRow(org: org, day: day, entry: entry, hours: hours(entry), range: range, isWide: width >= 1000, showAllCommits: showCommits)
-                    .padding(.vertical, 16)
+                StandupRow(
+                    org: org, day: day, entry: entry, hours: hours(entry), range: range, isWide: width >= 1000, showAllCommits: showCommits,
+                    tickets: board?.assigned(to: entry.id), presenting: presenting, onDiscuss: onDiscuss
+                )
+                .padding(.vertical, presenting ? 24 : 16)
             }
             Divider()
         }
@@ -507,26 +695,6 @@ private struct StandupRows: View {
     private func hours(_ entry: StandupEntry) -> WorkWeek.Hours? {
         guard let working = calendars[entry.person.login], working.isWorkingDay(day.start) else { return nil }
         return working.week.hours(on: Calendar.current.component(.weekday, from: day.start))
-    }
-}
-
-/// Everyone's day as one timeline, each item after its person's avatar,
-/// under the team's counts and a strip of the whole team's day.
-private struct StandupTeam: View {
-    let org: String
-    let day: DateInterval
-    let entries: [StandupEntry]
-    let hours: WorkWeek.Hours?
-    let showCommits: Bool
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            StandupLegend(entries: entries, isHorizontal: true)
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(.secondary)
-            DayStrip(day: day, ticks: entries.flatMap(\.ticks), hours: hours, range: standupHourRange(entries, day: day))
-            StandupTimelineList(org: org, items: StandupItem.items(entries), showAllCommits: showCommits, showAvatars: true)
-        }
     }
 }
 
@@ -658,16 +826,11 @@ struct StandupItem: Identifiable {
         }
         return folded
     }
-
-    /// Everyone's days in one, in time order. Each person's commit runs
-    /// are folded first, so a run stays one item among others' activity.
-    static func items(_ entries: [StandupEntry]) -> [StandupItem] {
-        entries.flatMap(items).sorted { ($0.at, rank($0.kind)) < ($1.at, rank($1.kind)) }
-    }
 }
 
-/// One person's day across the page: who and how much on the left, then
-/// their day strip and a timeline of what they did.
+/// One person across the page: who and how much on the left, then their
+/// tickets on the board by stage, their day strip and a timeline of what
+/// they did.
 struct StandupRow: View {
     @Environment(\.navigate) private var navigate
     let org: String
@@ -677,22 +840,38 @@ struct StandupRow: View {
     let range: ClosedRange<Double>
     let isWide: Bool
     let showAllCommits: Bool
+    /// Their issues on the workflow board; nil for none.
+    var tickets: StandupBoard? = nil
+    var presenting = false
+    var onDiscuss: ((StandupBoard.Item) -> Void)? = nil
 
     private static let nameWidth: CGFloat = 190
 
     var body: some View {
-        let items = StandupItem.items(entry)
         if isWide {
             HStack(alignment: .top, spacing: 24) {
                 person.frame(width: Self.nameWidth, alignment: .leading)
-                VStack(alignment: .leading, spacing: 14) {
-                    DayStrip(day: day, ticks: entry.ticks, hours: hours, range: range)
-                    StandupTimelineList(org: org, items: items, showAllCommits: showAllCommits)
-                }
+                details
             }
         } else {
             VStack(alignment: .leading, spacing: 14) {
                 person
+                details
+            }
+        }
+    }
+
+    private var details: some View {
+        let items = StandupItem.items(entry)
+        return VStack(alignment: .leading, spacing: 14) {
+            if let tickets, !tickets.isEmpty {
+                StandupTickets(org: org, board: tickets, presenting: presenting, isWide: isWide, onDiscuss: onDiscuss)
+            }
+            if items.isEmpty {
+                Text("Nothing recorded on this day.")
+                    .font(presenting ? .title3 : .callout)
+                    .foregroundStyle(.secondary)
+            } else {
                 DayStrip(day: day, ticks: entry.ticks, hours: hours, range: range)
                 StandupTimelineList(org: org, items: items, showAllCommits: showAllCommits)
             }
@@ -705,9 +884,9 @@ struct StandupRow: View {
                 navigate?(.person(entry.person.login))
             } label: {
                 HStack(spacing: 8) {
-                    Avatar(url: entry.person.avatarUrl, size: 28)
+                    Avatar(url: entry.person.avatarUrl, size: presenting ? 40 : 28)
                     Text(entry.person.displayName)
-                        .font(.headline)
+                        .font(presenting ? .title2.weight(.semibold) : .headline)
                         .lineLimit(2)
                 }
             }
@@ -790,17 +969,12 @@ struct StandupRow: View {
 
 /// Counts of what happened, each with the icon its timeline items use, so
 /// it reads as the timeline's legend; then the lines added and removed.
-/// Down the side for one person, across the top for the team.
+/// Down the side, under the person.
 private struct StandupLegend: View {
     let entries: [StandupEntry]
-    var isHorizontal = false
 
     var body: some View {
-        if isHorizontal {
-            FlowRow(spacing: 16) { rows }
-        } else {
-            VStack(alignment: .leading, spacing: 3) { rows }
-        }
+        VStack(alignment: .leading, spacing: 3) { rows }
     }
 
     @ViewBuilder
@@ -1152,13 +1326,22 @@ struct LinesText: View {
 
 /// A standup as notes: each person's day in a few lines (what merged,
 /// opened, was worked on and reviewed, and the issues closed and moved),
-/// then who was off or quiet.
+/// and with the board, what they have in review and in progress; then
+/// what's to discuss, how many wait for triage, and who was off or quiet.
 enum StandupNotes {
-    static func markdown(_ standup: Standup) -> String {
+    static func markdown(_ standup: Standup, board: StandupBoard? = nil) -> String {
         let day = standup.day.start.formatted(.dateTime.weekday(.wide).day().month(.wide))
         var lines = ["# Standup, \(day)", ""]
         func ref(_ repo: String, _ number: Int) -> String { "\(repo.split(separator: "/").last ?? "")#\(number)" }
-        for entry in standup.entries where !entry.isEmpty {
+        func issueLink(_ issue: IssueRecord) -> String { "[\(ref(issue.repo, issue.number))](\(issue.url.absoluteString)) \(issue.title)" }
+        var quiet: [String] = []
+        for entry in standup.entries {
+            let tickets = board?.assigned(to: entry.id)
+            let inFlight = (tickets?.items(.review).map { ("In review", $0) } ?? []) + (tickets?.items(.progress).map { ("In progress", $0) } ?? [])
+            guard !entry.isEmpty || !inFlight.isEmpty else {
+                quiet.append(entry.person.displayName)
+                continue
+            }
             lines.append("## \(entry.person.displayName)")
             lines.append("")
             for work in entry.pullRequests {
@@ -1190,12 +1373,34 @@ enum StandupNotes {
                     lines.append("- Opened \(link)")
                 }
             }
+            for (stage, item) in inFlight {
+                lines.append("- \(stage): \(issueLink(item.record))")
+            }
             lines.append("")
         }
-        let quiet = standup.entries.filter(\.isEmpty).map(\.person.displayName)
+        if let board, !board.discussion.isEmpty {
+            lines += ["## To discuss", ""] + board.discussion.map { "- \(issueLink($0.record))" } + [""]
+        }
+        if let triage = board?.items(.triage).count, triage > 0 {
+            lines += [triage == 1 ? "1 issue waiting for triage." : "\(triage) issues waiting for triage.", ""]
+        }
+        if let idle = board?.needingWork(standup.entries.map(\.id)), !idle.isEmpty {
+            let names = idle.compactMap { idle in standup.entries.first { $0.id == idle.login }?.person.displayName }
+            lines += ["Needs work: " + names.joined(separator: ", "), ""]
+        }
         if !quiet.isEmpty {
             lines += ["Off, or nothing recorded: " + quiet.joined(separator: ", "), ""]
         }
         return lines.joined(separator: "\n")
     }
+}
+
+/// Hands its content the step on screen, so only it redraws when the step
+/// changes, not the page that worked out what it shows.
+private struct StepReader<Content: View>: View {
+    @Binding var step: Int
+    let steps: Int
+    @ViewBuilder let content: (Int) -> Content
+
+    var body: some View { content(min(step, steps - 1)) }
 }
