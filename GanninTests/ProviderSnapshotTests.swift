@@ -26,14 +26,18 @@ struct ProviderSnapshotTests {
         #expect(normal == kept, "\(name) changed")
     }
 
-    /// The model and sandboxing as the snapshots were taken, put back after.
+    /// The model, sandboxing and a sandbox's size as the snapshots were
+    /// taken (the size at its defaults, whatever this Mac has set), put
+    /// back after.
     private func withDefaults(model: String?, _ body: () throws -> Void) rethrows {
         let defaults = UserDefaults.standard
-        let keys = [SessionStore.modelKey, SandboxCredentials.enabledKey]
+        let keys = [SessionStore.modelKey, SandboxCredentials.enabledKey, SandboxCredentials.cpusKey, SandboxCredentials.memoryKey]
         let kept = keys.map { defaults.object(forKey: $0) }
         defer { for (key, value) in zip(keys, kept) { defaults.set(value, forKey: key) } }
         defaults.set(model, forKey: SessionStore.modelKey)
         defaults.set(false, forKey: SandboxCredentials.enabledKey)
+        defaults.removeObject(forKey: SandboxCredentials.cpusKey)
+        defaults.removeObject(forKey: SandboxCredentials.memoryKey)
         try body()
     }
 

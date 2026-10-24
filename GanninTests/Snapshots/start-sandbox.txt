@@ -188,7 +188,7 @@ else
   image=$(sed -n 's/^image=//p' "$images" | tail -n1)
   rm -f "$images"
   [ -n "$image" ] || sandbox_failed "The sandbox's image didn't build. What container said is above."
-  args=(run --detach --name "$name" --label 'dev.andon.gannin=1' --label 'com.orchard.sandbox=true' --label 'com.orchard.sandbox.owner=dev.andon.gannin' --label 'com.orchard.sandbox.network=nat' --cpus 2 --memory 2G
+  args=(run --detach --name "$name" --label 'dev.andon.gannin=1' --label 'com.orchard.sandbox=true' --label 'com.orchard.sandbox.owner=dev.andon.gannin' --label 'com.orchard.sandbox.network=nat' --cpus 4 --memory 8G
     --mount "type=bind,source=$h,target=$h,readonly")
   # A repo's git dir, writable so commits and worktrees work, with
   # its hooks read-only; what it says is checked before git on the
