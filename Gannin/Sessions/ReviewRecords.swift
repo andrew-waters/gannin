@@ -221,7 +221,9 @@ struct ReviewRecord: Codable, Hashable, Identifiable {
             }
         }
         let stillOpen = record.state != "MERGED" && record.state != "CLOSED"
-        record.approvalHeld = record.verdict == "approve" && record.event != "APPROVE" && !draft.approvalDismissed && stillOpen ? true : nil
+        // An approval given on GitHub by hand reaches `draft.postedEvent` (Check for Changes) without `posting`.
+        let given = record.event == "APPROVE" || draft.postedEvent == "APPROVE"
+        record.approvalHeld = record.verdict == "approve" && !given && !draft.approvalDismissed && stillOpen ? true : nil
         return record
     }
 

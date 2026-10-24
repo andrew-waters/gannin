@@ -17,7 +17,7 @@ The summary is Claude's text and can't be reliably rewritten, so the posted comm
 
 Dismissing is stored on `ReviewDraft` (`approvalDismissedAt`, compared with `resultAt`) so it lapses when Claude reviews again. `readyForApproval` returns nil for a dismissed approval, which takes it out of the Inbox, the Dashboard, the waiting count and the reminder with one check. A merged or closed PR still leaves the queue, as before.
 
-The reminder is `SessionStore.remindApprovals`, run on each check of watched reviews. Last-notified times are in memory, so a relaunch starts the 24 hours again.
+The reminder is `SessionStore.remindApprovals`, run on each check of watched reviews. Last-notified times are in memory, so after a relaunch each held approval is notified about again at the first check, and an approval that became ready after its review finished is notified about then. The Agents badge counts held approvals as well as flagged sessions, as looking at a review's tab clears its flag.
 
 - [x] `ReviewRecord.approvalHeld`, derived in `updated`.
 - [x] `ReviewedPullRequest.approvalHeldNote` added to the body of an automatic comment whose verdict is approve; summary instruction in the review prompt.

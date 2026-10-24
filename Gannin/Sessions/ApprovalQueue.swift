@@ -39,26 +39,29 @@ extension SessionStore {
 
     /// A review's result is in: when it's ready for you, it's flagged as
     /// waiting on you with a notification saying so.
-    func noticeApproval(_ id: UUID) {
+    func noticeApproval(_ id: UUID, now: Date = .now) {
         guard let pr = sessions[id]?.reviewOf, readyForApproval(pr.id, whileBusy: true) != nil else { return }
-        approvalNoticedAt[id] = .now
+        approvalNoticedAt[id] = now
         flag(id, title: "Ready for your approval", body: "Claude would approve \(pr.repo)#\(pr.number). Look over the review, then approve it.", replies: false)
     }
 
     /// How long a held approval waits before its notification is sent again.
     static let approvalReminderInterval: TimeInterval = 24 * 3600
 
-    /// Notifies again for each approval in the queue that's been waiting
-    /// `approvalReminderInterval` since its last notification, until it's
-    /// given or dismissed. Run on each check of the watched reviews.
+    /// Whether an approval last notified about at `noticed` is due another
+    /// notification. One never notified about is: it became ready after its
+    /// review finished, or the app was relaunched since.
+    static func isDueReminder(noticed: Date?, now: Date) -> Bool {
+        guard let noticed else { return true }
+        return now.timeIntervalSince(noticed) >= approvalReminderInterval
+    }
+
+    /// Notifies again for each approval in the queue that's due
+    /// (`isDueReminder`), until it's given or dismissed. Run on each check of
+    /// the watched reviews.
     func remindApprovals(now: Date = .now) {
-        for (_, session) in approvalQueue() {
-            guard let noticed = approvalNoticedAt[session.id] else {
-                // Found already waiting (after a relaunch): counted from now.
-                approvalNoticedAt[session.id] = now
-                continue
-            }
-            if now.timeIntervalSince(noticed) >= Self.approvalReminderInterval { noticeApproval(session.id) }
+        for (_, session) in approvalQueue() where Self.isDueReminder(noticed: approvalNoticedAt[session.id], now: now) {
+            noticeApproval(session.id, now: now)
         }
     }
 

@@ -118,6 +118,29 @@ struct ApprovalQueueTests {
         #expect(held.contains(ReviewedPullRequest.approvalHeldNote))
     }
 
+    /// `findingEntries` reads every line after a finding as part of it, so the note can't follow the list.
+    @Test func approvalHeldNoteComesBeforeTheFindingsList() throws {
+        let body = ReviewedPullRequest.body(summary: "Looks good.", general: [findings[1]], approvalHeld: true)
+        let note = try #require(body.range(of: ReviewedPullRequest.approvalHeldNote))
+        let finding = try #require(body.range(of: "- `B.swift`: Missing test"))
+        #expect(note.upperBound <= finding.lowerBound)
+        #expect(body.hasSuffix("Missing test"))
+    }
+
+    @Test func aNeverNotifiedApprovalIsDueAReminder() {
+        let now = Date(timeIntervalSince1970: 1_000_000)
+        #expect(SessionStore.isDueReminder(noticed: nil, now: now))
+        #expect(!SessionStore.isDueReminder(noticed: now.addingTimeInterval(-3600), now: now))
+        #expect(SessionStore.isDueReminder(noticed: now.addingTimeInterval(-SessionStore.approvalReminderInterval), now: now))
+    }
+
+    @Test func recordDoesNotHoldAnApprovalGivenOnGitHubByHand() {
+        // Check for Changes sets the draft's event from GitHub without posting.
+        var draft = ReviewDraft()
+        draft.postedEvent = "APPROVE"
+        #expect(record("approve", draft: draft)?.approvalHeld == nil)
+    }
+
     @Test func dismissedFindingsAreNotHeld() {
         var draft = ReviewDraft()
         #expect(SessionStore.heldFindings(review("approve", findings: findings), draft: draft) == 2)

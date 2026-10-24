@@ -418,16 +418,17 @@ struct ReviewedPullRequest: Equatable {
     /// the summary isn't read as an approval.
     static let approvalHeldNote = "This is a comment, not an approval: Claude would approve this, but giving the approval is up to the reviewer."
 
-    /// A review's body: the summary, then findings that can't go on a line,
-    /// then `approvalHeldNote` when the review is a held approval.
+    /// A review's body: the summary, `approvalHeldNote` when the review is a
+    /// held approval, then findings that can't go on a line. The findings
+    /// stay last: `findingEntries` reads every line after one as part of it.
     static func body(summary: String, general: [SessionTranscript.Finding], approvalHeld: Bool = false) -> String {
         var text = summary
+        if approvalHeld { text += "\n\n_\(approvalHeldNote)_" }
         if !general.isEmpty {
             text += "\n\n" + general.map { finding in
                 "- `\(finding.path)\(finding.line.map { ":\($0)" } ?? "")`: \(finding.comment)"
             }.joined(separator: "\n")
         }
-        if approvalHeld { text += "\n\n_\(approvalHeldNote)_" }
         return text
     }
 }
