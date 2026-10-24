@@ -1623,11 +1623,17 @@ struct OrgSidebar: View {
         case .pullRequests: return workload.openPullRequests.count
         case .inbox:
             guard let login = auth.viewer?.login else { return 0 }
-            return Inbox(login: login, workload: workload, history: nil, workflow: IssueWorkflow()).count
+            let inbox = Inbox(login: login, workload: workload, history: nil, workflow: IssueWorkflow())
+            // Held approvals GitHub no longer lists as review requests are in the Inbox too.
+            let listed = Set(inbox.reviews.map(\.pr.id))
+            return inbox.count + sessions.approvalQueue(in: workload.openPullRequests, login: login).filter { !listed.contains($0.pr.id) }.count
         // Issues' lists under it have their own counts.
         case .agents:
             guard let selectedOrg else { return 0 }
-            return sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.count
+            let waiting = Set(sessions.sessions(for: selectedOrg).filter { sessions.isRunning($0.id) && (sessions.attention[$0.id] != nil || SessionQuestionCard.isAsking($0, in: sessions)) }.map(\.id))
+            // A held approval counts until it's given or dismissed, even once looking at its tab has cleared its flag.
+            let approvals = Set(sessions.approvalQueue(in: workload.openPullRequests, login: auth.viewer?.login).map(\.session.id))
+            return waiting.union(approvals).count
         case .dashboard, .issues, .people, .repositories, .actions, .investments, .rdTime, .projects, .harness, .onboarding, .views, .prioritisation, .planning, .refine, .recap, .scorecard, .agentMetrics, .ask, .epics, .hygiene, .delivery, .issueFlow, .releases, .settings: return 0
         case .routines:
             guard let selectedOrg else { return 0 }

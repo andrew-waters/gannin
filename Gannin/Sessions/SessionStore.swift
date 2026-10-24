@@ -492,8 +492,7 @@ final class SessionStore {
     @ObservationIgnored var automaticRuns: Set<UUID> = []
     /// When each automatic run was started, for counting it before its
     /// claude is running (`automaticReviewsRunning`).
-    @ObservationIgnored var automaticStartedAt: [UUID: Date] = [:]
-    /// What to tell claude once it has started (a review asked to look
+    @ObservationIgnored var automaticStartedAt: [UUID: Date] = [:]    /// What to tell claude once it has started (a review asked to look
     /// again while it wasn't running).
     @ObservationIgnored var pendingPrompts: [UUID: String] = [:]
     /// Why Review Now couldn't start a round, by working session, for its panel.
@@ -1214,7 +1213,7 @@ final class SessionStore {
         return identifier
     }
 
-    private func unflag(_ id: UUID) {
+    func unflag(_ id: UUID) {
         guard attention[id] != nil else { return }
         attention[id] = nil
         updateBadge()

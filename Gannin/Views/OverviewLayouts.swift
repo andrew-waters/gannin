@@ -95,6 +95,8 @@ struct AttentionOverview: View {
         /// Sorts within a severity: bigger first.
         let weight: Double
         let open: () -> Void
+        /// Set on an item that can be put away from its menu.
+        var dismiss: (() -> Void)? = nil
     }
 
     var body: some View {
@@ -149,6 +151,9 @@ struct AttentionOverview: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .contextMenu {
+            if let dismiss = item.dismiss { Button("Dismiss Approval", action: dismiss) }
+        }
     }
 
     private func items(now: Date = .now) -> [Item] {
@@ -190,16 +195,17 @@ struct AttentionOverview: View {
 
         // Yours to approve: Claude would, and the team's waiting on it.
         if let me = auth.viewer?.login {
-            for pr in workload.openPullRequests where !pr.isDraft && pr.requestedReviewers.contains(where: { $0.login == me }) {
-                guard let session = sessions.readyForApproval(pr.id) else { continue }
-                let asked = pr.reviewRequestedAt[me] ?? pr.createdAt
+            for (pr, session, asked) in sessions.approvalQueue(in: workload.openPullRequests, login: me) {
+                // GitHub stops listing you as asked once you've reviewed it, even as a comment.
+                let verb = pr.requestedReviewers.contains { $0.login == me } ? "asked" : "reviewed"
                 items.append(Item(
                     id: "approve \(pr.id)", severity: .critical, symbol: "checkmark.seal",
                     title: pr.title,
-                    detail: "\(sessions.approvalState(session)): yours to look over, asked \(age(asked, now: now)) ago · \(shortRepo(pr.repo))#\(pr.number)",
+                    detail: "\(sessions.approvalState(session)): yours to look over, \(verb) \(age(asked, now: now)) ago · \(shortRepo(pr.repo))#\(pr.number)",
                     // Above everything else that's urgent.
                     weight: .greatestFiniteMagnitude / 2 + now.timeIntervalSince(asked),
-                    open: { sessions.show(session.id, with: openWindow) }
+                    open: { sessions.show(session.id, with: openWindow) },
+                    dismiss: { sessions.dismissApproval(session.id) }
                 ))
             }
         }
