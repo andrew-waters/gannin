@@ -108,7 +108,7 @@ struct RoutineEditor: View {
     let isNew: Bool
     @State private var routine: Routine
     @State private var schedule: ScheduleDraft
-    @State private var repoText: String
+    @State private var repos: [String]
     let onSave: ((Routine) -> Void)?
 
     init(routine: Routine, isNew: Bool, onSave: ((Routine) -> Void)? = nil) {
@@ -117,13 +117,14 @@ struct RoutineEditor: View {
         self.onSave = onSave
         _routine = State(initialValue: routine)
         _schedule = State(initialValue: ScheduleDraft(routine.schedule))
-        _repoText = State(initialValue: routine.repos.joined(separator: ", "))
+        _repos = State(initialValue: routine.repos)
     }
 
     var body: some View {
         let built = schedule.schedule(for: routine.kind)
         VStack(spacing: 0) {
             Form {
+                if routine.kind.isScheduledTask { draftSection(built) }
                 whatSection
                 if routine.kind.isScheduledTask { agentSection }
                 whenSection(built)
@@ -154,6 +155,7 @@ struct RoutineEditor: View {
             .padding(12)
         }
         .frame(minWidth: 560, idealWidth: 600, minHeight: 560, idealHeight: 720)
+        .task(id: routine.org) { await sessions.harnessStore.loadRepositories(org: routine.org) }
     }
 
     // MARK: Sections
@@ -186,8 +188,7 @@ struct RoutineEditor: View {
                 LabeledContent("Issue", value: "\(issue.reference) \(issue.title)")
             }
             if routine.kind.isScheduledTask {
-                TextField("Repos", text: $repoText, prompt: Text(routine.kind == .report ? "owner/name, owner/name (optional)" : "owner/name, owner/name"))
-                    .leadingTextBox("Repos")
+                reposPicker
             }
             if routine.kind != .reviewQueue {
                 VStack(alignment: .leading, spacing: 4) {
@@ -342,6 +343,90 @@ struct RoutineEditor: View {
         }
     }
 
+    /// The repos it works on: picked from the project's, then the org's.
+    @ViewBuilder
+    private var reposPicker: some View {
+        LabeledContent("Repos") {
+            VStack(alignment: .trailing, spacing: 4) {
+                ForEach(repos, id: \.self) { repo in
+                    HStack(spacing: 6) {
+                        Text(repo)
+                        Button {
+                            repos.removeAll { $0 == repo }
+                        } label: {
+                            Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("Take \(repo) off")
+                    }
+                }
+                let project = projectRepos.filter { !repos.contains($0) }
+                let others = orgRepos.filter { !repos.contains($0) && !projectRepos.contains($0) }
+                Menu(repos.isEmpty ? (routine.kind == .report ? "Add Repo (optional)" : "Add Repo") : "Add Another") {
+                    if !project.isEmpty {
+                        Section("This project") { ForEach(project, id: \.self) { repo in Button(repo) { repos.append(repo) } } }
+                    }
+                    if !others.isEmpty {
+                        Section(project.isEmpty ? "The org" : "The rest of the org") { ForEach(others, id: \.self) { repo in Button(repo) { repos.append(repo) } } }
+                    }
+                    if project.isEmpty && others.isEmpty {
+                        Text(orgRepos.isEmpty ? "Loading the org's repos" : "Every repo is added")
+                    }
+                }
+                .fixedSize()
+            }
+        }
+    }
+
+    /// The project's own repos, as `owner/name`.
+    private var projectRepos: [String] {
+        let named = configs.config(for: routine.org).harness(repo: routine.harnessRepo)?.repos ?? []
+        return named.compactMap { name in
+            name.contains("/") ? name : orgRepos.first { $0.split(separator: "/").last.map(String.init)?.caseInsensitiveCompare(name) == .orderedSame }
+        }
+    }
+
+    private var orgRepos: [String] {
+        (sessions.harnessStore.repositories[routine.org] ?? []).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+    }
+
+    private var draftChoices: (specialists: [RoutineDrafting.Choice], workflows: [RoutineDrafting.Choice]) {
+        let setup = HarnessConfig(repo: routine.harnessRepo)
+        let specialists = sessions.specialists(org: routine.org, setup: setup).values
+            .sorted { $0.name < $1.name }
+            .map { RoutineDrafting.Choice(id: $0.name, label: $0.title + ($0.summary.map { ": \($0)" } ?? "")) }
+        let workflows = sessions.agentWorkflows(routine.org, setup).workflows(for: .routine).filter { !$0.isBuiltIn }
+            .map { RoutineDrafting.Choice(id: $0.id, label: $0.name) }
+        return (specialists, workflows)
+    }
+
+    /// Claude fills in the routine from what you say it's for.
+    private func draftSection(_ built: RoutineSchedule) -> some View {
+        ClaudeDraftSection(
+            org: routine.org,
+            placeholder: "Every Monday, audit our API repos for leaked secrets and injection, with the security specialist",
+            footer: "A conversation: say what the routine is for, and Claude asks what it needs or fills in the name, task, repos, how far it goes, when and who runs it, from the repos, specialists and workflows Gannin has. Nothing's saved until you Add it.",
+            current: { RoutineDrafting.editorText(routine, repos: repos, schedule: schedule.schedule(for: routine.kind), runsWith: sessions.routineAgent(routine)) },
+            firstPrompt: { ask in
+                let choices = draftChoices
+                let prompt = RoutineDrafting.request(
+                    ask: ask, current: RoutineDrafting.editorText(routine, repos: repos, schedule: schedule.schedule(for: routine.kind), runsWith: sessions.routineAgent(routine)),
+                    repos: projectRepos + orgRepos.filter { !projectRepos.contains($0) }, specialists: choices.specialists, workflows: choices.workflows
+                )
+                return (prompt, [:])
+            },
+            take: { reply in
+                guard let parsed = ScriptRunner.json(RoutineDrafting.Reply.self, in: reply) else { return nil }
+                if parsed.hasDraft {
+                    let choices = draftChoices
+                    RoutineDrafting.apply(parsed, to: &routine, repos: &repos, schedule: &schedule, knownRepos: projectRepos + orgRepos,
+                                          specialists: choices.specialists, workflows: choices.workflows)
+                }
+                return parsed.message ?? (parsed.hasDraft ? "Drafted. Check it over below." : "No changes.")
+            }
+        )
+    }
+
     /// Who runs it: a specialist, a Routines workflow, or the default.
     @ViewBuilder
     private var agentSection: some View {
@@ -433,10 +518,6 @@ struct RoutineEditor: View {
 
     private func timeBinding(_ path: WritableKeyPath<ScheduleDraft, TimeOfDay>) -> Binding<Date> {
         Binding(get: { schedule[keyPath: path].date }, set: { schedule[keyPath: path] = TimeOfDay($0) })
-    }
-
-    private var repos: [String] {
-        repoText.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init).filter { !$0.isEmpty }
     }
 
     /// Where its runs would start, as auto mode is remembered for.

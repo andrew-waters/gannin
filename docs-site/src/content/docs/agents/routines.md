@@ -22,7 +22,9 @@ Issues from a queue window or pin run as [Work on This](/docs/agents/work-on-thi
 
 ## Making one
 
-New Routine in the toolbar has New Routine, New Queue window and New Review Window. The editor has Name, Kind, Project, Repos (optional for a report), the task, the team's prompts (none ticked takes the defaults), Who runs it, When, how far it goes, and Limits.
+New Routine in the toolbar has New Routine, New Queue window and New Review Window. The editor has Name, Kind, Project, Repos (optional for a report), the task, the team's prompts (none ticked takes the defaults), Who runs it, When, how far it goes, and Limits. Add Repo lists the project's repos, then the rest of the org's.
+
+**Draft with Claude**, at the top, sets a routine up from what you say it's for ("every Monday, audit our API repos for leaked secrets with the security specialist"). Claude asks what it needs, or fills in the name, task, repos, how far it goes, when and who runs it, choosing only from the repos, specialists and Routines workflows Gannin has. Answer or ask for changes and it carries on from what's in the editor. Nothing's saved until you Add it.
 
 **Who runs it** (Run with) is your default Routines workflow, a specialist (the team's or your own), or a workflow from [Harness › Workflows](/docs/agents/workflows/) › Routines. A specialist runs the session as itself, on its own model. A workflow's steps before the session prepare its brief, and its steps after review any pull request the run opens.
 

@@ -345,13 +345,9 @@ enum HarnessCommitting {
     }
 }
 
-/// Drafting with Claude as a conversation: say what it's for, and Claude
-/// asks what it needs to know or drafts it (from the harness's guides, the
-/// ones already there and the org's guidance for the kind, Settings ›
-/// Harness), saying what it did; answer or ask for changes and it carries
-/// on, working from what's in the editor. One claude conversation per
-/// sheet (`--resume` in the same folder). Run through your own claude,
-/// only when you send something; nothing's committed until you do.
+/// Drafting a harness document with Claude (`ClaudeDraftSection`): from
+/// the harness's guides, the ones already there and the org's guidance for
+/// the kind, Settings › Harness. Nothing's committed until you do.
 struct DraftWithClaudeSection: View {
     @Environment(HarnessStore.self) private var harness
     @Environment(OrgConfigStore.self) private var configs
@@ -361,6 +357,60 @@ struct DraftWithClaudeSection: View {
     /// What's written so far, to improve on; nil for nothing yet.
     let current: () -> String?
     let apply: (HarnessAuthoring.Reply) -> Void
+
+    var body: some View {
+        ClaudeDraftSection(
+            org: org, placeholder: placeholder,
+            footer: "A conversation: Claude asks what it needs to know, drafts into the fields below and says what it did, and carries on from there. It reads the harness's guides and the \(kind.rawValue.lowercased()) already there, follows the org's guidance for \(kind.rawValue.lowercased()) (Settings under Harness), and sees your edits each time. Nothing's committed until you do.",
+            current: current,
+            firstPrompt: { ask in
+                let guides = await harness.guides(for: kind, org: org, setup: setup)
+                let prompt = HarnessAuthoring.request(
+                    kind: kind,
+                    guidance: HarnessAuthoring.guidance(for: kind, config: configs.config(for: org), org: org),
+                    ask: ask, current: current(), guides: guides.keys.sorted(),
+                    existing: (harness.index(for: org, setup)?.documents(kind) ?? []).filter { $0.summary != nil }
+                )
+                return (prompt, guides.mapValues { Data($0.utf8) })
+            },
+            take: { reply in
+                guard let parsed = ScriptRunner.json(HarnessAuthoring.Reply.self, in: reply) else { return nil }
+                if parsed.hasDraft { apply(parsed) }
+                return parsed.message ?? (parsed.hasDraft ? "Drafted. Check it over below." : "No changes.")
+            }
+        )
+    }
+
+    private var placeholder: String {
+        switch kind {
+        case .skills: "Rotate a tenant's API keys and check nothing breaks"
+        case .prompts: "Reviews of the billing service should check money handling and idempotency"
+        case .specialists: "A security reviewer who knows our auth middleware and looks for injection and leaked secrets"
+        case .findings: "Exports time out for orgs with over 10k jobs; it's the N+1 in job_exports"
+        case .learnings: "Sync writes go through the actor in SyncStore because two windows can refresh at once"
+        case .decisions: "We run every session in the harness root rather than in the code repo, so plans sit beside the code"
+        default: "What it should cover"
+        }
+    }
+}
+
+/// Drafting with Claude as a conversation: say what it's for, and Claude
+/// asks what it needs to know or drafts it, saying what it did; answer or
+/// ask for changes and it carries on, working from what's in the editor.
+/// One claude conversation per sheet (`--resume` in the same folder). Run
+/// through your own claude, only when you send something.
+struct ClaudeDraftSection: View {
+    let org: String
+    let placeholder: String
+    let footer: String
+    /// What's in the editor, to work from; nil for nothing yet.
+    let current: () -> String?
+    /// The first message's request, from what you've said, with the files
+    /// it reads. `conversational` is added after it.
+    let firstPrompt: (_ ask: String) async -> (prompt: String, files: [String: Data])
+    /// Takes Claude's reply: applies what it drafted and returns what to
+    /// show, or nil when the reply isn't the JSON asked for.
+    let take: (String) -> String?
 
     struct Turn: Identifiable {
         let id = UUID()
@@ -425,7 +475,7 @@ struct DraftWithClaudeSection: View {
         } header: {
             Text("Draft with Claude")
         } footer: {
-            Text("A conversation: Claude asks what it needs to know, drafts into the fields below and says what it did, and carries on from there. It reads the harness's guides and the \(kind.rawValue.lowercased()) already there, follows the org's guidance for \(kind.rawValue.lowercased()) (Settings under Harness), and sees your edits each time. Nothing's committed until you do.")
+            Text(footer)
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -443,19 +493,7 @@ struct DraftWithClaudeSection: View {
         }
     }
 
-    private var placeholder: String {
-        switch kind {
-        case .skills: "Rotate a tenant's API keys and check nothing breaks"
-        case .prompts: "Reviews of the billing service should check money handling and idempotency"
-        case .specialists: "A security reviewer who knows our auth middleware and looks for injection and leaked secrets"
-        case .findings: "Exports time out for orgs with over 10k jobs; it's the N+1 in job_exports"
-        case .learnings: "Sync writes go through the actor in SyncStore because two windows can refresh at once"
-        case .decisions: "We run every session in the harness root rather than in the code repo, so plans sit beside the code"
-        default: "What it should cover"
-        }
-    }
-
-    private static let conversational = """
+    static let conversational = """
         This is a conversation with me, not a one-off. Put what you say to me in `message`. If something that matters is unclear, ask me (a few short questions at most) in `message` and leave the other fields out until I've answered. Once you can, draft it, and use `message` to say briefly what you did and anything I should check. Later messages from me are answers or changes: work from what's in the editor then, since I may have edited it. Always reply with only the JSON, `message` included.
         """
 
@@ -471,14 +509,9 @@ struct DraftWithClaudeSection: View {
             let prompt: String
             var files: [String: Data] = [:]
             if isFirst {
-                let guides = await harness.guides(for: kind, org: org, setup: setup)
-                files = guides.mapValues { Data($0.utf8) }
-                prompt = HarnessAuthoring.request(
-                    kind: kind,
-                    guidance: HarnessAuthoring.guidance(for: kind, config: configs.config(for: org), org: org),
-                    ask: turns.filter { !$0.fromClaude }.map(\.text).joined(separator: "\n\n"), current: current(), guides: guides.keys.sorted(),
-                    existing: (harness.index(for: org, setup)?.documents(kind) ?? []).filter { $0.summary != nil }
-                ) + "\n\n" + Self.conversational
+                let first = await firstPrompt(turns.filter { !$0.fromClaude }.map(\.text).joined(separator: "\n\n"))
+                files = first.files
+                prompt = first.prompt + "\n\n" + Self.conversational
             } else {
                 let editor = current().map { "\n\nWhat's in the editor now:\n\n\($0)" } ?? ""
                 prompt = "\(text)\(editor)\n\nReply with only the JSON, as before."
@@ -489,13 +522,8 @@ struct DraftWithClaudeSection: View {
                     tools: ["Read", "Glob", "Grep"], session: (conversation.uuidString.lowercased(), !isFirst)
                 )
                 started = true
-                guard let parsed = ScriptRunner.json(HarnessAuthoring.Reply.self, in: reply) else {
-                    // Not the JSON: it's talking, so show it as said.
-                    turns.append(Turn(fromClaude: true, text: reply))
-                    return
-                }
-                if parsed.hasDraft { apply(parsed) }
-                turns.append(Turn(fromClaude: true, text: parsed.message ?? (parsed.hasDraft ? "Drafted. Check it over below." : "No changes.")))
+                // Not the JSON: it's talking, so show it as said.
+                turns.append(Turn(fromClaude: true, text: take(reply) ?? reply))
             } catch {
                 turns.append(Turn(fromClaude: true, text: error.localizedDescription))
                 // A first message that failed starts afresh next time.
