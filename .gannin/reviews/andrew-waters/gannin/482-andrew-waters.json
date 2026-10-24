@@ -1,0 +1,47 @@
+{
+  "author" : "dwrss",
+  "effort" : 3,
+  "event" : "COMMENT",
+  "findings" : [
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "Once this COMMENT is posted under the reviewer's account, GitHub treats their re",
+      "key" : "Gannin/Sessions/AutoReview.swift:351:Once this COMMENT is posted under the reviewer's account, Gi",
+      "line" : 351,
+      "path" : "Gannin/Sessions/AutoReview.swift",
+      "posted_at" : "2026-10-24T11:13:11Z",
+      "severity" : "major"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "\"Such a PR isn't in the Inbox or reminded about until it's ready\" suggests it wi",
+      "key" : "docs-site/src/content/docs/agents/auto-review.md:49:\"Such a PR isn't in the Inbox or reminded about until it's r",
+      "line" : 49,
+      "path" : "docs-site/src/content/docs/agents/auto-review.md",
+      "posted_at" : "2026-10-24T11:13:11Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`approvalNoticedAt` is only kept in memory, so after any relaunch the 24 hours s",
+      "key" : "Gannin/Sessions/ApprovalQueue.swift:58:`approvalNoticedAt` is only kept in memory, so after any rel",
+      "line" : 58,
+      "path" : "Gannin/Sessions/ApprovalQueue.swift",
+      "posted_at" : "2026-10-24T11:13:11Z",
+      "severity" : "minor"
+    }
+  ],
+  "number" : 482,
+  "posted_at" : "2026-10-24T11:13:11Z",
+  "posted_automatically" : true,
+  "repo" : "andrew-waters/gannin",
+  "reviewer" : "andrew-waters",
+  "started_at" : "2026-10-24T10:56:24Z",
+  "state" : "OPEN",
+  "title" : "Auto review: show a held approval as held in the record, the comment and the reminders",
+  "updated_at" : "2026-10-24T11:13:12Z",
+  "verdict" : "comment"
+}
