@@ -242,18 +242,24 @@ struct PairReviewTests {
         return (ExtraReviewer.junie.outcome(for: (result.status, result.output, "")), try String(contentsOf: log, encoding: .utf8).split(separator: "\n"))
     }
 
-    private static let noList = #"{"result":"All looks fine."}"#
-    private static let emptyList = #"{"result":"```json\n[]\n```"}"#
+    private static let noList = #"{"sessionId":"session-1","result":"All looks fine."}"#
+    private static let emptyList = #"{"sessionId":"session-1","result":"```json\n[]\n```"}"#
 
-    @Test func junieIsAskedAgainWhenItsSummaryHasNoList() throws {
+    @Test func junieIsAskedAgainInItsOwnSessionWhenItsSummaryHasNoList() throws {
         let (outcome, runs) = try runJunie(first: Self.noList, second: Self.emptyList)
         #expect(outcome == .findings([]))
         #expect(runs.count == 2)
-        #expect(runs[1].contains("--resume"))
+        #expect(runs[1].contains("--session-id session-1 --resume"))
+    }
+
+    @Test func junieIsNotAskedAgainWithoutASessionToAskIn() throws {
+        let (outcome, runs) = try runJunie(first: #"{"result":"All looks fine."}"#, second: Self.emptyList)
+        #expect(runs.count == 1)
+        #expect(outcome == .failed("Junie replied with no list of findings.", output: "All looks fine."))
     }
 
     @Test func aMentionOfTheFenceIsNotAList() throws {
-        let (outcome, runs) = try runJunie(first: #"{"result":"I would end with a ```json block, but there is nothing to say."}"#, second: Self.emptyList)
+        let (outcome, runs) = try runJunie(first: #"{"sessionId":"session-1","result":"I would end with a ```json block, but there is nothing to say."}"#, second: Self.emptyList)
         #expect(outcome == .findings([]))
         #expect(runs.count == 2)
     }

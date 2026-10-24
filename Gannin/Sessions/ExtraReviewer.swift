@@ -73,8 +73,8 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
     /// CLI's own stdout is discarded: with Junie it is coloured text
     /// whatever the output format is.
     ///
-    /// If the result has no fenced list, Junie's last session is asked once
-    /// more for it, within `timeout` in all.
+    /// If the result has no fenced list, the session it names (`sessionId`)
+    /// is asked once more for it, within `timeout` in all.
     ///
     /// A worktree's `.git` file points at its admin directory in the main
     /// clone, so a git command run in a plain copy would change the real
@@ -156,12 +156,15 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
                 "  exit $status",
                 "fi",
                 // No fenced list (the fence opens a JSON list, `\n` being how the
-                // result file writes a newline): ask Junie's last session once
-                // more for it, if the run left time. A retry that fails leaves
-                // the first result to be read as it was.
+                // result file writes a newline): ask the session named in the
+                // result file once more for it, if the run left time. Never
+                // `--resume` alone, which takes Junie's newest session whoever
+                // started it. A retry that fails leaves the first result to be
+                // read as it was.
                 #"left=$((\#(Int(timeout)) - SECONDS))"#,
-                #"if [ -s "$d/result.json" ] && ! grep -Eq '```json(\\n|[[:space:]])*\[' "$d/result.json" && [ "$left" -ge \#(Self.minimumRetry) ] && [ ! -e "$d/cancel" ]; then"#,
-                #"  run_junie "$left" "$d/retry.json" --resume "--task=$(cat "$d/reminder")""#,
+                #"sid=$(sed -n 's/.*"sessionId": *"\([^"]*\)".*/\1/p' "$d/result.json")"#,
+                #"if [ -n "$sid" ] && ! grep -Eq '```json(\\n|[[:space:]])*\[' "$d/result.json" && [ "$left" -ge \#(Self.minimumRetry) ] && [ ! -e "$d/cancel" ]; then"#,
+                #"  run_junie "$left" "$d/retry.json" --session-id "$sid" --resume "--task=$(cat "$d/reminder")""#,
                 #"  [ "$status" -eq 0 ] && [ -s "$d/retry.json" ] && mv "$d/retry.json" "$d/result.json""#,
                 "fi",
                 #"cat "$d/result.json""#,
