@@ -25,6 +25,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Settings › General's Provider lists Claude Code by name, as sessions now reach it through a provider that others can join later
 - Model, in Settings › General, a specialist and a workflow step, is one menu: Gannin's list (now Claude Sonnet 5.5 and Claude Haiku 5.5 in place of Sonnet 5 and Haiku 4.5), the models Claude Code has run with on this Mac lately, the newest of each family (Latest Opus and so on), and Other to type any ID. A model picked before that isn't offered stays as typed, under Other
 
+### Fixed
+- When Claude asks questions too long to fit over the terminal, they scroll between the title and Send Answers instead of running off the top
+
 ## [0.0.5] - 2026-10-23
 
 ### Added

@@ -258,49 +258,13 @@ struct SessionQuestionCard: View {
         let items = question.items
         let instant = items.count == 1 && items.first?.multiSelect == false
         header(title: items.count == 1 ? "Claude is asking" : "Claude has \(items.count) questions", symbol: "questionmark.bubble.fill") { EmptyView() }
-        ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    if !item.header.isEmpty {
-                        Text(item.header)
-                            .font(.caption.weight(.semibold))
-                            .padding(.horizontal, 7)
-                            .padding(.vertical, 2)
-                            .background(Color.orange.opacity(0.2), in: Capsule())
-                    }
-                    Text(item.question)
-                        .font(.body.weight(.semibold))
-                        .fixedSize(horizontal: false, vertical: true)
-                    if item.multiSelect {
-                        Text("Pick any")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8, alignment: .top)], alignment: .leading, spacing: 8) {
-                    ForEach(Array(item.options.enumerated()), id: \.offset) { option, choice in
-                        optionTile(choice, isPicked: picked[index]?.contains(option) == true) {
-                            if item.multiSelect {
-                                picked[index, default: []].formSymmetricDifference([option])
-                            } else {
-                                picked[index] = [option]
-                                other[index] = nil
-                                if instant { send(question) }
-                            }
-                        }
-                    }
-                }
-                TextField("Or say something else", text: Binding(
-                    get: { other[index] ?? "" },
-                    set: { text in
-                        other[index] = text
-                        if !text.isEmpty, !item.multiSelect { picked[index] = nil }
-                    }
-                ))
-                .textFieldStyle(.roundedBorder)
-                .onSubmit { if instant, !(other[index] ?? "").isEmpty { send(question) } }
+        // Floating over the terminal, long questions would grow past it and
+        // lose their top, so they scroll between the header and the buttons.
+        ViewThatFits(in: .vertical) {
+            questionList(question, instant: instant)
+            ScrollView {
+                questionList(question, instant: instant)
             }
-            if index < items.count - 1 { Divider() }
         }
         HStack {
             let answered = items.indices.filter { answer(items[$0], at: $0) != nil }.count
@@ -315,6 +279,58 @@ struct SessionQuestionCard: View {
                     .buttonStyle(.borderedProminent)
                     .keyboardShortcut(.return, modifiers: .command)
                     .disabled(answered == 0)
+            }
+        }
+    }
+
+    /// Each question with its options as tiles, and room for your own words.
+    @ViewBuilder
+    private func questionList(_ question: SessionTranscript.Question, instant: Bool) -> some View {
+        let items = question.items
+        VStack(alignment: .leading, spacing: 12) {
+            ForEach(Array(items.enumerated()), id: \.offset) { index, item in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        if !item.header.isEmpty {
+                            Text(item.header)
+                                .font(.caption.weight(.semibold))
+                                .padding(.horizontal, 7)
+                                .padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.2), in: Capsule())
+                        }
+                        Text(item.question)
+                            .font(.body.weight(.semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        if item.multiSelect {
+                            Text("Pick any")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220), spacing: 8, alignment: .top)], alignment: .leading, spacing: 8) {
+                        ForEach(Array(item.options.enumerated()), id: \.offset) { option, choice in
+                            optionTile(choice, isPicked: picked[index]?.contains(option) == true) {
+                                if item.multiSelect {
+                                    picked[index, default: []].formSymmetricDifference([option])
+                                } else {
+                                    picked[index] = [option]
+                                    other[index] = nil
+                                    if instant { send(question) }
+                                }
+                            }
+                        }
+                    }
+                    TextField("Or say something else", text: Binding(
+                        get: { other[index] ?? "" },
+                        set: { text in
+                            other[index] = text
+                            if !text.isEmpty, !item.multiSelect { picked[index] = nil }
+                        }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit { if instant, !(other[index] ?? "").isEmpty { send(question) } }
+                }
+                if index < items.count - 1 { Divider() }
             }
         }
     }
