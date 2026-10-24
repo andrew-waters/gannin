@@ -69,11 +69,12 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
     static let minimumRetry = 60
 
     /// A bash script that copies `folder`, runs the CLI in the copy and
-    /// prints its result file; the copy is removed however it ends. If the
-    /// result has no fenced list, the CLI's session is asked once more for
-    /// it, within `timeout` in all. The
+    /// prints its result file; the copy is removed however it ends. The
     /// CLI's own stdout is discarded: with Junie it is coloured text
     /// whatever the output format is.
+    ///
+    /// If the result has no fenced list, Junie's last session is asked once
+    /// more for it, within `timeout` in all.
     ///
     /// A worktree's `.git` file points at its admin directory in the main
     /// clone, so a git command run in a plain copy would change the real
@@ -154,12 +155,12 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
                 #"  if [ -s "$d/stderr" ]; then tail -n 3 "$d/stderr" >&2; else tail -n 3 "$d/stdout" | LC_ALL=C sed $'s/\033\\[[0-9;]*[A-Za-z]//g' >&2; fi"#,
                 "  exit $status",
                 "fi",
-                // No fenced list: ask the same session once more for it, if the
-                // run left time. `--resume` follows up the last session in this
-                // project, which is this run's copy. A retry that fails leaves
+                // No fenced list (the fence opens a JSON list, `\n` being how the
+                // result file writes a newline): ask Junie's last session once
+                // more for it, if the run left time. A retry that fails leaves
                 // the first result to be read as it was.
                 #"left=$((\#(Int(timeout)) - SECONDS))"#,
-                #"if ! grep -q '```json' "$d/result.json" && [ "$left" -ge \#(Self.minimumRetry) ] && [ ! -e "$d/cancel" ]; then"#,
+                #"if [ -s "$d/result.json" ] && ! grep -Eq '```json(\\n|[[:space:]])*\[' "$d/result.json" && [ "$left" -ge \#(Self.minimumRetry) ] && [ ! -e "$d/cancel" ]; then"#,
                 #"  run_junie "$left" "$d/retry.json" --resume "--task=$(cat "$d/reminder")""#,
                 #"  [ "$status" -eq 0 ] && [ -s "$d/retry.json" ] && mv "$d/retry.json" "$d/result.json""#,
                 "fi",
