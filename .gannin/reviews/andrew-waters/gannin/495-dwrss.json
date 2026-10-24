@@ -22,16 +22,27 @@
       "path" : "sessions/gannin-466/session.json",
       "posted_at" : "2026-10-24T09:11:53Z",
       "severity" : "nit"
+    },
+    {
+      "category" : "security",
+      "decision" : "kept",
+      "excerpt" : "The helper session is created with `role: step.title`, which is the raw title of",
+      "key" : "Gannin/Agents/ReviewRuns.swift:348:The helper session is created with `role: step.title`, which",
+      "line" : 348,
+      "path" : "Gannin/Agents/ReviewRuns.swift",
+      "posted_at" : "2026-10-24T20:38:52Z",
+      "severity" : "minor"
     }
   ],
   "merged_at" : "2026-10-24T13:09:45Z",
   "number" : 495,
-  "posted_at" : "2026-10-24T09:11:53Z",
+  "posted_at" : "2026-10-24T20:38:52Z",
+  "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "dwrss",
   "started_at" : "2026-10-24T09:08:40Z",
   "state" : "MERGED",
   "title" : "Workflows for every agent activity, with specialist agents and any provider",
-  "updated_at" : "2026-10-24T13:12:54Z",
-  "verdict" : "approve"
+  "updated_at" : "2026-10-24T20:38:53Z",
+  "verdict" : "comment"
 }
