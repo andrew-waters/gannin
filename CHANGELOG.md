@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Added
+- Gannin can be installed with Homebrew: `brew install --cask andrew-waters/tap/gannin`. It keeps updating itself as before
+
 ## [0.0.5] - 2026-10-23
 
 ### Added
