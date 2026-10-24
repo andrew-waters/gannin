@@ -204,9 +204,82 @@ struct PairReviewTests {
         let script = ExtraReviewer.junie.script(folder: URL(filePath: "/Users/me/code/harness/.worktrees/68-pair-review"), prompt: "Review it")
         #expect(script.contains("'/Users/me/code/harness/.worktrees/68-pair-review'"))
         #expect(script.contains(#"--project "$d/project""#))
-        #expect(script.contains("--timeout 600000"))
+        #expect(script.contains(#"run_junie 600 "$d/result.json""#))
         #expect(script.contains(#"trap 'rm -rf "$d"' EXIT"#))
         #expect(script.contains(#">"$d/stdout""#))
+    }
+
+    /// A fake `junie` whose first run writes `first` and whose `--resume` run writes `second`, or fails writing nothing when that is nil, noting each run's arguments in `log`.
+    private func fakeJunieWithFollowUp(in bin: URL, log: URL, first: String, second: String?) throws {
+        try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
+        let script = """
+            #!/bin/bash
+            echo "$*" >> \(log.path)
+            resumed=no
+            for arg in "$@"; do [ "$arg" = --resume ] && resumed=yes; done
+            while [ $# -gt 0 ]; do
+              case "$1" in
+                --json-output-file) out="$2"; shift 2 ;;
+                *) shift ;;
+              esac
+            done
+            if [ "$resumed" = yes ]; then \(second.map { "printf '%s' '\($0)' > \"$out\"" } ?? "exit 1"); else printf '%s' '\(first)' > "$out"; fi
+            """
+        let url = bin.appending(path: "junie")
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: url.path)
+    }
+
+    /// Runs the script against a fake `junie` (see `fakeJunieWithFollowUp`): what it printed, and the arguments of each of its runs.
+    private func runJunie(first: String, second: String?, timeout: TimeInterval = ExtraReviewer.timeout) throws -> (outcome: ExtraReviewer.Outcome, runs: [Substring]) {
+        let root = FileManager.default.temporaryDirectory.appending(path: "ExtraReviewerRetry-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let folder = root.appending(path: "worktrees"), log = root.appending(path: "runs.log")
+        try FileManager.default.createDirectory(at: folder.appending(path: "repo"), withIntermediateDirectories: true)
+        try fakeJunieWithFollowUp(in: root.appending(path: "bin"), log: log, first: first, second: second)
+        let script = ExtraReviewer.junie.script(folder: folder, prompt: "Review it", timeout: timeout)
+        let result = try run(["/bin/bash", "-s"], environment: ["PATH": "\(root.appending(path: "bin").path):/usr/bin:/bin"], input: script)
+        return (ExtraReviewer.junie.outcome(for: (result.status, result.output, "")), try String(contentsOf: log, encoding: .utf8).split(separator: "\n"))
+    }
+
+    private static let noList = #"{"sessionId":"session-1","result":"All looks fine."}"#
+    private static let emptyList = #"{"sessionId":"session-1","result":"```json\n[]\n```"}"#
+
+    @Test func junieIsAskedAgainInItsOwnSessionWhenItsSummaryHasNoList() throws {
+        let (outcome, runs) = try runJunie(first: Self.noList, second: Self.emptyList)
+        #expect(outcome == .findings([]))
+        #expect(runs.count == 2)
+        #expect(runs[1].contains("--session-id session-1 --resume"))
+    }
+
+    @Test func junieIsNotAskedAgainWithoutASessionToAskIn() throws {
+        let (outcome, runs) = try runJunie(first: #"{"result":"All looks fine."}"#, second: Self.emptyList)
+        #expect(runs.count == 1)
+        #expect(outcome == .failed("Junie replied with no list of findings.", output: "All looks fine."))
+    }
+
+    @Test func aMentionOfTheFenceIsNotAList() throws {
+        let (outcome, runs) = try runJunie(first: #"{"sessionId":"session-1","result":"I would end with a ```json block, but there is nothing to say."}"#, second: Self.emptyList)
+        #expect(outcome == .findings([]))
+        #expect(runs.count == 2)
+    }
+
+    @Test func junieIsNotAskedAgainWhenItGaveAList() throws {
+        let (outcome, runs) = try runJunie(first: Self.emptyList, second: "{}")
+        #expect(outcome == .findings([]))
+        #expect(runs.count == 1)
+    }
+
+    @Test func aFailedFollowUpLeavesTheFirstResultToBeRead() throws {
+        let (outcome, runs) = try runJunie(first: Self.noList, second: nil)
+        #expect(runs.count == 2)
+        #expect(outcome == .failed("Junie replied with no list of findings.", output: "All looks fine."))
+    }
+
+    @Test func junieIsNotAskedAgainWithTooLittleTimeLeft() throws {
+        let (outcome, runs) = try runJunie(first: Self.noList, second: Self.emptyList, timeout: TimeInterval(ExtraReviewer.minimumRetry - 1))
+        #expect(runs.count == 1)
+        #expect(outcome == .failed("Junie replied with no list of findings.", output: "All looks fine."))
     }
 
     /// Runs `args` and returns its status and standard output.

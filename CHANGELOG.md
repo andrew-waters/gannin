@@ -38,6 +38,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ### Fixed
 - A follow-up review no longer posts findings already on the pull request: ones an earlier review put in its body, ones a few lines from a comment saying the same, and ones you raised before a push made your comment outdated
 - Check for Changes on a review's tab also refreshes the PR's checks shown on its card in the sessions grid
+- When Junie's reply has no list of findings, it is asked once more for the list, in the same session, instead of the review failing straight away
 - A Junie review whose list of findings ends without the closing code fence is read instead of reported as having no list
 
 ## [0.0.4] - 2026-10-22
