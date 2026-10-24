@@ -580,10 +580,10 @@ extension SessionStore {
     }
 
     /// Logs something for the catch-up; already seen if you're looking at
-    /// its review.
-    private func note(_ id: UUID, _ kind: ReviewEvent.Kind, eventID: String? = nil, author: String? = nil, text: String? = nil, url: URL? = nil, at: Date = .now) {
+    /// its review, or `seen` (something you just did).
+    func note(_ id: UUID, _ kind: ReviewEvent.Kind, eventID: String? = nil, author: String? = nil, text: String? = nil, url: URL? = nil, at: Date = .now, seen: Bool = false) {
         guard let pr = sessions[id]?.reviewOf else { return }
-        let looking = windowIsKey && selectedTab == id && NSApp.isActive
+        let looking = seen || (windowIsKey && selectedTab == id && NSApp.isActive)
         activity.record(ReviewEvent(
             id: eventID.map { "\(id.uuidString)-\($0)" } ?? UUID().uuidString, pullRequest: pr, session: id, kind: kind,
             at: at, author: author, text: text, url: url, seenAt: looking ? .now : nil
