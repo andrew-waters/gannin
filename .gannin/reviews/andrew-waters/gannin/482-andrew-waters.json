@@ -31,17 +31,38 @@
       "line" : 58,
       "path" : "Gannin/Sessions/ApprovalQueue.swift",
       "posted_at" : "2026-10-24T11:13:11Z",
+      "resolved_at" : "2026-10-24T11:14:43Z",
       "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "Two things here don't match the code. \"Such a PR isn't in the Inbox or reminded ",
+      "key" : "docs-site/src/content/docs/agents/auto-review.md:49:Two things here don't match the code. \"Such a PR isn't in th",
+      "line" : 49,
+      "path" : "docs-site/src/content/docs/agents/auto-review.md",
+      "posted_at" : "2026-10-24T11:14:41Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The note now goes before the body findings, so the comment doesn't always end wi",
+      "key" : "CHANGELOG.md:29:The note now goes before the body findings, so the comment d",
+      "line" : 29,
+      "path" : "CHANGELOG.md",
+      "posted_at" : "2026-10-24T11:14:41Z",
+      "severity" : "nit"
     }
   ],
   "number" : 482,
-  "posted_at" : "2026-10-24T11:13:11Z",
+  "posted_at" : "2026-10-24T11:14:41Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-24T10:56:24Z",
   "state" : "OPEN",
   "title" : "Auto review: show a held approval as held in the record, the comment and the reminders",
-  "updated_at" : "2026-10-24T11:13:12Z",
+  "updated_at" : "2026-10-24T11:14:43Z",
   "verdict" : "comment"
 }
