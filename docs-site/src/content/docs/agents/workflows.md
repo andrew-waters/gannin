@@ -5,7 +5,7 @@ sidebar:
   order: 17
 ---
 
-Every piece of agent work Gannin starts (a review, Work on This, Quick Change, Ask, Planning, and Design and Refine) runs through a workflow: a chain of steps, each run by a [specialist](/docs/concepts/specialists-and-workflows/). With no workflows set up, each activity runs Gannin's default, a single step that does exactly what that page of these docs describes. The team's workflows and specialists are kept in the project's harness, so everyone shares them. You can also keep your own, marked **Just me**, which stay on your Mac and never reach the harness: a manager might aim a specialist and a workflow at one person's pull requests, for instance.
+Every piece of agent work Gannin starts (a review, Work on This, Quick Change, Ask, Planning, Design and Refine, and a scheduled [routine](/docs/agents/routines/)) runs through a workflow: a chain of steps, each run by a [specialist](/docs/concepts/specialists-and-workflows/). With no workflows set up, each activity runs Gannin's default, a single step that does exactly what that page of these docs describes. The team's workflows and specialists are kept in the project's harness, so everyone shares them. You can also keep your own, marked **Just me**, which stay on your Mac and never reach the harness: a manager might aim a specialist and a workflow at one person's pull requests, for instance.
 
 ## Specialists
 
@@ -21,7 +21,7 @@ Draft with Claude can write one with you. Commit to Harness commits a team one (
 
 ## Building a workflow
 
-Harness › Workflows shows the workflows for one activity at a time: pick Reviews, Work on This, Quick Change, Ask, Planning or Design and Refine in the toolbar (and the project, when the org has several). The menu at the top lists the activity's workflows: Gannin's own, which is always there and can't be changed, the team's, and yours, marked "just me". Beside it, a tag says whose the one showing is: **Gannin's**, **Team** or **Just me**.
+Harness › Workflows shows the workflows for one activity at a time: pick Reviews, Work on This, Quick Change, Ask, Planning, Design and Refine or Routines in the toolbar (and the project, when the org has several). The menu at the top lists the activity's workflows: Gannin's own, which is always there and can't be changed, the team's, and yours, marked "just me". Beside it, a tag says whose the one showing is: **Gannin's**, **Team** or **Just me**.
 
 - **New** makes a workflow of one step, and **Duplicate** copies the one showing; both ask whether it's kept for **Just me** or **The team**. A copy of one with your own specialists in it can only be yours. **Rename** and **Delete** change your own and the team's.
 - **Make My Default** has the activity run it for you unless a routing rule says otherwise. Defaults are each person's: the team doesn't set one, so someone new runs Gannin's until they pick their own.
@@ -37,7 +37,7 @@ Every review step is read-only: it can't edit code, push or approve. A round is 
 
 ### Sessions
 
-A workflow for Work on This, Quick Change, Ask, Planning or Design and Refine has exactly one step that is the session you type in, marked **Session**. Make This the Session (right-click) moves it to another step. Its specialist's soul and focus, provider and model are the session's. Steps before it run once, before the session first starts, and add what they write to its brief. Steps after it review each pull request the session opens, in the background, and the session's side panel says when one has started. Only Claude Code runs sessions for now.
+A workflow for Work on This, Quick Change, Ask, Planning, Design and Refine or Routines has exactly one step that is the session you type in, marked **Session**. Make This the Session (right-click) moves it to another step. Its specialist's soul and focus, provider and model are the session's. Steps before it run once, before the session first starts, and add what they write to its brief. Steps after it review each pull request the session opens, in the background, and the session's side panel says when one has started. Only Claude Code runs sessions for now.
 
 ## Routing
 

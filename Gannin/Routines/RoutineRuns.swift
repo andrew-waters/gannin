@@ -233,15 +233,40 @@ extension SessionStore {
                                               url: URL(string: "https://github.com/\(setup.repo)")!),
             repo: setup.repo, branch: branch, createdAt: .now,
             connect: nil, harnessRepo: setup.repo, harnessPath: harnessPath,
-            prompt: Self.askPrompt(routine.prompt, branch: branch), instructions: instructions,
+            prompt: Self.askPrompt(Self.reportTask(routine), branch: branch), instructions: instructions,
             ask: AskInfo(title: title, slug: slug, message: routine.prompt)
         )
         session.routineRun = info
+        applyRoutineAgent(routine, to: &session, setup: setup)
         let directory = Self.directory(for: id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         try? Data((Self.askBrief(session) + "\n" + info.briefSection).utf8).write(to: directory.appending(path: "brief.md"))
         add(session)
         return await startUnattended(id)
+    }
+
+    /// A report's task, with the repos it's to look at.
+    static func reportTask(_ routine: Routine) -> String {
+        guard !routine.repos.isEmpty else { return routine.prompt }
+        return routine.prompt + "\n\nThe repos to look at, as their shared clones under `projects/<name>`: " + routine.repos.joined(separator: ", ") + "."
+    }
+
+    /// Runs the routine's session as its specialist or Routines workflow
+    /// says, else the user's default Routines workflow.
+    func applyRoutineAgent(_ routine: Routine, to session: inout CodeSession, setup: HarnessConfig) {
+        let workflow: AgentWorkflow? = routine.specialist.map { name in
+            AgentWorkflow(name: name, stages: [AgentStage(steps: [AgentStep(specialist: name, interactive: true)])])
+        } ?? pickedWorkflow(routine.workflow, org: routine.org, setup: setup, activity: .routine)
+        applyWorkflow(.routine, to: &session, org: routine.org, setup: setup, subject: nil, workflow: workflow)
+    }
+
+    /// What a routine runs with, as its list and page say; nil for the
+    /// default.
+    func routineAgent(_ routine: Routine) -> String? {
+        let setup = HarnessConfig(repo: routine.harnessRepo)
+        if let name = routine.specialist { return specialists(org: routine.org, setup: setup)[name.lowercased()]?.title ?? "A specialist that's gone" }
+        if let id = routine.workflow { return agentWorkflows(routine.org, setup).workflow(id, for: .routine)?.name ?? "A workflow that's gone" }
+        return nil
     }
 
     /// Maintenance: a session with no issue, as a quick change without one
@@ -263,6 +288,7 @@ extension SessionStore {
         let info = RoutineRunInfo(routine: routine, run: run)
         session.routineRun = info
         session.prompt = Self.maintenancePrompt(session)
+        applyRoutineAgent(routine, to: &session, setup: setup)
         let directory = Self.directory(for: id)
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let brief = SessionBrief.make(session: session, record: nil, detail: nil, parent: nil, harness: harnessStore.index(for: routine.org, setup), goals: goals)

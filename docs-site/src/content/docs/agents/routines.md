@@ -11,8 +11,9 @@ They're under Agents › Routines.
 
 ## Kinds
 
-- **Report**: an [Ask](/docs/agents/ask/) session that answers the routine's question. Its files are in the Files pane, ready to commit to the harness. The tab says Report.
-- **Maintenance**: work with no issue, on a new branch each run, on the repos you name. The tab says Maintenance.
+- **Routine**: a task on a schedule, run by a [specialist](/docs/agents/workflows/#specialists) or a workflow if you pick one: a weekly security audit by your security specialist, say, or a check for documentation that's drifted from the code. How far it may go decides how it runs:
+  - **Report only**: an [Ask](/docs/agents/ask/) session in the harness that reads the repos you name (their shared clones) and writes up what it finds. It changes nothing; its files are in the Files pane, ready to commit to the harness. The tab says Report.
+  - **Local only**, **Draft PR** or **Ready PR**: work with no issue, on a new branch each run, in worktrees of the repos you name. The tab says Maintenance.
 - **Queue window**: while it's open, starts the next issue in the [queue](#the-queue), up to a number at once.
 - **Pinned issue**: starts one issue at a set time, then turns itself off.
 - **Review window**: while it's open, automatic PR reviews may start, up to its Reviews at once; outside every window they wait in the [review queue](#the-review-queue). See [Review windows](/docs/agents/auto-review/#review-windows).
@@ -21,7 +22,9 @@ Issues from a queue window or pin run as [Work on This](/docs/agents/work-on-thi
 
 ## Making one
 
-New Routine in the toolbar opens the editor: Name, Kind, Project, the prompt, the team's prompts (none ticked takes the defaults), Repos for maintenance, When, how far it goes, and Limits.
+New Routine in the toolbar has New Routine, New Queue window and New Review Window. The editor has Name, Kind, Project, Repos (optional for a report), the task, the team's prompts (none ticked takes the defaults), Who runs it, When, how far it goes, and Limits.
+
+**Who runs it** (Run with) is your default Routines workflow, a specialist (the team's or your own), or a workflow from [Harness › Workflows](/docs/agents/workflows/) › Routines. A specialist runs the session as itself, on its own model. A workflow's steps before the session prepare its brief, and its steps after review any pull request the run opens.
 
 **When** is one of:
 
@@ -35,7 +38,7 @@ New Routine in the toolbar opens the editor: Name, Kind, Project, the prompt, th
 
 The editor shows the next five times, or what's wrong.
 
-**How far it goes** is Local only, Draft PR or Ready PR. Local only is the default for new routines: Claude commits and stops, with no push and no PR. Draft PR may open a draft. Ready PR may mark it ready. No routine ever merges. This is a guard that takes away commands, not a sandbox. For one, see [Sandboxes](/docs/sessions/sandboxes/).
+**How far it goes** is Report only, Local only, Draft PR or Ready PR for a routine, and Local only, Draft PR or Ready PR for a queue window or pin. A new routine is Report only. Local only: Claude commits and stops, with no push and no PR. Draft PR may open a draft. Ready PR may mark it ready. No routine ever merges. This is a guard that takes away commands, not a sandbox. For one, see [Sandboxes](/docs/sessions/sandboxes/).
 
 **Limits** are minutes (Stop after) and cost (Stop after spending). At either, Claude is interrupted, its worktree and files are kept, and the run shows Stopped at limit with a notification.
 

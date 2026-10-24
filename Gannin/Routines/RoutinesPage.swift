@@ -26,7 +26,7 @@ struct RoutinesPage: View {
         // This Mac's review windows are listed with the synced ones, below.
         let all = routines.routines(for: org).filter { $0.kind != .reviewQueue }
         let reviewWindows = book.windows
-        let recurring = all.filter { $0.kind == .report || $0.kind == .code }
+        let recurring = all.filter(\.kind.isScheduledTask)
         let windows = all.filter { $0.kind == .issueQueue }
         let pins = all.filter { $0.kind == .pinned }.sorted { (pinTime($0) ?? .distantPast) > (pinTime($1) ?? .distantPast) }
         ScrollView {
@@ -36,14 +36,14 @@ struct RoutinesPage: View {
                     ContentUnavailableView {
                         Label("No routines yet", systemImage: "clock.arrow.circlepath")
                     } description: {
-                        Text("Routines start Claude Code sessions by themselves while Gannin is running: reports and maintenance on a schedule, and issues from the agent queue in a window. Times missed while Gannin was closed or the Mac was asleep are recorded, not run.")
+                        Text("Routines start Claude Code sessions by themselves while Gannin is running: a task on a schedule (a weekly security audit by a specialist, say), and issues from the agent queue in a window. Times missed while Gannin was closed or the Mac was asleep are recorded, not run.")
                     } actions: {
                         newMenu
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.top, 40)
                 }
-                section("Reports and maintenance", recurring)
+                section("On a schedule", recurring)
                 section("Queue windows", windows, footer: windows.isEmpty ? nil : "Each drains the agent queue (Agents › Queue) while it's open.")
                 reviewWindowsSection(reviewWindows)
                 section("Pinned issues", pins)
@@ -122,11 +122,11 @@ struct RoutinesPage: View {
 
     private var newMenu: some View {
         Menu {
-            ForEach([RoutineKind.report, .code, .issueQueue]) { kind in
+            ForEach([RoutineKind.report, .issueQueue]) { kind in
                 Button {
                     editing = EditedRoutine(routine: Routine.new(org: org, harnessRepo: harnessRepo, kind: kind), isNew: true)
                 } label: {
-                    Label("New \(kind.label)", systemImage: kind.systemImage)
+                    Label("New \(kind.label)", systemImage: kind == .report ? "clock.arrow.circlepath" : kind.systemImage)
                 }
                 .disabled(configs.config(for: org).allHarnesses.isEmpty)
             }
@@ -135,7 +135,7 @@ struct RoutinesPage: View {
         } label: {
             Label("New Routine", systemImage: "plus")
         }
-        .help("A report, maintenance, a window for the agent queue or a review window")
+        .help("A task on a schedule, a window for the agent queue or a review window")
     }
 
     private var newReviewWindowButton: some View {
@@ -252,6 +252,7 @@ struct EditedRoutine: Identifiable {
 /// One routine in the list: its kind, name, schedule, next run, last
 /// outcome and whether it's on.
 private struct RoutineRow: View {
+    @Environment(SessionStore.self) private var sessions
     @Environment(RoutineStore.self) private var routines
     @Environment(RoutineScheduler.self) private var scheduler
     let routine: Routine
@@ -273,7 +274,12 @@ private struct RoutineRow: View {
                     .lineLimit(1)
                 HStack(spacing: 8) {
                     Text(routine.schedule.summary)
-                    if routine.kind.touchesCode { Text(routine.limit.label) }
+                    if routine.kind.isScheduledTask {
+                        Text(routine.reach.label)
+                        if let agent = sessions.routineAgent(routine) { Text(agent) }
+                    } else if routine.kind.touchesCode {
+                        Text(routine.limit.label)
+                    }
                     if routine.kind == .issueQueue { Text("\(routine.concurrency) at once") }
                     if routine.kind == .reviewQueue { Text("\(routine.concurrency) review\(routine.concurrency == 1 ? "" : "s") at once") }
                 }
@@ -451,7 +457,12 @@ struct RoutinePage: View {
                 fact("When", routine.schedule.summary)
                 if let issue = routine.issue { fact("Issue", "\(issue.reference) \(issue.title)") }
                 if !routine.repos.isEmpty { fact("Repos", routine.repos.joined(separator: ", ")) }
-                if routine.kind.touchesCode { fact("May", "\(routine.limit.label): \(routine.limit.explanation)") }
+                if routine.kind.isScheduledTask {
+                    fact("May", "\(routine.reach.label): \(routine.reach.explanation)")
+                    fact("Runs with", sessions.routineAgent(routine) ?? "Your default Routines workflow")
+                } else if routine.kind.touchesCode {
+                    fact("May", "\(routine.limit.label): \(routine.limit.explanation)")
+                }
                 if routine.kind == .issueQueue { fact("At once", "\(routine.concurrency)") }
                 fact("Limits", "\(routine.maxMinutes) minutes or \(routine.maxCost.formatted(.currency(code: "USD")))")
             }

@@ -12,6 +12,8 @@ nonisolated enum WorkflowActivity: String, Codable, CaseIterable, Identifiable, 
     case ask
     case planning
     case refine
+    /// A scheduled routine's session (Agents › Routines).
+    case routine
 
     var id: String { rawValue }
 
@@ -24,6 +26,7 @@ nonisolated enum WorkflowActivity: String, Codable, CaseIterable, Identifiable, 
         case .ask: "Ask"
         case .planning: "Planning"
         case .refine: "Design and Refine"
+        case .routine: "Routines"
         }
     }
 

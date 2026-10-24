@@ -125,8 +125,9 @@ struct RoutineEditor: View {
         VStack(spacing: 0) {
             Form {
                 whatSection
+                if routine.kind.isScheduledTask { agentSection }
                 whenSection(built)
-                if routine.kind.touchesCode { limitSection }
+                if routine.kind.isScheduledTask { reachSection } else if routine.kind.touchesCode { limitSection }
                 if routine.kind != .reviewQueue { limitsSection }
                 if let warning = autoModeWarning {
                     Section {
@@ -162,15 +163,16 @@ struct RoutineEditor: View {
         Section {
             TextField("Name", text: $routine.name)
             if isNew, routine.kind != .pinned, routine.kind != .reviewQueue {
-                Picker("Kind", selection: $routine.kind) {
-                    ForEach([RoutineKind.report, .code, .issueQueue]) { kind in
-                        Label(kind.label, systemImage: kind.systemImage).tag(kind)
-                    }
+                Picker("Kind", selection: Binding(get: { routine.kind == .issueQueue }, set: { queue in
+                    routine.kind = queue ? .issueQueue : .report
+                })) {
+                    Label(RoutineKind.report.label, systemImage: "clock.arrow.circlepath").tag(false)
+                    Label(RoutineKind.issueQueue.label, systemImage: RoutineKind.issueQueue.systemImage).tag(true)
                 }
             }
             let harnesses = configs.config(for: routine.org).allHarnesses
             // Issue runs go to the project covering the issue's repos.
-            if routine.kind == .report || routine.kind == .code {
+            if routine.kind.isScheduledTask {
                 Picker("Project", selection: $routine.harnessRepo) {
                     ForEach(harnesses, id: \.repo) { harness in
                         Text(harness.repo).tag(harness.repo)
@@ -183,8 +185,8 @@ struct RoutineEditor: View {
             if let issue = routine.issue {
                 LabeledContent("Issue", value: "\(issue.reference) \(issue.title)")
             }
-            if routine.kind == .code {
-                TextField("Repos", text: $repoText, prompt: Text("owner/name, owner/name"))
+            if routine.kind.isScheduledTask {
+                TextField("Repos", text: $repoText, prompt: Text(routine.kind == .report ? "owner/name, owner/name (optional)" : "owner/name, owner/name"))
                     .leadingTextBox("Repos")
             }
             if routine.kind != .reviewQueue {
@@ -207,8 +209,7 @@ struct RoutineEditor: View {
 
     private var promptLabel: String {
         switch routine.kind {
-        case .report: "What to report on, as you'd ask in an Ask"
-        case .code: "The task"
+        case .report, .code: "The task: what to look at or do, and what to write up"
         case .issueQueue, .pinned: "A note added to each issue's prompt (optional)"
         case .reviewQueue: ""
         }
@@ -216,7 +217,7 @@ struct RoutineEditor: View {
 
     private var kindExplanation: String {
         switch routine.kind {
-        case .report: "An Ask session on this Mac with no code worktree. What it writes stays with the run, to open or Commit to Harness; nothing is committed by itself."
+        case .report: "A session in the harness on this Mac, with no worktrees: it reads the repos named (their shared clones) and writes up what it finds. What it writes stays with the run, to open or Commit to Harness; nothing is committed by itself."
         case .code: "A session with no issue, a new branch each run, worktrees of the repos named, laid out as Work on This lays them out."
         case .issueQueue: "While the window is open, the next issue in the org's agent queue starts as Work on This would, in the project covering its repos, up to the number at once below. Its session record is committed to the harness, unless Record queued sessions is off for that project in Settings › Harness."
         case .pinned: "The issue starts as Work on This would at the time below. Its session record is committed to the harness, unless Record queued sessions is off for that project in Settings › Harness."
@@ -332,12 +333,70 @@ struct RoutineEditor: View {
                     Text(time.formatted(.dateTime.weekday(.wide).day().month(.abbreviated).hour().minute()))
                         .font(.callout.monospacedDigit())
                 }
-                if routine.kind == .code || routine.kind == .report, schedule.form == .workingDays {
+                if routine.kind.isScheduledTask, schedule.form == .workingDays {
                     Text("The org's working days, less its bank holidays.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    /// Who runs it: a specialist, a Routines workflow, or the default.
+    @ViewBuilder
+    private var agentSection: some View {
+        let setup = HarnessConfig(repo: routine.harnessRepo)
+        let specialists = sessions.specialists(org: routine.org, setup: setup).values.sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
+        let library = sessions.agentWorkflows(routine.org, setup)
+        let workflows = library.workflows(for: .routine).filter { !$0.isBuiltIn }
+        Section {
+            Picker("Run with", selection: Binding(
+                get: { routine.specialist.map { "s:" + $0 } ?? routine.workflow.map { "w:" + $0 } ?? "" },
+                set: { picked in
+                    routine.specialist = picked.hasPrefix("s:") ? String(picked.dropFirst(2)) : nil
+                    routine.workflow = picked.hasPrefix("w:") ? String(picked.dropFirst(2)) : nil
+                }
+            )) {
+                Text("Your default (\(library.defaultWorkflow(for: .routine).name))").tag("")
+                if !specialists.isEmpty {
+                    Section("Specialists") {
+                        ForEach(specialists) { Text($0.title + ($0.isPersonal ? " (just me)" : "")).tag("s:" + $0.name) }
+                    }
+                }
+                if !workflows.isEmpty {
+                    Section("Workflows") {
+                        ForEach(workflows) { Text($0.name + (library.isPersonal($0.id, for: .routine) ? " (just me)" : "")).tag("w:" + $0.id) }
+                    }
+                }
+                if let name = routine.specialist, !specialists.contains(where: { $0.name.lowercased() == name.lowercased() }) {
+                    Text("\(name) (missing)").tag("s:" + name)
+                }
+                if let id = routine.workflow, !workflows.contains(where: { $0.id == id }) {
+                    Text("A workflow that's gone").tag("w:" + id)
+                }
+            }
+        } header: {
+            Text("Who runs it")
+        } footer: {
+            Text("A specialist runs the session as itself, on its own model. A workflow from Harness › Workflows › Routines can have steps that prepare its brief first and steps that review any pull request it opens.")
+        }
+    }
+
+    private var reachSection: some View {
+        Section {
+            Picker("Unattended, it may", selection: $routine.reach) {
+                ForEach(RoutineReach.allCases) { reach in
+                    Text(reach.label).tag(reach)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text(routine.reach.explanation)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } header: {
+            Text("How far it goes")
+        } footer: {
+            Text("Runs work in auto mode. Gannin takes away the commands the choice doesn't allow; it's a guard, not a sandbox.")
         }
     }
 
@@ -403,7 +462,10 @@ struct RoutineEditor: View {
             if let bad = repos.first(where: { $0.split(separator: "/").count != 2 }) { return "\(bad) isn't owner/name." }
             if routine.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Say what the task is." }
         }
-        if routine.kind == .report, routine.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Say what to report on." }
+        if routine.kind == .report {
+            if let bad = repos.first(where: { $0.split(separator: "/").count != 2 }) { return "\(bad) isn't owner/name." }
+            if routine.prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "Say what the task is." }
+        }
         if routine.maxCost <= 0 { return "Give it a cost limit." }
         return nil
     }
@@ -412,7 +474,11 @@ struct RoutineEditor: View {
         var saved = routine
         saved.name = saved.name.trimmingCharacters(in: .whitespaces)
         saved.schedule = built
-        saved.repos = saved.kind == .code ? repos : []
+        saved.repos = saved.kind.isScheduledTask ? repos : []
+        if !saved.kind.isScheduledTask {
+            saved.workflow = nil
+            saved.specialist = nil
+        }
         // A new schedule counts from now: an edit isn't taken for times missed.
         if saved.schedule != original.schedule, !isNew {
             saved = Routine(
@@ -420,7 +486,7 @@ struct RoutineEditor: View {
                 teamPrompts: saved.teamPrompts, repos: saved.repos, schedule: saved.schedule, limit: saved.limit, maxMinutes: saved.maxMinutes,
                 maxCost: saved.maxCost, concurrency: saved.concurrency, issue: saved.issue,
                 // Off stays off; a pin moved to a time to come is on again.
-                isEnabled: saved.isEnabled || saved.kind == .pinned, createdAt: .now
+                isEnabled: saved.isEnabled || saved.kind == .pinned, createdAt: .now, workflow: saved.workflow, specialist: saved.specialist
             )
         }
         if let onSave { onSave(saved) } else { routines.save(saved) }
