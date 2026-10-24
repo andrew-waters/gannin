@@ -21,7 +21,7 @@ struct StandupSettingsSection: View {
         } header: {
             Text("Standup")
         } footer: {
-            Text("The style Rituals › Standup opens on; anyone can pick another for the day. Open issues with the discussion label are listed first, under Done and needs discussion.")
+            Text("The style Rituals › Standup opens on; anyone can pick another for the day. Issues with the discussion label, open or completed since the day began, are listed first, under Done and needs discussion.")
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
         }
