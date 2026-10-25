@@ -79,6 +79,17 @@ struct ApprovalQueueTests {
         #expect(store.readyForApproval("PR_1")?.id == session.id)
     }
 
+    @Test func finishedReviewIsNotReadyForApproval() {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "ApprovalQueueTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let store = SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60), defaults: UserDefaults(suiteName: "ApprovalQueueTests-\(UUID().uuidString)")!)
+        let session = reviewSession("approve")
+        store.add(session)
+        #expect(store.readyForApproval("PR_1")?.id == session.id)
+        store.update(session.id) { $0.archivedAt = .now }
+        #expect(store.readyForApproval("PR_1") == nil)
+    }
+
     @Test func recordMarksAnApprovalNotGivenAsHeld() {
         #expect(record("approve")?.approvalHeld == true)
         // Posted as a comment: the verdict is approve, but what reached GitHub isn't.

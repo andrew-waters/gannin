@@ -13,6 +13,8 @@ extension SessionStore {
     /// arrives before its state settles).
     func readyForApproval(_ pullRequestID: String, whileBusy: Bool = false) -> CodeSession? {
         guard let session = review(of: pullRequestID),
+              // Finish Review ends the review, so it stops asking for the approval.
+              session.archivedAt == nil,
               let result = transcripts[session.id]?.review ?? session.reviewResult,
               result.verdict == "approve",
               // New commits since: not ready until it's looked again.
