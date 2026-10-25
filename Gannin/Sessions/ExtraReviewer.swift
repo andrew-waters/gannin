@@ -60,10 +60,21 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
             """
     }
 
+    /// Sent to Junie's session when its final summary had no fenced list.
+    static let reminder = """
+        Your final task summary didn't end with the findings as a fenced ```json block. \
+        Reply with your findings as that block, written out in full (an empty list, `[]`, when there's nothing to fix).
+        """
+    /// Seconds a run must have left for Junie to be asked again.
+    static let minimumRetry = 60
+
     /// A bash script that copies `folder`, runs the CLI in the copy and
     /// prints its result file; the copy is removed however it ends. The
     /// CLI's own stdout is discarded: with Junie it is coloured text
     /// whatever the output format is.
+    ///
+    /// If the result has no fenced list, the session it names (`sessionId`)
+    /// is asked once more for it, within `timeout` in all.
     ///
     /// A worktree's `.git` file points at its admin directory in the main
     /// clone, so a git command run in a plain copy would change the real
@@ -80,8 +91,6 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
     func script(folder: URL, prompt: String, tag: String = UUID().uuidString, timeout: TimeInterval = ExtraReviewer.timeout, slack: Int = 30) -> String {
         switch self {
         case .junie:
-            let milliseconds = Int(timeout * 1000)
-            let watchdog = Int(timeout) + slack
             let source = SessionScript.quoted(folder.path)
             return [
                 "d=\(workFolder(tag: tag))",
@@ -115,27 +124,48 @@ enum ExtraReviewer: String, CaseIterable, Identifiable, Codable, Hashable {
                 // background job no stdin, and this script is itself read from
                 // stdin, so the CLI is given none: it could read the rest of it.
                 "set -m",
+                "printf %s \(Data(Self.reminder.utf8).base64EncodedString()) | base64 -d > \"$d/reminder\"",
                 // Stopped while it was being copied: don't start it.
                 #"[ -e "$d/cancel" ] && exit 130"#,
-                #"junie --project "$d/project" --output-format json --json-output-file "$d/result.json" --timeout \#(milliseconds) --skip-update-check "$(cat "$d/prompt")" </dev/null >"$d/stdout" 2>"$d/stderr" &"#,
-                "pid=$!",
-                #"echo $pid > "$d/pid""#,
+                // `run_junie <seconds> <result file> <junie arguments>`, leaving
+                // how it ended in `$status`. Not run in a subshell, which has
+                // no job control, so the watchdog's group couldn't be stopped.
+                "run_junie() {",
+                "  secs=$1; out=$2; shift 2",
+                #"  junie --project "$d/project" --output-format json --json-output-file "$out" --timeout $((secs * 1000)) --skip-update-check "$@" </dev/null >"$d/stdout" 2>"$d/stderr" &"#,
+                "  pid=$!",
+                #"  echo $pid > "$d/pid""#,
                 // Stopped in the moment before the pid was written.
-                #"[ -e "$d/cancel" ] && kill -TERM -$pid 2>/dev/null"#,
-                "( sleep \(watchdog); kill -TERM -$pid 2>/dev/null ) &",
-                "watchdog=$!",
+                #"  [ -e "$d/cancel" ] && kill -TERM -$pid 2>/dev/null"#,
+                "  ( sleep $((secs + \(slack))); kill -TERM -$pid 2>/dev/null ) &",
+                "  watchdog=$!",
                 // Disowned, so bash doesn't print a job notice for it into the error text.
-                "disown $watchdog",
-                "wait $pid",
-                "status=$?",
+                "  disown $watchdog",
+                "  wait $pid",
+                "  status=$?",
                 // The watchdog's group, so its sleep goes too, and anything the
                 // CLI left running.
-                "kill -TERM -$watchdog 2>/dev/null",
-                "kill -TERM -$pid 2>/dev/null",
+                "  kill -TERM -$watchdog 2>/dev/null",
+                "  kill -TERM -$pid 2>/dev/null",
+                "}",
+                "SECONDS=0",
+                #"run_junie \#(Int(timeout)) "$d/result.json" "$(cat "$d/prompt")""#,
                 #"[ "$status" -eq 143 ] && { echo 'timed out' >&2; exit \#(Self.timedOut); }"#,
                 #"if [ "$status" -ne 0 ]; then"#,
                 #"  if [ -s "$d/stderr" ]; then tail -n 3 "$d/stderr" >&2; else tail -n 3 "$d/stdout" | LC_ALL=C sed $'s/\033\\[[0-9;]*[A-Za-z]//g' >&2; fi"#,
                 "  exit $status",
+                "fi",
+                // No fenced list (the fence opens a JSON list, `\n` being how the
+                // result file writes a newline): ask the session named in the
+                // result file once more for it, if the run left time. Never
+                // `--resume` alone, which takes Junie's newest session whoever
+                // started it. A retry that fails leaves the first result to be
+                // read as it was.
+                #"left=$((\#(Int(timeout)) - SECONDS))"#,
+                #"sid=$(sed -n 's/.*"sessionId": *"\([^"]*\)".*/\1/p' "$d/result.json")"#,
+                #"if [ -n "$sid" ] && ! grep -Eq '```json(\\n|[[:space:]])*\[' "$d/result.json" && [ "$left" -ge \#(Self.minimumRetry) ] && [ ! -e "$d/cancel" ]; then"#,
+                #"  run_junie "$left" "$d/retry.json" --session-id "$sid" --resume "--task=$(cat "$d/reminder")""#,
+                #"  [ "$status" -eq 0 ] && [ -s "$d/retry.json" ] && mv "$d/retry.json" "$d/result.json""#,
                 "fi",
                 #"cat "$d/result.json""#,
             ].joined(separator: "\n") + "\n"

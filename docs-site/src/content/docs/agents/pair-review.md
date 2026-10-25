@@ -31,6 +31,7 @@ With it on, each round runs both reviewers, and Claude gets their findings toget
 - **What Junie needs.** The `junie` command installed on this Mac and already signed in (its own login, or `JUNIE_API_KEY` set where Gannin can see it). Gannin installs nothing and stores no key.
 - **It can't edit your work.** Junie runs once a round, as a separate process, in a throwaway copy of the session's worktree folder. The copy is deleted afterwards, so whatever Junie changes in it is discarded, and its git commands (commit, checkout, reset) act on a private copy of the repository's branches and index, not yours (a submodule's own git data isn't copied). Junie still loads your own Junie settings and MCP servers, though, and anything those can reach outside the copy isn't protected.
 - **Local sessions only.** For a session that runs in a sandbox or on a server, Junie is shown as not available, with the reason.
+- **If Junie gives no list**, it's asked once more, in the same session, to write its findings as a list, provided it has at least a minute of its ten left. If it still has none, the panel shows what it printed.
 - **If Junie fails**, because it isn't installed, is signed out, hits a quota or takes longer than ten minutes, the panel says why and the round goes ahead with Claude's findings alone. The next round tries Junie again.
 
 This is separate from [Review with Claude](/docs/agents/reviews/), which reviews a pull request someone else wrote.
