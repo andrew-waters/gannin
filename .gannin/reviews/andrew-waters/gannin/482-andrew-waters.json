@@ -11,6 +11,7 @@
       "line" : 351,
       "path" : "Gannin/Sessions/AutoReview.swift",
       "posted_at" : "2026-10-24T11:13:11Z",
+      "resolved_at" : "2026-10-25T12:26:35Z",
       "severity" : "major"
     },
     {
@@ -21,6 +22,7 @@
       "line" : 49,
       "path" : "docs-site/src/content/docs/agents/auto-review.md",
       "posted_at" : "2026-10-24T11:13:11Z",
+      "resolved_at" : "2026-10-25T12:26:35Z",
       "severity" : "minor"
     },
     {
@@ -42,6 +44,7 @@
       "line" : 49,
       "path" : "docs-site/src/content/docs/agents/auto-review.md",
       "posted_at" : "2026-10-24T11:14:41Z",
+      "resolved_at" : "2026-10-25T12:26:35Z",
       "severity" : "minor"
     },
     {
@@ -52,17 +55,38 @@
       "line" : 29,
       "path" : "CHANGELOG.md",
       "posted_at" : "2026-10-24T11:14:41Z",
+      "resolved_at" : "2026-10-25T12:26:35Z",
+      "severity" : "nit"
+    },
+    {
+      "category" : "correctness",
+      "decision" : "kept",
+      "excerpt" : "`readyForApproval` finds the session with `review(of:)`, which includes reviews ",
+      "key" : "Gannin/Sessions/ApprovalQueue.swift:52:`readyForApproval` finds the session with `review(of:)`, whi",
+      "line" : 52,
+      "path" : "Gannin/Sessions/ApprovalQueue.swift",
+      "posted_at" : "2026-10-25T12:26:31Z",
+      "severity" : "minor"
+    },
+    {
+      "category" : "maintainability",
+      "decision" : "kept",
+      "excerpt" : "The first line of `pendingPrompts`' doc comment has been joined onto the end of ",
+      "key" : "Gannin/Sessions/SessionStore.swift:521:The first line of `pendingPrompts`' doc comment has been joi",
+      "line" : 521,
+      "path" : "Gannin/Sessions/SessionStore.swift",
+      "posted_at" : "2026-10-25T12:26:31Z",
       "severity" : "nit"
     }
   ],
   "number" : 482,
-  "posted_at" : "2026-10-24T11:14:41Z",
+  "posted_at" : "2026-10-25T12:26:31Z",
   "posted_automatically" : true,
   "repo" : "andrew-waters/gannin",
   "reviewer" : "andrew-waters",
   "started_at" : "2026-10-24T10:56:24Z",
   "state" : "OPEN",
   "title" : "Auto review: show a held approval as held in the record, the comment and the reminders",
-  "updated_at" : "2026-10-24T11:14:43Z",
+  "updated_at" : "2026-10-25T12:26:35Z",
   "verdict" : "comment"
 }
