@@ -73,6 +73,21 @@ struct IssueStrategyTests {
         #expect(!PlanningAgreeSheet.isContainerType(nil))
     }
 
+    @Test func aSingleTaskMergesOnlyWhenTheParentCanTakeIt() {
+        let merges = PlanningAgreeSheet.merges
+        // A new parent, or a planned issue known not to be a container.
+        #expect(merges(false, false, false, false, nil))
+        #expect(merges(false, false, false, true, false))
+        // The planned issue's type is unread, or an Epic or Initiative.
+        #expect(!merges(false, false, false, true, nil))
+        #expect(!merges(false, false, false, true, true))
+        // Already a sub-issue, made or half made.
+        #expect(!merges(true, false, false, false, nil))
+        #expect(!merges(false, true, false, false, nil))
+        // Already merged: still merges, so a retry stays a retry.
+        #expect(merges(false, true, true, true, false))
+    }
+
     @Test func aPlansDetailsAreAppendedOnce() throws {
         let path = "plans/2026-10-26-one.md"
         let first = try #require(PlanningAgreeSheet.appending("- [ ] step", planPath: path, to: "Original.\n"))

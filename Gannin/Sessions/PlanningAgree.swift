@@ -35,6 +35,9 @@ struct PlanningAgreeSheet: View {
         var made: (reference: String, url: URL)?
         /// Made on GitHub in an earlier attempt but not yet added to the parent.
         var created: PlanningMadeIssue?
+        /// Its details were added to the parent's description, so `made` is
+        /// the parent itself and it isn't a sub-issue.
+        var merged = false
         var failed: String?
         /// The issue was made, but couldn't be added to the workflow board.
         var boardWarning: String?
@@ -161,7 +164,7 @@ struct PlanningAgreeSheet: View {
                 Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
                 Button(working ? "Writing" : "Agree and Write") { Task { await agree() } }
                     .buttonStyle(.borderedProminent)
-                    .disabled(working || state == nil || present.isEmpty || (planning?.issue == nil && (parentTitle.trimmingCharacters(in: .whitespaces).isEmpty || parentRepo.isEmpty)) || drafts.contains { $0.include && ($0.repo.isEmpty || $0.title.trimmingCharacters(in: .whitespaces).isEmpty) })
+                    .disabled(working || state == nil || present.isEmpty || (planning?.issue == nil && (parentTitle.trimmingCharacters(in: .whitespaces).isEmpty || parentRepo.isEmpty)) || drafts.contains { $0.include && (($0.repo.isEmpty && !mergesTask) || $0.title.trimmingCharacters(in: .whitespaces).isEmpty) })
             }
             .padding(12)
         }
@@ -248,13 +251,15 @@ struct PlanningAgreeSheet: View {
                     .labelsHidden()
                     .multilineTextAlignment(.leading)
                     .fontWeight(.medium)
-                Picker("", selection: draft.repo) {
-                    ForEach(repos.contains(draft.wrappedValue.repo) || draft.wrappedValue.repo.isEmpty ? repos : [draft.wrappedValue.repo] + repos, id: \.self) {
-                        Text($0.split(separator: "/").last.map(String.init) ?? $0).tag($0)
+                if !mergesTask {
+                    Picker("", selection: draft.repo) {
+                        ForEach(repos.contains(draft.wrappedValue.repo) || draft.wrappedValue.repo.isEmpty ? repos : [draft.wrappedValue.repo] + repos, id: \.self) {
+                            Text($0.split(separator: "/").last.map(String.init) ?? $0).tag($0)
+                        }
                     }
+                    .labelsHidden()
+                    .fixedSize()
                 }
-                .labelsHidden()
-                .fixedSize()
                 if let made = draft.wrappedValue.made {
                     Link(destination: made.url) { Image(systemName: "checkmark.circle.fill").foregroundStyle(ChartPalette.good) }
                         .help(made.reference)
@@ -275,14 +280,16 @@ struct PlanningAgreeSheet: View {
                 .multilineTextAlignment(.leading)
                 .lineLimit(2...8)
                 .foregroundStyle(.secondary)
-            TextField("Labels", text: draft.labels, prompt: Text("Labels, comma separated"))
-                .labelsHidden()
-                .multilineTextAlignment(.leading)
-                .font(.caption)
+            if !mergesTask {
+                TextField("Labels", text: draft.labels, prompt: Text("Labels, comma separated"))
+                    .labelsHidden()
+                    .multilineTextAlignment(.leading)
+                    .font(.caption)
+            }
             if let failed = draft.wrappedValue.failed {
                 Text(failed).font(.caption).foregroundStyle(.red)
             }
-            if draft.wrappedValue.made == nil, let repoNote = Self.repoNote(task: draft.wrappedValue.taskRepo, filed: draft.wrappedValue.repo, central: strategy.centralRepo, issuesOff: issuesOff) {
+            if draft.wrappedValue.made == nil, !mergesTask, let repoNote = Self.repoNote(task: draft.wrappedValue.taskRepo, filed: draft.wrappedValue.repo, central: strategy.centralRepo, issuesOff: issuesOff) {
                 Text(repoNote).font(.caption).foregroundStyle(.secondary)
             }
             if let boardWarning = draft.wrappedValue.boardWarning {
@@ -312,9 +319,17 @@ struct PlanningAgreeSheet: View {
     /// hasn't been read keeps the sub-issue.
     private var mergesTask: Bool {
         let included = drafts.filter(\.include)
-        guard included.count == 1, let draft = included.first, draft.created == nil else { return false }
-        guard draft.made == nil || draft.made?.reference == parent?.reference else { return false }
-        return planning?.issue == nil || parentIsContainer == false
+        guard included.count == 1, let draft = included.first else { return false }
+        return Self.merges(created: draft.created != nil, made: draft.made != nil, merged: draft.merged, hasIssue: planning?.issue != nil, parentIsContainer: parentIsContainer)
+    }
+
+    /// Whether the only included task goes in the parent's description:
+    /// not once it's a sub-issue (`created`, or `made` without `merged`),
+    /// and, for an issue being planned, only once its type is known not to
+    /// be a container.
+    static func merges(created: Bool, made: Bool, merged: Bool, hasIssue: Bool, parentIsContainer: Bool?) -> Bool {
+        guard !created, !made || merged else { return false }
+        return !hasIssue || parentIsContainer == false
     }
 
     static func isContainerType(_ type: String?) -> Bool {
@@ -391,17 +406,22 @@ struct PlanningAgreeSheet: View {
         }
         guard let parent else { return }
 
-        let merged = mergesTask
-        if merged, let index = drafts.firstIndex(where: \.include) {
+        if mergesTask, let index = drafts.firstIndex(where: \.include) {
             drafts[index].failed = nil
             do {
                 let current = try await api.issueBodyAndType(id: parent.id)
-                let draft = drafts[index]
-                let details = (draft.body + workIn(draft) + satisfies(draft) + planLink).trimmingCharacters(in: .whitespacesAndNewlines)
-                if let body = Self.appending(details, planPath: planPath, to: current.body) {
-                    try await api.setIssueBody(id: parent.id, body: body)
+                if planning.issue != nil, Self.isContainerType(current.type) {
+                    // Changed to an Epic or Initiative since the sheet read it.
+                    parentIsContainer = true
+                } else {
+                    let draft = drafts[index]
+                    let details = (draft.body + workIn(draft) + satisfies(draft)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if let body = Self.appending(details, planPath: planPath, to: current.body) {
+                        try await api.setIssueBody(id: parent.id, body: body)
+                    }
+                    drafts[index].made = (parent.reference, parent.url)
+                    drafts[index].merged = true
                 }
-                drafts[index].made = (parent.reference, parent.url)
             } catch {
                 drafts[index].failed = error.localizedDescription
                 status = "Couldn't add the task to \(parent.reference): \(error.localizedDescription)"
@@ -447,8 +467,10 @@ struct PlanningAgreeSheet: View {
         }
 
         let agreedBy = present.sorted()
-        let made = merged ? [] : drafts.compactMap(\.made)
-        let tasks = merged ? [] : drafts.compactMap { draft in draft.made.map { (reference: $0.reference, url: $0.url, title: draft.title, satisfies: draft.satisfies) } }
+        let merged = drafts.contains(where: \.merged)
+        let subIssues = drafts.filter { !$0.merged }
+        let made = subIssues.compactMap(\.made)
+        let tasks = subIssues.compactMap { draft in draft.made.map { (reference: $0.reference, url: $0.url, title: draft.title, satisfies: draft.satisfies) } }
         let requirement = writesRequirement && !startedFromRequirement ? requirementPath : nil
         let linkedRequirement = requirement ?? (startedFromRequirement ? planning.documentPath : nil)
         var files: [String: String?] = [
@@ -483,7 +505,8 @@ struct PlanningAgreeSheet: View {
             $0.planning?.madeIssues = nil
         }
         var message = "The room agreed. Gannin committed \(planPath)\(requirement.map { " and \($0)" } ?? "") to the harness"
-        message += merged ? ", and added the task to the description of \(parent.reference)." : made.isEmpty ? " under \(parent.reference)." : ", and made \(made.map(\.reference).joined(separator: ", ")) as sub-issues of \(parent.reference)."
+        if merged { message += ", added a task to the description of \(parent.reference)" }
+        message += made.isEmpty ? (merged ? "." : " under \(parent.reference).") : ", and made \(made.map(\.reference).joined(separator: ", ")) as sub-issues of \(parent.reference)."
         message += " There's nothing more to write; answer questions about the plan if we ask."
         _ = sessions.submit(message, to: session.id)
         dismiss()
