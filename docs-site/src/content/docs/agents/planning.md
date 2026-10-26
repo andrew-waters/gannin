@@ -48,6 +48,8 @@ Where the issues go follows the org's choice in [Org settings › Issues › Whe
 
 You can still pick another repo for any issue before Agree and Write.
 
+When the plan has just one task, it doesn't get a sub-issue. Agree adds its details to the parent issue's description in a Details section, and the sheet says so. The parent is the issue being planned, or a new one if there wasn't one. If the issue being planned has the type Epic or Initiative, the task still becomes a sub-issue.
+
 ## Ending a plan
 
 End, beside Agree in the workspace, stops Claude, closes the tab and takes the plan out of the sidebar's Planning group. It's there whether or not the plan is agreed. After ending, the plan stays on Rituals › Planning with the status Finished, and opening it shows its stages, tasks and decisions to read; Claude isn't started again. Delete, from that list, removes a plan altogether.

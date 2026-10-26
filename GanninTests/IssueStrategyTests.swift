@@ -66,6 +66,21 @@ struct IssueStrategyTests {
         #expect(PlanningAgreeSheet.repoNote(task: nil, filed: "acme/api", central: nil, issuesOff: []) == nil)
     }
 
+    @Test func onlyEpicsAndInitiativesStayContainers() {
+        #expect(PlanningAgreeSheet.isContainerType("Epic"))
+        #expect(PlanningAgreeSheet.isContainerType("initiative"))
+        #expect(!PlanningAgreeSheet.isContainerType("Feature"))
+        #expect(!PlanningAgreeSheet.isContainerType(nil))
+    }
+
+    @Test func aPlansDetailsAreAppendedOnce() throws {
+        let path = "plans/2026-10-26-one.md"
+        let first = try #require(PlanningAgreeSheet.appending("- [ ] step", planPath: path, to: "Original.\n"))
+        #expect(first.hasPrefix("Original.\n\n<!-- gannin-plan: \(path) -->\n## Details\n\n- [ ] step"))
+        #expect(PlanningAgreeSheet.appending("- [ ] step", planPath: path, to: first) == nil)
+        #expect(PlanningAgreeSheet.appending("x", planPath: path, to: "")?.hasPrefix("<!-- gannin-plan:") == true)
+    }
+
     @Test func planningInstructionsFollowTheStrategy() {
         #expect(PlanningState.instructions(path: "p.json", filing: central).contains("files every issue in `acme/product`"))
         #expect(PlanningState.instructions(path: "p.json").contains("hasIssuesEnabled,isArchived"))

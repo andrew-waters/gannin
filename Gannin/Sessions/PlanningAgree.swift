@@ -53,6 +53,9 @@ struct PlanningAgreeSheet: View {
     /// Repos that won't take an issue (turned off, or archived), lowercased,
     /// once looked up.
     @State private var issuesOff: Set<String> = []
+    /// Whether the issue being planned is an Epic or Initiative, once read;
+    /// nil until then, or when it couldn't be.
+    @State private var parentIsContainer: Bool?
 
     private var org: String { session.org }
     private var planning: PlanningInfo? { session.planning }
@@ -116,7 +119,7 @@ struct PlanningAgreeSheet: View {
                 readiness
                 people
                 parentSection
-                Section("\(drafts.filter(\.include).count) of \(drafts.count) sub-issues") {
+                Section(mergesTask ? "Task, added to the parent issue's description" : "\(drafts.filter(\.include).count) of \(drafts.count) sub-issues") {
                     if drafts.isEmpty {
                         Text("No tasks yet: the plan is written with no sub-issues.").foregroundStyle(.secondary)
                     }
@@ -165,6 +168,7 @@ struct PlanningAgreeSheet: View {
         .frame(minWidth: 720, idealWidth: 800, minHeight: 620, idealHeight: 760)
         .onAppear(perform: fill)
         .task { await checkIssuesOff() }
+        .task { await loadParentType() }
     }
 
     // MARK: Sections
@@ -293,9 +297,44 @@ struct PlanningAgreeSheet: View {
         let count = drafts.filter { $0.include && $0.made == nil }.count
         var parts: [String] = []
         if planning?.issue == nil && parent == nil { parts.append("a parent issue") }
-        if count > 0 { parts.append(count == 1 ? "1 sub-issue" : "\(count) sub-issues") }
+        if mergesTask {
+            parts.append("the task in the parent issue")
+        } else if count > 0 {
+            parts.append(count == 1 ? "1 sub-issue" : "\(count) sub-issues")
+        }
         parts.append(writesRequirement && !startedFromRequirement ? "the plan and requirement" : "the plan")
         return "Writes " + parts.joined(separator: ", ")
+    }
+
+    /// A plan with one task doesn't need a sub-issue for it: its details go
+    /// in the parent's description, unless the parent is an Epic or
+    /// Initiative, which stays a container. An issue being planned whose type
+    /// hasn't been read keeps the sub-issue.
+    private var mergesTask: Bool {
+        let included = drafts.filter(\.include)
+        guard included.count == 1, let draft = included.first, draft.created == nil else { return false }
+        guard draft.made == nil || draft.made?.reference == parent?.reference else { return false }
+        return planning?.issue == nil || parentIsContainer == false
+    }
+
+    static func isContainerType(_ type: String?) -> Bool {
+        guard let type else { return false }
+        return ["epic", "initiative"].contains(type.lowercased())
+    }
+
+    /// `body` with the plan's details added, or nil when this plan's section
+    /// is already there (a retry after the plan's commit failed).
+    static func appending(_ details: String, planPath: String, to body: String) -> String? {
+        let marker = "<!-- gannin-plan: \(planPath) -->"
+        guard !body.contains(marker) else { return nil }
+        let existing = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (existing.isEmpty ? "" : existing + "\n\n") + marker + "\n## Details\n\n" + details
+    }
+
+    private func loadParentType() async {
+        guard let issue = planning?.issue, let api = auth.api,
+              let found = try? await api.issueBodyAndType(id: issue.id) else { return }
+        parentIsContainer = Self.isContainerType(found.type)
     }
 
     private func fill() {
@@ -352,6 +391,24 @@ struct PlanningAgreeSheet: View {
         }
         guard let parent else { return }
 
+        let merged = mergesTask
+        if merged, let index = drafts.firstIndex(where: \.include) {
+            drafts[index].failed = nil
+            do {
+                let current = try await api.issueBodyAndType(id: parent.id)
+                let draft = drafts[index]
+                let details = (draft.body + workIn(draft) + satisfies(draft) + planLink).trimmingCharacters(in: .whitespacesAndNewlines)
+                if let body = Self.appending(details, planPath: planPath, to: current.body) {
+                    try await api.setIssueBody(id: parent.id, body: body)
+                }
+                drafts[index].made = (parent.reference, parent.url)
+            } catch {
+                drafts[index].failed = error.localizedDescription
+                status = "Couldn't add the task to \(parent.reference): \(error.localizedDescription)"
+                return
+            }
+        }
+
         let config = projectConfig
         let boardID = config.filing.board(workflow: config.workflow).flatMap { number in projects.boardLists[org]?.first { $0.number == number }?.id }
         for index in drafts.indices where drafts[index].include && drafts[index].made == nil {
@@ -390,8 +447,8 @@ struct PlanningAgreeSheet: View {
         }
 
         let agreedBy = present.sorted()
-        let made = drafts.compactMap(\.made)
-        let tasks = drafts.compactMap { draft in draft.made.map { (reference: $0.reference, url: $0.url, title: draft.title, satisfies: draft.satisfies) } }
+        let made = merged ? [] : drafts.compactMap(\.made)
+        let tasks = merged ? [] : drafts.compactMap { draft in draft.made.map { (reference: $0.reference, url: $0.url, title: draft.title, satisfies: draft.satisfies) } }
         let requirement = writesRequirement && !startedFromRequirement ? requirementPath : nil
         let linkedRequirement = requirement ?? (startedFromRequirement ? planning.documentPath : nil)
         var files: [String: String?] = [
@@ -426,7 +483,7 @@ struct PlanningAgreeSheet: View {
             $0.planning?.madeIssues = nil
         }
         var message = "The room agreed. Gannin committed \(planPath)\(requirement.map { " and \($0)" } ?? "") to the harness"
-        message += made.isEmpty ? " under \(parent.reference)." : ", and made \(made.map(\.reference).joined(separator: ", ")) as sub-issues of \(parent.reference)."
+        message += merged ? ", and added the task to the description of \(parent.reference)." : made.isEmpty ? " under \(parent.reference)." : ", and made \(made.map(\.reference).joined(separator: ", ")) as sub-issues of \(parent.reference)."
         message += " There's nothing more to write; answer questions about the plan if we ask."
         _ = sessions.submit(message, to: session.id)
         dismiss()

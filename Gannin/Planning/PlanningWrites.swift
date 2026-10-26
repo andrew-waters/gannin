@@ -104,6 +104,41 @@ extension GitHubAPI {
             """, variables: ["parent": parent, "child": child])
     }
 
+    /// The issue's description and type name, read fresh so an append
+    /// builds on what's there now. A read.
+    func issueBodyAndType(id: String) async throws -> (body: String, type: String?) {
+        struct Response: Decodable {
+            struct Node: Decodable {
+                struct IssueType: Decodable { let name: String }
+                let body: String?
+                let issueType: IssueType?
+            }
+            let node: Node?
+        }
+        let found: Response = try await query("""
+            query($id: ID!) {
+              node(id: $id) { ... on Issue { body issueType { name } } }
+            }
+            """, variables: ["id": id])
+        guard let node = found.node else { throw APIError.graphQL(["Couldn't read the issue"]) }
+        return (node.body ?? "", node.issueType?.name)
+    }
+
+    /// Replaces an issue's description. A write.
+    func setIssueBody(id: String, body: String) async throws {
+        // updateIssue is nullable, as closeIssue is: an empty Response would
+        // mask a refusal rather than surfacing it.
+        struct Response: Decodable {
+            struct Payload: Decodable { struct Issue: Decodable { let id: String }; let issue: Issue }
+            let updateIssue: Payload
+        }
+        let _: Response = try await mutate("""
+            mutation($issue: ID!, $body: String!) {
+              updateIssue(input: { id: $issue, body: $body }) { issue { id } }
+            }
+            """, variables: ["issue": id, "body": body])
+    }
+
     /// Comments on an issue or pull request. A write.
     func addComment(subjectID: String, body: String) async throws {
         // addComment is nullable: GitHub refusing (no write access, an

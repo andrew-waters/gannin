@@ -8,6 +8,7 @@ paths:
 - The current stage is the `phase` claude writes into `planning.json` (`PlanningState.phase`), not something Gannin tracks, so claude can move stages itself. Read it leniently; never crash or drop state on an unknown value.
 - `.worktrees/<branch>/planning.json` is snake case. Update `PlanningState.instructions` (told to claude after the team's guidance) whenever its shape changes.
 - Agree files issues by the org's `IssueStrategy` (`OrgConfig.filing`): under a central repo a task's `repo` is where its work is, not where its issue goes, so keep it for the plan's `touches` and never overwrite it with the central repo. The issues-off lookup is advisory; a failed one filters nothing.
+- A plan with one task merges it into the parent's description (`PlanningAgreeSheet.mergesTask`) rather than making a sub-issue, unless the parent's type is Epic or Initiative. Never merge until that type has been read: an unread type keeps the sub-issue. The appended section carries a `gannin-plan` marker so a retry after a failed commit doesn't append twice.
 - Every task must name the criteria it `satisfies`; Agree must surface criteria no task covers (`PlanningState.uncovered`).
 - Moving back reopens a stage and marks later ones Recheck; moving forward approves the stages passed. Send claude the reason when going back.
 - Copy context documents into `.worktrees/<branch>/docs/` before claude starts (`SessionStore.copyDocuments`).
