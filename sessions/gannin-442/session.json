@@ -1,6 +1,7 @@
 {
   "box" : "Anius",
   "branch" : "442-auto-review-a-held-approval-reads-as",
+  "finishedAt" : "2026-10-26T10:28:05Z",
   "issue" : "andrew-waters/gannin#442",
   "pullRequests" : [
 
