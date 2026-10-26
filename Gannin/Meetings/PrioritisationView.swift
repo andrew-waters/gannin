@@ -285,11 +285,9 @@ struct PrioritisationView: View {
     /// Open issues the workload counts: excluded repos and hidden ones left
     /// out, and the search applied.
     private var openIssues: [IssueRecord] {
-        let excluded = configs.config(for: org).repoExclusion
-        let members = workload.team.map { Set($0.members) }
-        return (issueStore.history(for: org).map { Array($0.issues.values) } ?? [])
-            .filter { $0.isOpen && !excluded.contains($0.repo) && !hidden.keys.contains($0.id) }
-            .filter { issue in members.map { team in issue.assignees.contains(where: team.contains) || issue.assignees.isEmpty } ?? true }
+        let issues = issueStore.history(for: org).map { Array($0.issues.values) } ?? []
+        return TriageQueue.counted(issues, config: configs.config(for: org), hidden: hidden.keys, team: workload.team)
+            .filter(\.isOpen)
             .filter { issue in
                 IssueSearch.matches(search, title: issue.title, repo: issue.repo, number: issue.number,
                                     people: issue.assignees + issue.assignees.map { workload.person(login: $0).displayName } + [issue.author].compactMap { $0 },
@@ -300,12 +298,8 @@ struct PrioritisationView: View {
     /// No Status on the board, or not on it: newest first.
     @ViewBuilder
     private func triage(board: Int) -> some View {
-        let issues = openIssues
-            .filter { issue in
-                guard let fields = issue.fields(onProject: board) else { return true }
-                return fields.values["Status"] == nil
-            }
-            .sorted { $0.createdAt > $1.createdAt }
+        // The same as Standup's Triage column.
+        let issues = TriageQueue.untriaged(openIssues, board: board)
         Section {
             if issues.isEmpty {
                 Text(issueStore.history(for: org) == nil ? "Loading issues." : "Nothing to triage: every open issue has a Status.")

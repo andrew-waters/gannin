@@ -123,6 +123,7 @@ struct OrgSettingsView: View {
         case .issues:
             IssueStrategySection(org: org)
             IssueWorkflowSection(org: org)
+            StandupSettingsSection(org: org)
         case .investments:
             InvestmentCategoriesSection(org: org)
         case .rnd:
