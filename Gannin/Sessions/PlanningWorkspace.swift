@@ -530,7 +530,6 @@ struct PlanningWorkspaceView: View {
                             .padding(.horizontal, 36)
                             .padding(.vertical, 32)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .dimmedWhileAsking(dimmed) { undimmed = openQuestion }
                         }
                         .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
                     }
