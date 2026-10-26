@@ -43,6 +43,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - CI and the size of change on the CI page: each merged PR's lines against its CI time, CI time by size band, and CI per 1,000 lines merged, week by week
 - Needs attention on the CI page flags workflows whose runs keep going after a newer push instead of being cancelled
 - CI time per PR as a Scorecard goal, expanding per author
+- Dismiss Approval on a review held for your approval, in the Inbox and on the Dashboard, and a reminder every 24 hours until you approve or dismiss it
+- `approval_held` in a review's record in the harness, true while the PR is open, Claude's verdict is approve and the approval hasn't been given
+- An automatic review posted as a comment for a PR Claude would approve says, after its summary, that it isn't an approval and giving it is up to the reviewer
 
 ### Changed
 - Planning's Agree no longer offers repos with issues turned off, and moves a task that named one to a repo that accepts issues

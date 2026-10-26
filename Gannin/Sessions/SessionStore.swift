@@ -1255,7 +1255,7 @@ final class SessionStore {
         return identifier
     }
 
-    private func unflag(_ id: UUID) {
+    func unflag(_ id: UUID) {
         guard attention[id] != nil else { return }
         attention[id] = nil
         updateBadge()

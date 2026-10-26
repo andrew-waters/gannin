@@ -28,6 +28,18 @@ struct ReviewDraft: Hashable, Codable {
     /// When the latest review result arrived. `posted` stays set across
     /// rounds, so only a post at or after this is of the latest result.
     var resultAt: Date?
+    /// When the reviewer put away a held approval without giving it.
+    var approvalDismissedAt: Date?
+    /// When the notification for the held approval was last sent, kept so the
+    /// 24 hours between reminders carry across launches (`remindApprovals`).
+    var approvalNoticedAt: Date?
+
+    /// Whether the reviewer has put away the approval the latest result
+    /// holds; a later result is a new approval to give or dismiss.
+    var approvalDismissed: Bool {
+        guard let approvalDismissedAt else { return false }
+        return approvalDismissedAt >= (resultAt ?? .distantPast)
+    }
 
     /// Whether the author has seen the latest result.
     var postedLatest: Bool {
@@ -192,7 +204,7 @@ extension SessionStore {
             Look for bugs, missed cases, security problems, and code that doesn't fit the repo or the issue it's for. Comment only on lines the diff changes or shows. Say what's good in the summary, not as findings.\(learned)\(configured)
 
             End your reply with one fenced ```json block, findings most important first:
-            {"headline": "<one line: what this PR does>", "summary": "<a few sentences for the PR's author. When writing lists, use bullet points. Do not duplicate text from your comments.>", "verdict": "approve" | "comment" | "request_changes", "effort": <1 to 5: how much work reviewing it by hand is, 1 a glance, 5 hours>, "walkthrough": [{"title": "<an area of the change>", "summary": "<what changes there and why, a sentence or two>", "files": ["<path in the repo>"]}], "flow": ["<one step of what happens when the changed code runs>"], "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "category": \(ReviewCategory.promptList), "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"], \(checksField)\(HarnessLearning.reviewJSONField)}
+            {"headline": "<one line: what this PR does>", "summary": "<a few sentences for the PR's author. When writing lists, use bullet points. Do not duplicate text from your comments. Don't write that you approve or request changes: the summary can be posted as a comment, and approving is the reviewer's to give.>", "verdict": "approve" | "comment" | "request_changes", "effort": <1 to 5: how much work reviewing it by hand is, 1 a glance, 5 hours>, "walkthrough": [{"title": "<an area of the change>", "summary": "<what changes there and why, a sentence or two>", "files": ["<path in the repo>"]}], "flow": ["<one step of what happens when the changed code runs>"], "findings": [{"path": "<path in the repo>", "line": <line in the new file>, "severity": "blocker" | "major" | "minor" | "nit", "category": \(ReviewCategory.promptList), "comment": "<what's wrong and what to do>", "suggestion": "<optional: the replacement for that one line>"}], "resolved": ["<review thread ID>"], \(checksField)\(HarnessLearning.reviewJSONField)}
 
             `walkthrough` splits the change into a few areas in the order a reviewer should read them, every changed file in one. `flow` is only for a change with a path through the code worth tracing (a request, a sync, a job): its steps in order, else leave it empty. Each finding's `category`: correctness (it does the wrong thing or misses a case), data (data integrity, migrations, APIs and integrations), stability (errors, crashes, availability), security (security and privacy), performance (speed and scale), maintainability (readability, structure, tests, fit with the repo).
 
@@ -405,9 +417,16 @@ struct ReviewedPullRequest: Equatable {
             .map(String.init)
     }
 
-    /// A review's body: the summary, then findings that can't go on a line.
-    static func body(summary: String, general: [SessionTranscript.Finding]) -> String {
+    /// Added to a comment that goes up for a review Claude would approve, so
+    /// the summary isn't read as an approval.
+    static let approvalHeldNote = "This is a comment, not an approval: Claude would approve this, but giving the approval is up to the reviewer."
+
+    /// A review's body: the summary, `approvalHeldNote` when the review is a
+    /// held approval, then findings that can't go on a line. The findings
+    /// stay last: `findingEntries` reads every line after one as part of it.
+    static func body(summary: String, general: [SessionTranscript.Finding], approvalHeld: Bool = false) -> String {
         var text = summary
+        if approvalHeld { text += "\n\n_\(approvalHeldNote)_" }
         if !general.isEmpty {
             text += "\n\n" + general.map { finding in
                 "- `\(finding.path)\(finding.line.map { ":\($0)" } ?? "")`: \(finding.comment)"
