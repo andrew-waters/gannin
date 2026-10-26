@@ -29,7 +29,7 @@ Moving forward approves the stages you passed. Back (with a reason, which is sen
 
 ## In the room
 
-On top is what's happening now: a question for the room, what Claude is reading, or whose turn it is. Below is the stage you're looking at, with the requirement as it stands on the right. Both dim while a question is open.
+On top is what's happening now: a question for the room, what Claude is reading, or whose turn it is. Below is the stage you're looking at, with the requirement as it stands on the right. The stage dims while a question is open (click it to look at it); the requirement stays as it is, so you can read it while you answer.
 
 Questions come in a style you pick, kept on this Mac: One at a Time (letter keys), Poll the Room (counts hands and sends the most), Keyboard List or Conversation. A comment box at the foot sends "From the room", closing an open question first. The terminal and prompt box are in a drawer.
 
