@@ -332,6 +332,8 @@ struct PullRequestsView: View {
         if excludeDrafts { clearable.hideDrafts = false }
         return HStack(spacing: 8) {
             FilterSearchField(text: stored.projectedValue.search, prompt: "Title, number, person or repo")
+                // Narrower windows shrink the search before the menus and toggles truncate.
+                .layoutPriority(-1)
             ForEach(PullRequestFilters.Key.allCases, id: \.self) { menu($0, filters: filters, pool: pool) }
             Toggle("Hide mine", isOn: stored.projectedValue.hideMine)
                 .checkboxToggle()
