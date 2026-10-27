@@ -20,6 +20,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Changed
 - A review's Check for Changes result also reflects the background watch: it says what the last check found and how long ago, whether you ran it or Gannin did, and keeps counting up
+- A review's summary that describes the comments it left now gives one bullet per issue, grouped under its severity (blocker, major, minor, nit) as in the findings
 - Planning: when a plan has just one task, Agree adds its details (description, checklist and the criteria it satisfies) to the description of the issue being planned, or of a new issue, instead of making a sub-issue. An Epic or Initiative still gets a sub-issue
 - New Issue opens on Claude: the conversation on the left and a preview of the draft on the right, with Skip to write it yourself. Next takes you to the form, filled from the draft, to check the details and create it; Back returns to Claude and keeps your edits
 - The Claude Code window has New Issue too: in the tab bar's + menu, and with ⌘N
