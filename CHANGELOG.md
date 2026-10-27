@@ -27,6 +27,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Model, in Settings › General, a specialist and a workflow step, is one menu: Gannin's list (now Claude Sonnet 5.5 and Claude Haiku 5.5 in place of Sonnet 5 and Haiku 4.5), the models Claude Code has run with on this Mac lately, the newest of each family (Latest Opus and so on), and Other to type any ID. A model picked before that isn't offered stays as typed, under Other
 
 ### Fixed
+- A session's brief now says running ready-for-review is required for every change, and not to open the pull request as ready or report the work done without it, so Claude calls it more reliably
 - The search box in a filter bar, such as on Pull Requests, shrinks from 200 to 140 points when the window is narrow instead of pushing the other filters out of view
 - Finish and Clean Up no longer waits for the harness to be updated: the session goes as soon as its worktrees are removed, and its session.json is marked finished in the background
 - An issue opened from a project board shows its Assignees section even when the issue isn't in the synced issue history yet
