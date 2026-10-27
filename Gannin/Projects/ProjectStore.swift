@@ -121,6 +121,18 @@ final class ProjectStore {
         }
     }
 
+    /// The logins assigned to an issue on a cached board, for an issue the
+    /// issue history doesn't hold; nil when no cached board has it.
+    func assignees(org: String, contentID: String) -> [String]? {
+        let prefix = "\(org)#"
+        for (key, cache) in caches where key.hasPrefix(prefix) {
+            if let item = cache.itemsByID.values.first(where: { $0.contentID == contentID }) {
+                return item.assignees.map(\.login)
+            }
+        }
+        return nil
+    }
+
     /// Records assignees changed on an issue from the app, on every board
     /// that has it cached.
     func recordAssignees(org: String, contentID: String, assignees: [Person]) {

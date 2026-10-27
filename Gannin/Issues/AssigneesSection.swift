@@ -28,8 +28,10 @@ private struct AssigneesEditor: View {
     @State private var saveError: String?
 
     var body: some View {
-        if let record = issueStore.history(for: org)?.issues[issueID] {
-            let saved = Set(record.assignees)
+        // An issue opened from a board may not be in the issue history, in
+        // which case the board's copy of the item has its assignees.
+        if let assigned = issueStore.history(for: org)?.issues[issueID]?.assignees ?? projectStore.assignees(org: org, contentID: issueID) {
+            let saved = Set(assigned)
             let chosen = draft ?? saved
             Section("Assignees") {
                 Menu {
