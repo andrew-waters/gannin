@@ -634,15 +634,16 @@ extension SessionStore {
     }
 
     /// Ends the session and its helpers, removes its worktrees and the
-    /// issue's folder (on its box), marks it finished in the harness, and
-    /// forgets it. Throws when the worktrees couldn't be removed.
+    /// issue's folder (on its box), forgets it, and marks it finished in the
+    /// harness in the background (best effort, as it takes several GitHub
+    /// requests). Throws when the worktrees couldn't be removed.
     func finish(_ id: UUID) async throws {
         guard let session = sessions[id] else { return }
         for helper in helpers(of: id) { end(helper.id) }
         end(id)
         try await removeWorktrees(session)
-        await recordFinished(id)
         remove(id)
+        Task { await recordFinished(session) }
     }
 
     /// Finishes a review but keeps it, in the history: claude is ended and
@@ -733,8 +734,8 @@ extension SessionStore {
     }
 
     /// Adds `finishedAt` to the session's `session.json` in the harness.
-    private func recordFinished(_ id: UUID) async {
-        guard let session = sessions[id], let repo = session.harnessRepo, let folder = session.harnessFolder else { return }
+    private func recordFinished(_ session: CodeSession) async {
+        guard let repo = session.harnessRepo, let folder = session.harnessFolder else { return }
         let setup = HarnessConfig(repo: repo)
         let path = "\(folder)/session.json"
         _ = try? await harnessStore.commit(org: session.org, setup: setup, refreshing: false) { head in
