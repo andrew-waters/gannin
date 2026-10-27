@@ -634,15 +634,17 @@ extension SessionStore {
     }
 
     /// Ends the session and its helpers, removes its worktrees and the
-    /// issue's folder (on its box), marks it finished in the harness, and
-    /// forgets it. Throws when the worktrees couldn't be removed.
+    /// issue's folder (on its box), forgets it, and marks it finished in the
+    /// harness in the background, as it takes several GitHub requests. That
+    /// write is best effort: quitting before it lands leaves `finishedAt`
+    /// unset. Throws when the worktrees couldn't be removed.
     func finish(_ id: UUID) async throws {
         guard let session = sessions[id] else { return }
         for helper in helpers(of: id) { end(helper.id) }
         end(id)
         try await removeWorktrees(session)
-        await recordFinished(id)
         remove(id)
+        Task { await recordFinished(session) }
     }
 
     /// Finishes a review but keeps it, in the history: claude is ended and
@@ -733,10 +735,14 @@ extension SessionStore {
     }
 
     /// Adds `finishedAt` to the session's `session.json` in the harness.
-    private func recordFinished(_ id: UUID) async {
-        guard let session = sessions[id], let repo = session.harnessRepo, let folder = session.harnessFolder else { return }
+    private func recordFinished(_ session: CodeSession) async {
+        guard let repo = session.harnessRepo, let folder = session.harnessFolder else { return }
         let setup = HarnessConfig(repo: repo)
         let path = "\(folder)/session.json"
+        // Not awaited by `finish`, so it can overlap another write to this
+        // file. That's safe: `commit` reads the file at the head it builds on
+        // (retrying once if the head moves), and `finishedAt == nil` makes a
+        // repeat a no-op.
         _ = try? await harnessStore.commit(org: session.org, setup: setup, refreshing: false) { head in
             let text = try await self.harnessStore.files(setup: setup, at: head, paths: [path])[path] ?? nil
             guard let text, var record = try? SessionRecord.decoder.decode(SessionRecord.self, from: Data(text.utf8)), record.finishedAt == nil else { return nil }
