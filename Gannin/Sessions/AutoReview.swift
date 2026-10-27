@@ -95,6 +95,11 @@ struct ReviewWatch: Codable, Hashable {
     var newComments = 0
     /// Who opened the PR, as of the last look, for the look-again prompt.
     var author: String?
+    /// When the PR was last looked at, by the background pass or Check for
+    /// Changes, and its state on GitHub then. Optional so saves from before
+    /// they existed still decode.
+    var lastCheckedAt: Date?
+    var lastState: String?
 }
 
 // MARK: - What happened while you were away
@@ -459,6 +464,8 @@ extension SessionStore {
         guard var watch = sessions[id]?.watch, watch.isOn else { return }
         defer { update(id) { $0.watch = watch } }
         watch.author = now.author
+        watch.lastCheckedAt = .now
+        watch.lastState = now.state
         // The first look notes what's there.
         guard let head = watch.headSHA else {
             watch.headSHA = now.headSHA

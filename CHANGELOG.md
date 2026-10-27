@@ -19,6 +19,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Harness › Workflows builds each activity's workflows as nodes (stages left to right, steps side by side), with a step inspector, the most passes a workflow can make, its default and routing rules, whose repos, authors, labels and issue types can be picked from what Gannin knows or typed. Review with Claude, Work on This, Quick Change and Ask can pick another workflow for one run, and a review's Overview shows each step's rounds and findings, and which didn't run and why
 
 ### Changed
+- A review's Check for Changes result also reflects the background watch: it says what the last check found and how long ago, whether you ran it or Gannin did, and keeps counting up
 - Planning: when a plan has just one task, Agree adds its details (description, checklist and the criteria it satisfies) to the description of the issue being planned, or of a new issue, instead of making a sub-issue. An Epic or Initiative still gets a sub-issue
 - New Issue opens on Claude: the conversation on the left and a preview of the draft on the right, with Skip to write it yourself. Next takes you to the form, filled from the draft, to check the details and create it; Back returns to Claude and keeps your edits
 - The Claude Code window has New Issue too: in the tab bar's + menu, and with ⌘N
