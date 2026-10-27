@@ -27,6 +27,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Model, in Settings › General, a specialist and a workflow step, is one menu: Gannin's list (now Claude Sonnet 5.5 and Claude Haiku 5.5 in place of Sonnet 5 and Haiku 4.5), the models Claude Code has run with on this Mac lately, the newest of each family (Latest Opus and so on), and Other to type any ID. A model picked before that isn't offered stays as typed, under Other
 
 ### Fixed
+- The search box in a filter bar, such as on Pull Requests, shrinks from 200 to 140 points when the window is narrow instead of pushing the other filters out of view
 - An issue opened from a project board shows its Assignees section even when the issue isn't in the synced issue history yet
 - In a planning session, the requirement on the right is no longer greyed out while Claude's question is open, so it can be read while answering
 - When Claude asks questions too long to fit over the terminal, they scroll between the title and Send Answers instead of running off the top

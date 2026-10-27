@@ -427,7 +427,8 @@ struct FilterSearchField: View {
     @Binding var text: String
     let prompt: String
     /// Whether it stretches across the space it's given, rather than the
-    /// bars' usual 200 points.
+    /// bars' usual 200 points, which it gives up down to 140 when the bar
+    /// runs out of room.
     var fills = false
     /// Focus on the text field itself, for a caller that moves it there.
     var focus: FocusState<Bool>.Binding?
@@ -437,7 +438,7 @@ struct FilterSearchField: View {
             Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
             field
                 .textFieldStyle(.plain)
-                .frame(minWidth: fills ? 80 : 200, maxWidth: fills ? .infinity : 200)
+                .frame(minWidth: fills ? 80 : 140, maxWidth: fills ? .infinity : 200)
             if !text.isEmpty {
                 Button { text = "" } label: { Image(systemName: "xmark.circle.fill") }
                     .buttonStyle(.plain)
