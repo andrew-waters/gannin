@@ -539,6 +539,6 @@ enum SessionBrief {
 
     /// When and how to ask for a second agent's review (`PairReview`).
     private static func readyForReviewNote(_ session: CodeSession) -> String {
-        "- When the change is ready for review (committed, built and checked; before a pull request is opened as ready for review, though a draft is fine), run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and end your turn. Gannin may have a second agent review it; it can't edit, and its findings come back to you as a message. Fix those you agree with, say why not for the rest, commit, and run the script again. Gannin says when the review has settled, or to carry on without one."
+        "- Required for every change, however small: when the change is ready for review (committed, built and checked; before a pull request is opened as ready for review, though a draft is fine), run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and end your turn. Don't open the pull request as ready for review, or report the work done, without having run it. Gannin may have a second agent review it; it can't edit, and its findings come back to you as a message. Fix those you agree with, say why not for the rest, commit, and run the script again. Gannin says when the review has settled, or to carry on without one."
     }
 }
