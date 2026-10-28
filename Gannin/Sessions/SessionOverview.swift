@@ -12,7 +12,7 @@ struct SessionOverview: View {
     @FocusState private var searching: Bool
 
     var body: some View {
-        let everything = sessions.sessions.values.filter { $0.archivedAt == nil }
+        let everything = sessions.sessions.values.filter { $0.archivedAt == nil && !$0.isHelperReview }
         let words = SessionSearch.words(search)
         let all = everything
             .filter { SessionSearch.matches($0, words: words, pullRequests: sessions.pullRequestInfo[$0.id] ?? []) }
