@@ -2242,8 +2242,8 @@ struct SessionSidebarRows: View {
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }
         let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
-        group("Reviews", symbol: "eye", sessions: active.filter { !awaitsAuthor($0) } + finished, expanded: $reviewsExpanded)
-        group("Awaiting author", symbol: "hourglass", sessions: active.filter(awaitsAuthor), expanded: $awaitingExpanded)
+        group("Reviews", symbol: "eye", sessions: active.filter { !sessions.awaitsAuthor($0) } + finished, expanded: $reviewsExpanded)
+        group("Awaiting author", symbol: "hourglass", sessions: active.filter(sessions.awaitsAuthor), expanded: $awaitingExpanded)
         group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter { $0.isPlanning && $0.archivedAt == nil }, expanded: $planningExpanded)
         group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
         group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
@@ -2268,12 +2268,6 @@ struct SessionSidebarRows: View {
 
     private func isPosted(_ session: CodeSession) -> Bool {
         (sessions.reviewDrafts[session.id]?.posted ?? session.reviewDraft?.posted) != nil
-    }
-
-    /// Posted with comments or requested changes, which the author is to answer; an approval isn't.
-    private func awaitsAuthor(_ session: CodeSession) -> Bool {
-        guard let draft = sessions.reviewDrafts[session.id] ?? session.reviewDraft, draft.postedLatest else { return false }
-        return draft.postedEvent != "APPROVE"
     }
 
     /// Approved, Changes requested or Commented, as posted.

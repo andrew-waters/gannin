@@ -620,6 +620,12 @@ final class SessionStore {
         return session.isPullRequestReview && !session.isHelper
     }
 
+    /// Posted with comments or requested changes, which the author is to answer; an approval isn't.
+    func awaitsAuthor(_ session: CodeSession) -> Bool {
+        guard let draft = reviewDrafts[session.id] ?? session.reviewDraft, draft.postedLatest else { return false }
+        return draft.postedEvent != "APPROVE"
+    }
+
     /// The tabs as two groups, each in `tabs` order: everything that isn't a
     /// review, then reviews.
     var tabGroups: (work: [UUID], reviews: [UUID]) {
