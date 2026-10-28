@@ -1165,7 +1165,10 @@ struct PullRequestReviewView: View {
         }
         let ended = watch?.lastState == "MERGED" || watch?.lastState == "CLOSED"
         guard let watch, let checkedAt, let state = watch.lastState, watch.isOn || ended else {
-            return refreshedWithoutWatch ? "Refreshed (not watching)" : nil
+            // No later check can supersede the button's here, so what it found stands.
+            let found = foundPostedReviewAt != nil
+            if refreshedWithoutWatch { return "Refreshed (not watching)" + (found ? ", review found on GitHub" : "") }
+            return found ? "Review found on GitHub" : nil
         }
         // Only for the check that found it: a later pass says nothing of the review.
         let found = foundPostedReviewAt.map { checkedAt <= $0 } == true
