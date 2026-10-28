@@ -31,6 +31,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Fixed
 - A helper on another session (a pair reviewer, a tests helper, or a step of a review run) no longer appears as a session of its own in the sidebar or the sessions grid; it stays in the tab of the session it helps
+- A review's header shows Not posted again after Review Again produces a result you haven't posted, instead of the previous round's Posted link
 - A session's brief now says running ready-for-review is required for every change, and not to open the pull request as ready or report the work done without it, so Claude calls it more reliably
 - The search box in a filter bar, such as on Pull Requests, shrinks from 200 to 140 points when the window is narrow instead of pushing the other filters out of view
 - Finish and Clean Up no longer waits for the harness to be updated: the session goes as soon as its worktrees are removed, and its session.json is marked finished in the background

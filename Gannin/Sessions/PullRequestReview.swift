@@ -1285,7 +1285,7 @@ struct PullRequestReviewView: View {
             }
             .disabled(!sessions.isRunning(session.id) || state == .working || reviewingAgain)
             .help("Ask claude to review the PR again, as it is now")
-            if let posted = draft.posted {
+            if let posted = draft.posted, draft.postedLatest {
                 Link(destination: posted) {
                     let label = draft.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
                     Label(draft.postedAt.map { "\(label.text) \($0.formatted(.relative(presentation: .named)))" } ?? label.text, systemImage: label.symbol)
@@ -1295,7 +1295,7 @@ struct PullRequestReviewView: View {
             } else if review != nil {
                 Label("Not posted", systemImage: "circle.dashed")
                     .foregroundStyle(.secondary)
-                    .help("This review hasn't been posted to GitHub. Check for Changes also looks for one you posted elsewhere")
+                    .help("This round of the review hasn't been posted to GitHub. Check for Changes also looks for one you posted elsewhere")
             }
             // Kept in the row while the first review runs, so it appearing
             // doesn't reflow the buttons.
