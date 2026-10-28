@@ -33,7 +33,7 @@ When the PR has new commits the review hasn't seen, the Overview says "New commi
 
 The header shows what was posted (Approved, Commented or Changes requested, with when), or "Not posted" while nothing has been.
 
-In the sidebar, a review that's still open sits under Reviews until it's posted, then moves to Awaiting author, where it waits for the PR's author to respond. Finished reviews stay in Reviews as the history.
+In the sidebar, a review that's still open sits under Reviews until it's posted. Once you've posted comments or requested changes it moves to Awaiting author, where it waits for the PR's author to respond; an approval stays in Reviews, as there's nothing to respond to. Finished reviews stay in Reviews as the history.
 
 ## Files and findings
 
