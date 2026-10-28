@@ -3,8 +3,9 @@ import SwiftUI
 /// Every session at once: what each is doing, what it last said, the
 /// files it's touched, its PRs' checks and what it's cost. Waiting ones
 /// first; clicking one opens its tab. Reviews are a section of their own,
-/// as in the tab bar. A search field narrows them to those matching every
-/// word typed (`SessionSearch`); it starts empty each time the grid opens.
+/// with those awaiting their author in another, as in the sidebar. A search
+/// field narrows them to those matching every word typed (`SessionSearch`);
+/// it starts empty each time the grid opens.
 struct SessionOverview: View {
     @Environment(SessionStore.self) private var sessions
     @State private var search = ""
@@ -71,10 +72,15 @@ struct SessionOverview: View {
         }
     }
 
-    /// Work, then reviews, each in order; a group with no sessions is left out.
+    /// Work, then reviews, then reviews waiting on their author (as in the
+    /// sidebar), each in order; a group with no sessions is left out.
     private func sections(of all: [CodeSession]) -> [(title: String, sessions: [CodeSession])] {
-        [("Work", all.filter { !sessions.isReviewTab($0.id) }), ("Reviews", all.filter { sessions.isReviewTab($0.id) })]
-            .filter { !$0.sessions.isEmpty }
+        let reviews = all.filter { sessions.isReviewTab($0.id) }
+        return [
+            ("Work", all.filter { !sessions.isReviewTab($0.id) }),
+            ("Reviews", reviews.filter { !sessions.awaitsAuthor($0) }),
+            ("Awaiting author", reviews.filter { sessions.awaitsAuthor($0) }),
+        ].filter { !$0.sessions.isEmpty }
     }
 
     /// Waiting on you, then running, then the rest; newest first within.
