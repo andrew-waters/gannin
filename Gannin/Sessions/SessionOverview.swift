@@ -188,7 +188,7 @@ struct SessionFinishSection: View {
         let finished = sessions.isFinished(session.id)
         let stale = sessions.isStale(session)
         // An Ask is kept until it's deleted from its list.
-        if !session.isAsk, finished || stale {
+        if !session.isHelper, !session.isAsk, finished || stale {
             Section {
                 Text(finished
                      ? "Every pull request from this session is merged, so its worktrees can go."
