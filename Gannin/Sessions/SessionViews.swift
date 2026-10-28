@@ -2267,7 +2267,7 @@ struct SessionSidebarRows: View {
     }
 
     private func isPosted(_ session: CodeSession) -> Bool {
-        (sessions.reviewDrafts[session.id]?.posted ?? session.reviewDraft?.posted) != nil
+        (sessions.reviewDrafts[session.id] ?? session.reviewDraft)?.postedLatest ?? false
     }
 
     /// Approved, Changes requested or Commented, as posted.

@@ -1285,7 +1285,7 @@ struct PullRequestReviewView: View {
             }
             .disabled(!sessions.isRunning(session.id) || state == .working || reviewingAgain)
             .help("Ask claude to review the PR again, as it is now")
-            if let posted = draft.posted {
+            if let posted = draft.posted, draft.postedLatest {
                 Link(destination: posted) {
                     let label = draft.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
                     Label(draft.postedAt.map { "\(label.text) \($0.formatted(.relative(presentation: .named)))" } ?? label.text, systemImage: label.symbol)
@@ -1295,7 +1295,7 @@ struct PullRequestReviewView: View {
             } else if review != nil {
                 Label("Not posted", systemImage: "circle.dashed")
                     .foregroundStyle(.secondary)
-                    .help("This review hasn't been posted to GitHub. Check for Changes also looks for one you posted elsewhere")
+                    .help("This round of the review hasn't been posted to GitHub. Check for Changes also looks for one you posted elsewhere")
             }
             // Kept in the row while the first review runs, so it appearing
             // doesn't reflow the buttons.
@@ -1374,7 +1374,7 @@ struct PullRequestReviewView: View {
     private func status(state: SessionState, transcript: SessionTranscript?, hasReview: Bool) -> some View {
         if let archived = session.archivedAt {
             Label("Finished \(archived.formatted(.relative(presentation: .named)))", systemImage: "archivebox").foregroundStyle(.secondary)
-        } else if sessions.reviewDrafts[session.id]?.posted != nil, !(sessions.isRunning(session.id) && (state == .working || state == .starting)) {
+        } else if sessions.reviewDrafts[session.id]?.postedLatest == true, !(sessions.isRunning(session.id) && (state == .working || state == .starting)) {
             let label = sessions.reviewDrafts[session.id]?.postedLabel ?? ("Posted", "checkmark.circle.fill", ChartPalette.good)
             Label(label.text, systemImage: label.symbol).foregroundStyle(label.color)
         } else if !sessions.isRunning(session.id) {
@@ -2710,8 +2710,9 @@ struct ClaudeReviewBadge: View {
     private func label(_ review: CodeSession) -> (String, Color) {
         let state = sessions.state(review.id)
         let working = sessions.isRunning(review.id) && (state == .working || state == .starting)
-        if !working, sessions.reviewDrafts[review.id]?.posted != nil || review.reviewDraft?.posted != nil {
-            let label = (sessions.reviewDrafts[review.id] ?? review.reviewDraft)?.postedLabel
+        let draft = sessions.reviewDrafts[review.id] ?? review.reviewDraft
+        if !working, draft?.postedLatest == true {
+            let label = draft?.postedLabel
             return (label?.text ?? "Posted", label?.color ?? ChartPalette.good)
         }
         guard sessions.isRunning(review.id) else {
