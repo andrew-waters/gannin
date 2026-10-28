@@ -2,7 +2,7 @@ import Foundation
 import Testing
 @testable import Gannin
 
-/// A review waits on its author once what it said has been posted as comments or requested changes.
+/// A review waits on its author once what it said has been posted, whether as comments, requested changes or an approval.
 struct AwaitsAuthorTests {
     private func store() -> SessionStore {
         let folder = FileManager.default.temporaryDirectory.appending(path: "AwaitsAuthorTests-\(UUID().uuidString)", directoryHint: .isDirectory)
@@ -33,8 +33,8 @@ struct AwaitsAuthorTests {
         #expect(store.awaitsAuthor(session(posted: "REQUEST_CHANGES")))
     }
 
-    @Test func anApprovalDoesNot() {
-        #expect(!store().awaitsAuthor(session(posted: "APPROVE")))
+    @Test func anApprovalAwaitsTheAuthorToo() {
+        #expect(store().awaitsAuthor(session(posted: "APPROVE")))
     }
 
     @Test func anUnpostedReviewDoesNot() {
