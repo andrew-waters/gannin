@@ -122,9 +122,6 @@ struct CodeSession: Codable, Identifiable, Hashable {
     var isSandboxed: Bool { sandbox != nil }
     var isHelper: Bool { parentID != nil }
     var isPullRequestReview: Bool { reviewOf != nil }
-    /// A reviewer helping another session (a pair review or a step of a
-    /// review run), which shows in its owner's tab, not as a session of its own.
-    var isHelperReview: Bool { isHelper && isReviewer }
     /// As a tab or row names it.
     var title: String { name ?? ask?.title ?? role.map { "\($0): \(issue.title)" } ?? issue.title }
     var isInHarness: Bool { harnessPath != nil && harnessRepo != nil }
