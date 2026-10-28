@@ -620,10 +620,9 @@ final class SessionStore {
         return session.isPullRequestReview && !session.isHelper
     }
 
-    /// Posted with comments or requested changes, which the author is to answer; an approval isn't.
+    /// The latest result is posted, as comments, requested changes or an approval, so nothing is left for the reviewer to post.
     func awaitsAuthor(_ session: CodeSession) -> Bool {
-        guard let draft = reviewDrafts[session.id] ?? session.reviewDraft, draft.postedLatest else { return false }
-        return draft.postedEvent != "APPROVE"
+        (reviewDrafts[session.id] ?? session.reviewDraft)?.postedLatest ?? false
     }
 
     /// The tabs as two groups, each in `tabs` order: everything that isn't a
