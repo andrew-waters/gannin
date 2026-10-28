@@ -2237,7 +2237,8 @@ struct SessionSidebarRows: View {
         let all = sessions.sessions(for: org)
         group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && $0.reviewStep == nil && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
         // Active reviews, newest first, then the history. An active review
-        // that's been posted moves to its own group: it waits on the author.
+        // posted with comments or requested changes moves to its own group:
+        // it waits on the author.
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }
         let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
@@ -2271,7 +2272,7 @@ struct SessionSidebarRows: View {
 
     /// Posted with comments or requested changes, which the author is to answer; an approval isn't.
     private func awaitsAuthor(_ session: CodeSession) -> Bool {
-        guard let draft = sessions.reviewDrafts[session.id] ?? session.reviewDraft, draft.posted != nil else { return false }
+        guard let draft = sessions.reviewDrafts[session.id] ?? session.reviewDraft, draft.postedLatest else { return false }
         return draft.postedEvent != "APPROVE"
     }
 
