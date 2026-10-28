@@ -1019,7 +1019,7 @@ struct PullRequestReviewView: View {
     /// What the last Check for Changes added to what the watch records, until
     /// the next check or Review Again: the review was found on GitHub, GitHub
     /// couldn't be reached (when), or there was no watch to check.
-    @State private var foundPostedReview = false
+    @State private var foundPostedReviewAt: Date?
     @State private var checkFailedAt: Date?
     @State private var refreshedWithoutWatch = false
     @State private var headerWidth: CGFloat = 0
@@ -1132,13 +1132,10 @@ struct PullRequestReviewView: View {
         if let found { status = found.pullRequests.first { $0.id == reference.id } }
     }
 
-    /// What a check found: the PR's `state` from `checkWatchedReviews` (nil
-    /// when it couldn't look) and what the watch has noted since the review.
-    /// Without a watch only the diff and status were refreshed, so it can't say.
-    private func checkSummary(watching: Bool, state: String?) -> String {
-        guard watching else { return "Refreshed (not watching)" }
+    /// What a check found: the PR's `state` as of the check and what the
+    /// watch has noted since the review.
+    private func checkSummary(state: String) -> String {
         switch state {
-        case nil: return "Couldn't check GitHub"
         case "MERGED": return "Merged"
         case "CLOSED": return "Closed"
         default: break
@@ -1150,19 +1147,29 @@ struct PullRequestReviewView: View {
         return found.isEmpty ? "No changes" : found.joined(separator: ", ")
     }
 
+    /// "5 minutes ago", or "just now" for the first few seconds, when the
+    /// formatter would say "in 0 seconds".
+    private func ago(_ date: Date) -> String {
+        Date.now.timeIntervalSince(date) < 5 ? "just now" : date.formatted(.relative(presentation: .numeric, unitsStyle: .wide))
+    }
+
     /// What the last check found, from the watch (which the background pass
-    /// also updates) and what the button added. Nil before any check.
+    /// also updates) and what the button added. Nil before any check. `now`
+    /// is the timeline's tick, which makes the view re-run this.
     private func checkText(now: Date) -> String? {
+        _ = now
         let watch = sessions.sessions[session.id]?.watch
         let checkedAt = watch?.lastCheckedAt
-        if let failed = checkFailedAt, failed > (checkedAt ?? .distantPast) { return "Couldn't check GitHub" }
+        if let failed = checkFailedAt, failed > (checkedAt ?? .distantPast) {
+            return "Couldn't check GitHub" + (checkedAt.map { ", last checked \(ago($0))" } ?? "")
+        }
         let ended = watch?.lastState == "MERGED" || watch?.lastState == "CLOSED"
         guard let watch, let checkedAt, let state = watch.lastState, watch.isOn || ended else {
             return refreshedWithoutWatch ? "Refreshed (not watching)" : nil
         }
-        // The formatter reads the current time itself; `now` is the timeline's tick, which re-runs this.
-        let ago = min(checkedAt, now).formatted(.relative(presentation: .numeric, unitsStyle: .wide))
-        return checkSummary(watching: true, state: state) + ", checked \(ago)" + (foundPostedReview ? ", review found on GitHub" : "")
+        // Only for the check that found it: a later pass says nothing of the review.
+        let found = foundPostedReviewAt.map { checkedAt <= $0 } == true
+        return checkSummary(state: state) + ", checked \(ago(checkedAt))" + (found ? ", review found on GitHub" : "")
     }
 
     /// Opens what an Overview item points at.
@@ -1225,7 +1232,7 @@ struct PullRequestReviewView: View {
                 .buttonStyle(.bordered)
             Button("Check for Changes") {
                 checkingForChanges = true
-                foundPostedReview = false
+                foundPostedReviewAt = nil
                 checkFailedAt = nil
                 Task {
                     defer { checkingForChanges = false }
@@ -1236,7 +1243,7 @@ struct PullRequestReviewView: View {
                     await loadStatus()
                     // The sessions grid reads its checks from `pullRequestInfo`.
                     await sessions.refreshPullRequests(session.id)
-                    foundPostedReview = foundPost
+                    foundPostedReviewAt = foundPost ? .now : nil
                     refreshedWithoutWatch = !watching
                     // `look(at:)` records a check that reached GitHub; only a failed one needs showing here.
                     if watching, state == nil { checkFailedAt = .now }
@@ -1251,7 +1258,7 @@ struct PullRequestReviewView: View {
             }
             Button("Review Again") {
                 reviewingAgain = true
-                foundPostedReview = false
+                foundPostedReviewAt = nil
                 checkFailedAt = nil
                 refreshedWithoutWatch = false
                 Task {
