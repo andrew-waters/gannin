@@ -19,6 +19,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Harness › Workflows builds each activity's workflows as nodes (stages left to right, steps side by side), with a step inspector, the most passes a workflow can make, its default and routing rules, whose repos, authors, labels and issue types can be picked from what Gannin knows or typed. Review with Claude, Work on This, Quick Change and Ask can pick another workflow for one run, and a review's Overview shows each step's rounds and findings, and which didn't run and why
 
 ### Changed
+- The sidebar's Reviews group is split: reviews you've posted move to Awaiting author, so Reviews holds the ones still to post, plus the finished history
 - A review's Check for Changes result also reflects the background watch: it says what the last check found and how long ago, whether you ran it or Gannin did, and keeps counting up
 - A review's summary that describes the comments it left now gives one bullet per issue, grouped under its severity (blocker, major, minor, nit) as in the findings
 - Planning: when a plan has just one task, Agree adds its details (description, checklist and the criteria it satisfies) to the description of the issue being planned, or of a new issue, instead of making a sub-issue. An Epic or Initiative still gets a sub-issue

@@ -33,6 +33,8 @@ When the PR has new commits the review hasn't seen, the Overview says "New commi
 
 The header shows what was posted (Approved, Commented or Changes requested, with when), or "Not posted" while nothing has been.
 
+In the sidebar, a review that's still open sits under Reviews until it's posted, then moves to Awaiting author, where it waits for the PR's author to respond. Finished reviews stay in Reviews as the history.
+
 ## Files and findings
 
 The file list has Comments on this PR and the files grouped by the walkthrough's areas. A filter narrows findings by severity or category. Files with learnings are marked (see [Learnings](/docs/agents/learnings/)).

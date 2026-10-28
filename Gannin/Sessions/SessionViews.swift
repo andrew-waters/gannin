@@ -2228,6 +2228,7 @@ struct SessionSidebarRows: View {
     let org: String
     @AppStorage("sidebarSessionsIssues") private var issuesExpanded = true
     @AppStorage("sidebarSessionsReviews") private var reviewsExpanded = true
+    @AppStorage("sidebarSessionsAwaiting") private var awaitingExpanded = true
     @AppStorage("sidebarSessionsPlanning") private var planningExpanded = true
     @AppStorage("sidebarSessionsAsk") private var askExpanded = true
     @AppStorage("sidebarSessionsRefine") private var refineExpanded = true
@@ -2235,11 +2236,13 @@ struct SessionSidebarRows: View {
     var body: some View {
         let all = sessions.sessions(for: org)
         group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && $0.reviewStep == nil && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
-        // Active reviews, newest first, then the history.
+        // Active reviews, newest first, then the history. An active review
+        // that's been posted moves to its own group: it waits on the author.
         let reviews = all.filter(\.isPullRequestReview)
         let active = reviews.filter { $0.archivedAt == nil }
         let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
-        group("Reviews", symbol: "eye", sessions: active + finished, expanded: $reviewsExpanded)
+        group("Reviews", symbol: "eye", sessions: active.filter { !isPosted($0) } + finished, expanded: $reviewsExpanded)
+        group("Awaiting author", symbol: "hourglass", sessions: active.filter(isPosted), expanded: $awaitingExpanded)
         group("Planning", symbol: "list.bullet.clipboard", sessions: all.filter { $0.isPlanning && $0.archivedAt == nil }, expanded: $planningExpanded)
         group("Ask", symbol: "sparkle.magnifyingglass", sessions: sessions.askSessions(for: org), expanded: $askExpanded)
         group("Design and Refine", symbol: "rectangle.and.pencil.and.ellipsis", sessions: sessions.refineSessions(for: org), expanded: $refineExpanded)
@@ -2260,6 +2263,10 @@ struct SessionSidebarRows: View {
                     .badge(waiting > 0 ? Text("\(waiting) waiting") : Text("\(list.count)"))
             }
         }
+    }
+
+    private func isPosted(_ session: CodeSession) -> Bool {
+        (sessions.reviewDrafts[session.id]?.posted ?? session.reviewDraft?.posted) != nil
     }
 
     /// Approved, Changes requested or Commented, as posted.
@@ -2292,7 +2299,7 @@ struct SessionSidebarRows: View {
     private func rowButton(_ session: CodeSession) -> some View {
         let state = sessions.state(session.id)
         let finished = session.archivedAt != nil
-        let posted = (sessions.reviewDrafts[session.id]?.posted ?? session.reviewDraft?.posted) != nil
+        let posted = isPosted(session)
         let working = sessions.isRunning(session.id) && (state == .working || state == .starting)
         return Button {
             sessions.show(session.id, with: openWindow)
