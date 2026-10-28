@@ -2235,11 +2235,11 @@ struct SessionSidebarRows: View {
 
     var body: some View {
         let all = sessions.sessions(for: org)
-        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && $0.reviewStep == nil && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
+        group("Working on issues", symbol: "terminal", sessions: all.filter { !$0.isPullRequestReview && !$0.isHelper && $0.reviewStep == nil && !$0.isPlanning && !$0.isAsk && !$0.isRefine }, expanded: $issuesExpanded)
         // Active reviews, newest first, then the history. An active review
         // posted with comments or requested changes moves to its own group:
         // it waits on the author.
-        let reviews = all.filter(\.isPullRequestReview)
+        let reviews = all.filter { $0.isPullRequestReview && !$0.isHelper }
         let active = reviews.filter { $0.archivedAt == nil }
         let finished = reviews.filter { $0.archivedAt != nil }.sorted { ($0.archivedAt ?? .distantPast) > ($1.archivedAt ?? .distantPast) }
         group("Reviews", symbol: "eye", sessions: active.filter { !sessions.awaitsAuthor($0) } + finished, expanded: $reviewsExpanded)
