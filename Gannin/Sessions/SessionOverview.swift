@@ -3,8 +3,9 @@ import SwiftUI
 /// Every session at once: what each is doing, what it last said, the
 /// files it's touched, its PRs' checks and what it's cost. Waiting ones
 /// first; clicking one opens its tab. Reviews are a section of their own,
-/// as in the tab bar, with those awaiting their author split out. A search field narrows them to those matching every
-/// word typed (`SessionSearch`); it starts empty each time the grid opens.
+/// with those awaiting their author in another, as in the sidebar. A search
+/// field narrows them to those matching every word typed (`SessionSearch`);
+/// it starts empty each time the grid opens.
 struct SessionOverview: View {
     @Environment(SessionStore.self) private var sessions
     @State private var search = ""
