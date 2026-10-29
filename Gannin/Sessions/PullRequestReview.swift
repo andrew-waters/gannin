@@ -210,7 +210,7 @@ extension SessionStore {
 
             \(HarnessLearning.reviewJSONInstructions)
 
-            If I ask you to look again, end the same way. Before you do, list the PR's review threads with `\(threads)`. In `resolved`, give the ID of each thread that isn't resolved yet, was started by `viewer` (the account you review as), and whose point is now dealt with: fixed in the code, or answered so that nothing more is needed. Check the code rather than taking a reply's word for it. Leave out threads whose point still stands, and don't raise them again as findings unless something about them has changed. On a first review, `resolved` is empty.
+            If I ask you to look again, end the same way. Before you do, list the PR's review threads with `\(threads)`, run exactly as written: no `--jq`, pipes, `$(...)` or other changes, since commands like those are blocked and the output is small enough to read as it is. To see the PR's latest comments or commits again, use `gh pr view \(pr.number) --repo \(pr.repo) --comments`. In `resolved`, give the ID of each thread that isn't resolved yet, was started by `viewer` (the account you review as), and whose point is now dealt with: fixed in the code, or answered so that nothing more is needed. Check the code rather than taking a reply's word for it. Leave out threads whose point still stands, and don't raise them again as findings unless something about them has changed. On a first review, `resolved` is empty.
             """
     }
 }

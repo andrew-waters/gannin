@@ -547,6 +547,9 @@ extension SessionStore {
             \(opening) \
             \(earlier)\(learned)
 
+            List the PR's review threads with the `gh api graphql` command from your first prompt, run exactly as written: no `--jq`, \
+            pipes or other changes, which are blocked. Read the PR with `gh pr view --comments`, not a query of your own.
+
             End the same way with the fenced JSON block.
             """
     }
