@@ -1215,9 +1215,13 @@ struct PullRequestReviewView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
         }
-        let controls = FlowRow(spacing: 10, alignment: .center) {
+        // The status is its own column so a wrapped button line starts under
+        // the buttons, not under the status.
+        let controls = HStack(alignment: .top, spacing: 10) {
             status(state: state, transcript: transcript, hasReview: review != nil)
                 .frame(width: Self.statusWidth, alignment: .leading)
+                .frame(minHeight: Self.buttonHeight)
+            FlowRow(spacing: 10, alignment: .center) {
             let showsConversation = conversation ?? (session.archivedAt == nil && (sessions.isRunning(session.id) || session.reviewResult == nil))
             if session.archivedAt == nil {
                 Button {
@@ -1321,6 +1325,7 @@ struct PullRequestReviewView: View {
             Button("Post Review") { posting = true }
                 .buttonStyle(.borderedProminent)
                 .disabled(pullRequest == nil || (review == nil && draft.comments.isEmpty))
+            }
         }
         return VStack(alignment: .leading, spacing: 10) {
             // Chosen from the window's width alone, never from what's loaded
@@ -1364,6 +1369,10 @@ struct PullRequestReviewView: View {
     /// Every status takes this width, so the buttons beside it don't move or
     /// re-wrap as it changes; the working label is the widest and truncates.
     private static let statusWidth: CGFloat = 280
+
+    /// About a bordered button's height, so the status lines up with the
+    /// first row of buttons beside it.
+    private static let buttonHeight: CGFloat = 24
 
     private static let titleWidth: CGFloat = 360
 

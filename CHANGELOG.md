@@ -30,6 +30,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Model, in Settings › General, a specialist and a workflow step, is one menu: Gannin's list (now Claude Sonnet 5.5 and Claude Haiku 5.5 in place of Sonnet 5 and Haiku 4.5), the models Claude Code has run with on this Mac lately, the newest of each family (Latest Opus and so on), and Other to type any ID. A model picked before that isn't offered stays as typed, under Other
 
 ### Fixed
+- When the buttons in a review session's header wrap onto a second line, they now start directly below the first line of buttons instead of under the status at the far left
 - A helper on another session (a pair reviewer, a tests helper, or a step of a review run) no longer appears as a session of its own in the sidebar or the sessions grid; it stays in the tab of the session it helps
 - After Review Again produces a result you haven't posted, the review's header, its chip in PR lists and the sessions grid show it as not posted, instead of the previous round's Posted state
 - A session's brief now says running ready-for-review is required for every change, and not to open the pull request as ready or report the work done without it, so Claude calls it more reliably
