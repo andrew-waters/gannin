@@ -100,6 +100,15 @@ struct ReviewWatch: Codable, Hashable {
     /// they existed still decode.
     var lastCheckedAt: Date?
     var lastState: String?
+
+    /// What's changed since the review, as "new commits, 2 new comments";
+    /// nil when nothing has.
+    var changes: String? {
+        var found: [String] = []
+        if hasNewCommits { found.append("new commits") }
+        if newComments > 0 { found.append("\(newComments) new comment\(newComments == 1 ? "" : "s")") }
+        return found.isEmpty ? nil : found.joined(separator: ", ")
+    }
 }
 
 // MARK: - What happened while you were away

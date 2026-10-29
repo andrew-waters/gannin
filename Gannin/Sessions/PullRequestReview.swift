@@ -1140,11 +1140,7 @@ struct PullRequestReviewView: View {
         case "CLOSED": return "Closed"
         default: break
         }
-        guard let watch = sessions.sessions[session.id]?.watch else { return "No changes" }
-        var found: [String] = []
-        if watch.hasNewCommits { found.append("new commits") }
-        if watch.newComments > 0 { found.append("\(watch.newComments) new comment\(watch.newComments == 1 ? "" : "s")") }
-        return found.isEmpty ? "No changes" : found.joined(separator: ", ")
+        return sessions.sessions[session.id]?.watch?.changes ?? "No changes"
     }
 
     /// "5 minutes ago", or "just now" for the first few seconds, when the
@@ -2413,8 +2409,21 @@ private struct PostReviewSheet: View {
     /// The body as built from the findings, to tell whether the user has
     /// edited `bodyText` since.
     @State private var builtBody = ""
+    /// The `changesSinceReview` Post last stopped for. Only the same text
+    /// shown again lets the next press send, so changes that arrive after
+    /// the warning stop it once more.
+    @State private var warnedOfChanges: String?
 
     private var reference: PullRequestReference { session.reviewOf! }
+
+    /// Why the review may not match the PR now, if Gannin knows: what the
+    /// watch has seen since it ran, or Claude still working in the session
+    /// (Review Again clears the watch's counts as it starts, and nothing
+    /// tells a re-review from any other prompt).
+    private var changesSinceReview: String? {
+        if let changes = sessions.sessions[session.id]?.watch?.changes { return changes }
+        return sessions.state(session.id) == .working ? "Claude is still working on this review" : nil
+    }
 
     /// The PR with the latest comments and reviews in place of the ones it
     /// was opened with. Only those change: the review is posted against the
@@ -2540,6 +2549,10 @@ private struct PostReviewSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let changes = changesSinceReview, !isPosted {
+                Text("This review may be out of date: \(changes).\(warnedOfChanges == changes ? " Post again to send it anyway." : "")")
+                    .foregroundStyle(.orange).font(.callout)
+            }
             if let notice {
                 Text(notice).foregroundStyle(.orange).font(.callout)
             }
@@ -2601,6 +2614,11 @@ private struct PostReviewSheet: View {
 
     private func post() {
         guard let api = auth.api else { return }
+        // The warning is shown in the form from now on, but the comment check
+        // below still runs, so one more press is all it takes to post.
+        let changes = changesSinceReview
+        let mustWarn = !isPosted && changes != nil && warnedOfChanges != changes
+        if mustWarn { warnedOfChanges = changes }
         sending = true
         error = nil
         notice = nil
@@ -2637,6 +2655,10 @@ private struct PostReviewSheet: View {
                         sending = false
                         return
                     }
+                }
+                if mustWarn {
+                    sending = false
+                    return
                 }
                 // A failed lookup doesn't block posting, as with the comment check.
                 if let mine = try? await api.myReviews(repo: reference.repo, number: reference.number),
