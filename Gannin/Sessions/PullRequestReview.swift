@@ -2417,11 +2417,12 @@ private struct PostReviewSheet: View {
     private var reference: PullRequestReference { session.reviewOf! }
 
     /// Why the review may not match the PR now, if Gannin knows: what the
-    /// watch has seen since it ran, or a re-review under way (which clears
-    /// the watch's counts as it starts).
+    /// watch has seen since it ran, or Claude still working in the session
+    /// (Review Again clears the watch's counts as it starts, and nothing
+    /// tells a re-review from any other prompt).
     private var changesSinceReview: String? {
         if let changes = sessions.sessions[session.id]?.watch?.changes { return changes }
-        return sessions.state(session.id) == .working ? "Claude is reviewing it again" : nil
+        return sessions.state(session.id) == .working ? "Claude is still working on this review" : nil
     }
 
     /// The PR with the latest comments and reviews in place of the ones it
