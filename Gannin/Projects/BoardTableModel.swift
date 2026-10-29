@@ -3,13 +3,14 @@ import Foundation
 /// One line of the board table: a group's header or one of its items.
 enum BoardTableEntry: Identifiable {
     case header(BoardLayout.Group)
-    case row(BoardItem, group: String, striped: Bool)
+    /// `depth` is 0 for a top-level item and one more for each parent above it.
+    case row(BoardItem, group: String, striped: Bool, depth: Int)
 
     /// Prefixed, so a group named like an item ID can't collide with it.
     var id: String {
         switch self {
         case .header(let group): "header:\(group.id)"
-        case .row(let item, let group, _): "row:\(group):\(item.id)"
+        case .row(let item, let group, _, _): "row:\(group):\(item.id)"
         }
     }
 }
@@ -65,7 +66,9 @@ enum BoardTableModel {
     /// on screen. Each group is sorted on its own, keeping the order given
     /// for ties, and striped from its own first row. A collapsed group keeps
     /// its header and drops its rows; without `showsHeaders` there are no
-    /// headers at all.
+    /// headers at all. A sub-issue whose parent is in the same group sits
+    /// directly under it, so each level is sorted on its own; one whose
+    /// parent is in another group, or not on the board, stays top-level.
     static func entries(
         groups: [BoardLayout.Group],
         showsHeaders: Bool,
@@ -77,11 +80,36 @@ enum BoardTableModel {
         for group in groups {
             if showsHeaders { entries.append(.header(group)) }
             guard !collapsed.contains(group.id) else { continue }
-            for (index, item) in sorted(group.items, by: sortKey, ascending: ascending).enumerated() {
-                entries.append(.row(item, group: group.id, striped: !index.isMultiple(of: 2)))
+            var index = 0
+            for (item, depth) in nested(group.items, by: sortKey, ascending: ascending) {
+                entries.append(.row(item, group: group.id, striped: !index.isMultiple(of: 2), depth: depth))
+                index += 1
             }
         }
         return entries
+    }
+
+    /// The group's items depth first, each with its depth.
+    private static func nested(_ items: [BoardItem], by sortKey: ((BoardItem) -> StatsSortKey)?, ascending: Bool) -> [(BoardItem, Int)] {
+        let contentIDs = Set(items.compactMap(\.contentID))
+        var childrenOf: [String: [BoardItem]] = [:]
+        var roots: [BoardItem] = []
+        for item in items {
+            if let parent = item.parentID, parent != item.contentID, contentIDs.contains(parent) {
+                childrenOf[parent, default: []].append(item)
+            } else {
+                roots.append(item)
+            }
+        }
+        guard !childrenOf.isEmpty else { return sorted(items, by: sortKey, ascending: ascending).map { ($0, 0) } }
+        var result: [(BoardItem, Int)] = []
+        func append(_ item: BoardItem, depth: Int) {
+            result.append((item, depth))
+            guard let id = item.contentID, let children = childrenOf[id] else { return }
+            for child in sorted(children, by: sortKey, ascending: ascending) { append(child, depth: depth + 1) }
+        }
+        for root in sorted(roots, by: sortKey, ascending: ascending) { append(root, depth: 0) }
+        return result
     }
 
     private static func sorted(_ items: [BoardItem], by sortKey: ((BoardItem) -> StatsSortKey)?, ascending: Bool) -> [BoardItem] {

@@ -23,7 +23,7 @@ A board's saved views from GitHub show as tabs. Each opens with its own filter, 
 
 Layouts:
 
-- **Table**: items in sections if the view groups them, under one column header that stays at the top as you scroll. Click a column header to sort by it, within each section; click again to reverse.
+- **Table**: items in sections if the view groups them, under one column header that stays at the top as you scroll. Click a column header to sort by it, within each section; click again to reverse. A sub-issue sits indented under its parent when the parent is in the same section; otherwise it's listed on its own. Sorting applies to each level, so sub-issues stay under their parent.
 - **Board**: columns in the board's option order, with GitHub's colours. A + on a column starts a [New Issue](/docs/guides/new-issue/) with that column's value.
 - **Insights**: how long items spent in each status, from the issue history's board changes.
 

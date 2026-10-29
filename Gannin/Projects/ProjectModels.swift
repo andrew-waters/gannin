@@ -106,6 +106,10 @@ nonisolated struct BoardItem: Codable, Hashable, Identifiable {
     let updatedAt: Date?
     /// Custom field values by field name.
     var values: [String: IssueFieldValue]
+    /// The parent issue's node ID, matching its `contentID`. Optional so
+    /// caches saved before it was fetched still load; items gain it when
+    /// next fetched.
+    var parentID: String? = nil
 
     /// A field's value for grouping, sorting and display, built-ins included.
     func value(_ field: String) -> IssueFieldValue? {

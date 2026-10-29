@@ -19,7 +19,7 @@ struct BoardTableModelTests {
         entries.map {
             switch $0 {
             case .header(let group): "# \(group.name)"
-            case .row(let item, _, _): item.id
+            case .row(let item, _, _, _): item.id
             }
         }
     }
@@ -77,9 +77,39 @@ struct BoardTableModelTests {
             showsHeaders: true, collapsed: [], sortKey: nil, ascending: true
         )
         let striped = entries.compactMap { entry -> Bool? in
-            if case .row(_, _, let striped) = entry { striped } else { nil }
+            if case .row(_, _, let striped, _) = entry { striped } else { nil }
         }
         #expect(striped == [false, true, false])
+    }
+
+    private func issue(_ id: String, _ title: String, parent: String? = nil) -> BoardItem {
+        BoardItem(id: id, kind: .issue, contentID: "node-\(id)", title: title, number: nil, url: nil, repo: nil, state: nil,
+                         assignees: [], labels: [], milestone: nil, parent: nil, subIssuesProgress: nil,
+                         linkedPullRequests: 0, updatedAt: nil, values: [:], parentID: parent.map { "node-\($0)" })
+    }
+
+    private func depths(_ entries: [BoardTableEntry]) -> [String] {
+        entries.compactMap {
+            if case .row(let item, _, _, let depth) = $0 { "\(item.id):\(depth)" } else { nil }
+        }
+    }
+
+    @Test func subIssuesSitUnderTheirParentInTheSameGroup() {
+        let groups = [group("", [issue("c", "C", parent: "p"), issue("x", "X"), issue("p", "P")])]
+        let entries = BoardTableModel.entries(groups: groups, showsHeaders: false, collapsed: [], sortKey: nil, ascending: true)
+        #expect(depths(entries) == ["x:0", "p:0", "c:1"])
+    }
+
+    @Test func eachLevelIsSortedOnItsOwn() {
+        let groups = [group("", [issue("b", "b", parent: "p"), issue("p", "p"), issue("a", "a", parent: "p"), issue("z", "z")])]
+        let entries = BoardTableModel.entries(groups: groups, showsHeaders: false, collapsed: [], sortKey: byTitle, ascending: false)
+        #expect(depths(entries) == ["z:0", "p:0", "b:1", "a:1"])
+    }
+
+    @Test func aParentInAnotherGroupLeavesTheChildTopLevel() {
+        let groups = [group("Todo", [issue("p", "P")]), group("Done", [issue("c", "C", parent: "p")])]
+        let entries = BoardTableModel.entries(groups: groups, showsHeaders: true, collapsed: [], sortKey: nil, ascending: true)
+        #expect(depths(entries) == ["p:0", "c:0"])
     }
 
     @Test func headerIDsNeverCollideWithRowIDs() {

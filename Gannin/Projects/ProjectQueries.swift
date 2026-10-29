@@ -166,7 +166,7 @@ private struct RawBoardItem: Decodable {
     struct Label: Decodable { let name: String; let color: String }
     struct Repository: Decodable { let nameWithOwner: String }
     struct Titled: Decodable { let title: String }
-    struct Parent: Decodable { let title: String; let number: Int }
+    struct Parent: Decodable { let id: String; let title: String; let number: Int }
     struct SubIssues: Decodable { let total: Int; let percentCompleted: Int }
     struct Count: Decodable { let totalCount: Int }
     struct Content: Decodable {
@@ -219,7 +219,7 @@ private struct RawBoardItem: Decodable {
             assignees(first: 5) { nodes { login avatarUrl } }
             labels(first: 10) { nodes { name color } }
             milestone { title }
-            parent { title number }
+            parent { id title number }
             subIssuesSummary { total percentCompleted }
             closedByPullRequestsReferences(first: 1) { totalCount }
           }
@@ -283,7 +283,8 @@ private struct RawBoardItem: Decodable {
             subIssuesProgress: summary.flatMap { $0.total > 0 ? Double($0.percentCompleted) : nil },
             linkedPullRequests: content?.closedByPullRequestsReferences?.totalCount ?? 0,
             updatedAt: content?.updatedAt ?? updatedAt,
-            values: values
+            values: values,
+            parentID: content?.parent?.id
         )
     }
 }
