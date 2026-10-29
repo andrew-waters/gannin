@@ -17,6 +17,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Routines: New Report and New Maintenance are one New Routine, with Report only beside Local only, Draft PR and Ready PR, and Run with a specialist or a workflow (Harness › Workflows has Routines). A report can name repos to read. Repos are picked from the project's and the org's, and Draft with Claude sets a routine up from what you say it's for
 - Edit Specialist on a specialist's page and in a workflow step's inspector, as well as its right-click menu
 - Harness › Workflows builds each activity's workflows as nodes (stages left to right, steps side by side), with a step inspector, the most passes a workflow can make, its default and routing rules, whose repos, authors, labels and issue types can be picked from what Gannin knows or typed. Review with Claude, Work on This, Quick Change and Ask can pick another workflow for one run, and a review's Overview shows each step's rounds and findings, and which didn't run and why
+- A board's Table layout lists a sub-issue indented under its parent when both are in the same section, as Issues does. Sub-issues group under their parent once a board is next refreshed
 
 ### Changed
 - Post Review warns when the review's watch has seen new commits or comments since the review ran, and the first press of Post to GitHub stops until you press it again

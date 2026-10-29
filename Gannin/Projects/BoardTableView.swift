@@ -5,6 +5,8 @@ import SwiftUI
 private enum BoardTableMetrics {
     static let rowHeight: CGFloat = 36
     static let cellPadding: CGFloat = 10
+    /// How far a sub-issue's title is indented per level under its parent.
+    static let indent: CGFloat = 20
     /// Room at the right of every header for the sort chevron.
     static let sortSlot: CGFloat = 12
 
@@ -72,8 +74,8 @@ struct BoardTableView: View {
                                 isCollapsed: collapsed.contains(group.id), toggle: toggleGroup
                             )
                             .equatable()
-                        case .row(let item, _, let striped):
-                            BoardTableRow(board: board, item: item, columns: columns, striped: striped, org: org, open: open)
+                        case .row(let item, _, let striped, let depth):
+                            BoardTableRow(board: board, item: item, columns: columns, striped: striped, depth: depth, org: org, open: open)
                                 .equatable()
                         }
                     }
@@ -192,11 +194,12 @@ private struct BoardTableRow: View, Equatable {
     let item: BoardItem
     let columns: [BoardTableColumn]
     let striped: Bool
+    let depth: Int
     let org: String?
     let open: (BoardItem) -> Void
 
     static func == (a: Self, b: Self) -> Bool {
-        a.striped == b.striped && a.org == b.org && a.columns == b.columns && a.item == b.item && a.board == b.board
+        a.striped == b.striped && a.depth == b.depth && a.org == b.org && a.columns == b.columns && a.item == b.item && a.board == b.board
     }
 
     var body: some View {
@@ -211,6 +214,7 @@ private struct BoardTableRow: View, Equatable {
                     ZStack(alignment: .leading) {
                         Color.clear
                         BoardTableCell(board: board, item: item, column: column)
+                            .padding(.leading, column.isTitle ? CGFloat(depth) * BoardTableMetrics.indent : 0)
                             .padding(.horizontal, BoardTableMetrics.cellPadding)
                     }
                     .modifier(ColumnFrame(column: column))
