@@ -109,6 +109,12 @@ enum BoardTableModel {
             for child in sorted(children, by: sortKey, ascending: ascending) { append(child, depth: depth + 1) }
         }
         for root in sorted(roots, by: sortKey, ascending: ascending) { append(root, depth: 0) }
+        // Items that name each other as parents are never reached from a
+        // root; list them flat rather than drop them.
+        if result.count != items.count {
+            let placed = Set(result.map(\.0.id))
+            for item in sorted(items.filter { !placed.contains($0.id) }, by: sortKey, ascending: ascending) { result.append((item, 0)) }
+        }
         return result
     }
 

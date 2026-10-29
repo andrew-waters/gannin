@@ -84,8 +84,8 @@ struct BoardTableModelTests {
 
     private func issue(_ id: String, _ title: String, parent: String? = nil) -> BoardItem {
         BoardItem(id: id, kind: .issue, contentID: "node-\(id)", title: title, number: nil, url: nil, repo: nil, state: nil,
-                         assignees: [], labels: [], milestone: nil, parent: nil, subIssuesProgress: nil,
-                         linkedPullRequests: 0, updatedAt: nil, values: [:], parentID: parent.map { "node-\($0)" })
+                  assignees: [], labels: [], milestone: nil, parent: nil, subIssuesProgress: nil,
+                  linkedPullRequests: 0, updatedAt: nil, values: [:], parentID: parent.map { "node-\($0)" })
     }
 
     private func depths(_ entries: [BoardTableEntry]) -> [String] {
@@ -110,6 +110,12 @@ struct BoardTableModelTests {
         let groups = [group("Todo", [issue("p", "P")]), group("Done", [issue("c", "C", parent: "p")])]
         let entries = BoardTableModel.entries(groups: groups, showsHeaders: true, collapsed: [], sortKey: nil, ascending: true)
         #expect(depths(entries) == ["p:0", "c:0"])
+    }
+
+    @Test func itemsNamingEachOtherAsParentsAreStillListed() {
+        let groups = [group("", [issue("a", "A", parent: "b"), issue("b", "B", parent: "a"), issue("x", "X")])]
+        let entries = BoardTableModel.entries(groups: groups, showsHeaders: false, collapsed: [], sortKey: nil, ascending: true)
+        #expect(depths(entries) == ["x:0", "a:0", "b:0"])
     }
 
     @Test func headerIDsNeverCollideWithRowIDs() {
