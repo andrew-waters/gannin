@@ -465,6 +465,8 @@ struct PlanningQuestionView: View {
     /// elsewhere (the other field, the comment bar) isn't caught.
     private func key(_ press: KeyPress) -> KeyPress.Result {
         guard let item else { return .ignored }
+        // Presses from a text field bubble up to this card's handler.
+        if NSApp.keyWindow?.firstResponder is NSText { return .ignored }
         switch style {
         case .focus:
             guard press.modifiers.isEmpty, let char = press.characters.lowercased().first, let ascii = char.asciiValue, ascii >= 97 else { return .ignored }
