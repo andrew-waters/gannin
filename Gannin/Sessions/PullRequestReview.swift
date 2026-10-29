@@ -1140,11 +1140,7 @@ struct PullRequestReviewView: View {
         case "CLOSED": return "Closed"
         default: break
         }
-        guard let watch = sessions.sessions[session.id]?.watch else { return "No changes" }
-        var found: [String] = []
-        if watch.hasNewCommits { found.append("new commits") }
-        if watch.newComments > 0 { found.append("\(watch.newComments) new comment\(watch.newComments == 1 ? "" : "s")") }
-        return found.isEmpty ? "No changes" : found.joined(separator: ", ")
+        return sessions.sessions[session.id]?.watch?.changes ?? "No changes"
     }
 
     /// "5 minutes ago", or "just now" for the first few seconds, when the
@@ -2413,22 +2409,19 @@ private struct PostReviewSheet: View {
     /// The body as built from the findings, to tell whether the user has
     /// edited `bodyText` since.
     @State private var builtBody = ""
-    /// Post has stopped once for `changesSinceReview`, so the next press sends.
-    @State private var warnedOfChanges = false
+    /// The `changesSinceReview` Post last stopped for. Only the same text
+    /// shown again lets the next press send, so changes that arrive after
+    /// the warning stop it once more.
+    @State private var warnedOfChanges: String?
 
     private var reference: PullRequestReference { session.reviewOf! }
 
-    /// What the review's watch has seen on the PR since the review ran, if
-    /// anything: the review wasn't written against it.
+    /// Why the review may not match the PR now, if Gannin knows: what the
+    /// watch has seen since it ran, or a re-review under way (which clears
+    /// the watch's counts as it starts).
     private var changesSinceReview: String? {
-        guard let watch = sessions.sessions[session.id]?.watch else { return nil }
-        let comments = watch.newComments == 1 ? "1 new comment" : "\(watch.newComments) new comments"
-        switch (watch.hasNewCommits, watch.newComments > 0) {
-        case (true, true): return "new commits and \(comments)"
-        case (true, false): return "new commits"
-        case (false, true): return comments
-        case (false, false): return nil
-        }
+        if let changes = sessions.sessions[session.id]?.watch?.changes { return changes }
+        return sessions.state(session.id) == .working ? "Claude is reviewing it again" : nil
     }
 
     /// The PR with the latest comments and reviews in place of the ones it
@@ -2556,7 +2549,7 @@ private struct PostReviewSheet: View {
                     .foregroundStyle(.secondary)
             }
             if let changes = changesSinceReview, !isPosted {
-                Text("The pull request has \(changes) since this review ran, so it may be out of date.\(warnedOfChanges ? " Post again to send it anyway." : "")")
+                Text("This review may be out of date: \(changes).\(warnedOfChanges == changes ? " Post again to send it anyway." : "")")
                     .foregroundStyle(.orange).font(.callout)
             }
             if let notice {
@@ -2620,10 +2613,11 @@ private struct PostReviewSheet: View {
 
     private func post() {
         guard let api = auth.api else { return }
-        if !isPosted, changesSinceReview != nil, !warnedOfChanges {
-            warnedOfChanges = true
-            return
-        }
+        // The warning is shown in the form from now on, but the comment check
+        // below still runs, so one more press is all it takes to post.
+        let changes = changesSinceReview
+        let mustWarn = !isPosted && changes != nil && warnedOfChanges != changes
+        if mustWarn { warnedOfChanges = changes }
         sending = true
         error = nil
         notice = nil
@@ -2660,6 +2654,10 @@ private struct PostReviewSheet: View {
                         sending = false
                         return
                     }
+                }
+                if mustWarn {
+                    sending = false
+                    return
                 }
                 // A failed lookup doesn't block posting, as with the comment check.
                 if let mine = try? await api.myReviews(repo: reference.repo, number: reference.number),
