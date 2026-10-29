@@ -2413,8 +2413,23 @@ private struct PostReviewSheet: View {
     /// The body as built from the findings, to tell whether the user has
     /// edited `bodyText` since.
     @State private var builtBody = ""
+    /// Post has stopped once for `changesSinceReview`, so the next press sends.
+    @State private var warnedOfChanges = false
 
     private var reference: PullRequestReference { session.reviewOf! }
+
+    /// What the review's watch has seen on the PR since the review ran, if
+    /// anything: the review wasn't written against it.
+    private var changesSinceReview: String? {
+        guard let watch = sessions.sessions[session.id]?.watch else { return nil }
+        let comments = watch.newComments == 1 ? "1 new comment" : "\(watch.newComments) new comments"
+        switch (watch.hasNewCommits, watch.newComments > 0) {
+        case (true, true): return "new commits and \(comments)"
+        case (true, false): return "new commits"
+        case (false, true): return comments
+        case (false, false): return nil
+        }
+    }
 
     /// The PR with the latest comments and reviews in place of the ones it
     /// was opened with. Only those change: the review is posted against the
@@ -2540,6 +2555,10 @@ private struct PostReviewSheet: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            if let changes = changesSinceReview, !isPosted {
+                Text("The pull request has \(changes) since this review ran, so it may be out of date.\(warnedOfChanges ? " Post again to send it anyway." : "")")
+                    .foregroundStyle(.orange).font(.callout)
+            }
             if let notice {
                 Text(notice).foregroundStyle(.orange).font(.callout)
             }
@@ -2601,6 +2620,10 @@ private struct PostReviewSheet: View {
 
     private func post() {
         guard let api = auth.api else { return }
+        if !isPosted, changesSinceReview != nil, !warnedOfChanges {
+            warnedOfChanges = true
+            return
+        }
         sending = true
         error = nil
         notice = nil
