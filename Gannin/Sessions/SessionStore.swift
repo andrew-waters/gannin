@@ -397,6 +397,16 @@ final class SessionStore {
     private(set) var attention: [UUID: Date] = [:]
     /// Comments on a session's diff, not yet sent to claude.
     private(set) var drafts: [UUID: [DiffComment]] = [:]
+    /// Each session's message box, kept here so its text survives the
+    /// composer's view going away when the tab changes.
+    @ObservationIgnored private var messageDrafts: [UUID: MessageDraft] = [:]
+
+    func messageDraft(for id: UUID) -> MessageDraft {
+        if let draft = messageDrafts[id] { return draft }
+        let draft = MessageDraft()
+        messageDrafts[id] = draft
+        return draft
+    }
     /// Review comments and checks already sent to a session's claude, by
     /// their URL, so they aren't offered again. For this launch only.
     private(set) var sent: [UUID: Set<String>] = [:]
@@ -982,6 +992,7 @@ final class SessionStore {
         noteSandboxedHarnesses()
         states[id] = nil
         drafts[id] = nil
+        messageDrafts[id] = nil
         stagedAttachments[id] = nil
         attachmentErrors[id] = nil
         attachmentNotices[id] = nil
