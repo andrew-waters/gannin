@@ -1,5 +1,13 @@
 import SwiftUI
 
+/// What's typed in a session's message box and not yet sent. One per
+/// session, kept by `SessionStore`, so it survives the composer's view going
+/// away when the tab changes, and typing re-renders only the views reading it.
+@Observable
+final class MessageDraft {
+    var text = ""
+}
+
 /// The bar under a session's terminal: a box to tell it something (sent as a prompt, queued if it's
 /// busy), with thumbnails of the attachments going with it; saved prompts (⌃1 to ⌃9); Esc to stop it; how full its context
 /// is, with /compact; and how its last test or build went.
@@ -8,11 +16,13 @@ struct SessionComposer: View {
     let session: CodeSession
     /// The side panel's toggle, when the tab has one.
     var panelShown: Binding<Bool>?
-    @State private var text = ""
     @State private var snippets = PromptSnippet.saved
     @FocusState private var focused: Bool
 
+    private var draft: MessageDraft { sessions.messageDraft(for: session.id) }
+
     var body: some View {
+        @Bindable var draft = draft
         let running = sessions.isRunning(session.id)
         let transcript = sessions.transcripts[session.id]
         let attaching = !sessions.staged(in: session.id).isEmpty
@@ -20,14 +30,14 @@ struct SessionComposer: View {
             StagedAttachmentsStrip(session: session)
             HStack(spacing: 8) {
                 snippetMenu(enabled: running)
-                TextField("Tell claude something", text: $text, axis: .vertical)
+                TextField("Tell claude something", text: $draft.text, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .focused($focused)
                     .onSubmit(send)
                     .disabled(!running)
                 Button("Send", action: send)
-                    .disabled(!running || (!attaching && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                    .disabled(!running || (!attaching && draft.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
                     .help("Send it as a prompt, with the attachments above it. If claude is working, it reads it when it's done.")
                 Button {
                     sessions.interrupt(session.id)
@@ -61,8 +71,8 @@ struct SessionComposer: View {
     }
 
     private func send() {
-        guard sessions.submit(text, withAttachmentsTo: session.id) else { return }
-        text = ""
+        guard sessions.submit(draft.text, withAttachmentsTo: session.id) else { return }
+        draft.text = ""
     }
 
     private func snippetMenu(enabled: Bool) -> some View {
