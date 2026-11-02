@@ -88,8 +88,14 @@ nonisolated struct HarnessLearning: Identifiable, Hashable, Sendable {
         return mine == full || mine == full.split(separator: "/").last.map(String.init)
     }
 
-    /// Whether it names no folder, file or lines, so `covers` is true of every file.
-    var isRepoWide: Bool { scopes.allSatisfy { $0.path.isEmpty } }
+    /// Whether any scope is the whole repo, which makes `covers` true of every file.
+    var isRepoWide: Bool { scopes.contains { $0.path.isEmpty } }
+
+    /// Whether to list it as covering a file: `covers`, except for a
+    /// whole-repo learning, which would be listed on every file and PR.
+    func coversForDisplay(_ file: String, lines: ClosedRange<Int>? = nil) -> Bool {
+        !isRepoWide && covers(file, lines: lines)
+    }
 
     func covers(_ file: String, lines: ClosedRange<Int>? = nil) -> Bool {
         scopes.contains { $0.covers(file, lines: lines) }
