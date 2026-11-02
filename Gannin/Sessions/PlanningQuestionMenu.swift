@@ -3,13 +3,10 @@ import AppKit
 
 /// What the Question menu offers for the planning question that's up. The
 /// card publishes it with `focusedSceneValue`, and each action does what the
-/// card's own keys and buttons do.
-///
-/// Compared by what the menu shows, not by its closures: they read the
-/// card's live state when called, so focus changes (not every redraw) update
-/// the menu.
-struct PlanningQuestionMenu: Equatable {
-    struct Option: Equatable {
+/// card's own keys and buttons do. The closures read the card's live state
+/// when called.
+struct PlanningQuestionMenu {
+    struct Option {
         let letter: String
         let label: String
         let ticked: Bool
@@ -20,7 +17,6 @@ struct PlanningQuestionMenu: Equatable {
     /// sees it.
     static let numberedOptions = 9
 
-    let question: String
     let style: PlanningQuestionStyle
     let options: [Option]
     let multiSelect: Bool
@@ -51,12 +47,6 @@ struct PlanningQuestionMenu: Equatable {
         case .thread: Items(send: multiSelect)
         case .poll: Items()
         }
-    }
-
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.question == rhs.question && lhs.style == rhs.style && lhs.options == rhs.options
-            && lhs.multiSelect == rhs.multiSelect && lhs.sendTitle == rhs.sendTitle
-            && lhs.canSend == rhs.canSend && lhs.canGoBack == rhs.canGoBack
     }
 }
 
@@ -90,8 +80,9 @@ struct PlanningQuestionCommands: Commands {
                     Divider()
                 }
                 if items.send {
+                    // No key here: ⌘↩ is the card's Next or Send button's, and a
+                    // menu key would also take it from the comment box.
                     Button(menu.sendTitle) { menu.send() }
-                        .keyboardShortcut(.return, modifiers: .command)
                         .disabled(!menu.canSend)
                 }
                 Button("Back") { menu.back() }
@@ -120,7 +111,7 @@ struct PlanningQuestionCommands: Commands {
 
 // MARK: - Only in the Claude Code window
 
-/// Hides the Question menu unless the key window is one that asked for it.
+/// Hides the Question menu unless the main window is one that asked for it.
 /// SwiftUI declares a menu for the whole app, so this hides the item in the
 /// menu bar from AppKit. If it can't find the item the menu just stays,
 /// disabled.
@@ -146,7 +137,9 @@ final class QuestionMenuVisibility {
 
     private func update() {
         guard let item = NSApp.mainMenu?.items.first(where: { $0.title == PlanningQuestionCommands.title }) else { return }
-        let shown = NSApp.keyWindow.map { windows.contains($0) } ?? false
+        // The main window, not the key one, so a sheet or panel opened from
+        // the Claude Code window doesn't hide the menu.
+        let shown = (NSApp.mainWindow ?? NSApp.keyWindow).map { windows.contains($0) } ?? false
         if item.isHidden == shown { item.isHidden = !shown }
     }
 }

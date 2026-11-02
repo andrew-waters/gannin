@@ -99,12 +99,12 @@ A drawer's arrow keys only work when nothing inside it wants them, so typing in 
 | ↓ and ↑ | Move through the options in the Keyboard List style | Question › Next Option, Previous Option (no shortcut shown) |
 | ↩ | Picks the highlighted option in the Keyboard List style | Question › Choose Highlighted Option (no shortcut shown) |
 | Space | Ticks the highlighted option when a question allows several answers, in the Keyboard List style | Question › Tick Highlighted Option (no shortcut shown) |
-| ⌘↩ | Moves on (or sends) a question that allows several answers | Question › Next or Send |
+| ⌘↩ | Moves on (or sends) a question that allows several answers; the Question menu's Next or Send does the same but has no key of its own | Question › Next or Send (no shortcut shown) |
 | ⌘↩ | Sends the poll's most popular answer in Poll the Room | Not in a menu |
 | None | Goes back to the question before, or skips the question | Question › Back, Skip Question (no shortcut) |
 | ↩ | Sends your comment to the session from the box at the foot of the stage | Not in a menu |
 | ⇧↩ or ⌥↩ | Adds a new line in that comment box | Not in a menu |
-| ⌘↩ | Sends the comment from anywhere in the box | Not in a menu |
+| ⌘↩ | Sends the comment from anywhere in the box. | Not in a menu |
 | ⌘↩ | Starts the planning session from the New Plan form | Not in a menu |
 
 ## Investments

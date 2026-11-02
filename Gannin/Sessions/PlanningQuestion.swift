@@ -408,9 +408,9 @@ struct PlanningQuestionView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             if item.multiSelect {
-                // ⌘↩ is the Question menu's Next or Send.
                 Button(sendTitle) { sendPicked(in: item) }
                     .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.return, modifiers: .command)
                     .disabled(picked.isEmpty)
             }
         }
@@ -458,13 +458,16 @@ struct PlanningQuestionView: View {
         guard let shown = item else { return nil }
         // The actions read the card's state when they run, not as it is now.
         return PlanningQuestionMenu(
-            question: "\(question.id)#\(index)", style: style,
+            style: style,
             options: shown.options.enumerated().map { number, option in
                 .init(letter: letter(number), label: clean(option.label), ticked: picked.contains(number))
             },
             multiSelect: shown.multiSelect, sendTitle: sendTitle, canSend: !picked.isEmpty,
             canGoBack: index > 0 || revisitLast != nil,
-            pick: { number in if let item { pick(number, in: item) } },
+            // ⌘1 to ⌘9 do nothing while a text field is being edited.
+            pick: { number in
+                if let item, !(NSApp.keyWindow?.firstResponder is NSText) { pick(number, in: item) }
+            },
             move: { step in moveHighlight(by: step) },
             pickHighlighted: { if let item { pick(highlighted, in: item) } },
             send: { if let item { sendPicked(in: item) } },
