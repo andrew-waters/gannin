@@ -19,6 +19,6 @@ A review can also suggest learnings from explanations people gave in the PR. The
 
 A review's prompt lists the active learnings for the PR's repo. Work on This briefs a session with those for the issue's and its linked PRs' repos.
 
-In a review tab, the Learnings row lists those covering the diff, those applied and those suggested. The diff shows them in place: file and folder ones at the top, line ones at their line, with the lines marked. A learning the reviewer applied shows as a card on its line, with Challenge and Edit Learning.
+In a review tab, the Learnings row lists those covering the diff, those applied and those suggested. The diff shows them in place: file and folder ones at the top, line ones at their line, with the lines marked. A learning whose scope is the whole repo is left out of what covers the diff, since it would cover every file; it shows only when the reviewer applied it. A learning the reviewer applied shows as a card on its line, with Challenge and Edit Learning.
 
 Challenge sends your objection to the reviewer, who looks again. Edit Learning (also on a learning's own page) changes the rule or retires it.

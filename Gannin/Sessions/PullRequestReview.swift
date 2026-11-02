@@ -1659,8 +1659,10 @@ extension PullRequestReviewView {
 
     /// The harness's learnings for the repo whose scope covers a file the PR
     /// changes, on the lines its diff shows when a learning names lines.
+    /// Whole-repo learnings are left out: they'd cover every PR and file
+    /// whether or not the reviewer used them.
     func applied(to pullRequest: ReviewedPullRequest) -> [HarnessLearning] {
-        let learnings = harnessIndex?.learnings(for: reference.repo) ?? []
+        let learnings = (harnessIndex?.learnings(for: reference.repo) ?? []).filter { !$0.isRepoWide }
         guard !learnings.isEmpty else { return [] }
         return learnings.filter { learning in pullRequest.files.contains { learning.covers($0.path, lines: $0.shownLines) } }
     }
@@ -1673,9 +1675,10 @@ extension PullRequestReviewView {
         return document.flatMap(HarnessLearning.init(document:))
     }
 
-    /// The learnings covering one file, on the lines its diff shows.
+    /// The learnings covering one file, on the lines its diff shows; not
+    /// whole-repo ones, which cover every file.
     func learnings(on file: ReviewedPullRequest.File) -> [HarnessLearning] {
-        (harnessIndex?.learnings(for: reference.repo) ?? []).filter { $0.covers(file.path, lines: file.shownLines) }
+        (harnessIndex?.learnings(for: reference.repo) ?? []).filter { !$0.isRepoWide && $0.covers(file.path, lines: file.shownLines) }
     }
 
     func learningsColumn(pullRequest: ReviewedPullRequest, review: SessionTranscript.ReviewResult?) -> some View {
