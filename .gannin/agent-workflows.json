@@ -1,0 +1,111 @@
+{
+  "ask" : {
+    "workflows" : [
+      {
+        "id" : "6b41961b-baa9-467a-973c-54a18446e363",
+        "name" : "Second",
+        "stages" : [
+          {
+            "id" : "4c205f8f-ceb1-4809-96d7-ece0bab871e6",
+            "steps" : [
+              {
+                "focus" : "c",
+                "id" : "67f1f3b0-10dd-456e-b4c6-7991ccd29820",
+                "interactive" : true
+              }
+            ]
+          },
+          {
+            "id" : "ddf6a31d-eec5-48c9-882c-a9e367f65d69",
+            "steps" : [
+              {
+                "focus" : "a",
+                "id" : "d17fcd49-56c1-4178-9d55-4973ad9d88ac"
+              }
+            ]
+          },
+          {
+            "id" : "83af9504-40a3-48a5-b4bf-01b7d6f2e273",
+            "steps" : [
+              {
+                "focus" : "b",
+                "id" : "761df9a7-8762-46ea-b210-5207bea0fe36"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "quick-change" : {
+    "default" : "2646898c-9443-45d5-b388-138209c23cc2",
+    "workflows" : [
+      {
+        "id" : "2646898c-9443-45d5-b388-138209c23cc2",
+        "name" : "Comprehensive",
+        "stages" : [
+          {
+            "id" : "ed7bd9a3-ce6f-49c2-adaf-81988e974390",
+            "steps" : [
+              {
+                "id" : "e3437a96-8e54-4128-9a1a-9cf2d1f31397",
+                "interactive" : true
+              }
+            ]
+          },
+          {
+            "id" : "36637817-498f-4a58-98b8-6e1439823642",
+            "steps" : [
+              {
+                "id" : "7dc6cc0d-c712-4d37-8541-868565730705",
+                "specialist" : "security-reviewer"
+              },
+              {
+                "id" : "5f6c71d1-47dc-4508-9d58-4df2fa7c271c",
+                "specialist" : "docs-writer"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "review" : {
+    "default" : "ff4f3da2-3607-4a21-87c5-255428353f36",
+    "rules" : [
+      {
+        "id" : "d19a0456-d500-4f1b-a42b-2a62678644e7",
+        "workflow" : "ff4f3da2-3607-4a21-87c5-255428353f36"
+      }
+    ],
+    "workflows" : [
+      {
+        "id" : "ff4f3da2-3607-4a21-87c5-255428353f36",
+        "name" : "Thorough",
+        "stages" : [
+          {
+            "id" : "0c11277a-a1d7-46e5-9545-5267cceed540",
+            "steps" : [
+              {
+                "id" : "514ad56a-960f-4ee1-890f-e19eb56d2043"
+              }
+            ]
+          },
+          {
+            "id" : "c440af31-ccf8-46c8-8a70-cc1d1a3d8ed0",
+            "steps" : [
+              {
+                "id" : "9b32b245-d6f2-4601-9a5a-f9ba7d6e3cdb",
+                "specialist" : "docs-writer"
+              },
+              {
+                "id" : "611fba1e-3dc8-4b47-84c8-0fd6ab0d4095",
+                "specialist" : "security-reviewer"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}
