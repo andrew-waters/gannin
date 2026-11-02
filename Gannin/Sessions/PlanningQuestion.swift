@@ -84,6 +84,7 @@ struct PlanningQuestionView: View {
         .focusEffectDisabled()
         .focused($keys)
         .onKeyPress(phases: .down, action: key)
+        .focusedSceneValue(\.planningQuestion, menu)
         .onChange(of: question.id, initial: true) { reset(all: true) }
         .onChange(of: style) { reset(all: false) }
     }
@@ -94,12 +95,7 @@ struct PlanningQuestionView: View {
         HStack(spacing: 10) {
             // Always first and always there, so it's where the hand goes.
             Button {
-                if index > 0 {
-                    index -= 1
-                    reset(all: false)
-                } else {
-                    revisitLast?()
-                }
+                goBack()
             } label: {
                 Label("Back", systemImage: "chevron.left")
             }
@@ -134,7 +130,7 @@ struct PlanningQuestionView: View {
             .buttonStyle(.borderless)
             .fixedSize()
             .help("How questions are put to the room")
-            Button("Skip") { sessions.sendKeys("\u{1B}", to: session.id) }
+            Button("Skip") { skip() }
                 .buttonStyle(.borderless)
                 .help("Close the question without answering, to say something else below")
         }
@@ -412,12 +408,10 @@ struct PlanningQuestionView: View {
                 .foregroundStyle(.secondary)
             Spacer()
             if item.multiSelect {
-                Button(index + 1 < question.items.count ? "Next" : "Send") {
-                    choose(picked.sorted().map { clean(item.options[$0].label) }.joined(separator: "; "))
-                }
-                .buttonStyle(.borderedProminent)
-                .keyboardShortcut(.return, modifiers: .command)
-                .disabled(picked.isEmpty)
+                // ⌘↩ is the Question menu's Next or Send.
+                Button(sendTitle) { sendPicked(in: item) }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(picked.isEmpty)
             }
         }
     }
@@ -434,6 +428,50 @@ struct PlanningQuestionView: View {
     }
 
     private func chosen(_ number: Int) -> Bool { picked.contains(number) }
+
+    private var sendTitle: String { index + 1 < question.items.count ? "Next" : "Send" }
+
+    private func sendPicked(in item: SessionTranscript.Question.Item) {
+        choose(picked.sorted().map { clean(item.options[$0].label) }.joined(separator: "; "))
+    }
+
+    private func goBack() {
+        if index > 0 {
+            index -= 1
+            reset(all: false)
+        } else {
+            revisitLast?()
+        }
+    }
+
+    private func skip() {
+        sessions.sendKeys("\u{1B}", to: session.id)
+    }
+
+    private func moveHighlight(by step: Int) {
+        guard let item else { return }
+        highlighted = min(max(0, highlighted + step), item.options.count - 1)
+    }
+
+    /// What the Question menu has for this card, each action the card's own.
+    private var menu: PlanningQuestionMenu? {
+        guard let shown = item else { return nil }
+        // The actions read the card's state when they run, not as it is now.
+        return PlanningQuestionMenu(
+            question: "\(question.id)#\(index)", style: style,
+            options: shown.options.enumerated().map { number, option in
+                .init(letter: letter(number), label: clean(option.label), ticked: picked.contains(number))
+            },
+            multiSelect: shown.multiSelect, sendTitle: sendTitle, canSend: !picked.isEmpty,
+            canGoBack: index > 0 || revisitLast != nil,
+            pick: { number in if let item { pick(number, in: item) } },
+            move: { step in moveHighlight(by: step) },
+            pickHighlighted: { if let item { pick(highlighted, in: item) } },
+            send: { if let item { sendPicked(in: item) } },
+            back: { goBack() },
+            skip: { skip() }
+        )
+    }
 
     /// The answer to the question up: on to the next, or all of them sent.
     private func choose(_ answer: String) {
@@ -477,10 +515,10 @@ struct PlanningQuestionView: View {
         case .list:
             switch press.key {
             case .upArrow:
-                highlighted = max(0, highlighted - 1)
+                moveHighlight(by: -1)
                 return .handled
             case .downArrow:
-                highlighted = min(item.options.count - 1, highlighted + 1)
+                moveHighlight(by: 1)
                 return .handled
             case .return where press.modifiers.isEmpty:
                 pick(highlighted, in: item)

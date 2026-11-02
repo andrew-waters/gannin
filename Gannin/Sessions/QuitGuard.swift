@@ -16,6 +16,7 @@ final class GanninAppDelegate: NSObject, NSApplicationDelegate, UNUserNotificati
     func applicationDidFinishLaunching(_ notification: Notification) {
         UNUserNotificationCenter.current().delegate = self
         AppAppearance.current.apply()
+        QuestionMenuVisibility.shared.install()
         // scripts/relaunch.sh quits with SIGTERM, which skips
         // applicationWillTerminate; write pending session saves first.
         signal(SIGTERM, SIG_IGN)

@@ -269,6 +269,7 @@ struct GanninApp: App {
                 Divider()
             }
             SessionCommands(sessions: sessions)
+            PlanningQuestionCommands()
             // Help › Gannin Help opens the user docs on gannin.ai.
             CommandGroup(replacing: .help) {
                 Button("Gannin Help") { NSWorkspace.shared.open(GanninHelp.url) }
@@ -355,6 +356,7 @@ struct GanninApp: App {
             SessionsWindow()
                 .commandPaletteOpeningInMainWindow()
                 .capturesOpenWindow()
+                .showsQuestionMenu()
                 .environment(sessions)
                 .environment(metrics)
                 .environment(workLog)

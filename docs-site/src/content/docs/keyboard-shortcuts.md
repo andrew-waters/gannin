@@ -95,10 +95,13 @@ A drawer's arrow keys only work when nothing inside it wants them, so typing in 
 | Shortcut | What it does | Where |
 | --- | --- | --- |
 | A, B, C and so on | Pick the matching option of a question, in the One at a Time style | Not in a menu |
-| ↓ and ↑ | Move through the options in the Keyboard List style | Not in a menu |
-| ↩ | Picks the highlighted option in the Keyboard List style | Not in a menu |
-| Space | Ticks the highlighted option when a question allows several answers, in the Keyboard List style | Not in a menu |
-| ⌘↩ | Sends the poll's most popular answer in Poll the Room, or moves on (or sends) a multiple-choice question | Not in a menu |
+| ⌘1 to ⌘9 | Pick the first to ninth option of a question, in the One at a Time style | Question › the option (A: …, B: …) |
+| ↓ and ↑ | Move through the options in the Keyboard List style | Question › Next Option, Previous Option (no shortcut shown) |
+| ↩ | Picks the highlighted option in the Keyboard List style | Question › Choose Highlighted Option (no shortcut shown) |
+| Space | Ticks the highlighted option when a question allows several answers, in the Keyboard List style | Question › Tick Highlighted Option (no shortcut shown) |
+| ⌘↩ | Moves on (or sends) a question that allows several answers | Question › Next or Send |
+| ⌘↩ | Sends the poll's most popular answer in Poll the Room | Not in a menu |
+| None | Goes back to the question before, or skips the question | Question › Back, Skip Question (no shortcut) |
 | ↩ | Sends your comment to the session from the box at the foot of the stage | Not in a menu |
 | ⇧↩ or ⌥↩ | Adds a new line in that comment box | Not in a menu |
 | ⌘↩ | Sends the comment from anywhere in the box | Not in a menu |
