@@ -9,6 +9,8 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+## [0.0.6] - 2026-11-02
+
 ### Added
 - A Question menu in the Claude Code window lists a planning question's actions with their shortcuts: ⌘1 to ⌘9 answer with an option in One at a Time, Keyboard List has Previous Option, Next Option and Choose Highlighted Option, and Back, Skip Question and Next or Send (for a question that takes several answers) are there for the styles that use them. It's greyed out when no question is up, and hidden in other windows
 - Gannin can be installed with Homebrew: `brew install --cask andrew-waters/tap/gannin`. It keeps updating itself as before
