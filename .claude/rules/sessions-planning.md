@@ -11,6 +11,7 @@ paths:
 - A plan with one task merges it into the parent's description (`PlanningAgreeSheet.mergesTask`) rather than making a sub-issue, unless the parent's type is Epic or Initiative. Never merge until that type has been read: an unread type keeps the sub-issue. The appended section carries a `gannin-plan` marker so a retry after a failed commit doesn't append twice.
 - Every task must name the criteria it `satisfies`; Agree must surface criteria no task covers (`PlanningState.uncovered`).
 - Moving back reopens a stage and marks later ones Recheck; moving forward approves the stages passed. Send claude the reason when going back.
+- Never give a Question menu item a bare key (a letter, arrow or Return): a menu takes its key equivalents before a focused text field sees them, so typing in the answer or comment box would trigger it. Use ⌘ combinations, and no-op them while `NSText` is first responder; leave ⌘↩ to the footer button, which the comment box's ⌘↩ already shares. The menu is declared for every window and hidden outside the Claude Code window by `QuestionMenuVisibility`, since `Commands` can't be conditional.
 - Copy context documents into `.worktrees/<branch>/docs/` before claude starts (`SessionStore.copyDocuments`).
 - Agree must commit the plan and requirement in one commit, with `agreed_by` front matter, and create the parent and sub-issues first.
 - A dropped or picked document is shared with claude only after confirmation, and may go in `plans/assets/<slug>/` only if the user separately allowed committing it.
