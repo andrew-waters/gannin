@@ -104,7 +104,7 @@ A drawer's arrow keys only work when nothing inside it wants them, so typing in 
 | None | Goes back to the question before, or skips the question | Question › Back, Skip Question (no shortcut) |
 | ↩ | Sends your comment to the session from the box at the foot of the stage | Not in a menu |
 | ⇧↩ or ⌥↩ | Adds a new line in that comment box | Not in a menu |
-| ⌘↩ | Sends the comment from anywhere in the box. | Not in a menu |
+| ⌘↩ | Sends the comment from anywhere in the box | Not in a menu |
 | ⌘↩ | Starts the planning session from the New Plan form | Not in a menu |
 
 ## Investments
