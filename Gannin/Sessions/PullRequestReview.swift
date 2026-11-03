@@ -1110,13 +1110,23 @@ struct PullRequestReviewView: View {
         }
     }
 
+    /// The last fetch of each PR, by `reference.id`, shown at once when its
+    /// review is opened again while a fresh fetch runs. Not kept across launches.
+    private static var fetchedPullRequests: [String: ReviewedPullRequest] = [:]
+
     private func load() async {
+        if pullRequest == nil, let cached = Self.fetchedPullRequests[reference.id] {
+            pullRequest = cached
+            if selectedFile == nil { selectedFile = Self.overviewTag }
+        }
         guard let api = auth.api else { return }
         do {
             let fetched = try await RequestLimiter.interactive {
                 try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
             }
-            pullRequest = fetched
+            Self.fetchedPullRequests[reference.id] = fetched
+            // Unchanged, so the open diff isn't rebuilt under the reader.
+            if pullRequest != fetched { pullRequest = fetched }
             error = nil
             if selectedFile == nil { selectedFile = Self.overviewTag }
         } catch {
