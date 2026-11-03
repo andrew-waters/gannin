@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Fixed
+- `.vue` files get syntax highlighting in a pull request's diff and in a session's Changes pane, with the template, script and style sections each coloured in their own language
+
 ## [0.0.6] - 2026-11-02
 
 ### Added

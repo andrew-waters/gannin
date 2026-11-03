@@ -3,6 +3,10 @@ import Foundation
 /// The highlight.js language a file's diff is coloured in, chosen from its
 /// path alone.
 nonisolated enum DiffLanguage {
+    /// Not a highlight.js language: a component is split into sections, each
+    /// in its own (`VueSections`).
+    static let vue = "vue"
+
     private static let byExtension: [String: String] = [
         "swift": "swift",
         "ts": "typescript", "mts": "typescript", "cts": "typescript",
@@ -14,6 +18,7 @@ nonisolated enum DiffLanguage {
         "dockerfile": "dockerfile",
         "yml": "yaml", "yaml": "yaml",
         "md": "markdown", "markdown": "markdown",
+        "vue": DiffLanguage.vue,
         "sh": "bash", "bash": "bash", "zsh": "bash",
     ]
 
@@ -22,7 +27,10 @@ nonisolated enum DiffLanguage {
         ".bashrc": "bash", ".zshrc": "bash", ".bash_profile": "bash", ".zprofile": "bash",
     ]
 
-    static var allLanguages: Set<String> { Set(byExtension.values).union(byFilename.values) }
+    /// Every highlight.js language a file can be coloured in.
+    static var allLanguages: Set<String> {
+        Set(byExtension.values).union(byFilename.values).subtracting([vue]).union(VueSections.languages)
+    }
 
     /// The language for a path, or nil when it isn't in the supported set.
     static func name(forPath path: String) -> String? {
