@@ -217,6 +217,24 @@ extension SessionStore {
 
 // MARK: - The PR from GitHub
 
+/// The last fetch of the most recently opened PRs, so reopening a review can
+/// show its diff while a fresh fetch runs. Each holds every file's diff, so
+/// it's capped. Not kept across launches.
+struct ReviewedPullRequestCache {
+    static let capacity = 8
+    private var entries: [(id: String, pullRequest: ReviewedPullRequest)] = []
+
+    subscript(id: String) -> ReviewedPullRequest? {
+        entries.first { $0.id == id }?.pullRequest
+    }
+
+    mutating func store(_ pullRequest: ReviewedPullRequest, for id: String) {
+        entries.removeAll { $0.id == id }
+        entries.append((id, pullRequest))
+        if entries.count > Self.capacity { entries.removeFirst(entries.count - Self.capacity) }
+    }
+}
+
 /// The PR as the review shows it: its facts and every file's diff.
 struct ReviewedPullRequest: Equatable {
     struct File: Identifiable, Equatable {
@@ -278,6 +296,14 @@ struct ReviewedPullRequest: Equatable {
     /// The signed-in user, whose outdated comments still count as said.
     /// Set by the caller, which already knows it.
     var viewer: String?
+
+    /// Whether `other` would show the same: files are compared by `headSHA`
+    /// rather than line by line, since a diff only changes with a push.
+    func hasSameContent(as other: ReviewedPullRequest) -> Bool {
+        headSHA == other.headSHA && title == other.title && body == other.body && state == other.state
+            && existingComments == other.existingComments && earlierReviews == other.earlierReviews
+            && existingCommentsError == other.existingCommentsError
+    }
 
     /// How far, in lines, a finding can be from a comment saying the same
     /// and still be covered by it: a push or a re-run often moves the
@@ -1004,6 +1030,9 @@ struct PullRequestReviewView: View {
     @Environment(DetailStore.self) private var details
     let session: CodeSession
     @State private var pullRequest: ReviewedPullRequest?
+    /// `pullRequest` is from an earlier fetch and not yet confirmed: the
+    /// review can't be posted or approved from it, as it may be out of date.
+    @State private var showsEarlierFetch = false
     @State private var error: String?
     @State private var selectedFile: String?
     /// Nil until toggled: shown while claude runs or hasn't reviewed yet,
@@ -1061,7 +1090,7 @@ struct PullRequestReviewView: View {
     private func readiness(_ review: SessionTranscript.ReviewResult?) -> ReviewReadiness {
         let state = sessions.state(session.id)
         return ReviewReadiness(
-            status: status, pullRequest: pullRequest, review: review,
+            status: status, pullRequest: showsEarlierFetch ? nil : pullRequest, review: review,
             draft: sessions.reviewDrafts[session.id] ?? ReviewDraft(),
             isReviewing: sessions.isRunning(session.id) && (state == .working || state == .starting),
             config: session.reviewConfig,
@@ -1104,24 +1133,49 @@ struct PullRequestReviewView: View {
             Text("The reviewer is ended and its checkout removed. The review, your decisions and comments stay in Agents › Reviews, to read again or resume.")
         }
         .sheet(isPresented: $posting) {
-            if let pullRequest {
+            if let pullRequest, !showsEarlierFetch {
                 PostReviewSheet(session: session, pullRequest: pullRequest, review: review)
             }
         }
     }
 
+    private static var fetched = ReviewedPullRequestCache()
+
     private func load() async {
+        // Before the cache is shown: without a fetch to follow, nothing would clear `showsEarlierFetch`.
         guard let api = auth.api else { return }
+        if pullRequest == nil, let cached = Self.fetched[reference.id] {
+            pullRequest = cached
+            showsEarlierFetch = true
+            if selectedFile == nil { selectedFile = Self.overviewTag }
+        }
         do {
-            let fetched = try await RequestLimiter.interactive {
+            let fresh = try await RequestLimiter.interactive {
                 try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
             }
-            pullRequest = fetched
+            Self.fetched.store(fresh, for: reference.id)
+            // An unchanged PR keeps the open diff as it is, so it isn't rebuilt under the reader.
+            if pullRequest?.hasSameContent(as: fresh) != true { pullRequest = fresh }
+            showsEarlierFetch = false
             error = nil
             if selectedFile == nil { selectedFile = Self.overviewTag }
         } catch {
             self.error = error.localizedDescription
         }
+    }
+
+    /// Post Review's tooltip: what it does, or why it's disabled.
+    private func postReviewHelp(hasReview: Bool, hasComments: Bool) -> String {
+        if pullRequest == nil {
+            return error.map { "The pull request couldn't be loaded: \($0)" } ?? "Waiting for the pull request to load"
+        }
+        if showsEarlierFetch {
+            return error == nil
+                ? "Waiting for the latest fetch of the pull request, so nothing is posted from out-of-date data"
+                : "The pull request couldn't be fetched again, so what's shown may be out of date"
+        }
+        if !hasReview && !hasComments { return "Nothing to post yet: wait for the review to finish, or add a comment of your own" }
+        return "Choose what to post to GitHub, and confirm it"
     }
 
     private func loadStatus() async {
@@ -1206,6 +1260,10 @@ struct PullRequestReviewView: View {
                     Text("-\(pullRequest.deletions)").foregroundStyle(ChartPalette.critical)
                     Text("\(pullRequest.files.count) files")
                     if pullRequest.state != "open" { Text(pullRequest.state.capitalized).foregroundStyle(.purple) }
+                    if showsEarlierFetch {
+                        Text(error == nil ? "From an earlier fetch, updating…" : "From an earlier fetch: \(error ?? "")")
+                            .foregroundStyle(error == nil ? Color.secondary : Color.orange)
+                    }
                 }
             }
             .font(.callout)
@@ -1314,7 +1372,8 @@ struct PullRequestReviewView: View {
             }
             Button("Post Review") { posting = true }
                 .buttonStyle(.borderedProminent)
-                .disabled(pullRequest == nil || (review == nil && draft.comments.isEmpty))
+                .disabled(pullRequest == nil || showsEarlierFetch || (review == nil && draft.comments.isEmpty))
+                .help(postReviewHelp(hasReview: review != nil, hasComments: !draft.comments.isEmpty))
         }
         // The status is its own column so a wrapped button line starts under
         // the buttons, not under the status.
