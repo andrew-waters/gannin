@@ -1142,12 +1142,13 @@ struct PullRequestReviewView: View {
     private static var fetched = ReviewedPullRequestCache()
 
     private func load() async {
+        // Before the cache is shown: without a fetch to follow, nothing would clear `showsEarlierFetch`.
+        guard let api = auth.api else { return }
         if pullRequest == nil, let cached = Self.fetched[reference.id] {
             pullRequest = cached
             showsEarlierFetch = true
             if selectedFile == nil { selectedFile = Self.overviewTag }
         }
-        guard let api = auth.api else { return }
         do {
             let fresh = try await RequestLimiter.interactive {
                 try await api.reviewedPullRequest(repo: reference.repo, number: reference.number)
