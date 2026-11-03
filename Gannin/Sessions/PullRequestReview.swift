@@ -1164,6 +1164,18 @@ struct PullRequestReviewView: View {
         }
     }
 
+    /// Post Review's tooltip: what it does, or why it's disabled.
+    private func postReviewHelp(hasReview: Bool, hasComments: Bool) -> String {
+        if pullRequest == nil { return "Waiting for the pull request to load" }
+        if showsEarlierFetch {
+            return error == nil
+                ? "Waiting for the latest fetch of the pull request, so nothing is posted from out-of-date data"
+                : "The pull request couldn't be fetched again, so what's shown may be out of date"
+        }
+        if !hasReview && !hasComments { return "Nothing to post yet: wait for the review to finish, or add a comment of your own" }
+        return "Choose what to post to GitHub, and confirm it"
+    }
+
     private func loadStatus() async {
         guard let api = auth.api else { return }
         let found = try? await chargingTo(.sessionPullRequests) {
@@ -1359,6 +1371,7 @@ struct PullRequestReviewView: View {
             Button("Post Review") { posting = true }
                 .buttonStyle(.borderedProminent)
                 .disabled(pullRequest == nil || showsEarlierFetch || (review == nil && draft.comments.isEmpty))
+                .help(postReviewHelp(hasReview: review != nil, hasComments: !draft.comments.isEmpty))
         }
         // The status is its own column so a wrapped button line starts under
         // the buttons, not under the status.
