@@ -1166,7 +1166,9 @@ struct PullRequestReviewView: View {
 
     /// Post Review's tooltip: what it does, or why it's disabled.
     private func postReviewHelp(hasReview: Bool, hasComments: Bool) -> String {
-        if pullRequest == nil { return "Waiting for the pull request to load" }
+        if pullRequest == nil {
+            return error.map { "The pull request couldn't be loaded: \($0)" } ?? "Waiting for the pull request to load"
+        }
         if showsEarlierFetch {
             return error == nil
                 ? "Waiting for the latest fetch of the pull request, so nothing is posted from out-of-date data"
