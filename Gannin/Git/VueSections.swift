@@ -68,13 +68,16 @@ nonisolated enum VueSections {
         return runs
     }
 
-    private static let scriptWords: Set<String> = [
-        "const", "let", "var", "import", "export", "function", "return", "if", "else", "for", "while",
-        "class", "await", "async", "new", "this", "switch", "case",
+    /// What a line of JavaScript can start with. Only at the start of a line:
+    /// a template's plain text can hold `for`, `if` or `new` anywhere.
+    private static let scriptStarts = [
+        "const ", "let ", "var ", "import ", "export ", "function ", "function(", "return ", "return;", "await ",
+        "async ", "class ", "if (", "for (", "while (", "switch (", "} else", "else {", "else if",
     ]
 
     /// The language for lines that carry no section tag: markup when any line
-    /// looks like it, else script when any line has a JavaScript marker, else
+    /// looks like it, else script when any line has a JavaScript marker (an
+    /// arrow, an assignment, a call ending in `);` or a leading keyword), else
     /// style when any line is a `property: value;` or a selector. Anything
     /// else stays markup. Script wins over style so that code with an object
     /// literal isn't taken for a declaration.
@@ -85,8 +88,8 @@ nonisolated enum VueSections {
         }
         if markup { return "xml" }
         let script = lines.contains { line in
-            line.contains("=>") || line.contains(" = ")
-                || line.split(whereSeparator: { !$0.isLetter }).contains { scriptWords.contains(String($0)) }
+            line.contains("=>") || line.contains(" = ") || line.hasSuffix(");")
+                || scriptStarts.contains { line.hasPrefix($0) }
         }
         if script { return "javascript" }
         let style = lines.contains {

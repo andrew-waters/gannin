@@ -50,6 +50,11 @@ struct VueSectionsTests {
         #expect(runs(["{{ count }}"]).map(\.0) == ["xml"])
     }
 
+    @Test func aKeywordInsidePlainTextIsNotAScriptMarker() {
+        #expect(runs(["Save changes for this user", "Add a new item if you like"]).map(\.0) == ["xml"])
+        #expect(runs(["  doSomething(a);", "  } else {"]).map(\.0) == ["javascript"])
+    }
+
     @Test func scriptWinsOverStyleInAGuess() {
         #expect(runs(["if (a) {", "  b: c;", "}"]).map(\.0) == ["javascript"])
     }
