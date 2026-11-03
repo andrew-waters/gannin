@@ -18,7 +18,7 @@ struct DiffLanguageTests {
         (".github/workflows/ci.yml", "yaml"),
         ("README.md", "markdown"),
         ("scripts/relaunch.sh", "bash"),
-        ("web/src/App.vue", "xml"),
+        ("web/src/App.vue", "vue"),
         ("Dockerfile", "dockerfile"),
         ("build/Dockerfile", "dockerfile"),
     ])

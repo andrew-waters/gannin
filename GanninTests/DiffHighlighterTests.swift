@@ -89,17 +89,27 @@ struct DiffHighlighterTests {
         ], language: "typescript")
     }
 
-    @Test func vueComponentIsColouredAsXML() async throws {
-        let code = [
+    @Test func vueComponentKeepsItsTextAndIsColoured() async throws {
+        try await check([
             "<template>",
             "  <button class=\"a\" @click=\"count++\">{{ count }}</button>",
             "</template>",
             "",
-            "<script>",
-            "export default { data: () => ({ count: 0 }) }",
+            "<script lang=\"ts\">",
+            "export default { data: (): { count: number } => ({ count: 0 }) }",
             "</script>",
-        ]
-        #expect(DiffLanguage.name(forPath: "src/App.vue") == "xml")
-        try await check(code, language: "xml")
+            "",
+            "<style lang=\"scss\" scoped>",
+            ".a { $c: red; color: $c; }",
+            "</style>",
+        ], language: DiffLanguage.vue)
+    }
+
+    @Test func aVueHunkStartingInsideAScriptIsStillColoured() async throws {
+        try await check([
+            "const total: number = 1",
+            "export default { total }",
+            "</script>",
+        ], language: DiffLanguage.vue)
     }
 }
