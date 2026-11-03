@@ -88,4 +88,18 @@ struct DiffHighlighterTests {
             "const el = <div className=\"a\" onClick={() => x > 1 && y}>{label} &amp; more</div>",
         ], language: "typescript")
     }
+
+    @Test func vueComponentIsColouredAsXML() async throws {
+        let code = [
+            "<template>",
+            "  <button class=\"a\" @click=\"count++\">{{ count }}</button>",
+            "</template>",
+            "",
+            "<script>",
+            "export default { data: () => ({ count: 0 }) }",
+            "</script>",
+        ]
+        #expect(DiffLanguage.name(forPath: "src/App.vue") == "xml")
+        try await check(code, language: "xml")
+    }
 }
