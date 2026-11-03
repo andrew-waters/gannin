@@ -14,6 +14,7 @@ nonisolated enum DiffLanguage {
         "dockerfile": "dockerfile",
         "yml": "yaml", "yaml": "yaml",
         "md": "markdown", "markdown": "markdown",
+        "vue": "xml",
         "sh": "bash", "bash": "bash", "zsh": "bash",
     ]
 
