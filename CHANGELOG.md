@@ -35,6 +35,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Model, in Settings › General, a specialist and a workflow step, is one menu: Gannin's list (now Claude Sonnet 5.5 and Claude Haiku 5.5 in place of Sonnet 5 and Haiku 4.5), the models Claude Code has run with on this Mac lately, the newest of each family (Latest Opus and so on), and Other to type any ID. A model picked before that isn't offered stays as typed, under Other
 
 ### Fixed
+- A learning that covers a whole repo no longer shows as covering every file and PR in a review tab; it shows there only when the reviewer applied it
 - The message box at the bottom of a session keeps what you've typed when you switch to another tab and back
 - A planning question's keyboard shortcuts (letters in One at a Time, arrows, Return and Space in Keyboard List) no longer fire while you type in its text box
 - When the buttons in a review session's header wrap onto a second line, they now start directly below the first line of buttons instead of under the status at the far left
