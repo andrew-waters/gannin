@@ -40,6 +40,20 @@ struct VueSectionsTests {
         #expect(runs(["<div>", "  x", "</div>"]).map(\.0) == ["xml"])
     }
 
+    @Test func aSideWithNoTagIsGuessedFromItsContent() {
+        #expect(runs(["  const a = 1", "  return a"]).map(\.0) == ["javascript"])
+        #expect(runs(["  items.map(x => x.id)"]).map(\.0) == ["javascript"])
+        #expect(runs(["  color: red;", "  margin: 0 auto;"]).map(\.0) == ["css"])
+        #expect(runs([".card > a:hover {", "  color: red;", "}"]).map(\.0) == ["css"])
+        #expect(runs(["  <p class=\"a\">", "  :class=\"b\""]).map(\.0) == ["xml"])
+        #expect(runs(["  class=\"a\"", "  v-if=\"b\""]).map(\.0) == ["xml"])
+        #expect(runs(["{{ count }}"]).map(\.0) == ["xml"])
+    }
+
+    @Test func scriptWinsOverStyleInAGuess() {
+        #expect(runs(["if (a) {", "  b: c;", "}"]).map(\.0) == ["javascript"])
+    }
+
     @Test func aScriptInAnotherLanguageStaysMarkup() {
         #expect(runs(["<script lang=\"coffee\">", "a = 1", "</script>"]).map(\.0) == ["xml"])
     }

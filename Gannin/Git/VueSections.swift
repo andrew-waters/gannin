@@ -32,8 +32,9 @@ nonisolated enum VueSections {
     /// The runs of one side of a hunk. Tag lines are markup. A hunk shows only a
     /// few lines of context, so one can start inside a section whose opening
     /// tag it doesn't have: lines before a first closing tag are taken to be
-    /// that section, in its commonest language, and lines with no tag at all
-    /// stay markup.
+    /// that section, in its commonest language. A side with no section tag at
+    /// all, the usual case for an edit in the middle of a block, is guessed
+    /// from its content as a whole (`guess`).
     static func runs(_ code: [DiffHighlighter.Code]) -> [Run] {
         var languages = [String](repeating: "xml", count: code.count)
         var section: Section?
@@ -42,7 +43,6 @@ nonisolated enum VueSections {
             let text = line.text.trimmingCharacters(in: .whitespaces)
             if let open = section {
                 if text.contains(open.closing) {
-                    if !seenTag { backfill(&languages, before: index, with: open.language) }
                     section = nil
                 } else {
                     languages[index] = open.language
@@ -56,6 +56,7 @@ nonisolated enum VueSections {
                 seenTag = true
             }
         }
+        if !seenTag { languages = [String](repeating: guess(code), count: code.count) }
         var runs: [Run] = []
         for (index, line) in code.enumerated() {
             if runs.last?.language == languages[index] {
@@ -65,6 +66,34 @@ nonisolated enum VueSections {
             }
         }
         return runs
+    }
+
+    private static let scriptWords: Set<String> = [
+        "const", "let", "var", "import", "export", "function", "return", "if", "else", "for", "while",
+        "class", "await", "async", "new", "this", "switch", "case",
+    ]
+
+    /// The language for lines that carry no section tag: markup when any line
+    /// looks like it, else script when any line has a JavaScript marker, else
+    /// style when any line is a `property: value;` or a selector. Anything
+    /// else stays markup. Script wins over style so that code with an object
+    /// literal isn't taken for a declaration.
+    static func guess(_ code: [DiffHighlighter.Code]) -> String {
+        let lines = code.map { $0.text.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let markup = lines.contains {
+            $0.hasPrefix("<") || $0.contains("</") || $0.contains("/>") || $0.contains("=\"") || $0.contains("='")
+        }
+        if markup { return "xml" }
+        let script = lines.contains { line in
+            line.contains("=>") || line.contains(" = ")
+                || line.split(whereSeparator: { !$0.isLetter }).contains { scriptWords.contains(String($0)) }
+        }
+        if script { return "javascript" }
+        let style = lines.contains {
+            $0.wholeMatch(of: /-{0,2}[a-zA-Z][-\w]*\s*:\s*[^={}]+;/) != nil
+                || $0.wholeMatch(of: /[.#&@:\[\]\w>~+*, -]+\{/) != nil
+        }
+        return style ? "css" : "xml"
     }
 
     private static func backfill(_ languages: inout [String], before index: Int, with language: String) {
