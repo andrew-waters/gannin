@@ -1048,7 +1048,7 @@ final class SessionStore {
                 directory: remoteDirectory,
                 script: SessionScript.start(session, root: SessionScript.shellPath(session.harnessPath ?? session.remoteWorkspace ?? Self.defaultWorkspace), directory: remoteDirectory),
                 brief: brief,
-                settings: session.agent.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: remoteDirectory, branch: session.branch), sandboxed: session.isSandboxed),
+                settings: session.agent.settings(directory: remoteDirectory, isRemote: true, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: remoteDirectory, branch: session.branch), sandboxed: session.isSandboxed, concise: session.isReviewer),
                 files: session.isSandboxed ? ["inner.sh": SandboxLaunch.innerScript(session)] : [:]
             )
             command = SessionScript.connecting(connect, to: remote)
@@ -1070,7 +1070,7 @@ final class SessionStore {
             let local = SessionScript.quoted(real.path)
             if session.isSandboxed { prepareSandbox(session, directory: real) }
             // A sandbox's statusLine can't run the user's own command, which is on the Mac.
-            try? Data(session.agent.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed).utf8).write(to: directory.appending(path: "settings.json"))
+            try? Data(session.agent.settings(directory: local, isRemote: session.isSandboxed, allowing: Self.allowedCommands(session), rules: rules.hookCommand(directory: local, branch: session.branch), sandboxed: session.isSandboxed, concise: session.isReviewer).utf8).write(to: directory.appending(path: "settings.json"))
             let script = directory.appending(path: "start.sh")
             try? Data(SessionScript.start(session, root: SessionScript.quoted(root.path), directory: local).utf8).write(to: script)
             command = "bash \(SessionScript.quoted(script.path))"
