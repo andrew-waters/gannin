@@ -87,8 +87,9 @@ protocol InteractiveProvider: AgentProvider {
     /// The settings file the session is started with: hooks writing its
     /// state into `directory` (a shell expression on its box), the PR it
     /// opens, the statusline, and the session rules' hook when there are
-    /// rules. `allowing` are commands it may run without asking.
-    func settings(directory: String, isRemote: Bool, allowing: [String], rules: String?, sandboxed: Bool) -> String
+    /// rules. `allowing` are commands it may run without asking. `concise`
+    /// asks for the provider's terse output style, where it has one.
+    func settings(directory: String, isRemote: Bool, allowing: [String], rules: String?, sandboxed: Bool, concise: Bool) -> String
 
     /// The session's transcript on this Mac; `home` is a sandbox's config
     /// folder for it, nil for the user's own.

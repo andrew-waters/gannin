@@ -109,6 +109,15 @@ struct PairReviewTests {
         #expect(!none.contains("permissions"))
     }
 
+    @Test func conciseSettingsSetTheOutputStyle() throws {
+        func style(_ json: String) throws -> String? {
+            let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+            return object["outputStyle"] as? String
+        }
+        #expect(try style(AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true, concise: true)) == "Concise")
+        #expect(try style(AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true)) == nil)
+    }
+
     @Test func findingsPromptSaysWhatsNext() {
         let findings = [SessionTranscript.Finding(path: "app/a.swift", line: 3, comment: "Off by one")]
         let again = SessionStore.findingsPrompt(findings, round: 1, script: ".gannin/ready-for-review", last: false)
