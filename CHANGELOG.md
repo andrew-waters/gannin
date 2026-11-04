@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Fixed
+- A review finding that repeats an existing comment word for word is now recognised as a duplicate even when it's only a few words long
 - `.vue` files get syntax highlighting in a pull request's diff and in a session's Changes pane, with the template, script and style sections each coloured in their own language
 
 ## [0.0.6] - 2026-11-02

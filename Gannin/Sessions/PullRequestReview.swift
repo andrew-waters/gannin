@@ -402,6 +402,8 @@ struct ReviewedPullRequest: Equatable {
     static func isSameComment(existing: String, finding: String) -> Bool {
         let x = words(existing), y = words(finding)
         guard !x.isEmpty, !y.isEmpty else { return false }
+        // Identical wording always matches, however short: the length floors below only guard fuzzy matches.
+        if x == y { return true }
         let said = " " + x.joined(separator: " ") + " ", asked = y.joined(separator: " ")
         if asked.count >= 20, said.contains(" " + asked + " ") { return true }
         // Sharing a prefix isn't enough: "crashes" and "leaks memory" are different points.

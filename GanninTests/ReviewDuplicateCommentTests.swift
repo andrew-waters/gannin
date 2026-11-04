@@ -100,6 +100,11 @@ struct ReviewDuplicateCommentTests {
         #expect(ReviewedPullRequest.isSameComment(existing: "Rename this variable.", finding: "rename this variable"))
     }
 
+    @Test func identicalShortCommentsMatch() {
+        #expect(ReviewedPullRequest.isSameComment(existing: "Typo here.", finding: "typo here"))
+        #expect(ReviewedPullRequest.isSameComment(existing: "nit", finding: "Nit!"))
+    }
+
     @Test func aFindingThatAddsToTheCommentIsKept() {
         let comment = "This force unwrap crashes"
         let finding = "This force unwrap crashes when the token is missing, and the retry below never stops"
