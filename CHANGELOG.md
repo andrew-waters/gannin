@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Fixed
+- A review finding that the pull request already has a comment for is no longer listed in the review tab, and a review you've just posted shows its comments straight away instead of after Check for Changes
 - A review finding that repeats an existing comment word for word is now recognised as a duplicate even when it's only a few words long
 - `.vue` files get syntax highlighting in a pull request's diff and in a session's Changes pane, with the template, script and style sections each coloured in their own language
 - Opening a pull request's review again shows its diff at once from the last fetch, then updates it, instead of waiting for GitHub every time

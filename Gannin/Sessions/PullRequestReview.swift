@@ -333,8 +333,7 @@ struct ReviewedPullRequest: Equatable {
         // This review, if it's already on GitHub (posted from another Mac,
         // or before a relaunch), isn't an earlier one: leaving out what it
         // said would shrink the body so `PostedReview.repeated` misses it.
-        let summary = review?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let earlier = earlierReviews.filter { summary.isEmpty || !$0.body.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(summary) }
+        let earlier = earlierReviews(before: review)
         for finding in review?.findings ?? [] {
             let decision = draft.decisions[finding.key]
             if decision == .dismissed { continue }
@@ -361,6 +360,24 @@ struct ReviewedPullRequest: Equatable {
             inline.append(["path": comment.path, "line": comment.line, "side": comment.isOld ? "LEFT" : "RIGHT", "body": comment.body])
         }
         return (inline, general, omitted)
+    }
+
+    /// The PR's reviews other than `review`'s own post, if it's on GitHub.
+    private func earlierReviews(before review: SessionTranscript.ReviewResult?) -> [PostedReview] {
+        let summary = review?.summary.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return earlierReviews.filter { summary.isEmpty || !$0.body.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix(summary) }
+    }
+
+    /// Whether the PR already says what `finding` does, as `comments(for:draft:)`
+    /// decides for posting, so the review can leave it out of what it lists.
+    func isAlreadySaid(_ finding: SessionTranscript.Finding, in review: SessionTranscript.ReviewResult?, draft: ReviewDraft) -> Bool {
+        var text = finding.comment
+        switch draft.decisions[finding.key] {
+        case .dismissed: return false
+        case .edited(let edited): text = edited
+        case nil: break
+        }
+        return said(text, path: finding.path, line: finding.line, earlier: earlierReviews(before: review)) != nil
     }
 
     /// Who already said `text` about `path`, and where: a review comment on
@@ -1085,7 +1102,18 @@ struct PullRequestReviewView: View {
         }
     }
 
-    private func visible(_ findings: [SessionTranscript.Finding]) -> [SessionTranscript.Finding] {
+    /// The review's findings that the PR doesn't already say (those are left
+    /// out of the post, so they aren't listed), unfiltered.
+    private func unsaid(_ review: SessionTranscript.ReviewResult?) -> [SessionTranscript.Finding] {
+        let findings = review?.findings ?? []
+        guard var pull = pullRequest else { return findings }
+        pull.viewer = auth.viewer?.login
+        let draft = sessions.reviewDrafts[session.id] ?? ReviewDraft()
+        return findings.filter { !pull.isAlreadySaid($0, in: review, draft: draft) }
+    }
+
+    private func visible(_ review: SessionTranscript.ReviewResult?) -> [SessionTranscript.Finding] {
+        let findings = unsaid(review)
         guard let filter else { return findings }
         return findings.filter(filter.admits)
     }
@@ -1137,7 +1165,7 @@ struct PullRequestReviewView: View {
         } message: {
             Text("The reviewer is ended and its checkout removed. The review, your decisions and comments stay in Agents › Reviews, to read again or resume.")
         }
-        .sheet(isPresented: $posting) {
+        .sheet(isPresented: $posting, onDismiss: { Task { await load() } }) {
             if let pullRequest, !showsEarlierFetch {
                 PostReviewSheet(session: session, pullRequest: pullRequest, review: review)
             }
@@ -1491,11 +1519,11 @@ struct PullRequestReviewView: View {
     // MARK: Files
 
     private func fileList(review: SessionTranscript.ReviewResult?) -> some View {
-        let findings = visible(review?.findings ?? [])
+        let findings = visible(review)
         let drafts = sessions.reviewDrafts[session.id] ?? ReviewDraft()
         return VStack(spacing: 0) {
-            if !(review?.findings ?? []).isEmpty {
-                filterBar(review?.findings ?? [])
+            if !unsaid(review).isEmpty {
+                filterBar(unsaid(review))
                 Divider()
             }
             List(selection: $selectedFile) {
@@ -1667,7 +1695,7 @@ struct PullRequestReviewView: View {
 
     @ViewBuilder
     private func diffColumn(review: SessionTranscript.ReviewResult?) -> some View {
-        let findings = visible(review?.findings ?? [])
+        let findings = visible(review)
         if let pullRequest {
             if selectedFile == Self.overviewTag {
                 ReviewOverview(
