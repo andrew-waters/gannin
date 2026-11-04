@@ -1113,10 +1113,9 @@ struct PullRequestReviewView: View {
         }
     }
 
-    /// The review's findings that the PR doesn't already say (those are left
-    /// out of the post, so they aren't listed), unfiltered.
-    /// Worked out once per body evaluation: it compares every finding with
-    /// every comment.
+    /// The keys of the review's findings the PR already says. Posting leaves
+    /// these out, so the tab doesn't list them. Worked out once per body
+    /// evaluation: it compares every finding with every comment.
     private func alreadySaid(_ review: SessionTranscript.ReviewResult?) -> Set<String> {
         guard var pull = pullRequest else { return [] }
         pull.viewer = auth.viewer?.login
