@@ -254,4 +254,39 @@ struct ReviewDuplicateCommentTests {
         #expect(general.count == 1)
         #expect(omitted.isEmpty)
     }
+
+    // MARK: What the review tab lists
+
+    private let sentence = "This force unwrap crashes when the token is missing."
+
+    @Test func aFindingTheCommentsCoverIsCountedAsSaid() {
+        let result = review(line: 5, comment: sentence)
+        let keys = pull(existing: [existing(line: 5, body: sentence)]).saidFindingKeys(in: result, draft: ReviewDraft())
+        #expect(keys == Set(result.findings.map(\.key)))
+        #expect(pull().saidFindingKeys(in: result, draft: ReviewDraft()).isEmpty)
+    }
+
+    @Test func aDismissedFindingStaysListed() {
+        let result = review(line: 5, comment: sentence)
+        var draft = ReviewDraft()
+        draft.decisions[result.findings[0].key] = .dismissed
+        #expect(pull(existing: [existing(line: 5, body: sentence)]).saidFindingKeys(in: result, draft: draft).isEmpty)
+    }
+
+    @Test func anEditedFindingIsMatchedByItsEditedText() {
+        let result = review(line: 5, comment: sentence)
+        var draft = ReviewDraft()
+        draft.decisions[result.findings[0].key] = .edited("Rename this to match the other handlers.")
+        #expect(pull(existing: [existing(line: 5, body: sentence)]).saidFindingKeys(in: result, draft: draft).isEmpty)
+        let covered = pull(existing: [existing(line: 5, body: "Rename this to match the other handlers.")])
+        #expect(covered.saidFindingKeys(in: result, draft: draft) == Set(result.findings.map(\.key)))
+    }
+
+    @Test func theReviewsOwnPostDoesNotCoverItsFindings() {
+        let result = review(line: 40, comment: sentence, path: "B.swift")
+        let own = earlier(ReviewedPullRequest.body(summary: "s", general: result.findings))
+        #expect(pull(reviews: [own]).saidFindingKeys(in: result, draft: ReviewDraft()).isEmpty)
+        let other = earlier("Another summary\n\n- `B.swift:40`: \(sentence)")
+        #expect(pull(reviews: [other]).saidFindingKeys(in: result, draft: ReviewDraft()) == Set(result.findings.map(\.key)))
+    }
 }
