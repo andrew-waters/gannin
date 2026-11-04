@@ -10,7 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Changed
-- Reviewers (pull request reviews and pair-review reviewers) now run Claude Code's Concise output style, so their replies skip preamble and recap
+- Reviewers (pull request reviews and pair-review reviewers) now run Claude Code's Concise output style, so their replies skip preamble and recap (needs Claude Code 2.1.237 or later)
 
 ### Fixed
 - A review finding that repeats an existing comment word for word is now recognised as a duplicate even when it's only a few words long

@@ -173,8 +173,10 @@ struct ClaudeCodeProvider: InteractiveProvider, AskingProvider {
     /// (`SessionRules.hookCommand`), nil with none set. `sandboxed` adds hooks
     /// that write what claude's doing to the sandbox's activity log
     /// (`SandboxLaunch.activityScript`). `concise` sets the built-in
-    /// "Concise" output style. The name is case-sensitive: claude falls back
-    /// to Default for one it doesn't recognise.
+    /// "Concise" output style, which needs Claude Code 2.1.237 or later: an
+    /// older claude ignores the key without saying so. The name is
+    /// case-sensitive: claude falls back to Default for one it doesn't
+    /// recognise.
     func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], rules: String? = nil, sandboxed: Bool = false, concise: Bool = false) -> String {
         let signalCode = SessionScript.signalCode
         func signal(_ payload: String) -> String {
