@@ -100,6 +100,32 @@ struct ReviewDuplicateCommentTests {
         #expect(ReviewedPullRequest.isSameComment(existing: "Rename this variable.", finding: "rename this variable"))
     }
 
+    @Test func identicalShortCommentsMatchOnTheLine() {
+        #expect(ReviewedPullRequest.isSameComment(existing: "Typo here.", finding: "typo here", onTheLine: true))
+        #expect(ReviewedPullRequest.isSameComment(existing: "nit", finding: "Nit!", onTheLine: true))
+        #expect(!ReviewedPullRequest.isSameComment(existing: "nit", finding: "Nit!"))
+    }
+
+    @Test func identicalShortCommentOnTheSameLineIsLeftOut() {
+        let (inline, _, omitted) = pull(existing: [existing(line: 5, body: "Typo here.")]).comments(for: review(line: 5, comment: "typo here"), draft: ReviewDraft())
+        #expect(inline.isEmpty)
+        #expect(omitted.count == 1)
+    }
+
+    @Test func identicalShortCommentOnALineFarAwayIsKept() {
+        let (inline, _, omitted) = pull(existing: [existing(line: 15, body: "Typo here.")]).comments(for: review(line: 5, comment: "typo here"), draft: ReviewDraft())
+        #expect(inline.count == 1)
+        #expect(omitted.isEmpty)
+    }
+
+    @Test func shortFindingWithNoLineIsKeptWhateverTheFileSays() {
+        let (inline, general, omitted) = pull(existing: [existing(line: 5, body: "Nit.")], reviews: [earlier("s\n\n- `A.swift`: Nit.")])
+            .comments(for: review(line: nil, comment: "Nit."), draft: ReviewDraft())
+        #expect(inline.isEmpty)
+        #expect(general.count == 1)
+        #expect(omitted.isEmpty)
+    }
+
     @Test func aFindingThatAddsToTheCommentIsKept() {
         let comment = "This force unwrap crashes"
         let finding = "This force unwrap crashes when the token is missing, and the retry below never stops"
