@@ -345,7 +345,8 @@ struct ReviewedPullRequest: Equatable {
     /// that has since changed.
     private func said(_ text: String, path: String, line: Int?, earlier: [PostedReview]) -> (author: String, said: String, url: URL?)? {
         let comment = existingComments.first { comment in
-            guard !comment.isOld, comment.path == path, Self.isSameComment(existing: comment.body, finding: text) else { return false }
+            let onTheLine = line.map { abs(comment.line - $0) <= Self.lineLeeway } ?? false
+            guard !comment.isOld, comment.path == path, Self.isSameComment(existing: comment.body, finding: text, onTheLine: onTheLine && !comment.isOutdated) else { return false }
             if comment.isOutdated {
                 guard let viewer, comment.author.caseInsensitiveCompare(viewer) == .orderedSame else { return false }
                 return true
@@ -399,11 +400,13 @@ struct ReviewedPullRequest: Equatable {
     /// Case, punctuation and suggestion blocks are ignored, since people
     /// reword and Gannin adds the latter. A finding that adds to the comment
     /// isn't covered by it, so containment only works one way.
-    static func isSameComment(existing: String, finding: String) -> Bool {
+    /// `onTheLine` is whether the comment is already known to sit at the
+    /// finding's line. Only then does identical wording match however short it
+    /// is: matched anywhere in a file, "Nit." would swallow every other "Nit.".
+    static func isSameComment(existing: String, finding: String, onTheLine: Bool = false) -> Bool {
         let x = words(existing), y = words(finding)
         guard !x.isEmpty, !y.isEmpty else { return false }
-        // Identical wording always matches, however short: the length floors below only guard fuzzy matches.
-        if x == y { return true }
+        if onTheLine, x == y { return true }
         let said = " " + x.joined(separator: " ") + " ", asked = y.joined(separator: " ")
         if asked.count >= 20, said.contains(" " + asked + " ") { return true }
         // Sharing a prefix isn't enough: "crashes" and "leaks memory" are different points.
