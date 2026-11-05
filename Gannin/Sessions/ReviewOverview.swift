@@ -68,8 +68,10 @@ struct ReviewReadiness {
 
     /// `config` gives the checks' modes: a failed error blocks, a failed
     /// warning is to fix.
+    /// `said`: keys of findings the PR already says, which aren't counted
+    /// or listed, as they aren't posted.
     /// `isStale`: commits pushed since the review, not looked at yet.
-    init(status: SessionPullRequest?, pullRequest: ReviewedPullRequest?, review: SessionTranscript.ReviewResult?, draft: ReviewDraft, isReviewing: Bool, config: ReviewConfig? = nil, isStale: Bool = false) {
+    init(status: SessionPullRequest?, pullRequest: ReviewedPullRequest?, review: SessionTranscript.ReviewResult?, draft: ReviewDraft, said: Set<String> = [], isReviewing: Bool, config: ReviewConfig? = nil, isStale: Bool = false) {
         if let state = pullRequest?.state, state != "open" {
             sentence = state == "merged" ? "Merged" : "Closed"
             color = state == "merged" ? .purple : .secondary
@@ -129,7 +131,7 @@ struct ReviewReadiness {
             items.append(Item(id: "reviewing", tier: .waiting, text: "The reviewer is still looking"))
         }
 
-        let findings = (review?.findings ?? []).filter { draft.decisions[$0.key] != .dismissed }
+        let findings = (review?.findings ?? []).filter { draft.decisions[$0.key] != .dismissed && !said.contains($0.key) }
         var counts: [ReviewSeverity: Int] = [:]
         for finding in findings {
             let severity = ReviewSeverity(finding.severity) ?? .minor
