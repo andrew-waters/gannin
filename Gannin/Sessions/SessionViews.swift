@@ -211,7 +211,7 @@ private struct SessionTabBar: View {
             addMenu
                 .padding(.horizontal, 8)
         }
-        .frame(height: 56)
+        .frame(height: 44)
         // Lighter than the window, with the selected tab cut from the page
         // beneath it.
         .background(SessionTabColors.bar)
