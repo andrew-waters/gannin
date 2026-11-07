@@ -13,6 +13,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Reviewers (pull request reviews and pair-review reviewers) now run Claude Code's Concise output style, so their replies skip preamble and recap (needs Claude Code 2.1.237 or later)
 - Reviewers no longer connect to Claude Code's Remote Control, even when Enable Remote Control for all sessions is on in your Claude Code config
 - The session window's tab bar is shorter, so tabs have less empty space around their text
+- In a planning session, the Requirements pane is dimmed unless Requirements is being reviewed (or the plan is at Agree), and the Tasks stage is dimmed until the tasks are put to the room
 
 ### Fixed
 - A review finding that the pull request already has a comment for is no longer listed in the review tab, and a review you've just posted shows its comments straight away instead of after Check for Changes

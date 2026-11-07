@@ -470,6 +470,20 @@ struct PlanningWorkspaceView: View {
     /// A step other than the one under way is open.
     private var isLookingBack: Bool { viewing.map { $0 != current } ?? false }
 
+    /// The requirement is being reviewed: its stage is shown or under way,
+    /// or the whole plan is up at Agree. Otherwise its pane fades.
+    private var requirementInView: Bool { shown == .requirements || current == .requirements || current == .agree }
+
+    /// Tasks haven't been put to the room yet: an earlier stage is under
+    /// way, or Tasks is but nothing is proposed or claude is still drafting.
+    private var tasksNotReached: Bool {
+        switch current {
+        case .context, .requirements, .design: true
+        case .tasks: (state?.tasks.isEmpty ?? true) || busy
+        case .agree: false
+        }
+    }
+
     private var planning: PlanningInfo? { session.planning }
     private var state: PlanningState? { planning?.state }
     private var running: Bool { sessions.isRunning(session.id) }
@@ -532,6 +546,8 @@ struct PlanningWorkspaceView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                         }
                         .background(Color(nsColor: .windowBackgroundColor).opacity(0.5))
+                        .opacity(requirementInView ? 1 : 0.35)
+                        .animation(.easeInOut(duration: 0.25), value: requirementInView)
                     }
                 }
                 .font(.title3)
@@ -880,7 +896,10 @@ struct PlanningWorkspaceView: View {
             case .context: contextStep
             case .requirements: requirementsStep
             case .design: designStep
-            case .tasks: tasksStep
+            case .tasks:
+                tasksStep
+                    .opacity(tasksNotReached ? 0.35 : 1)
+                    .animation(.easeInOut(duration: 0.25), value: tasksNotReached)
             case .agree: agreeStep
             }
         }
