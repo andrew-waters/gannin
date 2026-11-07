@@ -176,8 +176,11 @@ struct ClaudeCodeProvider: InteractiveProvider, AskingProvider {
     /// "Concise" output style, which needs Claude Code 2.1.237 or later: an
     /// older claude ignores the key without saying so. The name is
     /// case-sensitive: claude falls back to Default for one it doesn't
-    /// recognise.
-    func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], rules: String? = nil, sandboxed: Bool = false, concise: Bool = false) -> String {
+    /// recognise. `remoteControl` false writes `remoteControlAtStartup:
+    /// false`, which overrides a user-level `true` (Claude Code has no
+    /// per-session flag to turn it off); true leaves the key out, so the
+    /// user's own setting applies.
+    func settings(directory dir: String, isRemote: Bool, allowing: [String] = [], rules: String? = nil, sandboxed: Bool = false, concise: Bool = false, remoteControl: Bool = true) -> String {
         let signalCode = SessionScript.signalCode
         func signal(_ payload: String) -> String {
             #"printf '\033]\#(signalCode);\#(payload)\007' > /dev/tty 2>/dev/null"#
@@ -244,6 +247,7 @@ struct ClaudeCodeProvider: InteractiveProvider, AskingProvider {
         let statusLine = #"input=$(cat); printf '%s' "$input" | tr -d '\n' > \#(dir)/statusline 2>/dev/null; \#(render)"#
         var object: [String: Any] = ["hooks": hooks, "statusLine": ["type": "command", "command": statusLine]]
         if concise { object["outputStyle"] = "Concise" }
+        if !remoteControl { object["remoteControlAtStartup"] = false }
         if !allowing.isEmpty { object["permissions"] = ["allow": allowing.map { "Bash(\($0):*)" }] }
         let data = (try? JSONSerialization.data(
             withJSONObject: object,

@@ -118,6 +118,15 @@ struct PairReviewTests {
         #expect(try style(AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true)) == nil)
     }
 
+    @Test func settingsTurnRemoteControlOffOnlyWhenAsked() throws {
+        func value(_ json: String) throws -> Any? {
+            let object = try #require(try JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any])
+            return object["remoteControlAtStartup"]
+        }
+        #expect(try value(AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true, remoteControl: false)) as? Bool == false)
+        #expect(try value(AgentProviders.claudeCode.settings(directory: "/tmp/s", isRemote: true)) == nil)
+    }
+
     @Test func findingsPromptSaysWhatsNext() {
         let findings = [SessionTranscript.Finding(path: "app/a.swift", line: 3, comment: "Off by one")]
         let again = SessionStore.findingsPrompt(findings, round: 1, script: ".gannin/ready-for-review", last: false)

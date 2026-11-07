@@ -5,7 +5,7 @@ sidebar:
   order: 5
 ---
 
-With pair review, Claude's change is looked at by a second agent before you see it. The reviewer can read but not edit, and nothing is posted to GitHub. It answers in Claude Code's Concise output style, so its replies state the result first and skip preamble and recap. That style needs Claude Code 2.1.237 or later; with an older version the reviewer stays verbose.
+With pair review, Claude's change is looked at by a second agent before you see it. The reviewer can read but not edit, and nothing is posted to GitHub. It answers in Claude Code's Concise output style, so its replies state the result first and skip preamble and recap. That style needs Claude Code 2.1.237 or later; with an older version the reviewer stays verbose. The reviewer doesn't connect to Claude Code's Remote Control, even if you've turned on Enable Remote Control for all sessions in Claude Code.
 
 ## How it works
 

@@ -89,7 +89,10 @@ protocol InteractiveProvider: AgentProvider {
     /// opens, the statusline, and the session rules' hook when there are
     /// rules. `allowing` are commands it may run without asking. `concise`
     /// asks for the provider's terse output style, where it has one.
-    func settings(directory: String, isRemote: Bool, allowing: [String], rules: String?, sandboxed: Bool, concise: Bool) -> String
+    /// `remoteControl` false keeps the session from connecting to the
+    /// provider's remote control, which the user's own config may turn on
+    /// for every session.
+    func settings(directory: String, isRemote: Bool, allowing: [String], rules: String?, sandboxed: Bool, concise: Bool, remoteControl: Bool) -> String
 
     /// The session's transcript on this Mac; `home` is a sandbox's config
     /// folder for it, nil for the user's own.
