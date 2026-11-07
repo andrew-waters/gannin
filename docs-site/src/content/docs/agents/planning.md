@@ -29,7 +29,7 @@ Moving forward approves the stages you passed. Back (with a reason, which is sen
 
 ## In the room
 
-On top is what's happening now: a question for the room, what Claude is reading, or whose turn it is. Below is the stage you're looking at, with the requirement as it stands on the right. The stage dims while a question is open (click it to look at it). The requirement on the right is dimmed except while Requirements is the stage you're looking at or the one under way, and at Agree, so you can read it while you review it. Tasks are dimmed until that stage is under way.
+On top is what's happening now: a question for the room, what Claude is reading, or whose turn it is. Below is the stage you're looking at, with the requirement as it stands on the right. The stage dims while a question is open (click it to look at it). The requirement on the right is dimmed except while Requirements is the stage you're looking at or the one under way, and at Agree, so you can read it while you review it. Tasks are dimmed until they're put to you: while an earlier stage is under way, and while Claude is still drafting them.
 
 Questions come in a style you pick, kept on this Mac: One at a Time (letter keys), Poll the Room (counts hands and sends the most), Keyboard List or Conversation. The Question menu, shown while the Claude Code window is in front, has the same actions as the keys, with ⌘1 to ⌘9 to answer in One at a Time; it's greyed out when no question is up, and typing in an answer box or the comment box never triggers it (⌘1 to ⌘9 do nothing while you're editing text). A comment box at the foot sends "From the room", closing an open question first. The terminal and prompt box are in a drawer.
 
