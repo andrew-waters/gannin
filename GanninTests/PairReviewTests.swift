@@ -75,7 +75,7 @@ struct PairReviewTests {
         }
 
         let issue = brief(session())
-        #expect(issue.contains("Before opening it as ready for review, " + asks(".worktrees/68-pair-review/.gannin/ready-for-review")))
+        #expect(issue.contains("Before opening it as ready for review, and before CI is run on it, " + asks(".worktrees/68-pair-review/.gannin/ready-for-review")))
         #expect(brief(session(inHarness: false)).contains(asks(".gannin/ready-for-review")))
 
         var noIssue = session()
