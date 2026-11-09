@@ -424,7 +424,7 @@ enum SessionBrief {
 
         var working = ["## Working here", ""]
         // The PR step repeats the review request above so it isn't skipped. A draft is fine before the review.
-        let reviewFirst = session.canPairReview ? " Before opening it as ready for review, run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and wait for its outcome (opening it as a draft first is fine)." : ""
+        let reviewFirst = session.canPairReview ? " Before opening it as ready for review, and before CI is run on it, run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and wait for its outcome (opening it as a draft first is fine)." : ""
         if session.isInHarness, let harnessPath = session.harnessPath, let harnessRepo = session.harnessRepo {
             let folder = ".worktrees/\(session.branch)"
             // Where linked PRs were opened: likely where the code is.
@@ -539,6 +539,6 @@ enum SessionBrief {
 
     /// When and how to ask for a second agent's review (`PairReview`).
     private static func readyForReviewNote(_ session: CodeSession) -> String {
-        "- Required for every change, however small: when the change is ready for review (committed, built and checked; before a pull request is opened as ready for review, though a draft is fine), run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and end your turn. Don't open the pull request as ready for review, or report the work done, without having run it. Gannin may have a second agent review it; it can't edit, and its findings come back to you as a message. Fix those you agree with, say why not for the rest, commit, and run the script again. Gannin says when the review has settled, or to carry on without one."
+        "- Required for every change, however small: when the change is ready for review (committed, built and checked; before a pull request is opened as ready for review, though a draft is fine), run `\(session.readyForReviewScript) \"<what changed and where to look>\"` and end your turn. Run it before CI is run, not after: don't wait for CI to pass, or ask for it to be run, first. Don't open the pull request as ready for review, or report the work done, without having run it. Gannin may have a second agent review it; it can't edit, and its findings come back to you as a message. Fix those you agree with, say why not for the rest, commit, and run the script again. Gannin says when the review has settled, or to carry on without one."
     }
 }
