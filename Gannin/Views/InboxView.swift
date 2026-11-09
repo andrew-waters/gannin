@@ -354,7 +354,7 @@ struct InboxView: View {
                 )
             }))
         }
-        if shown.contains(.reviews) { sections.append((InboxSection.reviews.rawValue, inbox.reviews.filter { !approving.contains($0.pr.id) }.map { item in
+        if shown.contains(.reviews) { sections.append((InboxSection.reviews.rawValue, inbox.reviews.filter { !approving.contains($0.pr.id) && !sessions.isFinishedReview(of: $0.pr.id, askedAt: $0.askedAt) }.map { item in
             let requested = item.pr.isDraft ? "Draft, review requested" : "Review requested"
             let others = Inbox.otherReviews(item.pr, excluding: auth.viewer?.login)
             return InboxRow(

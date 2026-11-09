@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Fixed
+- A review you finish no longer comes straight back under Needs your review in the Inbox; it returns only if you're asked to review the PR again
+
 ### Changed
 - Reviewers (pull request reviews and pair-review reviewers) now run Claude Code's Concise output style, so their replies skip preamble and recap (needs Claude Code 2.1.237 or later)
 - Reviewers no longer connect to Claude Code's Remote Control, even when Enable Remote Control for all sessions is on in your Claude Code config

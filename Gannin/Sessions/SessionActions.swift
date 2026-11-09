@@ -659,6 +659,16 @@ extension SessionStore {
         closeTab(id)
     }
 
+    /// Whether the PR's review was finished after the request for it was made.
+    /// GitHub keeps listing you as asked until you post a review, so without
+    /// this a finished review's PR would come straight back as waiting on
+    /// you. A request made after it was finished (a re-request) still counts.
+    func isFinishedReview(of pullRequestID: String, askedAt: Date?) -> Bool {
+        guard let archivedAt = review(of: pullRequestID)?.archivedAt else { return false }
+        guard let askedAt else { return true }
+        return askedAt <= archivedAt
+    }
+
     /// Ends a planning session but keeps it: claude and its helpers are
     /// ended and the tab closes. The worktree stays, as `planning.json` is
     /// read from it, and the plan, tasks and decisions stay to read from
