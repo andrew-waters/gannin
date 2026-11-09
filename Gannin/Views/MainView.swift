@@ -1627,7 +1627,7 @@ struct OrgSidebar: View {
         case .pullRequests: return workload.openPullRequests.count
         case .inbox:
             guard let login = auth.viewer?.login else { return 0 }
-            let inbox = Inbox(login: login, workload: workload, history: nil, workflow: IssueWorkflow())
+            let inbox = Inbox(login: login, workload: workload, history: nil, workflow: IssueWorkflow(), isFinished: sessions.isFinishedReview)
             // Held approvals GitHub no longer lists as review requests are in the Inbox too.
             let listed = Set(inbox.reviews.map(\.pr.id))
             return inbox.count + sessions.approvalQueue(in: workload.openPullRequests, login: login).filter { !listed.contains($0.pr.id) }.count

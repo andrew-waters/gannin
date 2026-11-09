@@ -56,7 +56,7 @@ Such PRs are first in the Inbox (Ready for your approval), at the top of Act now
 
 The Inbox's While you were away lists what happened on PRs Claude reviewed, one row per review, until you've looked at its tab.
 
-When the PR has merged, right-click its row and choose Finish Review to end the reviewer and keep the review in your history, without opening it. The row leaves the Inbox, as it does when you open the review and choose Finish. Closed PRs that weren't merged don't get the menu item.
+When the PR has merged, right-click its row and choose Finish Review to end the reviewer and keep the review in your history, without opening it. The row leaves the Inbox, as it does when you open the review and choose Finish. A PR you've finished a review of stays out of Needs your review, even though GitHub still lists you as asked, until you're asked to review it again. Closed PRs that weren't merged don't get the menu item.
 
 ## Review config
 

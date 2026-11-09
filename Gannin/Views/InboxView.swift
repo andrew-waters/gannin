@@ -115,7 +115,7 @@ struct InboxView: View {
 
     var body: some View {
         if let login = auth.viewer?.login {
-            let inbox = Inbox(login: login, workload: workload, history: issueStore.history(for: org), workflow: configs.config(for: org).workflow)
+            let inbox = Inbox(login: login, workload: workload, history: issueStore.history(for: org), workflow: configs.config(for: org).workflow, isFinished: sessions.isFinishedReview)
             let sections = sections(inbox)
             VStack(spacing: 0) {
                 bar
@@ -596,11 +596,15 @@ struct Inbox {
     let pullRequests: [PullRequest]
     let issues: [AssignedIssue]
 
-    init(login: String, workload: Workload, history: IssueHistory?, workflow: IssueWorkflow) {
+    /// `isFinished` says whether a review request (PR node ID, when you were
+    /// asked) was answered by a review you finished, which leaves `reviews`
+    /// and so `count`, so the list and the badge agree.
+    init(login: String, workload: Workload, history: IssueHistory?, workflow: IssueWorkflow, isFinished: (String, Date?) -> Bool = { _, _ in false }) {
         let open = workload.openPullRequests
         reviews = open
             .filter { $0.requestedReviewers.contains { $0.login == login } }
             .map { Review(pr: $0, askedAt: $0.reviewRequestedAt[login]) }
+            .filter { !isFinished($0.pr.id, $0.askedAt) }
             .sorted { ($0.askedAt ?? $0.pr.createdAt) < ($1.askedAt ?? $1.pr.createdAt) }
         changed = open
             .filter { $0.author?.login != login && !$0.requestedReviewers.contains { $0.login == login } }
