@@ -659,14 +659,20 @@ extension SessionStore {
         closeTab(id)
     }
 
-    /// Whether the PR's review was finished after the request for it was made.
-    /// GitHub keeps listing you as asked until you post a review, so without
-    /// this a finished review's PR would come straight back as waiting on
-    /// you. A request made after it was finished (a re-request) still counts.
+    /// Whether every review of the PR has been finished (`archiveReview`, the
+    /// only thing that sets `archivedAt` on a review) and the last of them
+    /// after the request for it was made. GitHub keeps listing you as asked
+    /// until you post a review, so without this a finished review's PR would
+    /// come straight back as waiting on you. A request made after it was
+    /// finished (a re-request) still counts, and so does any review of the PR
+    /// that is still going. With no request time to compare, it's taken as
+    /// the one the review answered.
     func isFinishedReview(of pullRequestID: String, askedAt: Date?) -> Bool {
-        guard let archivedAt = review(of: pullRequestID)?.archivedAt else { return false }
+        let reviews = sessions.values.filter { $0.reviewOf?.id == pullRequestID }
+        guard !reviews.isEmpty, reviews.allSatisfy({ $0.archivedAt != nil }),
+              let finishedAt = reviews.compactMap(\.archivedAt).max() else { return false }
         guard let askedAt else { return true }
-        return askedAt <= archivedAt
+        return askedAt <= finishedAt
     }
 
     /// Ends a planning session but keeps it: claude and its helpers are

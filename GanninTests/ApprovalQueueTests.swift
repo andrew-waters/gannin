@@ -90,6 +90,43 @@ struct ApprovalQueueTests {
         #expect(store.readyForApproval("PR_1") == nil)
     }
 
+    private func store() -> SessionStore {
+        let folder = FileManager.default.temporaryDirectory.appending(path: "ApprovalQueueTests-\(UUID().uuidString)", directoryHint: .isDirectory)
+        return SessionStore(harness: HarnessStore(auth: AuthStore()), directory: folder, saveDelay: .seconds(60), defaults: UserDefaults(suiteName: "ApprovalQueueTests-\(UUID().uuidString)")!)
+    }
+
+    /// GitHub still lists you as asked after Finish Review, so a request the
+    /// finish answered stays out of Needs your review, but a later one doesn't.
+    @Test func finishedReviewAnswersOnlyRequestsMadeBeforeIt() {
+        let store = store()
+        let session = reviewSession("comment")
+        store.add(session)
+        let finished = Date(timeIntervalSince1970: 200)
+        #expect(!store.isFinishedReview(of: "PR_1", askedAt: Date(timeIntervalSince1970: 100)))
+        store.update(session.id) { $0.archivedAt = finished }
+        #expect(store.isFinishedReview(of: "PR_1", askedAt: Date(timeIntervalSince1970: 100)))
+        #expect(store.isFinishedReview(of: "PR_1", askedAt: finished))
+        #expect(!store.isFinishedReview(of: "PR_1", askedAt: Date(timeIntervalSince1970: 300)))
+        // No request time to compare: taken as answered.
+        #expect(store.isFinishedReview(of: "PR_1", askedAt: nil))
+        #expect(!store.isFinishedReview(of: "PR_2", askedAt: nil))
+    }
+
+    /// A finished review beside one still going (a re-request, or one started
+    /// by hand) doesn't hide the PR, whichever the store returns first.
+    @Test func aReviewStillGoingKeepsThePullRequestListed() {
+        let store = store()
+        let old = reviewSession("comment")
+        let current = reviewSession("comment")
+        store.add(old)
+        store.add(current)
+        store.update(old.id) { $0.archivedAt = Date(timeIntervalSince1970: 200) }
+        #expect(!store.isFinishedReview(of: "PR_1", askedAt: Date(timeIntervalSince1970: 100)))
+        store.update(current.id) { $0.archivedAt = Date(timeIntervalSince1970: 300) }
+        #expect(store.isFinishedReview(of: "PR_1", askedAt: Date(timeIntervalSince1970: 250)))
+        #expect(!store.isFinishedReview(of: "PR_1", askedAt: Date(timeIntervalSince1970: 400)))
+    }
+
     @Test func recordMarksAnApprovalNotGivenAsHeld() {
         #expect(record("approve")?.approvalHeld == true)
         // Posted as a comment: the verdict is approve, but what reached GitHub isn't.
