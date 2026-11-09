@@ -10,6 +10,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 ## [Unreleased]
 
 ### Changed
+- The brief now tells a session to run ready-for-review before CI is run on its pull request, not after CI passes
 - Reviewers (pull request reviews and pair-review reviewers) now run Claude Code's Concise output style, so their replies skip preamble and recap (needs Claude Code 2.1.237 or later)
 - Reviewers no longer connect to Claude Code's Remote Control, even when Enable Remote Control for all sessions is on in your Claude Code config
 - The session window's tab bar is shorter, so tabs have less empty space around their text
