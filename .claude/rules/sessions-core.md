@@ -5,6 +5,9 @@ paths:
 ---
 # Sessions: shared invariants
 
+## Layout (`Gannin/Sessions/`)
+- Put a file that is only views in `Views/` and one with no SwiftUI (the store, models, scripts, parsing) in `Models/`. Files that mix both stay at the root until split: a view in `Models/` or logic in `Views/` defeats the separation, and `docs-site/scripts/check-settings.mjs` finds settings views by path.
+
 ## Providers (`Gannin/Agents/`)
 - Never run claude from a feature directly: start a session through `CodeSession.agent` (`InteractiveProvider`) and ask one-off questions through `AgentProviders.asking`, so another provider can take its place.
 - The Claude provider's start scripts, settings and sandbox scripts are pinned byte for byte by `ProviderSnapshotTests` (`GanninTests/Snapshots/`). Change one only on purpose: delete its snapshot, run the test once to write it, and read the diff before committing.
