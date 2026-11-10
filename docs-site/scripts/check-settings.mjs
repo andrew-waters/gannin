@@ -18,9 +18,9 @@ const pages = join(repo, 'docs-site/src/content/docs/settings');
 // [Swift file, structs within it (none for the whole file), pages]
 const panes = [
   ['Gannin/Views/SettingsView.swift', ['GeneralSettings'], ['app/general']],
-  ['Gannin/Sessions/SessionViews.swift', ['SessionSettingsSection'], ['app/general']],
+  ['Gannin/Sessions/Views/SessionViews.swift', ['SessionSettingsSection'], ['app/general']],
   ['Gannin/Sessions/SessionRules.swift', ['SessionRulesSection'], ['app/general']],
-  ['Gannin/Sessions/SessionOverview.swift', ['SessionPromptSettingsSection'], ['app/general']],
+  ['Gannin/Sessions/Views/SessionOverview.swift', ['SessionPromptSettingsSection'], ['app/general']],
   ['Gannin/Views/SyncSettingsView.swift', null, ['app/sync']],
   ['Gannin/Sandbox/SandboxSettings.swift', ['SandboxSettingsSection', 'RemoteMachinesSection'], ['app/sandbox']],
   ['Gannin/Views/StorageSettings.swift', null, ['app/storage']],
@@ -38,7 +38,7 @@ const panes = [
   ['Gannin/Harness/HarnessTeamViews.swift', null, ['org/harness']],
   ['Gannin/Harness/HarnessPromptViews.swift', null, ['org/harness', 'org/projects']],
   ['Gannin/Harness/HarnessEditors.swift', ['HarnessAuthoringSection'], ['org/harness']],
-  ['Gannin/Sessions/SessionViews.swift', ['HarnessCheckoutSection'], ['org/harness']],
+  ['Gannin/Sessions/Views/SessionViews.swift', ['HarnessCheckoutSection'], ['org/harness']],
   ['Gannin/Sandbox/SandboxSettings.swift', ['SandboxGitHubTokenSection'], ['org/harness', 'app/sandbox']],
 ];
 

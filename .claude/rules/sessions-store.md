@@ -1,11 +1,11 @@
 ---
 paths:
-  - "Gannin/Sessions/SessionStore*"
-  - "Gannin/Sessions/SessionScript*"
-  - "Gannin/Sessions/SessionLaunch*"
-  - "Gannin/Sessions/WrapUp*"
-  - "Gannin/Sessions/QuitGuard*"
-  - "Gannin/Sessions/ScriptRunner*"
+  - "Gannin/Sessions/**/SessionStore*"
+  - "Gannin/Sessions/**/SessionScript*"
+  - "Gannin/Sessions/**/SessionLaunch*"
+  - "Gannin/Sessions/**/WrapUp*"
+  - "Gannin/Sessions/**/QuitGuard*"
+  - "Gannin/Sessions/**/ScriptRunner*"
 ---
 
 # SessionStore, scripts, wrap-up, quit, ScriptRunner
@@ -40,4 +40,4 @@ paths:
 - `ClaudeCodeProvider.ask` runs `claude -p` locally if installed, else on the Connect with server with only the tools given; follow-ups use `--resume` in the same folder. `ScriptRunner` runs the script on its box and strips inherited `CLAUDE_CODE_*` variables.
 
 ## Testing
-- `SessionTabGroupsTests.swift`, `WrapUpTests.swift`, `SessionBriefGoalsTests.swift`, `SessionModeTests.swift`, `SessionRulesTests.swift`. `SandboxLaunchTests.swift` covers script generation for sandboxes. Nothing covers `SessionStore.record` or the quit guard.
+- `SessionTabGroupsTests.swift`, `SessionSidebarGroupsTests.swift` (the sidebar's grouping, `SessionSidebarGroups`), `WrapUpTests.swift`, `SessionBriefGoalsTests.swift`, `SessionModeTests.swift`, `SessionRulesTests.swift`. `SandboxLaunchTests.swift` covers script generation for sandboxes. Nothing covers `SessionStore.record` or the quit guard.

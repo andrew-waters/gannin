@@ -1,6 +1,6 @@
 ---
 paths:
-  - "Gannin/Sessions/Planning*"
+  - "Gannin/Sessions/**/Planning*"
 ---
 
 # Planning sessions
