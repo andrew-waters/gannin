@@ -123,7 +123,7 @@ enum DiffStyle {
         switch kind {
         case .added: ChartPalette.good.opacity(0.26)
         case .removed: ChartPalette.critical.opacity(0.26)
-        case .hunk: Color.secondary.opacity(0.16)
+        case .hunk: Color.secondary.opacity(0.1)
         case .context, .note: .clear
         }
     }
@@ -141,8 +141,8 @@ enum DiffStyle {
 
     static func gutterTint(_ kind: DiffLine.Kind) -> Color {
         switch kind {
-        case .added: ChartPalette.good.opacity(0.5)
-        case .removed: ChartPalette.critical.opacity(0.5)
+        case .added: ChartPalette.good.opacity(0.4)
+        case .removed: ChartPalette.critical.opacity(0.4)
         default: .clear
         }
     }
