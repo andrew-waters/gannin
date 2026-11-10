@@ -121,8 +121,8 @@ enum DiffStyle {
 
     static func background(_ kind: DiffLine.Kind) -> Color {
         switch kind {
-        case .added: ChartPalette.good.opacity(0.14)
-        case .removed: ChartPalette.critical.opacity(0.14)
+        case .added: ChartPalette.good.opacity(0.26)
+        case .removed: ChartPalette.critical.opacity(0.26)
         case .hunk: Color.secondary.opacity(0.1)
         case .context, .note: .clear
         }
@@ -133,16 +133,16 @@ enum DiffStyle {
     static func background(_ kind: DiffLine.Kind, highlighted: Bool) -> Color {
         guard highlighted else { return background(kind) }
         switch kind {
-        case .added: return ChartPalette.good.opacity(0.07)
-        case .removed: return ChartPalette.critical.opacity(0.07)
+        case .added: return ChartPalette.good.opacity(0.16)
+        case .removed: return ChartPalette.critical.opacity(0.16)
         default: return background(kind)
         }
     }
 
     static func gutterTint(_ kind: DiffLine.Kind) -> Color {
         switch kind {
-        case .added: ChartPalette.good.opacity(0.3)
-        case .removed: ChartPalette.critical.opacity(0.3)
+        case .added: ChartPalette.good.opacity(0.4)
+        case .removed: ChartPalette.critical.opacity(0.4)
         default: .clear
         }
     }

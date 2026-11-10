@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Changed
+- Added and removed lines in code diffs have stronger green and red tints, so changes stand out more
+
 ### Fixed
 - A review you finish no longer comes straight back under Needs your review in the Inbox; it returns only if you're asked to review the PR again
 
