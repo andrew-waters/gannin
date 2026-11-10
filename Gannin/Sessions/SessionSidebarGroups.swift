@@ -3,9 +3,11 @@ import Foundation
 /// How an org's sessions split into the sidebar's groups, apart from Ask and
 /// Design and Refine, which `SessionStore` orders by activity.
 struct SessionSidebarGroups: Equatable {
-    /// An issue's own sessions, not helpers, reviews, planning, Ask or Refine.
+    /// An issue's own sessions, not helpers, reviews, a review's steps
+    /// (`reviewStep`), planning, Ask or Refine.
     var issues: [CodeSession]
-    /// Active reviews that still need posting, then finished ones, most recently archived first.
+    /// Active reviews that still need posting, in the order `sessions` came
+    /// in, then finished ones, most recently archived first.
     var reviews: [CodeSession]
     /// Active reviews whose latest result is posted: they wait on the author.
     var awaitingAuthor: [CodeSession]
@@ -13,7 +15,8 @@ struct SessionSidebarGroups: Equatable {
     var planning: [CodeSession]
 
     /// - Parameters:
-    ///   - sessions: The org's sessions, in the order the groups keep.
+    ///   - sessions: The org's sessions, in the order the groups keep
+    ///     (`SessionStore.sessions(for:)` gives newest first).
     ///   - awaitsAuthor: Whether a review's latest result is already posted.
     init(_ sessions: [CodeSession], awaitsAuthor: (CodeSession) -> Bool) {
         issues = sessions.filter {

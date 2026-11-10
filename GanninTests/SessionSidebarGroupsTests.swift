@@ -30,6 +30,17 @@ struct SessionSidebarGroupsTests {
         #expect(groups.issues.map(\.id) == [work.id])
     }
 
+    @Test func askRefineAndReviewStepSessionsStayOutOfIssueWork() {
+        let work = session(1)
+        let ask = session(2) { $0.ask = AskInfo(title: "Q", slug: "2026-11-10-aaaaaaaa", message: "Q") }
+        let refine = session(3) {
+            $0.refine = RefineInfo(name: "Page", slug: "page", url: "https://example.com", repos: [], attendees: [])
+        }
+        let step = session(4) { $0.reviewStep = ReviewStepReference(lead: work.id, step: "security") }
+        let groups = SessionSidebarGroups([work, ask, refine, step], awaitsAuthor: { _ in false })
+        #expect(groups.issues.map(\.id) == [work.id])
+    }
+
     @Test func postedActiveReviewsWaitOnTheAuthor() {
         let waiting = review(1)
         let open = review(2)
