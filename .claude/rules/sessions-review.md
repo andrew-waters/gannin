@@ -1,11 +1,11 @@
 ---
 paths:
-  - "Gannin/Sessions/PullRequestReview*"
-  - "Gannin/Sessions/Review*"
-  - "Gannin/Sessions/AutoReview*"
-  - "Gannin/Sessions/ApprovalQueue*"
+  - "Gannin/Sessions/**/PullRequestReview*"
+  - "Gannin/Sessions/**/Review*"
+  - "Gannin/Sessions/**/AutoReview*"
+  - "Gannin/Sessions/**/ApprovalQueue*"
   - "Gannin/Agents/ReviewRuns*"
-  - "Gannin/Sessions/EngineerWatch*"
+  - "Gannin/Sessions/**/EngineerWatch*"
   - "Gannin/Git/DiffHighlighter*"
   - "Gannin/Git/DiffLanguage*"
 ---

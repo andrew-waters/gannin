@@ -1,11 +1,11 @@
 ---
 paths:
-  - "Gannin/Sessions/SessionStore*"
-  - "Gannin/Sessions/SessionScript*"
-  - "Gannin/Sessions/SessionLaunch*"
-  - "Gannin/Sessions/WrapUp*"
-  - "Gannin/Sessions/QuitGuard*"
-  - "Gannin/Sessions/ScriptRunner*"
+  - "Gannin/Sessions/**/SessionStore*"
+  - "Gannin/Sessions/**/SessionScript*"
+  - "Gannin/Sessions/**/SessionLaunch*"
+  - "Gannin/Sessions/**/WrapUp*"
+  - "Gannin/Sessions/**/QuitGuard*"
+  - "Gannin/Sessions/**/ScriptRunner*"
 ---
 
 # SessionStore, scripts, wrap-up, quit, ScriptRunner

@@ -1,7 +1,7 @@
 ---
 paths:
-  - "Gannin/Sessions/PairReview*"
-  - "Gannin/Sessions/ExtraReviewer*"
+  - "Gannin/Sessions/**/PairReview*"
+  - "Gannin/Sessions/**/ExtraReviewer*"
 ---
 # Pair review
 

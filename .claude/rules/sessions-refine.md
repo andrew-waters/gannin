@@ -1,6 +1,6 @@
 ---
 paths:
-  - "Gannin/Sessions/Refine*"
+  - "Gannin/Sessions/**/Refine*"
   - "Gannin/Meetings/RefinePage.swift"
 ---
 

@@ -1,8 +1,8 @@
 ---
 paths:
-  - "Gannin/Sessions/Ask*"
-  - "Gannin/Sessions/QuickChange*"
-  - "Gannin/Sessions/PromptWriting*"
+  - "Gannin/Sessions/**/Ask*"
+  - "Gannin/Sessions/**/QuickChange*"
+  - "Gannin/Sessions/**/PromptWriting*"
 ---
 # Ask, Quick Change, Write with Claude
 
