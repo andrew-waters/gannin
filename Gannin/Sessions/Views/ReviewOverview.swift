@@ -173,6 +173,7 @@ struct ReviewReadiness {
         let minor = items.filter { $0.tier == .minor }.count
 
         self.items = items
+        let approved = status?.reviewDecision == "APPROVED"
         if !blocking.isEmpty {
             sentence = "Can't merge: " + Self.list(blocking)
             color = ChartPalette.critical
@@ -186,11 +187,12 @@ struct ReviewReadiness {
             color = .secondary
             symbol = "hourglass"
         } else if !waiting.isEmpty {
-            sentence = "Ready once " + Self.list(waiting)
+            sentence = (approved ? "Approved. " : "") + "Ready once " + Self.list(waiting)
             color = ChartPalette.blue
             symbol = Tier.waiting.symbol
         } else {
-            sentence = minor == 0 ? "Ready to merge" : "Ready to merge, with \(minor) minor point\(minor == 1 ? "" : "s")"
+            let ready = approved ? "Approved, ready to merge" : "Ready to merge"
+            sentence = minor == 0 ? ready : "\(ready), with \(minor) minor point\(minor == 1 ? "" : "s")"
             color = ChartPalette.good
             symbol = "checkmark.circle.fill"
         }
