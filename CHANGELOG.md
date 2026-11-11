@@ -13,6 +13,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - Added and removed lines in code diffs have stronger green and red tints, so changes stand out more
 
 ### Fixed
+- The "waiting" count in the sidebar and the Dock badge no longer include a review that has finished a turn but has nothing for you to post; reviews count while they need you or have a result you haven't posted
 - A review you finish no longer comes straight back under Needs your review in the Inbox; it returns only if you're asked to review the PR again
 
 ### Changed
