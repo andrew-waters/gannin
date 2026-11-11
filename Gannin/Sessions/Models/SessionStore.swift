@@ -1212,7 +1212,17 @@ final class SessionStore {
             if let pr = sessions[id]?.reviewOf, readyForApproval(pr.id, whileBusy: true) != nil {
                 noticeApproval(id)
             } else if !isQuietForPairReview(id) {
-                flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false)
+                // A finished turn always counts as waiting, except a review's:
+                // that counts only once it has a result you haven't posted,
+                // since a review that is still being looked at or already
+                // posted needs nothing from you. Otherwise it's a
+                // notification alone.
+                let counts = sessions[id].map { session in
+                    !session.isPullRequestReview
+                        || (session.archivedAt == nil && !awaitsAuthor(session)
+                            && (transcripts[id]?.review ?? session.reviewResult) != nil)
+                } ?? false
+                flag(id, title: "Your turn", body: transcripts[id]?.lastReply.map { String($0.prefix(180)) } ?? "Claude has finished what it was doing.", replies: false, counts: counts)
             }
         case .working, .starting, .stopped:
             unflag(id)
@@ -1223,11 +1233,15 @@ final class SessionStore {
 
     /// Marks the session as waiting on you and, unless you're looking at
     /// it, notifies: with quick replies when claude is asking something.
-    func flag(_ id: UUID, title: String, body: String, replies: Bool) {
+    /// With `counts` false it only notifies, leaving the session out of the
+    /// waiting count and the Dock badge.
+    func flag(_ id: UUID, title: String, body: String, replies: Bool, counts: Bool = true) {
         // Already in front of you.
         if windowIsKey, selectedTab == id, NSApp.isActive { return }
-        attention[id] = attention[id] ?? .now
-        updateBadge()
+        if counts {
+            attention[id] = attention[id] ?? .now
+            updateBadge()
+        }
         guard UserDefaults.standard.object(forKey: Self.notifiesKey) as? Bool ?? true, let session = sessions[id] else { return }
         let content = UNMutableNotificationContent()
         content.title = title
