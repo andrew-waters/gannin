@@ -173,13 +173,15 @@ struct ReviewReadiness {
         let minor = items.filter { $0.tier == .minor }.count
 
         self.items = items
-        let approved = status?.reviewDecision == "APPROVED"
+        // GitHub's decision can predate the newest commits, so a stale review
+        // doesn't claim the PR as it stands is approved.
+        let approved = status?.reviewDecision == "APPROVED" && !isStale
         if !blocking.isEmpty {
-            sentence = "Can't merge: " + Self.list(blocking)
+            sentence = (approved ? "Approved, but can't merge: " : "Can't merge: ") + Self.list(blocking)
             color = ChartPalette.critical
             symbol = Tier.blocking.symbol
         } else if !fix.isEmpty {
-            sentence = "Not ready: " + Self.list(fix)
+            sentence = (approved ? "Approved, but not ready: " : "Not ready: ") + Self.list(fix)
             color = .orange
             symbol = Tier.fix.symbol
         } else if status == nil && pullRequest == nil {
