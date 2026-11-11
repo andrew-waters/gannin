@@ -173,12 +173,15 @@ struct ReviewReadiness {
         let minor = items.filter { $0.tier == .minor }.count
 
         self.items = items
+        // GitHub's decision can predate the newest commits, so a stale review
+        // doesn't claim the PR as it stands is approved.
+        let approved = status?.reviewDecision == "APPROVED" && !isStale
         if !blocking.isEmpty {
-            sentence = "Can't merge: " + Self.list(blocking)
+            sentence = (approved ? "Approved, but can't merge: " : "Can't merge: ") + Self.list(blocking)
             color = ChartPalette.critical
             symbol = Tier.blocking.symbol
         } else if !fix.isEmpty {
-            sentence = "Not ready: " + Self.list(fix)
+            sentence = (approved ? "Approved, but not ready: " : "Not ready: ") + Self.list(fix)
             color = .orange
             symbol = Tier.fix.symbol
         } else if status == nil && pullRequest == nil {
@@ -186,11 +189,12 @@ struct ReviewReadiness {
             color = .secondary
             symbol = "hourglass"
         } else if !waiting.isEmpty {
-            sentence = "Ready once " + Self.list(waiting)
+            sentence = (approved ? "Approved. " : "") + "Ready once " + Self.list(waiting)
             color = ChartPalette.blue
             symbol = Tier.waiting.symbol
         } else {
-            sentence = minor == 0 ? "Ready to merge" : "Ready to merge, with \(minor) minor point\(minor == 1 ? "" : "s")"
+            let ready = approved ? "Approved, ready to merge" : "Ready to merge"
+            sentence = minor == 0 ? ready : "\(ready), with \(minor) minor point\(minor == 1 ? "" : "s")"
             color = ChartPalette.good
             symbol = "checkmark.circle.fill"
         }
