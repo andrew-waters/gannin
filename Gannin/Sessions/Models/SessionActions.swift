@@ -649,14 +649,16 @@ extension SessionStore {
 
     /// Finishes a review but keeps it, in the history: claude is ended and
     /// its worktree removed (best effort), and its result, your decisions
-    /// and comments stay, to read again or resume.
+    /// and comments stay, to read again or resume. The record of it is
+    /// written to the harness in the background, as it takes several GitHub
+    /// requests; that write is best effort, same as `finish`'s.
     func archiveReview(_ id: UUID) async {
         guard let session = sessions[id] else { return }
-        await recordReview(id)
         end(id)
         try? await removeWorktrees(session)
         update(id) { $0.archivedAt = .now }
         closeTab(id)
+        Task { await recordReview(id) }
     }
 
     /// Whether every review of the PR has been finished (`archiveReview`, the
