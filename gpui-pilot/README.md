@@ -1,18 +1,21 @@
 # GPUI pilot
 
 A pilot for moving Gannin off SwiftUI onto [GPUI](https://www.gpui.rs), Zed's Rust UI framework,
-and for consolidating its windows into one. It rebuilds the CI page (the part of the app that
-leans hardest on Swift Charts), the Issues page with its drawer, and sessions (Claude Code in Zed's
-terminal beside its code change in Zed's diff view), inside a single-window shell.
+and for consolidating its windows into one. Inside a single-window shell it rebuilds CI, Issues,
+Pull Requests, Scorecards and Activity; syncs its own copy of the org's PRs and issues from
+GitHub; and starts Claude Code the way Gannin does (Work on This, Review with Claude, Plan, Ask,
+Quick Change, Explain) in Zed's terminal, beside the code change in Zed's diff view.
 
 **Licence:** it builds on Zed's own crates from Zed's repository (`terminal`, `terminal_view`,
 `editor`, `buffer_diff`, `multi_buffer` and what they need), which are GPL-3.0. Anything shipped on
 this code would have to be GPL-3.0 too. Only `gpui` and a few utility crates are Apache-2.0.
 
 It's a separate Cargo binary and isn't part of the Xcode build. It reads Gannin's caches and
-settings and never writes them. Its only calls to GitHub are signing in and reading who you are;
-a session's terminal runs whatever you run in it. Open CI and Issues in Gannin at least once so there's
-something to read.
+settings and never writes them: it keeps its own copies of the PR, issue and CI caches (seeded from
+Gannin's) under `Application Support/GanninGPUIPilot/`, and its own sessions there too. Its calls to
+GitHub are reads (signing in, syncing, Your Work), plus posting a review, which only happens from
+the Post to GitHub button after the review sheet has shown what will be sent. A session's terminal
+runs claude, which acts as you, as in Gannin.
 
 ## Running it
 
@@ -36,12 +39,14 @@ the two variables. `--org` and `--days` override what was saved.
 
 | Data | From |
 | --- | --- |
-| CI runs | `Application Support/Actions/<org>.json` |
-| Issues, board fields, status history, linked PRs | `Application Support/StoredIssues/<org>.json` |
+| CI runs | The pilot's copy of `Actions/<org>.json` |
+| Issues, board fields, status history, linked PRs | The pilot's copy of `StoredIssues/<org>.json`, synced |
 | Descriptions and comments | `Application Support/Details.json`, else `dev.andon.gannin/IssueText.sqlite` |
 | Projects and the issue workflow | `Application Support/UserData/Gannin.store` (org settings) and `Application Support/Harness/*.json` (each harness's `.gannin/project.json`) |
-| Pull requests: review, checks, reviewers, commits | `Application Support/PullRequests/<org>.json` |
-| Your login, PRs you're asked to review and your own PRs | Gannin's `viewer` preference and `Application Support/PullRequests/<org>.json` |
+| Pull requests: review, checks, reviewers, commits | The pilot's copy of `PullRequests/<org>.json`, synced |
+| Your Work | Live from GitHub when signed in, else the PR cache |
+| Scorecards and Activity | Gannin's own `PullRequests/`, `Metrics/`, `WorkLog/` and `Snapshots/` (the metrics and work-log slots the pilot doesn't sync), and the org's goals and exclusions from its settings |
+| Session state | Hook files in the pilot's `Sessions/<id>/`, and claude's transcript for a review's result |
 | Avatars | Downloaded once with `curl` into `~/Library/Caches/GanninGPUIPilot/avatars` |
 
 Where the window was left (org, project, tabs, panels, each page's controls and columns) is saved
@@ -87,12 +92,35 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   (which open as issue drawers on top), description and comments, and the people with where each
   reviewer stands. Labels, the base branch and conflicts aren't cached, so they don't show.
 - **Issue drawer** (`src/shell.rs`, `src/detail.rs`, `src/markdown.rs`): what `IssueWindow` shows,
-  with timing under the org's workflow and Markdown through pulldown-cmark.
+  with timing under the org's workflow and Markdown through pulldown-cmark. Its bar has Open on
+  GitHub, Plan This (Open Planning) and Work on This (Open Session); the PR drawer's has Open on
+  GitHub, Review with Claude (Open Review) and Explain.
+- **Syncing** (`src/sync.rs`, `src/github.rs`, `src/cache.rs`): every 5 minutes while signed in,
+  the current org's open and recently merged PRs and open issues, with Gannin's searches, fields
+  and merge rules: in full once a day, else what changed. Rate-limited as Gannin is (a refusal
+  pauses everything; a low budget holds the automatic sync off). The title bar shows when it last
+  synced and syncs on a click. `--sync <org>` runs one from a shell.
+- **Launching sessions** (`src/launch.rs`): as Gannin's start script: in the org's harness, in
+  `.worktrees/<branch>/`, with its brief, hooks (state, started, changed, PRs opened) and prompts,
+  resuming claude once started. Session state comes from the hooks' files. `--dry-launch <dir>`
+  writes a launch against a scratch harness to check with a stand-in claude.
+- **Reviews** (`src/review.rs`, `src/review_panel.rs`): edits disallowed, Gannin's prompt; the
+  result read from claude's transcript beside the terminal, findings to dismiss or restore, Review
+  Again, and Post Review with Gannin's rules (Comment only on your own PR, inline only on diff
+  lines, duplicates left out after re-fetching, never the same review twice).
+- **Planning, Ask, Quick Change** (`src/launch_form.rs`, `src/planning_panel.rs`): forms with
+  Zed's editor; a plan's `planning.json` shown as stages, requirement, design, tasks and
+  decisions, with "From the room". A quick change files no issue.
+- **Scorecards** (`src/scorecard.rs`): the org's goals as tiles and a period table, with Gannin's
+  metric definitions. `--scorecard <org>` prints recent weeks.
+- **Activity** (`src/activity.rs`): the work log grid of dots and Threads. `--activity <org>`.
 
-Left out: Me in filters, images in Markdown, commits in the timeline (they
-need the work log), session and agent actions, the Investment picker, harness documents, every
-write to GitHub, Gannin's own sessions (their state is only in its memory), staging or committing
-from the diff, syntax colours in it (Zed's grammars aren't loaded) and every other page.
+Left out: Me in Issues filters, images in Markdown, the Investment picker, harness documents,
+writes to GitHub other than posting a review (board fields, assignees, reviewers, new issues and
+sub-issues, filing a quick change's issue, recording sessions in the harness, a plan's Agree),
+Gannin's own sessions, staging or committing from the diff, syntax colours in it, Schedule for
+Agent, Hide, Scorecards' editing, breakdowns and issue and CI metrics, Activity's Punchcards, the
+Actions sync, and the other pages (commented out in `sections()`).
 
 ## What it has shown
 

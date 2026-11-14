@@ -970,6 +970,32 @@ impl Workspace {
         self.open_form(crate::launch::Flow::Plan, Some(issue), window, cx);
     }
 
+    /// Explain: Claude explains the PR in plain terms, as an Ask session
+    /// about it, so the conversation can carry on.
+    fn explain_pr(&mut self, pr: PrItem, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::launch::{self, Flow, Launch, Subject};
+        if self.show_session(&pr.id, Flow::Ask, window, cx) {
+            return;
+        }
+        let (Some(org), Some(harness)) = (self.org.clone(), self.harness_for(&pr.repo)) else {
+            return Self::no_harness(window, cx);
+        };
+        let subject = Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
+        let mut launch = Launch::new(Flow::Ask, format!("Explain {}#{}", pr.repo_name, pr.number), &org, &harness, String::new(), Some(subject));
+        launch.branch = format!("ask-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..8].to_lowercase());
+        let question = format!(
+            "Explain pull request {}#{}, \"{}\" ({}), in plain terms: what it changes, why, and anything a reviewer should look at closely. Read it with `gh pr view {} --repo {} --comments` and `gh pr diff {} --repo {}`. Don't change anything.",
+            pr.repo, pr.number, pr.title, pr.url, pr.number, pr.repo, pr.number, pr.repo
+        );
+        let title = format!("Explain {}#{}", pr.repo, pr.number);
+        let brief = launch::ask_brief(&title, &harness, &launch.harness_path, &launch.branch);
+        let prompt = launch::ask_prompt(&question, &launch.branch);
+        let context = launch.dir().join("context");
+        let _ = std::fs::create_dir_all(&context);
+        let _ = std::fs::write(context.join("README.md"), "# Context\n\nNothing from Gannin here: the pull request is the subject.\n");
+        self.start_launch(launch, &brief, &prompt, false, window, cx);
+    }
+
     /// The org's PR cache, read off the main thread.
     fn load_work(&mut self, org: String, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
@@ -1730,6 +1756,12 @@ impl Workspace {
                     actions.push(
                         action("review-with-claude", label.into(), tip)
                             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.review_pr(reviewed.clone(), window, cx)))
+                            .into_any_element(),
+                    );
+                    let explained = pr.clone();
+                    actions.push(
+                        action("explain", "Explain".into(), "Have Claude explain what this PR changes and why, in plain terms".into())
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.explain_pr(explained.clone(), window, cx)))
                             .into_any_element(),
                     );
                 }
