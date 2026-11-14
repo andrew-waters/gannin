@@ -1298,7 +1298,13 @@ impl Workspace {
                     .hover(|s| s.bg(theme.row_selected))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         cx.stop_propagation();
-                        this.refresh(cx);
+                        // A second click closes the panel it opened.
+                        if this.sync.open {
+                            this.sync.open = false;
+                            cx.notify();
+                        } else {
+                            this.refresh(cx);
+                        }
                     }))
                     .child(label)
                     .when_some(fraction.filter(|_| self.sync.running), |d, f| {
