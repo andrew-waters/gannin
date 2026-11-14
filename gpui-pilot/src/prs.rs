@@ -1338,7 +1338,7 @@ impl PrsPage {
                         }
                     }
                 } else {
-                    page.picked.clear();
+                    // A plain click opens the drawer; what's ticked stays.
                     page.anchor = Some(index);
                     page.selected = Some(opened.id.clone());
                     cx.emit(OpenPr(opened.clone()));
