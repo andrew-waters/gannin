@@ -28,6 +28,7 @@ mod projects;
 mod review;
 mod review_panel;
 mod review_preview;
+mod review_record;
 mod scorecard;
 mod pr_picker;
 mod prs;

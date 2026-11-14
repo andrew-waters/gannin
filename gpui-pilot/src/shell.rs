@@ -2035,6 +2035,8 @@ impl Workspace {
                     }
                     review.update(cx, |review, cx| review.start_post(window, cx));
                 } else if close {
+                    // The record's last update, as Gannin's Finish makes it.
+                    review.update(cx, |review, cx| review.record_on_close(cx));
                     if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
                         this.remove_tab(index, cx);
                     }

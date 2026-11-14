@@ -104,6 +104,11 @@ pub struct ReviewPanel {
     /// The last Check for Changes: when, and what it found or why it failed.
     checked: Option<(chrono::DateTime<chrono::Utc>, Result<review::Changes, String>)>,
     checking: bool,
+    /// Something to say about the review's record in the harness (a pull
+    /// request left open, or a failure).
+    record_note: Option<String>,
+    /// Record it in the harness when posting (the app-wide setting).
+    record_with_post: bool,
     _poll: Option<Task<()>>,
     /// Redraws the relative times now and then.
     _clock: Task<()>,
@@ -162,7 +167,13 @@ impl ReviewPanel {
             if this
                 .update(cx, |this, cx| {
                     if result.is_some() && this.result != result {
+                        let first = this.checked.is_none();
                         this.result = result;
+                        // A check once there's a result, so Review Again knows
+                        // whether anything's changed since.
+                        if first {
+                            this.check_for_changes(cx);
+                        }
                         cx.notify();
                     }
                     if this.activity != activity {
@@ -184,6 +195,8 @@ impl ReviewPanel {
             posted,
             checked: None,
             checking: false,
+            record_note: None,
+            record_with_post: crate::review_record::recording(),
             _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
             result: None,
@@ -221,6 +234,8 @@ impl ReviewPanel {
             posted,
             checked: None,
             checking: false,
+            record_note: None,
+            record_with_post: crate::review_record::recording(),
             _clock: Self::clock(cx),
             source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, working, snapshot: Arc::new(snapshot) },
             result,
@@ -476,13 +491,83 @@ impl ReviewPanel {
                         }
                     }
                 }
+                let ended = matches!(&found, Ok(c) if c.state != "OPEN");
                 this.checked = Some((chrono::Utc::now(), found));
                 this.checking = false;
+                if ended {
+                    this.record(None, cx);
+                }
                 cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    /// Whether the last check found new commits or comments since the
+    /// review, so reviewing again is worth it.
+    fn has_changes(&self) -> bool {
+        matches!(&self.checked, Some((_, Ok(c))) if c.state == "OPEN" && (c.new_commits > 0 || c.new_comments > 0))
+    }
+
+    /// The review as its record needs it (live sessions only).
+    fn record_input(&self, posting: Option<(String, chrono::DateTime<chrono::Utc>)>) -> Option<crate::review_record::Input> {
+        let Source::Live { launch, .. } = &self.source else { return None };
+        let subject = launch.subject.as_ref()?;
+        Some(crate::review_record::Input {
+            harness: launch.harness_repo.clone(),
+            repo: subject.repo.clone(),
+            number: subject.number,
+            pr_id: subject.id.clone(),
+            title: subject.title.clone(),
+            started_at: launch.created_at,
+            result: self.result.clone(),
+            dismissed: self.dismissed.clone(),
+            edits: self.edits.clone(),
+            posting,
+        })
+    }
+
+    /// Writes or updates the review's record in the harness, off the main
+    /// thread, unless recording is off.
+    pub fn record(&mut self, posting: Option<(String, chrono::DateTime<chrono::Utc>)>, cx: &mut Context<Self>) {
+        if !crate::review_record::recording() {
+            return;
+        }
+        let Some(input) = self.record_input(posting) else { return };
+        let task = cx.background_executor().spawn(async move {
+            let token = crate::auth::token().ok_or("Not signed in".to_string())?;
+            crate::review_record::record(&token, &input)
+        });
+        cx.spawn(async move |this, cx| {
+            let outcome = task.await;
+            this.update(cx, |this, cx| {
+                this.record_note = match outcome {
+                    Ok(note) => note,
+                    Err(error) => Some(format!("Couldn't record the review in the harness: {error}")),
+                };
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The record's last update, when the tab closes: it runs on after the
+    /// panel's gone.
+    pub fn record_on_close(&self, cx: &mut Context<Self>) {
+        if !crate::review_record::recording() {
+            return;
+        }
+        if let Some(input) = self.record_input(None) {
+            cx.background_executor()
+                .spawn(async move {
+                    if let Some(token) = crate::auth::token() {
+                        let _ = crate::review_record::record(&token, &input);
+                    }
+                })
+                .detach();
+        }
     }
 
     /// What the last check found, for beside its button.
@@ -540,7 +625,11 @@ impl ReviewPanel {
             this.update(cx, |this, cx| {
                 this.post = Some(match posted {
                     Ok(url) => {
-                        this.record_posted(Posted { event: event.to_string(), at: chrono::Utc::now(), url: url.clone() });
+                        let at = chrono::Utc::now();
+                        this.record_posted(Posted { event: event.to_string(), at, url: url.clone() });
+                        if this.record_with_post {
+                            this.record(Some((event.to_string(), at)), cx);
+                        }
                         Post::Posted(url)
                     }
                     Err(error) => Post::Failed(error.to_string()),
@@ -648,6 +737,7 @@ impl ReviewPanel {
                         .child(format!("{e}/5")),
                 )
             })
+            .when_some(self.record_note.clone(), |d, note| d.child(div().text_xs().text_color(theme.orange()).child(note)))
             // What was posted and when, a link to it.
             .when_some(self.posted_latest().cloned(), |d, posted| {
                 let url = posted.url.clone();
@@ -704,7 +794,7 @@ impl ReviewPanel {
         let url = self.url();
         let link = url.clone();
         let has_result = self.result.is_some();
-        let can_again = self.idle() && has_result;
+        let can_again = self.idle() && has_result && self.has_changes();
         let (_, status_tint) = self.status(theme);
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
@@ -1414,8 +1504,40 @@ impl ReviewPanel {
                     events = events.child(choice("event-approve", "Approve", "APPROVE", cx)).child(choice("event-changes", "Request Changes", "REQUEST_CHANGES", cx));
                 }
                 let inline = draft.comments.len();
+                let recording = self.record_with_post;
                 row.child(events)
                     .child(quiet(if own { "Your own PR: only a comment".into() } else { plural(inline, "inline comment", "inline comments") }))
+                    .child(
+                        div()
+                            .id("post-record")
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1p5()
+                            .text_sm()
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.record_with_post = !recording;
+                                crate::review_record::set_recording(!recording);
+                                cx.notify();
+                            }))
+                            .child(
+                                div()
+                                    .size(px(14.))
+                                    .rounded(px(3.))
+                                    .border_1()
+                                    .border_color(if recording { theme.selected } else { theme.secondary })
+                                    .when(recording, |d| d.bg(theme.selected))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .text_xs()
+                                    .text_color(theme.on_selected)
+                                    .child(if recording { "✓" } else { "" }),
+                            )
+                            .child("Record in harness"),
+                    )
                     .child(close("post-cancel", "Cancel", cx))
                     .child(Self::button("post-confirm", "Post to GitHub", true, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.confirm_post(cx))))
             }
