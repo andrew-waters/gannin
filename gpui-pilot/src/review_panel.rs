@@ -542,6 +542,73 @@ impl ReviewPanel {
         }
     }
 
+    fn standing(&self, theme: &Theme) -> impl IntoElement {
+        let tip = |id: &str, text: String| {
+            div().id(SharedString::from(format!("standing-{id}"))).flex().flex_row().items_center().gap_1().tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(text.clone())).into())
+        };
+        let icon = |path: &'static str, tint: Hsla| gpui::svg().path(path).size(px(16.)).flex_none().text_color(tint);
+        let (status, status_tint) = self.status(theme);
+        let status_icon = match status.as_str() {
+            "Review ready" => Some("icons/check.svg"),
+            "Needs you" => Some("icons/circle_help.svg"),
+            "Not running" => Some("icons/stop.svg"),
+            "" => None,
+            _ => Some("icons/load_circle.svg"),
+        };
+        let (ready, ready_tint) = self.readiness(theme);
+        let counts: Vec<(usize, Hsla)> = self
+            .result
+            .as_ref()
+            .map(|r| {
+                ["blocker", "major", "minor", "nit"]
+                    .iter()
+                    .map(|sev| {
+                        let n = r.findings.iter().filter(|f| !self.dismissed.contains(&f.key()) && f.severity.as_deref().unwrap_or("minor") == *sev).count();
+                        (n, severity_tint(Some(sev), theme))
+                    })
+                    .filter(|(n, _)| *n > 0)
+                    .collect()
+            })
+            .unwrap_or_default();
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .px_2()
+            .pt_1()
+            .pb_2p5()
+            .mb_1()
+            .border_b_1()
+            .border_color(theme.border)
+            .when_some(status_icon, |d, path| d.child(tip("status", status.clone()).child(icon(path, status_tint))))
+            .when_some(self.result.as_ref(), |d, r| {
+                let (path, tint, label) = match r.verdict.as_deref() {
+                    Some("approve") => ("icons/thumbs_up.svg", theme.good(), "Claude would approve"),
+                    Some("request_changes") => ("icons/x_circle.svg", theme.critical(), "Claude would request changes"),
+                    _ => ("icons/chat.svg", theme.secondary, "Claude would comment"),
+                };
+                d.child(tip("verdict", label.into()).child(icon(path, tint)))
+            })
+            .child(tip("ready", ready).map(|d| {
+                if counts.is_empty() {
+                    d.child(icon(if ready_tint == theme.good() { "icons/check_double.svg" } else { "icons/clock.svg" }, ready_tint))
+                } else {
+                    d.gap_2().children(counts.into_iter().map(|(n, tint)| {
+                        div().flex().flex_row().items_center().gap_1().child(div().size(px(8.)).rounded_full().bg(tint)).child(div().text_sm().font_weight(FontWeight::MEDIUM).child(n.to_string()))
+                    }))
+                }
+            }))
+            .child(div().flex_1())
+            .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| {
+                d.child(tip("effort", format!("Effort {e} of 5: how much work reviewing it by hand is")).child(Self::effort_pips(e, theme)))
+            })
+    }
+
+    fn effort_pips(effort: i64, theme: &Theme) -> impl IntoElement {
+        div().flex().flex_row().gap(px(2.)).children((1..=5).map(|i| div().w(px(6.)).h(px(10.)).rounded(px(1.5)).bg(if i <= effort { theme.selected } else { theme.secondary.opacity(0.25) })))
+    }
+
     fn effort_meter(effort: i64, theme: &Theme) -> impl IntoElement {
         div()
             .flex()
@@ -735,36 +802,10 @@ impl ReviewPanel {
 
     fn file_list(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        // Where the review stands, above everything: claude's state, the
-        // verdict, how ready it is to merge, and the effort.
-        let (status, status_tint) = self.status(theme);
-        let (ready, ready_tint) = self.readiness(theme);
-        rows.push(
-            div()
-                .flex()
-                .flex_col()
-                .gap_1p5()
-                .px_2()
-                .pt_1()
-                .pb_3()
-                .mb_1()
-                .border_b_1()
-                .border_color(theme.border)
-                .when(!status.is_empty() || self.result.is_some(), |d| {
-                    d.child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .when(!status.is_empty(), |d| d.child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(status_tint).child(status)))
-                            .when_some(self.result.as_ref(), |d, r| d.child(Self::verdict_pill(r.verdict.as_deref(), theme))),
-                    )
-                })
-                .child(div().text_sm().text_color(ready_tint).child(ready))
-                .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| d.child(Self::effort_meter(e, theme)))
-                .into_any_element(),
-        );
+        // Where the review stands, above everything, as icons with the
+        // words in their tooltips: claude's state, the verdict, the findings
+        // still kept by severity (how ready it is to merge), and the effort.
+        rows.push(self.standing(theme).into_any_element());
         rows.push(self.list_row("row-overview".into(), Selected::Overview, "Overview".into(), None, None, theme, cx).into_any_element());
         let general = self.general();
         if !general.is_empty() {
