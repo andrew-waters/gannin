@@ -192,19 +192,20 @@ fn sections() -> Vec<Section> {
         //     title: Some("Rituals"),
         //     rows: vec![Item(Standup), Item(Recap), Item(Prioritisation), Item(Planning), Item(Refine), Item(Hygiene)],
         // },
-        // The team's harness: its documents by kind. Onboarding and
-        // Workflows aren't ported yet.
-        Section {
-            id: "harness",
-            title: Some("Harness"),
-            rows: crate::harness::HarnessKind::ALL.into_iter().map(|kind| Item(Harness(kind))).collect(),
-        },
+        // The team's harness is a panel of its own (`LeftPanel::Harness`).
         // Section {
         //     id: "agents",
         //     title: Some("Agents"),
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
     ]
+}
+
+/// What the left dock shows: the app's navigation, or the team's harness.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LeftPanel {
+    Nav,
+    Harness,
 }
 
 #[derive(Clone, Copy)]
@@ -364,6 +365,10 @@ pub struct Workspace {
     account_open: bool,
     /// The tab bar's "+" menu is open.
     new_menu_open: bool,
+    /// Which panel the left dock shows.
+    left_panel: LeftPanel,
+    /// How many documents of each kind the org's harnesses hold.
+    harness_counts: std::collections::HashMap<crate::harness::HarnessKind, usize>,
     /// New Plan, New Ask or New Quick Change, over the window.
     launch_form: Option<(Entity<crate::launch_form::LaunchForm>, Subscription)>,
     sync: SyncStatus,
@@ -593,6 +598,8 @@ impl Workspace {
             sign_in_task: None,
             account_open: false,
             new_menu_open: false,
+            left_panel: LeftPanel::Nav,
+            harness_counts: Default::default(),
             launch_form: None,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
@@ -1149,6 +1156,9 @@ impl Workspace {
 
     /// After a sync: every page re-reads the pilot's caches.
     fn refresh_pages(&mut self, cx: &mut Context<Self>) {
+        if self.left_panel == LeftPanel::Harness {
+            self.load_harness_counts(cx);
+        }
         self.issues.update(cx, |page, cx| page.reload(cx));
         for page in self.pages() {
             match page {
@@ -2244,6 +2254,10 @@ impl Workspace {
         self.projects.clear();
         self.project = None;
         self.issues.update(cx, |page, cx| page.set_org(Some(org.clone()), cx));
+        self.harness_counts.clear();
+        if self.left_panel == LeftPanel::Harness {
+            self.load_harness_counts(cx);
+        }
         for page in self.pages() {
             match page {
                 Page::Issues(page) => page.update(cx, |page, cx| {
@@ -2459,12 +2473,41 @@ impl Workspace {
             })
     }
 
+    /// Reads how many documents of each kind the org's harnesses hold, off
+    /// the main thread, for the Harness panel.
+    fn load_harness_counts(&mut self, cx: &mut Context<Self>) {
+        let Some(org) = self.org.clone() else { return };
+        cx.spawn(async move |this, cx| {
+            let counts = cx.background_executor().spawn(async move { crate::harness::counts(&crate::harness::load(&org)) }).await;
+            this.update(cx, |this, cx| {
+                this.harness_counts = counts;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Shows `panel` in the left dock, or hides the dock when it's already
+    /// showing, as Zed's dock buttons.
+    fn show_left_panel(&mut self, panel: LeftPanel, cx: &mut Context<Self>) {
+        if self.sidebar_open && self.left_panel == panel {
+            self.sidebar_open = false;
+        } else {
+            self.sidebar_open = true;
+            self.left_panel = panel;
+            if panel == LeftPanel::Harness {
+                self.load_harness_counts(cx);
+            }
+        }
+    }
+
     // MARK: Status bar
 
     /// Along the foot of the window, as Zed's: panel toggles at each end
     /// and the page's own status between them.
     fn status_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let toggle = |id: &'static str, icon: &'static str, tip: &'static str, on: bool, cx: &mut Context<Self>, action: fn(&mut Self)| {
+        let toggle = |id: &'static str, icon: &'static str, tip: &'static str, on: bool, cx: &mut Context<Self>, action: fn(&mut Self, &mut Context<Self>)| {
             div()
                 .id(id)
                 .p_1()
@@ -2474,7 +2517,7 @@ impl Workspace {
                 .hover(|s| s.bg(theme.row_selected))
                 .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.to_string())).into())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    action(this);
+                    action(this, cx);
                     cx.stop_propagation();
                     cx.notify();
                 }))
@@ -2496,7 +2539,23 @@ impl Workspace {
                 "Sidebar  ⌃⌘S",
                 self.sidebar_open,
                 cx,
-                |this| this.sidebar_open = !this.sidebar_open,
+                |this, _| this.sidebar_open = !this.sidebar_open,
+            ))
+            .child(toggle(
+                "panel-nav",
+                "icons/list_tree.svg",
+                "Navigation",
+                self.sidebar_open && self.left_panel == LeftPanel::Nav,
+                cx,
+                |this, cx| this.show_left_panel(LeftPanel::Nav, cx),
+            ))
+            .child(toggle(
+                "panel-harness",
+                "icons/book.svg",
+                "Harness",
+                self.sidebar_open && self.left_panel == LeftPanel::Harness,
+                cx,
+                |this, cx| this.show_left_panel(LeftPanel::Harness, cx),
             ))
             .child(div().flex_1())
             .child(toggle(
@@ -2505,7 +2564,7 @@ impl Workspace {
                 "Sync  ⌘R refreshes",
                 self.sync.open,
                 cx,
-                |this| this.sync.open = !this.sync.open,
+                |this, _| this.sync.open = !this.sync.open,
             ))
             .child(toggle(
                 "toggle-inspector",
@@ -2513,7 +2572,7 @@ impl Workspace {
                 "Your Work  ⌥⌘I",
                 self.inspector_open,
                 cx,
-                |this| this.inspector_open = !this.inspector_open,
+                |this, _| this.inspector_open = !this.inspector_open,
             ))
     }
 
@@ -2522,7 +2581,24 @@ impl Workspace {
     fn sidebar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
         let mut rows: Vec<AnyElement> = Vec::new();
-        for section in sections() {
+        if self.left_panel == LeftPanel::Harness {
+            rows.push(
+                div()
+                    .mt_3()
+                    .mb_0p5()
+                    .px_2()
+                    .text_xs()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.tertiary)
+                    .child("Harness")
+                    .into_any_element(),
+            );
+            for kind in crate::harness::HarnessKind::ALL {
+                rows.push(self.nav_row(Nav::Harness(kind), 0, None, current, theme, cx).into_any_element());
+            }
+        }
+        let sections = if self.left_panel == LeftPanel::Nav { sections() } else { Vec::new() };
+        for section in sections {
             let collapsed = self.collapsed_sections.contains(section.id);
             if let Some(title) = section.title {
                 let id = section.id;
@@ -2633,6 +2709,13 @@ impl Workspace {
             // SF Symbols aren't reachable from GPUI; icons need an SVG set.
             .child(div().w(px(16.)).flex().justify_center().child(div().w(px(6.)).h(px(6.)).rounded_full().bg(theme.tertiary)))
             .child(div().flex_1().overflow_hidden().whitespace_nowrap().child(nav.title()))
+            .when_some(
+                match nav {
+                    Nav::Harness(kind) => self.harness_counts.get(&kind).copied(),
+                    _ => None,
+                },
+                |d, count| d.child(div().text_xs().text_color(theme.secondary).child(count.to_string())),
+            )
             .when_some(expanded, |d, expanded| {
                 d.child(
                     div()

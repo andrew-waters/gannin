@@ -158,6 +158,15 @@ pub fn load(org: &str) -> Vec<Doc> {
     docs
 }
 
+/// How many documents of each kind, for the Harness panel.
+pub fn counts(docs: &[Doc]) -> std::collections::HashMap<HarnessKind, usize> {
+    let mut counts = std::collections::HashMap::new();
+    for doc in docs {
+        *counts.entry(doc.kind).or_default() += 1;
+    }
+    counts
+}
+
 /// A row clicked: the workspace opens the document in a drawer.
 pub struct OpenDoc(pub Doc);
 
