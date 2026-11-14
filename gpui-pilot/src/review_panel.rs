@@ -583,8 +583,7 @@ impl ReviewPanel {
         let link = url.clone();
         let has_result = self.result.is_some();
         let can_again = self.idle() && has_result;
-        let (status, status_tint) = self.status(theme);
-        let (ready, ready_tint) = self.readiness(theme);
+        let (_, status_tint) = self.status(theme);
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
         let live = matches!(self.source, Source::Live { .. });
@@ -673,26 +672,7 @@ impl ReviewPanel {
                             .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&link)))
                             .child(title),
                     )
-                    .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{repo}#{number}")))
-                    .when(!status.is_empty(), |d| d.child(div().flex_none().text_sm().text_color(status_tint).child(status)))
-                    .when_some(self.result.as_ref(), |d, r| d.child(Self::verdict_pill(r.verdict.as_deref(), theme)))
-                    .child(
-                        div()
-                            .id("review-readiness")
-                            .flex_shrink(1.)
-                            .min_w(px(60.))
-                            .truncate()
-                            .text_sm()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(ready_tint)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.selected = Selected::Overview;
-                                cx.notify();
-                            }))
-                            .child(ready),
-                    )
-                    .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| d.child(div().flex_none().child(Self::effort_meter(e, theme)))),
+                    .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{repo}#{number}"))),
             )
             .child(controls)
     }
@@ -755,8 +735,37 @@ impl ReviewPanel {
 
     fn file_list(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        let (ready, _) = self.readiness(theme);
-        rows.push(self.list_row("row-overview".into(), Selected::Overview, "Overview".into(), Some(ready), None, theme, cx).into_any_element());
+        // Where the review stands, above everything: claude's state, the
+        // verdict, how ready it is to merge, and the effort.
+        let (status, status_tint) = self.status(theme);
+        let (ready, ready_tint) = self.readiness(theme);
+        rows.push(
+            div()
+                .flex()
+                .flex_col()
+                .gap_1p5()
+                .px_2()
+                .pt_1()
+                .pb_3()
+                .mb_1()
+                .border_b_1()
+                .border_color(theme.border)
+                .when(!status.is_empty() || self.result.is_some(), |d| {
+                    d.child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .when(!status.is_empty(), |d| d.child(div().text_sm().font_weight(FontWeight::MEDIUM).text_color(status_tint).child(status)))
+                            .when_some(self.result.as_ref(), |d, r| d.child(Self::verdict_pill(r.verdict.as_deref(), theme))),
+                    )
+                })
+                .child(div().text_sm().text_color(ready_tint).child(ready))
+                .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| d.child(Self::effort_meter(e, theme)))
+                .into_any_element(),
+        );
+        rows.push(self.list_row("row-overview".into(), Selected::Overview, "Overview".into(), None, None, theme, cx).into_any_element());
         let general = self.general();
         if !general.is_empty() {
             let kept = general.iter().filter(|f| !self.dismissed.contains(&f.key())).count();
