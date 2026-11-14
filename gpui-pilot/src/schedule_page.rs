@@ -293,11 +293,17 @@ impl SchedulePage {
     /// Scheduled issues waiting on you: decisions to make, blockers to
     /// clear, or a scout that failed.
     fn waiting_on_you(&self) -> Vec<(String, String)> {
+        self.scouted(&["needs", "blocked", "failed"])
+    }
+
+    /// Scheduled issues whose scouting is in one of `states`, in schedule
+    /// order.
+    fn scouted(&self, states: &[&str]) -> Vec<(String, String)> {
         let mut out: Vec<(String, String)> = Vec::new();
         let titles = self.schedule.starts.iter().map(|x| x.issue.clone()).chain(self.schedule.sequences.iter().flat_map(|q| q.items.clone()));
         for issue in titles {
             if let Some(r) = self.schedule.readiness.get(&issue.id) {
-                if matches!(r.state.as_str(), "needs" | "blocked" | "failed") && !out.iter().any(|(id, _)| *id == issue.id) {
+                if states.contains(&r.state.as_str()) && !out.iter().any(|(id, _)| *id == issue.id) {
                     out.push((issue.id.clone(), issue.label()));
                 }
             }
@@ -308,16 +314,47 @@ impl SchedulePage {
     /// The panel of what's waiting on you: each issue's decisions as
     /// options to pick, its blockers to clear, or Scout Again.
     fn decisions_panel(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let waiting = self.waiting_on_you();
+        // Those waiting first; then the ready ones, to see and change.
+        let mut waiting = self.waiting_on_you();
+        let ready = self.scouted(&["ready"]);
+        let first_ready = waiting.len();
+        waiting.extend(ready);
         let mut body = div().flex().flex_col().gap_4().child(div().font_weight(FontWeight::SEMIBOLD).child("Waiting on you")).child(div().text_xs().text_color(theme.secondary).child(
-            "Scouted when they were scheduled. Answer before their time and they start with the decisions made; one still waiting at its time is skipped, and starts once it's ready.",
+            "Scouted when they were scheduled. Each answer saves as you pick it. Once every decision is made and no blocker is left, an issue is ready and starts with them; one still waiting at its time is skipped, and starts once it's ready.",
         ));
-        if waiting.is_empty() {
+        if first_ready == 0 {
             body = body.child(div().text_sm().text_color(theme.secondary).child("Nothing: every scheduled issue is ready or still being scouted."));
         }
-        for (issue_id, title) in waiting {
+        for (n, (issue_id, title)) in waiting.into_iter().enumerate() {
+            if n == first_ready {
+                body = body.child(div().pt_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.good()).child("READY"));
+            }
             let Some(r) = self.schedule.readiness.get(&issue_id).cloned() else { continue };
-            let mut card = div().flex().flex_col().gap_2().p(px(10.)).rounded_lg().bg(theme.bg).border_1().border_color(theme.border).child(div().font_weight(FontWeight::MEDIUM).text_sm().child(title));
+            // How far along it is, saved as each option is picked.
+            let decided = r.decisions.iter().filter(|d| d.answer.is_some()).count();
+            let mut parts = Vec::new();
+            if !r.decisions.is_empty() {
+                parts.push(format!("{decided} of {} decided", r.decisions.len()));
+            }
+            if !r.blockers.is_empty() {
+                parts.push(format!("{} blocker{} left", r.blockers.len(), if r.blockers.len() == 1 { "" } else { "s" }));
+            }
+            let (status, tint) = match r.state.as_str() {
+                "ready" => ("Ready: it runs with these decisions".to_string(), theme.good()),
+                "failed" => ("The scout couldn't finish".to_string(), theme.critical()),
+                _ => (parts.join(" · "), if r.blockers.is_empty() { theme.orange() } else { theme.critical() }),
+            };
+            let mut card = div()
+                .flex()
+                .flex_col()
+                .gap_2()
+                .p(px(10.))
+                .rounded_lg()
+                .bg(theme.bg)
+                .border_1()
+                .border_color(if r.state == "ready" { theme.good().opacity(0.5) } else { theme.border })
+                .child(div().font_weight(FontWeight::MEDIUM).text_sm().child(title))
+                .child(div().text_xs().text_color(tint).child(status));
             if let Some(error) = &r.error {
                 card = card.child(div().text_xs().text_color(theme.critical()).child(format!("The scout couldn't finish: {error}")));
             }
