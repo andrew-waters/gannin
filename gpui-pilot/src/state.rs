@@ -41,6 +41,9 @@ pub struct SavedState {
     pub sidebar_open: bool,
     /// The Harness panel, beside the navigation.
     pub harness_open: bool,
+    /// The tab bar's filter by kind, and whether tabs group by kind.
+    pub tab_filter: Option<crate::shell::TabKind>,
+    pub group_tabs: bool,
     pub inspector_open: bool,
     pub dock_open: bool,
     pub sidebar_width: f32,
@@ -81,6 +84,8 @@ impl Default for SavedState {
             active: 0,
             sidebar_open: true,
             harness_open: false,
+            tab_filter: None,
+            group_tabs: false,
             inspector_open: false,
             dock_open: false,
             sidebar_width: 230.0,

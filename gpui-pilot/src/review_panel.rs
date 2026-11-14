@@ -397,7 +397,12 @@ impl ReviewPanel {
         (self.result.is_some(), self.posted_latest().is_some(), kept)
     }
 
-    /// Post Review, from outside (closing an unposted review).
+    /// Claude's verdict, once there's a result.
+    pub fn verdict(&self) -> Option<String> {
+        self.result.as_ref().and_then(|r| r.verdict.clone())
+    }
+
+        /// Post Review, from outside (closing an unposted review).
     pub fn start_post(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.open_post(window, cx);
     }

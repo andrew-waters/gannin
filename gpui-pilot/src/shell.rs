@@ -213,6 +213,41 @@ fn sections() -> Vec<Section> {
     ]
 }
 
+/// What a tab is, for its icon and the tab bar's filter; in the order
+/// grouped tabs go.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+pub enum TabKind {
+    Pages,
+    Work,
+    Reviews,
+    Plans,
+    Asks,
+}
+
+impl TabKind {
+    const ALL: [TabKind; 5] = [TabKind::Pages, TabKind::Work, TabKind::Reviews, TabKind::Plans, TabKind::Asks];
+
+    fn title(self) -> &'static str {
+        match self {
+            TabKind::Pages => "Pages",
+            TabKind::Work => "Work",
+            TabKind::Reviews => "Reviews",
+            TabKind::Plans => "Plans",
+            TabKind::Asks => "Asks",
+        }
+    }
+
+    fn icon(self) -> &'static str {
+        match self {
+            TabKind::Pages => "icons/file.svg",
+            TabKind::Work => "icons/pull_request.svg",
+            TabKind::Reviews => "icons/eye.svg",
+            TabKind::Plans => "icons/list_todo.svg",
+            TabKind::Asks => "icons/chat.svg",
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Edge {
     Harness,
@@ -381,6 +416,11 @@ pub struct Workspace {
     launch_form: Option<(Entity<crate::launch_form::LaunchForm>, Subscription)>,
     /// Review a Pull Request's picker, while it's open.
     pr_picker: Option<(Entity<crate::pr_picker::PrPicker>, Subscription)>,
+    /// The tab bar's filter by kind (None is all), whether tabs group by
+    /// kind, and whether its menu is open.
+    tab_filter: Option<TabKind>,
+    group_tabs: bool,
+    tab_filter_open: bool,
     /// Sessions being reopened at launch, which open without switching.
     reopening: usize,
     /// Explain's sheet, while it's open.
@@ -431,6 +471,8 @@ impl Workspace {
             active: self.tabs.iter().take(self.active).filter(|tab| !matches!(tab.nav, Nav::Session(_))).count(),
             sidebar_open: self.sidebar_open,
             harness_open: self.harness_open,
+            tab_filter: self.tab_filter,
+            group_tabs: self.group_tabs,
             inspector_open: self.inspector_open,
             dock_open: false,
             sidebar_width: self.sidebar_width,
@@ -617,6 +659,8 @@ impl Workspace {
             templates: (saved.issues.clone(), saved.prs.clone(), saved.ci.clone()),
             inspector: None,
             sidebar_open: saved.sidebar_open,
+            tab_filter: saved.tab_filter,
+            group_tabs: saved.group_tabs,
             harness_open: saved.harness_open,
             inspector_open: saved.inspector_open,
             sidebar_width: saved.sidebar_width,
@@ -641,6 +685,7 @@ impl Workspace {
             pr_picker: None,
             explain: None,
             reopening: 0,
+            tab_filter_open: false,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
             _subscriptions: subscriptions,
@@ -807,6 +852,12 @@ impl Workspace {
             self.drawers.clear();
         }
         self.active = index.min(self.tabs.len().saturating_sub(1));
+        // A tab the filter hides (a new one, say) shows all again.
+        if let (Some(kind), Some(tab)) = (self.tab_filter, self.tabs.get(self.active)) {
+            if self.tab_kind(tab, cx) != kind {
+                self.tab_filter = None;
+            }
+        }
         self.focus_current(window, cx);
         cx.notify();
     }
@@ -2957,6 +3008,7 @@ impl Workspace {
             .bg(theme.sidebar)
             .border_b_1()
             .border_color(theme.border)
+            .child(self.tab_filter_menu(theme, cx))
             .child(self.tabs(theme, cx))
             .child(self.new_menu(theme, cx))
     }
@@ -3049,15 +3101,59 @@ impl Workspace {
     }
 
     fn tabs(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .id("tabs")
-            .flex_1()
-            .min_w_0()
-            .h_full()
-            .flex()
-            .flex_row()
-            .overflow_x_scroll()
-            .children(self.tabs.iter().enumerate().map(|(index, tab)| {
+        // The tabs showing, in order: those of the kind picked, grouped by
+        // kind with its icon between groups when asked.
+        let mut order: Vec<usize> = (0..self.tabs.len()).filter(|&i| self.tab_filter.is_none_or(|k| self.tab_kind(&self.tabs[i], cx) == k)).collect();
+        if self.group_tabs {
+            order.sort_by_key(|&i| self.tab_kind(&self.tabs[i], cx) as u8);
+        }
+        let mut elements: Vec<AnyElement> = Vec::new();
+        let mut last: Option<TabKind> = None;
+        for index in order {
+            let kind = self.tab_kind(&self.tabs[index], cx);
+            if self.group_tabs && self.tab_filter.is_none() && last != Some(kind) {
+                elements.push(
+                    div()
+                        .flex_none()
+                        .h_full()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_2()
+                        .border_r_1()
+                        .border_color(theme.border)
+                        .bg(theme.tile)
+                        .text_xs()
+                        .text_color(theme.tertiary)
+                        .child(gpui::svg().path(kind.icon()).size(px(12.)).text_color(theme.tertiary))
+                        .child(kind.title())
+                        .into_any_element(),
+                );
+            }
+            last = Some(kind);
+            elements.push(self.tab_element(index, theme, cx).into_any_element());
+        }
+        div().id("tabs").flex_1().min_w_0().h_full().flex().flex_row().overflow_x_scroll().children(elements)
+    }
+
+    /// Next or previous among the tabs showing, in the order they show.
+    fn step_tab(&mut self, by: i32, window: &mut Window, cx: &mut Context<Self>) {
+        let mut order: Vec<usize> = (0..self.tabs.len()).filter(|&i| self.tab_filter.is_none_or(|k| self.tab_kind(&self.tabs[i], cx) == k)).collect();
+        if self.group_tabs {
+            order.sort_by_key(|&i| self.tab_kind(&self.tabs[i], cx) as u8);
+        }
+        if order.is_empty() {
+            return;
+        }
+        let at = order.iter().position(|&i| i == self.active).unwrap_or(0) as i32;
+        let next = (at + by).rem_euclid(order.len() as i32) as usize;
+        self.activate(order[next], window, cx);
+    }
+
+    fn tab_element(&self, index: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+                let tab = &self.tabs[index];
+                let (kind, kind_tint) = (self.tab_kind(tab, cx), self.tab_tint(tab, theme, cx));
                 let (nav, id, page) = (tab.nav, tab.id, tab.page.clone());
                 let active = index == self.active;
                 let label = self.tab_name(tab, cx);
@@ -3095,6 +3191,7 @@ impl Workspace {
                     .on_drag(DraggedTab(index, label.clone()), |dragged, _, _, cx| cx.new(|_| ColumnDrag(dragged.1.clone())))
                     .drag_over::<DraggedTab>(move |style, _, _, _| style.bg(landing))
                     .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| this.move_tab(dragged.0, index, cx)))
+                    .child(gpui::svg().path(kind.icon()).size(px(14.)).flex_none().text_color(kind_tint))
                     .when_some(match nav {
                         Nav::Session(id) => self.session(id, cx).map(|p| p.read(cx).state),
                         _ => None,
@@ -3140,7 +3237,157 @@ impl Workspace {
                             }))
                             .child("×"),
                     )
-            }))
+    }
+
+    /// What kind of tab it is, for its icon and the tab bar's filter.
+    fn tab_kind(&self, tab: &Tab, cx: &App) -> TabKind {
+        use crate::launch::Flow;
+        match tab.nav {
+            Nav::Session(id) => match self.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().map(|l| l.flow)) {
+                Some(Flow::Review) => TabKind::Reviews,
+                Some(Flow::Work) | Some(Flow::QuickChange) => TabKind::Work,
+                Some(Flow::Plan) => TabKind::Plans,
+                _ => TabKind::Asks,
+            },
+            _ => TabKind::Pages,
+        }
+    }
+
+    /// The icon's colour: a review's verdict once it has one.
+    fn tab_tint(&self, tab: &Tab, theme: &Theme, cx: &App) -> gpui::Hsla {
+        if let Nav::Session(id) = tab.nav {
+            if let Some(verdict) = self.session(id, cx).and_then(|p| p.read(cx).review()).and_then(|r| r.read(cx).verdict()) {
+                return match verdict.as_str() {
+                    "approve" => theme.good(),
+                    "request_changes" => theme.critical(),
+                    _ => theme.secondary,
+                };
+            }
+        }
+        theme.secondary
+    }
+
+    /// Whether a tab's session is waiting on the person.
+    fn tab_needs_you(&self, tab: &Tab, cx: &App) -> bool {
+        matches!(tab.nav, Nav::Session(id) if self.session(id, cx).is_some_and(|p| p.read(cx).state == State::NeedsYou))
+    }
+
+    /// At the left of the tab bar: which kind of tab shows, and grouping.
+    fn tab_filter_menu(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let open = self.tab_filter_open;
+        let counts: Vec<(TabKind, usize, bool)> = TabKind::ALL
+            .into_iter()
+            .map(|k| {
+                let of: Vec<&Tab> = self.tabs.iter().filter(|t| self.tab_kind(t, cx) == k).collect();
+                (k, of.len(), of.iter().any(|t| self.tab_needs_you(t, cx)))
+            })
+            .filter(|(_, n, _)| *n > 0)
+            .collect();
+        // A tab hidden by the filter that needs the person shows on the button.
+        let hidden_needs = self.tab_filter.is_some() && self.tabs.iter().any(|t| Some(self.tab_kind(t, cx)) != self.tab_filter && self.tab_needs_you(t, cx));
+        let orange: gpui::Hsla = gpui::rgb(0xFF9F0A).into();
+        let row = |id: SharedString, icon: Option<&'static str>, label: String, count: Option<usize>, needs: bool, on: bool| {
+            div()
+                .id(id)
+                .mx_1()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.row_selected))
+                .child(div().w(px(12.)).text_color(theme.selected).child(if on { "✓" } else { "" }))
+                .when_some(icon, |d, icon| d.child(gpui::svg().path(icon).size(px(14.)).text_color(theme.secondary)))
+                .child(div().flex_1().child(label))
+                .when(needs, |d| d.child(div().size(px(7.)).rounded_full().bg(orange)))
+                .when_some(count, |d, n| d.child(div().text_xs().text_color(theme.tertiary).child(n.to_string())))
+        };
+        let label = self.tab_filter.map(|k| k.title()).unwrap_or("All");
+        div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .items_center()
+            .px_1()
+            .border_r_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .id("tab-filter")
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .px_1p5()
+                    .py_0p5()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_xs()
+                    .text_color(if self.tab_filter.is_some() { theme.selected } else { theme.secondary })
+                    .when(open, |d| d.bg(theme.row_selected))
+                    .hover(|s| s.bg(theme.row_selected))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.tab_filter_open = !this.tab_filter_open;
+                        cx.notify();
+                    }))
+                    .child(gpui::svg().path(self.tab_filter.map(|k| k.icon()).unwrap_or("icons/filter.svg")).size(px(14.)).text_color(if self.tab_filter.is_some() { theme.selected } else { theme.secondary }))
+                    .child(label)
+                    .when(hidden_needs, |d| d.child(div().size(px(7.)).rounded_full().bg(orange))),
+            )
+            .when(open, |d| {
+                let mut menu = div()
+                    .id("tab-filter-menu")
+                    .occlude()
+                    .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                        this.tab_filter_open = false;
+                        cx.notify();
+                    }))
+                    .mt(px(28.))
+                    .w(px(220.))
+                    .py_1()
+                    .flex()
+                    .flex_col()
+                    .bg(theme.popover)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded_lg()
+                    .shadow_lg()
+                    .child(row("tab-filter-all".into(), None, "All".into(), Some(self.tabs.len()), false, self.tab_filter.is_none()).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.tab_filter = None;
+                        this.tab_filter_open = false;
+                        cx.notify();
+                    })));
+                for (kind, count, needs) in counts {
+                    menu = menu.child(
+                        row(SharedString::from(format!("tab-filter-{}", kind.title())), Some(kind.icon()), kind.title().into(), Some(count), needs, self.tab_filter == Some(kind)).on_click(cx.listener(
+                            move |this, _: &ClickEvent, window, cx| {
+                                this.tab_filter = Some(kind);
+                                this.tab_filter_open = false;
+                                // Show one of that kind if the tab showing isn't.
+                                if this.tabs.get(this.active).is_none_or(|t| this.tab_kind(t, cx) != kind) {
+                                    if let Some(first) = this.tabs.iter().position(|t| this.tab_kind(t, cx) == kind) {
+                                        this.activate(first, window, cx);
+                                    }
+                                }
+                                cx.notify();
+                            },
+                        )),
+                    );
+                }
+                let grouped = self.group_tabs;
+                menu = menu.child(div().my_1().h(px(1.)).bg(theme.border)).child(row("tab-group".into(), None, "Group by kind".into(), None, false, grouped).on_click(cx.listener(
+                    move |this, _: &ClickEvent, _, cx| {
+                        this.group_tabs = !grouped;
+                        this.tab_filter_open = false;
+                        cx.notify();
+                    },
+                )));
+                d.child(deferred(anchored().snap_to_window_with_margin(px(8.)).child(menu)).with_priority(2))
+            })
     }
 
     fn page(&self, theme: &Theme, cx: &App) -> AnyElement {
@@ -4460,16 +4707,8 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &NewQuickChange, window, cx| this.open_form(crate::launch::Flow::QuickChange, None, window, cx)))
             .on_action(cx.listener(|this, _: &NewPlan, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_tab(this.active, window, cx)))
-            .on_action(cx.listener(|this, _: &NextTab, window, cx| {
-                if !this.tabs.is_empty() {
-                    this.activate((this.active + 1) % this.tabs.len(), window, cx)
-                }
-            }))
-            .on_action(cx.listener(|this, _: &PreviousTab, window, cx| {
-                if !this.tabs.is_empty() {
-                    this.activate((this.active + this.tabs.len() - 1) % this.tabs.len(), window, cx)
-                }
-            }))
+            .on_action(cx.listener(|this, _: &NextTab, window, cx| this.step_tab(1, window, cx)))
+            .on_action(cx.listener(|this, _: &PreviousTab, window, cx| this.step_tab(-1, window, cx)))
             .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Org, window, cx)))
             // Escape closes the top drawer; the switcher takes it first when open.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
