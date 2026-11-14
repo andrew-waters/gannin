@@ -46,6 +46,7 @@ pub struct SavedState {
     /// The tab bar's filter by kind, and whether tabs group by kind.
     pub tab_filter: Option<crate::shell::TabKind>,
     pub group_tabs: bool,
+    pub collapsed_kinds: Vec<crate::shell::TabKind>,
     pub inspector_open: bool,
     pub dock_open: bool,
     pub sidebar_width: f32,
@@ -89,6 +90,7 @@ impl Default for SavedState {
             harness_open: false,
             tab_filter: None,
             group_tabs: false,
+            collapsed_kinds: Vec::new(),
             inspector_open: false,
             dock_open: false,
             sidebar_width: 230.0,

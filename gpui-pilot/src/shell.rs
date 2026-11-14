@@ -215,7 +215,7 @@ fn sections() -> Vec<Section> {
 
 /// What a tab is, for its icon and the tab bar's filter; in the order
 /// grouped tabs go.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
 pub enum TabKind {
     Pages,
     Work,
@@ -421,6 +421,8 @@ pub struct Workspace {
     tab_filter: Option<TabKind>,
     group_tabs: bool,
     tab_filter_open: bool,
+    /// Kinds whose group of tabs is folded away.
+    collapsed_kinds: std::collections::HashSet<TabKind>,
     /// Sessions being reopened at launch, which open without switching,
     /// but for the one that was showing (by its launch).
     reopening: usize,
@@ -479,6 +481,11 @@ impl Workspace {
             harness_open: self.harness_open,
             tab_filter: self.tab_filter,
             group_tabs: self.group_tabs,
+            collapsed_kinds: {
+                let mut kinds: Vec<TabKind> = self.collapsed_kinds.iter().copied().collect();
+                kinds.sort_by_key(|k| *k as u8);
+                kinds
+            },
             inspector_open: self.inspector_open,
             dock_open: false,
             sidebar_width: self.sidebar_width,
@@ -668,6 +675,7 @@ impl Workspace {
             templates: (saved.issues.clone(), saved.prs.clone(), saved.ci.clone()),
             inspector: None,
             sidebar_open: saved.sidebar_open,
+            collapsed_kinds: saved.collapsed_kinds.iter().copied().collect(),
             tab_filter: saved.tab_filter,
             group_tabs: saved.group_tabs,
             harness_open: saved.harness_open,
@@ -3126,9 +3134,15 @@ impl Workspace {
         let mut last: Option<TabKind> = None;
         for index in order {
             let kind = self.tab_kind(&self.tabs[index], cx);
-            if self.group_tabs && self.tab_filter.is_none() && last != Some(kind) {
+            let grouped = self.group_tabs && self.tab_filter.is_none();
+            let collapsed = grouped && self.collapsed_kinds.contains(&kind);
+            if grouped && last != Some(kind) {
+                // The group's heading folds its tabs away, or back.
+                let count = self.tabs.iter().filter(|t| self.tab_kind(t, cx) == kind).count();
+                let needs = collapsed && self.tabs.iter().any(|t| self.tab_kind(t, cx) == kind && self.tab_needs_you(t, cx));
                 elements.push(
                     div()
+                        .id(SharedString::from(format!("tab-group-{}", kind.title())))
                         .flex_none()
                         .h_full()
                         .flex()
@@ -3141,13 +3155,27 @@ impl Workspace {
                         .bg(theme.tile)
                         .text_xs()
                         .text_color(theme.tertiary)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme.row_selected))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            if !this.collapsed_kinds.remove(&kind) {
+                                this.collapsed_kinds.insert(kind);
+                            }
+                            cx.notify();
+                        }))
+                        .child(div().child(if collapsed { "▸" } else { "▾" }))
                         .child(gpui::svg().path(kind.icon()).size(px(12.)).text_color(theme.tertiary))
                         .child(kind.title())
+                        .when(collapsed, |d| d.child(div().text_color(theme.secondary).child(count.to_string())))
+                        .when(needs, |d| d.child(div().size(px(7.)).rounded_full().bg(gpui::rgb(0xFF9F0A))))
                         .into_any_element(),
                 );
             }
             last = Some(kind);
-            elements.push(self.tab_element(index, theme, cx).into_any_element());
+            // A folded group still shows the tab that's open.
+            if !collapsed || index == self.active {
+                elements.push(self.tab_element(index, theme, cx).into_any_element());
+            }
         }
         div().id("tabs").flex_1().min_w_0().h_full().flex().flex_row().overflow_x_scroll().children(elements)
     }
@@ -3168,8 +3196,12 @@ impl Workspace {
 
     fn tab_element(&self, index: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
                 let tab = &self.tabs[index];
-                let (kind, kind_tint) = (self.tab_kind(tab, cx), self.tab_tint(tab, theme, cx));
-                let (nav, id, page) = (tab.nav, tab.id, tab.page.clone());
+                let (icon, tint) = (self.tab_icon(tab, cx), self.tab_tint(tab, theme, cx));
+                // Filtered to one kind, the tabs need no icon to tell them
+                // apart; a session's state still colours its name.
+                let filtered = self.tab_filter.is_some();
+                let (id, page) = (tab.id, tab.page.clone());
+                let session_tint = matches!(tab.nav, Nav::Session(_)).then_some(tint);
                 let active = index == self.active;
                 let label = self.tab_name(tab, cx);
                 let landing = theme.row_selected;
@@ -3185,7 +3217,11 @@ impl Workspace {
                     .border_r_1()
                     .border_color(theme.border)
                     .cursor_pointer()
-                    .text_color(if active { theme.fg } else { theme.secondary })
+                    .text_color(match session_tint.filter(|_| filtered) {
+                        Some(tint) => tint,
+                        None if active => theme.fg,
+                        None => theme.secondary,
+                    })
                     .when(active, |d| d.bg(theme.bg))
                     // A double click renames; a single one switches.
                     .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
@@ -3206,11 +3242,7 @@ impl Workspace {
                     .on_drag(DraggedTab(index, label.clone()), |dragged, _, _, cx| cx.new(|_| ColumnDrag(dragged.1.clone())))
                     .drag_over::<DraggedTab>(move |style, _, _, _| style.bg(landing))
                     .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| this.move_tab(dragged.0, index, cx)))
-                    .child(gpui::svg().path(kind.icon()).size(px(14.)).flex_none().text_color(kind_tint))
-                    .when_some(match nav {
-                        Nav::Session(id) => self.session(id, cx).map(|p| p.read(cx).state),
-                        _ => None,
-                    }, |d, state| d.child(div().size(px(7.)).rounded_full().bg(state_tint(state, theme))))
+                    .when(!filtered, |d| d.child(gpui::svg().path(icon).size(px(14.)).flex_none().text_color(tint)))
                     .map(|d| match &self.renaming {
                         Some((renamed, field)) if *renamed == id => d.child(
                             div()
@@ -3268,18 +3300,42 @@ impl Workspace {
         }
     }
 
-    /// The icon's colour: a review's verdict once it has one.
+    /// A tab's own icon: its page's, or its session's kind.
+    fn tab_icon(&self, tab: &Tab, cx: &App) -> &'static str {
+        match tab.nav {
+            Nav::PullRequests => "icons/pull_request.svg",
+            Nav::Issues => "icons/circle.svg",
+            Nav::Scorecards => "icons/table.svg",
+            Nav::Ci => "icons/play_outlined.svg",
+            Nav::Activity => "icons/git_graph.svg",
+            Nav::Harness(_) => "icons/book.svg",
+            Nav::ReviewPreview => "icons/eye.svg",
+            Nav::Session(id) => match self.session(id, cx).map(|p| p.read(cx)) {
+                Some(page) if page.launch.is_some() => self.tab_kind(tab, cx).icon(),
+                Some(page) if page.kind == Kind::Shell => "icons/terminal.svg",
+                _ => "icons/sparkle.svg",
+            },
+            _ => "icons/file.svg",
+        }
+    }
+
+    /// The icon's colour, in place of a dot: a session's state (working,
+    /// needs you, your turn, ended), a review's verdict once it's in and
+    /// claude's waiting; a page's is plain.
     fn tab_tint(&self, tab: &Tab, theme: &Theme, cx: &App) -> gpui::Hsla {
-        if let Nav::Session(id) = tab.nav {
-            if let Some(verdict) = self.session(id, cx).and_then(|p| p.read(cx).review()).and_then(|r| r.read(cx).verdict()) {
+        let Nav::Session(id) = tab.nav else { return theme.secondary };
+        let Some(page) = self.session(id, cx) else { return theme.secondary };
+        let state = page.read(cx).state;
+        if matches!(state, State::YourTurn | State::Ended) {
+            if let Some(verdict) = page.read(cx).review().and_then(|r| r.read(cx).verdict()) {
                 return match verdict.as_str() {
                     "approve" => theme.good(),
                     "request_changes" => theme.critical(),
-                    _ => theme.secondary,
+                    _ => theme.selected,
                 };
             }
         }
-        theme.secondary
+        state_tint(state, theme)
     }
 
     /// Whether a tab's session is waiting on the person.
