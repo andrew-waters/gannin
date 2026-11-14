@@ -621,15 +621,6 @@ impl ReviewPanel {
             })))
     }
 
-    fn verdict_pill(verdict: Option<&str>, theme: &Theme) -> impl IntoElement {
-        let (label, tint) = match verdict {
-            Some("approve") => ("Approve", theme.good()),
-            Some("request_changes") => ("Request changes", theme.critical()),
-            _ => ("Comment", theme.secondary),
-        };
-        div().flex_none().px_2().py(px(3.)).rounded_full().text_xs().font_weight(FontWeight::SEMIBOLD).bg(tint.opacity(0.18)).text_color(tint).child(label)
-    }
-
     /// Where claude is, for the header.
     fn status(&self, theme: &Theme) -> (String, Hsla) {
         match self.claude_state().as_deref() {
