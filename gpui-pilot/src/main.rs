@@ -13,6 +13,7 @@ mod charts;
 mod data;
 mod detail;
 mod format;
+mod explain;
 mod github;
 mod harness;
 mod history;

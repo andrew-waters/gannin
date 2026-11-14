@@ -184,7 +184,7 @@ impl SessionPage {
         let mut subscriptions = Vec::new();
         if let Some(review) = &review {
             // Explain starts a session of its own, so the workspace hears of it.
-            subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone()))));
+            subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone(), event.1.clone()))));
         }
         subscriptions.push(cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {

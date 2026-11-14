@@ -383,6 +383,8 @@ pub struct Workspace {
     launch_form: Option<(Entity<crate::launch_form::LaunchForm>, Subscription)>,
     /// Review a Pull Request's picker, while it's open.
     pr_picker: Option<(Entity<crate::pr_picker::PrPicker>, Subscription)>,
+    /// Explain's sheet, while it's open.
+    explain: Option<(Entity<crate::explain::ExplainSheet>, Subscription)>,
     sync: SyncStatus,
     _sync_loop: Option<gpui::Task<()>>,
     /// What was last written, so unchanged state isn't written again.
@@ -619,6 +621,7 @@ impl Workspace {
             harness_counts: Default::default(),
             launch_form: None,
             pr_picker: None,
+            explain: None,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
             _subscriptions: subscriptions,
@@ -837,7 +840,7 @@ impl Workspace {
                 let page = cx.new(|cx| SessionPage::new(id, kind, folder, launch, builder, window, cx));
                 this._subscriptions.push(cx.subscribe(&page, |_, _, _: &Changed, cx| cx.notify()));
                 this._subscriptions.push(cx.subscribe_in(&page, window, |this, _, event: &crate::review_panel::ExplainPr, window, cx| {
-                    this.explain_subject(event.0.clone(), window, cx)
+                    this.open_explain(event.0.clone(), event.1.clone(), window, cx)
                 }));
                 this.sessions.push(page);
                 this.drawers.clear();
@@ -1060,32 +1063,20 @@ impl Workspace {
     /// about it, so the conversation can carry on.
     fn explain_pr(&mut self, pr: PrItem, window: &mut Window, cx: &mut Context<Self>) {
         let subject = crate::launch::Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
-        self.explain_subject(subject, window, cx);
+        self.open_explain(subject, Vec::new(), window, cx);
     }
 
-    /// Explains a PR in an Ask session of its own, or shows the one there is.
-    fn explain_subject(&mut self, pr: crate::launch::Subject, window: &mut Window, cx: &mut Context<Self>) {
-        use crate::launch::{self, Flow, Launch};
-        if self.show_session(&pr.id, Flow::Ask, window, cx) {
-            return;
-        }
-        let (Some(org), Some(harness)) = (self.org.clone(), self.harness_for(&pr.repo)) else {
-            return Self::no_harness(window, cx);
-        };
-        let repo_name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string();
-        let mut launch = Launch::new(Flow::Ask, format!("Explain {}#{}", repo_name, pr.number), &org, &harness, String::new(), Some(pr.clone()));
-        launch.branch = format!("ask-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..8].to_lowercase());
-        let question = format!(
-            "Explain pull request {}#{}, \"{}\" ({}), in plain terms: what it changes, why, and anything a reviewer should look at closely. Read it with `gh pr view {} --repo {} --comments` and `gh pr diff {} --repo {}`. Don't change anything.",
-            pr.repo, pr.number, pr.title, pr.url, pr.number, pr.repo, pr.number, pr.repo
-        );
-        let title = format!("Explain {}#{}", pr.repo, pr.number);
-        let brief = launch::ask_brief(&title, &harness, &launch.harness_path, &launch.branch);
-        let prompt = launch::ask_prompt(&question, &launch.branch);
-        let context = launch.dir().join("context");
-        let _ = std::fs::create_dir_all(&context);
-        let _ = std::fs::write(context.join("README.md"), "# Context\n\nNothing from Gannin here: the pull request is the subject.\n");
-        self.start_launch(launch, &brief, &prompt, false, window, cx);
+    /// Explain, as Gannin's: a conversation with claude about the PR in a
+    /// sheet, without a terminal.
+    fn open_explain(&mut self, subject: crate::launch::Subject, walkthrough: Vec<crate::review::Area>, window: &mut Window, cx: &mut Context<Self>) {
+        let sheet = cx.new(|cx| crate::explain::ExplainSheet::new(subject, walkthrough, window, cx));
+        let subscription = cx.subscribe_in(&sheet, window, |this, _, _: &crate::explain::CloseExplain, window, cx| {
+            this.explain = None;
+            this.focus_current(window, cx);
+            cx.notify();
+        });
+        self.explain = Some((sheet, subscription));
+        cx.notify();
     }
 
     /// The org's PR cache, read off the main thread.
@@ -4490,6 +4481,23 @@ impl Render for Workspace {
                 )
             })
             .when_some(self.sign_in.as_ref(), |d, step| d.child(self.sign_in_sheet(step, &theme, cx)))
+            .when_some(self.explain.as_ref().map(|(sheet, _)| sheet.clone()), |d, sheet| {
+                d.child(
+                    div()
+                        .id("explain-scrim")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .occlude()
+                        .bg(gpui::black().opacity(0.35))
+                        .flex()
+                        .justify_center()
+                        .pt(px(60.))
+                        .child(sheet),
+                )
+            })
             .when_some(self.pr_picker.as_ref().map(|(picker, _)| picker.clone()), |d, picker| {
                 d.child(
                     div()

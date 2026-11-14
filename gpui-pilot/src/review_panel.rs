@@ -44,7 +44,7 @@ pub struct Posted {
 }
 
 /// Ask the workspace to explain this PR in a session of its own.
-pub struct ExplainPr(pub crate::launch::Subject);
+pub struct ExplainPr(pub crate::launch::Subject, pub Vec<review::Area>);
 
 impl gpui::EventEmitter<ExplainPr> for ReviewPanel {}
 
@@ -500,7 +500,8 @@ impl ReviewPanel {
     fn explain(&mut self, cx: &mut Context<Self>) {
         if let Source::Live { launch, .. } = &self.source {
             if let Some(subject) = launch.subject.clone() {
-                cx.emit(ExplainPr(subject));
+                let walkthrough = self.result.as_ref().map(|r| r.walkthrough.clone()).unwrap_or_default();
+                cx.emit(ExplainPr(subject, walkthrough));
             }
         }
     }
@@ -689,6 +690,9 @@ impl ReviewPanel {
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
         let live = matches!(self.source, Source::Live { .. });
+        // Posting is for a result not posted yet: the button says so by
+        // whether it's enabled.
+        let can_post = has_result && self.posted_latest().is_none();
         let dot = if self.working() { theme.good() } else if status_tint == theme.orange() { theme.orange() } else if self.running() { theme.selected } else { theme.tertiary };
         let controls = match &self.post {
             Some(post) => self.post_controls(post, theme, cx).into_any_element(),
@@ -734,10 +738,9 @@ impl ReviewPanel {
                                 .child(format!("{} {}", posted_label(&posted.event), ago(posted.at))),
                         )
                     }
-                    (None, true) => d.child(div().flex_none().text_sm().text_color(theme.secondary).child("Not posted")),
-                    (None, false) => d,
+                    (None, _) => d,
                 })
-                .child(Self::button("review-post", "Post Review", true, has_result, theme).when(has_result, |d| {
+                .child(Self::button("review-post", "Post Review", true, can_post, theme).when(can_post, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
                 }))
                 .into_any_element(),
