@@ -63,7 +63,7 @@ pub fn gannin_lookback_days() -> i64 {
 }
 
 /// GitHub's ISO time with an explicit offset, as Gannin's searches use.
-fn search_stamp(time: DateTime<Utc>) -> String {
+pub(crate) fn search_stamp(time: DateTime<Utc>) -> String {
     time.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
 }
 
@@ -94,7 +94,7 @@ impl Step {
 }
 
 /// Records a page fetched for a step.
-fn advance(progress: &Progress, title: &str, fetched: usize, total: usize) {
+pub(crate) fn advance(progress: &Progress, title: &str, fetched: usize, total: usize) {
     if let Ok(mut steps) = progress.lock() {
         if let Some(step) = steps.iter_mut().rev().find(|s| s.title == title && !s.done) {
             step.fetched = fetched;
@@ -106,13 +106,13 @@ fn advance(progress: &Progress, title: &str, fetched: usize, total: usize) {
 /// The steps of the sync under way, shared with the window as it runs.
 pub type Progress = std::sync::Arc<std::sync::Mutex<Vec<Step>>>;
 
-fn begin(progress: &Progress, titles: &[&str]) {
+pub(crate) fn begin(progress: &Progress, titles: &[&str]) {
     if let Ok(mut steps) = progress.lock() {
         steps.extend(titles.iter().map(|t| Step { title: t.to_string(), count: None, done: false, fetched: 0, total: None }));
     }
 }
 
-fn finish(progress: &Progress, title: &str, count: Option<usize>) {
+pub(crate) fn finish(progress: &Progress, title: &str, count: Option<usize>) {
     if let Ok(mut steps) = progress.lock() {
         if let Some(step) = steps.iter_mut().rev().find(|s| s.title == title && !s.done) {
             step.done = true;
@@ -220,12 +220,19 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, 
     );
     write_synced(&all);
     finish(progress, "Saving the pilot's copy", None);
+
+    // The longer histories Scorecards and Activity read, each when it's due.
+    let base = format!("{}:{org}", if viewer == Some(org) { "user" } else { "org" });
+    crate::history::sync_people(token, org, viewer == Some(org), force_full, progress)?;
+    crate::history::sync_metrics(token, org, &base, crate::history::METRICS_DAYS, force_full, progress)?;
+    crate::history::sync_issue_history(token, org, &base, crate::history::METRICS_DAYS, force_full, progress)?;
+    crate::history::sync_work_log(token, org, &base, crate::history::WORK_LOG_DAYS, force_full, progress)?;
     Ok(report)
 }
 
 // MARK: - Pull requests
 
-fn person(node: &Value) -> Option<Value> {
+pub(crate) fn person(node: &Value) -> Option<Value> {
     let login = node["login"].as_str()?;
     let mut person = Map::new();
     person.insert("login".into(), json!(login));
@@ -235,11 +242,11 @@ fn person(node: &Value) -> Option<Value> {
     Some(Value::Object(person))
 }
 
-fn nodes(value: &Value) -> Vec<Value> {
+pub(crate) fn nodes(value: &Value) -> Vec<Value> {
     value["nodes"].as_array().cloned().unwrap_or_default()
 }
 
-fn linked_item(node: &Value) -> Option<Value> {
+pub(crate) fn linked_item(node: &Value) -> Option<Value> {
     Some(json!({
         "id": node["id"].as_str()?,
         "number": node["number"].as_i64()?,
@@ -252,7 +259,7 @@ fn linked_item(node: &Value) -> Option<Value> {
 
 /// Puts `key` in `map` only when it has a value, as Swift's Codable leaves
 /// out nil optionals.
-fn put(map: &mut Map<String, Value>, key: &str, value: &Value) {
+pub(crate) fn put(map: &mut Map<String, Value>, key: &str, value: &Value) {
     if !value.is_null() {
         map.insert(key.into(), value.clone());
     }
@@ -351,7 +358,7 @@ fn updated_at(slot: &Value) -> Option<&str> {
 
 /// Gannin's stale rule: the held copy is newer if it has an `updatedAt` and
 /// the incoming one is older or has none.
-fn held_is_newer(held: &Value, incoming: &Value) -> bool {
+pub(crate) fn held_is_newer(held: &Value, incoming: &Value) -> bool {
     match (updated_at(held), updated_at(incoming)) {
         (Some(h), Some(i)) => h > i,
         (Some(_), None) => true,
@@ -380,7 +387,7 @@ fn merge_person(newer: &Value, older: Option<&Value>) -> Value {
 /// Merges an incoming `core` into the held one: the newer side's fields,
 /// the other's where the newer has none; people and labels keep what the
 /// older copy knew of them.
-fn merge_core(held: Option<&Value>, incoming: Value) -> Value {
+pub(crate) fn merge_core(held: Option<&Value>, incoming: Value) -> Value {
     let Some(held) = held else { return incoming };
     let (newer, older) = if held_is_newer(held, &incoming) { (held.clone(), incoming) } else { (incoming, held.clone()) };
     let mut merged = older.as_object().cloned().unwrap_or_default();
@@ -424,7 +431,7 @@ fn merge_core(held: Option<&Value>, incoming: Value) -> Value {
     Value::Object(merged)
 }
 
-fn read_store(kind: Kind, org: &str, items_key: &str) -> Value {
+pub(crate) fn read_store(kind: Kind, org: &str, items_key: &str) -> Value {
     std::fs::read(cache::path(kind, org))
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())

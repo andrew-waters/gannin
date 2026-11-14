@@ -118,12 +118,11 @@ pub fn load(org: &str) -> Data {
                 .collect()
         })
         .unwrap_or_default();
-    let support = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Library/Application Support");
-    let covered_from = std::fs::read(support.join("Metrics").join(format!("{}.json", org.replace('%', "%25").replace(' ', "%20"))))
+    let covered_from = std::fs::read(crate::cache::path(crate::cache::Kind::Metrics, org))
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .and_then(|m| date(&m["coveredFrom"]));
-    let store: Value = std::fs::read(crate::cache::gannin_path(crate::cache::Kind::PullRequests, org))
+    let store: Value = std::fs::read(crate::cache::path(crate::cache::Kind::PullRequests, org))
         .ok()
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or(Value::Null);
@@ -182,12 +181,11 @@ pub fn load(org: &str) -> Data {
     // workflow: spells in an in-progress status on its board, else from the
     // first linked PR to closing.
     let workflow = crate::projects::load(org).workflow;
-    let encoded = org.replace('%', "%25").replace(' ', "%20");
-    let issues_covered_from = std::fs::read(support.join("Issues").join(format!("{encoded}.json")))
+    let issues_covered_from = std::fs::read(crate::cache::path(crate::cache::Kind::IssueHistory, org))
         .ok()
         .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
         .and_then(|v| date(&v["coveredFrom"]));
-    let issue_store: Value = std::fs::read(crate::cache::gannin_path(crate::cache::Kind::Issues, org)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    let issue_store: Value = std::fs::read(crate::cache::path(crate::cache::Kind::Issues, org)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
     let mut issues = Vec::new();
     for issue in issue_store["issues"].as_object().into_iter().flat_map(|m| m.values()) {
         let (core, history) = (&issue["core"], &issue["history"]);
@@ -237,7 +235,7 @@ pub fn load(org: &str) -> Data {
         let assignees = core["assignees"].as_array().map(|a| a.iter().filter_map(|p| p["login"].as_str().map(str::to_string)).collect()).unwrap_or_default();
         issues.push(DoneIssue { closed, cycle, assignees });
     }
-    let snapshot: Value = std::fs::read(support.join("Snapshots").join(format!("{org}.json"))).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    let snapshot: Value = std::fs::read(crate::cache::path(crate::cache::Kind::Snapshots, org)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
     let people = snapshot["members"]
         .as_array()
         .map(|m| {

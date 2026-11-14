@@ -12,6 +12,14 @@ pub enum Kind {
     Issues,
     PullRequests,
     Actions,
+    /// How far back the PR store's metrics go (`MetricsHistory`).
+    Metrics,
+    /// How far back the issue store's history goes (`IssueHistory`).
+    IssueHistory,
+    /// The issues of the work log, and how far back it goes (`WorkLogHistory`).
+    WorkLog,
+    /// The workload snapshot: the org's members and teams (`OrgSnapshot`).
+    Snapshots,
 }
 
 impl Kind {
@@ -21,6 +29,10 @@ impl Kind {
             Kind::Issues => "StoredIssues",
             Kind::PullRequests => "PullRequests",
             Kind::Actions => "Actions",
+            Kind::Metrics => "Metrics",
+            Kind::IssueHistory => "Issues",
+            Kind::WorkLog => "WorkLog",
+            Kind::Snapshots => "Snapshots",
         }
     }
 }

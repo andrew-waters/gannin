@@ -7,7 +7,8 @@
 //! - Threads: a lane per person, each PR they opened as a bar from its
 //!   first commit to merge (or now while open), with its commits on it.
 //!
-//! Events come from Gannin's caches, read only: each PR's work log, and the
+//! Events come from the pilot's copies of Gannin's caches, which its sync
+//! keeps current: each PR's work log, and the
 //! issues in `WorkLog/<org>.json`; people are the org's members from its
 //! snapshot, less excluded authors and bots. Punchcards aren't here yet.
 
@@ -127,9 +128,7 @@ pub fn load(org: &str) -> Data {
         let lower = login.to_lowercase();
         listed("excludedAuthors", login) || ((lower.ends_with("-bot") || lower.ends_with("[bot]")) && !listed("includedAuthors", login))
     };
-    let support = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Library/Application Support");
-    let encoded = org.replace('%', "%25").replace(' ', "%20");
-    let snapshot = read(support.join("Snapshots").join(format!("{org}.json")));
+    let snapshot = read(crate::cache::path(crate::cache::Kind::Snapshots, org));
     let mut people: Vec<Person> = snapshot["members"]
         .as_array()
         .map(|m| {
@@ -148,7 +147,7 @@ pub fn load(org: &str) -> Data {
     let excluded_repos: Vec<String> = config["excludedRepos"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
     let mut events = Vec::new();
     let mut threads = Vec::new();
-    let store = read(crate::cache::gannin_path(crate::cache::Kind::PullRequests, org));
+    let store = read(crate::cache::path(crate::cache::Kind::PullRequests, org));
     for pr in store["pullRequests"].as_object().into_iter().flat_map(|m| m.values()) {
         let log = &pr["workLog"];
         if log.is_null() {
@@ -207,7 +206,7 @@ pub fn load(org: &str) -> Data {
             });
         }
     }
-    let worklog = read(support.join("WorkLog").join(format!("{encoded}.json")));
+    let worklog = read(crate::cache::path(crate::cache::Kind::WorkLog, org));
     for issue in worklog["issues"].as_object().into_iter().flat_map(|m| m.values()) {
         let repo = issue["repo"].as_str().unwrap_or("").to_string();
         if excluded_repos.contains(&repo) {
