@@ -332,9 +332,13 @@ const ANYONE_ASSIGNED: &str = "*";
 const NO_MILESTONE: &str = "";
 /// The board value for issues the history has seen on none.
 const NO_BOARD: &str = "";
+/// The status value for issues with no Status on any board.
+const NO_STATUS: &str = "";
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Key {
+    /// Board Status, on any board the issue is on.
+    Status,
     Assignee,
     Repository,
     Label,
@@ -345,6 +349,7 @@ enum Key {
 impl Key {
     fn title(self) -> &'static str {
         match self {
+            Key::Status => "Status",
             Key::Assignee => "Assignee",
             Key::Repository => "Repository",
             Key::Label => "Label",
@@ -402,6 +407,7 @@ pub struct Filters {
     repositories: BTreeSet<String>,
     labels: BTreeSet<String>,
     boards: BTreeSet<String>,
+    statuses: BTreeSet<String>,
     milestones: BTreeSet<String>,
     /// (field, value); an empty value is an issue with none.
     fields: BTreeSet<(String, String)>,
@@ -418,6 +424,7 @@ impl Filters {
             Key::Repository => &self.repositories,
             Key::Label => &self.labels,
             Key::Board => &self.boards,
+            Key::Status => &self.statuses,
             Key::Milestone => &self.milestones,
         }
     }
@@ -428,6 +435,7 @@ impl Filters {
             Key::Repository => &mut self.repositories,
             Key::Label => &mut self.labels,
             Key::Board => &mut self.boards,
+            Key::Status => &mut self.statuses,
             Key::Milestone => &mut self.milestones,
         }
     }
@@ -457,6 +465,18 @@ impl Filters {
                     issue.has_history && issue.boards.is_empty()
                 } else {
                     issue.boards.iter().any(|(title, _)| title == board)
+                }
+            });
+            if !hit {
+                return false;
+            }
+        }
+        if except != Some(Key::Status) && !self.statuses.is_empty() {
+            let hit = self.statuses.iter().any(|status| {
+                if status == NO_STATUS {
+                    issue.statuses.is_empty()
+                } else {
+                    issue.statuses.iter().any(|(name, _)| name == status)
                 }
             });
             if !hit {
@@ -505,8 +525,8 @@ impl Filters {
 }
 
 impl Key {
-    fn all() -> [Key; 5] {
-        [Key::Assignee, Key::Repository, Key::Label, Key::Board, Key::Milestone]
+    fn all() -> [Key; 6] {
+        [Key::Status, Key::Assignee, Key::Repository, Key::Label, Key::Board, Key::Milestone]
     }
 }
 
@@ -1218,6 +1238,7 @@ impl IssuesPage {
             (Key::Assignee, login) => self.person_name(login),
             (Key::Repository, repo) => repo.rsplit('/').next().unwrap_or(repo).to_string(),
             (Key::Board, NO_BOARD) => "Not on a board".into(),
+            (Key::Status, NO_STATUS) => "No status".into(),
             (Key::Milestone, NO_MILESTONE) => "No milestone".into(),
             (_, value) => value.to_string(),
         }
@@ -1244,6 +1265,13 @@ impl IssuesPage {
                     v
                 }
                 Key::Milestone => vec![issue.milestone.clone().unwrap_or_default()],
+                Key::Status => {
+                    let mut v: Vec<String> = issue.statuses.iter().map(|(name, _)| name.clone()).collect();
+                    if v.is_empty() {
+                        v.push(NO_STATUS.to_string());
+                    }
+                    v
+                }
             };
             for value in values.into_iter().collect::<BTreeSet<_>>() {
                 *counts.entry(value).or_default() += 1;
@@ -1256,6 +1284,7 @@ impl IssuesPage {
         let special: &[&str] = match key {
             Key::Assignee => &[ANYONE_ASSIGNED, UNASSIGNED],
             Key::Board => &[NO_BOARD],
+            Key::Status => &[NO_STATUS],
             Key::Milestone => &[NO_MILESTONE],
             _ => &[],
         };
@@ -1263,8 +1292,21 @@ impl IssuesPage {
         let leading: Vec<Choice> = special.iter().map(|v| choice(v, counts.get(*v).copied().unwrap_or(0))).collect();
         let mut rest: Vec<Choice> =
             counts.iter().filter(|(v, _)| !special.contains(&v.as_str())).map(|(v, c)| choice(v, *c)).collect();
+        // Statuses in the board's order: Backlog, In Progress, Done.
+        let mut board_order: HashMap<&str, i64> = HashMap::new();
+        if key == Key::Status {
+            for (name, order) in self.issues.iter().flat_map(|i| &i.statuses) {
+                let entry = board_order.entry(name.as_str()).or_insert(*order);
+                *entry = (*entry).min(*order);
+            }
+        }
         rest.sort_by(|a, b| {
-            let by_count = if key == Key::Assignee { b.count.cmp(&a.count) } else { std::cmp::Ordering::Equal };
+            let by_order = |c: &Choice| board_order.get(c.value.as_str()).copied().unwrap_or(i64::MAX);
+            let by_count = match key {
+                Key::Assignee => b.count.cmp(&a.count),
+                Key::Status => by_order(a).cmp(&by_order(b)),
+                _ => std::cmp::Ordering::Equal,
+            };
             by_count.then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
         });
         (leading, rest)
@@ -1274,8 +1316,9 @@ impl IssuesPage {
     /// picked, by name.
     fn field_names(&self) -> Vec<String> {
         let mut names: BTreeSet<String> = self.filters.fields.iter().map(|(f, _)| f.clone()).collect();
+        // Status has its own menu, so it's left out unless already picked here.
         for issue in self.pool() {
-            names.extend(issue.field_choices.iter().map(|c| c.field.clone()));
+            names.extend(issue.field_choices.iter().filter(|c| !c.field.eq_ignore_ascii_case("status")).map(|c| c.field.clone()));
         }
         let mut names: Vec<String> = names.into_iter().collect();
         names.sort_by_key(|n| n.to_lowercase());
@@ -1632,6 +1675,9 @@ impl IssuesPage {
             .py_3()
             .child(self.search_field(theme, window, cx))
             .child(self.menu_button(Menu::State, theme, cx))
+            .when(!self.filters.statuses.is_empty() || self.pool().any(|i| !i.statuses.is_empty()), |d| {
+                d.child(self.menu_button(Menu::Key(Key::Status), theme, cx))
+            })
             .child(self.menu_button(Menu::Key(Key::Assignee), theme, cx))
             .child(self.menu_button(Menu::Key(Key::Repository), theme, cx))
             .child(self.menu_button(Menu::Key(Key::Label), theme, cx))
