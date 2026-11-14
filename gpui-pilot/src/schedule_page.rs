@@ -686,7 +686,7 @@ impl SchedulePage {
                             .hover(|s| s.bg(theme.row_selected))
                             .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.add(kind, date, minute, window, cx)))
                             .child(div().w(px(4.)).flex_none().rounded_full().bg(kind.tint(theme)))
-                            .child(div().flex().flex_col().child(div().font_weight(FontWeight::MEDIUM).child(kind.title())).child(div().text_sm().text_color(theme.secondary).child(caption)))
+                            .child(div().flex_1().min_w_0().flex().flex_col().child(div().font_weight(FontWeight::MEDIUM).child(kind.title())).child(div().text_sm().text_color(theme.secondary).child(caption)))
                     }))
                     .into_any_element(),
             );
