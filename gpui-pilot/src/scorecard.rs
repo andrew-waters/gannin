@@ -18,12 +18,13 @@ use crate::charts::{spark_bars, Theme};
 use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Utc};
 use gpui::{div, prelude::*, px, ClickEvent, Context, FontWeight, Hsla, SharedString, Window};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 // MARK: - Data
 
 #[derive(Clone)]
 struct MergedPr {
+    author: String,
     repo: String,
     created: DateTime<Utc>,
     merged: DateTime<Utc>,
@@ -39,8 +40,10 @@ struct MergedPr {
 
 #[derive(Clone)]
 struct OpenPr {
+    author: String,
     created: DateTime<Utc>,
-    requested: Vec<DateTime<Utc>>,
+    /// (reviewer, asked).
+    requested: Vec<(String, DateTime<Utc>)>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -55,8 +58,21 @@ struct Goal {
     notes: Option<String>,
 }
 
+/// A completed issue: when it closed, its repo, its assignees, and how long
+/// it was in progress (`IssueCycleTime`).
+#[derive(Clone)]
+struct DoneIssue {
+    closed: DateTime<Utc>,
+    cycle: Option<f64>,
+    assignees: Vec<String>,
+}
+
 #[derive(Clone, Default)]
 pub struct Data {
+    /// The org's members, by login: name and avatar.
+    people: HashMap<String, (String, Option<String>)>,
+    issues: Vec<DoneIssue>,
+    issues_covered_from: Option<DateTime<Utc>>,
     merged: Vec<MergedPr>,
     open: Vec<OpenPr>,
     covered_from: Option<DateTime<Utc>>,
@@ -78,7 +94,7 @@ fn excluded(login: &str, config: &Value) -> bool {
 /// Reads Gannin's PR cache, metrics coverage and the org's goals. Large:
 /// call off the main thread.
 pub fn load(org: &str) -> Data {
-    let config = crate::projects::config_json(org);
+    let config = crate::projects::effective_config(org);
     let excluded_repos: HashSet<String> = config["excludedRepos"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
     let without_review = config["reposWithoutReview"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
     let goals = config["scorecard"]
@@ -91,7 +107,8 @@ pub fn load(org: &str) -> Data {
                         name: g["name"].as_str()?.to_string(),
                         cadence: Resolution::from_cadence(g["cadence"].as_str()?)?,
                         metric: g["metric"].as_str().map(str::to_string),
-                        unit: g["unit"].as_str().unwrap_or("number").to_string(),
+                        // A metric's goal is in the metric's unit, as Gannin's `effectiveUnit`.
+                        unit: g["metric"].as_str().map(metric_unit).unwrap_or_else(|| g["unit"].as_str().unwrap_or("number")).to_string(),
                         at_least: g["comparison"].as_str() != Some("atMost"),
                         target: g["target"].as_f64(),
                         values: g["values"].as_object().map(|m| m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_f64()?))).collect()).unwrap_or_default(),
@@ -127,11 +144,11 @@ pub fn load(org: &str) -> Data {
                         m.iter()
                             .filter(|(login, _)| pr["workload"]["requestedReviewers"].as_array().is_some_and(|r| r.iter().any(|p| p["login"].as_str() == Some(login.as_str()))))
                             .filter(|(login, _)| !excluded(login, &config))
-                            .filter_map(|(_, at)| date(at))
+                            .filter_map(|(login, at)| Some((login.clone(), date(at)?)))
                             .collect()
                     })
                     .unwrap_or_default();
-                open.push(OpenPr { created, requested });
+                open.push(OpenPr { author: author.clone(), created, requested });
             }
         }
         let metrics = &pr["metrics"];
@@ -149,6 +166,7 @@ pub fn load(org: &str) -> Data {
             .map(|a| a.iter().filter_map(|r| Some((r["login"].as_str()?.to_string(), date(&r["requestedAt"])?, date(&r["removedAt"])))).filter(|(l, _, _)| !excluded(l, &config)).collect())
             .unwrap_or_default();
         merged.push(MergedPr {
+            author,
             repo,
             created,
             merged: merged_at,
@@ -160,7 +178,88 @@ pub fn load(org: &str) -> Data {
             files: core["changedFiles"].as_i64(),
         });
     }
-    Data { merged, open, covered_from, goals, without_review }
+    // Issues completed, and their time in progress under the org's
+    // workflow: spells in an in-progress status on its board, else from the
+    // first linked PR to closing.
+    let workflow = crate::projects::load(org).workflow;
+    let encoded = org.replace('%', "%25").replace(' ', "%20");
+    let issues_covered_from = std::fs::read(support.join("Issues").join(format!("{encoded}.json")))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<Value>(&b).ok())
+        .and_then(|v| date(&v["coveredFrom"]));
+    let issue_store: Value = std::fs::read(crate::cache::gannin_path(crate::cache::Kind::Issues, org)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    let mut issues = Vec::new();
+    for issue in issue_store["issues"].as_object().into_iter().flat_map(|m| m.values()) {
+        let (core, history) = (&issue["core"], &issue["history"]);
+        let Some(closed) = date(&core["closedAt"]) else { continue };
+        if history["stateReason"].as_str() != Some("COMPLETED") || excluded_repos.contains(core["repo"].as_str().unwrap_or("")) {
+            continue;
+        }
+        let mut changes: Vec<(DateTime<Utc>, String)> = history["statusChanges"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter(|c| workflow.project_number.is_none_or(|n| c["projectNumber"].as_i64() == Some(n)))
+                    .filter_map(|c| Some((date(&c["at"])?, c["status"].as_str()?.to_string())))
+                    .collect()
+            })
+            .unwrap_or_default();
+        changes.sort_by_key(|c| c.0);
+        let mut total = 0.;
+        let mut spells = 0;
+        let mut open_since: Option<DateTime<Utc>> = None;
+        for (at, status) in &changes {
+            let working = workflow.is_in_progress(status);
+            match (working, open_since) {
+                (true, None) => open_since = Some(*at),
+                (false, Some(since)) => {
+                    total += seconds(*at - since).max(0.);
+                    spells += 1;
+                    open_since = None;
+                }
+                _ => {}
+            }
+        }
+        if let Some(since) = open_since {
+            total += seconds(closed - since).max(0.);
+            spells += 1;
+        }
+        let cycle = if spells > 0 {
+            Some(total)
+        } else if workflow.fall_back_to_pull_requests {
+            history["linkedPullRequests"]
+                .as_array()
+                .and_then(|prs| prs.iter().filter_map(|p| date(&p["createdAt"])).min())
+                .map(|first| seconds(closed - first).max(0.))
+        } else {
+            None
+        };
+        let assignees = core["assignees"].as_array().map(|a| a.iter().filter_map(|p| p["login"].as_str().map(str::to_string)).collect()).unwrap_or_default();
+        issues.push(DoneIssue { closed, cycle, assignees });
+    }
+    let snapshot: Value = std::fs::read(support.join("Snapshots").join(format!("{org}.json"))).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(Value::Null);
+    let people = snapshot["members"]
+        .as_array()
+        .map(|m| {
+            m.iter()
+                .filter_map(|p| {
+                    let login = p["login"].as_str()?.to_string();
+                    let name = p["name"].as_str().filter(|n| !n.is_empty()).unwrap_or(&login).to_string();
+                    Some((login, (name, p["avatarUrl"].as_str().map(str::to_string))))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Data { people, issues, issues_covered_from, merged, open, covered_from, goals, without_review }
+}
+
+/// A metric's unit, as Gannin's `Metric.unit`.
+fn metric_unit(metric: &str) -> &'static str {
+    match metric {
+        "cycleTime" | "firstReview" | "issueCycleTime" | "ciTimePerPR" => "hours",
+        "rework" | "unreviewed" | "answered" => "percent",
+        _ => "number",
+    }
 }
 
 // MARK: - Periods
@@ -260,8 +359,16 @@ impl Resolution {
 
     fn heading(self, start: NaiveDate) -> String {
         match self {
-            Resolution::Day => start.format("%a\n%-d %b").to_string(),
-            Resolution::Week => format!("{}\n{}", start.format("%-d %b"), (start + Duration::days(6)).format("%-d %b")),
+            Resolution::Day => start.format("%a %-d %b").to_string(),
+            // One line: "9-15 Nov", or "28 Sep-4 Oct" across months.
+            Resolution::Week => {
+                let end = start + Duration::days(6);
+                if start.month() == end.month() {
+                    format!("{}-{}", start.format("%-d"), end.format("%-d %b"))
+                } else {
+                    format!("{}-{}", start.format("%-d %b"), end.format("%-d %b"))
+                }
+            }
             Resolution::Month => start.format("%b %Y").to_string(),
             Resolution::Quarter => format!("Q{} {}", start.month0() / 3 + 1, start.year()),
             Resolution::Year => start.format("%Y").to_string(),
@@ -334,12 +441,12 @@ impl MergedPr {
 pub fn print_weeks(org: &str, weeks: usize) {
     let data = load(org);
     let now = Utc::now();
-    println!("covered from {:?}; {} merged PRs with metrics; {} open; {} goals", data.covered_from, data.merged.len(), data.open.len(), data.goals.len());
+    println!("covered from {:?}; {} merged PRs with metrics; {} open; {} completed issues; goals: {:?}", data.covered_from, data.merged.len(), data.open.len(), data.issues.len(), data.goals.iter().map(|g| (&g.name, &g.unit, g.target)).collect::<Vec<_>>());
     for period in periods(Resolution::Week, weeks) {
-        let row: Vec<String> = ["throughput", "cycleTime", "firstReview", "rework", "unreviewed", "prSize", "answered", "slowReviews", "openPullRequests"]
+        let row: Vec<String> = ["throughput", "cycleTime", "firstReview", "prSize", "prFiles", "issueCycleTime"]
             .iter()
             .map(|m| {
-                let (v, n) = measure(m, &data, &period, now);
+                let (v, n) = measure(m, &data, &period, now, None);
                 format!("{m}={}({n})", v.map(|v| format!("{v:.2}")).unwrap_or("-".into()))
             })
             .collect();
@@ -349,8 +456,11 @@ pub fn print_weeks(org: &str, weeks: usize) {
 
 /// A metric's raw value in a period (seconds, a share 0-1, or a count) and
 /// how many it's from. `None` when there's nothing to measure.
-fn measure(metric: &str, data: &Data, period: &Period, now: DateTime<Utc>) -> (Option<f64>, usize) {
-    let bucket: Vec<&MergedPr> = data.merged.iter().filter(|p| p.merged >= period.start && p.merged < period.end).collect();
+/// `who` narrows it to one person, as Gannin's breakdown: PRs they wrote,
+/// requests made of them, issues assigned to them.
+fn measure(metric: &str, data: &Data, period: &Period, now: DateTime<Utc>, who: Option<&str>) -> (Option<f64>, usize) {
+    let mine = |login: &str| who.is_none_or(|w| w == login);
+    let bucket: Vec<&MergedPr> = data.merged.iter().filter(|p| p.merged >= period.start && p.merged < period.end && mine(&p.author)).collect();
     let n = bucket.len();
     match metric {
         "throughput" => (Some(n as f64), n),
@@ -400,8 +510,8 @@ fn measure(metric: &str, data: &Data, period: &Period, now: DateTime<Utc>) -> (O
         }
         "answered" => {
             let (mut requests, mut answered) = (0, 0);
-            for pr in &bucket {
-                for (login, at, removed) in &pr.requests {
+            for pr in data.merged.iter().filter(|p| p.merged >= period.start && p.merged < period.end) {
+                for (login, at, removed) in pr.requests.iter().filter(|r| mine(&r.0)) {
                     if let Some(response) = pr.answer(login, *at, *removed) {
                         requests += 1;
                         answered += usize::from(response.is_some());
@@ -413,7 +523,7 @@ fn measure(metric: &str, data: &Data, period: &Period, now: DateTime<Utc>) -> (O
         "slowReviews" => {
             let (mut requests, mut slow) = (0, 0);
             for pr in &data.merged {
-                for (login, at, removed) in pr.requests.iter().filter(|r| r.1 >= period.start && r.1 < period.end) {
+                for (login, at, removed) in pr.requests.iter().filter(|r| r.1 >= period.start && r.1 < period.end && mine(&r.0)) {
                     if let Some(response) = pr.answer(login, *at, *removed) {
                         requests += 1;
                         let answered = response.unwrap_or(removed.unwrap_or(pr.merged));
@@ -422,16 +532,27 @@ fn measure(metric: &str, data: &Data, period: &Period, now: DateTime<Utc>) -> (O
                 }
             }
             for pr in &data.open {
-                for at in pr.requested.iter().filter(|at| **at >= period.start && **at < period.end) {
+                for (_, at) in pr.requested.iter().filter(|(login, at)| *at >= period.start && *at < period.end && mine(login)) {
                     requests += 1;
                     slow += usize::from(seconds(now - *at) > 86_400.);
                 }
             }
             (Some(slow as f64), requests)
         }
+        "issueCycleTime" => {
+            let cycles: Vec<f64> = data
+                .issues
+                .iter()
+                .filter(|i| i.closed >= period.start && i.closed < period.end && who.is_none_or(|w| i.assignees.iter().any(|a| a == w)))
+                .filter_map(|i| i.cycle)
+                .collect();
+            let count = cycles.len();
+            (median(cycles), count)
+        }
         "openPullRequests" => {
             let at = period.end.min(now);
-            let count = data.merged.iter().filter(|p| p.created <= at && at < p.merged).count() + data.open.iter().filter(|p| p.created <= at).count();
+            let count = data.merged.iter().filter(|p| p.created <= at && at < p.merged && mine(&p.author)).count()
+                + data.open.iter().filter(|p| p.created <= at && mine(&p.author)).count();
             (Some(count as f64), count)
         }
         _ => (None, 0),
@@ -450,7 +571,7 @@ fn metric_title(metric: &str) -> (&'static str, &'static str) {
         "answered" => ("Review requests answered", "Before the PR merged, or the request was withdrawn"),
         "slowReviews" => ("Reviews waiting over a day", "Requests made in the period not answered within a day"),
         "openPullRequests" => ("Open PRs", "Open at the period's end, or now"),
-        "issueCycleTime" => ("Issue cycle time", "Not in the pilot yet"),
+        "issueCycleTime" => ("Issue cycle time", "Median time in progress, of issues completed"),
         "flakyRuns" => ("Flaky CI runs", "Not in the pilot yet"),
         "ciTimePerPR" => ("CI time per PR", "Not in the pilot yet"),
         _ => ("Metric", ""),
@@ -510,14 +631,17 @@ struct Cell {
     goal: Option<f64>,
 }
 
-fn cell(goal: &Goal, data: &Data, period: &Period, resolution: Resolution, now: DateTime<Utc>) -> Cell {
+fn cell(goal: &Goal, data: &Data, period: &Period, resolution: Resolution, now: DateTime<Utc>, who: Option<&str>) -> Cell {
     let share = ((seconds(now - period.start) / seconds(period.end - period.start)).clamp(0., 1.)) * resolution.days() / goal.cadence.days();
-    let target = goal.target.map(|t| if accumulates(goal.metric.as_deref()) { (t * share).floor() } else { t });
+    // A person's share of a team count isn't judged against the team's target.
+    let personal_count = who.is_some() && accumulates(goal.metric.as_deref());
+    let target = goal.target.filter(|_| !personal_count).map(|t| if accumulates(goal.metric.as_deref()) { (t * share).floor() } else { t });
     let (value, count, covered, judged) = match &goal.metric {
         Some(metric) => {
-            let covered = data.covered_from.is_some_and(|from| from <= period.start);
+            let from = if metric == "issueCycleTime" { data.issues_covered_from } else { data.covered_from };
+            let covered = from.is_some_and(|from| from <= period.start);
             if covered {
-                let (value, count) = measure(metric, data, period, now);
+                let (value, count) = measure(metric, data, period, now, who);
                 (value, count, true, true)
             } else {
                 (None, 0, false, false)
@@ -546,12 +670,19 @@ pub struct ScorecardPage {
     cadence: Resolution,
     resolution: Resolution,
     range: usize,
+    /// Goals opened to show each person's part, by name.
+    expanded: HashSet<String>,
+    /// The page's width, measured as it's laid out, for how many period
+    /// columns fit; and how many columns back from the newest the table
+    /// starts.
+    width: std::rc::Rc<std::cell::Cell<f32>>,
+    column_offset: usize,
     generation: u64,
 }
 
 impl ScorecardPage {
     pub fn new(org: Option<String>, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { org, data: None, cadence: Resolution::Week, resolution: Resolution::Week, range: 13, generation: 0 };
+        let mut page = Self { org, data: None, cadence: Resolution::Week, resolution: Resolution::Week, range: 13, expanded: HashSet::new(), width: Default::default(), column_offset: 0, generation: 0 };
         page.load(cx);
         page
     }
@@ -626,6 +757,7 @@ impl ScorecardPage {
                     .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
                         page.resolution = r;
                         page.range = r.ranges().1;
+                        page.column_offset = 0;
                         cx.notify();
                     }))
                     .into_any_element()
@@ -639,6 +771,7 @@ impl ScorecardPage {
                 self.chip(SharedString::from(format!("range-{n}")), label, n == self.range, theme)
                     .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
                         page.range = n;
+                        page.column_offset = 0;
                         cx.notify();
                     }))
                     .into_any_element()
@@ -663,7 +796,7 @@ impl ScorecardPage {
     fn tile(&self, goal: &Goal, data: &Data, theme: &Theme) -> impl IntoElement {
         let now = Utc::now();
         let periods = periods(self.resolution, 13);
-        let cells: Vec<Cell> = periods.iter().map(|p| cell(goal, data, p, self.resolution, now)).collect();
+        let cells: Vec<Cell> = periods.iter().map(|p| cell(goal, data, p, self.resolution, now, None)).collect();
         let last = &cells[1];
         let before = &cells[if self.resolution == Resolution::Day { 8.min(cells.len() - 1) } else { 2 }];
         let value = last.value.map(|v| format_value(goal, v)).unwrap_or_else(|| "N/A".into());
@@ -680,28 +813,37 @@ impl ScorecardPage {
         };
         let off = last.meets == Some(false);
         let change_tint = if off { theme.critical() } else { theme.secondary };
-        let caption = match self.resolution {
-            Resolution::Day if periods[1].label == Local::now().date_naive() - Duration::days(1) => "Yesterday".to_string(),
-            r => r.heading(periods[1].label).replace('\n', " to "),
-        };
         let target = goal.target.map(|t| {
             let sign = if goal.at_least { "≥" } else { "≤" };
             let per = if accumulates(goal.metric.as_deref()) { format!(" a {}", goal.cadence.noun()) } else { String::new() };
-            format!("Target {sign} {}{per}", format_target(goal, t))
+            format!("{sign} {}{per}", format_target(goal, t))
         });
         let history: Vec<f64> = cells[1..].iter().rev().map(|c| c.value.map(|v| display(goal, v)).unwrap_or(0.)).collect();
         div()
-            .w(px(220.))
-            .h(px(150.))
+            .flex_1()
+            .min_w(px(190.))
+            .h(px(132.))
+            .overflow_hidden()
             .p_3()
             .flex()
             .flex_col()
             .gap_1()
             .rounded_lg()
             .bg(theme.tile)
-            .child(div().text_xs().text_color(theme.secondary).truncate().child(goal.name.clone()))
+            // The name, and its target opposite.
             .child(
                 div()
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(div().flex_1().min_w_0().text_sm().text_color(theme.secondary).truncate().child(goal.name.clone()))
+                    .when_some(target, |d, t| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child(t))),
+            )
+            .child(
+                div()
+                    .flex_none()
                     .flex()
                     .flex_row()
                     .items_end()
@@ -713,15 +855,26 @@ impl ScorecardPage {
                     }).child(value))
                     .when_some(change, |d, c| d.child(div().pb_1().text_xs().text_color(change_tint).child(c))),
             )
-            .child(div().text_xs().text_color(theme.secondary).child(caption))
-            .when_some(target, |d, t| d.child(div().text_xs().text_color(theme.tertiary).child(t)))
             .child(div().flex_1())
-            .child(spark_bars(&history, theme))
+            .child(div().flex_none().h(px(22.)).overflow_hidden().child(spark_bars(&history, theme)))
     }
 
-    fn table(&self, goals: &[&Goal], data: &Data, theme: &Theme) -> impl IntoElement {
+    /// How many period columns fit beside the name, target and hit columns.
+    fn columns_that_fit(&self) -> usize {
+        let width = self.width.get();
+        if width <= 0. {
+            return self.range;
+        }
+        (((width - 420.) / 86.).floor().max(1.) as usize).min(self.range)
+    }
+
+    fn table(&self, goals: &[&Goal], data: &Data, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let now = Utc::now();
-        let periods = periods(self.resolution, self.range);
+        let all = periods(self.resolution, self.range);
+        let fit = self.columns_that_fit();
+        let start = self.column_offset.min(all.len().saturating_sub(fit));
+        let periods: Vec<Period> = all[start..(start + fit).min(all.len())].to_vec();
+        let paged = fit < all.len();
         let header = div()
             .flex()
             .flex_row()
@@ -740,67 +893,247 @@ impl ScorecardPage {
                     .flex_none()
                     .px_2()
                     .py_1()
-                    .when(i == 0, |d| d.bg(theme.secondary.opacity(0.1)))
+                    .when(i + start == 0, |d| d.bg(theme.secondary.opacity(0.1)))
+                    .whitespace_nowrap()
                     .child(self.resolution.heading(p.label))
             }));
-        let rows = goals.iter().map(|goal| {
-            let cells: Vec<Cell> = periods.iter().map(|p| cell(goal, data, p, self.resolution, now)).collect();
-            let judged: Vec<&Cell> = cells[1..].iter().filter(|c| c.meets.is_some()).collect();
+        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        for goal in goals {
+            // HIT and the target count every period; the row shows those that fit.
+            let all_cells: Vec<Cell> = all.iter().map(|p| cell(goal, data, p, self.resolution, now, None)).collect();
+            let judged: Vec<&Cell> = all_cells[1..].iter().filter(|c| c.meets.is_some()).collect();
             let hit = judged.iter().filter(|c| c.meets == Some(true)).count();
             let caption = match &goal.metric {
                 Some(metric) => metric_title(metric).1.to_string(),
                 None => "Entered by hand".into(),
             };
-            let target = match (goal.target, cells.get(1).and_then(|c| c.goal)) {
+            let target = match (goal.target, all_cells.get(1).and_then(|c| c.goal)) {
                 (Some(_), Some(t)) => format!("{} {}", if goal.at_least { "≥" } else { "≤" }, format_target(goal, t)),
                 _ => "No target".into(),
             };
+            let expanded = self.expanded.contains(&goal.name);
+            let toggled = goal.name.clone();
+            rows.push(
+                div()
+                    .h(px(48.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .border_b_1()
+                    .border_color(theme.grid)
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("goal-{}", goal.name)))
+                            .w(px(250.))
+                            .h_full()
+                            .flex_none()
+                            .px_2()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            // A metric opens to show each person's part, as Gannin's.
+                            .when(goal.metric.is_some(), |d| {
+                                d.cursor_pointer()
+                                    .hover(|s| s.bg(theme.row_selected))
+                                    .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                                        if !page.expanded.remove(&toggled) {
+                                            page.expanded.insert(toggled.clone());
+                                        }
+                                        cx.notify();
+                                    }))
+                                    .child(div().w(px(12.)).text_xs().text_color(theme.tertiary).child(if expanded { "▾" } else { "▸" }))
+                            })
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .child(div().truncate().child(goal.name.clone()))
+                                    .child(div().text_xs().text_color(theme.secondary).truncate().child(caption)),
+                            ),
+                    )
+                    .child(div().w(px(100.)).flex_none().px_2().text_color(theme.secondary).child(target))
+                    .child(div().w(px(70.)).flex_none().px_2().text_color(theme.secondary).child(if judged.is_empty() { "-".into() } else { format!("{hit}/{}", judged.len()) }))
+                    .children(self.cell_views(goal, &all_cells[start..start + periods.len()], &goal.name, start, theme))
+                    .into_any_element(),
+            );
+            if expanded {
+                if let Some(metric) = goal.metric.as_deref() {
+                    rows.extend(self.breakdown(goal, metric, data, &periods, start, theme, cx));
+                }
+            }
+        }
+        // ‹ Newer and Older › page through the columns that don't fit.
+        let step = fit.max(1);
+        let (newer, older) = (start > 0, start + fit < all.len());
+        let button = |id: &'static str, label: &'static str, enabled: bool| {
             div()
-                .h(px(48.))
-                .flex()
-                .flex_row()
-                .items_center()
-                .border_b_1()
-                .border_color(theme.grid)
-                .child(
-                    div()
-                        .w(px(250.))
-                        .flex_none()
-                        .px_2()
-                        .flex()
-                        .flex_col()
-                        .child(div().truncate().child(goal.name.clone()))
-                        .child(div().text_xs().text_color(theme.secondary).truncate().child(caption)),
-                )
-                .child(div().w(px(100.)).flex_none().px_2().text_color(theme.secondary).child(target))
-                .child(div().w(px(70.)).flex_none().px_2().text_color(theme.secondary).child(if judged.is_empty() { "-".into() } else { format!("{hit}/{}", judged.len()) }))
-                .children(cells.iter().enumerate().map(|(i, c)| {
-                    let (text, tint): (String, Hsla) = match (c.covered, c.value) {
-                        (false, _) => ("-".into(), theme.tertiary),
-                        (true, None) => ("N/A".into(), theme.tertiary),
-                        (true, Some(v)) => (
-                            format_value(goal, v),
-                            match c.meets {
-                                Some(true) => theme.good(),
-                                Some(false) => theme.critical(),
-                                None => theme.secondary,
-                            },
-                        ),
-                    };
-                    div()
-                        .w(px(86.))
-                        .h_full()
-                        .flex_none()
-                        .px_2()
-                        .flex()
-                        .flex_col()
-                        .justify_center()
-                        .when(i == 0, |d| d.bg(theme.secondary.opacity(0.1)))
-                        .child(div().text_color(tint).when(c.meets.is_some(), |d| d.font_weight(FontWeight::SEMIBOLD)).child(text))
-                        .when(c.count > 0 && goal.metric.is_some(), |d| d.child(div().text_xs().text_color(theme.tertiary).child(format!("{} PRs", c.count))))
+                .id(id)
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .text_xs()
+                .border_1()
+                .border_color(theme.border)
+                .text_color(if enabled { theme.fg } else { theme.tertiary })
+                .when(enabled, |d| d.cursor_pointer().hover(|s| s.bg(theme.row_selected)))
+                .child(label)
+        };
+        let noun = self.resolution.noun();
+        let pager = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .pb_1()
+            .child(button("columns-newer", "‹ Newer", newer).when(newer, |d| {
+                d.on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                    page.column_offset = start.saturating_sub(step);
+                    cx.notify();
                 }))
-        });
-        div().flex().flex_col().child(header).children(rows)
+            }))
+            .child(div().flex_1().flex().justify_center().text_xs().text_color(theme.secondary).child(format!(
+                "{}s {}-{} of {}, newest first",
+                format!("{}{}", &noun[..1].to_uppercase(), &noun[1..]),
+                start + 1,
+                start + periods.len(),
+                all.len()
+            )))
+            .child(button("columns-older", "Older ›", older).when(older, |d| {
+                d.on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                    page.column_offset = start + step;
+                    cx.notify();
+                }))
+            }));
+        div().flex().flex_col().when(paged, |d| d.child(pager)).child(header).children(rows)
+    }
+}
+
+impl ScorecardPage {
+    /// A row's cells: the value, green or red against the target, "-"
+    /// before the history, "N/A" with nothing to measure; the count it's
+    /// from on hover.
+    /// `first` is the first cell's period, counted back from the current one.
+    fn cell_views(&self, goal: &Goal, cells: &[Cell], key: &str, first: usize, theme: &Theme) -> Vec<gpui::AnyElement> {
+        cells
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let (text, tint): (String, Hsla) = match (c.covered, c.value) {
+                    (false, _) => ("-".into(), theme.tertiary),
+                    (true, None) => ("N/A".into(), theme.tertiary),
+                    (true, Some(v)) => (
+                        format_value(goal, v),
+                        match c.meets {
+                            Some(true) => theme.good(),
+                            Some(false) => theme.critical(),
+                            None => theme.secondary,
+                        },
+                    ),
+                };
+                let noun = match goal.metric.as_deref() {
+                    Some("issueCycleTime") => "issues",
+                    Some("answered" | "slowReviews") => "requests",
+                    _ => "PRs",
+                };
+                let tip = match (c.covered, c.value, goal.metric.is_some()) {
+                    (false, _, _) => "Before the history Gannin has".to_string(),
+                    (true, None, _) => "Nothing to measure (yet)".to_string(),
+                    (true, Some(_), true) => format!(
+                        "{}, from {} {noun}{}",
+                        match c.meets {
+                            Some(true) => "On target",
+                            Some(false) => "Off target",
+                            None => "Not judged",
+                        },
+                        c.count,
+                        if i + first == 0 { ", so far" } else { "" }
+                    ),
+                    (true, Some(_), false) => "Entered by hand".to_string(),
+                };
+                div()
+                    .id(SharedString::from(format!("cell-{key}-{i}")))
+                    .w(px(86.))
+                    .h_full()
+                    .flex_none()
+                    .px_2()
+                    .flex()
+                    .items_center()
+                    .when(i + first == 0, |d| d.bg(theme.secondary.opacity(0.1)))
+                    .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+                    .child(div().text_color(tint).when(c.meets.is_some(), |d| d.font_weight(FontWeight::SEMIBOLD)).child(text))
+                    .into_any_element()
+            })
+            .collect()
+    }
+
+    /// A goal's metric for each person with something in these periods,
+    /// sorted by name, as Gannin's breakdown.
+    fn breakdown(&self, goal: &Goal, metric: &str, data: &Data, periods: &[Period], first: usize, theme: &Theme, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+        let now = Utc::now();
+        let (from, to) = (periods.last().map(|p| p.start).unwrap_or(now), periods.first().map(|p| p.end).unwrap_or(now));
+        let within = |t: DateTime<Utc>| t >= from && t < to;
+        // Who could have a part: authors, reviewers asked, assignees.
+        let mut logins: BTreeSet<String> = BTreeSet::new();
+        match metric {
+            "answered" | "slowReviews" => {
+                logins.extend(data.merged.iter().flat_map(|p| p.requests.iter().filter(|r| within(r.1)).map(|r| r.0.clone())));
+                logins.extend(data.open.iter().flat_map(|p| p.requested.iter().filter(|r| within(r.1)).map(|r| r.0.clone())));
+            }
+            "issueCycleTime" => logins.extend(data.issues.iter().filter(|i| within(i.closed)).flat_map(|i| i.assignees.iter().cloned())),
+            _ => {
+                logins.extend(data.merged.iter().filter(|p| within(p.merged) || (metric == "openPullRequests" && p.created < to)).map(|p| p.author.clone()));
+                if metric == "openPullRequests" {
+                    logins.extend(data.open.iter().map(|p| p.author.clone()));
+                }
+            }
+        }
+        let mut people: Vec<(String, String, Option<String>, Vec<Cell>)> = logins
+            .into_iter()
+            .filter(|l| !l.is_empty())
+            .filter_map(|login| {
+                let cells: Vec<Cell> = periods.iter().map(|p| cell(goal, data, p, self.resolution, now, Some(&login))).collect();
+                if !cells.iter().any(|c| c.count > 0) {
+                    return None;
+                }
+                let (name, avatar) = data.people.get(&login).cloned().unwrap_or_else(|| (login.clone(), None));
+                Some((login, name, avatar, cells))
+            })
+            .collect();
+        people.sort_by_key(|p| p.1.to_lowercase());
+        if people.is_empty() {
+            return vec![div().h(px(36.)).px_6().flex().items_center().text_xs().text_color(theme.secondary).child("Nobody to show in these periods yet.").into_any_element()];
+        }
+        people
+            .into_iter()
+            .map(|(login, name, avatar_url, cells)| {
+                div()
+                    .h(px(36.))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .bg(theme.secondary.opacity(0.04))
+                    .border_b_1()
+                    .border_color(theme.grid)
+                    .child(
+                        div()
+                            .w(px(420.))
+                            .flex_none()
+                            .pl_6()
+                            .pr_2()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(crate::avatars::avatar(&login, avatar_url.as_deref(), 18., theme, cx))
+                            .child(div().text_xs().truncate().child(name)),
+                    )
+                    .children(self.cell_views(goal, &cells, &format!("{}-{login}", goal.name), first, theme))
+                    .into_any_element()
+            })
+            .collect()
     }
 }
 
@@ -820,6 +1153,7 @@ impl Render for ScorecardPage {
             return div().size_full().p_4().bg(theme.bg).text_color(theme.secondary).child("Loading").into_any_element();
         };
         let goals: Vec<&Goal> = data.goals.iter().filter(|g| g.cadence == self.cadence).collect();
+
         let body = if goals.is_empty() {
             div()
                 .p_8()
@@ -839,13 +1173,37 @@ impl Render for ScorecardPage {
                 .filter(|from| goals.iter().any(|g| g.metric.is_some()) && periods(self.resolution, self.range).last().is_some_and(|p| p.start < *from))
                 .map(|from| format!("Merged PRs go back to {} so far. Earlier periods fill in as Gannin fetches them.", from.with_timezone(&Local).format("%-d %b %Y")));
             div()
+                .w_full()
+                .min_w_0()
+                .overflow_hidden()
                 .flex()
                 .flex_col()
                 .gap_4()
                 .px_4()
                 .pb_4()
                 .child(div().flex().flex_row().flex_wrap().gap_3().children(goals.iter().map(|g| self.tile(g, &data, &theme))))
-                .child(div().id("scorecard-table").overflow_x_scroll().child(self.table(&goals, &data, &theme)))
+                .child(
+                    // Held to the page's width, so a table wider than it
+                    // scrolls sideways.
+                    // Measures the width the table has, so the columns that
+                    // fit are shown and the rest paged to.
+                    div().w_full().h(px(0.)).child({
+                        let width = self.width.clone();
+                        gpui::canvas(
+                            move |bounds, window, _| {
+                                let now = f32::from(bounds.size.width);
+                                if (now - width.get()).abs() > 1. {
+                                    width.set(now);
+                                    window.refresh();
+                                }
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .w_full()
+                        .h(px(0.))
+                    }),
+                )
+                .child(self.table(&goals, &data, &theme, cx))
                 .when_some(covered_note, |d, note| d.child(div().text_xs().text_color(theme.secondary).child(note)))
                 .when(goals.iter().any(|g| g.notes.is_some()), |d| d)
                 .into_any_element()
@@ -853,6 +1211,8 @@ impl Render for ScorecardPage {
         div()
             .id("scorecard")
             .size_full()
+            .min_w_0()
+
             .flex()
             .flex_col()
             .overflow_y_scroll()

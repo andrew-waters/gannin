@@ -89,6 +89,38 @@ pub fn config_json(org: &str) -> serde_json::Value {
         .unwrap_or(serde_json::Value::Null)
 }
 
+/// The org's settings with what its harness keeps winning, as Gannin reads
+/// them: the harness's `.gannin/scorecard.json` for the goals, and its
+/// `.gannin/exclusions.json` for the people and repos left out.
+pub fn effective_config(org: &str) -> serde_json::Value {
+    let mut config = config_json(org);
+    if !config.is_object() {
+        config = serde_json::json!({});
+    }
+    // The org's home harness: its first project's, as the pages order them.
+    let Some(harness) = load(org).projects.first().map(|p| p.id.clone()) else { return config };
+    let index_path = support().join("Harness").join(format!("{org}@{}.json", harness.replace('/', "~")));
+    let Some(index) = std::fs::read(index_path).ok().and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok()) else { return config };
+    let file = |path: &str| {
+        index["dataFiles"]
+            .as_array()
+            .and_then(|files| files.iter().find(|f| f["path"] == path))
+            .and_then(|f| f["text"].as_str())
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(text).ok())
+    };
+    if let Some(scorecard) = file(".gannin/scorecard.json").filter(|v| v.is_array()) {
+        config["scorecard"] = scorecard;
+    }
+    if let Some(exclusions) = file(".gannin/exclusions.json") {
+        for (from, to) in [("people", "excludedAuthors"), ("includedPeople", "includedAuthors"), ("repos", "excludedRepos"), ("reposWithoutReview", "reposWithoutReview")] {
+            if let Some(value) = exclusions.get(from).filter(|v| v.is_array()) {
+                config[to] = value.clone();
+            }
+        }
+    }
+    config
+}
+
 /// The org's settings as Gannin saved them: a JSON blob per org.
 fn config(org: &str) -> Config {
     use rusqlite::{Connection, OpenFlags};

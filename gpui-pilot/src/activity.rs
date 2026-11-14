@@ -121,7 +121,7 @@ fn read(path: std::path::PathBuf) -> Value {
 
 /// Reads Gannin's caches for the org. Large: call off the main thread.
 pub fn load(org: &str) -> Data {
-    let config = crate::projects::config_json(org);
+    let config = crate::projects::effective_config(org);
     let listed = |key: &str, login: &str| config[key].as_array().is_some_and(|a| a.iter().any(|v| v.as_str() == Some(login)));
     let excluded = |login: &str| {
         let lower = login.to_lowercase();
@@ -280,10 +280,13 @@ pub struct ActivityPage {
     hidden: BTreeSet<EventKind>,
     repo: Option<String>,
     filter_open: bool,
+    /// The page's width, measured as it's laid out, so the columns share it.
+    width: std::rc::Rc<std::cell::Cell<f32>>,
     generation: u64,
 }
 
 const NAME_WIDTH: f32 = 170.;
+/// The narrowest a column gets, and its width before the page is measured.
 const COLUMN_WIDTH: f32 = 76.;
 const ROW_HEIGHT: f32 = 104.;
 
@@ -293,7 +296,7 @@ fn local_midnight(date: NaiveDate) -> DateTime<Utc> {
 
 impl ActivityPage {
     pub fn new(org: Option<String>, cx: &mut Context<Self>) -> Self {
-        let mut page = Self { org, data: None, tab: Tab::WorkLog, scale: Scale::Days, page: 0, hidden: BTreeSet::new(), repo: None, filter_open: false, generation: 0 };
+        let mut page = Self { org, data: None, tab: Tab::WorkLog, scale: Scale::Days, page: 0, hidden: BTreeSet::new(), repo: None, filter_open: false, width: Default::default(), generation: 0 };
         page.load(cx);
         page
     }
@@ -349,6 +352,15 @@ impl ActivityPage {
                     .collect()
             }
         }
+    }
+
+    /// Each column's width: the page's width less the names, shared out.
+    fn column_width(&self, columns: usize) -> f32 {
+        let width = self.width.get();
+        if width <= 0. || columns == 0 {
+            return COLUMN_WIDTH;
+        }
+        ((width - NAME_WIDTH) / columns as f32).floor().max(40.)
     }
 
     fn shows(&self, event: &Event) -> bool {
@@ -516,6 +528,7 @@ impl ActivityPage {
 
     fn work_log(&self, data: &Data, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let columns = self.columns();
+        let column_width = self.column_width(columns.len());
         let (from, to) = (columns[0].0, columns[columns.len() - 1].1);
         // Events by person and column.
         let mut cells: HashMap<(&str, usize), Vec<&Event>> = HashMap::new();
@@ -536,7 +549,7 @@ impl ActivityPage {
                     Scale::Weeks => (day.format("%-d").to_string(), day.format("%b").to_string().to_uppercase()),
                 };
                 div()
-                    .w(px(COLUMN_WIDTH))
+                    .w(px(column_width))
                     .flex_none()
                     .py_1()
                     .flex()
@@ -575,16 +588,16 @@ impl ActivityPage {
                         placed.push((distance * angle.cos(), distance * angle.sin(), event.radius(), event));
                     }
                     let extent = placed.iter().map(|(x, y, r, _)| (x * x + y * y).sqrt() + r).fold(0f32, f32::max);
-                    let room = (COLUMN_WIDTH.min(ROW_HEIGHT) / 2.) - 6.;
+                    let room = (column_width.min(ROW_HEIGHT) / 2.) - 6.;
                     let scale = if extent > room { room / extent } else { 1. };
                     div()
-                        .w(px(COLUMN_WIDTH))
+                        .w(px(column_width))
                         .h_full()
                         .flex_none()
                         .relative()
                         .children(placed.into_iter().enumerate().map(|(i, (x, y, r, event))| {
                             let size = (r * 2. * scale).max(3.);
-                            let left = COLUMN_WIDTH / 2. + x * scale - size / 2.;
+                            let left = column_width / 2. + x * scale - size / 2.;
                             let top = ROW_HEIGHT / 2. + y * scale - size / 2.;
                             let tip = format!(
                                 "{} · {}#{} {}{} · {}",
@@ -631,7 +644,7 @@ impl ActivityPage {
         let columns = self.columns();
         let (from, to) = (columns[0].0, columns[columns.len() - 1].1);
         let now = Utc::now();
-        let width = COLUMN_WIDTH * columns.len() as f32;
+        let width = self.column_width(columns.len()) * columns.len() as f32;
         let span = (to - from).num_seconds().max(1) as f32;
         let x = |t: DateTime<Utc>| ((t - from).num_seconds() as f32 / span * width).clamp(0., width);
         let lanes = data.people.iter().enumerate().map(|(lane, person)| {
@@ -734,7 +747,23 @@ impl Render for ActivityPage {
             .bg(theme.bg)
             .font_weight(FontWeight::NORMAL)
             .child(self.toolbar(&data, &theme, cx))
-            .child(div().id("activity-body").overflow_x_scroll().px_4().pb_4().child(body))
+            .child(div().w_full().min_w_0().px_4().h(px(0.)).child({
+                // Measures the width the grid has, so its columns share it.
+                let width = self.width.clone();
+                gpui::canvas(
+                    move |bounds, window, _| {
+                        let now = f32::from(bounds.size.width);
+                        if (now - width.get()).abs() > 1. {
+                            width.set(now);
+                            window.refresh();
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .w_full()
+                .h(px(0.))
+            }))
+            .child(div().id("activity-body").w_full().min_w_0().overflow_hidden().px_4().pb_4().child(body))
             .into_any_element()
     }
 }
