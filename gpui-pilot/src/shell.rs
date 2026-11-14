@@ -4013,7 +4013,23 @@ impl Workspace {
             facts.push(fact("Area", area.clone()));
         }
         if doc.tasks > 0 {
-            facts.push(fact("Tasks", format!("{} of {} done", doc.tasks_done, doc.tasks)));
+            facts.push(
+                div()
+                    .min_w(px(140.))
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .child(div().text_xs().text_color(theme.secondary).child("Tasks"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(crate::charts::progress_ring(doc.tasks_done, doc.tasks, 16., theme))
+                            .child(format!("{} of {} done", doc.tasks_done, doc.tasks)),
+                    ),
+            );
         }
         for (key, value) in doc.front_matter.iter().filter(|(k, _)| !matches!(k.as_str(), "domains" | "issues" | "date")) {
             let label = key.replace(['_', '-'], " ");

@@ -282,7 +282,20 @@ impl HarnessPage {
             .child(div().w(px(130.)).flex_none().truncate().text_color(theme.secondary).child(doc.area.clone().unwrap_or_default()))
             .child(div().w(px(110.)).flex_none().truncate().child(status_label(doc.status.as_deref())))
             .when(plans, |d| {
-                d.child(div().w(px(70.)).flex_none().text_color(theme.secondary).child(if doc.tasks > 0 { format!("{} of {}", doc.tasks_done, doc.tasks) } else { String::new() }))
+                d.child(
+                    div()
+                        .w(px(70.))
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1p5()
+                        .text_xs()
+                        .text_color(theme.secondary)
+                        .when(doc.tasks > 0, |d| {
+                            d.child(crate::charts::progress_ring(doc.tasks_done, doc.tasks, 14., &theme)).child(format!("{}/{}", doc.tasks_done, doc.tasks))
+                        }),
+                )
             })
             .child(div().w(px(96.)).flex_none().text_color(theme.secondary).child(doc.date.map(|d| d.format("%-d %b %Y").to_string()).unwrap_or_default()))
     }

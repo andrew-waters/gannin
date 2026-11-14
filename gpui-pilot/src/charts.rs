@@ -365,3 +365,44 @@ pub fn histogram_cell(histogram: &Histogram, theme: &Theme) -> impl IntoElement 
         div().w(px(12.)).h(px(height)).rounded_sm().bg(color)
     }))
 }
+
+/// A ring that fills clockwise from the top as `done` of `total` complete:
+/// the track in the grid colour, the done part in blue, all green once
+/// everything's done.
+pub fn progress_ring(done: i64, total: i64, diameter: f32, theme: &Theme) -> impl IntoElement {
+    let fraction = if total > 0 { (done as f32 / total as f32).clamp(0., 1.) } else { 0. };
+    let (track, fill_color) = (theme.grid, if fraction >= 1. { theme.good() } else { theme.blue() });
+    canvas(
+        |_, _, _| (),
+        move |bounds, _, window, _| {
+            let width = (diameter * 0.18).max(2.);
+            let radius = diameter / 2. - width / 2.;
+            let center = bounds.center();
+            let arc = |from: f32, to: f32| {
+                let steps = ((to - from) * 64.).ceil().max(1.) as usize;
+                let mut path = PathBuilder::stroke(px(width));
+                for i in 0..=steps {
+                    let turn = from + (to - from) * i as f32 / steps as f32;
+                    let angle = turn * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+                    let p = point(center.x + px(radius * angle.cos()), center.y + px(radius * angle.sin()));
+                    if i == 0 {
+                        path.move_to(p);
+                    } else {
+                        path.line_to(p);
+                    }
+                }
+                path.build().ok()
+            };
+            if let Some(path) = arc(0., 1.) {
+                window.paint_path(path, track);
+            }
+            if fraction > 0. {
+                if let Some(path) = arc(0., fraction) {
+                    window.paint_path(path, fill_color);
+                }
+            }
+        },
+    )
+    .size(px(diameter))
+    .flex_none()
+}
