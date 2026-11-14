@@ -383,7 +383,8 @@ impl Render for SessionPage {
             .flex()
             .flex_col()
             .bg(theme.bg)
-            .child(header)
+            // A review's own header says all this, in one row.
+            .when(self.review.is_none(), |d| d.child(header))
             .child(div().flex_1().min_h_0().flex().flex_row().map(|d| match self.show {
                 _ if self.review.is_some() => d.child(changes),
                 Show::Terminal => d.child(terminal),

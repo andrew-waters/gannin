@@ -56,6 +56,10 @@ pub struct ReviewPanel {
     /// The Conversation pane, once the person has toggled it; until then it
     /// follows claude (shown while it works or before a result).
     conversation: Option<bool>,
+    /// The Conversation pane's height, and while its edge is dragged, where
+    /// the drag began (the pointer's y and the height then).
+    conversation_height: f32,
+    resizing: Option<(f32, f32)>,
     composer: Entity<editor::Editor>,
     post: Option<Post>,
     _poll: Option<Task<()>>,
@@ -123,6 +127,8 @@ impl ReviewPanel {
             editing: None,
             selected: Selected::Overview,
             conversation: None,
+            conversation_height: 260.,
+            resizing: None,
             composer: Self::composer(window, cx),
             post: None,
             _poll: Some(poll),
@@ -152,6 +158,8 @@ impl ReviewPanel {
             editing: None,
             selected: Selected::Overview,
             conversation: None,
+            conversation_height: 260.,
+            resizing: None,
             composer: Self::composer(window, cx),
             post,
             _poll: None,
@@ -428,6 +436,9 @@ impl ReviewPanel {
         }
     }
 
+    /// One row: where claude is, the PR, the verdict, how ready it is and
+    /// the effort, then the buttons; while posting, the buttons give way to
+    /// the post's own controls.
     fn header(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let (repo, number) = self.subject();
         let url = self.url();
@@ -438,83 +449,72 @@ impl ReviewPanel {
         let (ready, ready_tint) = self.readiness(theme);
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
+        let dot = if self.working() { theme.good() } else if status_tint == theme.orange() { theme.orange() } else if self.running() { theme.selected } else { theme.tertiary };
+        let controls = match &self.post {
+            Some(post) => self.post_controls(post, theme, cx).into_any_element(),
+            None => div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .when(self.running(), |d| {
+                    d.child(Self::button("review-conversation", "Conversation", false, true, theme).when(shown, |b| b.bg(theme.row_selected)).on_click(cx.listener(
+                        move |this, _: &ClickEvent, _, cx| {
+                            this.conversation = Some(!shown);
+                            cx.notify();
+                        },
+                    )))
+                })
+                .child(Self::button("review-github", "Open on GitHub", false, true, theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                .child(Self::button("review-again", "Review Again", false, can_again, theme).when(can_again, |d| {
+                    d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx)))
+                }))
+                .child(Self::button("review-post", "Post Review", true, has_result, theme).when(has_result, |d| {
+                    d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
+                }))
+                .into_any_element(),
+        };
         div()
             .flex_none()
+            .h(px(44.))
             .flex()
-            .flex_col()
-            .gap_2()
+            .flex_row()
+            .items_center()
+            .gap_3()
             .px_4()
-            .py_3()
             .bg(theme.sidebar)
             .border_b_1()
             .border_color(theme.border)
+            .child(div().flex_none().size(px(7.)).rounded_full().bg(dot))
             .child(
                 div()
-                    .flex()
-                    .flex_row()
-                    .items_start()
-                    .gap_4()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .child(
-                                div()
-                                    .id("review-title")
-                                    .text_lg()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .cursor_pointer()
-                                    .hover(|s| s.text_color(theme.selected))
-                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&link)))
-                                    .child(title),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap_2()
-                                    .text_sm()
-                                    .text_color(theme.secondary)
-                                    .child(format!("{repo}#{number}"))
-                                    .when(!status.is_empty(), |d| d.child(div().text_color(status_tint).child(status))),
-                            ),
-                    )
-                    .child(
-                        div()
-                            .flex_none()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .when(self.running(), |d| {
-                                d.child(Self::button("review-conversation", "Conversation", false, true, theme).when(shown, |b| b.bg(theme.row_selected)).on_click(cx.listener(
-                                    move |this, _: &ClickEvent, _, cx| {
-                                        this.conversation = Some(!shown);
-                                        cx.notify();
-                                    },
-                                )))
-                            })
-                            .child(Self::button("review-github", "Open on GitHub", false, true, theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
-                            .child(Self::button("review-again", "Review Again", false, can_again, theme).when(can_again, |d| {
-                                d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx)))
-                            }))
-                            .child(Self::button("review-post", "Post Review", true, has_result, theme).when(has_result, |d| {
-                                d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
-                            })),
-                    ),
-            )
-            .child(
-                div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_3()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("review-title")
+                            .flex_shrink(1.)
+                            .min_w(px(80.))
+                            .truncate()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .cursor_pointer()
+                            .hover(|s| s.text_color(theme.selected))
+                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&link)))
+                            .child(title),
+                    )
+                    .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{repo}#{number}")))
+                    .when(!status.is_empty(), |d| d.child(div().flex_none().text_sm().text_color(status_tint).child(status)))
                     .when_some(self.result.as_ref(), |d, r| d.child(Self::verdict_pill(r.verdict.as_deref(), theme)))
                     .child(
                         div()
                             .id("review-readiness")
+                            .flex_shrink(1.)
+                            .min_w(px(60.))
+                            .truncate()
                             .text_sm()
                             .font_weight(FontWeight::MEDIUM)
                             .text_color(ready_tint)
@@ -525,8 +525,9 @@ impl ReviewPanel {
                             }))
                             .child(ready),
                     )
-                    .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| d.child(Self::effort_meter(e, theme))),
+                    .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| d.child(div().flex_none().child(Self::effort_meter(e, theme)))),
             )
+            .child(controls)
     }
 
     /// A row in the file list.
@@ -1003,12 +1004,31 @@ impl ReviewPanel {
             Source::Preview { .. } => None,
         };
         div()
+            .relative()
             .flex_none()
-            .h(px(260.))
+            .h(px(self.conversation_height))
             .flex()
             .flex_col()
             .border_t_1()
             .border_color(theme.border)
+            // The top edge drags to resize it.
+            .child(
+                div()
+                    .id("conversation-resize")
+                    .absolute()
+                    .top(px(-3.))
+                    .left_0()
+                    .right_0()
+                    .h(px(6.))
+                    .cursor_row_resize()
+                    .on_mouse_down(
+                        gpui::MouseButton::Left,
+                        cx.listener(|this, event: &gpui::MouseDownEvent, _, cx| {
+                            this.resizing = Some((f32::from(event.position.y), this.conversation_height));
+                            cx.stop_propagation();
+                        }),
+                    ),
+            )
             .map(|d| match live {
                 Some(view) => d.child(div().flex_1().min_h_0().child(view)),
                 None => d.child(
@@ -1059,42 +1079,42 @@ impl ReviewPanel {
             .child(label.to_string())
     }
 
-    fn post_sheet(&self, post: &Post, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let (repo, number) = self.subject();
-        let cancel = Self::button("post-cancel", "Cancel", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-            this.post = None;
-            cx.notify();
-        }));
-        let quiet = |text: String| div().text_xs().text_color(theme.secondary).child(text);
-        let body = match post {
-            Post::Loading => quiet("Loading the pull request".into()).into_any_element(),
-            Post::Posting => quiet("Posting".into()).into_any_element(),
+    /// Posting, in the header: the kind of review and what goes, or where
+    /// the post is. Nothing goes to GitHub until Post to GitHub is clicked.
+    fn post_controls(&self, post: &Post, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let close = |id: &'static str, label: &'static str, cx: &mut Context<Self>| {
+            Self::button(id, label, false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.post = None;
+                cx.notify();
+            }))
+        };
+        let quiet = |text: String| div().flex_shrink(1.).min_w_0().truncate().text_sm().text_color(theme.secondary).child(text);
+        let row = div().flex_none().max_w(px(640.)).flex().flex_row().items_center().gap_2();
+        match post {
+            Post::Loading => row.child(quiet("Loading the pull request".into())).child(close("post-cancel", "Cancel", cx)),
+            Post::Posting => row.child(quiet("Posting to GitHub".into())),
             Post::Posted(url) => {
                 let url = url.clone();
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_2()
-                    .child("Posted to GitHub.")
-                    .child(div().id("posted-link").text_color(theme.selected).cursor_pointer().on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))).child("Open it"))
-                    .into_any_element()
+                row.child(div().text_sm().text_color(theme.good()).child("Posted to GitHub"))
+                    .child(Self::button("posted-open", "Open It", false, true, theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                    .child(close("post-done", "Done", cx))
             }
-            Post::Failed(error) => div().text_color(theme.critical()).child(error.clone()).into_any_element(),
-            Post::Ready { snapshot, draft, event, body } => {
+            Post::Failed(error) => row
+                .child(div().flex_shrink(1.).min_w_0().truncate().text_sm().text_color(theme.critical()).child(error.clone()))
+                .child(close("post-close", "Close", cx)),
+            Post::Ready { snapshot, draft, event, .. } => {
                 let own = snapshot.is_own();
                 let event_now = *event;
                 let choice = |id: &'static str, label: &'static str, value: &'static str, cx: &mut Context<Self>| {
                     let on = event_now == value;
                     div()
                         .id(id)
-                        .flex_1()
+                        .px_2()
                         .py_0p5()
-                        .flex()
-                        .justify_center()
                         .rounded_md()
                         .cursor_pointer()
                         .text_color(if on { theme.fg } else { theme.secondary })
-                        .when(on, |d| d.bg(theme.row_selected))
+                        .when(on, |d| d.bg(theme.bg))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             if let Some(Post::Ready { event, .. }) = this.post.as_mut() {
                                 *event = value;
@@ -1103,100 +1123,89 @@ impl ReviewPanel {
                         }))
                         .child(label)
                 };
-                let mut events = div().p_0p5().flex().flex_row().gap_0p5().rounded_md().bg(theme.tile).text_xs().child(choice("event-comment", "Comment", "COMMENT", cx));
+                let mut events = div().flex_none().p_0p5().flex().flex_row().gap_0p5().rounded_md().bg(theme.grid).text_sm().child(choice("event-comment", "Comment", "COMMENT", cx));
                 if !own {
                     events = events.child(choice("event-approve", "Approve", "APPROVE", cx)).child(choice("event-changes", "Request Changes", "REQUEST_CHANGES", cx));
                 }
-                let general = draft.body.lines().filter(|l| l.starts_with("- `")).count();
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .child(div().flex().flex_col().gap_1().child(quiet("Review".into())).child(events).when(own, |d| {
-                        d.child(quiet("It's your own pull request, so GitHub only takes a comment.".into()))
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(quiet("Body".into()))
-                            .child(div().p_2().rounded_md().border_1().border_color(theme.border).child(body.clone()))
-                            .when(general > 0, |d| {
-                                d.child(quiet(format!(
-                                    "{general} finding{} {} on a line the diff shows, so {} in the body.",
-                                    if general == 1 { "" } else { "s" },
-                                    if general == 1 { "isn't" } else { "aren't" },
-                                    if general == 1 { "it's" } else { "they're" }
-                                )))
-                            }),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(quiet(format!("{} inline comment{}", draft.comments.len(), if draft.comments.len() == 1 { "" } else { "s" })))
-                            .children(draft.comments.iter().map(|(path, line, body)| {
-                                div().flex().flex_col().child(div().text_xs().text_color(theme.selected).child(format!("{path}:{line}"))).child(div().text_xs().child(body.clone()))
-                            })),
-                    )
-                    .when(!draft.left_out.is_empty(), |d| {
-                        d.child(
+                let inline = draft.comments.len();
+                row.child(events)
+                    .child(quiet(if own { "Your own PR: only a comment".into() } else { plural(inline, "inline comment", "inline comments") }))
+                    .child(close("post-cancel", "Cancel", cx))
+                    .child(Self::button("post-confirm", "Post to GitHub", true, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.confirm_post(cx))))
+            }
+        }
+    }
+
+    /// The draft being posted, in the detail column: the body to edit, the
+    /// inline comments and the findings left out.
+    fn post_draft(&self, post: &Post, theme: &Theme) -> Option<impl IntoElement> {
+        let Post::Ready { snapshot, draft, body, .. } = post else { return None };
+        let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
+        let general = draft.body.lines().filter(|l| l.starts_with("- `")).count();
+        Some(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(18.))
+                .max_w(px(860.))
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(Self::section_heading("Review to post"))
+                        .child(quiet(if snapshot.is_own() {
+                            "It's your own pull request, so GitHub only takes a comment.".into()
+                        } else {
+                            "Pick the kind of review in the header, check the text, then Post to GitHub.".into()
+                        })),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child("Body"))
+                        .child(div().p_2().rounded_md().border_1().border_color(theme.border).bg(theme.bg).child(body.clone()))
+                        .when(general > 0, |d| {
+                            d.child(quiet(format!(
+                                "{} {} on a line the diff shows, so {} in the body.",
+                                plural(general, "finding", "findings"),
+                                if general == 1 { "isn't" } else { "aren't" },
+                                if general == 1 { "it's" } else { "they're" }
+                            )))
+                        }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(div().font_weight(FontWeight::SEMIBOLD).child(capitalised(&plural(draft.comments.len(), "inline comment", "inline comments"))))
+                        .children(draft.comments.iter().map(|(path, line, body)| {
                             div()
                                 .flex()
                                 .flex_col()
-                                .gap_1()
-                                .child(quiet(format!("{} finding{} left out", draft.left_out.len(), if draft.left_out.len() == 1 { "" } else { "s" })))
-                                .children(draft.left_out.iter().map(|f| div().text_xs().text_color(theme.secondary).child(format!("{}:{}: {}", f.path, f.line.unwrap_or(0), f.comment))))
-                                .child(quiet("A comment near its line, or an earlier review, already says much the same, so it isn't posted again.".into())),
-                        )
-                    })
-                    .into_any_element()
-            }
-        };
-        let can_post = matches!(post, Post::Ready { .. });
-        div()
-            .id("post-sheet")
-            .absolute()
-            .top_0()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .occlude()
-            .bg(gpui::black().opacity(0.3))
-            .flex()
-            .justify_center()
-            .pt_8()
-            .child(
-                div()
-                    .id("post-sheet-body")
-                    .w(px(560.))
-                    .max_h(px(620.))
-                    .overflow_y_scroll()
-                    .p_4()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .bg(theme.popover)
-                    .border_1()
-                    .border_color(theme.border)
-                    .rounded_xl()
-                    .shadow_lg()
-                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(format!("{repo}#{number}")))
-                    .child(body)
-                    .child(
+                                .gap_0p5()
+                                .p_2()
+                                .rounded_md()
+                                .bg(theme.tile)
+                                .child(div().font_family("SF Mono").text_xs().text_color(theme.selected).child(format!("{path}:{line}")))
+                                .child(div().text_sm().child(body.clone()))
+                        })),
+                )
+                .when(!draft.left_out.is_empty(), |d| {
+                    d.child(
                         div()
                             .flex()
-                            .flex_row()
-                            .gap_2()
-                            .justify_end()
-                            .child(cancel)
-                            .when(can_post, |d| {
-                                d.child(Self::button("post-confirm", "Post to GitHub", true, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.confirm_post(cx))))
-                            }),
-                    ),
-            )
+                            .flex_col()
+                            .gap_1()
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(capitalised(&format!("{} left out", plural(draft.left_out.len(), "finding", "findings")))))
+                            .children(draft.left_out.iter().map(|f| div().text_sm().text_color(theme.secondary).child(format!("{}:{}: {}", f.path, f.line.unwrap_or(0), f.comment))))
+                            .child(quiet("A comment near its line, or an earlier review, already says much the same, so it isn't posted again.".into())),
+                    )
+                }),
+        )
     }
 }
 
@@ -1204,7 +1213,9 @@ impl ReviewPanel {
 impl Render for ReviewPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
+        let draft = self.post.as_ref().and_then(|post| self.post_draft(post, &theme)).map(|d| d.into_any_element());
         let detail = match self.selected.clone() {
+            _ if draft.is_some() => draft.unwrap(),
             Selected::Overview => self.overview(&theme, cx).into_any_element(),
             Selected::General => self.general_detail(&theme, cx).into_any_element(),
             Selected::Learnings => self.learnings_detail(&theme).into_any_element(),
@@ -1216,6 +1227,20 @@ impl Render for ReviewPanel {
             .flex()
             .flex_col()
             .bg(theme.bg)
+            .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
+                let Some((start, height)) = this.resizing else { return };
+                if event.pressed_button != Some(gpui::MouseButton::Left) {
+                    this.resizing = None;
+                    return;
+                }
+                let most = (f32::from(window.viewport_size().height) - 220.).max(140.);
+                this.conversation_height = (height + start - f32::from(event.position.y)).clamp(120., most);
+                cx.notify();
+            }))
+            .on_mouse_up(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _: &gpui::MouseUpEvent, _, _| this.resizing = None),
+            )
             .child(self.header(&theme, cx))
             .child(
                 div()
@@ -1227,6 +1252,5 @@ impl Render for ReviewPanel {
                     .child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail)),
             )
             .when(self.shows_conversation(), |d| d.child(self.conversation_pane(&theme, cx)))
-            .when_some(self.post.as_ref(), |d, post| d.child(self.post_sheet(post, &theme, cx)))
     }
 }
