@@ -59,7 +59,7 @@ impl Mock {
     fn pane(self) -> &'static str {
         match self {
             Mock::Working | Mock::YourTurn => "changes",
-            Mock::PrOpened | Mock::ChecksFailing | Mock::ChangesRequested | Mock::Conflicts => "prs",
+            Mock::PrOpened | Mock::ChecksFailing | Mock::ChangesRequested | Mock::Conflicts => "issue",
             _ => "issue",
         }
     }

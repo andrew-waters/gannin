@@ -147,7 +147,6 @@ pub struct WorkData {
 enum Pane {
     Issue,
     Changes,
-    Prs,
     Activity,
 }
 
@@ -188,7 +187,6 @@ impl WorkPanel {
     pub fn show_pane(&mut self, pane: &str) {
         self.pane = match pane {
             "changes" => Pane::Changes,
-            "prs" => Pane::Prs,
             "activity" => Pane::Activity,
             _ => Pane::Issue,
         };
@@ -281,7 +279,8 @@ impl WorkPanel {
                                 ),
                             )
                         } else {
-                            d.child(div().absolute().bottom(px(12.)).left(px(12.)).right(px(12.)).flex().justify_center().child(self.ask_card(&ask, theme, cx)))
+                            // It takes the terminal's whole area, to read and answer.
+                            d.child(div().absolute().top_0().bottom_0().left_0().right_0().p_3().bg(theme.bg.opacity(0.6)).child(self.ask_card(&ask, theme, cx)))
                         }
                     }),
             )
@@ -362,9 +361,10 @@ impl WorkPanel {
     fn ask_card(&self, ask: &Ask, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let orange: Hsla = gpui::rgb(0xFF9F0A).into();
         let card = div()
-            .w_full()
-            .max_w(px(820.))
-            .p_4()
+            .id("ask-card")
+            .size_full()
+            .overflow_y_scroll()
+            .p_5()
             .flex()
             .flex_col()
             .gap_3()
@@ -529,9 +529,8 @@ impl WorkPanel {
                 .child(label)
         };
         let body = match self.pane {
-            Pane::Issue => self.issue_pane(theme).into_any_element(),
+            Pane::Issue => self.issue_pane(theme, cx).into_any_element(),
             Pane::Changes => self.changes_pane(theme, cx).into_any_element(),
-            Pane::Prs => self.prs_pane(theme, cx).into_any_element(),
             Pane::Activity => self.activity_pane(theme).into_any_element(),
         };
         div()
@@ -555,25 +554,24 @@ impl WorkPanel {
                             .gap_0p5()
                             .rounded_md()
                             .bg(theme.grid)
-                            .child(tab("pane-issue", "Issue".into(), Pane::Issue, cx))
-                            .child(tab("pane-changes", if files > 0 { format!("Changes {files}") } else { "Changes".into() }, Pane::Changes, cx))
                             .child(tab(
-                                "pane-prs",
+                                "pane-issue",
                                 match (prs, failed) {
-                                    (0, _) => "PRs".into(),
-                                    (n, 0) => format!("PRs {n}"),
-                                    (n, f) => format!("PRs {n} ✕{f}"),
+                                    (0, _) => "Issue".into(),
+                                    (n, 0) => format!("Issue · {}", if n == 1 { "1 PR".to_string() } else { format!("{n} PRs") }),
+                                    (n, f) => format!("Issue · {} ✕{f}", if n == 1 { "1 PR".to_string() } else { format!("{n} PRs") }),
                                 },
-                                Pane::Prs,
+                                Pane::Issue,
                                 cx,
                             ))
+                            .child(tab("pane-changes", if files > 0 { format!("Changes {files}") } else { "Changes".into() }, Pane::Changes, cx))
                             .child(tab("pane-activity", "Activity".into(), Pane::Activity, cx)),
                     ),
             )
             .child(div().id("work-pane").flex_1().min_h_0().overflow_y_scroll().child(body))
     }
 
-    fn issue_pane(&self, theme: &Theme) -> impl IntoElement {
+    fn issue_pane(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let d = &self.data;
         let state = d.state;
         let all_merged = !d.prs.is_empty() && d.prs.iter().all(|p| p.state == PrState::Merged);
@@ -601,6 +599,8 @@ impl WorkPanel {
                         .child(div().flex().flex_row().child(Self::button("work-finish", "Finish and Remove Worktrees", all_merged, true, theme))),
                 )
             })
+            // The pull requests first: where the work stands.
+            .when(!d.prs.is_empty(), |el| el.child(Self::section("Pull requests", theme).child(self.pr_cards(theme, cx))))
             .child(
                 Self::section("Issue", theme)
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(d.title.clone()))
@@ -761,45 +761,18 @@ impl WorkPanel {
             .into_any_element()
     }
 
-    fn prs_pane(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The session's pull requests, one compact card each: state and
+    /// title on a line; review, checks and conflicts on the next; then
+    /// what's failing and the feedback to send, when there is any.
+    fn pr_cards(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let d = &self.data;
-        if d.prs.is_empty() {
-            return div()
-                .p_6()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap_2()
-                .child(div().font_weight(FontWeight::MEDIUM).child("No pull requests yet"))
-                .child(div().text_sm().text_center().text_color(theme.secondary).child(format!(
-                    "When claude opens one, or one is opened from {}, it shows here with its checks and review.",
-                    d.branch
-                )))
-                .into_any_element();
-        }
         let running = d.state.running();
         let auto = self.auto_feedback;
+        let any_open = d.prs.iter().any(|p| p.state == PrState::Open);
         div()
             .flex()
             .flex_col()
-            .gap_4()
-            .p_4()
-            .child(
-                div()
-                    .id("auto-feedback")
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_2()
-                    .text_sm()
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.auto_feedback = !auto;
-                        cx.notify();
-                    }))
-                    .child(div().size(px(14.)).rounded(px(3.)).border_1().border_color(if auto { theme.selected } else { theme.secondary }).when(auto, |d| d.bg(theme.selected)).flex().items_center().justify_center().text_xs().text_color(theme.on_selected).child(if auto { "✓" } else { "" }))
-                    .child("Send new feedback to Claude"),
-            )
+            .gap_2()
             .children(d.prs.iter().map(|pr| {
                 let (state, tint) = match pr.state {
                     PrState::Open => ("Open", theme.good()),
@@ -808,110 +781,135 @@ impl WorkPanel {
                     PrState::Closed => ("Closed", theme.secondary),
                 };
                 let review = match pr.review.as_deref() {
-                    Some("APPROVED") => Some(("Approved", theme.secondary)),
+                    Some("APPROVED") => Some(("Approved", theme.good())),
                     Some("CHANGES_REQUESTED") => Some(("Changes requested", theme.orange())),
                     Some(_) => Some(("Review required", theme.secondary)),
                     None => None,
                 };
-                let checks = if pr.failed.is_empty() && pr.pending.is_empty() && pr.passed == 0 {
-                    "None ran".to_string()
-                } else {
-                    let mut parts = Vec::new();
-                    if !pr.failed.is_empty() {
-                        parts.push(format!("{} failed", pr.failed.len()));
-                    }
-                    if !pr.pending.is_empty() {
-                        parts.push(format!("{} running", pr.pending.len()));
-                    }
-                    if pr.passed > 0 {
-                        parts.push(format!("{} passed", pr.passed));
-                    }
-                    parts.join(", ")
-                };
                 let open = pr.state == PrState::Open;
                 let number = pr.number;
                 let ticked: Vec<usize> = self.ticked.iter().filter(|(n, _)| *n == number).map(|(_, i)| *i).collect();
-                Self::section(&format!("{}#{}", pr.repo, pr.number), theme)
-                    .child(div().font_weight(FontWeight::SEMIBOLD).text_color(theme.selected).child(pr.title.clone()))
+                let count = |n: usize, mark: &'static str, tint: Hsla| (n > 0).then(|| div().flex().flex_row().gap_0p5().text_color(tint).child(mark).child(n.to_string()));
+                let name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .p(px(10.))
+                    .rounded_lg()
+                    .bg(theme.bg)
+                    .border_1()
+                    .border_color(if open && (pr.conflicts || !pr.failed.is_empty()) { theme.critical().opacity(0.5) } else { theme.border })
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(Self::dot(tint, 8.))
+                            .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{name}#{number}")))
+                            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::MEDIUM).child(pr.title.clone())),
+                    )
                     .child(
                         div()
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap_3()
-                            .text_sm()
-                            .child(div().flex().flex_row().items_center().gap_1().child(Self::dot(tint, 7.)).child(state))
-                            .when_some(review, |d, (label, tint)| d.child(div().text_color(tint).child(label)))
-                            .when(open && pr.conflicts, |d| d.child(div().text_color(theme.critical()).child("Conflicts"))),
+                            .text_xs()
+                            .child(div().text_color(tint).child(state))
+                            .when_some(review.filter(|_| open), |d, (label, tint)| d.child(div().text_color(tint).child(label)))
+                            .when(open && pr.conflicts, |d| d.child(div().text_color(theme.critical()).child("Conflicts")))
+                            .child(div().flex_1())
+                            .children(count(pr.passed, "✓", theme.good()))
+                            .children(count(pr.failed.len(), "✕", theme.critical()))
+                            .children(count(pr.pending.len(), "◷", theme.orange()))
+                            .when(pr.passed + pr.failed.len() + pr.pending.len() == 0, |d| d.child(div().text_color(theme.tertiary).child("No checks"))),
                     )
-                    .child(Self::fact("Checks", checks, theme))
-                    .children(pr.failed.iter().map(|c| div().text_sm().flex().flex_row().gap_1p5().child(div().text_color(theme.critical()).child("✕")).child(c.clone())))
-                    .children(pr.pending.iter().take(5).map(|c| div().text_sm().flex().flex_row().gap_1p5().child(div().text_color(theme.orange()).child("◷")).child(c.clone())))
                     .when(open && !pr.failed.is_empty(), |d| {
                         d.child(
                             div()
                                 .flex()
                                 .flex_row()
-                                .gap_2()
+                                .flex_wrap()
                                 .items_center()
-                                .when(pr.failures_sent, |d| d.child(div().text_xs().text_color(theme.secondary).child("Sent to Claude")))
-                                .child(Self::button(format!("rerun-{number}"), "Re-run Failed Checks", false, true, theme))
-                                .child(Self::button(format!("send-failures-{number}"), "Send Failures to Claude", false, running, theme)),
+                                .gap_x_2()
+                                .gap_y_1()
+                                .text_xs()
+                                .child(div().text_color(theme.critical()).child(pr.failed.join(", ")))
+                                .child(div().flex_1())
+                                .when(pr.failures_sent, |d| d.child(div().text_color(theme.secondary).child("Sent")))
+                                .child(Self::button(format!("rerun-{number}"), "Re-run", false, true, theme).text_xs())
+                                .child(Self::button(format!("send-failures-{number}"), "Send to Claude", false, running, theme).text_xs()),
                         )
                     })
                     .when(open && !pr.feedback.is_empty(), |d| {
-                        d.child(div().pt_1().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child("FEEDBACK"))
-                            .children(pr.feedback.iter().enumerate().map(|(i, f)| {
-                                let on = ticked.contains(&i);
-                                div()
-                                    .id(SharedString::from(format!("fb-{number}-{i}")))
-                                    .flex()
-                                    .flex_row()
-                                    .gap_2()
-                                    .p_2()
-                                    .rounded_md()
-                                    .bg(theme.tile)
-                                    .cursor_pointer()
-                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                        if let Some(at) = this.ticked.iter().position(|t| *t == (number, i)) {
-                                            this.ticked.remove(at);
-                                        } else {
-                                            this.ticked.push((number, i));
-                                        }
-                                        cx.notify();
-                                    }))
-                                    .child(div().size(px(14.)).flex_none().rounded(px(3.)).border_1().border_color(if on { theme.selected } else { theme.secondary }).when(on, |d| d.bg(theme.selected)).flex().items_center().justify_center().text_xs().text_color(theme.on_selected).child(if on { "✓" } else { "" }))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .flex()
-                                            .flex_col()
-                                            .gap_0p5()
-                                            .child(
-                                                div()
-                                                    .flex()
-                                                    .flex_row()
-                                                    .gap_2()
-                                                    .text_sm()
-                                                    .child(div().font_weight(FontWeight::MEDIUM).child(format!("@{}", f.author)))
-                                                    .when_some(f.location.clone(), |d, l| d.child(div().font_family("SF Mono").text_xs().text_color(theme.secondary).child(l)))
-                                                    .when_some(f.verdict.clone(), |d, v| d.child(div().text_xs().text_color(theme.orange()).child(v)))
-                                                    .when(f.sent, |d| d.child(div().text_xs().text_color(theme.secondary).child("Sent"))),
-                                            )
-                                            .child(div().text_sm().text_color(if f.sent { theme.secondary } else { theme.fg }).child(f.body.clone())),
-                                    )
-                            }))
-                            .child(div().flex().flex_row().child(Self::button(
-                                format!("send-fb-{number}"),
-                                if ticked.is_empty() { "Send to Claude".to_string() } else { format!("Send {} to Claude", ticked.len()) },
-                                true,
-                                running && !ticked.is_empty(),
-                                theme,
-                            )))
+                        d.children(pr.feedback.iter().enumerate().map(|(i, f)| {
+                            let on = ticked.contains(&i);
+                            div()
+                                .id(SharedString::from(format!("fb-{number}-{i}")))
+                                .flex()
+                                .flex_row()
+                                .items_start()
+                                .gap_2()
+                                .p_1p5()
+                                .rounded_md()
+                                .bg(theme.tile)
+                                .cursor_pointer()
+                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    if let Some(at) = this.ticked.iter().position(|t| *t == (number, i)) {
+                                        this.ticked.remove(at);
+                                    } else {
+                                        this.ticked.push((number, i));
+                                    }
+                                    cx.notify();
+                                }))
+                                .child(div().mt_0p5().size(px(13.)).flex_none().rounded(px(3.)).border_1().border_color(if on { theme.selected } else { theme.secondary }).when(on, |d| d.bg(theme.selected)).flex().items_center().justify_center().text_xs().text_color(theme.on_selected).child(if on { "✓" } else { "" }))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .text_xs()
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .flex_row()
+                                                .gap_1p5()
+                                                .child(div().font_weight(FontWeight::MEDIUM).child(format!("@{}", f.author)))
+                                                .when_some(f.location.clone(), |d, l| d.child(div().truncate().font_family("SF Mono").text_color(theme.secondary).child(l)))
+                                                .when(f.sent, |d| d.child(div().text_color(theme.secondary).child("Sent"))),
+                                        )
+                                        .child(div().text_sm().text_color(if f.sent { theme.secondary } else { theme.fg }).child(f.body.clone())),
+                                )
+                        }))
+                        .child(div().flex().flex_row().justify_end().child(Self::button(
+                            format!("send-fb-{number}"),
+                            if ticked.is_empty() { "Send to Claude".to_string() } else { format!("Send {} to Claude", ticked.len()) },
+                            true,
+                            running && !ticked.is_empty(),
+                            theme,
+                        ).text_xs()))
                     })
             }))
-            .into_any_element()
+            .when(any_open, |d| {
+                d.child(
+                    div()
+                        .id("auto-feedback")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(theme.secondary)
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.auto_feedback = !auto;
+                            cx.notify();
+                        }))
+                        .child(div().size(px(13.)).rounded(px(3.)).border_1().border_color(if auto { theme.selected } else { theme.secondary }).when(auto, |d| d.bg(theme.selected)).flex().items_center().justify_center().text_color(theme.on_selected).child(if auto { "✓" } else { "" }))
+                        .child("Send new feedback to Claude"),
+                )
+            })
     }
 
     fn activity_pane(&self, theme: &Theme) -> impl IntoElement {
