@@ -21,7 +21,6 @@ pub enum WorkState {
     NeedsYou,
     YourTurn,
     Exited,
-    Stopped,
 }
 
 impl WorkState {
@@ -32,12 +31,11 @@ impl WorkState {
             WorkState::NeedsYou => "Needs you",
             WorkState::YourTurn => "Your turn",
             WorkState::Exited => "Claude exited",
-            WorkState::Stopped => "Stopped",
         }
     }
 
     fn running(self) -> bool {
-        !matches!(self, WorkState::Exited | WorkState::Stopped)
+        !matches!(self, WorkState::Exited)
     }
 
     pub fn tint(self, theme: &Theme) -> Hsla {
@@ -45,7 +43,7 @@ impl WorkState {
             WorkState::Starting | WorkState::Working => theme.blue(),
             WorkState::NeedsYou => gpui::rgb(0xFF9F0A).into(),
             WorkState::YourTurn => theme.good(),
-            WorkState::Exited | WorkState::Stopped => theme.secondary.opacity(0.5),
+            WorkState::Exited => theme.secondary.opacity(0.5),
         }
     }
 }
@@ -65,10 +63,15 @@ pub struct ChangedFile {
 #[derive(Clone, Debug)]
 pub struct Worktree {
     pub name: String,
+    /// Where it is, to read a file's diff.
+    pub path: String,
     /// Commits not pushed; None when it's never been pushed.
     pub unpushed: Option<usize>,
     pub base: String,
+    /// Everything since it left the default branch.
     pub files: Vec<ChangedFile>,
+    /// What isn't committed yet.
+    pub uncommitted: Vec<ChangedFile>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -136,7 +139,8 @@ pub struct WorkData {
     pub ask: Option<Ask>,
     pub activity: Vec<(String, String)>,
     pub model: String,
-    pub cost: f64,
+    /// What it's cost, when known.
+    pub cost: Option<f64>,
     pub context: f32,
     pub last_check: Option<bool>,
     /// Days since anything happened, for Stale.
@@ -150,9 +154,28 @@ enum Pane {
     Activity,
 }
 
+/// Asks the workspace to act on the session: start it again where it left
+/// off, or take it out of the pilot (after Finish, or Forget).
+pub enum WorkEvent {
+    Resume,
+    Forget,
+}
+
+impl gpui::EventEmitter<WorkEvent> for WorkPanel {}
+
+/// A live session's launch and terminal, for its data and to send to it.
+struct Live {
+    launch: crate::launch::Launch,
+    terminal: Entity<terminal::Terminal>,
+}
+
 pub struct WorkPanel {
     data: WorkData,
     terminal: Option<AnyView>,
+    live: Option<Live>,
+    /// Diffs read for a live session, by worktree, path and mode.
+    diffs: std::collections::HashMap<(String, String, bool), Vec<String>>,
+    _poll: Option<gpui::Task<()>>,
     pane: Pane,
     panel_open: bool,
     /// Branch (everything since the default branch) or Uncommitted.
@@ -180,7 +203,312 @@ impl WorkPanel {
             Some(Ask::Questions(qs)) => vec![Vec::new(); qs.len()],
             _ => Vec::new(),
         };
-        Self { data, terminal, pane: Pane::Issue, panel_open: true, uncommitted: false, file, composer, ask_away: false, picked, ticked: Vec::new(), auto_feedback: true }
+        Self {
+            data,
+            terminal,
+            live: None,
+            diffs: Default::default(),
+            _poll: None,
+            pane: Pane::Issue,
+            panel_open: true,
+            uncommitted: false,
+            file,
+            composer,
+            ask_away: false,
+            picked,
+            ticked: Vec::new(),
+            auto_feedback: true,
+        }
+    }
+
+    /// A live Work on This session: its terminal, and its data read every
+    /// few seconds (its pull requests every minute) off the main thread.
+    pub fn live(launch: crate::launch::Launch, terminal: Entity<terminal::Terminal>, view: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let subject = launch.subject.clone();
+        let data = WorkData {
+            reference: subject.as_ref().map(|s| format!("{}#{}", s.repo, s.number)).unwrap_or_default(),
+            title: subject.as_ref().map(|s| s.title.clone()).unwrap_or_else(|| launch.title.clone()),
+            issue_url: subject.as_ref().map(|s| s.url.clone()).unwrap_or_default(),
+            issue_body: subject.as_ref().and_then(|s| crate::detail::load_text(&s.id)).map(|t| t.body).unwrap_or_default(),
+            state: WorkState::Starting,
+            branch: launch.branch.clone(),
+            folder: launch.folder().to_string_lossy().to_string(),
+            worktrees: Vec::new(),
+            prs: Vec::new(),
+            ask: None,
+            activity: Vec::new(),
+            model: String::new(),
+            cost: None,
+            context: 0.,
+            last_check: None,
+            idle_days: 0,
+        };
+        let mut panel = Self::new(data, Some(view), window, cx);
+        let (folder, claude_id, dir) = (launch.folder(), launch.claude_id(), launch.dir());
+        panel.live = Some(Live { launch, terminal });
+        panel._poll = Some(cx.spawn(async move |this, cx| {
+            let mut tick = 0u32;
+            loop {
+                let (folder, id) = (folder.clone(), claude_id.clone());
+                let local = cx.background_executor().spawn(async move { (crate::work_live::worktrees(&folder), crate::work_live::transcript(&id)) }).await;
+                let urls = this.update(cx, |this, _| this.live.as_ref().map(|l| l.launch.pull_requests()).unwrap_or_default()).ok();
+                let prs = match urls {
+                    Some(urls) if !urls.is_empty() && tick % 20 == 0 => Some(
+                        cx.background_executor()
+                            .spawn(async move {
+                                let token = crate::auth::token()?;
+                                let viewer = crate::auth::saved_viewer().map(|v| v.login).unwrap_or_default();
+                                Some(crate::work_live::pull_requests(&token, &urls, &viewer))
+                            })
+                            .await,
+                    ),
+                    _ => None,
+                };
+                let dir = dir.clone();
+                let alive = this
+                    .update(cx, |this, cx| {
+                        let (worktrees, transcript) = local;
+                        this.data.worktrees = worktrees;
+                        this.data.activity = transcript.activity;
+                        this.data.model = transcript.model;
+                        this.data.context = transcript.context;
+                        if let Some(Some(prs)) = prs {
+                            // Keep what's been sent, by PR.
+                            let sent: Vec<(i64, bool)> = this.data.prs.iter().map(|p| (p.number, p.failures_sent)).collect();
+                            this.data.prs = prs;
+                            for pr in &mut this.data.prs {
+                                pr.failures_sent = sent.iter().any(|(n, s)| *n == pr.number && *s);
+                            }
+                        }
+                        this.refresh_state(&dir, cx);
+                        cx.notify();
+                    })
+                    .is_ok();
+                if !alive {
+                    return;
+                }
+                tick += 1;
+                cx.background_executor().timer(std::time::Duration::from_secs(3)).await;
+            }
+        }));
+        panel
+    }
+
+    /// Where claude is, from the hooks' state file, and what it's asking.
+    fn refresh_state(&mut self, dir: &std::path::Path, cx: &mut Context<Self>) {
+        let Some(live) = &self.live else { return };
+        let state = match live.launch.state().as_deref() {
+            Some("working") => WorkState::Working,
+            Some("needs-you") => WorkState::NeedsYou,
+            Some("idle") => WorkState::YourTurn,
+            Some("exited") | Some("stopped") => WorkState::Exited,
+            _ => WorkState::Starting,
+        };
+        let asking = if state == WorkState::NeedsYou {
+            let screen = live.terminal.read(cx).get_content();
+            Some(crate::work_live::ask(dir, &screen))
+        } else {
+            None
+        };
+        // A new question starts with nothing picked, the card showing.
+        let fresh = match (&self.data.ask, &asking) {
+            (Some(Ask::Questions(a)), Some(Ask::Questions(b))) => a.len() != b.len() || a.iter().zip(b).any(|(x, y)| x.question != y.question),
+            (None, Some(_)) => true,
+            _ => false,
+        };
+        if fresh {
+            self.ask_away = false;
+            self.picked = match &asking {
+                Some(Ask::Questions(qs)) => vec![Vec::new(); qs.len()],
+                _ => Vec::new(),
+            };
+        }
+        self.data.state = state;
+        self.data.ask = asking;
+    }
+
+    /// Types into claude's terminal: text as one message, then Return.
+    fn send(&mut self, text: String, escape_first: bool, cx: &mut Context<Self>) {
+        let Some(live) = &self.live else { return };
+        let terminal = live.terminal.clone();
+        cx.spawn(async move |_, cx| {
+            if escape_first {
+                terminal.update(cx, |t, _| t.input(b"\x1b".to_vec()));
+                cx.background_executor().timer(std::time::Duration::from_millis(400)).await;
+            }
+            terminal.update(cx, |t, _| t.paste(&text));
+            cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
+            terminal.update(cx, |t, _| t.input(b"\r".to_vec()));
+        })
+        .detach();
+    }
+
+    /// Raw keys to the terminal (a choice's digit, Return, Esc).
+    fn keys(&self, bytes: &[u8], cx: &mut Context<Self>) {
+        if let Some(live) = &self.live {
+            let bytes = bytes.to_vec();
+            live.terminal.update(cx, |t, _| t.input(bytes));
+        }
+    }
+
+    fn send_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.composer.read(cx).text(cx).trim().to_string();
+        if text.is_empty() {
+            return;
+        }
+        self.composer.update(cx, |e, cx| e.set_text("", window, cx));
+        self.send(text, false, cx);
+    }
+
+    /// The questions' answers as one message, after Esc closes claude's own
+    /// picker, as Gannin answers them.
+    fn send_answers(&mut self, cx: &mut Context<Self>) {
+        let Some(Ask::Questions(questions)) = self.data.ask.clone() else { return };
+        let lines: Vec<String> = questions
+            .iter()
+            .enumerate()
+            .map(|(i, q)| {
+                let picked: Vec<String> = self.picked.get(i).into_iter().flatten().filter_map(|&o| q.options.get(o).map(|(l, _, _)| l.clone())).collect();
+                format!("- {}: {}", q.question, if picked.is_empty() { "your call".to_string() } else { picked.join(", ") })
+            })
+            .collect();
+        self.send(format!("My answers:\n{}", lines.join("\n")), true, cx);
+    }
+
+    fn send_failures(&mut self, number: i64, cx: &mut Context<Self>) {
+        let Some(pr) = self.data.prs.iter_mut().find(|p| p.number == number) else { return };
+        pr.failures_sent = true;
+        let text = format!(
+            "The checks failing on {}#{}: {}. Look at why they fail (gh pr checks {} --repo {}), fix them, and push.",
+            pr.repo,
+            pr.number,
+            pr.failed.join(", "),
+            pr.number,
+            pr.repo
+        );
+        self.send(text, false, cx);
+    }
+
+    fn send_feedback(&mut self, number: i64, cx: &mut Context<Self>) {
+        let ticked: Vec<usize> = self.ticked.iter().filter(|(n, _)| *n == number).map(|(_, i)| *i).collect();
+        let Some(pr) = self.data.prs.iter_mut().find(|p| p.number == number) else { return };
+        let mut items: Vec<String> = Vec::new();
+        for (i, f) in pr.feedback.iter_mut().enumerate().filter(|(i, _)| ticked.contains(i)) {
+            let _ = i;
+            f.sent = true;
+            items.push(format!("- @{}{}: {}", f.author, f.location.as_ref().map(|l| format!(" on {l}")).unwrap_or_default(), f.body));
+        }
+        let text = format!("Feedback on {}#{} to deal with:\n{}", pr.repo, pr.number, items.join("\n"));
+        self.ticked.retain(|(n, _)| *n != number);
+        self.send(text, false, cx);
+    }
+
+    /// Stop Claude: ends claude (Ctrl-C twice), keeping the shell and the
+    /// worktree, to resume later.
+    fn stop_claude(&mut self, cx: &mut Context<Self>) {
+        let Some(live) = &self.live else { return };
+        let terminal = live.terminal.clone();
+        cx.spawn(async move |_, cx| {
+            terminal.update(cx, |t, _| t.input(b"\x03".to_vec()));
+            cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
+            terminal.update(cx, |t, _| t.input(b"\x03".to_vec()));
+        })
+        .detach();
+    }
+
+    /// Forget, after asking: the session leaves the pilot; its files stay.
+    fn forget(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let folder = self.data.folder.clone();
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            "Forget this session?",
+            Some(&format!("Claude is ended and the pilot forgets the session. Its folder and worktrees stay at {folder} for you to remove with git worktree remove.")),
+            &["Forget Session", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await == Ok(0) {
+                this.update(cx, |_, cx| cx.emit(WorkEvent::Forget)).ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Finish, after asking: the worktrees are removed (with anything not
+    /// pushed in them) and the session leaves the pilot.
+    fn finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let folder = self.data.folder.clone();
+        let worktrees: Vec<String> = self.data.worktrees.iter().map(|w| w.path.clone()).collect();
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            "Finish this session?",
+            Some(&format!("Claude is ended, the worktrees in {folder} are removed with anything not pushed in them, and the pilot forgets the session.")),
+            &["Finish and Remove Worktrees", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await != Ok(0) {
+                return;
+            }
+            cx.background_executor()
+                .spawn(async move {
+                    for path in &worktrees {
+                        let _ = std::process::Command::new("git").args(["-C", path, "worktree", "remove", "--force", path]).output();
+                    }
+                    let _ = std::fs::remove_dir_all(&folder);
+                })
+                .await;
+            this.update(cx, |_, cx| cx.emit(WorkEvent::Forget)).ok();
+        })
+        .detach();
+    }
+
+    /// Reads a file's diff for a live session, off the main thread.
+    fn load_diff(&mut self, worktree: String, path: String, cx: &mut Context<Self>) {
+        if self.live.is_none() {
+            return;
+        }
+        let uncommitted = self.uncommitted;
+        cx.spawn(async move |this, cx| {
+            let (wt, p) = (worktree.clone(), path.clone());
+            let lines = cx.background_executor().spawn(async move { crate::work_live::diff(std::path::Path::new(&wt), &p, uncommitted) }).await;
+            this.update(cx, |this, cx| {
+                this.diffs.insert((worktree, path, uncommitted), lines);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// What closing the tab would leave: files not committed and commits
+    /// not pushed, per worktree, and whether every PR is merged.
+    pub fn closing(&self) -> (Vec<String>, bool) {
+        let notes = self
+            .data
+            .worktrees
+            .iter()
+            .filter_map(|w| {
+                let mut parts = Vec::new();
+                if !w.uncommitted.is_empty() {
+                    parts.push(format!("{} not committed", if w.uncommitted.len() == 1 { "1 file".to_string() } else { format!("{} files", w.uncommitted.len()) }));
+                }
+                match w.unpushed {
+                    Some(0) => {}
+                    Some(n) => parts.push(format!("{n} commit{} not pushed", if n == 1 { "" } else { "s" })),
+                    None if !w.files.is_empty() => parts.push("never pushed".into()),
+                    None => {}
+                }
+                (!parts.is_empty()).then(|| format!("{}: {}", w.name, parts.join(", ")))
+            })
+            .collect();
+        let merged = !self.data.prs.is_empty() && self.data.prs.iter().all(|p| p.state == PrState::Merged);
+        (notes, merged)
+    }
+
+    /// Finish from outside (the close prompt).
+    pub fn start_finish(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.finish(window, cx);
     }
 
     /// Shows a pane (the preview picks the one a state is about).
@@ -257,7 +585,7 @@ impl WorkPanel {
                     .min_h_0()
                     .child(terminal)
                     .when(!state.running(), |d| {
-                        d.child(div().absolute().top(px(12.)).right(px(12.)).child(Self::button("work-resume", "Resume", true, true, theme)))
+                        d.child(div().absolute().top(px(12.)).right(px(12.)).child(Self::button("work-resume", "Resume", true, true, theme).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(WorkEvent::Resume)))))
                     })
                     .when_some(self.data.ask.clone().filter(|_| state == WorkState::NeedsYou), |d, ask| {
                         if self.ask_away {
@@ -290,7 +618,7 @@ impl WorkPanel {
     fn mock_terminal_lines(&self) -> Vec<String> {
         match self.data.state {
             WorkState::Starting => vec!["Cloning acme/api into projects/api".into(), "Making the worktree issue-412-retry-webhooks".into(), "Starting claude".into()],
-            WorkState::Exited | WorkState::Stopped => vec!["> The PR is open and its checks pass.".into(), "".into(), "Claude Code has exited. This shell is in the harness; run claude --resume to go on.".into()],
+            WorkState::Exited => vec!["> The PR is open and its checks pass.".into(), "".into(), "Claude Code has exited. This shell is in the harness; run claude --resume to go on.".into()],
             _ => vec![
                 "> Work on acme/api#412: Retry failed webhooks with backoff".into(),
                 "".into(),
@@ -341,13 +669,16 @@ impl WorkPanel {
                     .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                         if event.keystroke.key == "enter" && !event.keystroke.modifiers.shift {
                             cx.stop_propagation();
-                            this.composer.update(cx, |e, cx| e.set_text("", window, cx));
+                            this.send_composer(window, cx);
                         }
                     }))
                     .child(self.composer.clone()),
             )
-            .child(Self::button("work-send", "Send", false, running, theme))
-            .child(Self::button("work-stop", "Stop", false, state == WorkState::Working, theme))
+            .child(Self::button("work-send", "Send", false, running, theme).when(running, |b| b.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_composer(window, cx)))))
+            .child(Self::button("work-stop", "Stop", false, state == WorkState::Working, theme).when(state == WorkState::Working, |b| {
+                // Esc stops claude mid-turn, to say something else.
+                b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b", cx)))
+            }))
             .when_some(self.data.last_check, |d, passed| {
                 d.child(div().flex_none().text_xs().text_color(if passed { theme.good() } else { theme.critical() }).child(if passed { "Passed" } else { "Failed" }))
             })
@@ -412,10 +743,21 @@ impl WorkPanel {
                         .flex_row()
                         .justify_end()
                         .gap_2()
-                        .child(Self::button("perm-unattended", "Allow and Stop Asking", false, true, theme))
-                        .child(Self::button("perm-deny", "Deny", false, true, theme))
-                        .children(choices.iter().enumerate().map(|(i, c)| Self::button(format!("perm-choice-{i}"), c.clone(), false, true, theme)))
-                        .child(Self::button("perm-allow", "Allow", true, true, theme)),
+                        // The terminal's own choices, each picked by its digit;
+                        // without them, Allow (Return) and Deny (Esc).
+                        .child(Self::button("perm-deny", "Deny", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b", cx))))
+                        .map(|row| {
+                            if choices.is_empty() {
+                                row.child(Self::button("perm-allow", "Allow", true, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\r", cx))))
+                            } else {
+                                row.children(choices.iter().enumerate().rev().map(|(i, c)| {
+                                    let digit = c.chars().next().filter(|d| d.is_ascii_digit()).unwrap_or('1');
+                                    let label = c.split_once(". ").map(|(_, l)| l.to_string()).unwrap_or_else(|| c.clone());
+                                    Self::button(format!("perm-choice-{i}"), label, i == 0, true, theme)
+                                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.keys(digit.to_string().as_bytes(), cx)))
+                                }))
+                            }
+                        }),
                 )
             }
             Ask::Questions(questions) => {
@@ -496,8 +838,8 @@ impl WorkPanel {
                         } else {
                             format!("{answered} of {} answered. Any left go as \"your call\".", questions.len())
                         }))
-                        .child(Self::button("q-dismiss", "Dismiss", false, true, theme))
-                        .child(Self::button("q-send", "Send Answers", true, true, theme)),
+                        .child(Self::button("q-dismiss", "Dismiss", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b", cx))))
+                        .child(Self::button("q-send", "Send Answers", true, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.send_answers(cx)))),
                 )
             }
         }
@@ -607,7 +949,7 @@ impl WorkPanel {
                                 } else {
                                     "Nothing's happened in this session for over three days. Finish it to remove its worktrees, or leave it be."
                                 }))
-                                .child(div().flex().flex_row().child(Self::button("work-finish", "Finish and Remove Worktrees", false, true, theme))),
+                                .child(div().flex().flex_row().child(Self::button("work-finish", "Finish and Remove Worktrees", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.finish(window, cx))))),
                         ),
                 )
             })
@@ -616,7 +958,17 @@ impl WorkPanel {
             .child(
                 Self::section("Issue", theme)
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(d.title.clone()))
-                    .child(div().text_sm().text_color(theme.selected).child(d.reference.clone()))
+                    .child({
+                        let url = d.issue_url.clone();
+                        div()
+                            .id("work-issue-link")
+                            .text_sm()
+                            .text_color(theme.selected)
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.8))
+                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                            .child(d.reference.clone())
+                    })
                     .child(markdown("work-issue-body", &d.issue_body, theme)),
             )
             .child(
@@ -637,9 +989,19 @@ impl WorkPanel {
                             .flex_row()
                             .gap_2()
                             .pt_1()
-                            .child(Self::button("work-finder", "Show in Finder", false, true, theme))
-                            .child(Self::button("work-stop-resume", if state.running() { "Stop Claude" } else { "Resume" }, false, true, theme))
-                            .child(Self::button("work-forget", "Forget", false, true, theme)),
+                            .child(Self::button("work-finder", "Show in Finder", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, _| {
+                                let _ = std::process::Command::new("open").arg(&this.data.folder).spawn();
+                            })))
+                            .child(Self::button("work-stop-resume", if state.running() { "Stop Claude" } else { "Resume" }, false, true, theme).on_click(cx.listener(
+                                move |this, _: &ClickEvent, _, cx| {
+                                    if state.running() {
+                                        this.stop_claude(cx)
+                                    } else {
+                                        cx.emit(WorkEvent::Resume)
+                                    }
+                                },
+                            )))
+                            .child(Self::button("work-forget", "Forget", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.forget(window, cx)))),
                     )
                     .child(div().text_xs().text_color(theme.secondary).child(if state.running() {
                         "Stop Claude ends it and keeps the worktree, to resume later. Forget ends claude and takes the session out of Gannin; its files stay."
@@ -681,7 +1043,13 @@ impl WorkPanel {
                 .child(label)
         };
         let selected = self.file.clone();
-        let diff = d.worktrees.iter().flat_map(|w| w.files.iter()).find(|f| Some(&f.path) == selected.as_ref()).cloned();
+        let list = |w: &Worktree| if uncommitted { w.uncommitted.clone() } else { w.files.clone() };
+        let diff = d.worktrees.iter().find_map(|w| list(w).into_iter().find(|f| Some(&f.path) == selected.as_ref()).map(|f| (w.path.clone(), f))).map(|(wt, mut f)| {
+            if f.diff.is_empty() {
+                f.diff = self.diffs.get(&(wt, f.path.clone(), uncommitted)).cloned().unwrap_or_default();
+            }
+            f
+        });
         div()
             .flex()
             .flex_col()
@@ -692,7 +1060,8 @@ impl WorkPanel {
                     .child(div().p_0p5().flex().flex_row().gap_0p5().rounded_md().bg(theme.grid).child(mode("mode-branch", "Branch", false, cx)).child(mode("mode-uncommitted", "Uncommitted", true, cx))),
             )
             .children(d.worktrees.iter().map(|w| {
-                let files: Vec<&ChangedFile> = w.files.iter().filter(|f| !uncommitted || f.staged || f.status != ' ').collect();
+                let files: Vec<ChangedFile> = list(w);
+                let wt = w.path.clone();
                 let pushed = match w.unpushed {
                     Some(0) => ("Pushed".to_string(), theme.secondary),
                     Some(n) => (format!("{n} not pushed"), theme.orange()),
@@ -713,14 +1082,13 @@ impl WorkPanel {
                             .pb_1()
                             .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(w.name.clone()))
                             .child(div().text_xs().text_color(pushed.1).child(pushed.0))
-                            .when(!uncommitted, |d| d.child(div().text_xs().text_color(theme.tertiary).child(format!("against {}", w.base))))
-                            .when(uncommitted && w.files.iter().any(|f| f.staged), |d| d.child(Self::button(format!("commit-{}", w.name), "Commit", false, true, theme)))
-                            .when(uncommitted && w.unpushed != Some(0), |d| d.child(Self::button(format!("push-{}", w.name), "Push", false, true, theme))),
+                            .when(!uncommitted, |d| d.child(div().text_xs().text_color(theme.tertiary).child(format!("against {}", w.base)))),
                     )
                     .when(files.is_empty(), |d| d.child(div().px_1().text_sm().text_color(theme.secondary).child("No changes")))
                     .children(files.into_iter().map(|f| {
                         let on = selected.as_ref() == Some(&f.path);
                         let path = f.path.clone();
+                        let wt = wt.clone();
                         let (name, folder) = f.path.rsplit_once('/').map(|(a, b)| (b.to_string(), a.to_string())).unwrap_or((f.path.clone(), String::new()));
                         let tint = match f.status {
                             'A' => theme.good(),
@@ -742,6 +1110,7 @@ impl WorkPanel {
                             .hover(|s| s.bg(theme.row_selected.opacity(0.5)))
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.file = Some(path.clone());
+                                this.load_diff(wt.clone(), path.clone(), cx);
                                 cx.notify();
                             }))
                             .child(div().w(px(12.)).flex_none().font_family("SF Mono").text_xs().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(f.status.to_string()))
@@ -851,8 +1220,9 @@ impl WorkPanel {
                                 .child(div().text_color(theme.critical()).child(pr.failed.join(", ")))
                                 .child(div().flex_1())
                                 .when(pr.failures_sent, |d| d.child(div().text_color(theme.secondary).child("Sent")))
-                                .child(Self::button(format!("rerun-{number}"), "Re-run", false, true, theme).text_xs())
-                                .child(Self::button(format!("send-failures-{number}"), "Send to Claude", false, running, theme).text_xs()),
+                                .child(Self::button(format!("send-failures-{number}"), "Send to Claude", false, running, theme).text_xs().when(running, |b| {
+                                    b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.send_failures(number, cx)))
+                                })),
                         )
                     })
                     .when(open && !pr.feedback.is_empty(), |d| {
@@ -889,6 +1259,7 @@ impl WorkPanel {
                                                 .gap_1p5()
                                                 .child(div().font_weight(FontWeight::MEDIUM).child(format!("@{}", f.author)))
                                                 .when_some(f.location.clone(), |d, l| d.child(div().truncate().font_family("SF Mono").text_color(theme.secondary).child(l)))
+                                                .when_some(f.verdict.clone(), |d, v| d.child(div().text_color(theme.orange()).child(v)))
                                                 .when(f.sent, |d| d.child(div().text_color(theme.secondary).child("Sent"))),
                                         )
                                         .child(div().text_sm().text_color(if f.sent { theme.secondary } else { theme.fg }).child(f.body.clone())),
@@ -900,10 +1271,11 @@ impl WorkPanel {
                             true,
                             running && !ticked.is_empty(),
                             theme,
-                        ).text_xs()))
+                        ).text_xs().when(running && !ticked.is_empty(), |b| b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.send_feedback(number, cx))))))
                     })
             }))
-            .when(any_open, |d| {
+            // Sending new feedback by itself isn't wired yet: the preview shows it.
+            .when(any_open && self.live.is_none(), |d| {
                 d.child(
                     div()
                         .id("auto-feedback")
@@ -934,7 +1306,7 @@ impl WorkPanel {
             .child(
                 Self::section("Claude Code", theme)
                     .child(Self::fact("Model", d.model.clone(), theme))
-                    .child(Self::fact("Cost", format!("${:.2}", d.cost), theme))
+                    .when_some(d.cost, |el, cost| el.child(Self::fact("Cost", format!("${cost:.2}"), theme)))
                     .child(Self::fact("Context", format!("{}%", (d.context * 100.).round()), theme))
                     .child(Self::fact("Last check", match d.last_check {
                         Some(true) => "Passed",

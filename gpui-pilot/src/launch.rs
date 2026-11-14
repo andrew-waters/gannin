@@ -251,6 +251,9 @@ fn settings_json(dir: &Path) -> String {
             ],
             "PreToolUse": [
                 { "matcher": "*", "hooks": [state("working")] },
+                // The tool it's about to use, and on what, for the question
+                // or permission card.
+                { "matcher": "*", "hooks": [{ "type": "command", "command": format!("cat > {} 2>/dev/null; exit 0", file("tool.json")) }] },
                 { "matcher": "AskUserQuestion", "hooks": [state("needs-you")] },
             ],
             "SessionEnd": [{ "hooks": [state("exited")] }],

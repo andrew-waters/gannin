@@ -97,6 +97,10 @@ impl ReviewResult {
 }
 
 /// Claude's transcript for a session, wherever its project folder is.
+pub(crate) fn transcript_path(claude_id: &str) -> Option<PathBuf> {
+    transcript(claude_id)
+}
+
 fn transcript(claude_id: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let projects = home.join(".claude/projects");

@@ -74,6 +74,9 @@ pub struct SessionPage {
     changes: Entity<ChangesView>,
     /// A review session's findings, shown where Changes would be.
     review: Option<Entity<crate::review_panel::ReviewPanel>>,
+    /// A Work on This session's panel: the terminal with the issue, its
+    /// changes, PRs and activity beside it.
+    work: Option<Entity<crate::work_panel::WorkPanel>>,
     /// A planning session's workspace, shown where Changes would be.
     planning: Option<Entity<crate::planning_panel::PlanningPanel>>,
     show: Show,
@@ -91,6 +94,7 @@ pub struct Changed;
 
 impl gpui::EventEmitter<Changed> for SessionPage {}
 impl gpui::EventEmitter<crate::review_panel::ExplainPr> for SessionPage {}
+impl gpui::EventEmitter<crate::work_panel::WorkEvent> for SessionPage {}
 
 /// Starts the process in a pty; the page is made once it's running.
 pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
@@ -176,12 +180,25 @@ impl SessionPage {
                 let (launch, terminal, terminal_view) = (l.clone(), terminal.clone(), gpui::AnyView::from(view.clone()));
                 cx.new(|cx| crate::review_panel::ReviewPanel::new(launch, terminal, terminal_view, window, cx))
             });
+        let work = launch.as_ref().filter(|l| l.flow == crate::launch::Flow::Work).map(|l| {
+            let (launch, terminal, terminal_view) = (l.clone(), terminal.clone(), gpui::AnyView::from(view.clone()));
+            cx.new(|cx| crate::work_panel::WorkPanel::live(launch, terminal, terminal_view, window, cx))
+        });
         let planning = launch.as_ref().filter(|l| l.flow == crate::launch::Flow::Plan).map(|l| {
             let (launch, terminal) = (l.clone(), terminal.clone());
             cx.new(|cx| crate::planning_panel::PlanningPanel::new(launch, terminal, window, cx))
         });
         let show = if review.is_some() || planning.is_some() { Show::Changes } else { Show::Both };
         let mut subscriptions = Vec::new();
+        if let Some(work) = &work {
+            // Resume, Finish and Forget act on the tab, so the workspace hears of them.
+            subscriptions.push(cx.subscribe(work, |_, _, event: &crate::work_panel::WorkEvent, cx| {
+                cx.emit(match event {
+                    crate::work_panel::WorkEvent::Resume => crate::work_panel::WorkEvent::Resume,
+                    crate::work_panel::WorkEvent::Forget => crate::work_panel::WorkEvent::Forget,
+                })
+            }));
+        }
         if let Some(review) = &review {
             // Explain starts a session of its own, so the workspace hears of it.
             subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone(), event.1.clone()))));
@@ -214,6 +231,7 @@ impl SessionPage {
             view,
             changes,
             review,
+            work,
             planning,
             // A review or a plan opens on its panel; the terminal is a
             // switch away, as in Gannin. Other sessions show both.
@@ -274,6 +292,11 @@ impl SessionPage {
 
     pub fn folder(&self, cx: &App) -> PathBuf {
         self.terminal.read(cx).working_directory().unwrap_or_else(|| self.folder.clone())
+    }
+
+    /// A Work on This session's panel.
+    pub fn work(&self) -> Option<Entity<crate::work_panel::WorkPanel>> {
+        self.work.clone()
     }
 
     /// A review session's panel.
@@ -401,9 +424,10 @@ impl Render for SessionPage {
             .flex_col()
             .bg(theme.bg)
             // A review's own header says all this, in one row.
-            .when(self.review.is_none(), |d| d.child(header))
+            .when(self.review.is_none() && self.work.is_none(), |d| d.child(header))
             .child(div().flex_1().min_h_0().flex().flex_row().map(|d| match self.show {
                 _ if self.review.is_some() => d.child(changes),
+                _ if self.work.is_some() => d.children(self.work.clone()),
                 Show::Terminal => d.child(terminal),
                 Show::Changes => d.child(changes),
                 Show::Both => d.child(terminal).child(div().w(px(1.)).h_full().bg(theme.border)).child(changes),

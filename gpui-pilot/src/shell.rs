@@ -935,6 +935,23 @@ impl Workspace {
                 this.next_session += 1;
                 let page = cx.new(|cx| SessionPage::new(id, kind, folder, launch, builder, window, cx));
                 this._subscriptions.push(cx.subscribe(&page, |_, _, _: &Changed, cx| cx.notify()));
+                this._subscriptions.push(cx.subscribe_in(&page, window, move |this, page, event: &crate::work_panel::WorkEvent, window, cx| {
+                    let launch = page.read(cx).launch.clone();
+                    let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) else { return };
+                    this.remove_tab(index, cx);
+                    match (event, launch) {
+                        // Resume: a new terminal in its place, claude carrying on.
+                        (crate::work_panel::WorkEvent::Resume, Some(launch)) => {
+                            let folder = launch.harness_path.clone();
+                            this.open_session(Kind::Claude, folder, Some(launch), window, cx);
+                        }
+                        // Forget (or after Finish): the pilot's record of it goes; its files stay.
+                        (crate::work_panel::WorkEvent::Forget, Some(launch)) => {
+                            let _ = std::fs::remove_dir_all(launch.dir());
+                        }
+                        _ => {}
+                    }
+                }));
                 this._subscriptions.push(cx.subscribe_in(&page, window, |this, _, event: &crate::review_panel::ExplainPr, window, cx| {
                     this.open_explain(event.0.clone(), event.1.clone(), window, cx)
                 }));
@@ -2049,6 +2066,9 @@ impl Workspace {
             if let Some(review) = self.session(id, cx).and_then(|p| p.read(cx).review()) {
                 return self.close_review(id, review, window, cx);
             }
+            if let Some(work) = self.session(id, cx).and_then(|p| p.read(cx).work()) {
+                return self.close_work(id, work, window, cx);
+            }
         }
         if let Nav::Session(id) = nav {
             if let Some(page) = self.session(id, cx).filter(|p| p.read(cx).state != State::Ended).cloned() {
@@ -2116,6 +2136,37 @@ impl Workspace {
                 } else if close {
                     // The record's last update, as Gannin's Finish makes it.
                     review.update(cx, |review, cx| review.record_on_close(cx));
+                    if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
+                        this.remove_tab(index, cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Closing a Work on This tab says what it leaves: claude stops, and
+    /// the worktree with anything not committed or pushed stays, to pick up
+    /// again from the issue. With every PR merged it offers Finish.
+    fn close_work(&mut self, id: u32, work: Entity<crate::work_panel::WorkPanel>, window: &mut Window, cx: &mut Context<Self>) {
+        let (notes, merged) = work.read(cx).closing();
+        let title = self.session(id, cx).map(|p| p.read(cx).title(cx)).unwrap_or_default();
+        let mut detail = String::new();
+        if !notes.is_empty() {
+            detail.push_str(&notes.join("\n"));
+            detail.push_str("\n\n");
+        }
+        detail.push_str("Claude stops. The worktree and its changes stay, and Work on This on the issue picks the session up again.");
+        let buttons: &[&str] = if merged { &["Finish and Remove Worktrees", "Close", "Cancel"] } else { &["Close", "Cancel"] };
+        let answer = window.prompt(gpui::PromptLevel::Warning, &format!("Close \u{201c}{title}\u{201d}?"), Some(&detail), buttons, cx);
+        cx.spawn_in(window, async move |this, cx| {
+            let choice = answer.await.ok();
+            this.update_in(cx, |this, window, cx| {
+                let close = if merged { choice == Some(1) } else { choice == Some(0) };
+                if merged && choice == Some(0) {
+                    work.update(cx, |work, cx| work.start_finish(window, cx));
+                } else if close {
                     if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
                         this.remove_tab(index, cx);
                     }

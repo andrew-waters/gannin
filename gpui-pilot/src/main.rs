@@ -29,6 +29,7 @@ mod review;
 mod review_panel;
 mod review_preview;
 mod review_record;
+mod work_live;
 mod work_panel;
 mod work_preview;
 mod scorecard;
@@ -89,6 +90,22 @@ fn main() {
                 return;
             }
             // Counts the work log's events for the last two weeks.
+            // Lists the worktrees in a Work on This session's folder and
+            // what's changed in each, as its panel reads them.
+            "--work-changes" => {
+                let folder = std::path::PathBuf::from(args.next().unwrap_or_default());
+                for w in work_live::worktrees(&folder) {
+                    println!("{} (base {}, unpushed {:?}): {} on the branch, {} uncommitted", w.name, w.base, w.unpushed, w.files.len(), w.uncommitted.len());
+                    for f in w.files.iter().take(8) {
+                        println!("  {} {} +{} -{}", f.status, f.path, f.additions, f.deletions);
+                    }
+                    if let Some(f) = w.files.first() {
+                        let diff = work_live::diff(std::path::Path::new(&w.path), &f.path, false);
+                        println!("  diff of {}: {} lines, first {:?}", f.path, diff.len(), diff.first());
+                    }
+                }
+                return;
+            }
             "--activity" => {
                 activity::print_summary(&args.next().unwrap_or_default());
                 return;

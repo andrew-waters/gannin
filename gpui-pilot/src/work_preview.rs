@@ -164,10 +164,10 @@ fn data(mock: Mock) -> WorkData {
     let worktrees = match mock {
         Mock::Starting => Vec::new(),
         Mock::Working | Mock::Permission | Mock::Question | Mock::YourTurn => {
-            vec![Worktree { name: "api".into(), unpushed: None, base: "main".into(), files: files() }]
+            vec![Worktree { name: "api".into(), path: String::new(), unpushed: None, base: "main".into(), files: files(), uncommitted: files().into_iter().skip(1).collect() }]
         }
-        Mock::Merged => vec![Worktree { name: "api".into(), unpushed: Some(0), base: "main".into(), files: Vec::new() }],
-        _ => vec![Worktree { name: "api".into(), unpushed: Some(0), base: "main".into(), files: files() }],
+        Mock::Merged => vec![Worktree { name: "api".into(), path: String::new(), unpushed: Some(0), base: "main".into(), files: Vec::new(), uncommitted: Vec::new() }],
+        _ => vec![Worktree { name: "api".into(), path: String::new(), unpushed: Some(0), base: "main".into(), files: files(), uncommitted: Vec::new() }],
     };
     let feedback = vec![
         Feedback {
@@ -210,7 +210,7 @@ fn data(mock: Mock) -> WorkData {
         ask,
         activity,
         model: "claude-opus-5-5".into(),
-        cost: 1.84,
+        cost: Some(1.84),
         context: if mock == Mock::Working { 0.74 } else { 0.42 },
         last_check: if matches!(mock, Mock::Starting) { None } else { Some(mock != Mock::ChecksFailing) },
         idle_days: if mock == Mock::Stale { 5 } else { 0 },
