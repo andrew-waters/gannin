@@ -37,6 +37,8 @@ pub struct SavedState {
     /// The launches of the session tabs that were open, in tab order, to
     /// open again (claude resumes in each).
     pub sessions: Vec<String>,
+    /// The session tab that was showing, by its launch, to show again.
+    pub active_session: Option<String>,
     pub active: usize,
     pub sidebar_open: bool,
     /// The Harness panel, beside the navigation.
@@ -81,6 +83,7 @@ impl Default for SavedState {
             tabs: vec![Nav::Ci],
             views: Vec::new(),
             sessions: Vec::new(),
+            active_session: None,
             active: 0,
             sidebar_open: true,
             harness_open: false,

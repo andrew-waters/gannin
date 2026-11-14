@@ -421,8 +421,10 @@ pub struct Workspace {
     tab_filter: Option<TabKind>,
     group_tabs: bool,
     tab_filter_open: bool,
-    /// Sessions being reopened at launch, which open without switching.
+    /// Sessions being reopened at launch, which open without switching,
+    /// but for the one that was showing (by its launch).
     reopening: usize,
+    show_on_reopen: Option<String>,
     /// Explain's sheet, while it's open.
     explain: Option<(Entity<crate::explain::ExplainSheet>, Subscription)>,
     sync: SyncStatus,
@@ -467,6 +469,10 @@ impl Workspace {
                     _ => None,
                 })
                 .collect(),
+            active_session: match self.current() {
+                Some(Nav::Session(id)) => self.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().map(|l| l.id.clone())),
+                _ => None,
+            },
             // Sessions open after the views, so the index counts the views.
             active: self.tabs.iter().take(self.active).filter(|tab| !matches!(tab.nav, Nav::Session(_))).count(),
             sidebar_open: self.sidebar_open,
@@ -528,6 +534,7 @@ impl Workspace {
         });
         let views = Self::saved_views(&saved);
         let sessions = saved.sessions.clone();
+        let active_session = saved.active_session.clone();
         let active = saved.active;
         let mut workspace = Self::build(saved, window, cx);
         for view in &views {
@@ -536,7 +543,9 @@ impl Workspace {
         }
         workspace.active = active.min(workspace.tabs.len().saturating_sub(1));
         workspace.load_viewer(cx);
-        // The sessions that were open come back, claude resuming in each.
+        // The sessions that were open come back, claude resuming in each;
+        // the one that was showing shows again.
+        workspace.show_on_reopen = active_session;
         let launches = crate::launch::saved();
         for id in &sessions {
             if let Some(launch) = launches.iter().find(|l| &l.id == id).cloned() {
@@ -685,6 +694,7 @@ impl Workspace {
             pr_picker: None,
             explain: None,
             reopening: 0,
+            show_on_reopen: None,
             tab_filter_open: false,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
@@ -921,6 +931,11 @@ impl Workspace {
                 // Sessions reopened at launch don't take the tab that was showing.
                 if this.reopening > 0 {
                     this.reopening -= 1;
+                    let reopened = this.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().map(|l| l.id.clone()));
+                    if reopened.is_some() && reopened == this.show_on_reopen {
+                        this.show_on_reopen = None;
+                        this.activate(this.tabs.len() - 1, window, cx);
+                    }
                     cx.notify();
                 } else {
                     this.activate(this.tabs.len() - 1, window, cx);
