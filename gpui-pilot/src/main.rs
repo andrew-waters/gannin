@@ -42,6 +42,26 @@ fn main() {
         match arg.as_str() {
             "--org" => org = args.next(),
             "--days" => days = args.next().and_then(|d| d.parse().ok()),
+            // Runs Your Work's live query and lists what it found.
+            "--work" => {
+                let token = auth::token().expect("sign in to the pilot first");
+                let viewer = auth::saved_viewer().map(|v| v.login);
+                match work::load_live(&token, viewer) {
+                    Ok(work) => {
+                        for pr in &work.reviews {
+                            println!("review: {}#{} {}", pr.repo, pr.number, pr.title);
+                        }
+                        for pr in &work.mine {
+                            println!("mine: {}#{} {} [{}]", pr.repo, pr.number, pr.title, pr.standing());
+                        }
+                        for issue in work.issues.iter().flatten() {
+                            println!("issue: {}#{} {}", issue.repo, issue.number, issue.title);
+                        }
+                    }
+                    Err(error) => println!("failed: {error}"),
+                }
+                return;
+            }
             // Syncs one org into the pilot's caches without a window, and
             // reports what it fetched: for trying the sync from a shell.
             "--sync" => {

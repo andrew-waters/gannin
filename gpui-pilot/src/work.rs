@@ -1,8 +1,9 @@
-//! What the menu bar's "Your work" shows, read from Gannin's caches: the
-//! signed-in login, PRs whose review is asked of you and your own open PRs
-//! with what they need. Gannin fetches these live (`EngineerWatch`); here
-//! they're as fresh as the org's last refresh. Mergeability isn't cached,
-//! so Conflicts never shows. Team review requests aren't resolved.
+//! What the menu bar's "Your work" shows: PRs whose review is asked of you,
+//! your own open PRs with what they need, and issues assigned to you.
+//! Signed in, it's live, from `EngineerWatch`'s one query across every org.
+//! Signed out, it's read from the org's PR cache, as fresh as its last
+//! sync, where mergeability isn't kept (so Conflicts can't show) and team
+//! review requests aren't resolved.
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -20,6 +21,19 @@ pub struct Pr {
     pub draft: bool,
     pub review: Option<String>,
     pub checks: Option<String>,
+    /// MERGEABLE, CONFLICTING or UNKNOWN; live only.
+    pub mergeable: Option<String>,
+    pub updated: DateTime<Utc>,
+}
+
+/// An issue assigned to you, from the live query.
+#[derive(Clone)]
+pub struct Issue {
+    pub id: String,
+    pub repo: String,
+    pub number: i64,
+    pub title: String,
+    pub url: String,
     pub updated: DateTime<Utc>,
 }
 
@@ -35,6 +49,9 @@ impl Pr {
         }
         if self.review.as_deref() == Some("CHANGES_REQUESTED") {
             return Some("Changes requested");
+        }
+        if self.mergeable.as_deref() == Some("CONFLICTING") {
+            return Some("Conflicts");
         }
         if self.review.as_deref() == Some("APPROVED") && self.checks.as_deref() != Some("PENDING") && !self.draft {
             return Some("Ready to merge");
@@ -63,6 +80,55 @@ pub struct Work {
     pub login: Option<String>,
     pub reviews: Vec<Pr>,
     pub mine: Vec<Pr>,
+    /// Live: issues assigned to you in every org. Nil from the cache,
+    /// where the Issues store answers instead.
+    pub issues: Option<Vec<Issue>>,
+    pub live: bool,
+}
+
+const LIVE_PR_FIELDS: &str = "id number title url isDraft createdAt updatedAt reviewDecision mergeable author { login } repository { nameWithOwner } commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }";
+
+/// `EngineerWatch.engineerWork()`: one query, three searches, every org.
+pub fn load_live(token: &str, login: Option<String>) -> Result<Work, crate::github::Error> {
+    let query = format!(
+        "query {{ reviews: search(type: ISSUE, query: \"is:open is:pr review-requested:@me archived:false sort:updated-desc\", first: 40) {{ nodes {{ __typename ... on PullRequest {{ {LIVE_PR_FIELDS} }} }} }} mine: search(type: ISSUE, query: \"is:open is:pr author:@me archived:false sort:updated-desc\", first: 40) {{ nodes {{ __typename ... on PullRequest {{ {LIVE_PR_FIELDS} }} }} }} issues: search(type: ISSUE, query: \"is:open is:issue assignee:@me archived:false sort:updated-desc\", first: 25) {{ nodes {{ __typename ... on Issue {{ id number title url updatedAt repository {{ nameWithOwner }} }} }} }} }}"
+    );
+    let data = crate::github::graphql(token, &query, serde_json::json!({}))?;
+    let pr = |node: &serde_json::Value| -> Option<Pr> {
+        Some(Pr {
+            repo: node["repository"]["nameWithOwner"].as_str()?.to_string(),
+            number: node["number"].as_i64()?,
+            title: node["title"].as_str()?.to_string(),
+            url: node["url"].as_str()?.to_string(),
+            author: node["author"]["login"].as_str().map(str::to_string),
+            draft: node["isDraft"].as_bool().unwrap_or(false),
+            review: node["reviewDecision"].as_str().map(str::to_string),
+            checks: node["commits"]["nodes"].as_array().and_then(|n| n.last()).and_then(|c| c["commit"]["statusCheckRollup"]["state"].as_str()).map(str::to_string),
+            mergeable: node["mergeable"].as_str().map(str::to_string),
+            updated: node["updatedAt"].as_str()?.parse().ok()?,
+        })
+    };
+    let list = |key: &str| -> Vec<serde_json::Value> { data[key]["nodes"].as_array().cloned().unwrap_or_default() };
+    let issues = list("issues")
+        .iter()
+        .filter_map(|node| {
+            Some(Issue {
+                id: node["id"].as_str()?.to_string(),
+                repo: node["repository"]["nameWithOwner"].as_str()?.to_string(),
+                number: node["number"].as_i64()?,
+                title: node["title"].as_str()?.to_string(),
+                url: node["url"].as_str()?.to_string(),
+                updated: node["updatedAt"].as_str()?.parse().ok()?,
+            })
+        })
+        .collect();
+    Ok(Work {
+        login,
+        reviews: list("reviews").iter().filter_map(pr).collect(),
+        mine: list("mine").iter().filter_map(pr).collect(),
+        issues: Some(issues),
+        live: true,
+    })
 }
 
 /// The signed-in login from Gannin's `viewer` preference (JSON in a data
@@ -150,6 +216,7 @@ pub fn load(org: &str, login: Option<String>) -> Work {
             draft: workload.is_draft,
             review: workload.review_decision,
             checks: workload.checks,
+            mergeable: None,
             updated: workload.updated_at,
         };
         if author.as_deref() == Some(login.as_str()) {

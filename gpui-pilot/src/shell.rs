@@ -752,7 +752,14 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             let loaded = org.clone();
             let login = this.update(cx, |this, _| this.viewer.as_ref().map(|v| v.login.clone())).ok().flatten();
-            let work = cx.background_executor().spawn(async move { work::load(&loaded, login) }).await;
+            // Live when signed in, else (or when GitHub can't answer) the cache.
+            let work = cx
+                .background_executor()
+                .spawn(async move {
+                    let live = login.is_some().then(auth::token).flatten().and_then(|token| work::load_live(&token, login.clone()).ok());
+                    live.unwrap_or_else(|| work::load(&loaded, login))
+                })
+                .await;
             this.update(cx, |this, cx| {
                 if this.org.as_deref() == Some(org.as_str()) {
                     this.work = work;
@@ -2190,7 +2197,7 @@ impl Workspace {
         };
         let mine_tint = |pr: &Pr| match pr.needs() {
             Some("Checks failing") => red,
-            Some("Changes requested") => orange,
+            Some("Changes requested" | "Conflicts") => orange,
             Some("Ready to merge") => green,
             _ => theme.tertiary,
         };
@@ -2260,7 +2267,24 @@ impl Workspace {
                 index += 1;
             }
         }
-        if !assigned.is_empty() {
+        if let Some(live) = self.work.issues.clone().filter(|i| !i.is_empty()) {
+            list = list.child(section("Assigned to you", live.len(), green));
+            for issue in live.into_iter().take(8) {
+                let detail = format!("{}#{} · updated {}", issue.repo.rsplit('/').next().unwrap_or(&issue.repo), issue.number, relative_date(issue.updated, Utc::now()));
+                let (id, url) = (issue.id.clone(), issue.url.clone());
+                list = list.child(row(("work-issue", index), green, issue.title.clone(), detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    // In a drawer when it's this org's, else on GitHub.
+                    match this.issues.read(cx).issue(&id) {
+                        Some(found) => {
+                            this.navigate(Nav::Issues, false, window, cx);
+                            this.push_drawer(found, cx);
+                        }
+                        None => cx.open_url(&url),
+                    }
+                })));
+                index += 1;
+            }
+        } else if !assigned.is_empty() {
             list = list.child(section("Assigned to you", assigned.len(), green));
             for issue in assigned.into_iter().take(8) {
                 let detail = format!("{}#{} · updated {}", issue.repo_name, issue.number, relative_date(issue.updated_at.unwrap_or(issue.created_at), Utc::now()));
@@ -2296,15 +2320,16 @@ impl Workspace {
         };
         let summary = match &self.work.login {
             Some(login) => format!(
-                "{} · {}",
+                "{} · {} · {}",
                 login,
                 match count {
                     0 => "nothing waiting".to_string(),
                     1 => "1 thing waiting".to_string(),
                     n => format!("{n} things waiting"),
-                }
+                },
+                if self.work.live { "live from GitHub" } else { "from the cache" }
             ),
-            None => "Not signed in to Gannin: only sessions show".to_string(),
+            None => "Not signed in: only sessions show".to_string(),
         };
         div()
             .flex()
