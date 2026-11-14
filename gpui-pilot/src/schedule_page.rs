@@ -253,56 +253,27 @@ impl SchedulePage {
         cx.notify();
     }
 
-    /// The blocks on a date.
+    /// The blocks on a date, from the schedule's own view of the day.
     fn blocks(&self, date: NaiveDate) -> Vec<Block> {
-        let s = &self.schedule;
-        let today = Local::now().date_naive();
-        let weekday = date.weekday().num_days_from_monday();
-        let mut out = Vec::new();
-        for w in s.windows.iter().filter(|w| w.weekdays.contains(&weekday)) {
-            out.push(Block { kind: Kind::Window, id: w.id.clone(), title: w.name.clone(), start: w.start, length: w.length, status: "", paused: w.paused, place: None });
-        }
-        for st in &s.starts {
-            let (d, m) = local(st.at);
-            if d == date {
-                out.push(Block { kind: Kind::Start, id: st.id.clone(), title: st.issue.label(), start: m, length: 90, status: status_of(&st.run), paused: st.paused, place: None });
-            }
-        }
-        for q in &s.sequences {
-            // Each item at when it started, or two hours after the one before.
-            let (mut d, mut m) = local(q.start);
-            for (i, item) in q.items.iter().enumerate() {
-                let run = q.runs.get(i).cloned().unwrap_or_default();
-                if let RunState::Started { at, .. } | RunState::Done { at, .. } = &run {
-                    if i > 0 {
-                        (d, m) = local(*at);
-                    }
-                }
-                if d == date {
-                    out.push(Block { kind: Kind::Sequence, id: q.id.clone(), title: item.label(), start: m, length: 110, status: status_of(&run), paused: q.paused, place: Some((i + 1, q.items.len())) });
-                }
-                m += 120;
-                if m >= 24 * 60 {
-                    m -= 24 * 60;
-                    d = d.succ_opt().unwrap_or(d);
-                }
-            }
-        }
-        for p in s.prompts.iter().filter(|p| p.weekdays.contains(&weekday)) {
-            // A past day's run, from what ran.
-            let status = if date <= today {
-                s.ran.iter().rev().find(|r| r.item == p.id && local(r.at).0 == date).map(|r| match r.outcome.as_str() {
-                    "missed" => "missed",
-                    "failed" => "failed",
-                    _ => "done",
-                })
-            } else {
-                None
-            };
-            out.push(Block { kind: Kind::Prompt, id: p.id.clone(), title: p.name.clone(), start: p.start, length: 20, status: status.unwrap_or(""), paused: p.paused, place: None });
-        }
-        out.sort_by_key(|b| b.start);
-        out
+        self.schedule
+            .busy(date)
+            .into_iter()
+            .map(|b| Block {
+                kind: match b.kind {
+                    "window" => Kind::Window,
+                    "start" => Kind::Start,
+                    "sequence" => Kind::Sequence,
+                    _ => Kind::Prompt,
+                },
+                id: b.id,
+                title: b.title,
+                start: b.start,
+                length: b.length,
+                status: b.status,
+                paused: b.paused,
+                place: b.place,
+            })
+            .collect()
     }
 
     fn select(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
@@ -407,7 +378,7 @@ impl SchedulePage {
             }
             _ => {
                 let name = if picking.picked.len() == 1 { picking.picked[0].label() } else { format!("{} issues", picking.picked.len()) };
-                let seq = Sequence { id: id.clone(), name, start: at, items: picking.picked.clone(), runs: vec![RunState::Waiting; picking.picked.len()], paused: false };
+                let seq = Sequence { id: id.clone(), name, start: at, items: picking.picked.clone(), runs: vec![RunState::Waiting; picking.picked.len()], paused: false, interval: 120 };
                 self.change_all(cx, |s| s.sequences.push(seq));
                 self.select(Some(id), window, cx);
             }
@@ -876,6 +847,25 @@ impl SchedulePage {
                     .child(label("Starts"))
                     .child(div().text_sm().child(date.format("%a %-d %b").to_string()))
                     .child(input(&self.time_field))
+                    .child(label("Interval"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(Self::button("int-less", "−", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.change(cx, |s, id| {
+                                if let Some(q) = s.sequences.iter_mut().find(|q| q.id == id) {
+                                    q.interval = q.interval.saturating_sub(5).max(5);
+                                }
+                            }))))
+                            .child(div().text_sm().child(format!("{} min between starts", q.interval)))
+                            .child(Self::button("int-more", "+", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.change(cx, |s, id| {
+                                if let Some(q) = s.sequences.iter_mut().find(|q| q.id == id) {
+                                    q.interval = (q.interval + 5).min(24 * 60);
+                                }
+                            })))),
+                    )
                     .child(label("Each to completion, in order"))
                     .children(q.items.iter().enumerate().map(|(i, item)| {
                         let run = q.runs.get(i).cloned().unwrap_or_default();
@@ -904,7 +894,7 @@ impl SchedulePage {
                                 }))))
                             })
                     }))
-                    .child(div().text_xs().text_color(theme.secondary).child("The next starts once one's pull request is open, its checks pass and no review threads are left open. A failed item pauses the sequence."));
+                    .child(div().text_xs().text_color(theme.secondary).child("The next starts once one's pull request is open, its checks pass and no review threads are left open, and the interval since it started has passed. A failed item pauses the sequence."));
             }
         }
         let runs_now = kind != Kind::Window;

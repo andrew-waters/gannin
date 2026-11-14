@@ -31,6 +31,7 @@ mod review_preview;
 mod review_record;
 mod schedule;
 mod schedule_page;
+mod schedule_sheet;
 mod work_flow;
 mod work_live;
 mod work_panel;

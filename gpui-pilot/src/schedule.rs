@@ -84,6 +84,104 @@ pub struct Sequence {
     pub runs: Vec<RunState>,
     #[serde(default)]
     pub paused: bool,
+    /// Minutes from one item's start to the next's, at the least: the
+    /// next starts once the one before is done and this long has passed.
+    #[serde(default = "default_interval")]
+    pub interval: u32,
+}
+
+fn default_interval() -> u32 {
+    120
+}
+
+impl Sequence {
+    /// When each item starts, or is planned to: as it ran, else an interval
+    /// after the one before.
+    pub fn planned(&self) -> Vec<DateTime<Utc>> {
+        let mut out = Vec::with_capacity(self.items.len());
+        let mut at = self.start;
+        for i in 0..self.items.len() {
+            if let Some(RunState::Started { at: ran, .. } | RunState::Done { at: ran, .. }) = self.runs.get(i) {
+                if i > 0 {
+                    at = *ran;
+                }
+            }
+            out.push(at);
+            at += Duration::minutes(self.interval.max(5) as i64);
+        }
+        out
+    }
+}
+
+/// What's on a day, for the page and for picking a free time: each
+/// thing's kind, id, title, start and length (minutes), its run's state,
+/// whether it's paused, and its place in a sequence.
+#[derive(Clone, Debug)]
+pub struct Busy {
+    pub kind: &'static str,
+    pub id: String,
+    pub title: String,
+    pub start: u32,
+    pub length: u32,
+    pub status: &'static str,
+    pub paused: bool,
+    pub place: Option<(usize, usize)>,
+}
+
+pub fn status_of(run: &RunState) -> &'static str {
+    match run {
+        RunState::Waiting => "",
+        RunState::Started { .. } => "running",
+        RunState::Done { .. } => "done",
+        RunState::Failed { .. } => "failed",
+        RunState::Missed { .. } => "missed",
+    }
+}
+
+fn local(at: DateTime<Utc>) -> (NaiveDate, u32) {
+    let l = at.with_timezone(&Local);
+    (l.date_naive(), (l.time().signed_duration_since(NaiveTime::MIN).num_minutes()) as u32)
+}
+
+impl Schedule {
+    pub fn busy(&self, date: NaiveDate) -> Vec<Busy> {
+        let today = Local::now().date_naive();
+        let weekday = date.weekday().num_days_from_monday();
+        let mut out = Vec::new();
+        for w in self.windows.iter().filter(|w| w.weekdays.contains(&weekday)) {
+            out.push(Busy { kind: "window", id: w.id.clone(), title: w.name.clone(), start: w.start, length: w.length, status: "", paused: w.paused, place: None });
+        }
+        for st in &self.starts {
+            let (d, m) = local(st.at);
+            if d == date {
+                out.push(Busy { kind: "start", id: st.id.clone(), title: st.issue.label(), start: m, length: 90, status: status_of(&st.run), paused: st.paused, place: None });
+            }
+        }
+        for q in &self.sequences {
+            let planned = q.planned();
+            for (i, (item, at)) in q.items.iter().zip(planned).enumerate() {
+                let (d, m) = local(at);
+                if d == date {
+                    let run = q.runs.get(i).cloned().unwrap_or_default();
+                    out.push(Busy { kind: "sequence", id: q.id.clone(), title: item.label(), start: m, length: q.interval.max(15).saturating_sub(5), status: status_of(&run), paused: q.paused, place: Some((i + 1, q.items.len())) });
+                }
+            }
+        }
+        for p in self.prompts.iter().filter(|p| p.weekdays.contains(&weekday)) {
+            let status = if date <= today {
+                self.ran.iter().rev().find(|r| r.item == p.id && local(r.at).0 == date).map(|r| match r.outcome.as_str() {
+                    "missed" => "missed",
+                    "failed" => "failed",
+                    _ => "done",
+                })
+            } else {
+                None
+            };
+            out.push(Busy { kind: "prompt", id: p.id.clone(), title: p.name.clone(), start: p.start, length: 20, status: status.unwrap_or(""), paused: p.paused, place: None });
+        }
+        out.sort_by_key(|b| b.start);
+        out
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]

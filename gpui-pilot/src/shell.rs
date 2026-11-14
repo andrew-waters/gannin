@@ -460,6 +460,8 @@ pub struct Workspace {
     window_handle: Option<gpui::AnyWindowHandle>,
     /// Workflows for launches being started, by launch id.
     launch_workflows: std::collections::HashMap<String, crate::workflows::Workflow>,
+    /// Add to Schedule's sheet, while it's open.
+    schedule_sheet: Option<(Entity<crate::schedule_sheet::ScheduleSheet>, Subscription)>,
     /// Explain's sheet, while it's open.
     explain: Option<(Entity<crate::explain::ExplainSheet>, Subscription)>,
     sync: SyncStatus,
@@ -761,6 +763,7 @@ impl Workspace {
             launch_form: None,
             pr_picker: None,
             explain: None,
+            schedule_sheet: None,
             launch_workflows: Default::default(),
             _scheduler: None,
             schedule_ticks: 0,
@@ -1403,7 +1406,19 @@ impl Workspace {
                 }
                 seq.runs.resize(seq.items.len(), RunState::Waiting);
                 let Some(next) = seq.runs.iter().position(|r| *r == RunState::Waiting) else { continue };
-                let ready = if next == 0 { due(seq.start, now) } else { matches!(seq.runs[next - 1], RunState::Done { .. }).then_some(true) };
+                // The next once the one before is done and the interval since
+                // it started has passed.
+                let ready = if next == 0 {
+                    due(seq.start, now)
+                } else {
+                    match &seq.runs[next - 1] {
+                        RunState::Done { .. } => {
+                            let earliest = seq.planned().get(next - 1).copied().unwrap_or(now) + chrono::Duration::minutes(seq.interval.max(5) as i64);
+                            (now >= earliest).then_some(true)
+                        }
+                        _ => None,
+                    }
+                };
                 match ready {
                     Some(true) => {
                         let item = seq.items[next].clone();
@@ -1510,10 +1525,13 @@ impl Workspace {
                     }
                     let mut sched = Schedule::load();
                     let now = chrono::Utc::now();
+                    // Done keeps when it started, so the next item's interval
+                    // counts from there.
+                    let _ = now;
                     let finish = |r: &mut RunState| {
-                        if let RunState::Started { launch, .. } = r {
+                        if let RunState::Started { launch, at } = r {
                             if done.contains(launch) {
-                                *r = RunState::Done { launch: launch.clone(), at: now };
+                                *r = RunState::Done { launch: launch.clone(), at: *at };
                             }
                         }
                     };
@@ -1577,7 +1595,7 @@ impl Workspace {
     /// Add to Schedule: the issues as a sequence from the next half hour,
     /// in the order picked; then the Schedule shows, to move it.
     fn schedule_issues(&mut self, issues: Vec<IssueItem>, window: &mut Window, cx: &mut Context<Self>) {
-        use crate::schedule::{IssueRef, RunState, Schedule, Sequence};
+        use crate::schedule::IssueRef;
         // An epic stands for its open sub-issues, in the order set on
         // GitHub; read off the main thread, then the sequence is made.
         let picked: Vec<(IssueRef, bool)> = issues.iter().map(|i| (IssueRef { id: i.id.clone(), repo: i.repo.clone(), number: i.number, title: i.title.clone(), url: i.url.clone() }, i.sub_issues > 0)).collect();
@@ -1604,14 +1622,16 @@ impl Workspace {
                 if items.is_empty() {
                     return;
                 }
-                let now = chrono::Local::now();
-                let minute = (chrono::Timelike::hour(&now) * 60 + chrono::Timelike::minute(&now)) / 30 * 30 + 30;
-                let date = if minute >= 24 * 60 { now.date_naive().succ_opt().unwrap_or(now.date_naive()) } else { now.date_naive() };
+                // Then when: the sheet shows what's on, and where these land.
                 let name = epic_name.clone().unwrap_or_else(|| if items.len() == 1 { items[0].label() } else { format!("{} issues", items.len()) });
-                let mut sched = Schedule::load();
-                sched.sequences.push(Sequence { id: crate::schedule::new_id(), name, start: crate::schedule::at(date, minute % (24 * 60)), runs: vec![RunState::Waiting; items.len()], items, paused: false });
-                sched.save();
-                this.navigate(Nav::SchedulePreview, false, window, cx);
+                let sheet = cx.new(|cx| crate::schedule_sheet::ScheduleSheet::new(name, items, window, cx));
+                let subscription = cx.subscribe_in(&sheet, window, |this, _, _: &crate::schedule_sheet::SheetEvent, window, cx| {
+                    this.schedule_sheet = None;
+                    this.focus_current(window, cx);
+                    cx.notify();
+                });
+                this.schedule_sheet = Some((sheet, subscription));
+                cx.notify();
             })
             .ok();
         })
@@ -5517,6 +5537,9 @@ impl Render for Workspace {
                 )
             })
             .when_some(self.sign_in.as_ref(), |d, step| d.child(self.sign_in_sheet(step, &theme, cx)))
+            .when_some(self.schedule_sheet.as_ref().map(|(sheet, _)| sheet.clone()), |d, sheet| {
+                d.child(div().id("schedule-sheet-scrim").absolute().top_0().left_0().right_0().bottom_0().occlude().bg(gpui::black().opacity(0.35)).flex().justify_center().pt(px(50.)).child(sheet))
+            })
             .when_some(self.explain.as_ref().map(|(sheet, _)| sheet.clone()), |d, sheet| {
                 d.child(
                     div()
