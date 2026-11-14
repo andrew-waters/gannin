@@ -542,66 +542,67 @@ impl ReviewPanel {
         }
     }
 
+    /// Where the review stands, led by the verdict: the verdict as a
+    /// coloured word (or where claude is, before there's one), the findings
+    /// still kept by severity, and the effort. Claude's state is the
+    /// header's dot.
     fn standing(&self, theme: &Theme) -> impl IntoElement {
-        let tip = |id: &str, text: String| {
-            div().id(SharedString::from(format!("standing-{id}"))).flex().flex_row().items_center().gap_1().tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(text.clone())).into())
-        };
-        let icon = |path: &'static str, tint: Hsla| gpui::svg().path(path).size(px(16.)).flex_none().text_color(tint);
         let (status, status_tint) = self.status(theme);
-        let status_icon = match status.as_str() {
-            "Review ready" => Some("icons/check.svg"),
-            "Needs you" => Some("icons/circle_help.svg"),
-            "Not running" => Some("icons/stop.svg"),
-            "" => None,
-            _ => Some("icons/load_circle.svg"),
+        let (lead, lead_tint) = match self.result.as_ref().map(|r| r.verdict.as_deref()) {
+            Some(Some("approve")) => ("Approve".to_string(), theme.good()),
+            Some(Some("request_changes")) => ("Request changes".to_string(), theme.critical()),
+            Some(_) => ("Comment".to_string(), theme.secondary),
+            None => (if status.is_empty() { "Reviewing".to_string() } else { status }, status_tint),
         };
         let (ready, ready_tint) = self.readiness(theme);
-        let counts: Vec<(usize, Hsla)> = self
+        let counts: Vec<(usize, &str, Hsla)> = self
             .result
             .as_ref()
             .map(|r| {
                 ["blocker", "major", "minor", "nit"]
-                    .iter()
+                    .into_iter()
                     .map(|sev| {
-                        let n = r.findings.iter().filter(|f| !self.dismissed.contains(&f.key()) && f.severity.as_deref().unwrap_or("minor") == *sev).count();
-                        (n, severity_tint(Some(sev), theme))
+                        let n = r.findings.iter().filter(|f| !self.dismissed.contains(&f.key()) && f.severity.as_deref().unwrap_or("minor") == sev).count();
+                        (n, sev, severity_tint(Some(sev), theme))
                     })
-                    .filter(|(n, _)| *n > 0)
+                    .filter(|(n, _, _)| *n > 0)
                     .collect()
             })
             .unwrap_or_default();
+        let has_result = self.result.is_some();
         div()
             .flex()
-            .flex_row()
-            .items_center()
-            .gap_3()
+            .flex_col()
+            .gap_1()
             .px_2()
             .pt_1()
             .pb_2p5()
             .mb_1()
             .border_b_1()
             .border_color(theme.border)
-            .when_some(status_icon, |d, path| d.child(tip("status", status.clone()).child(icon(path, status_tint))))
-            .when_some(self.result.as_ref(), |d, r| {
-                let (path, tint, label) = match r.verdict.as_deref() {
-                    Some("approve") => ("icons/thumbs_up.svg", theme.good(), "Claude would approve"),
-                    Some("request_changes") => ("icons/x_circle.svg", theme.critical(), "Claude would request changes"),
-                    _ => ("icons/chat.svg", theme.secondary, "Claude would comment"),
-                };
-                d.child(tip("verdict", label.into()).child(icon(path, tint)))
-            })
-            .child(tip("ready", ready).map(|d| {
+            .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(lead_tint).child(lead))
+            .map(|d| {
                 if counts.is_empty() {
-                    d.child(icon(if ready_tint == theme.good() { "icons/check_double.svg" } else { "icons/clock.svg" }, ready_tint))
+                    d.child(div().text_sm().text_color(if has_result { ready_tint } else { theme.secondary }).child(if has_result { ready } else { "Findings show here when it's done".into() }))
                 } else {
-                    d.gap_2().children(counts.into_iter().map(|(n, tint)| {
-                        div().flex().flex_row().items_center().gap_1().child(div().size(px(8.)).rounded_full().bg(tint)).child(div().text_sm().font_weight(FontWeight::MEDIUM).child(n.to_string()))
-                    }))
+                    d.child(div().flex().flex_row().flex_wrap().gap_x_3().gap_y_0p5().text_sm().children(counts.into_iter().map(|(n, sev, tint)| {
+                        div().flex().flex_row().items_center().gap_1().child(div().size(px(7.)).rounded_full().bg(tint)).child(format!("{n} {sev}"))
+                    })))
                 }
-            }))
-            .child(div().flex_1())
+            })
             .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| {
-                d.child(tip("effort", format!("Effort {e} of 5: how much work reviewing it by hand is")).child(Self::effort_pips(e, theme)))
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(theme.secondary)
+                        .child("Effort")
+                        .child(Self::effort_pips(e, theme))
+                        .child(format!("{e}/5")),
+                )
             })
     }
 
