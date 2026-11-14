@@ -220,8 +220,10 @@ fn sections() -> Vec<Section> {
         //     title: Some("Agents"),
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
+        // Claude Code's agents: the workflows sessions run through.
+        Section { id: "agents", title: Some("Agents"), rows: vec![Item(WorkflowsPreview)] },
         // The pilot's own: states to refine a UI against before it's wired.
-        Section { id: "previews", title: Some("Previews"), rows: vec![Item(SchedulePreview), Item(WorkflowsPreview), Item(WorkPreview)] },
+        Section { id: "previews", title: Some("Previews"), rows: vec![Item(SchedulePreview), Item(WorkPreview)] },
     ]
 }
 
@@ -360,7 +362,7 @@ enum Page {
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
     WorkPreview(Entity<crate::work_preview::WorkPreview>),
     SchedulePreview(Entity<crate::schedule_preview::SchedulePreview>),
-    WorkflowsPreview(Entity<crate::workflow_editor_preview::WorkflowEditorPreview>),
+    WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
     None,
 }
 
@@ -670,6 +672,13 @@ impl Workspace {
     }
 
     fn apply_focus(&mut self, cx: &mut Context<Self>) {
+        // The Workflows pages follow the window's project.
+        let (org, project) = (self.org.clone(), self.project.clone());
+        for page in self.pages() {
+            if let Page::WorkflowsPreview(page) = page {
+                page.update(cx, |page, cx| page.set_project(org.clone(), project.clone(), cx));
+            }
+        }
         let focus = self.focus_repos();
         for page in self.pages() {
             match page {
@@ -813,7 +822,7 @@ impl Workspace {
             Nav::ReviewPreview => Page::ReviewPreview(cx.new(|cx| crate::review_preview::ReviewPreview::new(window, cx))),
             Nav::WorkPreview => Page::WorkPreview(cx.new(|cx| crate::work_preview::WorkPreview::new(window, cx))),
             Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_preview::SchedulePreview::new(window, cx))),
-            Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflow_editor_preview::WorkflowEditorPreview::new(window, cx))),
+            Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             _ => Page::None,
         };

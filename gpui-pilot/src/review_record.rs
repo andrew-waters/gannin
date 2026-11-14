@@ -326,6 +326,41 @@ pub fn record(token: &str, input: &Input) -> Result<Option<String>, String> {
     Err("The harness kept moving while recording the review.".into())
 }
 
+/// Commits one file to the harness's default branch through GitHub's API:
+/// `build` makes its new text from the text at the head (None skips the
+/// commit, nothing having changed). Rebuilt on the new head and retried
+/// once if the branch moved; a branch that needs a pull request gets one,
+/// merged at once, or left open and said so.
+pub fn commit_file(token: &str, harness: &str, path: &str, headline: &str, build: &dyn Fn(Option<&str>) -> Option<String>) -> Result<Option<String>, String> {
+    let (owner, name) = harness.split_once('/').ok_or("Not a harness repository")?;
+    for attempt in 0..2 {
+        let head = gql(
+            token,
+            "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { id defaultBranchRef { name target { oid } } } }",
+            json!({ "owner": owner, "name": name }),
+        )?;
+        let repo_id = head["repository"]["id"].as_str().unwrap_or_default().to_string();
+        let branch = head["repository"]["defaultBranchRef"]["name"].as_str().ok_or("The harness has no default branch")?.to_string();
+        let oid = head["repository"]["defaultBranchRef"]["target"]["oid"].as_str().ok_or("The harness has no head")?.to_string();
+        let file = gql(
+            token,
+            "query($owner: String!, $name: String!, $expr: String!) { repository(owner: $owner, name: $name) { object(expression: $expr) { ... on Blob { text } } } }",
+            json!({ "owner": owner, "name": name, "expr": format!("{oid}:{path}") }),
+        )?;
+        let Some(text) = build(file["repository"]["object"]["text"].as_str()) else { return Ok(None) };
+        let contents = base64(text.as_bytes());
+        match commit(token, harness, &branch, &oid, headline, path, &contents) {
+            Ok(()) => return Ok(None),
+            Err(error) if attempt == 0 && (error.contains("expected") || error.contains("Expected")) => continue,
+            Err(error) if error.to_lowercase().contains("pull request") || error.to_lowercase().contains("rule violation") => {
+                return via_pull_request(token, harness, &repo_id, &branch, &oid, headline, path, &contents);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err("The harness kept moving while committing.".into())
+}
+
 fn commit(token: &str, repo: &str, branch: &str, oid: &str, headline: &str, path: &str, contents: &str) -> Result<(), String> {
     gql(
         token,

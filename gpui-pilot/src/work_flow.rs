@@ -206,6 +206,10 @@ pub struct StepResult {
     pub status: String,
     pub summary: String,
     pub findings: Vec<Finding>,
+    /// Every finding of this reviewer's holds the push, not only blockers
+    /// and majors.
+    #[serde(default)]
+    pub holds_all: bool,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -295,6 +299,7 @@ pub fn local_round(worktree: &Path, workflow: &Workflow, specialists: &[Speciali
             let (worktree, specialists, base, earlier_text) = (worktree.to_path_buf(), specialists.to_vec(), base.clone(), earlier_text.clone());
             std::thread::spawn(move || {
                 let label = step.label(&specialists);
+                let holds_all = step.holds.as_deref() == Some("all");
                 if let Some(command) = &step.command {
                     let (ok, tail, took) = run_command(&worktree, command);
                     return StepResult {
@@ -303,13 +308,15 @@ pub fn local_round(worktree: &Path, workflow: &Workflow, specialists: &[Speciali
                         status: if ok { "done".into() } else { "failed".into() },
                         summary: if ok { format!("Passed in {}s.", took.as_secs()) } else { format!("Failed after {}s:\n{tail}", took.as_secs()) },
                         findings: Vec::new(),
+                        holds_all: false,
                     };
                 }
-                if step.provider.as_deref() == Some("junie") {
-                    return StepResult { label, provider: "Junie".into(), status: "done".into(), summary: "Junie doesn't run here yet.".into(), findings: Vec::new() };
+                // A step's provider, else its specialist's.
+                if step.provider.as_deref().or(specialist(&step, &specialists).and_then(|s| s.provider.as_deref())) == Some("junie") {
+                    return StepResult { label, provider: "Junie".into(), status: "done".into(), summary: "Junie doesn't run here yet.".into(), findings: Vec::new(), holds_all: false };
                 }
                 if round > step.round_count() {
-                    return StepResult { label, provider: "Claude Code".into(), status: "done".into(), summary: format!("Its {} rounds are done.", step.round_count()), findings: Vec::new() };
+                    return StepResult { label, provider: "Claude Code".into(), status: "done".into(), summary: format!("Its {} rounds are done.", step.round_count()), findings: Vec::new(), holds_all: false };
                 }
                 let prompt = format!(
                     "{}Review the change in this git worktree before it's pushed: everything since it left {base} (`git diff $(git merge-base HEAD {base})`), committed or not. Don't change anything. Look for bugs, missed cases, security problems and code that doesn't fit the repo; comment only on what the change touches.{earlier_text}\n\nEnd your reply with one fenced ```json block: a list of findings, most important first, each {{\"path\": \"<file>\", \"line\": <line in the new file>, \"severity\": \"blocker\" | \"major\" | \"minor\" | \"nit\", \"comment\": \"<what's wrong and what to do>\"}}. Give [] when there's nothing.",
@@ -323,10 +330,11 @@ pub fn local_round(worktree: &Path, workflow: &Workflow, specialists: &[Speciali
                             status: "done".into(),
                             summary: if findings.is_empty() { "Found nothing.".into() } else { format!("{} finding{}.", findings.len(), if findings.len() == 1 { "" } else { "s" }) },
                             findings,
+                            holds_all,
                         },
-                        None => StepResult { label, provider: "Claude Code".into(), status: "failed".into(), summary: "Gave no list of findings.".into(), findings: Vec::new() },
+                        None => StepResult { label, provider: "Claude Code".into(), status: "failed".into(), summary: "Gave no list of findings.".into(), findings: Vec::new(), holds_all },
                     },
-                    Err(error) => StepResult { label, provider: "Claude Code".into(), status: "failed".into(), summary: error, findings: Vec::new() },
+                    Err(error) => StepResult { label, provider: "Claude Code".into(), status: "failed".into(), summary: error, findings: Vec::new(), holds_all },
                 }
             })
         })
@@ -334,12 +342,12 @@ pub fn local_round(worktree: &Path, workflow: &Workflow, specialists: &[Speciali
     let mut results: Vec<StepResult> = handles.into_iter().filter_map(|h| h.join().ok()).collect();
     let blocking = |f: &Finding| matches!(f.severity.as_str(), "blocker" | "major");
     let commands_pass = results.iter().filter(|r| r.provider == "Command").all(|r| r.status == "done");
-    let open_blocking = results.iter().flat_map(|r| r.findings.iter()).any(blocking);
+    let open_blocking = results.iter().any(|r| r.findings.iter().any(|f| r.holds_all || blocking(f)));
     // Out of rounds: a reviewer's findings no longer hold the push.
     let rounds_left = workflow.steps_when(When::Local).iter().any(|s| s.command.is_none() && s.provider.as_deref() != Some("junie") && round < s.round_count());
     let clear = commands_pass && (!open_blocking || !rounds_left);
     for r in &mut results {
-        if r.provider != "Command" && r.findings.iter().any(blocking) && !clear {
+        if r.provider != "Command" && r.findings.iter().any(|f| r.holds_all || blocking(f)) && !clear {
             r.status = "holding".into();
         }
     }

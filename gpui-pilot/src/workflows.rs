@@ -49,10 +49,6 @@ pub struct Step {
 }
 
 impl Step {
-    pub fn new(id: String) -> Self {
-        Self { id, ..Default::default() }
-    }
-
     pub fn is_session(&self) -> bool {
         self.interactive == Some(true)
     }
@@ -73,14 +69,6 @@ impl Step {
             Some(name) => specialists.iter().find(|s| s.name.eq_ignore_ascii_case(name)).map(|s| s.title.clone()).unwrap_or_else(|| name.to_string()),
             None if self.provider.as_deref() == Some("junie") => "Junie".into(),
             None => "Gannin's reviewer".into(),
-        }
-    }
-
-    pub fn provider_title(&self) -> &'static str {
-        match (self.command.is_some(), self.provider.as_deref()) {
-            (true, _) => "Command",
-            (_, Some("junie")) => "Junie",
-            _ => "Claude Code",
         }
     }
 }

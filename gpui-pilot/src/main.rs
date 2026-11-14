@@ -35,7 +35,7 @@ mod work_live;
 mod work_panel;
 mod work_preview;
 mod workflows;
-mod workflow_editor_preview;
+mod workflows_page;
 mod scorecard;
 mod pr_picker;
 mod prs;
@@ -95,6 +95,21 @@ fn main() {
             // Counts the work log's events for the last two weeks.
             // Lists the worktrees in a Work on This session's folder and
             // what's changed in each, as its panel reads them.
+            // Runs a workflow's local review round on a worktree, as a held
+            // push would: `--local-round <worktree> <workflow.json>`.
+            "--local-round" => {
+                let worktree = std::path::PathBuf::from(args.next().unwrap_or_default());
+                let workflow: workflows::Workflow = serde_json::from_slice(&std::fs::read(args.next().unwrap_or_default()).expect("the workflow file")).expect("a workflow");
+                let (results, clear) = work_flow::local_round(&worktree, &workflow, &[], 1, &[]);
+                for r in &results {
+                    println!("{} [{}] {}: {}", r.label, r.provider, r.status, r.summary.lines().next().unwrap_or(""));
+                    for f in &r.findings {
+                        println!("  - [{}] {}:{} {}", f.severity, f.path, f.line.unwrap_or(0), f.comment);
+                    }
+                }
+                println!("\nclear: {clear}\n\n{}", work_flow::round_message(1, "0123456789abcdef", &results, clear));
+                return;
+            }
             "--work-changes" => {
                 let folder = std::path::PathBuf::from(args.next().unwrap_or_default());
                 for w in work_live::worktrees(&folder) {

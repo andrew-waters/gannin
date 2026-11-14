@@ -249,6 +249,34 @@ pub struct WorkPanel {
     auto_feedback: bool,
 }
 
+/// A comment's gist for its row: the first line of words, with HTML
+/// comments and tags, Markdown markers and checkboxes taken out (bots'
+/// review bodies are mostly markup). The whole of it still goes to claude.
+fn summary_line(body: &str) -> String {
+    let mut text = body.to_string();
+    while let Some(start) = text.find("<!--") {
+        match text[start..].find("-->") {
+            Some(end) => text.replace_range(start..start + end + 3, ""),
+            None => text.truncate(start),
+        }
+    }
+    let mut plain = String::new();
+    let mut in_tag = false;
+    for c in text.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => plain.push(c),
+            _ => {}
+        }
+    }
+    plain
+        .lines()
+        .map(|l| l.trim().trim_start_matches(['#', '>', '-', '*']).trim().trim_start_matches("[ ]").trim_start_matches("[x]").trim().replace("**", "").replace('`', ""))
+        .find(|l| !l.is_empty() && l.chars().any(|c| c.is_alphanumeric()))
+        .unwrap_or_else(|| "A comment".into())
+}
+
 impl WorkPanel {
     pub fn new(data: WorkData, terminal: Option<AnyView>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let composer = cx.new(|cx| {
@@ -1712,7 +1740,7 @@ impl WorkPanel {
                                                 .when_some(f.verdict.clone(), |d, v| d.child(div().text_color(theme.orange()).child(v)))
                                                 .when(f.sent, |d| d.child(div().text_color(theme.secondary).child("Sent"))),
                                         )
-                                        .child(div().text_sm().text_color(if f.sent { theme.secondary } else { theme.fg }).child(f.body.clone())),
+                                        .child(div().truncate().text_sm().text_color(if f.sent { theme.secondary } else { theme.fg }).child(summary_line(&f.body))),
                                 )
                         }))
                         .child(div().flex().flex_row().justify_end().child(Self::button(
