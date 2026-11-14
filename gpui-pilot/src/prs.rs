@@ -457,9 +457,7 @@ impl PrItem {
 }
 
 fn cache_path(org: &str) -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    let encoded = org.replace('%', "%25").replace(' ', "%20").replace('/', "%2F");
-    home.join("Library/Application Support/PullRequests").join(format!("{encoded}.json"))
+    crate::cache::path(crate::cache::Kind::PullRequests, org)
 }
 
 fn load(org: &str) -> Result<Vec<PrItem>, String> {
@@ -847,13 +845,25 @@ impl PrsPage {
     }
 
     fn load(&mut self, cx: &mut Context<Self>) {
+        self.load_quietly(false, cx);
+    }
+
+    /// Reads the cache again after a sync, keeping what's shown until the
+    /// new copy is in.
+    pub fn reload(&mut self, cx: &mut Context<Self>) {
+        self.load_quietly(true, cx);
+    }
+
+    fn load_quietly(&mut self, quiet: bool, cx: &mut Context<Self>) {
         let Some(org) = self.org.clone() else { return };
         self.generation += 1;
         let generation = self.generation;
-        self.loading = true;
-        self.error = None;
-        self.prs = Arc::new(Vec::new());
-        self.rows.clear();
+        if !quiet {
+            self.loading = true;
+            self.error = None;
+            self.prs = Arc::new(Vec::new());
+            self.rows.clear();
+        }
         cx.notify();
         cx.spawn(async move |this, cx| {
             let result = cx

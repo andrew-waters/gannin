@@ -92,8 +92,7 @@ pub fn cache_dir() -> PathBuf {
 }
 
 pub fn cache_path(org: &str) -> PathBuf {
-    let encoded: String = org.replace('%', "%25").replace(' ', "%20");
-    cache_dir().join(format!("{encoded}.json"))
+    crate::cache::path(crate::cache::Kind::Actions, org)
 }
 
 /// Orgs with a saved file, by name.

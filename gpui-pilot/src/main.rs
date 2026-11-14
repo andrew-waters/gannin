@@ -6,11 +6,13 @@
 
 mod auth;
 mod avatars;
+mod cache;
 mod changes;
 mod charts;
 mod data;
 mod detail;
 mod format;
+mod github;
 mod issues;
 mod markdown;
 mod metrics;
@@ -20,6 +22,7 @@ mod prs;
 mod session;
 mod shell;
 mod state;
+mod sync;
 mod work;
 mod zed;
 
@@ -39,6 +42,19 @@ fn main() {
         match arg.as_str() {
             "--org" => org = args.next(),
             "--days" => days = args.next().and_then(|d| d.parse().ok()),
+            // Syncs one org into the pilot's caches without a window, and
+            // reports what it fetched: for trying the sync from a shell.
+            "--sync" => {
+                let org = args.next().unwrap_or_default();
+                let token = auth::token().expect("sign in to the pilot first");
+                let viewer = auth::saved_viewer().map(|v| v.login);
+                let started = std::time::Instant::now();
+                match sync::sync_org(&token, &org, viewer.as_deref()) {
+                    Ok(report) => println!("{org}: {report:?} in {:?}; budget {:?}", started.elapsed(), github::rate_limit()),
+                    Err(error) => println!("{org}: failed: {error}"),
+                }
+                return;
+            }
             _ => eprintln!("Ignoring {arg}; usage: gannin-gpui-pilot [--org NAME] [--days N]"),
         }
     }

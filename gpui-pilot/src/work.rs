@@ -122,8 +122,7 @@ struct Workload {
 }
 
 fn store_path(org: &str) -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Application Support/PullRequests").join(format!("{org}.json"))
+    crate::cache::path(crate::cache::Kind::PullRequests, org)
 }
 
 /// Reads the org's PR cache as `login` (the pilot's signed-in viewer),

@@ -227,6 +227,16 @@ const DRAWER_WIDTH: f32 = 900.0;
 /// How far each drawer beneath the top one shows, as `drawerPeek`.
 const DRAWER_PEEK: f32 = 14.0;
 
+/// The workload sync's state, for the title bar.
+#[derive(Default)]
+struct SyncStatus {
+    running: bool,
+    error: Option<String>,
+}
+
+/// How often the workload syncs, as Gannin's default.
+const SYNC_EVERY: chrono::Duration = chrono::Duration::minutes(5);
+
 /// Signing in with GitHub, step by step, as `SignInView`.
 enum SignIn {
     Requesting,
@@ -314,6 +324,8 @@ pub struct Workspace {
     /// Polls GitHub while signing in; dropping it stops.
     sign_in_task: Option<gpui::Task<()>>,
     account_open: bool,
+    sync: SyncStatus,
+    _sync_loop: Option<gpui::Task<()>>,
     /// What was last written, so unchanged state isn't written again.
     last_saved: Option<SavedState>,
     _subscriptions: Vec<Subscription>,
@@ -410,6 +422,7 @@ impl Workspace {
         }
         workspace.active = active.min(workspace.tabs.len().saturating_sub(1));
         workspace.load_viewer(cx);
+        workspace.start_sync_loop(cx);
         workspace.load_settings(cx);
         workspace
     }
@@ -534,6 +547,8 @@ impl Workspace {
             sign_in: None,
             sign_in_task: None,
             account_open: false,
+            sync: SyncStatus::default(),
+            _sync_loop: None,
             _subscriptions: subscriptions,
         }
     }
@@ -747,6 +762,112 @@ impl Workspace {
             .ok();
         })
         .detach();
+    }
+
+    // MARK: Sync
+
+    /// Checks once a minute whether the org is due a sync: signed in, five
+    /// minutes since the last, and GitHub's budget not low or refused.
+    fn start_sync_loop(&mut self, cx: &mut Context<Self>) {
+        self._sync_loop = Some(cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(std::time::Duration::from_secs(60)).await;
+            let Ok(()) = this.update(cx, |this, cx| {
+                let due = this.org.as_deref().is_some_and(|org| {
+                    crate::sync::last_synced(org).is_none_or(|at| chrono::Utc::now() - at >= SYNC_EVERY)
+                });
+                if due && !crate::github::should_hold_off() {
+                    this.sync_now(cx);
+                }
+            }) else {
+                return;
+            };
+        }));
+    }
+
+    /// Syncs the current org now, then has its pages read their caches again.
+    fn sync_now(&mut self, cx: &mut Context<Self>) {
+        if self.sync.running || self.viewer.is_none() {
+            return;
+        }
+        let Some(org) = self.org.clone() else { return };
+        let viewer = self.viewer.as_ref().map(|v| v.login.clone());
+        self.sync.running = true;
+        self.sync.error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let synced_org = org.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let token = auth::token().ok_or(crate::github::Error::Unauthorised)?;
+                    crate::sync::sync_org(&token, &synced_org, viewer.as_deref())
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.sync.running = false;
+                match result {
+                    Ok(_) => this.refresh_pages(cx),
+                    Err(error) => this.sync.error = Some(error.to_string()),
+                }
+                let _ = org;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// After a sync: every page re-reads the pilot's caches.
+    fn refresh_pages(&mut self, cx: &mut Context<Self>) {
+        self.issues.update(cx, |page, cx| page.reload(cx));
+        for page in self.pages() {
+            match page {
+                Page::Issues(page) => page.update(cx, |page, cx| page.reload(cx)),
+                Page::Prs(page) => page.update(cx, |page, cx| page.reload(cx)),
+                _ => {}
+            }
+        }
+        if let Some(org) = self.org.clone() {
+            self.load_work(org, cx);
+        }
+    }
+
+    /// "Synced 3 min ago", "Syncing", or why it isn't; a click syncs now.
+    fn sync_button(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = chrono::Utc::now();
+        let last = self.org.as_deref().and_then(crate::sync::last_synced);
+        let (label, tip): (String, String) = if self.sync.running {
+            ("Syncing".into(), "Fetching changes from GitHub".into())
+        } else if let Some(until) = crate::github::paused_until() {
+            (
+                format!("Paused until {}", until.with_timezone(&Local).format("%H:%M")),
+                "GitHub's rate limit is spent; syncing waits for its reset".into(),
+            )
+        } else if let Some(error) = &self.sync.error {
+            ("Sync failed".into(), format!("{error}. Click to try again."))
+        } else if let Some(at) = last {
+            (format!("Synced {}", relative_date(at, now)), "Click to sync now; it syncs every 5 minutes".into())
+        } else {
+            ("Sync".into(), "Fetch this org's open PRs and issues from GitHub into the pilot's own copy".into())
+        };
+        let budget = crate::github::rate_limit().map(|r| format!(" · {} of {} left this hour", r.remaining, r.limit)).unwrap_or_default();
+        let tip = format!("{tip}{budget}");
+        div()
+            .id("sync")
+            .px_2()
+            .py_0p5()
+            .mr_2()
+            .rounded_md()
+            .text_xs()
+            .cursor_pointer()
+            .text_color(if self.sync.error.is_some() { theme.critical() } else { theme.secondary })
+            .hover(|s| s.bg(theme.row_selected))
+            .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                cx.stop_propagation();
+                this.sync_now(cx);
+            }))
+            .child(label)
     }
 
     // MARK: Account
@@ -1537,6 +1658,7 @@ impl Workspace {
                 d.child(div().text_color(theme.tertiary).child("/")).child(self.switcher_button(Pick::Project, name, theme, cx))
             })
             .child(div().flex_1())
+            .when(self.viewer.is_some(), |d| d.child(self.sync_button(theme, cx)))
             .child(self.account(theme, cx))
     }
 
