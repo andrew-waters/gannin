@@ -422,7 +422,7 @@ impl WorkPanel {
         let answer = window.prompt(
             gpui::PromptLevel::Warning,
             "Forget this session?",
-            Some(&format!("Claude is ended and the pilot forgets the session. Its folder and worktrees stay at {folder} for you to remove with git worktree remove.")),
+            Some(&format!("Claude is ended and Gannin forgets the session. Its folder and worktrees stay at {folder} for you to remove with git worktree remove.")),
             &["Forget Session", "Cancel"],
             cx,
         );
@@ -442,7 +442,7 @@ impl WorkPanel {
         let answer = window.prompt(
             gpui::PromptLevel::Warning,
             "Finish this session?",
-            Some(&format!("Claude is ended, the worktrees in {folder} are removed with anything not pushed in them, and the pilot forgets the session.")),
+            Some(&format!("Claude is ended, the worktrees in {folder} are removed with anything not pushed in them, and Gannin forgets the session.")),
             &["Finish and Remove Worktrees", "Cancel"],
             cx,
         );

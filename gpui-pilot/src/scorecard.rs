@@ -570,8 +570,8 @@ fn metric_title(metric: &str) -> (&'static str, &'static str) {
         "slowReviews" => ("Reviews waiting over a day", "Requests made in the period not answered within a day"),
         "openPullRequests" => ("Open PRs", "Open at the period's end, or now"),
         "issueCycleTime" => ("Issue cycle time", "Median time in progress, of issues completed"),
-        "flakyRuns" => ("Flaky CI runs", "Not in the pilot yet"),
-        "ciTimePerPR" => ("CI time per PR", "Not in the pilot yet"),
+        "flakyRuns" => ("Flaky CI runs", "Not measured yet"),
+        "ciTimePerPR" => ("CI time per PR", "Not measured yet"),
         _ => ("Metric", ""),
     }
 }

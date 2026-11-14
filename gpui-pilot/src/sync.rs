@@ -210,7 +210,7 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, 
     report.issues = issues.len();
 
     let cutoff = merged_since.and_hms_opt(0, 0, 0).map(|t| t.and_utc());
-    begin(progress, &["Saving the pilot's copy"]);
+    begin(progress, &["Saving"]);
     merge_pull_requests(org, &prs, report.full, cutoff).map_err(|e| Error::Other(format!("Couldn't save pull requests: {e}")))?;
     merge_issues(org, &issues, report.full).map_err(|e| Error::Other(format!("Couldn't save issues: {e}")))?;
 
@@ -219,7 +219,7 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, 
         Synced { at: Some(now), full_at: if report.full { Some(now) } else { previous.full_at }, lookback_days: lookback },
     );
     write_synced(&all);
-    finish(progress, "Saving the pilot's copy", None);
+    finish(progress, "Saving", None);
 
     // The longer histories Scorecards and Activity read, each when it's due.
     let base = format!("{}:{org}", if viewer == Some(org) { "user" } else { "org" });

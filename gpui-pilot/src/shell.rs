@@ -214,7 +214,7 @@ fn sections() -> Vec<Section> {
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
         // The pilot's own: states to refine a UI against before it's wired.
-        Section { id: "pilot", title: Some("Pilot"), rows: vec![Item(WorkPreview)] },
+        Section { id: "previews", title: Some("Previews"), rows: vec![Item(WorkPreview)] },
     ]
 }
 
@@ -1253,7 +1253,7 @@ impl Workspace {
                 let _ = std::fs::create_dir_all(&context);
                 let _ = std::fs::write(
                     context.join("README.md"),
-                    format!("# {org}, as the Gannin pilot sees it\n\nThe pilot doesn't write Gannin's org view here yet: use `gh` and the code for what the question needs.\n\nWritten {}.\n", chrono::Utc::now().to_rfc3339()),
+                    format!("# {org}\n\nGannin's org view isn't written here yet: use `gh` and the code for what the question needs.\n\nWritten {}.\n", chrono::Utc::now().to_rfc3339()),
                 );
                 self.start_launch(launch, &brief, &prompt, false, window, cx);
             }
@@ -1800,7 +1800,7 @@ impl Workspace {
             .children(log)
             .child(self.sync_settings(theme, cx))
             .child(quiet(
-                "Synced into the pilot's own copy. Metrics, work logs and CI runs are read from Gannin's caches."
+                "Synced into its own copy of the caches."
                     .into(),
             ))
     }
@@ -2107,7 +2107,7 @@ impl Workspace {
                         div()
                             .text_xs()
                             .text_color(theme.secondary)
-                            .child("The pilot keeps its own sign-in: signing out here leaves Gannin signed in."),
+                            .child("Signing out here leaves the Swift app signed in: each keeps its own sign-in."),
                     )
                     .child(body),
             )
@@ -2959,7 +2959,7 @@ impl Workspace {
                                         .py_0p5()
                                         .text_xs()
                                         .text_color(theme.tertiary)
-                                        .child("Not loaded in the pilot")
+                                        .child("Not loaded yet")
                                         .into_any_element(),
                                 );
                             }
@@ -3631,7 +3631,7 @@ impl Workspace {
                 .child(
                     div()
                         .text_color(theme.secondary)
-                        .child("Not ported in the pilot. CI and Issues are real pages."),
+                        .child("Not built yet."),
                 )
                 .child(
                     div()

@@ -117,7 +117,7 @@ fn main() {
             }
             // Runs Your Work's live query and lists what it found.
             "--work" => {
-                let token = auth::token().expect("sign in to the pilot first");
+                let token = auth::token().expect("sign in first");
                 let viewer = auth::saved_viewer().map(|v| v.login);
                 match work::load_live(&token, viewer) {
                     Ok(work) => {
@@ -139,7 +139,7 @@ fn main() {
             // reports what it fetched: for trying the sync from a shell.
             "--sync" => {
                 let org = args.next().unwrap_or_default();
-                let token = auth::token().expect("sign in to the pilot first");
+                let token = auth::token().expect("sign in first");
                 let viewer = auth::saved_viewer().map(|v| v.login);
                 let started = std::time::Instant::now();
                 match sync::sync_org(&token, &org, viewer.as_deref(), false, Default::default(), &Default::default()) {
@@ -157,7 +157,7 @@ fn main() {
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.bind_keys(shell::key_bindings());
         cx.set_menus(vec![
-            Menu { name: "Gannin GPUI Pilot".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false },
+            Menu { name: "Gannin".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false },
             Menu {
                 name: "File".into(),
                 items: vec![
