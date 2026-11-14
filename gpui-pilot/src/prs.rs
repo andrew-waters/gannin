@@ -1345,6 +1345,21 @@ impl PrsPage {
                 }
                 cx.notify();
             }))
+            .child(
+                div()
+                    .id(("pick", index))
+                    .flex_none()
+                    .p_1()
+                    .on_click(cx.listener({
+                        let id = pr.id.clone();
+                        move |page, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            page.toggle_pick(&id, index);
+                            cx.notify();
+                        }
+                    }))
+                    .child(Self::checkbox(Some(picked), theme)),
+            )
             .children(self.columns.iter().map(|column| self.cell(column, index, theme, cx)))
     }
 
@@ -1646,6 +1661,36 @@ pub fn state_pill(pr: &PrItem, theme: &Theme) -> impl IntoElement {
 }
 
 impl PrsPage {
+    /// A checkbox: ticked, part-ticked (some of the rows) or empty.
+    fn checkbox(state: Option<bool>, theme: &Theme) -> gpui::Div {
+        let on = state != Some(false);
+        div()
+            .size(px(14.))
+            .flex_none()
+            .rounded(px(3.))
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_xs()
+            .border_1()
+            .border_color(if on { theme.selected } else { theme.secondary.opacity(0.6) })
+            .when(on, |d| d.bg(theme.selected).text_color(theme.on_selected))
+            .child(match state {
+                Some(true) => "✓",
+                None => "–",
+                Some(false) => "",
+            })
+    }
+
+    fn toggle_pick(&mut self, id: &str, index: usize) {
+        if let Some(at) = self.picked.iter().position(|p| p == id) {
+            self.picked.remove(at);
+        } else {
+            self.picked.push(id.to_string());
+        }
+        self.anchor = Some(index);
+    }
+
     /// The PRs picked together that are still in the list.
     fn picked_prs(&self) -> Vec<PrItem> {
         self.picked.iter().filter_map(|id| self.prs.iter().find(|p| &p.id == id).cloned()).collect()
@@ -1722,6 +1767,30 @@ impl Render for PrsPage {
             .text_xs()
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme.secondary)
+            .child({
+                let visible: Vec<String> = self.rows.iter().map(|&r| self.prs[r].id.clone()).collect();
+                let ticked = visible.iter().filter(|id| self.picked.contains(id)).count();
+                let state = if ticked == 0 { Some(false) } else if ticked == visible.len() { Some(true) } else { None };
+                div()
+                    .id("pick-all")
+                    .flex_none()
+                    .p_1()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                        // Ticks every row showing, or clears them when all are.
+                        if state == Some(true) {
+                            page.picked.retain(|id| !visible.contains(id));
+                        } else {
+                            for id in &visible {
+                                if !page.picked.contains(id) {
+                                    page.picked.push(id.clone());
+                                }
+                            }
+                        }
+                        cx.notify();
+                    }))
+                    .child(Self::checkbox(state, &theme))
+            })
             .children(self.columns.clone().into_iter().map(|column| {
                 let marker = if column == sort { if descending { " ↓" } else { " ↑" } } else { "" };
                 let (sorted, onto, title) = (column.clone(), column.clone(), column.title());
