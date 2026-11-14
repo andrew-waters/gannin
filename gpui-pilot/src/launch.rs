@@ -268,6 +268,47 @@ fn settings_json(dir: &Path) -> String {
     serde_json::to_string_pretty(&settings).unwrap_or_default()
 }
 
+/// The harness checkout off its default branch: where it is instead
+/// ("on stack-dns", "at 3cf2f36d, not on a branch"), its default branch,
+/// and whether it has no changes to tracked files (so it can be switched).
+pub struct HarnessOff {
+    pub on: String,
+    pub default: String,
+    pub clean: bool,
+}
+
+fn git_in(dir: &Path, args: &[&str]) -> Option<String> {
+    let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
+    out.status.success().then(|| String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Whether the harness is off its default branch (None when it's on it, or
+/// that can't be told).
+pub fn harness_branch(harness: &Path) -> Option<HarnessOff> {
+    let default = git_in(harness, &["symbolic-ref", "--short", "refs/remotes/origin/HEAD"])?.trim_start_matches("origin/").to_string();
+    let on = match git_in(harness, &["symbolic-ref", "--short", "-q", "HEAD"]) {
+        Some(branch) if branch == default => return None,
+        Some(branch) => format!("on {branch}"),
+        None => format!("at {}, not on a branch", git_in(harness, &["rev-parse", "--short", "HEAD"]).unwrap_or_default()),
+    };
+    let clean = git_in(harness, &["status", "--porcelain", "--untracked-files=no"]).is_some_and(|s| s.is_empty());
+    Some(HarnessOff { on, default, clean })
+}
+
+/// Puts the harness back on its default branch and pulls it.
+pub fn switch_harness(harness: &Path, default: &str) -> Result<(), String> {
+    let run = |args: &[&str]| -> Result<(), String> {
+        let out = std::process::Command::new("git").arg("-C").arg(harness).args(args).output().map_err(|e| e.to_string())?;
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        }
+    };
+    run(&["checkout", default])?;
+    run(&["pull", "--ff-only", "--quiet"])
+}
+
 /// Where the org's harness is checked out on this Mac, as
 /// `SessionStore.localHarnessPath` finds it: Gannin's setting for it, else
 /// an existing checkout of it in the usual places, else `~/Gannin/<org>-<name>`.

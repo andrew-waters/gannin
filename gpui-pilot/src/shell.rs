@@ -1020,7 +1020,63 @@ impl Workspace {
     }
 
     /// Prepares a launch's files and opens it.
+    /// Starts a launch, after checking the harness is on its default
+    /// branch: sessions read the team's instructions from it, so one left
+    /// on another branch or a detached commit would start on stale ones.
+    /// Then it asks: switch it back (and pull) and start, start anyway, or
+    /// not start.
     fn start_launch(&mut self, launch: crate::launch::Launch, brief: &str, prompt: &str, disallow_edits: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let (brief, prompt) = (brief.to_string(), prompt.to_string());
+        let harness = launch.harness_path.clone();
+        let check = cx.background_executor().spawn(async move { crate::launch::harness_branch(&harness) });
+        cx.spawn_in(window, async move |this, cx| {
+            let found = check.await;
+            this.update_in(cx, |this, window, cx| {
+                let Some(off) = found else {
+                    return this.start_now(launch, &brief, &prompt, disallow_edits, window, cx);
+                };
+                let place = launch.harness_path.display().to_string().replace(&std::env::var("HOME").unwrap_or_default(), "~");
+                let detail = format!(
+                    "{place} is {}, not on {}, so this session would read the team's instructions as they are there, not the latest.{}",
+                    off.on,
+                    off.default,
+                    if off.clean { "" } else { "\n\nIt has changes to tracked files, so it can't be switched here: put it back on its default branch yourself, or start anyway." }
+                );
+                let buttons: &[&str] = if off.clean { &["Switch and Start", "Start Anyway", "Cancel"] } else { &["Start Anyway", "Cancel"] };
+                let answer = window.prompt(gpui::PromptLevel::Warning, &format!("The harness isn't on {}", off.default), Some(&detail), buttons, cx);
+                let clean = off.clean;
+                let default = off.default.clone();
+                cx.spawn_in(window, async move |this, cx| {
+                    let choice = answer.await.ok();
+                    let (switch, start) = match (clean, choice) {
+                        (true, Some(0)) => (true, true),
+                        (true, Some(1)) | (false, Some(0)) => (false, true),
+                        _ => (false, false),
+                    };
+                    if !start {
+                        return;
+                    }
+                    if switch {
+                        let harness = launch.harness_path.clone();
+                        let switched = cx.background_executor().spawn(async move { crate::launch::switch_harness(&harness, &default) }).await;
+                        if let Err(error) = switched {
+                            this.update_in(cx, |_, window, cx| {
+                                let _ = window.prompt(gpui::PromptLevel::Critical, "Couldn't switch the harness", Some(&error), &["OK"], cx);
+                            })
+                            .ok();
+                            return;
+                        }
+                    }
+                    this.update_in(cx, |this, window, cx| this.start_now(launch, &brief, &prompt, disallow_edits, window, cx)).ok();
+                })
+                .detach();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn start_now(&mut self, launch: crate::launch::Launch, brief: &str, prompt: &str, disallow_edits: bool, window: &mut Window, cx: &mut Context<Self>) {
         if let Err(error) = launch.prepare(brief, prompt, disallow_edits) {
             let _ = window.prompt(gpui::PromptLevel::Critical, "Couldn't start the session", Some(&error.to_string()), &["OK"], cx);
             return;
