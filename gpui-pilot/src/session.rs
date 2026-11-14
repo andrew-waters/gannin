@@ -72,6 +72,8 @@ pub struct SessionPage {
     terminal: Entity<Terminal>,
     view: Entity<TerminalView>,
     changes: Entity<ChangesView>,
+    /// A review session's findings, shown where Changes would be.
+    review: Option<Entity<crate::review_panel::ReviewPanel>>,
     show: Show,
     pub state: State,
     /// When the state last changed, for "waiting since".
@@ -164,6 +166,13 @@ impl SessionPage {
                 cx,
             )
         });
+        let review = launch
+            .as_ref()
+            .filter(|l| l.flow == crate::launch::Flow::Review)
+            .map(|l| {
+                let (launch, terminal) = (l.clone(), terminal.clone());
+                cx.new(|cx| crate::review_panel::ReviewPanel::new(launch, terminal, cx))
+            });
         let subscriptions = vec![cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {
                 this.last_output = Instant::now();
@@ -191,6 +200,7 @@ impl SessionPage {
             terminal,
             view,
             changes,
+            review,
             show: Show::Both,
             state: State::Working,
             since: chrono::Local::now(),
@@ -282,7 +292,7 @@ impl SessionPage {
             .gap_0p5()
             .child(option("show-terminal", "Terminal", Show::Terminal, cx))
             .child(option("show-both", "Side by Side", Show::Both, cx))
-            .child(option("show-changes", "Changes", Show::Changes, cx))
+            .child(option("show-changes", if self.review.is_some() { "Review" } else { "Changes" }, Show::Changes, cx))
     }
 }
 
@@ -327,7 +337,10 @@ impl Render for SessionPage {
             .child(div().flex_1())
             .child(self.switch(&theme, cx));
         let terminal = div().flex_1().min_w_0().h_full().child(self.view.clone());
-        let changes = div().flex_1().min_w_0().h_full().child(self.changes.clone());
+        let changes = div().flex_1().min_w_0().h_full().map(|d| match &self.review {
+            Some(review) => d.child(review.clone()),
+            None => d.child(self.changes.clone()),
+        });
         div()
             .size_full()
             .flex()

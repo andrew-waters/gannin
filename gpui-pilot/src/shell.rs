@@ -840,6 +840,24 @@ impl Workspace {
         self.start_launch(launch, &brief, &prompt, false, window, cx);
     }
 
+    /// Review with Claude: a session in the harness with edits disallowed,
+    /// Gannin's review prompt, and its findings beside the terminal.
+    fn review_pr(&mut self, pr: PrItem, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::launch::{self, Flow, Launch, Subject};
+        if self.show_session(&pr.id, Flow::Review, window, cx) {
+            return;
+        }
+        let (Some(org), Some(harness)) = (self.org.clone(), self.harness_for(&pr.repo)) else {
+            return Self::no_harness(window, cx);
+        };
+        let branch = format!("review-{}-{}", pr.repo_name, pr.number);
+        let subject = Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
+        let launch = Launch::new(Flow::Review, format!("Review {}#{}", pr.repo_name, pr.number), &org, &harness, branch.clone(), Some(subject));
+        let brief = format!("# Review of {}#{}: {}\n\n{}\n", pr.repo, pr.number, pr.title, pr.url);
+        let prompt = launch::review_prompt(&pr.repo, pr.number, &pr.title, &pr.url, &branch);
+        self.start_launch(launch, &brief, &prompt, true, window, cx);
+    }
+
     /// The org's PR cache, read off the main thread.
     fn load_work(&mut self, org: String, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
@@ -1575,6 +1593,21 @@ impl Workspace {
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                         .into_any_element(),
                 );
+                // Reviews are for open PRs, as Gannin's drawer offers them.
+                if pr.state == PrState::Open {
+                    let has_review = self.session_for(&pr.id, Flow::Review, cx).is_some() || Self::saved_launch(&pr.id, Flow::Review).is_some();
+                    let (label, tip) = if has_review {
+                        ("Open Review", "Show Claude's review of this PR".to_string())
+                    } else {
+                        ("Review with Claude", "Have Claude review this PR, then go through its findings and post the review to GitHub".to_string())
+                    };
+                    let reviewed = pr.clone();
+                    actions.push(
+                        action("review-with-claude", label.into(), tip)
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.review_pr(reviewed.clone(), window, cx)))
+                            .into_any_element(),
+                    );
+                }
             }
         }
         actions

@@ -19,6 +19,8 @@ mod markdown;
 mod metrics;
 mod page;
 mod projects;
+mod review;
+mod review_panel;
 mod prs;
 mod session;
 mod shell;
@@ -56,6 +58,22 @@ fn main() {
                 let brief = format!("# acme/api#12: Fix\n\n{}", launch::working_here("acme/harness", &dry.harness_path, &branch, Some("acme/api#12"), "acme/api", false));
                 dry.prepare(&brief, &prompt, false).expect("prepare");
                 println!("{}", dry.dir().join("start.sh").display());
+                return;
+            }
+            // Reads a review session's result from claude's transcript.
+            "--review-result" => {
+                let id = args.next().unwrap_or_default();
+                match review::read_result(&id) {
+                    Some(result) => println!(
+                        "verdict {:?}, effort {:?}, {} findings, {} areas; headline {:?}",
+                        result.verdict,
+                        result.effort,
+                        result.findings.len(),
+                        result.walkthrough.len(),
+                        result.headline
+                    ),
+                    None => println!("no result"),
+                }
                 return;
             }
             // Runs Your Work's live query and lists what it found.
