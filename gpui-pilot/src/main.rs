@@ -23,6 +23,7 @@ mod planning_panel;
 mod projects;
 mod review;
 mod review_panel;
+mod scorecard;
 mod prs;
 mod session;
 mod shell;
@@ -76,6 +77,11 @@ fn main() {
                     ),
                     None => println!("no result"),
                 }
+                return;
+            }
+            // Prints the scorecard metrics for recent weeks.
+            "--scorecard" => {
+                scorecard::print_weeks(&args.next().unwrap_or_default(), 6);
                 return;
             }
             // Runs Your Work's live query and lists what it found.

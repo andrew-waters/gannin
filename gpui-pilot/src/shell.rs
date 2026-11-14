@@ -165,7 +165,7 @@ fn sections() -> Vec<Section> {
             id: "delivery",
             title: Some("Delivery"),
             rows: vec![
-                // Item(Scorecards),
+                Item(Scorecards),
                 // Item(PrFlow),
                 // Item(IssueFlow),
                 // Item(Releases),
@@ -253,6 +253,7 @@ enum Page {
     Issues(Entity<IssuesPage>),
     Prs(Entity<PrsPage>),
     Ci(Entity<ActionsPage>),
+    Scorecard(Entity<crate::scorecard::ScorecardPage>),
     None,
 }
 
@@ -488,7 +489,7 @@ impl Workspace {
                 Page::Issues(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
                 Page::Prs(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
                 Page::Ci(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
-                Page::None => {}
+                _ => {}
             }
         }
         cx.notify();
@@ -605,6 +606,7 @@ impl Workspace {
                 let state = saved.and_then(|s| s.ci.clone()).unwrap_or_else(|| self.template_ci(cx));
                 Page::Ci(cx.new(|cx| ActionsPage::new(org, &state, window, cx)))
             }
+            Nav::Scorecards => Page::Scorecard(cx.new(|cx| crate::scorecard::ScorecardPage::new(org, cx))),
             _ => Page::None,
         };
         let subscriptions = Self::watch(&page, cx);
@@ -614,7 +616,7 @@ impl Workspace {
             Page::Issues(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
             Page::Prs(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
             Page::Ci(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
-            Page::None => {}
+            _ => {}
         }
         self.next_tab += 1;
         Tab { id: self.next_tab, nav, name: saved.and_then(|s| s.name.clone()), page }
@@ -653,7 +655,7 @@ impl Workspace {
                 }),
                 cx.observe(page, |this, _, cx| this.persist(cx)),
             ],
-            Page::None => Vec::new(),
+            _ => Vec::new(),
         }
     }
 
@@ -1031,6 +1033,7 @@ impl Workspace {
             match page {
                 Page::Issues(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::Prs(page) => page.update(cx, |page, cx| page.reload(cx)),
+                Page::Scorecard(page) => page.update(cx, |page, cx| page.reload(cx)),
                 _ => {}
             }
         }
@@ -1792,7 +1795,8 @@ impl Workspace {
                     page.set_focus(None, cx);
                     page.set_org(Some(org.clone()), cx)
                 }),
-                Page::None => {}
+                Page::Scorecard(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
+                _ => {}
             }
         }
         self.load_settings(cx);
@@ -2361,6 +2365,7 @@ impl Workspace {
                 Page::Issues(page) => page.into_any_element(),
                 Page::Prs(page) => page.into_any_element(),
                 Page::Ci(page) => page.into_any_element(),
+                Page::Scorecard(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()

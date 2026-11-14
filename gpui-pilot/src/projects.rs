@@ -75,6 +75,20 @@ fn support() -> PathBuf {
     home.join("Library/Application Support")
 }
 
+/// The org's settings as Gannin saved them, as JSON, for what this file
+/// doesn't type (scorecard goals, exclusions). Null when there are none.
+pub fn config_json(org: &str) -> serde_json::Value {
+    use rusqlite::{Connection, OpenFlags};
+    let path = support().join("UserData/Gannin.store");
+    let Ok(db) = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX) else {
+        return serde_json::Value::Null;
+    };
+    db.query_row("SELECT ZCONFIG FROM ZORGCONFIGRECORD WHERE ZORG = ?1", [org], |row| row.get::<_, Vec<u8>>(0))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+        .unwrap_or(serde_json::Value::Null)
+}
+
 /// The org's settings as Gannin saved them: a JSON blob per org.
 fn config(org: &str) -> Config {
     use rusqlite::{Connection, OpenFlags};
