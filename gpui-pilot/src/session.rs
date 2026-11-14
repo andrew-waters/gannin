@@ -337,8 +337,14 @@ fn asks_on_screen(screen: &str) -> bool {
 }
 
 impl Focusable for SessionPage {
+    /// The terminal's, but a review's own panel for a review: its terminal
+    /// is often hidden, and focus on something not drawn would leave the
+    /// window's shortcuts nowhere to go.
     fn focus_handle(&self, cx: &App) -> FocusHandle {
-        self.view.focus_handle(cx)
+        match &self.review {
+            Some(review) => review.read(cx).focus.clone(),
+            None => self.view.focus_handle(cx),
+        }
     }
 }
 

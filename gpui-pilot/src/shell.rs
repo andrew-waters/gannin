@@ -3185,6 +3185,10 @@ impl Workspace {
         let mut order: Vec<usize> = (0..self.tabs.len()).filter(|&i| self.tab_filter.is_none_or(|k| self.tab_kind(&self.tabs[i], cx) == k)).collect();
         if self.group_tabs {
             order.sort_by_key(|&i| self.tab_kind(&self.tabs[i], cx) as u8);
+            // Tabs in a folded group are skipped, but for the one open.
+            if self.tab_filter.is_none() {
+                order.retain(|&i| i == self.active || !self.collapsed_kinds.contains(&self.tab_kind(&self.tabs[i], cx)));
+            }
         }
         if order.is_empty() {
             return;

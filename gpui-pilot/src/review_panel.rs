@@ -81,6 +81,9 @@ enum Selected {
 }
 
 pub struct ReviewPanel {
+    /// The panel's own focus, so the window's shortcuts work with the
+    /// terminal hidden.
+    pub focus: gpui::FocusHandle,
     source: Source,
     result: Option<ReviewResult>,
     dismissed: HashSet<String>,
@@ -192,6 +195,7 @@ impl ReviewPanel {
         let dismissed = decisions["dismissed"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
         let edits = decisions["edits"].as_object().map(|m| m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()).unwrap_or_default();
         Self {
+            focus: cx.focus_handle(),
             posted,
             checked: None,
             checking: false,
@@ -231,6 +235,7 @@ impl ReviewPanel {
     ) -> Self {
         let posted = matches!(post, Some(Post::Posted(_))).then(|| Posted { event: "COMMENT".into(), at: chrono::Utc::now(), url: format!("https://github.com/{repo}/pull/{number}") });
         Self {
+            focus: cx.focus_handle(),
             posted,
             checked: None,
             checking: false,
@@ -1641,6 +1646,7 @@ impl Render for ReviewPanel {
             .flex()
             .flex_col()
             .bg(theme.bg)
+            .track_focus(&self.focus)
             .on_mouse_move(cx.listener(|this, event: &gpui::MouseMoveEvent, window, cx| {
                 let Some((start, height)) = this.resizing else { return };
                 if event.pressed_button != Some(gpui::MouseButton::Left) {
