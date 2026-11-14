@@ -90,8 +90,9 @@ pub struct SchedulePage {
     week: NaiveDate,
     selected: Option<String>,
     adding: Option<(NaiveDate, u32)>,
-    /// The panel of decisions waiting on you shows.
+    /// The panel of decisions waiting on you shows, and its submitted ones.
     deciding: bool,
+    show_submitted: bool,
     picking: Option<Picking>,
     name_field: Entity<editor::Editor>,
     time_field: Entity<editor::Editor>,
@@ -219,6 +220,7 @@ impl SchedulePage {
             selected: None,
             adding: None,
             deciding: false,
+            show_submitted: false,
             picking: None,
             name_field,
             time_field,
@@ -292,8 +294,9 @@ impl SchedulePage {
 
     /// Scheduled issues waiting on you: decisions to make, blockers to
     /// clear, or a scout that failed.
+    /// Scouted and not submitted yet.
     fn waiting_on_you(&self) -> Vec<(String, String)> {
-        self.scouted(&["needs", "blocked", "failed"])
+        self.scouted(&["needs", "blocked", "failed", "ready"]).into_iter().filter(|(id, _)| !self.schedule.readiness.get(id).is_some_and(|r| r.submitted)).collect()
     }
 
     /// Scheduled issues whose scouting is in one of `states`, in schedule
@@ -314,20 +317,23 @@ impl SchedulePage {
     /// The panel of what's waiting on you: each issue's decisions as
     /// options to pick, its blockers to clear, or Scout Again.
     fn decisions_panel(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
-        // Those waiting first; then the ready ones, to see and change.
+        // Those waiting; then, folded, the submitted ones to see and change.
         let mut waiting = self.waiting_on_you();
-        let ready = self.scouted(&["ready"]);
+        let submitted: Vec<(String, String)> = self.scouted(&["ready", "needs", "blocked"]).into_iter().filter(|(id, _)| self.schedule.readiness.get(id).is_some_and(|r| r.submitted)).collect();
         let first_ready = waiting.len();
-        waiting.extend(ready);
+        let submitted_count = submitted.len();
+        if self.show_submitted {
+            waiting.extend(submitted);
+        }
         let mut body = div().flex().flex_col().gap_4().child(div().font_weight(FontWeight::SEMIBOLD).child("Waiting on you")).child(div().text_xs().text_color(theme.secondary).child(
-            "Scouted when they were scheduled. Each answer saves as you pick it. Once every decision is made and no blocker is left, an issue is ready and starts with them; one still waiting at its time is skipped, and starts once it's ready.",
+            "Scouted when they were scheduled. Pick answers (each saves as you pick it), then Submit: anything unanswered takes the recommendation, blockers left are told to the session as known, and it's ready and off the list. One not ready at its time is skipped, and starts once it's ready.",
         ));
         if first_ready == 0 {
             body = body.child(div().text_sm().text_color(theme.secondary).child("Nothing: every scheduled issue is ready or still being scouted."));
         }
         for (n, (issue_id, title)) in waiting.into_iter().enumerate() {
             if n == first_ready {
-                body = body.child(div().pt_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.good()).child("READY"));
+                body = body.child(div().pt_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.good()).child("SUBMITTED"));
             }
             let Some(r) = self.schedule.readiness.get(&issue_id).cloned() else { continue };
             // How far along it is, saved as each option is picked.
@@ -416,13 +422,39 @@ impl SchedulePage {
                 );
             }
             let iid = issue_id.clone();
-            card = card.child(div().flex().flex_row().child(Self::button(format!("rescout-{issue_id}"), "Scout Again", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                let iid = iid.clone();
-                this.change_all(cx, move |s| {
-                    s.readiness.remove(&iid);
-                })
-            }))));
+            let submit_id = issue_id.clone();
+            let open_left = r.decisions.iter().filter(|d| d.answer.is_none()).count() + r.blockers.len();
+            card = card.child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .when(!r.submitted, |d| {
+                        d.child(
+                            Self::button(format!("submit-{issue_id}"), if open_left > 0 { "Submit, taking the recommendations" } else { "Submit" }, true, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                let id = submit_id.clone();
+                                this.change_all(cx, move |s| {
+                                    if let Some(r) = s.readiness.get_mut(&id) {
+                                        r.submit();
+                                    }
+                                })
+                            })),
+                        )
+                    })
+                    .child(Self::button(format!("rescout-{issue_id}"), "Scout Again", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        let iid = iid.clone();
+                        this.change_all(cx, move |s| {
+                            s.readiness.remove(&iid);
+                        })
+                    }))),
+            );
             body = body.child(card);
+        }
+        if submitted_count > 0 {
+            body = body.child(Self::button("show-submitted", if self.show_submitted { format!("Hide Submitted ({submitted_count})") } else { format!("Show Submitted ({submitted_count})") }, false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.show_submitted = !this.show_submitted;
+                cx.notify();
+            })));
         }
         body.into_any_element()
     }

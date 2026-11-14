@@ -281,9 +281,29 @@ pub struct Readiness {
     pub scouted_at: Option<DateTime<Utc>>,
     #[serde(default)]
     pub error: Option<String>,
+    /// Submitted from Waiting on you: decided, off the list.
+    #[serde(default)]
+    pub submitted: bool,
+    /// Blockers submitted without clearing, told to the session as known.
+    #[serde(default)]
+    pub acknowledged: Vec<String>,
 }
 
 impl Readiness {
+    /// Submit: what's unanswered takes the recommended option (or "your
+    /// call"), blockers left become known ones for the session, and it's
+    /// ready.
+    pub fn submit(&mut self) {
+        for d in &mut self.decisions {
+            if d.answer.is_none() {
+                d.answer = Some(d.recommended.and_then(|r| d.options.get(r)).map(|o| o.0.clone()).unwrap_or_else(|| "Your call".into()));
+            }
+        }
+        self.acknowledged.append(&mut self.blockers);
+        self.submitted = true;
+        self.state = "ready".into();
+    }
+
     /// Ready once every decision has an answer and nothing blocks it.
     pub fn settle(&mut self) {
         if self.state == "scouting" || self.state == "failed" {
@@ -312,6 +332,12 @@ impl Readiness {
         let made: Vec<String> = self.decisions.iter().filter_map(|d| Some(format!("- {}: {}", d.question, d.answer.as_ref()?))).collect();
         if !made.is_empty() {
             out.push_str(&format!("\n### Decisions made\n\n{}\n", made.join("\n")));
+        }
+        if !self.acknowledged.is_empty() {
+            out.push_str(&format!(
+                "\n### Known blockers\n\nThe scout found these and they were accepted as they are: work around them, and say in the pull request how.\n\n{}\n",
+                self.acknowledged.iter().map(|b| format!("- {b}")).collect::<Vec<_>>().join("\n")
+            ));
         }
         out
     }
@@ -501,6 +527,7 @@ pub fn scout(harness: &std::path::Path, issue: &IssueRef) -> Readiness {
                 blockers: v["blockers"].as_array().into_iter().flatten().filter_map(|b| b.as_str().map(str::to_string)).collect(),
                 scouted_at: Some(now),
                 error: None,
+                ..Default::default()
             };
             r.settle();
             r
