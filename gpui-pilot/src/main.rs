@@ -43,10 +43,9 @@ mod work;
 mod zed;
 
 use gpui::{
-    actions, point, px, size, App, AppContext, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions,
-    WindowBounds, WindowOptions,
+    actions, App, AppContext, KeyBinding, Menu, MenuItem,
 };
-use shell::{CloseTab, NewAsk, Refresh, ToggleSync, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
+use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
 
 actions!(pilot, [Quit]);
 
@@ -167,6 +166,8 @@ fn main() {
                     MenuItem::action("New Quick Change", NewQuickChange),
                     MenuItem::action("New Plan", NewPlan),
                     MenuItem::separator(),
+                    MenuItem::action("New Window", NewWindow),
+                    MenuItem::separator(),
                     MenuItem::action("Switch Org", OpenSwitcher),
                     MenuItem::separator(),
                     MenuItem::action("Close Tab", CloseTab),
@@ -186,18 +187,8 @@ fn main() {
             },
         ]);
 
-        let bounds = Bounds::centered(None, size(px(1440.), px(940.)), cx);
         let workspace = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                // The app draws its own title bar, with the traffic lights over it.
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Gannin".into()),
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(14.), px(12.))),
-                }),
-                ..Default::default()
-            },
+            shell::window_options(cx),
             |window, cx| {
                 // Where it was left, unless the command line says otherwise.
                 let mut saved = state::SavedState::load();
@@ -207,14 +198,23 @@ fn main() {
                 if let Some(days) = days {
                     saved.ci.days = days;
                 }
-                cx.new(|cx| Workspace::new(saved, window, cx))
+                cx.new(|cx| Workspace::new(saved, 0, window, cx))
             },
         )
         .expect("open the window");
-        // Quit asks first while sessions run.
+        // The other windows that were open come back too.
+        Workspace::reopen_windows(cx);
+        let _ = workspace;
+        // Quit asks first while sessions run, in any window.
         cx.on_action(move |_: &Quit, cx| {
-            if workspace.update(cx, |workspace, window, cx| workspace.quit(window, cx)).is_err() {
-                cx.quit();
+            let window = cx.active_window().and_then(|w| w.downcast::<Workspace>()).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));
+            match window {
+                Some(window) => {
+                    if window.update(cx, |workspace, window, cx| workspace.quit(window, cx)).is_err() {
+                        cx.quit();
+                    }
+                }
+                None => cx.quit(),
             }
         });
         cx.on_window_closed(|cx, _| {

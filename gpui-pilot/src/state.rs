@@ -108,22 +108,51 @@ impl Default for SavedState {
     }
 }
 
-fn path() -> PathBuf {
+fn folder() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Application Support/GanninGPUIPilot/state.json")
+    home.join("Library/Application Support/GanninGPUIPilot")
+}
+
+/// A window's state: the first window's is state.json, others' state-<n>.json.
+fn path_for(slot: usize) -> PathBuf {
+    folder().join(if slot == 0 { "state.json".to_string() } else { format!("state-{slot}.json") })
+}
+
+/// The windows besides the first that were open, by their slot.
+pub fn extra_slots() -> Vec<usize> {
+    let mut slots: Vec<usize> = std::fs::read_dir(folder())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| e.file_name().to_str()?.strip_prefix("state-")?.strip_suffix(".json")?.parse().ok())
+        .filter(|&n: &usize| n > 0)
+        .collect();
+    slots.sort();
+    slots
+}
+
+/// A closed window's state goes, so it doesn't open again.
+pub fn remove_slot(slot: usize) {
+    if slot > 0 {
+        let _ = std::fs::remove_file(path_for(slot));
+    }
 }
 
 impl SavedState {
     /// The last state saved, or the defaults when there's none or it can't
     /// be read.
     pub fn load() -> Self {
-        std::fs::read(path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+        Self::load_slot(0)
+    }
+
+    pub fn load_slot(slot: usize) -> Self {
+        std::fs::read(path_for(slot)).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
     }
 
     /// Writes to a temporary file and moves it over, so a half-written file
     /// is never read back.
-    pub fn save(&self) {
-        let path = path();
+    pub fn save_slot(&self, slot: usize) {
+        let path = path_for(slot);
         let Ok(json) = serde_json::to_vec_pretty(self) else { return };
         if let Some(folder) = path.parent() {
             let _ = std::fs::create_dir_all(folder);

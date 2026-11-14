@@ -19,7 +19,7 @@ use crate::metrics::RepoStats;
 use crate::page::{ActionsPage, OpenRepo};
 use crate::session::{self, Changed, Kind, SessionPage, State};
 use crate::prs::{OpenPr, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs};
-use crate::state::{CiSaved, SavedState, SavedTab};
+use crate::state::{remove_slot, CiSaved, SavedState, SavedTab};
 use crate::work::{self, Pr, Work};
 use gpui::{
     actions, anchored, Focusable, black, deferred, div, ease_out_quint, prelude::*, px, relative, Animation, AnimationExt, AnyElement, ClickEvent, Context, App, Entity, FocusHandle, FontWeight, KeyBinding,
@@ -29,7 +29,7 @@ use gpui::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher]);
+actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, NewWindow]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
@@ -38,6 +38,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-t", NewClaudeSession, None),
         KeyBinding::new("ctrl-`", NewTerminal, None),
         KeyBinding::new("cmd-w", CloseTab, None),
+        KeyBinding::new("cmd-shift-n", NewWindow, None),
         KeyBinding::new("cmd-shift-right", NextTab, None),
         KeyBinding::new("cmd-shift-left", PreviousTab, None),
         KeyBinding::new("cmd-shift-]", NextTab, None),
@@ -216,6 +217,19 @@ fn sections() -> Vec<Section> {
         // The pilot's own: states to refine a UI against before it's wired.
         Section { id: "previews", title: Some("Previews"), rows: vec![Item(WorkPreview)] },
     ]
+}
+
+/// The orgs being synced now, by any window.
+static SYNCING: std::sync::Mutex<std::collections::BTreeSet<String>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// The window every Gannin window opens with: its own title bar, with the
+/// traffic lights over it.
+pub fn window_options(cx: &App) -> gpui::WindowOptions {
+    gpui::WindowOptions {
+        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(1440.), px(940.)), cx))),
+        titlebar: Some(gpui::TitlebarOptions { title: Some("Gannin".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(px(14.), px(12.))) }),
+        ..Default::default()
+    }
 }
 
 /// What a tab is, for its icon and the tab bar's filter; in the order
@@ -429,6 +443,8 @@ pub struct Workspace {
     tab_filter_open: bool,
     /// Kinds whose group of tabs is folded away.
     collapsed_kinds: std::collections::HashSet<TabKind>,
+    /// Which window this is, for where its state is saved (0 is the first).
+    slot: usize,
     /// Sessions being reopened at launch, which open without switching,
     /// but for the one that was showing (by its launch).
     reopening: usize,
@@ -528,28 +544,44 @@ impl Workspace {
         }
         let state = self.snapshot(cx);
         if self.last_saved.as_ref() != Some(&state) {
-            state.save();
+            state.save_slot(self.slot);
             self.last_saved = Some(state);
         }
     }
 
-    pub fn new(saved: SavedState, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        // The window's close button is a quit (it's the only window), so it
-        // asks the same way.
+    pub fn new(saved: SavedState, slot: usize, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // Closing a window with sessions running asks first, as they end
+        // with it; a closed window (but the first) doesn't open again.
         let this = cx.entity().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             let Some(this) = this.upgrade() else { return true };
-            let running = !this.read(cx).running(cx).is_empty();
-            if running {
-                this.update(cx, |this, cx| this.quit(window, cx));
+            let running = this.read(cx).running(cx);
+            if running.is_empty() {
+                remove_slot(slot);
+                return true;
             }
-            !running
+            let message = match running.len() {
+                1 => "Close this window and end the session that's running in it?".to_string(),
+                n => format!("Close this window and end the {n} sessions running in it?"),
+            };
+            let detail = Self::ending_detail(&running, cx);
+            let answer = window.prompt(gpui::PromptLevel::Warning, &message, Some(&detail), &["Close Window", "Cancel"], cx);
+            window
+                .spawn(cx, async move |cx| {
+                    if answer.await == Ok(0) {
+                        remove_slot(slot);
+                        cx.update(|window, _| window.remove_window()).ok();
+                    }
+                })
+                .detach();
+            false
         });
         let views = Self::saved_views(&saved);
         let sessions = saved.sessions.clone();
         let active_session = saved.active_session.clone();
         let active = saved.active;
         let mut workspace = Self::build(saved, window, cx);
+        workspace.slot = slot;
         for view in &views {
             let tab = workspace.make_tab(view.nav, Some(view), window, cx);
             workspace.tabs.push(tab);
@@ -708,6 +740,7 @@ impl Workspace {
             pr_picker: None,
             explain: None,
             reopening: 0,
+            slot: 0,
             show_on_reopen: None,
             tab_filter_open: false,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
@@ -1364,6 +1397,10 @@ impl Workspace {
             return;
         }
         let Some(org) = org.or_else(|| self.org.clone()) else { return };
+        // Two windows on one org sync it once.
+        if !SYNCING.lock().map(|mut s| s.insert(org.clone())).unwrap_or(false) {
+            return;
+        }
         let viewer = self.viewer.as_ref().map(|v| v.login.clone());
         self.sync.running = true;
         self.sync.error = None;
@@ -1399,6 +1436,9 @@ impl Workspace {
                     crate::sync::sync_org(&token, &synced_org, viewer.as_deref(), full, options, &progress)
                 })
                 .await;
+            if let Ok(mut syncing) = SYNCING.lock() {
+                syncing.remove(&org);
+            }
             this.update(cx, |this, cx| {
                 this.sync.running = false;
                 let result = result.map_err(|e| e.to_string());
@@ -2256,9 +2296,43 @@ impl Workspace {
         .detach();
     }
 
+    /// New Window: another window, on this one's org, to pick its own
+    /// project; it opens again after a relaunch until it's closed.
+    fn new_window(&mut self, cx: &mut Context<Self>) {
+        let open: Vec<usize> = cx.windows().into_iter().filter_map(|h| h.downcast::<Workspace>()).filter_map(|h| h.read(cx).ok().map(|w| w.slot)).chain(std::iter::once(self.slot)).collect();
+        let slot = open.iter().chain(crate::state::extra_slots().iter()).max().copied().unwrap_or(0) + 1;
+        let saved = SavedState { org: self.org.clone(), ..SavedState::default() };
+        let options = window_options(cx);
+        let opened = cx.open_window(options, move |window, cx| cx.new(|cx| Workspace::new(saved, slot, window, cx)));
+        if let Ok(handle) = opened {
+            handle.update(cx, |workspace, window, cx| workspace.open_switcher(Pick::Project, window, cx)).ok();
+        }
+    }
+
+    /// Opens the windows besides the first that were open when it quit.
+    pub fn reopen_windows(cx: &mut App) {
+        for slot in crate::state::extra_slots() {
+            let saved = SavedState::load_slot(slot);
+            let options = window_options(cx);
+            let _ = cx.open_window(options, move |window, cx| cx.new(|cx| Workspace::new(saved, slot, window, cx)));
+        }
+    }
+
     /// Quitting with sessions running asks first, as Gannin's quit guard does.
     pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let running = self.running(cx);
+        // Every window's sessions end with the app.
+        let mut running = self.running(cx);
+        let own = window.window_handle();
+        for handle in cx.windows() {
+            if handle == own {
+                continue;
+            }
+            if let Some(other) = handle.downcast::<Workspace>() {
+                if let Ok(workspace) = other.read(cx) {
+                    running.extend(workspace.running(cx));
+                }
+            }
+        }
         if running.is_empty() {
             return cx.quit();
         }
@@ -3252,7 +3326,9 @@ impl Workspace {
                                 }))
                                 .child(item("new-menu-plan", "New Plan", None, |this, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
                                 .child(div().my_1().h(px(1.)).bg(theme.border))
-                                .child(item("new-menu-review", "Review a Pull Request", None, |this, window, cx| this.open_pr_picker(window, cx))),
+                                .child(item("new-menu-review", "Review a Pull Request", None, |this, window, cx| this.open_pr_picker(window, cx)))
+                                .child(div().my_1().h(px(1.)).bg(theme.border))
+                                .child(item("new-menu-window", "New Window", Some("⇧⌘N"), |this, _, cx| this.new_window(cx))),
                         ),
                     )
                     .with_priority(2),
@@ -4921,6 +4997,7 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &NewQuickChange, window, cx| this.open_form(crate::launch::Flow::QuickChange, None, window, cx)))
             .on_action(cx.listener(|this, _: &NewPlan, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_tab(this.active, window, cx)))
+            .on_action(cx.listener(|this, _: &NewWindow, _, cx| this.new_window(cx)))
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.step_tab(1, window, cx)))
             .on_action(cx.listener(|this, _: &PreviousTab, window, cx| this.step_tab(-1, window, cx)))
             .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Org, window, cx)))
