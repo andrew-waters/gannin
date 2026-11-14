@@ -172,8 +172,8 @@ impl SessionPage {
             .as_ref()
             .filter(|l| l.flow == crate::launch::Flow::Review)
             .map(|l| {
-                let (launch, terminal) = (l.clone(), terminal.clone());
-                cx.new(|cx| crate::review_panel::ReviewPanel::new(launch, terminal, cx))
+                let (launch, terminal, terminal_view) = (l.clone(), terminal.clone(), gpui::AnyView::from(view.clone()));
+                cx.new(|cx| crate::review_panel::ReviewPanel::new(launch, terminal, terminal_view, window, cx))
             });
         let planning = launch.as_ref().filter(|l| l.flow == crate::launch::Flow::Plan).map(|l| {
             let (launch, terminal) = (l.clone(), terminal.clone());
@@ -370,7 +370,8 @@ impl Render for SessionPage {
                     }))
             })
             .child(div().flex_1())
-            .child(self.switch(&theme, cx));
+            // A review lays out its own conversation pane, so has no switch.
+            .when(self.review.is_none(), |d| d.child(self.switch(&theme, cx)));
         let terminal = div().flex_1().min_w_0().h_full().child(self.view.clone());
         let changes = div().flex_1().min_w_0().h_full().map(|d| match (&self.review, &self.planning) {
             (Some(review), _) => d.child(review.clone()),
@@ -384,6 +385,7 @@ impl Render for SessionPage {
             .bg(theme.bg)
             .child(header)
             .child(div().flex_1().min_h_0().flex().flex_row().map(|d| match self.show {
+                _ if self.review.is_some() => d.child(changes),
                 Show::Terminal => d.child(terminal),
                 Show::Changes => d.child(changes),
                 Show::Both => d.child(terminal).child(div().w(px(1.)).h_full().bg(theme.border)).child(changes),

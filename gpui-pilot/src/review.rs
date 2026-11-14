@@ -48,7 +48,50 @@ pub struct ReviewResult {
     pub verdict: Option<String>,
     pub effort: Option<i64>,
     pub findings: Vec<Finding>,
-    pub walkthrough: Vec<(String, Option<String>, Vec<String>)>,
+    /// The change in areas, in the order to read them.
+    pub walkthrough: Vec<Area>,
+    /// What happens when the changed code runs, step by step.
+    pub flow: Vec<String>,
+    /// Review threads claude says are now dealt with.
+    pub resolved: Vec<String>,
+    /// The team's learnings that shaped this review.
+    pub applied: Vec<Applied>,
+    /// Explanations people gave in the PR that later reviews should know.
+    pub learnings: Vec<Suggested>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Area {
+    pub title: String,
+    pub summary: Option<String>,
+    pub files: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Applied {
+    pub learning: String,
+    pub path: Option<String>,
+    pub line: Option<i64>,
+    pub note: String,
+    pub concern: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Suggested {
+    pub path: String,
+    pub line: Option<i64>,
+    pub end_line: Option<i64>,
+    pub rule: String,
+    pub reason: Option<String>,
+    pub source: Option<String>,
+    pub author: Option<String>,
+}
+
+impl ReviewResult {
+    /// The area a file is in, by its index, else None.
+    pub fn area_of(&self, path: &str) -> Option<usize> {
+        self.walkthrough.iter().position(|a| a.files.iter().any(|f| f == path))
+    }
 }
 
 /// Claude's transcript for a session, wherever its project folder is.
@@ -100,11 +143,11 @@ pub fn parse(reply: &str) -> Option<ReviewResult> {
             areas
                 .iter()
                 .filter_map(|a| {
-                    Some((
-                        a["title"].as_str()?.to_string(),
-                        text(&a["summary"]),
-                        a["files"].as_array().map(|f| f.iter().filter_map(|p| p.as_str().map(str::to_string)).collect()).unwrap_or_default(),
-                    ))
+                    Some(Area {
+                        title: a["title"].as_str()?.to_string(),
+                        summary: text(&a["summary"]),
+                        files: a["files"].as_array().map(|f| f.iter().filter_map(|p| p.as_str().map(str::to_string)).collect()).unwrap_or_default(),
+                    })
                 })
                 .collect()
         })
@@ -116,6 +159,42 @@ pub fn parse(reply: &str) -> Option<ReviewResult> {
         effort: value["effort"].as_i64().map(|e| e.clamp(1, 5)),
         findings,
         walkthrough,
+        flow: value["flow"].as_array().map(|a| a.iter().filter_map(text).collect()).unwrap_or_default(),
+        resolved: value["resolved"].as_array().map(|a| a.iter().filter_map(text).collect()).unwrap_or_default(),
+        applied: value["applied"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|l| {
+                        Some(Applied {
+                            learning: l["learning"].as_str()?.to_string(),
+                            path: text(&l["path"]),
+                            line: l["line"].as_i64(),
+                            note: l["note"].as_str().unwrap_or_default().to_string(),
+                            concern: text(&l["concern"]),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        learnings: value["learnings"]
+            .as_array()
+            .map(|a| {
+                a.iter()
+                    .filter_map(|l| {
+                        Some(Suggested {
+                            path: l["path"].as_str()?.to_string(),
+                            line: l["line"].as_i64(),
+                            end_line: l["end_line"].as_i64(),
+                            rule: l["rule"].as_str()?.to_string(),
+                            reason: text(&l["reason"]),
+                            source: text(&l["source"]),
+                            author: text(&l["author"]),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 

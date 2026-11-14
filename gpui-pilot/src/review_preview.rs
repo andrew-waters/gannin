@@ -143,6 +143,7 @@ impl ReviewPreview {
             _ => review::parse(FINDINGS),
         };
         let idle = !matches!(state, State::Reviewing | State::Ended);
+        let working = state == State::Reviewing;
         let own = state == State::PostOwn;
         let post = match state {
             State::PostReady | State::PostOwn => result.as_ref().map(|r| ReviewPanel::ready(r, &HashSet::new(), Arc::new(snapshot(own)), window, cx)),
@@ -151,7 +152,7 @@ impl ReviewPreview {
             State::PostFailed => Some(Post::Failed("GitHub refused the review (422): the commit it's for is no longer the head of the pull request.".into())),
             _ => None,
         };
-        cx.new(|_| ReviewPanel::preview(REPO, NUMBER, result, idle, snapshot(own), post))
+        cx.new(|cx| ReviewPanel::preview(REPO, NUMBER, result, idle, working, snapshot(own), post, window, cx))
     }
 
     fn pick(&mut self, state: State, window: &mut Window, cx: &mut Context<Self>) {

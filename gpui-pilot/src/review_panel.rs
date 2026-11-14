@@ -1,14 +1,19 @@
-//! A review session's findings beside its terminal, as Gannin's review tab:
-//! the headline, verdict and summary, each finding to keep or dismiss,
-//! Review Again, and Post Review, whose sheet shows exactly what would go
-//! to GitHub and posts only when the person clicks Post to GitHub.
+//! A review session, laid out as Gannin's review tab: a header with the
+//! verdict, how ready it is to merge and the effort; the files in the
+//! walkthrough's areas down the side, with Overview, findings not on a
+//! changed file and learnings above them; the selected one's detail beside
+//! it; and the conversation with claude (its terminal and a box to tell it
+//! something) in a pane along the bottom, shown while claude works.
+//!
+//! Post Review's sheet shows exactly what would go to GitHub and posts only
+//! when the person clicks Post to GitHub.
 
 use crate::charts::Theme;
 use crate::launch::Launch;
 use crate::markdown::markdown;
-use crate::review::{self, Draft, ReviewResult, Snapshot};
-use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, FontWeight, Hsla, SharedString, Task, Window};
-use std::collections::HashSet;
+use crate::review::{self, Draft, Finding, ReviewResult, Snapshot};
+use gpui::{div, prelude::*, px, AnyView, ClickEvent, Context, Entity, Focusable, FontWeight, Hsla, KeyDownEvent, SharedString, Task, Window};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 use terminal::Terminal;
@@ -25,20 +30,72 @@ pub enum Post {
 /// Where a panel's review comes from: a live session, or the Review
 /// Preview's made-up one, which never runs claude or calls GitHub.
 enum Source {
-    Live { launch: Launch, terminal: Entity<Terminal> },
-    Preview { repo: String, number: i64, url: String, idle: bool, snapshot: Arc<Snapshot> },
+    Live { launch: Launch, terminal: Entity<Terminal>, view: AnyView },
+    Preview { repo: String, number: i64, url: String, idle: bool, working: bool, snapshot: Arc<Snapshot> },
+}
+
+/// What the detail column shows.
+#[derive(Clone, PartialEq)]
+enum Selected {
+    Overview,
+    /// Findings on files the walkthrough doesn't list.
+    General,
+    Learnings,
+    File(String),
 }
 
 pub struct ReviewPanel {
     source: Source,
     result: Option<ReviewResult>,
     dismissed: HashSet<String>,
+    /// A finding's text as the person rewrote it, by the finding's key.
+    edits: HashMap<String, String>,
+    /// The finding being edited, and its editor.
+    editing: Option<(String, Entity<editor::Editor>)>,
+    selected: Selected,
+    /// The Conversation pane, once the person has toggled it; until then it
+    /// follows claude (shown while it works or before a result).
+    conversation: Option<bool>,
+    composer: Entity<editor::Editor>,
     post: Option<Post>,
     _poll: Option<Task<()>>,
 }
 
+fn severity_tint(severity: Option<&str>, theme: &Theme) -> Hsla {
+    match severity {
+        Some("blocker") => theme.critical(),
+        Some("major") => theme.orange(),
+        Some("minor") => gpui::rgb(0xEDA100).into(),
+        _ => theme.secondary,
+    }
+}
+
+fn plural(n: usize, one: &str, many: &str) -> String {
+    format!("{n} {}", if n == 1 { one } else { many })
+}
+
+fn capitalised(text: &str) -> String {
+    let mut chars = text.chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
+fn file_name(path: &str) -> (&str, &str) {
+    match path.rsplit_once('/') {
+        Some((folder, name)) => (name, folder),
+        None => (path, ""),
+    }
+}
+
 impl ReviewPanel {
-    pub fn new(launch: Launch, terminal: Entity<Terminal>, cx: &mut Context<Self>) -> Self {
+    fn composer(window: &mut Window, cx: &mut Context<Self>) -> Entity<editor::Editor> {
+        cx.new(|cx| {
+            let mut editor = editor::Editor::single_line(window, cx);
+            editor.set_placeholder_text("Tell claude something", window, cx);
+            editor
+        })
+    }
+
+    pub fn new(launch: Launch, terminal: Entity<Terminal>, view: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let claude_id = launch.claude_id();
         // The transcript is read again every few seconds, off the main
         // thread, until a result is there and whenever it may have changed.
@@ -58,16 +115,44 @@ impl ReviewPanel {
             }
             cx.background_executor().timer(Duration::from_secs(4)).await;
         });
-        Self { source: Source::Live { launch, terminal }, result: None, dismissed: HashSet::new(), post: None, _poll: Some(poll) }
+        Self {
+            source: Source::Live { launch, terminal, view },
+            result: None,
+            dismissed: HashSet::new(),
+            edits: HashMap::new(),
+            editing: None,
+            selected: Selected::Overview,
+            conversation: None,
+            composer: Self::composer(window, cx),
+            post: None,
+            _poll: Some(poll),
+        }
     }
 
     /// A panel showing a made-up review in one state, for the Review
-    /// Preview. `idle` is whether claude would be waiting for the person.
-    pub fn preview(repo: &str, number: i64, result: Option<ReviewResult>, idle: bool, snapshot: Snapshot, post: Option<Post>) -> Self {
+    /// Preview. `idle` is whether claude would be waiting for the person,
+    /// `working` whether it's busy.
+    #[allow(clippy::too_many_arguments)]
+    pub fn preview(
+        repo: &str,
+        number: i64,
+        result: Option<ReviewResult>,
+        idle: bool,
+        working: bool,
+        snapshot: Snapshot,
+        post: Option<Post>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
-            source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, snapshot: Arc::new(snapshot) },
+            source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, working, snapshot: Arc::new(snapshot) },
             result,
             dismissed: HashSet::new(),
+            edits: HashMap::new(),
+            editing: None,
+            selected: Selected::Overview,
+            conversation: None,
+            composer: Self::composer(window, cx),
             post,
             _poll: None,
         }
@@ -80,6 +165,13 @@ impl ReviewPanel {
         }
     }
 
+    fn title(&self) -> Option<String> {
+        match &self.source {
+            Source::Live { launch, .. } => launch.subject.as_ref().map(|s| s.title.clone()).filter(|t| !t.is_empty()),
+            Source::Preview { .. } => Some("Idempotency keys for payments".into()),
+        }
+    }
+
     fn url(&self) -> String {
         match &self.source {
             Source::Live { launch, .. } => launch.subject.as_ref().map(|s| s.url.clone()).unwrap_or_default(),
@@ -87,35 +179,121 @@ impl ReviewPanel {
         }
     }
 
-    /// Whether claude is waiting for the person, so Review Again can go.
-    fn idle(&self) -> bool {
+    /// Where claude is: working, needs-you, idle, or ended (None when it
+    /// hasn't said).
+    fn claude_state(&self) -> Option<String> {
         match &self.source {
-            Source::Live { launch, .. } => matches!(launch.state().as_deref(), Some("idle")),
-            Source::Preview { idle, .. } => *idle,
+            Source::Live { launch, .. } => launch.state(),
+            Source::Preview { idle, working, .. } => Some(if *working { "working" } else if *idle { "idle" } else { "exited" }.into()),
         }
     }
 
-    /// Asks claude to review it afresh, as Gannin's Review Again.
-    fn review_again(&mut self, cx: &mut Context<Self>) {
-        if let Source::Live { terminal, .. } = &self.source {
-            terminal.update(cx, |terminal, _| {
-                terminal.paste(crate::launch::REVIEW_AGAIN);
-                terminal.input(b"\r".to_vec());
-            });
+    /// Whether claude is waiting for the person, so Review Again can go.
+    fn idle(&self) -> bool {
+        self.claude_state().as_deref() == Some("idle")
+    }
+
+    fn working(&self) -> bool {
+        !matches!(self.claude_state().as_deref(), Some("idle") | Some("exited") | Some("stopped") | Some("needs-you"))
+    }
+
+    fn running(&self) -> bool {
+        !matches!(self.claude_state().as_deref(), Some("exited") | Some("stopped"))
+    }
+
+    fn shows_conversation(&self) -> bool {
+        self.conversation.unwrap_or(self.result.is_none() || self.working())
+    }
+
+    /// The findings as they'd go out: dismissed ones left out, edited ones
+    /// with the person's text.
+    fn kept(&self) -> Option<ReviewResult> {
+        let mut result = self.result.clone()?;
+        result.findings = result
+            .findings
+            .into_iter()
+            .filter(|f| !self.dismissed.contains(&f.key()))
+            .map(|mut f| {
+                if let Some(text) = self.edits.get(&f.key()) {
+                    f.comment = text.clone();
+                }
+                f
+            })
+            .collect();
+        Some(result)
+    }
+
+    /// Findings on files the walkthrough doesn't list: those go in the
+    /// review's body.
+    fn general(&self) -> Vec<Finding> {
+        let Some(result) = &self.result else { return Vec::new() };
+        result.findings.iter().filter(|f| result.area_of(&f.path).is_none()).cloned().collect()
+    }
+
+    /// Sends text to claude as one message.
+    fn tell(&mut self, text: String, window: &mut Window, cx: &mut Context<Self>) {
+        let Source::Live { terminal, .. } = &self.source else { return };
+        let terminal = terminal.clone();
+        cx.spawn_in(window, async move |_, cx| {
+            terminal.update(cx, |t, _| t.paste(&text));
+            cx.background_executor().timer(Duration::from_millis(150)).await;
+            terminal.update(cx, |t, _| t.input(b"\r".to_vec()));
+        })
+        .detach();
+        self.conversation = Some(true);
+        cx.notify();
+    }
+
+    fn send_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.composer.read(cx).text(cx).trim().to_string();
+        if text.is_empty() {
+            return;
         }
+        self.composer.update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.tell(text, window, cx);
+    }
+
+    /// Asks claude to review it afresh, as Gannin's Review Again.
+    fn review_again(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.tell(crate::launch::REVIEW_AGAIN.to_string(), window, cx);
+    }
+
+    fn start_edit(&mut self, finding: &Finding, window: &mut Window, cx: &mut Context<Self>) {
+        let key = finding.key();
+        let text = self.edits.get(&key).cloned().unwrap_or_else(|| finding.comment.clone());
+        let editor = cx.new(|cx| {
+            let mut editor = editor::Editor::auto_height(3, 12, window, cx);
+            editor.set_text(text, window, cx);
+            editor
+        });
+        window.focus(&editor.focus_handle(cx), cx);
+        self.editing = Some((key, editor));
+        cx.notify();
+    }
+
+    /// Keeps the edit; the original text clears it.
+    fn save_edit(&mut self, original: &str, cx: &mut Context<Self>) {
+        let Some((key, editor)) = self.editing.take() else { return };
+        let text = editor.read(cx).text(cx).trim().to_string();
+        if text.is_empty() || text == original {
+            self.edits.remove(&key);
+        } else {
+            self.edits.insert(key, text);
+        }
+        cx.notify();
     }
 
     /// Opens the sheet: the PR, its files and what's been said, fetched now.
     fn open_post(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(result) = self.result.clone() else { return };
+        let Some(result) = self.kept() else { return };
+        let none = HashSet::new();
         if let Source::Preview { snapshot, .. } = &self.source {
-            self.post = Some(Self::ready(&result, &self.dismissed, snapshot.clone(), window, cx));
+            self.post = Some(Self::ready(&result, &none, snapshot.clone(), window, cx));
             cx.notify();
             return;
         }
         self.post = Some(Post::Loading);
         let (repo, number) = self.subject();
-        let dismissed = self.dismissed.clone();
         cx.notify();
         cx.spawn_in(window, async move |this, cx| {
             let fetched = cx
@@ -127,7 +305,7 @@ impl ReviewPanel {
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.post = Some(match fetched {
-                    Ok(snapshot) => Self::ready(&result, &dismissed, Arc::new(snapshot), window, cx),
+                    Ok(snapshot) => Self::ready(&result, &HashSet::new(), Arc::new(snapshot), window, cx),
                     Err(error) => Post::Failed(error),
                 });
                 cx.notify();
@@ -136,7 +314,6 @@ impl ReviewPanel {
         })
         .detach();
     }
-
     /// The sheet ready to post: the draft from the findings kept, and the
     /// event the verdict suggests.
     pub fn ready(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: Arc<Snapshot>, window: &mut Window, cx: &mut gpui::App) -> Post {
@@ -193,13 +370,681 @@ impl ReviewPanel {
         .detach();
     }
 
-    fn severity_tint(severity: Option<&str>, theme: &Theme) -> Hsla {
-        match severity {
-            Some("blocker") => theme.critical(),
-            Some("major") => theme.orange(),
-            Some("minor") => gpui::rgb(0xEDA100).into(),
-            _ => theme.secondary,
+
+    // MARK: Pieces
+
+    /// How ready it is to merge, from the findings still kept: the sentence
+    /// and its colour, as Gannin's readiness line.
+    fn readiness(&self, theme: &Theme) -> (String, Hsla) {
+        let Some(result) = &self.result else {
+            return ("Ready once the reviewer has finished".into(), theme.blue());
+        };
+        let kept: Vec<&Finding> = result.findings.iter().filter(|f| !self.dismissed.contains(&f.key())).collect();
+        let count = |s: &str| kept.iter().filter(|f| f.severity.as_deref() == Some(s)).count();
+        let (blockers, majors) = (count("blocker"), count("major"));
+        let minor = kept.len() - blockers - majors;
+        if blockers > 0 {
+            (format!("Can't merge: {}", plural(blockers, "blocker", "blockers")), theme.critical())
+        } else if majors > 0 {
+            (format!("Not ready: {} to fix", plural(majors, "major point", "major points")), theme.orange())
+        } else if self.working() {
+            ("Ready once the reviewer has finished".into(), theme.blue())
+        } else if minor > 0 {
+            (format!("Ready to merge, with {}", plural(minor, "minor point", "minor points")), theme.good())
+        } else {
+            ("Ready to merge".into(), theme.good())
         }
+    }
+
+    fn effort_meter(effort: i64, theme: &Theme) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1p5()
+            .child(div().text_xs().text_color(theme.secondary).child("Effort"))
+            .child(div().flex().flex_row().gap(px(2.)).children((1..=5).map(|i| {
+                div().w(px(8.)).h(px(10.)).rounded(px(1.5)).bg(if i <= effort { theme.selected } else { theme.secondary.opacity(0.25) })
+            })))
+    }
+
+    fn verdict_pill(verdict: Option<&str>, theme: &Theme) -> impl IntoElement {
+        let (label, tint) = match verdict {
+            Some("approve") => ("Approve", theme.good()),
+            Some("request_changes") => ("Request changes", theme.critical()),
+            _ => ("Comment", theme.secondary),
+        };
+        div().flex_none().px_2().py(px(3.)).rounded_full().text_xs().font_weight(FontWeight::SEMIBOLD).bg(tint.opacity(0.18)).text_color(tint).child(label)
+    }
+
+    /// Where claude is, for the header.
+    fn status(&self, theme: &Theme) -> (String, Hsla) {
+        match self.claude_state().as_deref() {
+            Some("exited") | Some("stopped") => ("Not running".into(), theme.secondary),
+            Some("needs-you") => ("Needs you".into(), theme.orange()),
+            _ if self.working() => (if self.result.is_some() { "Reviewing again".into() } else { "Reading the PR".into() }, theme.secondary),
+            _ if self.result.is_some() => ("Review ready".into(), theme.good()),
+            _ => (String::new(), theme.secondary),
+        }
+    }
+
+    fn header(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let (repo, number) = self.subject();
+        let url = self.url();
+        let link = url.clone();
+        let has_result = self.result.is_some();
+        let can_again = self.idle() && has_result;
+        let (status, status_tint) = self.status(theme);
+        let (ready, ready_tint) = self.readiness(theme);
+        let shown = self.shows_conversation();
+        let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
+        div()
+            .flex_none()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .px_4()
+            .py_3()
+            .bg(theme.sidebar)
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .child(
+                                div()
+                                    .id("review-title")
+                                    .text_lg()
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .cursor_pointer()
+                                    .hover(|s| s.text_color(theme.selected))
+                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&link)))
+                                    .child(title),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .text_sm()
+                                    .text_color(theme.secondary)
+                                    .child(format!("{repo}#{number}"))
+                                    .when(!status.is_empty(), |d| d.child(div().text_color(status_tint).child(status))),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .when(self.running(), |d| {
+                                d.child(Self::button("review-conversation", "Conversation", false, true, theme).when(shown, |b| b.bg(theme.row_selected)).on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _, cx| {
+                                        this.conversation = Some(!shown);
+                                        cx.notify();
+                                    },
+                                )))
+                            })
+                            .child(Self::button("review-github", "Open on GitHub", false, true, theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                            .child(Self::button("review-again", "Review Again", false, can_again, theme).when(can_again, |d| {
+                                d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx)))
+                            }))
+                            .child(Self::button("review-post", "Post Review", true, has_result, theme).when(has_result, |d| {
+                                d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .when_some(self.result.as_ref(), |d, r| d.child(Self::verdict_pill(r.verdict.as_deref(), theme)))
+                    .child(
+                        div()
+                            .id("review-readiness")
+                            .text_sm()
+                            .font_weight(FontWeight::MEDIUM)
+                            .text_color(ready_tint)
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.selected = Selected::Overview;
+                                cx.notify();
+                            }))
+                            .child(ready),
+                    )
+                    .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| d.child(Self::effort_meter(e, theme))),
+            )
+    }
+
+    /// A row in the file list.
+    fn list_row(&self, id: SharedString, selected: Selected, label: String, detail: Option<String>, badge: Option<(usize, Hsla)>, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let on = self.selected == selected;
+        div()
+            .id(id)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1()
+            .rounded_md()
+            .cursor_pointer()
+            .when(on, |d| d.bg(theme.row_selected))
+            .when(!on, |d| d.hover(|s| s.bg(theme.row_selected.opacity(0.5))))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.selected = selected.clone();
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(div().truncate().child(label))
+                    .when_some(detail.filter(|d| !d.is_empty()), |d, folder| d.child(div().truncate().text_xs().text_color(theme.secondary).child(folder))),
+            )
+            .when_some(badge, |d, (count, tint)| {
+                d.child(div().flex_none().px_1p5().rounded_full().text_xs().font_weight(FontWeight::SEMIBOLD).bg(tint.opacity(0.25)).child(count.to_string()))
+            })
+    }
+
+    fn area_number(n: usize, theme: &Theme) -> impl IntoElement {
+        div()
+            .flex_none()
+            .size(px(20.))
+            .rounded_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.selected.opacity(0.18))
+            .text_xs()
+            .font_weight(FontWeight::BOLD)
+            .text_color(theme.selected)
+            .child(n.to_string())
+    }
+
+    /// The findings still kept on a file, and the worst one's colour.
+    fn badge(&self, path: &str, theme: &Theme) -> Option<(usize, Hsla)> {
+        let result = self.result.as_ref()?;
+        let kept: Vec<&Finding> = result.findings.iter().filter(|f| f.path == path && !self.dismissed.contains(&f.key())).collect();
+        let worst = kept.iter().min_by_key(|f| f.rank())?;
+        Some((kept.len(), severity_tint(worst.severity.as_deref(), theme)))
+    }
+
+    fn file_list(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut rows: Vec<gpui::AnyElement> = Vec::new();
+        let (ready, _) = self.readiness(theme);
+        rows.push(self.list_row("row-overview".into(), Selected::Overview, "Overview".into(), Some(ready), None, theme, cx).into_any_element());
+        let general = self.general();
+        if !general.is_empty() {
+            let kept = general.iter().filter(|f| !self.dismissed.contains(&f.key())).count();
+            let worst = general.iter().min_by_key(|f| f.rank()).map(|f| severity_tint(f.severity.as_deref(), theme)).unwrap_or(theme.secondary);
+            rows.push(
+                self.list_row("row-general".into(), Selected::General, format!("{} not on a changed file", general.len()), None, (kept > 0).then_some((kept, worst)), theme, cx)
+                    .into_any_element(),
+            );
+        }
+        if let Some(result) = &self.result {
+            let learnings = result.applied.len() + result.learnings.len();
+            if learnings > 0 {
+                rows.push(self.list_row("row-learnings".into(), Selected::Learnings, plural(learnings, "learning", "learnings"), None, None, theme, cx).into_any_element());
+            }
+            for (i, area) in result.walkthrough.iter().enumerate() {
+                rows.push(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .mt_3()
+                        .mb_1()
+                        .px_2()
+                        .child(Self::area_number(i + 1, theme))
+                        .child(div().flex_1().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).child(area.title.clone()))
+                        .into_any_element(),
+                );
+                for path in &area.files {
+                    let (name, folder) = file_name(path);
+                    rows.push(
+                        self.list_row(
+                            SharedString::from(format!("row-file-{path}")),
+                            Selected::File(path.clone()),
+                            name.to_string(),
+                            Some(folder.to_string()),
+                            self.badge(path, theme),
+                            theme,
+                            cx,
+                        )
+                        .into_any_element(),
+                    );
+                }
+            }
+        }
+        div()
+            .id("review-files")
+            .w(px(280.))
+            .flex_none()
+            .h_full()
+            .overflow_y_scroll()
+            .p_2()
+            .border_r_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .children(rows)
+    }
+
+    fn finding_card(&self, finding: &Finding, show_location: bool, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let key = finding.key();
+        let dismissed = self.dismissed.contains(&key);
+        let tint = severity_tint(finding.severity.as_deref(), theme);
+        let editing = self.editing.as_ref().filter(|(k, _)| *k == key).map(|(_, e)| e.clone());
+        let text = self.edits.get(&key).cloned().unwrap_or_else(|| finding.comment.clone());
+        let edited = self.edits.contains_key(&key);
+        let id = SharedString::from(key.clone());
+        let action = |suffix: &str, label: &'static str| {
+            div()
+                .id(SharedString::from(format!("{id}-{suffix}")))
+                .px_1p5()
+                .rounded_md()
+                .text_xs()
+                .cursor_pointer()
+                .text_color(theme.secondary)
+                .hover(|s| s.bg(theme.row_selected))
+                .child(label)
+        };
+        let (toggle_key, edit_finding, original) = (key.clone(), finding.clone(), finding.comment.clone());
+        div()
+            .flex()
+            .flex_row()
+            .rounded_lg()
+            .overflow_hidden()
+            .border_1()
+            .border_color(if dismissed { theme.border } else { tint.opacity(0.7) })
+            .bg(if dismissed { theme.tile.opacity(0.5) } else { theme.tile })
+            .when(!dismissed, |d| d.child(div().w(px(4.)).flex_none().bg(tint)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .p(px(10.))
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(div().px_1p5().rounded_full().text_xs().bg(tint.opacity(0.25)).child(capitalised(finding.severity.as_deref().unwrap_or("note"))))
+                            .when_some(finding.category.clone(), |d, c| d.child(div().px_1p5().rounded_sm().text_xs().bg(theme.grid).child(capitalised(&c))))
+                            .when(edited, |d| d.child(div().text_xs().text_color(theme.secondary).child("Edited")))
+                            .child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.selected).when(show_location, |d| {
+                                d.child(match finding.line {
+                                    Some(line) => format!("{}:{line}", finding.path),
+                                    None => finding.path.clone(),
+                                })
+                            }))
+                            .when(!dismissed && editing.is_none(), |d| {
+                                d.child(action("edit", "Edit").on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.start_edit(&edit_finding, window, cx))))
+                            })
+                            .when(editing.is_none(), |d| {
+                                d.child(action("toggle", if dismissed { "Restore" } else { "Dismiss" }).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    if !this.dismissed.remove(&toggle_key) {
+                                        this.dismissed.insert(toggle_key.clone());
+                                    }
+                                    cx.notify();
+                                })))
+                            }),
+                    )
+                    .map(|d| match editing {
+                        Some(editor) => d
+                            .child(div().p_2().rounded_md().border_1().border_color(theme.border).bg(theme.bg).child(editor))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .justify_end()
+                                    .gap_2()
+                                    .child(Self::button("edit-cancel", "Cancel", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                        this.editing = None;
+                                        cx.notify();
+                                    })))
+                                    .child(Self::button("edit-save", "Save", true, true, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.save_edit(&original, cx)))),
+                            ),
+                        None if dismissed => d.child(div().text_sm().text_color(theme.secondary).line_through().child(text)),
+                        None => d
+                            .child(markdown(&format!("finding-{id}"), &text, theme))
+                            .when_some(finding.suggestion.clone(), |d, s| {
+                                d.child(div().p_2().rounded_md().bg(theme.good().opacity(0.12)).font_family("SF Mono").text_xs().child(s))
+                            }),
+                    }),
+            )
+    }
+
+    fn section_heading(text: &str) -> impl IntoElement {
+        div().text_base().font_weight(FontWeight::SEMIBOLD).child(text.to_string())
+    }
+
+    fn overview(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
+        let (ready, ready_tint) = self.readiness(theme);
+        let Some(result) = self.result.clone() else {
+            return div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(div().flex().flex_row().items_center().gap_3().child(div().font_weight(FontWeight::MEDIUM).text_color(ready_tint).child(ready)))
+                .child(quiet("The summary, walkthrough and findings show here once the reviewer has finished.".into()))
+                .into_any_element();
+        };
+        // Needs attention: the findings still kept, by how much they hold
+        // up the merge.
+        let mut kept: Vec<Finding> = result.findings.iter().filter(|f| !self.dismissed.contains(&f.key())).cloned().collect();
+        kept.sort_by_key(|f| f.rank());
+        let tiers: Vec<(&str, Hsla, Vec<Finding>)> = vec![
+            ("Blocking the merge", theme.critical(), kept.iter().filter(|f| f.rank() == 0).cloned().collect()),
+            ("Fix before merging", theme.orange(), kept.iter().filter(|f| f.rank() == 1).cloned().collect()),
+            ("Not blocking", theme.secondary, kept.iter().filter(|f| f.rank() >= 2).cloned().collect()),
+        ];
+        let attention = tiers.into_iter().filter(|t| !t.2.is_empty()).map(|(label, tint, findings)| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(label))
+                .child(div().flex().flex_col().rounded_lg().bg(theme.tile).children(findings.into_iter().enumerate().map(|(i, f)| {
+                    let target = if result.area_of(&f.path).is_some() { Selected::File(f.path.clone()) } else { Selected::General };
+                    let first = f.comment.split(". ").next().unwrap_or(&f.comment).to_string();
+                    div()
+                        .id(SharedString::from(format!("attention-{}", f.key())))
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .px(px(10.))
+                        .py(px(7.))
+                        .when(i > 0, |d| d.border_t_1().border_color(theme.border))
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme.row_selected.opacity(0.5)))
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.selected = target.clone();
+                            cx.notify();
+                        }))
+                        .child(div().flex_none().size(px(6.)).rounded_full().bg(severity_tint(f.severity.as_deref(), theme)))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .child(div().truncate().child(first))
+                                .child(div().truncate().text_xs().text_color(theme.secondary).child(match f.line {
+                                    Some(line) => format!("{}:{line}", f.path),
+                                    None => f.path.clone(),
+                                })),
+                        )
+                        .when_some(f.category.clone(), |d, c| d.child(div().flex_none().px_1p5().rounded_sm().text_xs().bg(theme.grid).child(capitalised(&c))))
+                        .child(div().flex_none().text_color(theme.tertiary).child("›"))
+                })))
+        });
+        let has_attention = !kept.is_empty();
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(22.))
+            .max_w(px(860.))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .when_some(result.headline.clone(), |d, h| d.child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(h)))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_3()
+                            .child(div().font_weight(FontWeight::MEDIUM).text_color(ready_tint).child(ready))
+                            .when_some(result.effort, |d, e| d.child(Self::effort_meter(e, theme))),
+                    )
+                    .child(markdown("review-summary", &result.summary, theme)),
+            )
+            .when(has_attention, |d| d.child(div().flex().flex_col().gap_3().child(Self::section_heading("Needs attention")).children(attention)))
+            .when(!result.walkthrough.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .child(div().flex().flex_col().child(Self::section_heading("Walkthrough")).child(quiet("The change in the order to read it. The file list follows it.".into())))
+                        .children(result.walkthrough.iter().enumerate().map(|(i, area)| {
+                            div()
+                                .flex()
+                                .flex_row()
+                                .gap_3()
+                                .child(Self::area_number(i + 1, theme))
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(div().font_weight(FontWeight::SEMIBOLD).child(area.title.clone()))
+                                        .when_some(area.summary.clone(), |d, s| d.child(div().text_color(theme.secondary).child(s)))
+                                        .child(div().flex().flex_row().flex_wrap().gap_1().children(area.files.iter().map(|path| {
+                                            let target = Selected::File(path.clone());
+                                            div()
+                                                .id(SharedString::from(format!("chip-{path}")))
+                                                .px_1p5()
+                                                .rounded_sm()
+                                                .bg(theme.grid)
+                                                .font_family("SF Mono")
+                                                .text_xs()
+                                                .cursor_pointer()
+                                                .hover(|s| s.bg(theme.row_selected))
+                                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                                    this.selected = target.clone();
+                                                    cx.notify();
+                                                }))
+                                                .child(path.clone())
+                                        }))),
+                                )
+                        }))
+                )
+            })
+            .when(!result.flow.is_empty(), |d| {
+                d.child(
+                    div().flex().flex_col().gap_1p5().child(Self::section_heading("What happens")).children(result.flow.iter().enumerate().map(|(i, step)| {
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_1()
+                            .child(div().w(px(22.)).flex_none().text_color(theme.secondary).child(format!("{}.", i + 1)))
+                            .child(div().flex_1().child(step.clone()))
+                    })),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn file_detail(&self, path: &str, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(result) = self.result.clone() else { return div().into_any_element() };
+        let area = result.area_of(path).map(|i| (i, result.walkthrough[i].clone()));
+        let mut findings: Vec<Finding> = result.findings.iter().filter(|f| f.path == path).cloned().collect();
+        findings.sort_by_key(|f| (f.line.unwrap_or(0), f.rank()));
+        let applied: Vec<review::Applied> = result.applied.iter().filter(|a| a.path.as_deref() == Some(path)).cloned().collect();
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .max_w(px(860.))
+            .child(div().font_family("SF Mono").text_sm().child(path.to_string()))
+            .when_some(area, |d, (i, area)| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .child(Self::area_number(i + 1, theme))
+                        .child(div().flex_1().flex().flex_col().child(div().font_weight(FontWeight::MEDIUM).child(area.title)).when_some(area.summary, |d, s| d.child(div().text_sm().text_color(theme.secondary).child(s)))),
+                )
+            })
+            .children(applied.iter().map(|a| Self::applied_card(a, theme)))
+            .when(findings.is_empty(), |d| d.child(div().text_sm().text_color(theme.secondary).child("No findings on this file.")))
+            .children(findings.iter().map(|f| self.finding_card(f, true, theme, cx)))
+            .into_any_element()
+    }
+
+    fn applied_card(applied: &review::Applied, theme: &Theme) -> impl IntoElement {
+        let yellow: Hsla = gpui::rgb(0xEDA100).into();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .p(px(10.))
+            .rounded_lg()
+            .bg(yellow.opacity(0.1))
+            .child(div().font_weight(FontWeight::MEDIUM).child(format!("Applied: {}", applied.learning)))
+            .when_some(applied.path.clone(), |d, path| {
+                d.child(div().font_family("SF Mono").text_xs().text_color(theme.secondary).child(match applied.line {
+                    Some(line) => format!("{path}:{line}"),
+                    None => path,
+                }))
+            })
+            .child(div().text_sm().child(applied.note.clone()))
+            .when_some(applied.concern.clone(), |d, c| d.child(div().text_sm().text_color(theme.orange()).child(format!("Concern: {c}"))))
+    }
+
+    fn learnings_detail(&self, theme: &Theme) -> impl IntoElement {
+        let Some(result) = &self.result else { return div().into_any_element() };
+        let yellow: Hsla = gpui::rgb(0xEDA100).into();
+        let caption = |text: &str| div().text_sm().text_color(theme.secondary).child(text.to_string());
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(14.))
+            .max_w(px(860.))
+            .when(!result.applied.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(Self::section_heading("Applied by the reviewer"))
+                        .child(caption("The team's learnings that shaped this review, and how."))
+                        .children(result.applied.iter().map(|a| Self::applied_card(a, theme))),
+                )
+            })
+            .when(!result.learnings.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(Self::section_heading("Suggested by the reviewer"))
+                        .child(caption("Why code is the way it is, as people said in this PR, for later reviews to know."))
+                        .children(result.learnings.iter().map(|l| {
+                            let lines = match (l.line, l.end_line) {
+                                (Some(a), Some(b)) => format!("{}:{a}-{b}", l.path),
+                                (Some(a), None) => format!("{}:{a}", l.path),
+                                _ => l.path.clone(),
+                            };
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .p(px(10.))
+                                .rounded_lg()
+                                .bg(yellow.opacity(0.08))
+                                .child(div().font_weight(FontWeight::MEDIUM).child(l.rule.clone()))
+                                .when_some(l.reason.clone(), |d, r| d.child(div().text_sm().child(r)))
+                                .child(div().font_family("SF Mono").text_xs().text_color(theme.secondary).child(lines))
+                                .when_some(l.author.clone(), |d, a| d.child(div().text_xs().text_color(theme.secondary).child(format!("From @{a}"))))
+                        })),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn general_detail(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut general = self.general();
+        general.sort_by_key(|f| f.rank());
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(10.))
+            .max_w(px(860.))
+            .child(div().text_sm().text_color(theme.secondary).child("These go in the review's body, as GitHub only takes comments on lines the diff shows."))
+            .children(general.iter().map(|f| self.finding_card(f, true, theme, cx)))
+    }
+
+    /// The conversation with claude: its terminal and a box to tell it
+    /// something. A preview has no claude, so says so.
+    fn conversation_pane(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let live = match &self.source {
+            Source::Live { view, .. } => Some(view.clone()),
+            Source::Preview { .. } => None,
+        };
+        div()
+            .flex_none()
+            .h(px(260.))
+            .flex()
+            .flex_col()
+            .border_t_1()
+            .border_color(theme.border)
+            .map(|d| match live {
+                Some(view) => d.child(div().flex_1().min_h_0().child(view)),
+                None => d.child(
+                    div()
+                        .flex_1()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .text_sm()
+                        .text_color(theme.secondary)
+                        .child("Claude's terminal shows here in a real review."),
+                ),
+            })
+            .child(
+                div()
+                    .flex_none()
+                    .px_3()
+                    .py_2()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(
+                        div()
+                            .px_2()
+                            .py_1()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.border)
+                            .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                                if event.keystroke.key == "enter" {
+                                    cx.stop_propagation();
+                                    this.send_composer(window, cx);
+                                }
+                            }))
+                            .child(self.composer.clone()),
+                    ),
+            )
     }
 
     fn button(id: &'static str, label: &str, prominent: bool, enabled: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
@@ -355,135 +1200,33 @@ impl ReviewPanel {
     }
 }
 
+
 impl Render for ReviewPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
-        let quiet = |text: String| div().text_xs().text_color(theme.secondary).child(text);
-        let content = match &self.result {
-            None => div()
-                .p_4()
-                .flex()
-                .flex_col()
-                .gap_2()
-                .child(div().font_weight(FontWeight::MEDIUM).child("Reviewing"))
-                .child(quiet("Claude is reading the pull request. Its findings show here when it ends its reply with them.".into()))
-                .into_any_element(),
-            Some(result) => {
-                let (verdict, tint) = match result.verdict.as_deref() {
-                    Some("approve") => ("Approve", theme.good()),
-                    Some("request_changes") => ("Request changes", theme.critical()),
-                    _ => ("Comment", theme.secondary),
-                };
-                let mut findings = result.findings.clone();
-                findings.sort_by_key(|f| f.rank());
-                let kept = findings.iter().filter(|f| !self.dismissed.contains(&f.key())).count();
-                div()
-                    .id("review-body")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .p_4()
-                    .flex()
-                    .flex_col()
-                    .gap_3()
-                    .when_some(result.headline.clone(), |d, h| d.child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child(h)))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(crate::issues::pill(verdict, tint))
-                            .when_some(result.effort, |d, e| d.child(quiet(format!("Effort {e} of 5")))),
-                    )
-                    .child(markdown("review-summary", &result.summary, &theme))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(format!("Findings · {kept} of {}", findings.len())))
-                    .children(findings.into_iter().enumerate().map(|(i, finding)| {
-                        let key = finding.key();
-                        let dismissed = self.dismissed.contains(&key);
-                        let tint = Self::severity_tint(finding.severity.as_deref(), &theme);
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .child(div().w(px(3.)).flex_none().rounded_full().bg(tint))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .when(dismissed, |d| d.opacity(0.45))
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_row()
-                                            .items_center()
-                                            .gap_2()
-                                            .child(div().px_1p5().rounded_full().text_xs().bg(tint.opacity(0.2)).text_color(tint).child(finding.severity.clone().unwrap_or_else(|| "note".into())))
-                                            .when_some(finding.category.clone(), |d, c| d.child(quiet(c)))
-                                            .child(div().flex_1().truncate().text_xs().text_color(theme.selected).child(match finding.line {
-                                                Some(line) => format!("{}:{line}", finding.path),
-                                                None => finding.path.clone(),
-                                            }))
-                                            .child(
-                                                div()
-                                                    .id(("finding-toggle", i))
-                                                    .px_1p5()
-                                                    .rounded_md()
-                                                    .text_xs()
-                                                    .cursor_pointer()
-                                                    .text_color(theme.secondary)
-                                                    .hover(|s| s.bg(theme.row_selected))
-                                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                                        if !this.dismissed.remove(&key) {
-                                                            this.dismissed.insert(key.clone());
-                                                        }
-                                                        cx.notify();
-                                                    }))
-                                                    .child(if dismissed { "Restore" } else { "Dismiss" }),
-                                            ),
-                                    )
-                                    .child(markdown(&format!("finding-{i}"), &finding.comment, &theme))
-                                    .when_some(finding.suggestion.clone(), |d, s| {
-                                        d.child(div().p_2().rounded_md().bg(theme.good().opacity(0.12)).font_family("Menlo").text_xs().child(s))
-                                    }),
-                            )
-                    }))
-                    .into_any_element()
-            }
+        let detail = match self.selected.clone() {
+            Selected::Overview => self.overview(&theme, cx).into_any_element(),
+            Selected::General => self.general_detail(&theme, cx).into_any_element(),
+            Selected::Learnings => self.learnings_detail(&theme).into_any_element(),
+            Selected::File(path) => self.file_detail(&path, &theme, cx).into_any_element(),
         };
-        let idle = self.idle();
-        let has_result = self.result.is_some();
-        let (repo, number) = self.subject();
-        let url = self.url();
-        let bar = div()
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .px_3()
-            .py_2()
-            .border_b_1()
-            .border_color(theme.border)
-            .child(div().flex_1().truncate().font_weight(FontWeight::MEDIUM).child(SharedString::from(format!("{repo}#{number}"))))
-            .child(Self::button("review-github", "Open on GitHub", false, true, &theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
-            .child(Self::button("review-again", "Review Again", false, idle && has_result, &theme).when(idle && has_result, |d| {
-                d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.review_again(cx)))
-            }))
-            .child(Self::button("review-post", "Post Review", true, has_result, &theme).when(has_result, |d| {
-                d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
-            }));
         div()
             .relative()
             .size_full()
             .flex()
             .flex_col()
             .bg(theme.bg)
-            .child(bar)
-            .child(content)
+            .child(self.header(&theme, cx))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .child(self.file_list(&theme, cx))
+                    .child(div().id("review-detail").flex_1().min_w_0().h_full().overflow_y_scroll().p_5().child(detail)),
+            )
+            .when(self.shows_conversation(), |d| d.child(self.conversation_pane(&theme, cx)))
             .when_some(self.post.as_ref(), |d, post| d.child(self.post_sheet(post, &theme, cx)))
     }
 }

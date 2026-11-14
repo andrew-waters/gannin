@@ -29,7 +29,7 @@ use gpui::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, OpenSwitcher]);
+actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
@@ -38,6 +38,12 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-t", NewClaudeSession, None),
         KeyBinding::new("ctrl-`", NewTerminal, None),
         KeyBinding::new("cmd-w", CloseTab, None),
+        KeyBinding::new("cmd-shift-right", NextTab, None),
+        KeyBinding::new("cmd-shift-left", PreviousTab, None),
+        KeyBinding::new("cmd-shift-]", NextTab, None),
+        KeyBinding::new("cmd-shift-[", PreviousTab, None),
+        KeyBinding::new("ctrl-tab", NextTab, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
         KeyBinding::new("cmd-alt-o", OpenSwitcher, None),
         KeyBinding::new("cmd-r", Refresh, None),
     ]
@@ -4321,6 +4327,16 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &NewQuickChange, window, cx| this.open_form(crate::launch::Flow::QuickChange, None, window, cx)))
             .on_action(cx.listener(|this, _: &NewPlan, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_tab(this.active, window, cx)))
+            .on_action(cx.listener(|this, _: &NextTab, window, cx| {
+                if !this.tabs.is_empty() {
+                    this.activate((this.active + 1) % this.tabs.len(), window, cx)
+                }
+            }))
+            .on_action(cx.listener(|this, _: &PreviousTab, window, cx| {
+                if !this.tabs.is_empty() {
+                    this.activate((this.active + this.tabs.len() - 1) % this.tabs.len(), window, cx)
+                }
+            }))
             .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Org, window, cx)))
             // Escape closes the top drawer; the switcher takes it first when open.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
