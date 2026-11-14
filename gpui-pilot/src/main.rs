@@ -5,6 +5,7 @@
 //! cargo run --release -- [--org NAME] [--days 7|30|90]
 
 mod auth;
+mod activity;
 mod avatars;
 mod cache;
 mod changes;
@@ -77,6 +78,11 @@ fn main() {
                     ),
                     None => println!("no result"),
                 }
+                return;
+            }
+            // Counts the work log's events for the last two weeks.
+            "--activity" => {
+                activity::print_summary(&args.next().unwrap_or_default());
                 return;
             }
             // Prints the scorecard metrics for recent weeks.

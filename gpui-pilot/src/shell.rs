@@ -174,7 +174,15 @@ fn sections() -> Vec<Section> {
                 Item(Ci),
             ],
         },
-        // Section { id: "team", title: Some("Team"), rows: vec![Group(Everyone, vec![]), Item(Activity), Item(TimeOff)] },
+        Section {
+            id: "team",
+            title: Some("Team"),
+            rows: vec![
+                // Group(Everyone, vec![]),
+                Item(Activity),
+                // Item(TimeOff),
+            ],
+        },
         // Section {
         //     id: "rituals",
         //     title: Some("Rituals"),
@@ -254,6 +262,7 @@ enum Page {
     Prs(Entity<PrsPage>),
     Ci(Entity<ActionsPage>),
     Scorecard(Entity<crate::scorecard::ScorecardPage>),
+    Activity(Entity<crate::activity::ActivityPage>),
     None,
 }
 
@@ -607,6 +616,7 @@ impl Workspace {
                 Page::Ci(cx.new(|cx| ActionsPage::new(org, &state, window, cx)))
             }
             Nav::Scorecards => Page::Scorecard(cx.new(|cx| crate::scorecard::ScorecardPage::new(org, cx))),
+            Nav::Activity => Page::Activity(cx.new(|cx| crate::activity::ActivityPage::new(org, cx))),
             _ => Page::None,
         };
         let subscriptions = Self::watch(&page, cx);
@@ -655,6 +665,17 @@ impl Workspace {
                 }),
                 cx.observe(page, |this, _, cx| this.persist(cx)),
             ],
+            // An issue opens in a drawer when the store has it, else on
+            // GitHub; a PR on GitHub.
+            Page::Activity(page) => vec![cx.subscribe(page, |this, _, event: &crate::activity::OpenItem, cx| {
+                match event.issue_id.as_deref().and_then(|id| this.issues.read(cx).issue(id)) {
+                    Some(issue) => {
+                        this.drawers.clear();
+                        this.push_drawer(issue, cx);
+                    }
+                    None => cx.open_url(&event.url),
+                }
+            })],
             _ => Vec::new(),
         }
     }
@@ -1034,6 +1055,7 @@ impl Workspace {
                 Page::Issues(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::Prs(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::Scorecard(page) => page.update(cx, |page, cx| page.reload(cx)),
+                Page::Activity(page) => page.update(cx, |page, cx| page.reload(cx)),
                 _ => {}
             }
         }
@@ -1796,6 +1818,7 @@ impl Workspace {
                     page.set_org(Some(org.clone()), cx)
                 }),
                 Page::Scorecard(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
+                Page::Activity(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 _ => {}
             }
         }
@@ -2366,6 +2389,7 @@ impl Workspace {
                 Page::Prs(page) => page.into_any_element(),
                 Page::Ci(page) => page.into_any_element(),
                 Page::Scorecard(page) => page.into_any_element(),
+                Page::Activity(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()
