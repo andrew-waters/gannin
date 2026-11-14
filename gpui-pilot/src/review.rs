@@ -119,6 +119,25 @@ pub fn read_result(claude_id: &str) -> Option<ReviewResult> {
     parse(&last_reply).map(|r| ReviewResult { at, ..r })
 }
 
+/// What claude is doing, from the end of its transcript: the tool it last
+/// used and on what, or "Writing the review" once it's replying.
+pub fn activity(claude_id: &str) -> Option<String> {
+    let text = std::fs::read_to_string(transcript(claude_id)?).ok()?;
+    let entry = text.lines().rev().filter_map(|line| serde_json::from_str::<Value>(line).ok()).find(|e| e["type"] == "assistant" && e["isSidechain"] != true)?;
+    let block = entry["message"]["content"].as_array()?.last()?.clone();
+    if block["type"] == "text" {
+        return Some("Writing the review".into());
+    }
+    if block["type"] != "tool_use" {
+        return None;
+    }
+    let input = &block["input"];
+    let what = ["description", "file_path", "pattern", "path", "command", "url", "query"].iter().find_map(|k| input[*k].as_str()).unwrap_or("");
+    let what: String = what.lines().next().unwrap_or("").chars().take(90).collect();
+    let name = block["name"].as_str().unwrap_or("Working");
+    Some(if what.is_empty() { name.to_string() } else { format!("{name}: {what}") })
+}
+
 pub fn parse(reply: &str) -> Option<ReviewResult> {
     let start = reply.rfind("```json")? + "```json".len();
     let end = start + reply[start..].find("```")?;

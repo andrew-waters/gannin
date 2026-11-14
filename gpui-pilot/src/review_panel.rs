@@ -92,6 +92,8 @@ pub struct ReviewPanel {
     /// The Conversation pane, once the person has toggled it; until then it
     /// follows claude (shown while it works or before a result).
     conversation: Option<bool>,
+    /// What claude is doing now, from its transcript.
+    activity: Option<String>,
     /// The Conversation pane's height, and while its edge is dragged, where
     /// the drag began (the pointer's y and the height then).
     conversation_height: f32,
@@ -156,11 +158,15 @@ impl ReviewPanel {
         // thread, until a result is there and whenever it may have changed.
         let poll = cx.spawn(async move |this, cx| loop {
             let id = claude_id.clone();
-            let result = cx.background_executor().spawn(async move { review::read_result(&id) }).await;
+            let (result, activity) = cx.background_executor().spawn(async move { (review::read_result(&id), review::activity(&id)) }).await;
             if this
                 .update(cx, |this, cx| {
                     if result.is_some() && this.result != result {
                         this.result = result;
+                        cx.notify();
+                    }
+                    if this.activity != activity {
+                        this.activity = activity;
                         cx.notify();
                     }
                 })
@@ -186,6 +192,7 @@ impl ReviewPanel {
             editing: None,
             selected: Selected::Overview,
             conversation: None,
+            activity: None,
             conversation_height: 260.,
             resizing: None,
             composer: Self::composer(window, cx),
@@ -222,6 +229,7 @@ impl ReviewPanel {
             editing: None,
             selected: Selected::Overview,
             conversation: None,
+            activity: None,
             conversation_height: 260.,
             resizing: None,
             composer: Self::composer(window, cx),
@@ -273,8 +281,10 @@ impl ReviewPanel {
         !matches!(self.claude_state().as_deref(), Some("exited") | Some("stopped"))
     }
 
+    /// The terminal shows only when asked for: the review page says what
+    /// claude is doing without it.
     fn shows_conversation(&self) -> bool {
-        self.conversation.unwrap_or(self.result.is_none() || self.working())
+        self.conversation.unwrap_or(false)
     }
 
     /// The findings as they'd go out: dismissed ones left out, edited ones
@@ -605,7 +615,15 @@ impl ReviewPanel {
             .mb_1()
             .border_b_1()
             .border_color(theme.border)
-            .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(lead_tint).child(lead))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(lead_tint).child(lead))
+                    .when(self.working(), |d| d.child(Self::spinner("standing-spinner", 13., theme))),
+            )
             .map(|d| {
                 if counts.is_empty() {
                     d.child(div().text_sm().text_color(if has_result { ready_tint } else { theme.secondary }).child(if has_result { ready } else { "Findings show here when it's done".into() }))
@@ -680,7 +698,7 @@ impl ReviewPanel {
                 .flex_row()
                 .gap_2()
                 .when(self.running(), |d| {
-                    d.child(Self::button("review-conversation", "Conversation", false, true, theme).when(shown, |b| b.bg(theme.row_selected)).on_click(cx.listener(
+                    d.child(Self::button("review-conversation", "Terminal", false, true, theme).when(shown, |b| b.bg(theme.row_selected)).on_click(cx.listener(
                         move |this, _: &ClickEvent, _, cx| {
                             this.conversation = Some(!shown);
                             cx.notify();
@@ -972,6 +990,45 @@ impl ReviewPanel {
             )
     }
 
+    fn spinner(id: &'static str, size: f32, theme: &Theme) -> impl IntoElement {
+        use gpui::{Animation, AnimationExt, Transformation};
+        gpui::svg()
+            .path("icons/arrow_circle.svg")
+            .size(px(size))
+            .flex_none()
+            .text_color(theme.secondary)
+            .with_animation(id, Animation::new(Duration::from_millis(1200)).repeat(), |svg, delta| svg.with_transformation(Transformation::rotate(gpui::percentage(delta))))
+    }
+
+    /// Before there's a result: a spinner and what claude is doing, or that
+    /// it's waiting on the person, with the terminal a click away.
+    fn waiting(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let (status, status_tint) = self.status(theme);
+        let needs_you = self.claude_state().as_deref() == Some("needs-you");
+        let shown = self.shows_conversation();
+        div()
+            .size_full()
+            .min_h(px(320.))
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .when(self.working(), |d| d.child(Self::spinner("review-waiting", 28., theme)))
+            .child(div().text_lg().font_weight(FontWeight::MEDIUM).text_color(if needs_you { status_tint } else { theme.fg }).child(if status.is_empty() { "Reviewing".to_string() } else { status }))
+            .child(div().max_w(px(520.)).text_center().text_sm().text_color(theme.secondary).child(match (&self.activity, needs_you) {
+                (_, true) => "Claude is asking something in its terminal.".to_string(),
+                (Some(activity), _) => activity.clone(),
+                (None, _) => "The summary, walkthrough and findings show here once it's done.".to_string(),
+            }))
+            .when(needs_you || !shown, |d| {
+                d.child(Self::button("waiting-terminal", if needs_you { "Answer in Terminal" } else { "Show Terminal" }, needs_you, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    this.conversation = Some(true);
+                    cx.notify();
+                })))
+            })
+    }
+
     fn section_heading(text: &str) -> impl IntoElement {
         div().text_base().font_weight(FontWeight::SEMIBOLD).child(text.to_string())
     }
@@ -980,13 +1037,7 @@ impl ReviewPanel {
         let quiet = |text: String| div().text_sm().text_color(theme.secondary).child(text);
         let (ready, ready_tint) = self.readiness(theme);
         let Some(result) = self.result.clone() else {
-            return div()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .child(div().flex().flex_row().items_center().gap_3().child(div().font_weight(FontWeight::MEDIUM).text_color(ready_tint).child(ready)))
-                .child(quiet("The summary, walkthrough and findings show here once the reviewer has finished.".into()))
-                .into_any_element();
+            return self.waiting(theme, cx).into_any_element();
         };
         // Needs attention: the findings still kept, by how much they hold
         // up the merge.
