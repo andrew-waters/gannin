@@ -1,0 +1,23 @@
+[package]
+name = "gannin-gpui-pilot"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Pilot: Gannin's Actions page rebuilt on Zed's GPUI, reading the Swift app's cache"
+
+[dependencies]
+# runtime_shaders compiles the Metal shaders at launch, so the build doesn't
+# need Xcode's separately downloaded Metal toolchain.
+gpui = { version = "0.2", features = ["runtime_shaders"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+# Reads Gannin's issue text index; links the system SQLite.
+rusqlite = "0.32"
+# Markdown for descriptions and comments (GPUI has no renderer of its own).
+pulldown-cmark = { version = "0.12", default-features = false }
+
+[profile.dev]
+# Parsing a 12 MB cache unoptimised takes seconds; optimise dependencies only.
+[profile.dev.package."*"]
+opt-level = 2
