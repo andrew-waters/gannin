@@ -171,6 +171,9 @@ impl ReviewPanel {
             cx.background_executor().timer(Duration::from_secs(4)).await;
         });
         let posted = std::fs::read(launch.dir().join("posted.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        let decisions: serde_json::Value = std::fs::read(launch.dir().join("decisions.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let dismissed = decisions["dismissed"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
+        let edits = decisions["edits"].as_object().map(|m| m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()).unwrap_or_default();
         Self {
             posted,
             checked: None,
@@ -178,8 +181,8 @@ impl ReviewPanel {
             _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
             result: None,
-            dismissed: HashSet::new(),
-            edits: HashMap::new(),
+            dismissed,
+            edits,
             editing: None,
             selected: Selected::Overview,
             conversation: None,
@@ -349,7 +352,29 @@ impl ReviewPanel {
         } else {
             self.edits.insert(key, text);
         }
+        self.save_decisions();
         cx.notify();
+    }
+
+    /// Keeps the person's dismissals and edits in the session's folder, so
+    /// closing the tab loses none of them.
+    fn save_decisions(&self) {
+        if let Source::Live { launch, .. } = &self.source {
+            let decisions = serde_json::json!({ "dismissed": self.dismissed.iter().collect::<Vec<_>>(), "edits": self.edits });
+            let _ = std::fs::write(launch.dir().join("decisions.json"), serde_json::to_vec(&decisions).unwrap_or_default());
+        }
+    }
+
+    /// What closing the tab would leave behind: whether there's a result,
+    /// whether it's posted, and how many findings are kept.
+    pub fn closing(&self) -> (bool, bool, usize) {
+        let kept = self.result.as_ref().map(|r| r.findings.iter().filter(|f| !self.dismissed.contains(&f.key())).count()).unwrap_or(0);
+        (self.result.is_some(), self.posted_latest().is_some(), kept)
+    }
+
+    /// Post Review, from outside (closing an unposted review).
+    pub fn start_post(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.open_post(window, cx);
     }
 
     /// Opens the sheet: the PR, its files and what's been said, fetched now.
@@ -917,6 +942,7 @@ impl ReviewPanel {
                                     if !this.dismissed.remove(&toggle_key) {
                                         this.dismissed.insert(toggle_key.clone());
                                     }
+                                    this.save_decisions();
                                     cx.notify();
                                 })))
                             }),

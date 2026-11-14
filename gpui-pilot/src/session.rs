@@ -276,6 +276,11 @@ impl SessionPage {
         self.terminal.read(cx).working_directory().unwrap_or_else(|| self.folder.clone())
     }
 
+    /// A review session's panel.
+    pub fn review(&self) -> Option<Entity<crate::review_panel::ReviewPanel>> {
+        self.review.clone()
+    }
+
     /// Called as its tab shows or hides: the diff is read only while seen.
     pub fn set_visible(&mut self, visible: bool, cx: &mut Context<Self>) {
         let show_changes = visible && self.show != Show::Terminal;

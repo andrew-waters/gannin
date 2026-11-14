@@ -1899,6 +1899,11 @@ impl Workspace {
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(nav) = self.tabs.get(index).map(|tab| tab.nav) else { return };
         if let Nav::Session(id) = nav {
+            if let Some(review) = self.session(id, cx).and_then(|p| p.read(cx).review()) {
+                return self.close_review(id, review, window, cx);
+            }
+        }
+        if let Nav::Session(id) = nav {
             if let Some(page) = self.session(id, cx).filter(|p| p.read(cx).state != State::Ended).cloned() {
                 let title = page.read(cx).title(cx);
                 let detail = Self::ending_detail(&[page], cx);
@@ -1924,6 +1929,52 @@ impl Workspace {
             }
         }
         self.remove_tab(index, cx);
+    }
+
+    /// Closing a review's tab says what happens to it: one not posted
+    /// offers Post Review first. Claude stops; the review, the person's
+    /// dismissals and edits and the conversation stay in the session's
+    /// folder, and opening the review from the PR again resumes it.
+    fn close_review(&mut self, id: u32, review: Entity<crate::review_panel::ReviewPanel>, window: &mut Window, cx: &mut Context<Self>) {
+        let (has_result, posted, kept) = review.read(cx).closing();
+        let title = self.session(id, cx).map(|p| p.read(cx).title(cx)).unwrap_or_default();
+        let after = "Claude stops. The review, your dismissals and edits stay, and opening the review from the pull request again picks it up where it was.";
+        let (message, detail, buttons): (String, String, &[&str]) = if has_result && !posted {
+            (
+                format!("Close \u{201c}{title}\u{201d} without posting it?"),
+                format!(
+                    "Claude's review, with {}, hasn't been posted to GitHub.\n\n{after}",
+                    match kept {
+                        0 => "no findings kept".to_string(),
+                        1 => "1 finding".to_string(),
+                        n => format!("{n} findings"),
+                    }
+                ),
+                &["Post Review", "Close Review", "Cancel"],
+            )
+        } else {
+            (format!("Close \u{201c}{title}\u{201d}?"), after.to_string(), &["Close Review", "Cancel"])
+        };
+        let answer = window.prompt(gpui::PromptLevel::Warning, &message, Some(&detail), buttons, cx);
+        let offers_post = buttons.len() == 3;
+        cx.spawn_in(window, async move |this, cx| {
+            let choice = answer.await.ok();
+            this.update_in(cx, |this, window, cx| {
+                let close = if offers_post { choice == Some(1) } else { choice == Some(0) };
+                if offers_post && choice == Some(0) {
+                    if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
+                        this.activate(index, window, cx);
+                    }
+                    review.update(cx, |review, cx| review.start_post(window, cx));
+                } else if close {
+                    if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
+                        this.remove_tab(index, cx);
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Quitting with sessions running asks first, as Gannin's quit guard does.
