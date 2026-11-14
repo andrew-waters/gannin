@@ -34,7 +34,6 @@ mod schedule_page;
 mod work_flow;
 mod work_live;
 mod work_panel;
-mod work_preview;
 mod workflows;
 mod workflows_page;
 mod scorecard;

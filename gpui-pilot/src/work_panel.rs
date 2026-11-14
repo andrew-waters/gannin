@@ -785,20 +785,6 @@ impl WorkPanel {
         self.finish(window, cx);
     }
 
-    /// Shows a pane (the preview picks the one a state is about).
-    pub fn show_pane(&mut self, pane: &str) {
-        self.pane = match pane {
-            "changes" => Pane::Changes,
-            "activity" => Pane::Activity,
-            "workflow" => Pane::Workflow,
-            _ => Pane::Issue,
-        };
-        // The workflow opens on the stage that's going.
-        if let Some(run) = &self.data.workflow {
-            self.stage = run.stages.iter().position(|s| matches!(s.status, StageStatus::Running | StageStatus::Holding | StageStatus::Failed)).unwrap_or(0);
-        }
-    }
-
     fn stage_tint(status: StageStatus, theme: &Theme) -> Hsla {
         match status {
             StageStatus::Waiting => theme.tertiary,

@@ -32,7 +32,9 @@ pub struct SavedState {
     pub project: Option<String>,
     /// Before tabs had their own controls: the pages, in order. Read once
     /// when `views` is empty.
+    #[serde(deserialize_with = "lenient")]
     pub tabs: Vec<Nav>,
+    #[serde(deserialize_with = "lenient")]
     pub views: Vec<SavedTab>,
     /// The launches of the session tabs that were open, in tab order, to
     /// open again (claude resumes in each).
@@ -53,6 +55,7 @@ pub struct SavedState {
     pub inspector_width: f32,
     pub dock_height: f32,
     pub collapsed_sections: Vec<String>,
+    #[serde(deserialize_with = "lenient")]
     pub expanded_groups: Vec<Nav>,
     /// Names given to tabs, in place of the page's own.
     pub tab_names: Vec<(Nav, String)>,
@@ -185,4 +188,11 @@ impl Default for SyncPrefs {
     fn default() -> Self {
         Self { workload_minutes: 5, full_hours: 24, work_minutes: 5, lookback_days: None, reserve: 500 }
     }
+}
+
+/// A list read item by item: one this build can't read (a page that's
+/// gone, say) is dropped, not the whole saved state with it.
+fn lenient<'de, D: serde::Deserializer<'de>, T: serde::de::DeserializeOwned>(d: D) -> Result<Vec<T>, D::Error> {
+    let values: Vec<serde_json::Value> = serde::Deserialize::deserialize(d).unwrap_or_default();
+    Ok(values.into_iter().filter_map(|v| serde_json::from_value(v).ok()).collect())
 }

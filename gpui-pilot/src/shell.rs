@@ -100,11 +100,9 @@ pub enum Nav {
     Harness(crate::harness::HarnessKind),
     /// The review panel in each state, from a made-up PR (the pilot's own).
     ReviewPreview,
-    /// A Work on This session in each state, from a made-up issue.
-    WorkPreview,
-    /// The scheduler's week and month, from made-up items.
+    /// The scheduler: its week and month.
     SchedulePreview,
-    /// The workflow editor, from made-up workflows.
+    /// The workflow editor.
     WorkflowsPreview,
 }
 
@@ -145,7 +143,6 @@ impl Nav {
             Nav::Session(_) => "Session",
             Nav::Harness(kind) => kind.title(),
             Nav::ReviewPreview => "Review Preview",
-            Nav::WorkPreview => "Work Preview",
             Nav::SchedulePreview => "Schedule",
             Nav::WorkflowsPreview => "Workflows",
         }
@@ -222,8 +219,6 @@ fn sections() -> Vec<Section> {
         // },
         // Claude Code's agents: the workflows sessions run through.
         Section { id: "agents", title: Some("Agents"), rows: vec![Item(SchedulePreview), Item(WorkflowsPreview)] },
-        // The pilot's own: states to refine a UI against before it's wired.
-        Section { id: "previews", title: Some("Previews"), rows: vec![Item(WorkPreview)] },
     ]
 }
 
@@ -360,7 +355,6 @@ enum Page {
     Activity(Entity<crate::activity::ActivityPage>),
     Harness(Entity<crate::harness::HarnessPage>),
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
-    WorkPreview(Entity<crate::work_preview::WorkPreview>),
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
     None,
@@ -832,7 +826,6 @@ impl Workspace {
             Nav::Scorecards => Page::Scorecard(cx.new(|cx| crate::scorecard::ScorecardPage::new(org, cx))),
             Nav::Activity => Page::Activity(cx.new(|cx| crate::activity::ActivityPage::new(org, cx))),
             Nav::ReviewPreview => Page::ReviewPreview(cx.new(|cx| crate::review_preview::ReviewPreview::new(window, cx))),
-            Nav::WorkPreview => Page::WorkPreview(cx.new(|cx| crate::work_preview::WorkPreview::new(window, cx))),
             Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_page::SchedulePage::new(org.clone(), window, cx))),
             Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
@@ -3953,7 +3946,6 @@ impl Workspace {
             Nav::Activity => "icons/git_graph.svg",
             Nav::Harness(_) => "icons/book.svg",
             Nav::ReviewPreview => "icons/eye.svg",
-            Nav::WorkPreview => "icons/pull_request.svg",
             Nav::SchedulePreview => "icons/clock.svg",
             Nav::WorkflowsPreview => "icons/git_graph.svg",
             Nav::Session(id) => match self.session(id, cx).map(|p| p.read(cx)) {
@@ -4121,7 +4113,6 @@ impl Workspace {
                 Page::Activity(page) => page.into_any_element(),
                 Page::Harness(page) => page.into_any_element(),
                 Page::ReviewPreview(page) => page.into_any_element(),
-                Page::WorkPreview(page) => page.into_any_element(),
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
