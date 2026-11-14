@@ -582,7 +582,7 @@ impl ReviewPanel {
     /// coloured word (or where claude is, before there's one), the findings
     /// still kept by severity, and the effort. Claude's state is the
     /// header's dot.
-    fn standing(&self, theme: &Theme) -> impl IntoElement {
+    fn standing(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let (status, status_tint) = self.status(theme);
         let (lead, lead_tint) = match self.result.as_ref().map(|r| r.verdict.as_deref()) {
             Some(Some("approve")) => ("Approve".to_string(), theme.good()),
@@ -646,6 +646,25 @@ impl ReviewPanel {
                         .child("Effort")
                         .child(Self::effort_pips(e, theme))
                         .child(format!("{e}/5")),
+                )
+            })
+            // What was posted and when, a link to it.
+            .when_some(self.posted_latest().cloned(), |d, posted| {
+                let url = posted.url.clone();
+                let tint = match posted_label(&posted.event) {
+                    "Approved" => theme.good(),
+                    "Changes requested" => theme.orange(),
+                    _ => theme.selected,
+                };
+                d.child(
+                    div()
+                        .id("review-posted")
+                        .text_sm()
+                        .text_color(tint)
+                        .cursor_pointer()
+                        .hover(|s| s.opacity(0.8))
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                        .child(format!("{} {}", posted_label(&posted.event), ago(posted.at))),
                 )
             })
     }
@@ -718,28 +737,6 @@ impl ReviewPanel {
                 .child(Self::button("review-again", "Review Again", false, can_again, theme).when(can_again, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx)))
                 }))
-                .map(|d| match (self.posted_latest().cloned(), has_result) {
-                    (Some(posted), _) => {
-                        let url = posted.url.clone();
-                        let tint = match posted_label(&posted.event) {
-                            "Approved" => theme.good(),
-                            "Changes requested" => theme.orange(),
-                            _ => theme.selected,
-                        };
-                        d.child(
-                            div()
-                                .id("review-posted")
-                                .flex_none()
-                                .text_sm()
-                                .text_color(tint)
-                                .cursor_pointer()
-                                .hover(|s| s.opacity(0.8))
-                                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
-                                .child(format!("{} {}", posted_label(&posted.event), ago(posted.at))),
-                        )
-                    }
-                    (None, _) => d,
-                })
                 .child(Self::button("review-post", "Post Review", true, can_post, theme).when(can_post, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
                 }))
@@ -843,7 +840,7 @@ impl ReviewPanel {
         // Where the review stands, above everything, as icons with the
         // words in their tooltips: claude's state, the verdict, the findings
         // still kept by severity (how ready it is to merge), and the effort.
-        rows.push(self.standing(theme).into_any_element());
+        rows.push(self.standing(theme, cx).into_any_element());
         rows.push(self.list_row("row-overview".into(), Selected::Overview, "Overview".into(), None, None, theme, cx).into_any_element());
         let general = self.general();
         if !general.is_empty() {
