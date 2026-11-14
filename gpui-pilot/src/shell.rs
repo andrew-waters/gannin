@@ -210,8 +210,6 @@ fn sections() -> Vec<Section> {
         //     title: Some("Agents"),
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
-        // The pilot's own: states to refine the UI against.
-        Section { id: "pilot", title: Some("Pilot"), rows: vec![Item(ReviewPreview)] },
     ]
 }
 
