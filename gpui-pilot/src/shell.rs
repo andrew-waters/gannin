@@ -42,6 +42,9 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("cmd-shift-left", PreviousTab, None),
         KeyBinding::new("cmd-shift-]", NextTab, None),
         KeyBinding::new("cmd-shift-[", PreviousTab, None),
+        // ⇧⌘[ and ⇧⌘] arrive as ⌘{ and ⌘}, as Zed binds them.
+        KeyBinding::new("cmd-}", NextTab, None),
+        KeyBinding::new("cmd-{", PreviousTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
         KeyBinding::new("cmd-alt-o", OpenSwitcher, None),
