@@ -830,6 +830,9 @@ impl Workspace {
                 this.next_session += 1;
                 let page = cx.new(|cx| SessionPage::new(id, kind, folder, launch, builder, window, cx));
                 this._subscriptions.push(cx.subscribe(&page, |_, _, _: &Changed, cx| cx.notify()));
+                this._subscriptions.push(cx.subscribe_in(&page, window, |this, _, event: &crate::review_panel::ExplainPr, window, cx| {
+                    this.explain_subject(event.0.clone(), window, cx)
+                }));
                 this.sessions.push(page);
                 this.drawers.clear();
                 this.next_tab += 1;
@@ -1032,15 +1035,21 @@ impl Workspace {
     /// Explain: Claude explains the PR in plain terms, as an Ask session
     /// about it, so the conversation can carry on.
     fn explain_pr(&mut self, pr: PrItem, window: &mut Window, cx: &mut Context<Self>) {
-        use crate::launch::{self, Flow, Launch, Subject};
+        let subject = crate::launch::Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
+        self.explain_subject(subject, window, cx);
+    }
+
+    /// Explains a PR in an Ask session of its own, or shows the one there is.
+    fn explain_subject(&mut self, pr: crate::launch::Subject, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::launch::{self, Flow, Launch};
         if self.show_session(&pr.id, Flow::Ask, window, cx) {
             return;
         }
         let (Some(org), Some(harness)) = (self.org.clone(), self.harness_for(&pr.repo)) else {
             return Self::no_harness(window, cx);
         };
-        let subject = Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
-        let mut launch = Launch::new(Flow::Ask, format!("Explain {}#{}", pr.repo_name, pr.number), &org, &harness, String::new(), Some(subject));
+        let repo_name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string();
+        let mut launch = Launch::new(Flow::Ask, format!("Explain {}#{}", repo_name, pr.number), &org, &harness, String::new(), Some(pr.clone()));
         launch.branch = format!("ask-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..8].to_lowercase());
         let question = format!(
             "Explain pull request {}#{}, \"{}\" ({}), in plain terms: what it changes, why, and anything a reviewer should look at closely. Read it with `gh pr view {} --repo {} --comments` and `gh pr diff {} --repo {}`. Don't change anything.",

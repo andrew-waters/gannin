@@ -90,6 +90,7 @@ pub struct SessionPage {
 pub struct Changed;
 
 impl gpui::EventEmitter<Changed> for SessionPage {}
+impl gpui::EventEmitter<crate::review_panel::ExplainPr> for SessionPage {}
 
 /// Starts the process in a pty; the page is made once it's running.
 pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
@@ -180,7 +181,12 @@ impl SessionPage {
             cx.new(|cx| crate::planning_panel::PlanningPanel::new(launch, terminal, window, cx))
         });
         let show = if review.is_some() || planning.is_some() { Show::Changes } else { Show::Both };
-        let subscriptions = vec![cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
+        let mut subscriptions = Vec::new();
+        if let Some(review) = &review {
+            // Explain starts a session of its own, so the workspace hears of it.
+            subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone()))));
+        }
+        subscriptions.push(cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {
                 this.last_output = Instant::now();
                 if this.launch.is_none() && this.state != State::Working && this.state != State::Ended {
@@ -191,7 +197,7 @@ impl SessionPage {
             terminal::Event::TitleChanged | terminal::Event::BreadcrumbsChanged => cx.emit(Changed),
             terminal::Event::CloseTerminal => this.set_state(State::Ended, cx),
             _ => {}
-        })];
+        }));
         // Once a second: has the output gone quiet, and is it asking?
         let tick = cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(Duration::from_secs(1)).await;

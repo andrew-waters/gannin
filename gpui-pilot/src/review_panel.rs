@@ -34,6 +34,42 @@ enum Source {
     Preview { repo: String, number: i64, url: String, idle: bool, working: bool, snapshot: Arc<Snapshot> },
 }
 
+/// A review posted to GitHub: its kind (as GitHub names it), when, and
+/// its link. Kept in the session's folder so it's known after a relaunch.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Posted {
+    pub event: String,
+    pub at: chrono::DateTime<chrono::Utc>,
+    pub url: String,
+}
+
+/// Ask the workspace to explain this PR in a session of its own.
+pub struct ExplainPr(pub crate::launch::Subject);
+
+impl gpui::EventEmitter<ExplainPr> for ReviewPanel {}
+
+/// "Approved", "Changes requested" or "Commented", from GitHub's event or
+/// review state.
+fn posted_label(event: &str) -> &'static str {
+    match event {
+        "APPROVE" | "APPROVED" => "Approved",
+        "REQUEST_CHANGES" | "CHANGES_REQUESTED" => "Changes requested",
+        "COMMENT" | "COMMENTED" => "Commented",
+        _ => "Posted",
+    }
+}
+
+/// "just now", "5 minutes ago", "3 hours ago", else the date.
+fn ago(at: chrono::DateTime<chrono::Utc>) -> String {
+    let seconds = (chrono::Utc::now() - at).num_seconds().max(0);
+    match seconds {
+        0..60 => "just now".into(),
+        60..3600 => plural((seconds / 60) as usize, "minute ago", "minutes ago"),
+        3600..86400 => plural((seconds / 3600) as usize, "hour ago", "hours ago"),
+        _ => at.with_timezone(&chrono::Local).format("%-d %b").to_string(),
+    }
+}
+
 /// What the detail column shows.
 #[derive(Clone, PartialEq)]
 enum Selected {
@@ -62,7 +98,13 @@ pub struct ReviewPanel {
     resizing: Option<(f32, f32)>,
     composer: Entity<editor::Editor>,
     post: Option<Post>,
+    posted: Option<Posted>,
+    /// The last Check for Changes: when, and what it found or why it failed.
+    checked: Option<(chrono::DateTime<chrono::Utc>, Result<review::Changes, String>)>,
+    checking: bool,
     _poll: Option<Task<()>>,
+    /// Redraws the relative times now and then.
+    _clock: Task<()>,
 }
 
 fn severity_tint(severity: Option<&str>, theme: &Theme) -> Hsla {
@@ -91,6 +133,15 @@ fn file_name(path: &str) -> (&str, &str) {
 }
 
 impl ReviewPanel {
+    fn clock(cx: &mut Context<Self>) -> Task<()> {
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(30)).await;
+            if this.update(cx, |_, cx| cx.notify()).is_err() {
+                return;
+            }
+        })
+    }
+
     fn composer(window: &mut Window, cx: &mut Context<Self>) -> Entity<editor::Editor> {
         cx.new(|cx| {
             let mut editor = editor::Editor::single_line(window, cx);
@@ -119,7 +170,12 @@ impl ReviewPanel {
             }
             cx.background_executor().timer(Duration::from_secs(4)).await;
         });
+        let posted = std::fs::read(launch.dir().join("posted.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
         Self {
+            posted,
+            checked: None,
+            checking: false,
+            _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
             result: None,
             dismissed: HashSet::new(),
@@ -150,7 +206,12 @@ impl ReviewPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let posted = matches!(post, Some(Post::Posted(_))).then(|| Posted { event: "COMMENT".into(), at: chrono::Utc::now(), url: format!("https://github.com/{repo}/pull/{number}") });
         Self {
+            posted,
+            checked: None,
+            checking: false,
+            _clock: Self::clock(cx),
             source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, working, snapshot: Arc::new(snapshot) },
             result,
             dismissed: HashSet::new(),
@@ -336,6 +397,79 @@ impl ReviewPanel {
         Post::Ready { snapshot, draft: Arc::new(draft), event, body }
     }
 
+    fn record_posted(&mut self, posted: Posted) {
+        if let Source::Live { launch, .. } = &self.source {
+            let _ = std::fs::write(launch.dir().join("posted.json"), serde_json::to_vec(&posted).unwrap_or_default());
+        }
+        self.posted = Some(posted);
+    }
+
+    /// The posted review, if it's for the latest result: a newer result
+    /// isn't posted yet.
+    fn posted_latest(&self) -> Option<&Posted> {
+        self.posted.as_ref().filter(|p| self.result.as_ref().and_then(|r| r.at).is_none_or(|at| p.at >= at))
+    }
+
+    /// Checks GitHub for what's changed since the review (read only). A
+    /// review of the viewer's found there counts as posted.
+    fn check_for_changes(&mut self, cx: &mut Context<Self>) {
+        if self.checking {
+            return;
+        }
+        self.checking = true;
+        cx.notify();
+        let since = self.result.as_ref().and_then(|r| r.at);
+        let (repo, number) = self.subject();
+        let preview = matches!(self.source, Source::Preview { .. });
+        cx.spawn(async move |this, cx| {
+            let found = if preview {
+                cx.background_executor().timer(Duration::from_millis(800)).await;
+                Ok(review::Changes { state: "OPEN".into(), new_commits: 2, new_comments: 1, mine: None })
+            } else {
+                cx.background_executor()
+                    .spawn(async move {
+                        let token = crate::auth::token().ok_or("Sign in to check GitHub.")?;
+                        review::check(&token, &repo, number, since)
+                    })
+                    .await
+            };
+            this.update(cx, |this, cx| {
+                if let Ok(changes) = &found {
+                    if let Some((state, at, url)) = &changes.mine {
+                        if this.posted.as_ref().is_none_or(|p| p.at < *at) {
+                            this.record_posted(Posted { event: state.clone(), at: *at, url: url.clone() });
+                        }
+                    }
+                }
+                this.checked = Some((chrono::Utc::now(), found));
+                this.checking = false;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// What the last check found, for beside its button.
+    fn check_text(&self) -> Option<String> {
+        if self.checking {
+            return Some("Checking".into());
+        }
+        let (at, found) = self.checked.as_ref()?;
+        Some(match found {
+            Ok(changes) => format!("{}, checked {}", changes.summary(), ago(*at)),
+            Err(_) => format!("Couldn't check GitHub, tried {}", ago(*at)),
+        })
+    }
+
+    fn explain(&mut self, cx: &mut Context<Self>) {
+        if let Source::Live { launch, .. } = &self.source {
+            if let Some(subject) = launch.subject.clone() {
+                cx.emit(ExplainPr(subject));
+            }
+        }
+    }
+
     /// Sends it: only from the person's click on Post to GitHub. A preview
     /// only pretends, after a moment.
     fn confirm_post(&mut self, cx: &mut Context<Self>) {
@@ -350,6 +484,7 @@ impl ReviewPanel {
             cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Duration::from_millis(1200)).await;
                 this.update(cx, |this, cx| {
+                    this.posted = Some(Posted { event: event.to_string(), at: chrono::Utc::now(), url: url.clone() });
                     this.post = Some(Post::Posted(url));
                     cx.notify();
                 })
@@ -368,7 +503,10 @@ impl ReviewPanel {
                 .await;
             this.update(cx, |this, cx| {
                 this.post = Some(match posted {
-                    Ok(url) => Post::Posted(url),
+                    Ok(url) => {
+                        this.record_posted(Posted { event: event.to_string(), at: chrono::Utc::now(), url: url.clone() });
+                        Post::Posted(url)
+                    }
                     Err(error) => Post::Failed(error.to_string()),
                 });
                 cx.notify();
@@ -449,6 +587,7 @@ impl ReviewPanel {
         let (ready, ready_tint) = self.readiness(theme);
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
+        let live = matches!(self.source, Source::Live { .. });
         let dot = if self.working() { theme.good() } else if status_tint == theme.orange() { theme.orange() } else if self.running() { theme.selected } else { theme.tertiary };
         let controls = match &self.post {
             Some(post) => self.post_controls(post, theme, cx).into_any_element(),
@@ -466,9 +605,37 @@ impl ReviewPanel {
                     )))
                 })
                 .child(Self::button("review-github", "Open on GitHub", false, true, theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                .child(Self::button("review-explain", "Explain", false, live, theme).when(live, |d| d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.explain(cx)))))
+                .when_some(self.check_text(), |d, text| d.child(div().flex_none().text_sm().text_color(theme.secondary).child(text)))
+                .child(Self::button("review-check", "Check for Changes", false, !self.checking, theme).when(!self.checking, |d| {
+                    d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.check_for_changes(cx)))
+                }))
                 .child(Self::button("review-again", "Review Again", false, can_again, theme).when(can_again, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx)))
                 }))
+                .map(|d| match (self.posted_latest().cloned(), has_result) {
+                    (Some(posted), _) => {
+                        let url = posted.url.clone();
+                        let tint = match posted_label(&posted.event) {
+                            "Approved" => theme.good(),
+                            "Changes requested" => theme.orange(),
+                            _ => theme.selected,
+                        };
+                        d.child(
+                            div()
+                                .id("review-posted")
+                                .flex_none()
+                                .text_sm()
+                                .text_color(tint)
+                                .cursor_pointer()
+                                .hover(|s| s.opacity(0.8))
+                                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                                .child(format!("{} {}", posted_label(&posted.event), ago(posted.at))),
+                        )
+                    }
+                    (None, true) => d.child(div().flex_none().text_sm().text_color(theme.secondary).child("Not posted")),
+                    (None, false) => d,
+                })
                 .child(Self::button("review-post", "Post Review", true, has_result, theme).when(has_result, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
                 }))

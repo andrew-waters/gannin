@@ -58,6 +58,8 @@ pub struct ReviewResult {
     pub applied: Vec<Applied>,
     /// Explanations people gave in the PR that later reviews should know.
     pub learnings: Vec<Suggested>,
+    /// When claude gave it, from the transcript.
+    pub at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -105,16 +107,16 @@ fn transcript(claude_id: &str) -> Option<PathBuf> {
 /// leniently so one bad finding never loses the rest.
 pub fn read_result(claude_id: &str) -> Option<ReviewResult> {
     let text = std::fs::read_to_string(transcript(claude_id)?).ok()?;
-    let last_reply = text.lines().rev().filter_map(|line| serde_json::from_str::<Value>(line).ok()).find_map(|entry| {
+    let (last_reply, at) = text.lines().rev().filter_map(|line| serde_json::from_str::<Value>(line).ok()).find_map(|entry| {
         if entry["type"] != "assistant" || entry["isSidechain"] == true {
             return None;
         }
         let blocks = entry["message"]["content"].as_array()?;
         let text: Vec<&str> = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect();
         let text = text.join("\n");
-        (!text.trim().is_empty()).then_some(text)
+        (!text.trim().is_empty()).then(|| (text, entry["timestamp"].as_str().and_then(|t| t.parse().ok())))
     })?;
-    parse(&last_reply)
+    parse(&last_reply).map(|r| ReviewResult { at, ..r })
 }
 
 pub fn parse(reply: &str) -> Option<ReviewResult> {
@@ -177,6 +179,7 @@ pub fn parse(reply: &str) -> Option<ReviewResult> {
                     .collect()
             })
             .unwrap_or_default(),
+        at: None,
         learnings: value["learnings"]
             .as_array()
             .map(|a| {
@@ -486,4 +489,59 @@ pub fn post(token: &str, repo: &str, number: i64, event: &str, draft: &Draft, sn
     let payload = json!({ "commit_id": snapshot.head_sha, "event": event, "body": draft.body, "comments": comments });
     let posted = rest(token, "POST", &format!("repos/{repo}/pulls/{number}/reviews"), Some(&payload)).map_err(|e| format!("GitHub didn't take it: {e}"))?;
     Ok(posted["html_url"].as_str().unwrap_or_default().to_string())
+}
+
+// MARK: - Changes since the review
+
+/// What's happened on the PR since the review, as Check for Changes finds.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Changes {
+    /// OPEN, MERGED or CLOSED.
+    pub state: String,
+    pub new_commits: usize,
+    /// Comments and reviews by others since the review.
+    pub new_comments: usize,
+    /// The viewer's own latest review since the review: its state, when and where.
+    pub mine: Option<(String, chrono::DateTime<chrono::Utc>, String)>,
+}
+
+impl Changes {
+    pub fn summary(&self) -> String {
+        match self.state.as_str() {
+            "MERGED" => return "Merged".into(),
+            "CLOSED" => return "Closed".into(),
+            _ => {}
+        }
+        let mut parts = Vec::new();
+        if self.new_commits > 0 {
+            parts.push(format!("{} new commit{}", self.new_commits, if self.new_commits == 1 { "" } else { "s" }));
+        }
+        if self.new_comments > 0 {
+            parts.push(format!("{} new comment{}", self.new_comments, if self.new_comments == 1 { "" } else { "s" }));
+        }
+        if parts.is_empty() { "No changes".into() } else { parts.join(", ") }
+    }
+}
+
+/// Reads the PR's state, commits, comments and reviews, and counts what's
+/// newer than `since` (the review). Read only.
+pub fn check(token: &str, repo: &str, number: i64, since: Option<chrono::DateTime<chrono::Utc>>) -> Result<Changes, String> {
+    let (owner, name) = repo.split_once('/').ok_or("Not a repository")?;
+    let query = "query($owner: String!, $name: String!, $number: Int!) { viewer { login } repository(owner: $owner, name: $name) { pullRequest(number: $number) { state commits(last: 100) { nodes { commit { committedDate } } } comments(last: 100) { nodes { createdAt author { login } } } reviews(last: 50) { nodes { state submittedAt url author { login } } } } } }";
+    let data = crate::github::graphql(token, query, json!({ "owner": owner, "name": name, "number": number })).map_err(|e| e.to_string())?;
+    let viewer = data["viewer"]["login"].as_str().unwrap_or("");
+    let pr = &data["repository"]["pullRequest"];
+    let after = |v: &Value| v.as_str().and_then(|t| t.parse::<chrono::DateTime<chrono::Utc>>().ok()).is_some_and(|t| since.is_none_or(|s| t > s));
+    let nodes = |v: &Value| v["nodes"].as_array().cloned().unwrap_or_default();
+    let new_commits = nodes(&pr["commits"]).iter().filter(|c| after(&c["commit"]["committedDate"])).count();
+    let others = |n: &Value| n["author"]["login"].as_str().is_some_and(|l| l != viewer);
+    let reviews = nodes(&pr["reviews"]);
+    let new_comments = nodes(&pr["comments"]).iter().filter(|c| others(c) && after(&c["createdAt"])).count()
+        + reviews.iter().filter(|r| others(r) && after(&r["submittedAt"])).count();
+    let mine = reviews
+        .iter()
+        .filter(|r| r["author"]["login"].as_str() == Some(viewer) && after(&r["submittedAt"]))
+        .filter_map(|r| Some((r["state"].as_str()?.to_string(), r["submittedAt"].as_str()?.parse().ok()?, r["url"].as_str().unwrap_or_default().to_string())))
+        .max_by_key(|r| r.1);
+    Ok(Changes { state: pr["state"].as_str().unwrap_or("OPEN").to_string(), new_commits, new_comments, mine })
 }
