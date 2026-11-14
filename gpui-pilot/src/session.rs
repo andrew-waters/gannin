@@ -74,6 +74,8 @@ pub struct SessionPage {
     changes: Entity<ChangesView>,
     /// A review session's findings, shown where Changes would be.
     review: Option<Entity<crate::review_panel::ReviewPanel>>,
+    /// A planning session's workspace, shown where Changes would be.
+    planning: Option<Entity<crate::planning_panel::PlanningPanel>>,
     show: Show,
     pub state: State,
     /// When the state last changed, for "waiting since".
@@ -173,6 +175,10 @@ impl SessionPage {
                 let (launch, terminal) = (l.clone(), terminal.clone());
                 cx.new(|cx| crate::review_panel::ReviewPanel::new(launch, terminal, cx))
             });
+        let planning = launch.as_ref().filter(|l| l.flow == crate::launch::Flow::Plan).map(|l| {
+            let (launch, terminal) = (l.clone(), terminal.clone());
+            cx.new(|cx| crate::planning_panel::PlanningPanel::new(launch, terminal, window, cx))
+        });
         let subscriptions = vec![cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {
                 this.last_output = Instant::now();
@@ -201,6 +207,7 @@ impl SessionPage {
             view,
             changes,
             review,
+            planning,
             show: Show::Both,
             state: State::Working,
             since: chrono::Local::now(),
@@ -292,7 +299,18 @@ impl SessionPage {
             .gap_0p5()
             .child(option("show-terminal", "Terminal", Show::Terminal, cx))
             .child(option("show-both", "Side by Side", Show::Both, cx))
-            .child(option("show-changes", if self.review.is_some() { "Review" } else { "Changes" }, Show::Changes, cx))
+            .child(option(
+                "show-changes",
+                if self.review.is_some() {
+                    "Review"
+                } else if self.planning.is_some() {
+                    "Plan"
+                } else {
+                    "Changes"
+                },
+                Show::Changes,
+                cx,
+            ))
     }
 }
 
@@ -334,12 +352,27 @@ impl Render for SessionPage {
             .child(div().size(px(8.)).rounded_full().bg(tint))
             .child(div().font_weight(gpui::FontWeight::MEDIUM).truncate().child(title))
             .child(div().text_xs().text_color(theme.secondary).child(state.label()))
+            .when_some(self.launch.as_ref(), |d, launch| {
+                // What kind of session it is, and any PRs it has opened.
+                d.child(div().px_1p5().rounded_sm().text_xs().bg(theme.tile).text_color(theme.secondary).child(launch.flow.label()))
+                    .children(launch.pull_requests().into_iter().enumerate().map(|(i, url)| {
+                        let label = url.rsplit_once("/pull/").map(|(repo, n)| format!("{}#{n}", repo.rsplit('/').next().unwrap_or(""))).unwrap_or_else(|| url.clone());
+                        div()
+                            .id(("session-pr", i))
+                            .text_xs()
+                            .text_color(theme.selected)
+                            .cursor_pointer()
+                            .on_click(move |_, _, cx| cx.open_url(&url))
+                            .child(label)
+                    }))
+            })
             .child(div().flex_1())
             .child(self.switch(&theme, cx));
         let terminal = div().flex_1().min_w_0().h_full().child(self.view.clone());
-        let changes = div().flex_1().min_w_0().h_full().map(|d| match &self.review {
-            Some(review) => d.child(review.clone()),
-            None => d.child(self.changes.clone()),
+        let changes = div().flex_1().min_w_0().h_full().map(|d| match (&self.review, &self.planning) {
+            (Some(review), _) => d.child(review.clone()),
+            (_, Some(planning)) => d.child(planning.clone()),
+            _ => d.child(self.changes.clone()),
         });
         div()
             .size_full()

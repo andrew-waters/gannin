@@ -15,9 +15,11 @@ mod format;
 mod github;
 mod issues;
 mod launch;
+mod launch_form;
 mod markdown;
 mod metrics;
 mod page;
+mod planning_panel;
 mod projects;
 mod review;
 mod review_panel;
@@ -33,7 +35,7 @@ use gpui::{
     actions, point, px, size, App, AppContext, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions,
     WindowBounds, WindowOptions,
 };
-use shell::{CloseTab, NewClaudeSession, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
+use shell::{CloseTab, NewAsk, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
 
 actions!(pilot, [Quit]);
 
@@ -124,6 +126,9 @@ fn main() {
                 items: vec![
                     MenuItem::action("New Claude Code Session", NewClaudeSession),
                     MenuItem::action("New Terminal", NewTerminal),
+                    MenuItem::action("New Ask", NewAsk),
+                    MenuItem::action("New Quick Change", NewQuickChange),
+                    MenuItem::action("New Plan", NewPlan),
                     MenuItem::separator(),
                     MenuItem::action("Switch Org", OpenSwitcher),
                     MenuItem::separator(),

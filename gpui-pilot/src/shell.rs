@@ -29,7 +29,7 @@ use gpui::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleInspector, NewClaudeSession, NewTerminal, CloseTab, OpenSwitcher]);
+actions!(shell, [ToggleSidebar, ToggleInspector, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, OpenSwitcher]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
@@ -325,6 +325,8 @@ pub struct Workspace {
     /// Polls GitHub while signing in; dropping it stops.
     sign_in_task: Option<gpui::Task<()>>,
     account_open: bool,
+    /// New Plan, New Ask or New Quick Change, over the window.
+    launch_form: Option<(Entity<crate::launch_form::LaunchForm>, Subscription)>,
     sync: SyncStatus,
     _sync_loop: Option<gpui::Task<()>>,
     /// What was last written, so unchanged state isn't written again.
@@ -548,6 +550,7 @@ impl Workspace {
             sign_in: None,
             sign_in_task: None,
             account_open: false,
+            launch_form: None,
             sync: SyncStatus::default(),
             _sync_loop: None,
             _subscriptions: subscriptions,
@@ -856,6 +859,92 @@ impl Workspace {
         let brief = format!("# Review of {}#{}: {}\n\n{}\n", pr.repo, pr.number, pr.title, pr.url);
         let prompt = launch::review_prompt(&pr.repo, pr.number, &pr.title, &pr.url, &branch);
         self.start_launch(launch, &brief, &prompt, true, window, cx);
+    }
+
+    /// New Plan, New Ask or New Quick Change; a plan can be for an issue.
+    fn open_form(&mut self, flow: crate::launch::Flow, issue: Option<IssueItem>, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::launch_form::{FormEvent, LaunchForm};
+        if self.projects.is_empty() {
+            return Self::no_harness(window, cx);
+        }
+        let projects = self.projects.clone();
+        let form = cx.new(|cx| LaunchForm::new(flow, projects, issue, window, cx));
+        let subscription = cx.subscribe_in(&form, window, |this, _, event: &FormEvent, window, cx| {
+            this.launch_form = None;
+            if let FormEvent::Start(started) = event {
+                this.start_from_form(started, window, cx);
+            } else {
+                this.focus_current(window, cx);
+            }
+            cx.notify();
+        });
+        self.launch_form = Some((form, subscription));
+        cx.notify();
+    }
+
+    fn start_from_form(&mut self, started: &crate::launch_form::Started, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::launch::{self, Flow, Launch, Subject};
+        let Some(org) = self.org.clone() else { return };
+        let harness = started.harness.clone();
+        match started.flow {
+            Flow::Plan => {
+                let topic = started.text.clone();
+                let slug = launch::slug(&topic, 40);
+                let branch = format!("plan-{}", if slug.is_empty() { "plan" } else { slug.as_str() });
+                let subject = started.issue.as_ref().map(|i| Subject { id: i.id.clone(), repo: i.repo.clone(), number: i.number, title: i.title.clone(), url: i.url.clone() });
+                let launch = Launch::new(Flow::Plan, format!("Plan: {}", launch::short_title(&topic)), &org, &harness, branch.clone(), subject);
+                let mut brief = format!("# Planning: {topic}\n\n");
+                let reference = started.issue.as_ref().map(|i| (format!("{}#{}", i.repo, i.number), i.number, i.repo.clone()));
+                if let Some(issue) = &started.issue {
+                    brief.push_str(&format!("Planning {}#{}: {}\n", issue.repo, issue.number, issue.title));
+                }
+                let mut prompt = launch::planning_prompt(&topic, &branch, reference.as_ref().map(|(r, n, repo)| (r.as_str(), *n, repo.as_str())));
+                if !started.extra.is_empty() {
+                    prompt.push_str("\n\n");
+                    prompt.push_str(&started.extra);
+                }
+                self.start_launch(launch, &brief, &prompt, false, window, cx);
+            }
+            Flow::Ask => {
+                let title = launch::short_title(&started.text);
+                let mut launch = Launch::new(Flow::Ask, format!("Ask: {title}"), &org, &harness, String::new(), None);
+                launch.branch = format!("ask-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..8].to_lowercase());
+                let brief = launch::ask_brief(&title, &harness, &launch.harness_path, &launch.branch);
+                let prompt = launch::ask_prompt(&started.text, &launch.branch);
+                // What Gannin puts in context/: here, only what it holds.
+                let context = launch.dir().join("context");
+                let _ = std::fs::create_dir_all(&context);
+                let _ = std::fs::write(
+                    context.join("README.md"),
+                    format!("# {org}, as the Gannin pilot sees it\n\nThe pilot doesn't write Gannin's org view here yet: use `gh` and the code for what the question needs.\n\nWritten {}.\n", chrono::Utc::now().to_rfc3339()),
+                );
+                self.start_launch(launch, &brief, &prompt, false, window, cx);
+            }
+            Flow::QuickChange => {
+                let Some(repo) = started.repo.clone() else { return };
+                let title = if started.extra.is_empty() { launch::short_title(&started.text) } else { started.extra.clone() };
+                let mut launch = Launch::new(Flow::QuickChange, format!("Quick change: {title}"), &org, &harness, String::new(), None);
+                let hex = launch.id[..4].to_lowercase();
+                let slug = launch::slug(&title, 32);
+                launch.branch = if slug.is_empty() { format!("quick-{hex}") } else { format!("quick-{slug}-{hex}") };
+                let brief = format!(
+                    "# Quick change in {repo}: {title}\n\n## A quick change\n\nStarted from a quick note in Gannin rather than a written-up issue, and there's no issue for it. It's meant to be small: a snag, a tweak or a one-line fix in {repo}. It needs no plan document. If it turns out bigger than that (more than one repo, a design decision to make, or more than a short piece of work), stop and say so before going further, so it can be written up as an issue.\n\n## The note\n\n{}\n\n{}",
+                    started.text,
+                    launch::working_here(&harness, &launch.harness_path, &launch.branch, None, &repo, true)
+                );
+                let prompt = launch::quick_change_prompt(&repo, &title, &launch.branch, false);
+                self.start_launch(launch, &brief, &prompt, false, window, cx);
+            }
+            _ => {}
+        }
+    }
+
+    /// Plan This: the New Plan form for the issue; or its planning session.
+    fn plan_issue(&mut self, issue: IssueItem, window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_session(&issue.id, crate::launch::Flow::Plan, window, cx) {
+            return;
+        }
+        self.open_form(crate::launch::Flow::Plan, Some(issue), window, cx);
     }
 
     /// The org's PR cache, read off the main thread.
@@ -1580,6 +1669,17 @@ impl Workspace {
                 } else {
                     ("Work on This", format!("Work on this issue with Claude Code, in {harness}"))
                 };
+                let has_plan = self.session_for(&issue.id, Flow::Plan, cx).is_some() || Self::saved_launch(&issue.id, Flow::Plan).is_some();
+                let planned = issue.clone();
+                actions.push(
+                    if has_plan {
+                        action("plan-this", "Open Planning".into(), "Show this issue's planning session".into())
+                    } else {
+                        action("plan-this", "Plan This".into(), "Plan this issue with the team: requirements, design and tasks, then its sub-issues".into())
+                    }
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.plan_issue(planned.clone(), window, cx)))
+                    .into_any_element(),
+                );
                 actions.push(
                     action("work-on-this", label.into(), tip)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.work_on(issue.clone(), window, cx)))
@@ -2526,6 +2626,22 @@ impl Workspace {
                     })))
                     .child(button("new-terminal", "New Terminal").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         this.new_session(Kind::Shell, window, cx)
+                    }))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .pt_2()
+                    .child(button("new-ask", "New Ask").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.open_form(crate::launch::Flow::Ask, None, window, cx)
+                    })))
+                    .child(button("new-quick-change", "Quick Change").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.open_form(crate::launch::Flow::QuickChange, None, window, cx)
+                    })))
+                    .child(button("new-plan", "New Plan").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.open_form(crate::launch::Flow::Plan, None, window, cx)
                     }))),
             )
             .child(list)
@@ -3476,6 +3592,9 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &NewClaudeSession, window, cx| this.new_session(Kind::Claude, window, cx)))
             .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.new_session(Kind::Shell, window, cx)))
+            .on_action(cx.listener(|this, _: &NewAsk, window, cx| this.open_form(crate::launch::Flow::Ask, None, window, cx)))
+            .on_action(cx.listener(|this, _: &NewQuickChange, window, cx| this.open_form(crate::launch::Flow::QuickChange, None, window, cx)))
+            .on_action(cx.listener(|this, _: &NewPlan, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
             .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_tab(this.active, window, cx)))
             .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Org, window, cx)))
             // Escape closes the top drawer; the switcher takes it first when open.
@@ -3541,5 +3660,22 @@ impl Render for Workspace {
                 )
             })
             .when_some(self.sign_in.as_ref(), |d, step| d.child(self.sign_in_sheet(step, &theme, cx)))
+            .when_some(self.launch_form.as_ref().map(|(form, _)| form.clone()), |d, form| {
+                d.child(
+                    div()
+                        .id("form-scrim")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .occlude()
+                        .bg(gpui::black().opacity(0.35))
+                        .flex()
+                        .justify_center()
+                        .pt(px(90.))
+                        .child(form),
+                )
+            })
     }
 }
