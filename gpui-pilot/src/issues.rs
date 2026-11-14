@@ -1059,6 +1059,11 @@ impl IssuesPage {
         self.issues.iter().find(|i| i.id == id).cloned()
     }
 
+    /// An issue by its repo and number.
+    pub fn issue_by_number(&self, repo: &str, number: i64) -> Option<IssueItem> {
+        self.issues.iter().find(|i| i.number == number && i.repo == repo).cloned()
+    }
+
     /// Open issues assigned to `login`, recently updated first.
     pub fn assigned_to(&self, login: &str) -> Vec<IssueItem> {
         let mut assigned: Vec<IssueItem> =

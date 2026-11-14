@@ -14,6 +14,7 @@ mod data;
 mod detail;
 mod format;
 mod github;
+mod harness;
 mod issues;
 mod launch;
 mod launch_form;

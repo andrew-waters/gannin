@@ -86,6 +86,8 @@ pub enum Nav {
     /// A session's tab, by the pilot's own number for it. Not restored at
     /// launch: its terminal ended with the last run.
     Session(u32),
+    /// A kind of document in the team's harness.
+    Harness(crate::harness::HarnessKind),
 }
 
 impl Nav {
@@ -123,6 +125,7 @@ impl Nav {
             Nav::Queue => "Queue",
             Nav::Settings => "Settings",
             Nav::Session(_) => "Session",
+            Nav::Harness(kind) => kind.title(),
         }
     }
 }
@@ -189,7 +192,13 @@ fn sections() -> Vec<Section> {
         //     title: Some("Rituals"),
         //     rows: vec![Item(Standup), Item(Recap), Item(Prioritisation), Item(Planning), Item(Refine), Item(Hygiene)],
         // },
-        // Section { id: "harness", title: Some("Harness"), rows: vec![Item(Onboarding), Item(HarnessWorkflows)] },
+        // The team's harness: its documents by kind. Onboarding and
+        // Workflows aren't ported yet.
+        Section {
+            id: "harness",
+            title: Some("Harness"),
+            rows: crate::harness::HarnessKind::ALL.into_iter().map(|kind| Item(Harness(kind))).collect(),
+        },
         // Section {
         //     id: "agents",
         //     title: Some("Agents"),
@@ -222,6 +231,7 @@ struct Drawer {
 enum DrawerItem {
     Issue(IssueDrawer),
     Pull(PrItem),
+    Doc(crate::harness::Doc),
 }
 
 /// An issue, with its parent and sub-issues looked up when it opened.
@@ -279,6 +289,7 @@ enum Page {
     Ci(Entity<ActionsPage>),
     Scorecard(Entity<crate::scorecard::ScorecardPage>),
     Activity(Entity<crate::activity::ActivityPage>),
+    Harness(Entity<crate::harness::HarnessPage>),
     None,
 }
 
@@ -351,6 +362,8 @@ pub struct Workspace {
     /// Polls GitHub while signing in; dropping it stops.
     sign_in_task: Option<gpui::Task<()>>,
     account_open: bool,
+    /// The tab bar's "+" menu is open.
+    new_menu_open: bool,
     /// New Plan, New Ask or New Quick Change, over the window.
     launch_form: Option<(Entity<crate::launch_form::LaunchForm>, Subscription)>,
     sync: SyncStatus,
@@ -579,6 +592,7 @@ impl Workspace {
             sign_in: None,
             sign_in_task: None,
             account_open: false,
+            new_menu_open: false,
             launch_form: None,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
@@ -636,6 +650,7 @@ impl Workspace {
             }
             Nav::Scorecards => Page::Scorecard(cx.new(|cx| crate::scorecard::ScorecardPage::new(org, cx))),
             Nav::Activity => Page::Activity(cx.new(|cx| crate::activity::ActivityPage::new(org, cx))),
+            Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             _ => Page::None,
         };
         let subscriptions = Self::watch(&page, cx);
@@ -694,6 +709,11 @@ impl Workspace {
                     }
                     None => cx.open_url(&event.url),
                 }
+            })],
+            Page::Harness(page) => vec![cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
+                this.drawers.clear();
+                let id = event.0.path.clone();
+                this.open_drawer(DrawerItem::Doc(event.0.clone()), id, cx);
             })],
             _ => Vec::new(),
         }
@@ -1136,6 +1156,7 @@ impl Workspace {
                 Page::Prs(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::Scorecard(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::Activity(page) => page.update(cx, |page, cx| page.reload(cx)),
+                Page::Harness(page) => page.update(cx, |page, cx| page.reload(cx)),
                 _ => {}
             }
         }
@@ -2010,6 +2031,7 @@ impl Workspace {
                             .child(match &drawer.item {
                                 DrawerItem::Issue(item) => self.issue_page(drawer, item, theme, cx).into_any_element(),
                                 DrawerItem::Pull(pr) => self.pr_page(drawer, pr, theme, cx).into_any_element(),
+                                DrawerItem::Doc(doc) => self.doc_page(drawer, doc, theme, cx).into_any_element(),
                             }),
                     )
                     .with_animation(
@@ -2048,9 +2070,10 @@ impl Workspace {
                     .flex_1()
                     .text_color(theme.secondary)
                     .child({
-                        let kind = match drawer.item {
+                        let kind = match &drawer.item {
                             DrawerItem::Issue(_) => "Issue",
                             DrawerItem::Pull(_) => "Pull Request",
+                            DrawerItem::Doc(doc) => doc.kind.title(),
                         };
                         if count > 1 {
                             format!("{kind} · {} of {count}", self.drawers.iter().position(|d| d.seq == drawer.seq).unwrap_or(0) + 1)
@@ -2112,6 +2135,14 @@ impl Workspace {
                 actions.push(
                     action("work-on-this", label.into(), tip)
                         .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.work_on(issue.clone(), window, cx)))
+                        .into_any_element(),
+                );
+            }
+            DrawerItem::Doc(doc) => {
+                let url = doc.url();
+                actions.push(
+                    action("doc-github", "Open on GitHub".into(), "Open this document in the harness on GitHub".into())
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                         .into_any_element(),
                 );
             }
@@ -2229,6 +2260,7 @@ impl Workspace {
                 }),
                 Page::Scorecard(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::Activity(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
+                Page::Harness(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 _ => {}
             }
         }
@@ -2702,15 +2734,111 @@ impl Workspace {
 
     fn tab_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .id("tabs")
             .h(px(32.))
             .flex_none()
             .flex()
             .flex_row()
-            .overflow_x_scroll()
             .bg(theme.sidebar)
             .border_b_1()
             .border_color(theme.border)
+            .child(self.tabs(theme, cx))
+            .child(self.new_menu(theme, cx))
+    }
+
+    /// The "+" at the right of the tab bar, as the Claude Code window's in
+    /// Gannin: a menu of what can start in a tab of its own.
+    fn new_menu(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let open = self.new_menu_open;
+        let item = |id: &'static str, label: &'static str, keys: Option<&'static str>, run: fn(&mut Self, &mut Window, &mut Context<Self>)| {
+            div()
+                .id(id)
+                .mx_1()
+                .px_2()
+                .py_1()
+                .rounded_md()
+                .flex()
+                .flex_row()
+                .justify_between()
+                .gap_4()
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.row_selected))
+                .child(label)
+                .when_some(keys, |d, keys| d.child(div().text_color(theme.tertiary).child(keys)))
+                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.new_menu_open = false;
+                    run(this, window, cx);
+                    cx.notify();
+                }))
+        };
+        div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .items_center()
+            .px_1()
+            .border_l_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .id("new-tab")
+                    .px_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .text_color(theme.secondary)
+                    .when(open, |d| d.bg(theme.row_selected))
+                    .hover(|s| s.bg(theme.row_selected))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.new_menu_open = !this.new_menu_open;
+                        cx.notify();
+                    }))
+                    .child("+"),
+            )
+            .when(open, |d| {
+                d.child(
+                    deferred(
+                        anchored().anchor(gpui::Anchor::TopRight).snap_to_window_with_margin(px(8.)).child(
+                            div()
+                                .id("new-menu")
+                                .occlude()
+                                .on_mouse_down_out(cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                                    this.new_menu_open = false;
+                                    cx.notify();
+                                }))
+                                .mt(px(28.))
+                                .w(px(220.))
+                                .py_1()
+                                .flex()
+                                .flex_col()
+                                .bg(theme.popover)
+                                .border_1()
+                                .border_color(theme.border)
+                                .rounded_lg()
+                                .shadow_lg()
+                                .child(item("new-menu-claude", "New Claude Code", Some("⌘T"), |this, window, cx| this.new_session(Kind::Claude, window, cx)))
+                                .child(item("new-menu-terminal", "New Terminal", Some("⌃`"), |this, window, cx| this.new_session(Kind::Shell, window, cx)))
+                                .child(div().my_1().h(px(1.)).bg(theme.border))
+                                .child(item("new-menu-ask", "New Ask", None, |this, window, cx| this.open_form(crate::launch::Flow::Ask, None, window, cx)))
+                                .child(item("new-menu-quick", "Quick Change", None, |this, window, cx| {
+                                    this.open_form(crate::launch::Flow::QuickChange, None, window, cx)
+                                }))
+                                .child(item("new-menu-plan", "New Plan", None, |this, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx))),
+                        ),
+                    )
+                    .with_priority(2),
+                )
+            })
+    }
+
+    fn tabs(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("tabs")
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .flex()
+            .flex_row()
+            .overflow_x_scroll()
             .children(self.tabs.iter().enumerate().map(|(index, tab)| {
                 let (nav, id, page) = (tab.nav, tab.id, tab.page.clone());
                 let active = index == self.active;
@@ -2776,6 +2904,7 @@ impl Workspace {
                         _ if self.renaming.as_ref().is_some_and(|(r, _)| *r == id) => None,
                         Page::Issues(page) => page.read(cx).tab_count(),
                         Page::Prs(page) => page.read(cx).tab_count(),
+                        Page::Harness(page) => page.read(cx).tab_count(),
                         _ => None,
                     }, |d, count| {
                         d.child(div().text_xs().text_color(theme.secondary).child(count))
@@ -2808,6 +2937,7 @@ impl Workspace {
                 Page::Ci(page) => page.into_any_element(),
                 Page::Scorecard(page) => page.into_any_element(),
                 Page::Activity(page) => page.into_any_element(),
+                Page::Harness(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()
@@ -3775,6 +3905,96 @@ impl Workspace {
         div().flex().flex_col().child(header).child(div().flex().flex_row().items_start().child(left).child(right))
     }
 
+    /// A harness document: its title, status, date and path; what it's
+    /// about; its front matter as facts; and its text.
+    fn doc_page(&self, drawer: &Drawer, doc: &crate::harness::Doc, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let seq = drawer.seq;
+        let quiet = |text: String| div().text_xs().text_color(theme.secondary).child(text);
+        let fact = |label: &str, value: String| {
+            div()
+                .min_w(px(140.))
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .child(div().text_xs().text_color(theme.secondary).child(label.to_string()))
+                .child(value)
+        };
+        let mut facts = Vec::new();
+        if let Some(status) = &doc.status {
+            facts.push(fact("Status", crate::harness::status_label(Some(status))));
+        }
+        if let Some(date) = doc.date {
+            facts.push(fact("Date", date.format("%-d %b %Y").to_string()));
+        }
+        if let Some(area) = &doc.area {
+            facts.push(fact("Area", area.clone()));
+        }
+        if doc.tasks > 0 {
+            facts.push(fact("Tasks", format!("{} of {} done", doc.tasks_done, doc.tasks)));
+        }
+        for (key, value) in doc.front_matter.iter().filter(|(k, _)| !matches!(k.as_str(), "domains" | "issues" | "date")) {
+            let label = key.replace(['_', '-'], " ");
+            let label = format!("{}{}", label.get(..1).unwrap_or("").to_uppercase(), label.get(1..).unwrap_or(""));
+            facts.push(fact(&label, value.clone()));
+        }
+        // The issues it's about first, then those it mentions; each opens in
+        // a drawer when the store has it.
+        let mut references = doc.references.clone();
+        references.sort_by_key(|r| !r.2);
+        let issues = (!references.is_empty()).then(|| {
+            div().flex().flex_col().gap_1().child(div().font_weight(FontWeight::SEMIBOLD).child("Issues")).children(references.into_iter().enumerate().map(|(i, (repo, number, about))| {
+                let repo = repo.unwrap_or_default();
+                let found = self.issues.read(cx).issue_by_number(&repo, number);
+                let title = found.as_ref().map(|f| f.title.clone()).unwrap_or_default();
+                let url = format!("https://github.com/{repo}/issues/{number}");
+                div()
+                    .id(SharedString::from(format!("doc-issue-{seq}-{i}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .py_0p5()
+                    .px_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.tile))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match &found {
+                        Some(issue) => this.push_drawer(issue.clone(), cx),
+                        None => cx.open_url(&url),
+                    }))
+                    .child(div().text_color(theme.selected).child(format!("{}#{number}", repo.rsplit('/').next().unwrap_or(&repo))))
+                    .child(div().flex_1().truncate().child(title))
+                    .child(quiet(if about { "about".into() } else { "mentions".into() }))
+            }))
+        });
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .px_5()
+                    .py_4()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(doc.title.clone()))
+                    .child(quiet(format!("{} · {}", doc.harness, doc.path)))
+                    .when_some(doc.summary.clone(), |d, s| d.child(div().text_color(theme.secondary).child(s)))
+                    .child(div().flex().flex_row().flex_wrap().gap_x_6().gap_y_3().children(facts)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_6()
+                    .p_5()
+                    .children(issues)
+                    .child(markdown(&format!("doc-{seq}"), doc.body(), theme)),
+            )
+    }
+
     // MARK: Switcher
 
     /// Behind an open switcher: a click anywhere else closes it.
@@ -4054,8 +4274,9 @@ impl Render for Workspace {
                 if event.keystroke.key == "escape" && this.sign_in.is_some() {
                     this.cancel_sign_in(cx);
                     cx.stop_propagation();
-                } else if event.keystroke.key == "escape" && this.account_open {
+                } else if event.keystroke.key == "escape" && (this.account_open || this.new_menu_open) {
                     this.account_open = false;
+                    this.new_menu_open = false;
                     cx.notify();
                     cx.stop_propagation();
                 } else if event.keystroke.key == "escape" && this.switcher.is_none() && !this.drawers.is_empty() {
