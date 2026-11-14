@@ -29,6 +29,7 @@ mod review;
 mod review_panel;
 mod review_preview;
 mod review_record;
+mod schedule_preview;
 mod work_live;
 mod work_panel;
 mod work_preview;
