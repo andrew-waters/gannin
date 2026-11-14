@@ -738,6 +738,8 @@ impl ReviewPanel {
                 )
             })
             .when_some(self.record_note.clone(), |d, note| d.child(div().text_xs().text_color(theme.orange()).child(note)))
+            // What Check for Changes last found.
+            .when_some(self.check_text(), |d, text| d.child(div().text_sm().text_color(if self.has_changes() { theme.selected } else { theme.secondary }).child(text)))
             // What was posted and when, a link to it.
             .when_some(self.posted_latest().cloned(), |d, posted| {
                 let url = posted.url.clone();
@@ -820,7 +822,6 @@ impl ReviewPanel {
                 })
                 .child(Self::button("review-github", "Open on GitHub", false, true, theme).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
                 .child(Self::button("review-explain", "Explain", false, live, theme).when(live, |d| d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.explain(cx)))))
-                .when_some(self.check_text(), |d, text| d.child(div().flex_none().text_sm().text_color(theme.secondary).child(text)))
                 .child(Self::button("review-check", "Check for Changes", false, !self.checking, theme).when(!self.checking, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.check_for_changes(cx)))
                 }))
