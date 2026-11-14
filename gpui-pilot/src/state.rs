@@ -10,13 +10,30 @@ use crate::shell::Nav;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// A tab: its page, the name given it, and that page's controls.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+pub struct SavedTab {
+    pub nav: Nav,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub issues: Option<IssuesSaved>,
+    #[serde(default)]
+    pub prs: Option<PrsSaved>,
+    #[serde(default)]
+    pub ci: Option<CiSaved>,
+}
+
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
 #[serde(default)]
 pub struct SavedState {
     pub org: Option<String>,
     /// The project picked, by its harness repo.
     pub project: Option<String>,
+    /// Before tabs had their own controls: the pages, in order. Read once
+    /// when `views` is empty.
     pub tabs: Vec<Nav>,
+    pub views: Vec<SavedTab>,
     pub active: usize,
     pub sidebar_open: bool,
     pub inspector_open: bool,
@@ -28,6 +45,7 @@ pub struct SavedState {
     pub expanded_groups: Vec<Nav>,
     /// Names given to tabs, in place of the page's own.
     pub tab_names: Vec<(Nav, String)>,
+    /// What a new tab of each page starts from (its filters reset).
     pub ci: CiSaved,
     pub issues: IssuesSaved,
     pub prs: PrsSaved,
@@ -52,6 +70,7 @@ impl Default for SavedState {
             org: None,
             project: None,
             tabs: vec![Nav::Ci],
+            views: Vec::new(),
             active: 0,
             sidebar_open: true,
             inspector_open: false,

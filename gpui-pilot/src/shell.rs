@@ -9,7 +9,7 @@ use crate::data;
 use crate::format::{compact_duration, duration_or_dash, percent, relative_date};
 use crate::detail::{self, IssueText, Workflow};
 use crate::projects::{self, Project};
-use crate::issues::{pill, ColumnDrag, IssueItem, IssuesPage, OpenIssue};
+use crate::issues::{pill, ColumnDrag, IssueItem, IssuesPage, IssuesSaved, OpenIssue};
 use crate::auth::{self, DeviceCode, Poll, Viewer};
 use crate::avatars::avatar;
 use crate::markdown::markdown;
@@ -18,8 +18,8 @@ use std::sync::Arc;
 use crate::metrics::RepoStats;
 use crate::page::{ActionsPage, OpenRepo};
 use crate::session::{self, Changed, Kind, SessionPage, State};
-use crate::prs::{OpenPr, PrItem, PrState, PrsPage};
-use crate::state::SavedState;
+use crate::prs::{OpenPr, PrItem, PrState, PrsPage, PrsSaved};
+use crate::state::{CiSaved, SavedState, SavedTab};
 use crate::work::{self, Pr, Work};
 use gpui::{
     actions, anchored, Focusable, black, deferred, div, ease_out_quint, prelude::*, px, relative, Animation, AnimationExt, AnyElement, ClickEvent, Context, App, Entity, FocusHandle, FontWeight, KeyBinding,
@@ -128,6 +128,8 @@ impl Nav {
 enum Row {
     Item(Nav),
     /// A row with rows under it, behind a disclosure triangle.
+    // Used again once Projects, Views and Everyone are ported.
+    #[allow(dead_code)]
     Group(Nav, Vec<Nav>),
 }
 
@@ -138,49 +140,51 @@ struct Section {
     rows: Vec<Row>,
 }
 
-/// The sidebar in `OrgSidebar`'s order.
+/// The sidebar in `OrgSidebar`'s order, with only the pages the pilot has.
+/// The rest are commented out where they'd go, as a list of what's left
+/// to port; a section with none is left out.
 fn sections() -> Vec<Section> {
     use Nav::*;
-    use Row::{Group, Item};
+    use Row::Item;
     vec![
-        Section { id: "top", title: None, rows: vec![Item(Dashboard), Item(Inbox)] },
+        // Section { id: "top", title: None, rows: vec![Item(Dashboard), Item(Inbox)] },
         Section {
             id: "work",
             title: Some("Work"),
             rows: vec![
                 Item(PullRequests),
                 Item(Issues),
-                Item(Epics),
-                Item(Repositories),
-                Group(Projects, vec![]),
-                Group(Views, vec![]),
+                // Item(Epics),
+                // Item(Repositories),
+                // Group(Projects, vec![]),
+                // Group(Views, vec![]),
             ],
         },
         Section {
             id: "delivery",
             title: Some("Delivery"),
             rows: vec![
-                Item(Scorecards),
-                Item(PrFlow),
-                Item(IssueFlow),
-                Item(Releases),
-                Item(Investments),
-                Item(RdTime),
+                // Item(Scorecards),
+                // Item(PrFlow),
+                // Item(IssueFlow),
+                // Item(Releases),
+                // Item(Investments),
+                // Item(RdTime),
                 Item(Ci),
             ],
         },
-        Section { id: "team", title: Some("Team"), rows: vec![Group(Everyone, vec![]), Item(Activity), Item(TimeOff)] },
-        Section {
-            id: "rituals",
-            title: Some("Rituals"),
-            rows: vec![Item(Standup), Item(Recap), Item(Prioritisation), Item(Planning), Item(Refine), Item(Hygiene)],
-        },
-        Section { id: "harness", title: Some("Harness"), rows: vec![Item(Onboarding), Item(HarnessWorkflows)] },
-        Section {
-            id: "agents",
-            title: Some("Agents"),
-            rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
-        },
+        // Section { id: "team", title: Some("Team"), rows: vec![Group(Everyone, vec![]), Item(Activity), Item(TimeOff)] },
+        // Section {
+        //     id: "rituals",
+        //     title: Some("Rituals"),
+        //     rows: vec![Item(Standup), Item(Recap), Item(Prioritisation), Item(Planning), Item(Refine), Item(Hygiene)],
+        // },
+        // Section { id: "harness", title: Some("Harness"), rows: vec![Item(Onboarding), Item(HarnessWorkflows)] },
+        // Section {
+        //     id: "agents",
+        //     title: Some("Agents"),
+        //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
+        // },
     ]
 }
 
@@ -231,6 +235,25 @@ enum SignIn {
     Failed(String),
 }
 
+/// What a tab shows: a page of its own (so two Issues tabs can be filtered
+/// differently), or nothing of its own (a session's, or an unported page).
+#[derive(Clone)]
+enum Page {
+    Issues(Entity<IssuesPage>),
+    Prs(Entity<PrsPage>),
+    Ci(Entity<ActionsPage>),
+    None,
+}
+
+/// A tab: its page, and the name given it. A named tab is a view of its
+/// own: the sidebar never switches to it or replaces it.
+struct Tab {
+    id: u64,
+    nav: Nav,
+    name: Option<String>,
+    page: Page,
+}
+
 /// A tab being dragged: where it was, and its name for the drag image.
 #[derive(Clone)]
 struct DraggedTab(usize, String);
@@ -252,11 +275,9 @@ struct Switcher {
 pub struct Workspace {
     focus: FocusHandle,
     switcher_focus: FocusHandle,
-    /// Names given to tabs, by the page in them.
-    tab_names: Vec<(Nav, String)>,
-    /// A tab being renamed: which, and the name so far.
-    renaming: Option<(Nav, String)>,
-    rename_focus: FocusHandle,
+    /// A tab being renamed (by its id), in Zed's single-line editor.
+    renaming: Option<(u64, Entity<editor::Editor>)>,
+    _rename_subscription: Option<Subscription>,
     orgs: Vec<String>,
     org: Option<String>,
     /// The org's projects, each a harness, and the one picked by its id.
@@ -266,7 +287,10 @@ pub struct Workspace {
     workflow: Workflow,
     collapsed_sections: HashSet<&'static str>,
     expanded_groups: HashSet<Nav>,
-    tabs: Vec<Nav>,
+    tabs: Vec<Tab>,
+    next_tab: u64,
+    /// What a new tab of each page starts from.
+    templates: (IssuesSaved, PrsSaved, CiSaved),
     active: usize,
     inspector: Option<Inspected>,
     sidebar_open: bool,
@@ -278,9 +302,8 @@ pub struct Workspace {
     /// Bottom first; the last is on top.
     drawers: Vec<Drawer>,
     drawer_seq: usize,
-    actions_page: Entity<ActionsPage>,
+    /// Every issue, never shown: what drawers and Your Work look up.
     issues: Entity<IssuesPage>,
-    prs: Entity<PrsPage>,
     sessions: Vec<Entity<SessionPage>>,
     next_session: u32,
     /// Reviews asked of you and your PRs, from the org's PR cache.
@@ -301,8 +324,30 @@ impl Workspace {
         SavedState {
             org: self.org.clone(),
             project: self.project.clone(),
-            tabs: self.tabs.clone(),
-            active: self.active,
+            tabs: Vec::new(),
+            views: self
+                .tabs
+                .iter()
+                .filter(|tab| !matches!(tab.nav, Nav::Session(_)))
+                .map(|tab| SavedTab {
+                    nav: tab.nav,
+                    name: tab.name.clone(),
+                    issues: match &tab.page {
+                        Page::Issues(page) => Some(page.read(cx).saved()),
+                        _ => None,
+                    },
+                    prs: match &tab.page {
+                        Page::Prs(page) => Some(page.read(cx).saved()),
+                        _ => None,
+                    },
+                    ci: match &tab.page {
+                        Page::Ci(page) => Some(page.read(cx).saved()),
+                        _ => None,
+                    },
+                })
+                .collect(),
+            // Sessions aren't kept, so the index counts the tabs that are.
+            active: self.tabs.iter().take(self.active).filter(|tab| !matches!(tab.nav, Nav::Session(_))).count(),
             sidebar_open: self.sidebar_open,
             inspector_open: self.inspector_open,
             dock_open: false,
@@ -319,17 +364,22 @@ impl Workspace {
                 groups.sort_by_key(|nav| format!("{nav:?}"));
                 groups
             },
-            tab_names: self.tab_names.iter().filter(|(nav, _)| !matches!(nav, Nav::Session(_))).cloned().collect(),
-            ci: self.actions_page.read(cx).saved(),
-            issues: self.issues.read(cx).saved(),
-            prs: self.prs.read(cx).saved(),
+            tab_names: Vec::new(),
+            ci: self.template_ci(cx),
+            issues: self.template_issues(cx),
+            prs: self.template_prs(cx),
         }
     }
 
     /// Writes the state when it differs from what was last written. Panel
     /// drags are left until they end, rather than written on every move.
     fn persist(&mut self, cx: &App) {
-        if self.resizing.is_some() || self.issues.read(cx).is_resizing() || self.prs.read(cx).is_resizing() {
+        let resizing_column = self.tabs.iter().any(|tab| match &tab.page {
+            Page::Issues(page) => page.read(cx).is_resizing(),
+            Page::Prs(page) => page.read(cx).is_resizing(),
+            _ => false,
+        });
+        if self.resizing.is_some() || resizing_column {
             return;
         }
         let state = self.snapshot(cx);
@@ -351,13 +401,37 @@ impl Workspace {
             }
             !running
         });
+        let views = Self::saved_views(&saved);
+        let active = saved.active;
         let mut workspace = Self::build(saved, window, cx);
+        for view in &views {
+            let tab = workspace.make_tab(view.nav, Some(view), window, cx);
+            workspace.tabs.push(tab);
+        }
+        workspace.active = active.min(workspace.tabs.len().saturating_sub(1));
         workspace.load_viewer(cx);
-        // Clicking away from a tab's name keeps it.
-        let blur = cx.on_blur(&workspace.rename_focus, window, |this, _, cx| this.finish_rename(true, cx));
-        workspace._subscriptions.push(blur);
         workspace.load_settings(cx);
         workspace
+    }
+
+    /// The tabs saved; from before tabs had controls of their own, each page
+    /// with the one set of controls and the names given then.
+    fn saved_views(saved: &SavedState) -> Vec<SavedTab> {
+        if !saved.views.is_empty() {
+            return saved.views.clone();
+        }
+        saved
+            .tabs
+            .iter()
+            .filter(|nav| !matches!(nav, Nav::Session(_)))
+            .map(|&nav| SavedTab {
+                nav,
+                name: saved.tab_names.iter().find(|(n, _)| *n == nav).map(|(_, name)| name.clone()),
+                issues: (nav == Nav::Issues).then(|| saved.issues.clone()),
+                prs: (nav == Nav::PullRequests).then(|| saved.prs.clone()),
+                ci: (nav == Nav::Ci).then(|| saved.ci.clone()),
+            })
+            .collect()
     }
 
     /// Reads the org's projects and workflow off the main thread, then
@@ -393,9 +467,14 @@ impl Workspace {
 
     fn apply_focus(&mut self, cx: &mut Context<Self>) {
         let focus = self.focus_repos();
-        self.actions_page.update(cx, |page, cx| page.set_focus(focus.clone(), cx));
-        self.issues.update(cx, |page, cx| page.set_focus(focus.clone(), cx));
-        self.prs.update(cx, |page, cx| page.set_focus(focus, cx));
+        for page in self.pages() {
+            match page {
+                Page::Issues(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
+                Page::Prs(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
+                Page::Ci(page) => page.update(cx, |page, cx| page.set_focus(focus.clone(), cx)),
+                Page::None => {}
+            }
+        }
         cx.notify();
     }
 
@@ -412,51 +491,20 @@ impl Workspace {
         let orgs = data::orgs();
         // The saved org, while it still has a cache.
         let org = saved.org.clone().filter(|org| orgs.contains(org)).or_else(|| orgs.first().cloned());
-        let actions_page = cx.new(|cx| ActionsPage::new(org.clone(), &saved.ci, window, cx));
-        let issues = cx.new(|cx| IssuesPage::new(org.clone(), &saved.issues, window, cx));
-        let prs = cx.new(|cx| PrsPage::new(org.clone(), &saved.prs, window, cx));
-        // A row picked in a list replaces the stack, as a list row does today.
-        let open_issue = |this: &mut Self, _: Entity<IssuesPage>, event: &OpenIssue, cx: &mut Context<Self>| {
-            this.drawers.clear();
-            this.push_drawer(event.0.clone(), cx);
-        };
-        let subscriptions = vec![
-            cx.subscribe(&actions_page, |this, _, event: &OpenRepo, cx| {
-                this.inspector = Some(Inspected::Repo(event.0.clone()));
-                this.inspector_open = true;
-                cx.notify();
-            }),
-            cx.subscribe(&issues, open_issue),
-            cx.subscribe(&prs, |this, _, event: &OpenPr, cx| {
-                this.drawers.clear();
-                this.push_pr_drawer(event.0.clone(), cx);
-            }),
-            cx.observe(&prs, |this, _, cx| {
-                this.persist(cx);
-                cx.notify();
-            }),
-            cx.observe_window_appearance(window, |_, window, cx| {
-                crate::zed::follow_appearance(window, cx);
-                cx.notify();
-            }),
-            // Page controls change without the workspace redrawing.
-            cx.observe(&actions_page, |this, _, cx| this.persist(cx)),
-            // Also redraws the tab, which shows the page's count.
-            cx.observe(&issues, |this, _, cx| {
-                this.persist(cx);
-                cx.notify();
-            }),
-        ];
-        let tabs: Vec<Nav> = saved.tabs.iter().copied().filter(|nav| !matches!(nav, Nav::Session(_))).collect();
+        // Every issue, for drawers and Your Work; tabs have pages of their own.
+        let issues = cx.new(|cx| IssuesPage::new(org.clone(), &IssuesSaved::default(), window, cx));
+        let subscriptions = vec![cx.observe_window_appearance(window, |_, window, cx| {
+            crate::zed::follow_appearance(window, cx);
+            cx.notify();
+        })];
         crate::zed::follow_appearance(window, cx);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
         Self {
             focus,
             switcher_focus: cx.focus_handle(),
-            tab_names: saved.tab_names.iter().filter(|(nav, _)| !matches!(nav, Nav::Session(_))).cloned().collect(),
             renaming: None,
-            rename_focus: cx.focus_handle(),
+            _rename_subscription: None,
             orgs,
             org,
             projects: Vec::new(),
@@ -464,8 +512,10 @@ impl Workspace {
             workflow: Workflow::default(),
             collapsed_sections: sections().iter().map(|s| s.id).filter(|id| saved.collapsed_sections.iter().any(|c| c == id)).collect(),
             expanded_groups: saved.expanded_groups.iter().copied().collect(),
-            active: saved.active.min(tabs.len().saturating_sub(1)),
-            tabs,
+            active: 0,
+            tabs: Vec::new(),
+            next_tab: 0,
+            templates: (saved.issues.clone(), saved.prs.clone(), saved.ci.clone()),
             inspector: None,
             sidebar_open: saved.sidebar_open,
             inspector_open: saved.inspector_open,
@@ -476,9 +526,7 @@ impl Workspace {
             switcher: None,
             drawers: Vec::new(),
             drawer_seq: 0,
-            actions_page,
             issues,
-            prs,
             sessions: Vec::new(),
             next_session: 1,
             work: Work::default(),
@@ -490,24 +538,133 @@ impl Workspace {
         }
     }
 
-    /// Shows `nav` in the current tab, or a new one with Command held. A
-    /// page already open in a tab is switched to instead.
-    fn navigate(&mut self, nav: Nav, new_tab: bool, cx: &mut Context<Self>) {
+    /// Shows `nav`: switches to a tab of it that hasn't been named, else
+    /// puts it in the current tab, else (Command held, or the current tab is
+    /// named or a session's) opens a new tab beside it. A named tab is a view
+    /// someone made, so it's never switched to or replaced from here.
+    fn navigate(&mut self, nav: Nav, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) {
         // Drawers belong to the page under them.
         self.drawers.clear();
-        if let Some(index) = self.tabs.iter().position(|tab| *tab == nav) {
-            self.active = index;
-        } else if new_tab || self.tabs.is_empty() {
-            self.tabs.push(nav);
-            self.active = self.tabs.len() - 1;
-        } else if matches!(self.tabs[self.active], Nav::Session(_)) {
-            // A session's tab keeps its session: the page opens beside it.
-            self.tabs.insert(self.active + 1, nav);
-            self.active += 1;
-        } else {
-            self.tabs[self.active] = nav;
+        let reusable = |tab: &Tab| tab.name.is_none() && !matches!(tab.nav, Nav::Session(_));
+        if !new_tab {
+            if let Some(index) = self.tabs.iter().position(|tab| tab.nav == nav && reusable(tab)) {
+                self.activate(index, window, cx);
+                return;
+            }
         }
+        let tab = self.make_tab(nav, None, window, cx);
+        if !new_tab && self.tabs.get(self.active).is_some_and(reusable) {
+            self.tabs[self.active] = tab;
+        } else if self.tabs.is_empty() {
+            self.tabs.push(tab);
+            self.active = 0;
+        } else {
+            self.tabs.insert(self.active + 1, tab);
+            self.active += 1;
+        }
+        self.focus_current(window, cx);
         cx.notify();
+    }
+
+    /// A tab for `nav`, with a page of its own made from `saved` (a saved
+    /// tab's controls), else from the templates with nothing filtered.
+    fn make_tab(&mut self, nav: Nav, saved: Option<&SavedTab>, window: &mut Window, cx: &mut Context<Self>) -> Tab {
+        let org = self.org.clone();
+        let page = match nav {
+            Nav::Issues => {
+                let state = saved.and_then(|s| s.issues.clone()).unwrap_or_else(|| self.template_issues(cx).fresh());
+                Page::Issues(cx.new(|cx| IssuesPage::new(org, &state, window, cx)))
+            }
+            Nav::PullRequests => {
+                let state = saved.and_then(|s| s.prs.clone()).unwrap_or_else(|| self.template_prs(cx).fresh());
+                let page = cx.new(|cx| PrsPage::new(org, &state, window, cx));
+                let me = self.viewer.as_ref().map(|v| v.login.clone());
+                page.update(cx, |page, cx| page.set_me(me, cx));
+                Page::Prs(page)
+            }
+            Nav::Ci => {
+                let state = saved.and_then(|s| s.ci.clone()).unwrap_or_else(|| self.template_ci(cx));
+                Page::Ci(cx.new(|cx| ActionsPage::new(org, &state, window, cx)))
+            }
+            _ => Page::None,
+        };
+        let subscriptions = Self::watch(&page, cx);
+        self._subscriptions.extend(subscriptions);
+        let focus = self.focus_repos();
+        match &page {
+            Page::Issues(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
+            Page::Prs(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
+            Page::Ci(p) => p.update(cx, |p, cx| p.set_focus(focus, cx)),
+            Page::None => {}
+        }
+        self.next_tab += 1;
+        Tab { id: self.next_tab, nav, name: saved.and_then(|s| s.name.clone()), page }
+    }
+
+    /// Opens drawers, the inspector and saving from a page's events.
+    fn watch(page: &Page, cx: &mut Context<Self>) -> Vec<Subscription> {
+        match page {
+            Page::Issues(page) => vec![
+                // A row picked in a list replaces the stack.
+                cx.subscribe(page, |this, _, event: &OpenIssue, cx| {
+                    this.drawers.clear();
+                    this.push_drawer(event.0.clone(), cx);
+                }),
+                // Also redraws the tab, which shows the page's count.
+                cx.observe(page, |this, _, cx| {
+                    this.persist(cx);
+                    cx.notify();
+                }),
+            ],
+            Page::Prs(page) => vec![
+                cx.subscribe(page, |this, _, event: &OpenPr, cx| {
+                    this.drawers.clear();
+                    this.push_pr_drawer(event.0.clone(), cx);
+                }),
+                cx.observe(page, |this, _, cx| {
+                    this.persist(cx);
+                    cx.notify();
+                }),
+            ],
+            Page::Ci(page) => vec![
+                cx.subscribe(page, |this, _, event: &OpenRepo, cx| {
+                    this.inspector = Some(Inspected::Repo(event.0.clone()));
+                    this.inspector_open = true;
+                    cx.notify();
+                }),
+                cx.observe(page, |this, _, cx| this.persist(cx)),
+            ],
+            Page::None => Vec::new(),
+        }
+    }
+
+    /// Every tab's page.
+    fn pages(&self) -> Vec<Page> {
+        self.tabs.iter().map(|tab| tab.page.clone()).collect()
+    }
+
+    fn current_page(&self) -> Page {
+        self.tabs.get(self.active).map_or(Page::None, |tab| tab.page.clone())
+    }
+
+    /// The controls a new tab starts from: the current tab's of that page,
+    /// else the first such tab's, else what was saved.
+    fn template_issues(&self, cx: &App) -> IssuesSaved {
+        let current = self.current_page();
+        let pages = std::iter::once(&current).chain(self.tabs.iter().map(|t| &t.page));
+        pages.into_iter().find_map(|p| if let Page::Issues(p) = p { Some(p.read(cx).saved()) } else { None }).unwrap_or_else(|| self.templates.0.clone())
+    }
+
+    fn template_prs(&self, cx: &App) -> PrsSaved {
+        let current = self.current_page();
+        let pages = std::iter::once(&current).chain(self.tabs.iter().map(|t| &t.page));
+        pages.into_iter().find_map(|p| if let Page::Prs(p) = p { Some(p.read(cx).saved()) } else { None }).unwrap_or_else(|| self.templates.1.clone())
+    }
+
+    fn template_ci(&self, cx: &App) -> CiSaved {
+        let current = self.current_page();
+        let pages = std::iter::once(&current).chain(self.tabs.iter().map(|t| &t.page));
+        pages.into_iter().find_map(|p| if let Page::Ci(p) = p { Some(p.read(cx).saved()) } else { None }).unwrap_or_else(|| self.templates.2.clone())
     }
 
     fn session(&self, id: u32, cx: &App) -> Option<&Entity<SessionPage>> {
@@ -565,7 +722,9 @@ impl Workspace {
                 this._subscriptions.push(cx.subscribe(&page, |_, _, _: &Changed, cx| cx.notify()));
                 this.sessions.push(page);
                 this.drawers.clear();
-                this.tabs.push(Nav::Session(id));
+                this.next_tab += 1;
+                let tab = Tab { id: this.next_tab, nav: Nav::Session(id), name: None, page: Page::None };
+                this.tabs.push(tab);
                 this.activate(this.tabs.len() - 1, window, cx);
             })
             .ok();
@@ -612,7 +771,11 @@ impl Workspace {
         if self.viewer != viewer {
             self.viewer = viewer;
             let me = self.viewer.as_ref().map(|v| v.login.clone());
-            self.prs.update(cx, |page, cx| page.set_me(me, cx));
+            for page in self.pages() {
+                if let Page::Prs(page) = page {
+                    page.update(cx, |page, cx| page.set_me(me.clone(), cx));
+                }
+            }
             // Your Work is read as whoever is signed in.
             if let Some(org) = self.org.clone() {
                 self.load_work(org, cx);
@@ -921,7 +1084,7 @@ impl Workspace {
     /// stays open. A session still running asks first, as ending the tab
     /// ends its process.
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(nav) = self.tabs.get(index).copied() else { return };
+        let Some(nav) = self.tabs.get(index).map(|tab| tab.nav) else { return };
         if let Nav::Session(id) = nav {
             if let Some(page) = self.session(id, cx).filter(|p| p.read(cx).state != State::Ended).cloned() {
                 let title = page.read(cx).title(cx);
@@ -936,7 +1099,7 @@ impl Workspace {
                 cx.spawn_in(window, async move |this, cx| {
                     if answer.await == Ok(0) {
                         this.update(cx, |this, cx| {
-                            if let Some(index) = this.tabs.iter().position(|t| *t == Nav::Session(id)) {
+                            if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
                                 this.remove_tab(index, cx);
                             }
                         })
@@ -975,7 +1138,7 @@ impl Workspace {
             return;
         }
         // Dropping a session's terminal ends its process (a hangup).
-        if let Nav::Session(id) = self.tabs.remove(index) {
+        if let Nav::Session(id) = self.tabs.remove(index).nav {
             self.sessions.retain(|s| s.read(cx).id != id);
         }
         if self.active >= self.tabs.len() || self.active > index {
@@ -985,7 +1148,7 @@ impl Workspace {
     }
 
     fn current(&self) -> Option<Nav> {
-        self.tabs.get(self.active).copied()
+        self.tabs.get(self.active).map(|tab| tab.nav)
     }
 
     fn push_drawer(&mut self, issue: IssueItem, cx: &mut Context<Self>) {
@@ -1184,9 +1347,11 @@ impl Workspace {
                                 .text_xs()
                                 .text_color(theme.selected)
                                 .cursor_pointer()
-                                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                                    this.issues.update(cx, |page, cx| page.set_scope(Some(parent.clone()), cx));
-                                    this.navigate(Nav::Issues, false, cx);
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                    this.navigate(Nav::Issues, false, window, cx);
+                                    if let Page::Issues(page) = this.current_page() {
+                                        page.update(cx, |page, cx| page.set_scope(Some(parent.clone()), cx));
+                                    }
                                 }))
                                 .child("Show in list"),
                         ),
@@ -1204,18 +1369,24 @@ impl Workspace {
         // The new org's projects arrive with its settings.
         self.projects.clear();
         self.project = None;
-        self.actions_page.update(cx, |page, cx| {
-            page.set_focus(None, cx);
-            page.set_org(Some(org.clone()), cx)
-        });
-        self.issues.update(cx, |page, cx| {
-            page.set_focus(None, cx);
-            page.set_org(Some(org.clone()), cx)
-        });
-        self.prs.update(cx, |page, cx| {
-            page.set_focus(None, cx);
-            page.set_org(Some(org), cx)
-        });
+        self.issues.update(cx, |page, cx| page.set_org(Some(org.clone()), cx));
+        for page in self.pages() {
+            match page {
+                Page::Issues(page) => page.update(cx, |page, cx| {
+                    page.set_focus(None, cx);
+                    page.set_org(Some(org.clone()), cx)
+                }),
+                Page::Prs(page) => page.update(cx, |page, cx| {
+                    page.set_focus(None, cx);
+                    page.set_org(Some(org.clone()), cx)
+                }),
+                Page::Ci(page) => page.update(cx, |page, cx| {
+                    page.set_focus(None, cx);
+                    page.set_org(Some(org.clone()), cx)
+                }),
+                Page::None => {}
+            }
+        }
         self.load_settings(cx);
         window.focus(&self.focus, cx);
         cx.notify();
@@ -1416,9 +1587,12 @@ impl Workspace {
     /// and the page's own status between them.
     fn status_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let status = match self.current() {
-            Some(Nav::Ci) => self.actions_page.read(cx).status(),
-            Some(Nav::Issues) => self.issues.read(cx).status(),
-            Some(Nav::PullRequests) => self.prs.read(cx).status(),
+            _ if !matches!(self.current_page(), Page::None) => match self.current_page() {
+                Page::Issues(page) => page.read(cx).status(),
+                Page::Prs(page) => page.read(cx).status(),
+                Page::Ci(page) => page.read(cx).status(),
+                Page::None => String::new(),
+            },
             Some(Nav::Session(id)) => self.session(id, cx).map(|s| s.read(cx).status(cx)).unwrap_or_default(),
             Some(nav) => format!("{}: not ported", nav.title()),
             None => String::new(),
@@ -1544,14 +1718,15 @@ impl Workspace {
                     .child(placeholder_button("Quick Change", theme)),
             )
             .child(div().id("nav").flex_1().min_h_0().overflow_y_scroll().px_2().pb_3().children(rows))
-            .child(
-                div()
-                    .flex_none()
-                    .p_2()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .child(self.nav_row(Nav::Settings, 0, None, current, theme, cx)),
-            )
+            // Settings isn't ported yet.
+            // .child(
+            //     div()
+            //         .flex_none()
+            //         .p_2()
+            //         .border_t_1()
+            //         .border_color(theme.border)
+            //         .child(self.nav_row(Nav::Settings, 0, None, current, theme, cx)),
+            // )
             .child(self.resize_handle("resize-sidebar", Edge::Sidebar, cx))
     }
 
@@ -1579,8 +1754,8 @@ impl Workspace {
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.row_selected))
             .when(!selected, |d| d.hover(|s| s.bg(theme.row_selected.opacity(0.5))))
-            .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
-                this.navigate(nav, event.modifiers().platform, cx)
+            .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                this.navigate(nav, event.modifiers().platform, window, cx)
             }))
             // SF Symbols aren't reachable from GPUI; icons need an SVG set.
             .child(div().w(px(16.)).flex().justify_center().child(div().w(px(6.)).h(px(6.)).rounded_full().bg(theme.tertiary)))
@@ -1608,77 +1783,66 @@ impl Workspace {
 
     /// A tab's name: the one given it, else its page's (a session's from
     /// its terminal).
-    fn tab_name(&self, nav: Nav, cx: &App) -> String {
-        if let Some((_, name)) = self.tab_names.iter().find(|(n, _)| *n == nav) {
+    fn tab_name(&self, tab: &Tab, cx: &App) -> String {
+        if let Some(name) = &tab.name {
             return name.clone();
         }
+        Self::page_name(self, tab.nav, cx)
+    }
+
+    fn page_name(&self, nav: Nav, cx: &App) -> String {
         match nav {
             Nav::Session(id) => self.session(id, cx).map_or("Session".into(), |p| p.read(cx).title(cx)),
             nav => nav.title().into(),
         }
     }
 
-    fn start_rename(&mut self, nav: Nav, window: &mut Window, cx: &mut Context<Self>) {
-        self.renaming = Some((nav, self.tab_name(nav, cx)));
-        window.focus(&self.rename_focus, cx);
+    /// Opens the tab's name in an editor with it all selected.
+    fn start_rename(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.iter().find(|t| t.id == id) else { return };
+        let name = self.tab_name(tab, cx);
+        let field = cx.new(|cx| {
+            let mut field = editor::Editor::single_line(window, cx);
+            field.set_text(name, window, cx);
+            field.select_all(&editor::actions::SelectAll, window, cx);
+            field
+        });
+        // Clicking away keeps the name.
+        self._rename_subscription = Some(cx.subscribe(&field, |this, _, event: &editor::EditorEvent, cx| {
+            if matches!(event, editor::EditorEvent::Blurred) {
+                this.finish_rename(true, cx);
+            }
+        }));
+        let handle = field.focus_handle(cx);
+        self.renaming = Some((id, field));
+        window.focus(&handle, cx);
         cx.notify();
     }
 
-    /// Keeps the name typed; an empty one goes back to the page's own.
+    /// Keeps the name typed; an empty one, or the page's own, clears it, so
+    /// the tab is ordinary again.
     fn finish_rename(&mut self, keep: bool, cx: &mut Context<Self>) {
-        let Some((nav, name)) = self.renaming.take() else { return };
+        let Some((id, field)) = self.renaming.take() else { return };
+        self._rename_subscription = None;
         if keep {
-            self.tab_names.retain(|(n, _)| *n != nav);
-            let name = name.trim();
-            if !name.is_empty() && name != self.tab_name(nav, cx) {
-                self.tab_names.push((nav, name.to_string()));
-            }
+            let name = field.read(cx).text(cx).trim().to_string();
+            let Some(index) = self.tabs.iter().position(|t| t.id == id) else { return };
+            let own = self.page_name(self.tabs[index].nav, cx);
+            self.tabs[index].name = (!name.is_empty() && name != own).then_some(name);
         }
         cx.notify();
     }
 
-    /// The name field by hand, as GPUI has no text input: printable keys,
-    /// Backspace (Option or Command for more), Command-V, Enter and Escape.
+    /// Enter keeps the name and Escape drops it, before the editor sees them.
     fn rename_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let keystroke = &event.keystroke;
-        let modifiers = &keystroke.modifiers;
-        match keystroke.key.as_str() {
-            "enter" => {
-                self.finish_rename(true, cx);
-                self.focus_current(window, cx);
-            }
-            "escape" => {
-                self.finish_rename(false, cx);
-                self.focus_current(window, cx);
-            }
-            key => {
-                let Some((_, name)) = self.renaming.as_mut() else { return };
-                match key {
-                    "backspace" if modifiers.platform => name.clear(),
-                    "backspace" if modifiers.alt => {
-                        let trimmed = name.trim_end().len();
-                        name.truncate(trimmed);
-                        let cut = name.rfind(' ').map_or(0, |i| i + 1);
-                        name.truncate(cut);
-                    }
-                    "backspace" => {
-                        name.pop();
-                    }
-                    "v" if modifiers.platform => {
-                        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
-                            name.push_str(&text.replace(['\n', '\r'], " "));
-                        }
-                    }
-                    _ if modifiers.platform || modifiers.control => return,
-                    _ => match &keystroke.key_char {
-                        Some(text) if !text.chars().any(char::is_control) => name.push_str(text),
-                        _ => return,
-                    },
-                }
-            }
-        }
+        let keep = match event.keystroke.key.as_str() {
+            "enter" => true,
+            "escape" => false,
+            _ => return,
+        };
         cx.stop_propagation();
-        cx.notify();
+        self.finish_rename(keep, cx);
+        self.focus_current(window, cx);
     }
 
     /// Drops a dragged tab onto another's place; the active tab stays active.
@@ -1686,11 +1850,11 @@ impl Workspace {
         if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
             return;
         }
-        let active = self.tabs.get(self.active).copied();
+        let active = self.tabs.get(self.active).map(|t| t.id);
         let moved = self.tabs.remove(from);
         self.tabs.insert(to, moved);
         if let Some(active) = active {
-            self.active = self.tabs.iter().position(|t| *t == active).unwrap_or(0);
+            self.active = self.tabs.iter().position(|t| t.id == active).unwrap_or(0);
         }
         cx.notify();
     }
@@ -1706,9 +1870,10 @@ impl Workspace {
             .bg(theme.sidebar)
             .border_b_1()
             .border_color(theme.border)
-            .children(self.tabs.clone().into_iter().enumerate().map(|(index, nav)| {
+            .children(self.tabs.iter().enumerate().map(|(index, tab)| {
+                let (nav, id, page) = (tab.nav, tab.id, tab.page.clone());
                 let active = index == self.active;
-                let label = self.tab_name(nav, cx);
+                let label = self.tab_name(tab, cx);
                 let landing = theme.row_selected;
                 div()
                     .id(("tab", index))
@@ -1727,7 +1892,7 @@ impl Workspace {
                     // A double click renames; a single one switches.
                     .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
                         if event.click_count() == 2 {
-                            this.start_rename(nav, window, cx);
+                            this.start_rename(id, window, cx);
                         } else {
                             this.activate(index, window, cx);
                         }
@@ -1736,7 +1901,7 @@ impl Workspace {
                         MouseButton::Right,
                         cx.listener(move |this, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            this.start_rename(nav, window, cx);
+                            this.start_rename(id, window, cx);
                         }),
                     )
                     // Drag a tab onto another to move it there.
@@ -1748,27 +1913,28 @@ impl Workspace {
                         _ => None,
                     }, |d, state| d.child(div().size(px(7.)).rounded_full().bg(state_tint(state, theme))))
                     .map(|d| match &self.renaming {
-                        Some((renamed, name)) if *renamed == nav => d.child(
+                        Some((renamed, field)) if *renamed == id => d.child(
                             div()
                                 .id(("rename-tab", index))
-                                .track_focus(&self.rename_focus)
-                                .on_key_down(cx.listener(Self::rename_key))
-                                .min_w(px(80.))
-                                .max_w(px(260.))
+                                .capture_key_down(cx.listener(Self::rename_key))
+                                // Clicks in the field place the cursor, not
+                                // switch or drag the tab.
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .on_click(|_, _, cx| cx.stop_propagation())
+                                .w(px(180.))
                                 .px_1()
                                 .rounded_sm()
                                 .border_1()
                                 .border_color(theme.selected)
                                 .bg(theme.bg)
-                                .text_color(theme.fg)
-                                .truncate()
-                                .child(format!("{name}|")),
+                                .child(field.clone()),
                         ),
                         _ => d.child(div().max_w(px(220.)).truncate().child(label.clone())),
                     })
-                    .when_some(match nav {
-                        Nav::Issues if self.renaming.is_none() => self.issues.read(cx).tab_count(),
-                        Nav::PullRequests if self.renaming.is_none() => self.prs.read(cx).tab_count(),
+                    .when_some(match &page {
+                        _ if self.renaming.as_ref().is_some_and(|(r, _)| *r == id) => None,
+                        Page::Issues(page) => page.read(cx).tab_count(),
+                        Page::Prs(page) => page.read(cx).tab_count(),
                         _ => None,
                     }, |d, count| {
                         d.child(div().text_xs().text_color(theme.secondary).child(count))
@@ -1795,9 +1961,12 @@ impl Workspace {
                 Some(page) => page.clone().into_any_element(),
                 None => div().into_any_element(),
             },
-            Some(Nav::Ci) => self.actions_page.clone().into_any_element(),
-            Some(Nav::Issues) => self.issues.clone().into_any_element(),
-            Some(Nav::PullRequests) => self.prs.clone().into_any_element(),
+            _ if !matches!(self.current_page(), Page::None) => match self.current_page() {
+                Page::Issues(page) => page.into_any_element(),
+                Page::Prs(page) => page.into_any_element(),
+                Page::Ci(page) => page.into_any_element(),
+                Page::None => div().into_any_element(),
+            },
             Some(nav) => div()
                 .size_full()
                 .flex()
@@ -1901,7 +2070,7 @@ impl Workspace {
             let id = p.id;
             let detail = format!("{} · {}", p.state.label(), relative_date(p.since.with_timezone(&Utc), Utc::now()));
             row(("work-session", index), state_tint(p.state, theme), p.title(cx), detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                if let Some(index) = this.tabs.iter().position(|t| *t == Nav::Session(id)) {
+                if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
                     this.activate(index, window, cx);
                 }
             }))
@@ -1988,8 +2157,7 @@ impl Workspace {
                 let detail = format!("{}#{} · updated {}", issue.repo_name, issue.number, relative_date(issue.updated_at.unwrap_or(issue.created_at), Utc::now()));
                 let title = issue.title.clone();
                 list = list.child(row(("work-issue", index), green, title, detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                    this.navigate(Nav::Issues, true, cx);
-                    this.focus_current(window, cx);
+                    this.navigate(Nav::Issues, false, window, cx);
                     this.push_drawer(issue.clone(), cx);
                 })));
                 index += 1;
@@ -2823,7 +2991,7 @@ impl Workspace {
                         .hover(|s| s.bg(theme.row_selected))
                         .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                             this.close_switcher(window, cx);
-                            this.navigate(Nav::Settings, false, cx);
+                            this.navigate(Nav::Settings, false, window, cx);
                         }))
                         .child(div().w(px(16.)).text_color(theme.secondary).child("⚙"))
                         .child(action),

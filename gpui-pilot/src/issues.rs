@@ -713,6 +713,13 @@ pub struct IssuesSaved {
     tree_column: bool,
 }
 
+impl IssuesSaved {
+    /// For a new tab: these columns and order, with nothing filtered.
+    pub fn fresh(&self) -> Self {
+        Self { sort: self.sort.clone(), descending: self.descending, columns: self.columns.clone(), widths: self.widths.clone(), ..Self::default() }
+    }
+}
+
 impl Default for IssuesSaved {
     fn default() -> Self {
         Self {

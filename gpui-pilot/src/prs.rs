@@ -724,6 +724,13 @@ pub struct PrsSaved {
     widths: BTreeMap<String, f32>,
 }
 
+impl PrsSaved {
+    /// For a new tab: these columns and order, with nothing filtered.
+    pub fn fresh(&self) -> Self {
+        Self { sort: self.sort.clone(), descending: self.descending, columns: self.columns.clone(), widths: self.widths.clone(), ..Self::default() }
+    }
+}
+
 impl Default for PrsSaved {
     fn default() -> Self {
         Self {
