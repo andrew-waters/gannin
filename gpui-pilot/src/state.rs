@@ -36,6 +36,8 @@ pub struct SavedState {
     pub views: Vec<SavedTab>,
     pub active: usize,
     pub sidebar_open: bool,
+    /// The Harness panel, beside the navigation.
+    pub harness_open: bool,
     pub inspector_open: bool,
     pub dock_open: bool,
     pub sidebar_width: f32,
@@ -74,6 +76,7 @@ impl Default for SavedState {
             views: Vec::new(),
             active: 0,
             sidebar_open: true,
+            harness_open: false,
             inspector_open: false,
             dock_open: false,
             sidebar_width: 230.0,

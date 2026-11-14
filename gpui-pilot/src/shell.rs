@@ -192,7 +192,7 @@ fn sections() -> Vec<Section> {
         //     title: Some("Rituals"),
         //     rows: vec![Item(Standup), Item(Recap), Item(Prioritisation), Item(Planning), Item(Refine), Item(Hygiene)],
         // },
-        // The team's harness is a panel of its own (`LeftPanel::Harness`).
+        // The team's harness is a panel of its own (`harness_panel`).
         // Section {
         //     id: "agents",
         //     title: Some("Agents"),
@@ -201,15 +201,9 @@ fn sections() -> Vec<Section> {
     ]
 }
 
-/// What the left dock shows: the app's navigation, or the team's harness.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum LeftPanel {
-    Nav,
-    Harness,
-}
-
 #[derive(Clone, Copy)]
 enum Edge {
+    Harness,
     Sidebar,
     Inspector,
 }
@@ -345,6 +339,7 @@ pub struct Workspace {
     sidebar_open: bool,
     inspector_open: bool,
     sidebar_width: f32,
+    harness_width: f32,
     inspector_width: f32,
     resizing: Option<Edge>,
     switcher: Option<Switcher>,
@@ -365,8 +360,8 @@ pub struct Workspace {
     account_open: bool,
     /// The tab bar's "+" menu is open.
     new_menu_open: bool,
-    /// Which panel the left dock shows.
-    left_panel: LeftPanel,
+    /// The Harness panel shows, beside the navigation when that's open too.
+    harness_open: bool,
     /// How many documents of each kind the org's harnesses hold.
     harness_counts: std::collections::HashMap<crate::harness::HarnessKind, usize>,
     /// New Plan, New Ask or New Quick Change, over the window.
@@ -408,6 +403,7 @@ impl Workspace {
             // Sessions aren't kept, so the index counts the tabs that are.
             active: self.tabs.iter().take(self.active).filter(|tab| !matches!(tab.nav, Nav::Session(_))).count(),
             sidebar_open: self.sidebar_open,
+            harness_open: self.harness_open,
             inspector_open: self.inspector_open,
             dock_open: false,
             sidebar_width: self.sidebar_width,
@@ -470,6 +466,9 @@ impl Workspace {
         }
         workspace.active = active.min(workspace.tabs.len().saturating_sub(1));
         workspace.load_viewer(cx);
+        if workspace.harness_open {
+            workspace.load_harness_counts(cx);
+        }
         crate::github::set_reserve(workspace.sync.prefs.reserve);
         workspace.start_sync_loop(cx);
         workspace.load_settings(cx);
@@ -581,8 +580,10 @@ impl Workspace {
             templates: (saved.issues.clone(), saved.prs.clone(), saved.ci.clone()),
             inspector: None,
             sidebar_open: saved.sidebar_open,
+            harness_open: saved.harness_open,
             inspector_open: saved.inspector_open,
             sidebar_width: saved.sidebar_width,
+            harness_width: saved.sidebar_width,
             inspector_width: saved.inspector_width,
             last_saved: Some(saved),
             resizing: None,
@@ -598,7 +599,6 @@ impl Workspace {
             sign_in_task: None,
             account_open: false,
             new_menu_open: false,
-            left_panel: LeftPanel::Nav,
             harness_counts: Default::default(),
             launch_form: None,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
@@ -1156,7 +1156,7 @@ impl Workspace {
 
     /// After a sync: every page re-reads the pilot's caches.
     fn refresh_pages(&mut self, cx: &mut Context<Self>) {
-        if self.left_panel == LeftPanel::Harness {
+        if self.harness_open {
             self.load_harness_counts(cx);
         }
         self.issues.update(cx, |page, cx| page.reload(cx));
@@ -2255,7 +2255,7 @@ impl Workspace {
         self.project = None;
         self.issues.update(cx, |page, cx| page.set_org(Some(org.clone()), cx));
         self.harness_counts.clear();
-        if self.left_panel == LeftPanel::Harness {
+        if self.harness_open {
             self.load_harness_counts(cx);
         }
         for page in self.pages() {
@@ -2372,6 +2372,10 @@ impl Workspace {
         let x = f32::from(event.position.x);
         match edge {
             Edge::Sidebar => self.sidebar_width = x.clamp(180.0, 420.0),
+            Edge::Harness => {
+                let left = if self.sidebar_open { self.sidebar_width } else { 0. };
+                self.harness_width = (x - left).clamp(180.0, 420.0)
+            }
             Edge::Inspector => self.inspector_width = (width - x).clamp(260.0, 640.0),
         }
         cx.notify();
@@ -2390,7 +2394,7 @@ impl Workspace {
                 }),
             );
         match edge {
-            Edge::Sidebar => handle.top_0().bottom_0().right(px(-3.)).w(px(6.)).cursor_col_resize(),
+            Edge::Sidebar | Edge::Harness => handle.top_0().bottom_0().right(px(-3.)).w(px(6.)).cursor_col_resize(),
             Edge::Inspector => handle.top_0().bottom_0().left(px(-3.)).w(px(6.)).cursor_col_resize(),
         }
     }
@@ -2488,17 +2492,11 @@ impl Workspace {
         .detach();
     }
 
-    /// Shows `panel` in the left dock, or hides the dock when it's already
-    /// showing, as Zed's dock buttons.
-    fn show_left_panel(&mut self, panel: LeftPanel, cx: &mut Context<Self>) {
-        if self.sidebar_open && self.left_panel == panel {
-            self.sidebar_open = false;
-        } else {
-            self.sidebar_open = true;
-            self.left_panel = panel;
-            if panel == LeftPanel::Harness {
-                self.load_harness_counts(cx);
-            }
+    /// Shows or hides the Harness panel; its counts load as it opens.
+    fn toggle_harness(&mut self, cx: &mut Context<Self>) {
+        self.harness_open = !self.harness_open;
+        if self.harness_open {
+            self.load_harness_counts(cx);
         }
     }
 
@@ -2533,30 +2531,10 @@ impl Workspace {
             .bg(theme.sidebar)
             .border_t_1()
             .border_color(theme.border)
-            .child(toggle(
-                "toggle-sidebar",
-                if self.sidebar_open { "icons/threads_sidebar_left_open.svg" } else { "icons/threads_sidebar_left_closed.svg" },
-                "Sidebar  ⌃⌘S",
-                self.sidebar_open,
-                cx,
-                |this, _| this.sidebar_open = !this.sidebar_open,
-            ))
-            .child(toggle(
-                "panel-nav",
-                "icons/list_tree.svg",
-                "Navigation",
-                self.sidebar_open && self.left_panel == LeftPanel::Nav,
-                cx,
-                |this, cx| this.show_left_panel(LeftPanel::Nav, cx),
-            ))
-            .child(toggle(
-                "panel-harness",
-                "icons/book.svg",
-                "Harness",
-                self.sidebar_open && self.left_panel == LeftPanel::Harness,
-                cx,
-                |this, cx| this.show_left_panel(LeftPanel::Harness, cx),
-            ))
+            .child(toggle("toggle-sidebar", "icons/list_tree.svg", "Navigation  ⌃⌘S", self.sidebar_open, cx, |this, _| {
+                this.sidebar_open = !this.sidebar_open
+            }))
+            .child(toggle("toggle-harness", "icons/book.svg", "Harness", self.harness_open, cx, |this, cx| this.toggle_harness(cx)))
             .child(div().flex_1())
             .child(toggle(
                 "toggle-sync",
@@ -2568,7 +2546,7 @@ impl Workspace {
             ))
             .child(toggle(
                 "toggle-inspector",
-                if self.inspector_open { "icons/threads_sidebar_right_open.svg" } else { "icons/threads_sidebar_right_closed.svg" },
+                "icons/user_check.svg",
                 "Your Work  ⌥⌘I",
                 self.inspector_open,
                 cx,
@@ -2581,24 +2559,7 @@ impl Workspace {
     fn sidebar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let current = self.current();
         let mut rows: Vec<AnyElement> = Vec::new();
-        if self.left_panel == LeftPanel::Harness {
-            rows.push(
-                div()
-                    .mt_3()
-                    .mb_0p5()
-                    .px_2()
-                    .text_xs()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(theme.tertiary)
-                    .child("Harness")
-                    .into_any_element(),
-            );
-            for kind in crate::harness::HarnessKind::ALL {
-                rows.push(self.nav_row(Nav::Harness(kind), 0, None, current, theme, cx).into_any_element());
-            }
-        }
-        let sections = if self.left_panel == LeftPanel::Nav { sections() } else { Vec::new() };
-        for section in sections {
+        for section in sections() {
             let collapsed = self.collapsed_sections.contains(section.id);
             if let Some(title) = section.title {
                 let id = section.id;
@@ -2677,6 +2638,34 @@ impl Workspace {
             //         .child(self.nav_row(Nav::Settings, 0, None, current, theme, cx)),
             // )
             .child(self.resize_handle("resize-sidebar", Edge::Sidebar, cx))
+    }
+
+    /// The team's harness: its kinds of document, each with a count, beside
+    /// the navigation.
+    fn harness_panel(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let current = self.current();
+        div()
+            .relative()
+            .w(px(self.harness_width))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(theme.sidebar)
+            .border_r_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .id("harness-panel")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scroll()
+                    .px_2()
+                    .pb_3()
+                    .child(div().mt_3().mb_0p5().px_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.tertiary).child("Harness"))
+                    .children(crate::harness::HarnessKind::ALL.into_iter().map(|kind| self.nav_row(Nav::Harness(kind), 0, None, current, theme, cx))),
+            )
+            .child(self.resize_handle("resize-harness", Edge::Harness, cx))
     }
 
     /// A row: icon slot, title, and a disclosure triangle for a group.
@@ -3244,20 +3233,6 @@ impl Workspace {
             }
         }
 
-        let button = |id: &'static str, label: &'static str| {
-            div()
-                .id(id)
-                .flex_1()
-                .py_1()
-                .flex()
-                .justify_center()
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .cursor_pointer()
-                .hover(|s| s.bg(theme.row_selected))
-                .child(label)
-        };
         let summary = match &self.work.login {
             Some(login) => format!(
                 "{} · {} · {}",
@@ -3275,35 +3250,6 @@ impl Workspace {
             .flex()
             .flex_col()
             .child(div().text_xs().text_color(theme.secondary).child(summary))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .pt_2()
-                    .child(button("new-claude", "New Claude Code").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.new_session(Kind::Claude, window, cx)
-                    })))
-                    .child(button("new-terminal", "New Terminal").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.new_session(Kind::Shell, window, cx)
-                    }))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .pt_2()
-                    .child(button("new-ask", "New Ask").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.open_form(crate::launch::Flow::Ask, None, window, cx)
-                    })))
-                    .child(button("new-quick-change", "Quick Change").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.open_form(crate::launch::Flow::QuickChange, None, window, cx)
-                    })))
-                    .child(button("new-plan", "New Plan").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                        this.open_form(crate::launch::Flow::Plan, None, window, cx)
-                    }))),
-            )
             .child(list)
     }
 
@@ -4408,6 +4354,7 @@ impl Render for Workspace {
                     .flex()
                     .flex_row()
                     .when(self.sidebar_open, |d| d.child(self.sidebar(&theme, cx)))
+                    .when(self.harness_open, |d| d.child(self.harness_panel(&theme, cx)))
                     .child(center)
                     .when(self.inspector_open, |d| d.child(self.inspector(&theme, cx)))
                     .when(self.sync.open, |d| d.child(self.sync_panel(&theme, cx))),
