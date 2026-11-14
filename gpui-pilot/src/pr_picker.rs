@@ -18,6 +18,7 @@ impl EventEmitter<PickerEvent> for PrPicker {}
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Whose {
     AskedOfMe,
+    Mine,
     Others,
     All,
 }
@@ -31,6 +32,10 @@ pub struct PrPicker {
     drafts: bool,
     bots: bool,
     selected: usize,
+    /// The search as last seen, so the selection resets only when it
+    /// changes (the editor redraws for its cursor too).
+    last_search: String,
+    rows: gpui::ScrollHandle,
 }
 
 impl PrPicker {
@@ -40,9 +45,14 @@ impl PrPicker {
             editor.set_placeholder_text("Search titles, repos, numbers, branches or people", window, cx);
             editor
         });
-        cx.observe(&search, |this, _, cx| {
-            this.selected = 0;
-            cx.notify();
+        cx.observe(&search, |this, search, cx| {
+            let text = search.read(cx).text(cx);
+            if text != this.last_search {
+                this.last_search = text;
+                this.selected = 0;
+                this.rows.scroll_to_top_of_item(0);
+                cx.notify();
+            }
         })
         .detach();
         window.focus(&gpui::Focusable::focus_handle(search.read(cx), cx), cx);
@@ -52,7 +62,7 @@ impl PrPicker {
                 // Asked of me first is the most useful start, if there are any.
                 let asked = loaded.as_ref().map(|prs| prs.iter().filter(|p| this.asked_of_me(p)).count()).unwrap_or(0);
                 if asked == 0 {
-                    this.whose = Whose::Others;
+                    this.whose = Whose::All;
                 }
                 this.prs = Some(loaded.map(|prs| prs.into_iter().filter(|p| p.state == PrState::Open).collect()));
                 cx.notify();
@@ -60,7 +70,18 @@ impl PrPicker {
             .ok();
         })
         .detach();
-        Self { me, prs: None, search, whose: Whose::AskedOfMe, repo: None, drafts: false, bots: false, selected: 0 }
+        Self {
+            me,
+            prs: None,
+            search,
+            whose: Whose::AskedOfMe,
+            repo: None,
+            drafts: false,
+            bots: false,
+            selected: 0,
+            last_search: String::new(),
+            rows: gpui::ScrollHandle::new(),
+        }
     }
 
     fn asked_of_me(&self, pr: &PrItem) -> bool {
@@ -82,6 +103,7 @@ impl PrPicker {
             .filter(|p| self.bots || !p.author_is_bot)
             .filter(|p| match self.whose {
                 Whose::AskedOfMe => self.asked_of_me(p),
+                Whose::Mine => self.mine(p),
                 Whose::Others => !self.mine(p),
                 Whose::All => true,
             })
@@ -106,8 +128,14 @@ impl PrPicker {
         let count = self.shown(cx).1.len();
         match event.keystroke.key.as_str() {
             "escape" => cx.emit(PickerEvent::Cancel),
-            "down" => self.selected = (self.selected + 1).min(count.saturating_sub(1)),
-            "up" => self.selected = self.selected.saturating_sub(1),
+            "down" => {
+                self.selected = (self.selected + 1).min(count.saturating_sub(1));
+                self.rows.scroll_to_item(self.selected);
+            }
+            "up" => {
+                self.selected = self.selected.saturating_sub(1);
+                self.rows.scroll_to_item(self.selected);
+            }
             "enter" => {
                 if let Some(pr) = self.shown(cx).1.into_iter().nth(self.selected) {
                     cx.emit(PickerEvent::Pick(pr));
@@ -165,6 +193,7 @@ impl Render for PrPicker {
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
+                .track_scroll(&self.rows)
                 .children(shown.into_iter().enumerate().map(|(i, pr)| {
                     let asked = self.asked_of_me(&pr);
                     let on = i == selected;
@@ -249,6 +278,7 @@ impl Render for PrPicker {
                             .flex_wrap()
                             .gap_1()
                             .child(whose("Asked of me", Whose::AskedOfMe, cx))
+                            .child(whose("Mine", Whose::Mine, cx))
                             .child(whose("Not mine", Whose::Others, cx))
                             .child(whose("All", Whose::All, cx))
                             .child(div().w(px(8.)))
