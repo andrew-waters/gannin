@@ -11,8 +11,10 @@ use crate::schedule::{self, IssueRef, Prompt, ReviewWindow, RunState, Schedule, 
 use chrono::{Datelike, Duration, Local, NaiveDate, Timelike};
 use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, EventEmitter, FontWeight, Hsla, SharedString, Subscription, Task, Window};
 
-const FIRST_HOUR: u32 = 7;
-const LAST_HOUR: u32 = 21;
+/// The whole day, opening scrolled to the morning.
+const FIRST_HOUR: u32 = 0;
+const LAST_HOUR: u32 = 24;
+const OPENS_AT: u32 = 7;
 const HOUR: f32 = 52.;
 const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -92,6 +94,9 @@ pub struct SchedulePage {
     search_field: Entity<editor::Editor>,
     _fields: Vec<Subscription>,
     _reload: Task<()>,
+    /// The week's scroll, set to the morning the first time it shows.
+    week_scroll: gpui::ScrollHandle,
+    scrolled: bool,
 }
 
 fn monday(date: NaiveDate) -> NaiveDate {
@@ -215,6 +220,8 @@ impl SchedulePage {
             search_field,
             _fields: subs,
             _reload: reload,
+            week_scroll: gpui::ScrollHandle::new(),
+            scrolled: false,
         }
     }
 
@@ -593,7 +600,12 @@ impl SchedulePage {
                     d.child(div().absolute().top(px(top(now.hour() * 60 + now.minute()))).left_0().right_0().h(px(2.)).bg(theme.critical()))
                 })
         });
-        div().size_full().flex().flex_col().child(header).child(div().id("week-body").flex_1().min_h_0().overflow_y_scroll().child(div().flex().flex_row().pt_2().child(gutter).children(columns)))
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .child(header)
+            .child(div().id("week-body").flex_1().min_h_0().overflow_y_scroll().track_scroll(&self.week_scroll).child(div().flex().flex_row().pt_2().child(gutter).children(columns)))
     }
 
     fn month_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -981,6 +993,10 @@ impl SchedulePage {
 impl Render for SchedulePage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
+        if !self.scrolled {
+            self.scrolled = true;
+            self.week_scroll.set_offset(gpui::point(px(0.), px(-((OPENS_AT - FIRST_HOUR) as f32) * HOUR)));
+        }
         let side = self.side(&theme, cx);
         let body = match self.view {
             View::Week => self.week_view(&theme, cx).into_any_element(),

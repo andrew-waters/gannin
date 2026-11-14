@@ -110,6 +110,16 @@ fn main() {
                 println!("\nclear: {clear}\n\n{}", work_flow::round_message(1, "0123456789abcdef", &results, clear));
                 return;
             }
+            // Reads a saved layout file and says which tabs it would open.
+            "--state-check" => {
+                let path = args.next().unwrap_or_default();
+                let bytes = std::fs::read(&path).expect("the file");
+                match serde_json::from_slice::<state::SavedState>(&bytes) {
+                    Ok(state) => println!("views: {:?}", state.views.iter().map(|v| (format!("{:?}", v.nav), v.name.clone())).collect::<Vec<_>>()),
+                    Err(e) => println!("unreadable: {e}"),
+                }
+                return;
+            }
             "--work-changes" => {
                 let folder = std::path::PathBuf::from(args.next().unwrap_or_default());
                 for w in work_live::worktrees(&folder) {
