@@ -601,6 +601,13 @@ impl Workspace {
         workspace.slot = slot;
         workspace.window_handle = Some(window.window_handle());
         if slot == 0 {
+            // Scouts ended with the app: theirs start again.
+            let mut sched = crate::schedule::Schedule::load();
+            let before = sched.readiness.len();
+            sched.readiness.retain(|_, r| r.state != "scouting");
+            if sched.readiness.len() != before {
+                sched.save();
+            }
             workspace.start_scheduler(cx);
         }
         for view in &views {
