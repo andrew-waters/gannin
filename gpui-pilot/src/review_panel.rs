@@ -177,6 +177,7 @@ impl ReviewPanel {
                         if first {
                             this.check_for_changes(cx);
                         }
+                        this.auto_post(cx);
                         cx.notify();
                     }
                     if this.activity != activity {
@@ -578,6 +579,50 @@ impl ReviewPanel {
                 })
                 .detach();
         }
+    }
+
+    /// A review a review window started posts by itself, once, when its
+    /// result is in: the event from the verdict, but an approval only when
+    /// the schedule allows it (else a comment); then it's recorded.
+    fn auto_post(&mut self, cx: &mut Context<Self>) {
+        let Source::Live { launch, .. } = &self.source else { return };
+        let dir = launch.dir();
+        if !dir.join("auto-post").exists() || dir.join("auto-posted").exists() || self.posted_latest().is_some() {
+            return;
+        }
+        let Some(result) = self.kept() else { return };
+        let _ = std::fs::write(dir.join("auto-posted"), "");
+        let (repo, number) = self.subject();
+        let approve = crate::schedule::Schedule::load().settings.approve_by_itself;
+        cx.spawn(async move |this, cx| {
+            let posted = cx
+                .background_executor()
+                .spawn(async move {
+                    let token = crate::auth::token().ok_or("Not signed in")?;
+                    let snapshot = review::snapshot(&token, &repo, number).map_err(|e| e.to_string())?;
+                    let draft = review::draft(&result, &HashSet::new(), &snapshot);
+                    let mut event = review::default_event(&result, snapshot.is_own());
+                    if event == "APPROVE" && !approve {
+                        event = "COMMENT";
+                    }
+                    let url = review::post(&token, &repo, number, event, &draft, &snapshot).map_err(|e| e.to_string())?;
+                    Ok::<_, String>((event, url))
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                match posted {
+                    Ok((event, url)) => {
+                        let at = chrono::Utc::now();
+                        this.record_posted(Posted { event: event.to_string(), at, url });
+                        this.record(Some((event.to_string(), at)), cx);
+                    }
+                    Err(error) => this.record_note = Some(format!("Couldn't post by itself: {error}")),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// What the last check found, for beside its button.

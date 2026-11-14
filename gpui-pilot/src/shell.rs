@@ -221,9 +221,9 @@ fn sections() -> Vec<Section> {
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
         // Claude Code's agents: the workflows sessions run through.
-        Section { id: "agents", title: Some("Agents"), rows: vec![Item(WorkflowsPreview)] },
+        Section { id: "agents", title: Some("Agents"), rows: vec![Item(SchedulePreview), Item(WorkflowsPreview)] },
         // The pilot's own: states to refine a UI against before it's wired.
-        Section { id: "previews", title: Some("Previews"), rows: vec![Item(SchedulePreview), Item(WorkPreview)] },
+        Section { id: "previews", title: Some("Previews"), rows: vec![Item(WorkPreview)] },
     ]
 }
 
@@ -361,7 +361,7 @@ enum Page {
     Harness(Entity<crate::harness::HarnessPage>),
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
     WorkPreview(Entity<crate::work_preview::WorkPreview>),
-    SchedulePreview(Entity<crate::schedule_preview::SchedulePreview>),
+    SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
     None,
 }
@@ -833,7 +833,7 @@ impl Workspace {
             Nav::Activity => Page::Activity(cx.new(|cx| crate::activity::ActivityPage::new(org, cx))),
             Nav::ReviewPreview => Page::ReviewPreview(cx.new(|cx| crate::review_preview::ReviewPreview::new(window, cx))),
             Nav::WorkPreview => Page::WorkPreview(cx.new(|cx| crate::work_preview::WorkPreview::new(window, cx))),
-            Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_preview::SchedulePreview::new(window, cx))),
+            Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_page::SchedulePage::new(org.clone(), window, cx))),
             Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             _ => Page::None,
@@ -861,6 +861,7 @@ impl Workspace {
                     this.push_drawer(event.0.clone(), cx);
                 }),
                 cx.subscribe_in(page, window, |this, _, event: &crate::issues::WorkOnIssues, window, cx| this.work_on_many(event.0.clone(), window, cx)),
+                cx.subscribe_in(page, window, |this, _, event: &crate::issues::ScheduleIssues, window, cx| this.schedule_issues(event.0.clone(), window, cx)),
                 // Also redraws the tab, which shows the page's count.
                 cx.observe(page, |this, _, cx| {
                     this.persist(cx);
@@ -897,6 +898,7 @@ impl Workspace {
                     None => cx.open_url(&event.url),
                 }
             })],
+            Page::SchedulePreview(page) => vec![cx.subscribe_in(page, window, |this, _, event: &crate::schedule_page::RunNow, window, cx| this.run_now(&event.0, window, cx))],
             Page::Harness(page) => vec![cx.subscribe(page, |this, _, event: &crate::harness::OpenDoc, cx| {
                 this.drawers.clear();
                 let id = event.0.path.clone();
@@ -1577,6 +1579,56 @@ impl Workspace {
         let _ = std::fs::write(context.join("README.md"), format!("# {org}\n\nStarted by the schedule: {name}.\n"));
         self.start_launch(launch, &brief, &prompt, false, window, cx);
         true
+    }
+
+    /// Add to Schedule: the issues as a sequence from the next half hour,
+    /// in the order picked; then the Schedule shows, to move it.
+    fn schedule_issues(&mut self, issues: Vec<IssueItem>, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::schedule::{IssueRef, RunState, Schedule, Sequence};
+        let now = chrono::Local::now();
+        let minute = (chrono::Timelike::hour(&now) * 60 + chrono::Timelike::minute(&now)) / 30 * 30 + 30;
+        let date = if minute >= 24 * 60 { now.date_naive().succ_opt().unwrap_or(now.date_naive()) } else { now.date_naive() };
+        let items: Vec<IssueRef> = issues.iter().map(|i| IssueRef { id: i.id.clone(), repo: i.repo.clone(), number: i.number, title: i.title.clone(), url: i.url.clone() }).collect();
+        let name = if items.len() == 1 { items[0].label() } else { format!("{} issues", items.len()) };
+        let mut sched = Schedule::load();
+        sched.sequences.push(Sequence { id: crate::schedule::new_id(), name, start: crate::schedule::at(date, minute % (24 * 60)), runs: vec![RunState::Waiting; items.len()], items, paused: false });
+        sched.save();
+        self.navigate(Nav::SchedulePreview, false, window, cx);
+    }
+
+    /// Run Now from the Schedule page: an issue start or a sequence's next
+    /// item starts now, and a recurring prompt opens its Ask.
+    fn run_now(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::schedule::{RunState, Schedule};
+        let mut sched = Schedule::load();
+        let gap = sched.settings.gap_minutes;
+        let now = chrono::Utc::now();
+        if let Some(i) = sched.starts.iter().position(|s| s.id == id) {
+            let start = sched.starts[i].clone();
+            sched.starts[i].run = match self.issues.read(cx).issue(&start.issue.id).and_then(|issue| self.work_on_with(issue, Some(gap), window, cx)) {
+                Some(launch) => RunState::Started { launch, at: now },
+                None => RunState::Failed { reason: "It already has a session, or isn't in this window's org.".into(), at: now },
+            };
+            sched.note(id, &start.issue.label(), "started", "Run Now");
+        } else if let Some(i) = sched.sequences.iter().position(|q| q.id == id) {
+            let mut seq = sched.sequences[i].clone();
+            seq.runs.resize(seq.items.len(), RunState::Waiting);
+            // Missed or failed items go again; else the next waiting one.
+            if let Some(next) = seq.runs.iter().position(|r| matches!(r, RunState::Waiting | RunState::Missed { .. } | RunState::Failed { .. })) {
+                let item = seq.items[next].clone();
+                seq.runs[next] = match self.issues.read(cx).issue(&item.id).and_then(|issue| self.work_on_with(issue, Some(gap), window, cx)) {
+                    Some(launch) => RunState::Started { launch, at: now },
+                    None => RunState::Failed { reason: "It already has a session, or isn't in this window's org.".into(), at: now },
+                };
+                seq.paused = false;
+                sched.note(id, &item.label(), "started", "Run Now");
+            }
+            sched.sequences[i] = seq;
+        } else if let Some(p) = sched.prompts.iter().find(|p| p.id == id).cloned() {
+            let started = self.start_prompt(&p.name, &p.text, window, cx);
+            sched.note(id, &p.name, if started { "started" } else { "failed" }, "Run Now");
+        }
+        sched.save();
     }
 
     /// Types a message into a session's terminal, by its launch.
@@ -3077,6 +3129,7 @@ impl Workspace {
                 Page::Scorecard(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::Activity(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::Harness(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
+                Page::SchedulePreview(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 _ => {}
             }
         }

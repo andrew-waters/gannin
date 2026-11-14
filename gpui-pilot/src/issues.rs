@@ -312,7 +312,7 @@ fn cache_path(org: &str) -> PathBuf {
     crate::cache::path(crate::cache::Kind::Issues, org)
 }
 
-fn load(org: &str) -> Result<Vec<IssueItem>, String> {
+pub(crate) fn load(org: &str) -> Result<Vec<IssueItem>, String> {
     let bytes = std::fs::read(cache_path(org)).map_err(|e| e.to_string())?;
     let file: File = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     if file.format_version != CURRENT_FORMAT {
@@ -758,6 +758,11 @@ impl EventEmitter<OpenIssue> for IssuesPage {}
 pub struct WorkOnIssues(pub Vec<IssueItem>);
 
 impl EventEmitter<WorkOnIssues> for IssuesPage {}
+
+/// Add these to the schedule, as a sequence in the order picked.
+pub struct ScheduleIssues(pub Vec<IssueItem>);
+
+impl EventEmitter<ScheduleIssues> for IssuesPage {}
 
 pub struct IssuesPage {
     org: Option<String>,
@@ -1863,6 +1868,14 @@ impl IssuesPage {
                 page.picked.clear();
                 cx.notify();
             })))
+            .when(!open.is_empty(), |d| {
+                let scheduled = open.clone();
+                d.child(button("picked-schedule", "Add to Schedule".into(), false).on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                    cx.emit(ScheduleIssues(scheduled.clone()));
+                    page.picked.clear();
+                    cx.notify();
+                })))
+            })
             .when(!open.is_empty(), |d| {
                 let count = open.len();
                 d.child(
