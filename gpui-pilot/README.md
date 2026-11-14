@@ -10,7 +10,8 @@ terminal beside its code change in Zed's diff view), inside a single-window shel
 this code would have to be GPL-3.0 too. Only `gpui` and a few utility crates are Apache-2.0.
 
 It's a separate Cargo binary and isn't part of the Xcode build. It reads Gannin's caches and
-settings, never writes them and never calls GitHub; a session's terminal runs whatever you run in it. Open CI and Issues in Gannin at least once so there's
+settings and never writes them. Its only calls to GitHub are signing in and reading who you are;
+a session's terminal runs whatever you run in it. Open CI and Issues in Gannin at least once so there's
 something to read.
 
 ## Running it
@@ -70,6 +71,12 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   Sessions waiting on you, reviews asked of you, your PRs needing you, sessions working, your
   other PRs and issues assigned to you, in that order. A session or an issue switches to its tab;
   a PR opens on GitHub. Built from caches, so Conflicts and team review requests don't show.
+- **Account** (`src/auth.rs`): at the right of the title bar, as Zed's: Sign In when signed out,
+  else your avatar with a menu (profile, Sign Out). Signing in is GitHub's device flow on Gannin's
+  OAuth app, as Gannin's sign-in. The token is the pilot's own, in its own keychain item, reached
+  through the `security` tool (an unsigned binary that changes every build would be asked to
+  allow keychain access after each one), so signing out here leaves Gannin signed in. Your Work
+  reads as the signed-in login, else Gannin's.
 - **Issue drawer** (`src/shell.rs`, `src/detail.rs`, `src/markdown.rs`): what `IssueWindow` shows,
   with timing under the org's workflow and Markdown through pulldown-cmark.
 

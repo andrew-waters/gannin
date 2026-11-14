@@ -126,9 +126,11 @@ fn store_path(org: &str) -> PathBuf {
     home.join("Library/Application Support/PullRequests").join(format!("{org}.json"))
 }
 
-/// Reads the org's PR cache; call off the main thread (it can be tens of MB).
-pub fn load(org: &str) -> Work {
-    let login = viewer();
+/// Reads the org's PR cache as `login` (the pilot's signed-in viewer),
+/// else as whoever Gannin is signed in as; call off the main thread (it
+/// can be tens of MB).
+pub fn load(org: &str, login: Option<String>) -> Work {
+    let login = login.or_else(viewer);
     let mut work = Work { login: login.clone(), ..Default::default() };
     let Some(login) = login else { return work };
     let Ok(bytes) = std::fs::read(store_path(org)) else { return work };

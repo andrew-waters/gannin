@@ -10,6 +10,7 @@ use crate::format::{compact_duration, duration_or_dash, percent, relative_date};
 use crate::detail::{self, IssueText, Workflow};
 use crate::projects::{self, Project};
 use crate::issues::{pill, IssueItem, IssuesPage, OpenIssue};
+use crate::auth::{self, DeviceCode, Poll, Viewer};
 use crate::avatars::avatar;
 use crate::markdown::markdown;
 use chrono::{DateTime, Local, Utc};
@@ -212,6 +213,14 @@ const DRAWER_WIDTH: f32 = 900.0;
 /// How far each drawer beneath the top one shows, as `drawerPeek`.
 const DRAWER_PEEK: f32 = 14.0;
 
+/// Signing in with GitHub, step by step, as `SignInView`.
+enum SignIn {
+    Requesting,
+    Code { code: DeviceCode, copied: bool },
+    Finishing,
+    Failed(String),
+}
+
 /// What a title bar switcher picks.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pick {
@@ -256,6 +265,12 @@ pub struct Workspace {
     next_session: u32,
     /// Reviews asked of you and your PRs, from the org's PR cache.
     work: Work,
+    /// Who's signed in to the pilot with GitHub.
+    viewer: Option<Viewer>,
+    sign_in: Option<SignIn>,
+    /// Polls GitHub while signing in; dropping it stops.
+    sign_in_task: Option<gpui::Task<()>>,
+    account_open: bool,
     /// What was last written, so unchanged state isn't written again.
     last_saved: Option<SavedState>,
     _subscriptions: Vec<Subscription>,
@@ -315,6 +330,7 @@ impl Workspace {
             !running
         });
         let mut workspace = Self::build(saved, window, cx);
+        workspace.load_viewer(cx);
         workspace.load_settings(cx);
         workspace
     }
@@ -427,6 +443,10 @@ impl Workspace {
             sessions: Vec::new(),
             next_session: 1,
             work: Work::default(),
+            viewer: None,
+            sign_in: None,
+            sign_in_task: None,
+            account_open: false,
             _subscriptions: subscriptions,
         }
     }
@@ -518,7 +538,8 @@ impl Workspace {
     fn load_work(&mut self, org: String, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let loaded = org.clone();
-            let work = cx.background_executor().spawn(async move { work::load(&loaded) }).await;
+            let login = this.update(cx, |this, _| this.viewer.as_ref().map(|v| v.login.clone())).ok().flatten();
+            let work = cx.background_executor().spawn(async move { work::load(&loaded, login) }).await;
             this.update(cx, |this, cx| {
                 if this.org.as_deref() == Some(org.as_str()) {
                     this.work = work;
@@ -528,6 +549,308 @@ impl Workspace {
             .ok();
         })
         .detach();
+    }
+
+    // MARK: Account
+
+    /// Who was signed in, from the pilot's own file and keychain item, then
+    /// checked with GitHub (a rejected token signs out).
+    fn load_viewer(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let saved = cx.background_executor().spawn(async { auth::saved_viewer() }).await;
+            let had = saved.is_some();
+            this.update(cx, |this, cx| this.set_viewer(saved, cx)).ok();
+            if had {
+                if let Some(checked) = cx.background_executor().spawn(async { auth::validate() }).await {
+                    this.update(cx, |this, cx| this.set_viewer(checked, cx)).ok();
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn set_viewer(&mut self, viewer: Option<Viewer>, cx: &mut Context<Self>) {
+        if self.viewer != viewer {
+            self.viewer = viewer;
+            // Your Work is read as whoever is signed in.
+            if let Some(org) = self.org.clone() {
+                self.load_work(org, cx);
+            }
+            cx.notify();
+        }
+    }
+
+    /// GitHub's device flow: a code to enter on github.com, then a poll
+    /// until it's authorised, as Gannin's sign-in.
+    fn start_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.account_open = false;
+        self.sign_in = Some(SignIn::Requesting);
+        self.sign_in_task = Some(cx.spawn(async move |this, cx| {
+            let fail = |message: String, this: &gpui::WeakEntity<Self>, cx: &mut gpui::AsyncApp| {
+                this.update(cx, |this, cx| {
+                    this.sign_in = Some(SignIn::Failed(message));
+                    cx.notify();
+                })
+                .ok();
+            };
+            let code = match cx.background_executor().spawn(async { auth::request_code() }).await {
+                Ok(code) => code,
+                Err(message) => return fail(message, &this, cx),
+            };
+            let deadline = std::time::Instant::now() + code.expires_in();
+            let mut interval = code.interval();
+            let polled = code.clone();
+            if this
+                .update(cx, |this, cx| {
+                    this.sign_in = Some(SignIn::Code { code, copied: false });
+                    cx.notify();
+                })
+                .is_err()
+            {
+                return;
+            }
+            let token = loop {
+                cx.background_executor().timer(interval).await;
+                if std::time::Instant::now() > deadline {
+                    return fail("The code expired before you authorised. Try again.".into(), &this, cx);
+                }
+                let code = polled.clone();
+                match cx.background_executor().spawn(async move { auth::poll(&code, interval) }).await {
+                    Poll::Token(token) => break token,
+                    Poll::Wait(next) => interval = next,
+                    Poll::Failed(message) => return fail(message, &this, cx),
+                }
+            };
+            this.update(cx, |this, cx| {
+                this.sign_in = Some(SignIn::Finishing);
+                cx.notify();
+            })
+            .ok();
+            match cx.background_executor().spawn(async move { auth::complete(&token) }).await {
+                Ok(viewer) => {
+                    this.update(cx, |this, cx| {
+                        this.sign_in = None;
+                        this.set_viewer(Some(viewer), cx);
+                    })
+                    .ok();
+                }
+                Err(message) => fail(message, &this, cx),
+            }
+        }));
+        cx.notify();
+    }
+
+    fn cancel_sign_in(&mut self, cx: &mut Context<Self>) {
+        self.sign_in = None;
+        self.sign_in_task = None;
+        cx.notify();
+    }
+
+    fn sign_out(&mut self, cx: &mut Context<Self>) {
+        self.account_open = false;
+        cx.background_executor().spawn(async { auth::sign_out() }).detach();
+        self.set_viewer(None, cx);
+    }
+
+    /// At the right of the title bar, as Zed's: the avatar with a menu when
+    /// signed in, else Sign In.
+    fn account(&self, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let Some(viewer) = self.viewer.clone() else {
+            return div()
+                .id("sign-in")
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.row_selected))
+                .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.start_sign_in(cx);
+                }))
+                .child("Sign In")
+                .into_any_element();
+        };
+        let open = self.account_open;
+        let item = |id: &'static str, label: &'static str| {
+            div().id(id).mx_1().px_2().py_1().rounded_md().cursor_pointer().hover(|s| s.bg(theme.row_selected)).child(label)
+        };
+        let profile = format!("https://github.com/{}", viewer.login);
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id("account")
+                    .p_0p5()
+                    .rounded_full()
+                    .cursor_pointer()
+                    .when(open, |d| d.bg(theme.row_selected))
+                    .hover(|s| s.bg(theme.row_selected))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.account_open = !this.account_open;
+                        cx.notify();
+                    }))
+                    .child(avatar(&viewer.login, viewer.avatar_url.as_deref(), 22., theme, cx)),
+            )
+            .when(open, |d| {
+                d.child(
+                    deferred(
+                        anchored().anchor(gpui::Anchor::TopRight).snap_to_window_with_margin(px(8.)).child(
+                            div()
+                                .id("account-menu")
+                                .occlude()
+                                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                                .mt_1()
+                                .w(px(240.))
+                                .py_1()
+                                .flex()
+                                .flex_col()
+                                .bg(theme.popover)
+                                .border_1()
+                                .border_color(theme.border)
+                                .rounded_lg()
+                                .shadow_lg()
+                                .child(
+                                    div()
+                                        .px_3()
+                                        .py_1p5()
+                                        .flex()
+                                        .flex_col()
+                                        .when_some(viewer.name.clone(), |d, name| d.child(div().font_weight(FontWeight::MEDIUM).child(name)))
+                                        .child(div().text_xs().text_color(theme.secondary).child(format!("{} on GitHub", viewer.login))),
+                                )
+                                .child(div().my_1().h(px(1.)).bg(theme.border))
+                                .child(item("account-profile", "Open Profile on GitHub").on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                    this.account_open = false;
+                                    cx.open_url(&profile);
+                                    cx.notify();
+                                })))
+                                .child(item("account-sign-out", "Sign Out").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.sign_out(cx)))),
+                        ),
+                    )
+                    .with_priority(2),
+                )
+            })
+            .into_any_element()
+    }
+
+    /// The device flow's sheet, over the window.
+    fn sign_in_sheet(&self, step: &SignIn, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let button = |id: &'static str, label: &'static str, prominent: bool| {
+            div()
+                .id(id)
+                .px_3()
+                .py_1()
+                .rounded_md()
+                .cursor_pointer()
+                .map(|d| if prominent { d.bg(theme.selected).text_color(theme.on_selected) } else { d.border_1().border_color(theme.border) })
+                .hover(|s| s.opacity(0.85))
+                .child(label)
+        };
+        let cancel = button("sign-in-cancel", "Cancel", false).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.cancel_sign_in(cx)));
+        let body = match step {
+            SignIn::Requesting => div().text_color(theme.secondary).child("Asking GitHub for a code").into_any_element(),
+            SignIn::Finishing => div().text_color(theme.secondary).child("Signing in").into_any_element(),
+            SignIn::Failed(message) => div()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .child(div().text_color(gpui::rgb(0xFF453A)).child(message.clone()))
+                .child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .gap_2()
+                        .child(button("sign-in-retry", "Try Again", true).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.start_sign_in(cx))))
+                        .child(cancel),
+                )
+                .into_any_element(),
+            SignIn::Code { code, copied } => {
+                let user_code = code.user_code.clone();
+                let uri = code.verification_uri.clone();
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .child(div().text_color(theme.secondary).child("Enter this code on GitHub:"))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .px_4()
+                                    .py_2()
+                                    .rounded_lg()
+                                    .bg(theme.tile)
+                                    .font_family("Menlo")
+                                    .text_size(px(28.))
+                                    .font_weight(FontWeight::BOLD)
+                                    .child(user_code.clone()),
+                            )
+                            .child(
+                                button("sign-in-copy", if *copied { "Copied" } else { "Copy" }, false).on_click(cx.listener(
+                                    move |this, _: &ClickEvent, _, cx| {
+                                        cx.write_to_clipboard(gpui::ClipboardItem::new_string(user_code.clone()));
+                                        if let Some(SignIn::Code { copied, .. }) = this.sign_in.as_mut() {
+                                            *copied = true;
+                                        }
+                                        cx.notify();
+                                    },
+                                )),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(button("sign-in-open", "Open GitHub", true).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&uri))))
+                            .child(cancel),
+                    )
+                    .child(div().text_xs().text_color(theme.secondary).child("Waiting for you to authorise"))
+                    .into_any_element()
+            }
+        };
+        div()
+            .id("sign-in-scrim")
+            .absolute()
+            .top_0()
+            .left_0()
+            .right_0()
+            .bottom_0()
+            .occlude()
+            .bg(gpui::black().opacity(0.35))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                div()
+                    .id("sign-in-sheet")
+                    .w(px(420.))
+                    .p_5()
+                    .flex()
+                    .flex_col()
+                    .gap_3()
+                    .bg(theme.popover)
+                    .border_1()
+                    .border_color(theme.border)
+                    .rounded_xl()
+                    .shadow_lg()
+                    .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).child("Sign in with GitHub"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.secondary)
+                            .child("The pilot keeps its own sign-in: signing out here leaves Gannin signed in."),
+                    )
+                    .child(body),
+            )
     }
 
     /// Sessions whose process is still running.
@@ -975,6 +1298,8 @@ impl Workspace {
                     .map_or_else(|| "No project".to_string(), |p| p.name.clone());
                 d.child(div().text_color(theme.tertiary).child("/")).child(self.switcher_button(Pick::Project, name, theme, cx))
             })
+            .child(div().flex_1())
+            .child(self.account(theme, cx))
     }
 
     /// A title bar button opening its switcher, drawn beneath it, as Zed's
@@ -2187,7 +2512,14 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Org, window, cx)))
             // Escape closes the top drawer; the switcher takes it first when open.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
-                if event.keystroke.key == "escape" && this.switcher.is_none() && !this.drawers.is_empty() {
+                if event.keystroke.key == "escape" && this.sign_in.is_some() {
+                    this.cancel_sign_in(cx);
+                    cx.stop_propagation();
+                } else if event.keystroke.key == "escape" && this.account_open {
+                    this.account_open = false;
+                    cx.notify();
+                    cx.stop_propagation();
+                } else if event.keystroke.key == "escape" && this.switcher.is_none() && !this.drawers.is_empty() {
                     this.pop_drawer(cx);
                     cx.stop_propagation();
                 }
@@ -2222,5 +2554,24 @@ impl Render for Workspace {
             )
             .child(self.status_bar(&theme, cx))
             .when(self.switcher.is_some(), |d| d.child(self.switcher_backdrop(cx)))
+            .when(self.account_open, |d| {
+                d.child(
+                    div()
+                        .id("account-backdrop")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _: &MouseDownEvent, _, cx| {
+                                this.account_open = false;
+                                cx.notify();
+                            }),
+                        ),
+                )
+            })
+            .when_some(self.sign_in.as_ref(), |d, step| d.child(self.sign_in_sheet(step, &theme, cx)))
     }
 }

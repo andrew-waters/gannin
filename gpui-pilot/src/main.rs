@@ -4,6 +4,7 @@
 //!
 //! cargo run --release -- [--org NAME] [--days 7|30|90]
 
+mod auth;
 mod avatars;
 mod changes;
 mod charts;
