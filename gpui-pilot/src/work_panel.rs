@@ -145,6 +145,54 @@ pub struct WorkData {
     pub last_check: Option<bool>,
     /// Days since anything happened, for Stale.
     pub idle_days: i64,
+    /// The workflow the work runs through, and how far it's got.
+    pub workflow: Option<WorkflowRun>,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum StageStatus {
+    Waiting,
+    Running,
+    /// A local review gate holding the push.
+    Holding,
+    Done,
+    Failed,
+}
+
+/// A local review finding, and what the session did with it.
+#[derive(Clone, Debug)]
+pub struct LocalFinding {
+    pub severity: String,
+    pub path: String,
+    pub text: String,
+    /// "Fixed in a1b2c3d", "Answered: ...", or none yet.
+    pub outcome: Option<String>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StepRun {
+    pub name: String,
+    /// Claude Code, Junie, or Command.
+    pub provider: String,
+    pub status: StageStatus,
+    pub summary: String,
+    pub findings: Vec<LocalFinding>,
+}
+
+#[derive(Clone, Debug)]
+pub struct StageRun {
+    /// Prepare, Session, Local review, On the PR, Done.
+    pub title: String,
+    pub status: StageStatus,
+    /// A few words for the strip: "Round 2 · 1 blocker".
+    pub note: String,
+    pub steps: Vec<StepRun>,
+}
+
+#[derive(Clone, Debug)]
+pub struct WorkflowRun {
+    pub name: String,
+    pub stages: Vec<StageRun>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -152,6 +200,7 @@ enum Pane {
     Issue,
     Changes,
     Activity,
+    Workflow,
 }
 
 /// Asks the workspace to act on the session: start it again where it left
@@ -177,6 +226,8 @@ pub struct WorkPanel {
     diffs: std::collections::HashMap<(String, String, bool), Vec<String>>,
     _poll: Option<gpui::Task<()>>,
     pane: Pane,
+    /// The workflow stage whose detail shows.
+    stage: usize,
     panel_open: bool,
     /// Branch (everything since the default branch) or Uncommitted.
     uncommitted: bool,
@@ -210,6 +261,7 @@ impl WorkPanel {
             diffs: Default::default(),
             _poll: None,
             pane: Pane::Issue,
+            stage: 0,
             panel_open: true,
             uncommitted: false,
             file,
@@ -242,6 +294,7 @@ impl WorkPanel {
             context: 0.,
             last_check: None,
             idle_days: 0,
+            workflow: None,
         };
         let mut panel = Self::new(data, Some(view), window, cx);
         let (folder, claude_id, dir) = (launch.folder(), launch.claude_id(), launch.dir());
@@ -516,8 +569,207 @@ impl WorkPanel {
         self.pane = match pane {
             "changes" => Pane::Changes,
             "activity" => Pane::Activity,
+            "workflow" => Pane::Workflow,
             _ => Pane::Issue,
         };
+        // The workflow opens on the stage that's going.
+        if let Some(run) = &self.data.workflow {
+            self.stage = run.stages.iter().position(|s| matches!(s.status, StageStatus::Running | StageStatus::Holding | StageStatus::Failed)).unwrap_or(0);
+        }
+    }
+
+    fn stage_tint(status: StageStatus, theme: &Theme) -> Hsla {
+        match status {
+            StageStatus::Waiting => theme.tertiary,
+            StageStatus::Running => theme.blue(),
+            StageStatus::Holding => theme.orange(),
+            StageStatus::Done => theme.good(),
+            StageStatus::Failed => theme.critical(),
+        }
+    }
+
+    fn stage_mark(status: StageStatus) -> &'static str {
+        match status {
+            StageStatus::Waiting => "○",
+            StageStatus::Running => "●",
+            StageStatus::Holding => "◆",
+            StageStatus::Done => "✓",
+            StageStatus::Failed => "✕",
+        }
+    }
+
+    /// The workflow across the top: each stage, how it's going, and a few
+    /// words; one opens its detail in the side panel.
+    fn workflow_strip(&self, run: &WorkflowRun, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .px_3()
+            .py_1p5()
+            .border_b_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .child(div().flex_none().pr_2().text_xs().text_color(theme.secondary).child(run.name.clone()))
+            .children(run.stages.iter().enumerate().map(|(i, stage)| {
+                let tint = Self::stage_tint(stage.status, theme);
+                let on = self.pane == Pane::Workflow && self.stage == i;
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1()
+                    .when(i > 0, |d| d.child(div().text_color(theme.tertiary).child("›")))
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("stage-{i}")))
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1p5()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .text_sm()
+                            .cursor_pointer()
+                            .when(on, |d| d.bg(theme.row_selected))
+                            .hover(|s| s.bg(theme.row_selected.opacity(0.6)))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.pane = Pane::Workflow;
+                                this.stage = i;
+                                this.panel_open = true;
+                                cx.notify();
+                            }))
+                            .child(div().text_color(tint).child(Self::stage_mark(stage.status)))
+                            .child(div().when(stage.status == StageStatus::Waiting, |d| d.text_color(theme.secondary)).child(stage.title.clone()))
+                            .when(!stage.note.is_empty(), |d| d.child(div().text_xs().text_color(tint).child(stage.note.clone()))),
+                    )
+            }))
+    }
+
+    /// A stage's detail: each step, what it said, and for a local review
+    /// its findings and what the session did with each.
+    fn workflow_pane(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(run) = &self.data.workflow else { return div().into_any_element() };
+        let Some(stage) = run.stages.get(self.stage) else { return div().into_any_element() };
+        let caption = match stage.title.as_str() {
+            "Prepare" => "Ran once before the session started; what they wrote is in its brief.",
+            "Session" => "The Claude Code session you can talk to, in the terminal.",
+            "Local review" => "Checks the work in the worktree before it leaves this Mac. Pushing and opening the PR wait until blockers and majors are fixed or answered, and every command passes.",
+            "On the PR" => "Reviewers on the open pull request, and the bots' comments for the session to deal with.",
+            _ => "Done when the PR is open, its checks pass and the bots' comments are dealt with.",
+        };
+        let holding = stage.status == StageStatus::Holding;
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_4()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_color(Self::stage_tint(stage.status, theme)).child(Self::stage_mark(stage.status)))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child(stage.title.clone()))
+                            .when(!stage.note.is_empty(), |d| d.child(div().text_sm().text_color(Self::stage_tint(stage.status, theme)).child(stage.note.clone()))),
+                    )
+                    .child(div().text_sm().text_color(theme.secondary).child(caption)),
+            )
+            .when(holding, |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .p_2()
+                        .rounded_md()
+                        .bg(theme.orange().opacity(0.1))
+                        .child(div().flex_1().text_sm().child("Pushing waits for this review."))
+                        .child(Self::button("push-anyway", "Push Anyway", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            // The gate lets this commit through; the review's
+                            // findings stay for the session.
+                            let stage = this.stage;
+                            if let Some(s) = this.data.workflow.as_mut().and_then(|w| w.stages.get_mut(stage)) {
+                                s.status = StageStatus::Done;
+                                s.note = "Pushed anyway".into();
+                            }
+                            cx.notify();
+                        }))),
+                )
+            })
+            .when(stage.steps.is_empty(), |d| d.child(div().text_sm().text_color(theme.secondary).child("No steps in this stage.")))
+            .children(stage.steps.iter().enumerate().map(|(si, step)| {
+                let tint = Self::stage_tint(step.status, theme);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .p(px(10.))
+                    .rounded_lg()
+                    .bg(theme.bg)
+                    .border_1()
+                    .border_color(theme.border)
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(div().text_color(tint).child(Self::stage_mark(step.status)))
+                            .child(div().flex_1().font_weight(FontWeight::MEDIUM).child(step.name.clone()))
+                            .child(div().text_xs().text_color(theme.secondary).child(step.provider.clone())),
+                    )
+                    .when(!step.summary.is_empty(), |d| {
+                        d.child(div().text_sm().text_color(if step.provider == "Command" { theme.fg } else { theme.secondary }).when(step.provider == "Command", |d| d.font_family("SF Mono").text_xs()).child(step.summary.clone()))
+                    })
+                    .children(step.findings.iter().enumerate().map(move |(fi, f)| {
+                        let sev = match f.severity.as_str() {
+                            "blocker" => theme.critical(),
+                            "major" => theme.orange(),
+                            "minor" => gpui::rgb(0xEDA100).into(),
+                            _ => theme.secondary,
+                        };
+                        div()
+                            .id(SharedString::from(format!("lf-{si}-{fi}")))
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .child(div().w(px(3.)).flex_none().rounded_full().bg(sev))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0p5()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_row()
+                                            .gap_2()
+                                            .text_xs()
+                                            .child(div().px_1p5().rounded_full().bg(sev.opacity(0.2)).child(f.severity.clone()))
+                                            .child(div().truncate().font_family("SF Mono").text_color(theme.selected).child(f.path.clone())),
+                                    )
+                                    .child(div().text_sm().child(f.text.clone()))
+                                    .when_some(f.outcome.clone(), |d, o| {
+                                        let fixed = o.starts_with("Fixed");
+                                        d.child(div().text_xs().text_color(if fixed { theme.good() } else { theme.secondary }).child(o))
+                                    }),
+                            )
+                    }))
+            }))
+            .into_any_element()
     }
 
     fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, prominent: bool, enabled: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
@@ -874,6 +1126,7 @@ impl WorkPanel {
             Pane::Issue => self.issue_pane(theme, cx).into_any_element(),
             Pane::Changes => self.changes_pane(theme, cx).into_any_element(),
             Pane::Activity => self.activity_pane(theme).into_any_element(),
+            Pane::Workflow => self.workflow_pane(theme, cx).into_any_element(),
         };
         div()
             .w(px(440.))
@@ -907,7 +1160,8 @@ impl WorkPanel {
                                 cx,
                             ))
                             .child(tab("pane-changes", if files > 0 { format!("Changes {files}") } else { "Changes".into() }, Pane::Changes, cx))
-                            .child(tab("pane-activity", "Activity".into(), Pane::Activity, cx)),
+                            .child(tab("pane-activity", "Activity".into(), Pane::Activity, cx))
+                            .when(self.data.workflow.is_some(), |d| d.child(tab("pane-workflow", "Workflow".into(), Pane::Workflow, cx))),
                     ),
             )
             .child(div().id("work-pane").flex_1().min_h_0().overflow_y_scroll().child(body))
@@ -1336,9 +1590,17 @@ impl Render for WorkPanel {
         div()
             .size_full()
             .flex()
-            .flex_row()
+            .flex_col()
             .bg(theme.bg)
-            .child(self.terminal_column(&theme, cx))
-            .when(self.panel_open, |d| d.child(self.side_panel(&theme, cx)))
+            .when_some(self.data.workflow.clone(), |d, run| d.child(self.workflow_strip(&run, &theme, cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .flex()
+                    .flex_row()
+                    .child(self.terminal_column(&theme, cx))
+                    .when(self.panel_open, |d| d.child(self.side_panel(&theme, cx))),
+            )
     }
 }

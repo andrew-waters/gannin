@@ -104,6 +104,8 @@ pub enum Nav {
     WorkPreview,
     /// The scheduler's week and month, from made-up items.
     SchedulePreview,
+    /// The workflow editor, from made-up workflows.
+    WorkflowsPreview,
 }
 
 impl Nav {
@@ -145,6 +147,7 @@ impl Nav {
             Nav::ReviewPreview => "Review Preview",
             Nav::WorkPreview => "Work Preview",
             Nav::SchedulePreview => "Schedule",
+            Nav::WorkflowsPreview => "Workflows",
         }
     }
 }
@@ -218,7 +221,7 @@ fn sections() -> Vec<Section> {
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
         // The pilot's own: states to refine a UI against before it's wired.
-        Section { id: "previews", title: Some("Previews"), rows: vec![Item(SchedulePreview), Item(WorkPreview)] },
+        Section { id: "previews", title: Some("Previews"), rows: vec![Item(SchedulePreview), Item(WorkflowsPreview), Item(WorkPreview)] },
     ]
 }
 
@@ -357,6 +360,7 @@ enum Page {
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
     WorkPreview(Entity<crate::work_preview::WorkPreview>),
     SchedulePreview(Entity<crate::schedule_preview::SchedulePreview>),
+    WorkflowsPreview(Entity<crate::workflow_editor_preview::WorkflowEditorPreview>),
     None,
 }
 
@@ -806,6 +810,7 @@ impl Workspace {
             Nav::ReviewPreview => Page::ReviewPreview(cx.new(|cx| crate::review_preview::ReviewPreview::new(window, cx))),
             Nav::WorkPreview => Page::WorkPreview(cx.new(|cx| crate::work_preview::WorkPreview::new(window, cx))),
             Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_preview::SchedulePreview::new(window, cx))),
+            Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflow_editor_preview::WorkflowEditorPreview::new(window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             _ => Page::None,
         };
@@ -3534,6 +3539,7 @@ impl Workspace {
             Nav::ReviewPreview => "icons/eye.svg",
             Nav::WorkPreview => "icons/pull_request.svg",
             Nav::SchedulePreview => "icons/clock.svg",
+            Nav::WorkflowsPreview => "icons/git_graph.svg",
             Nav::Session(id) => match self.session(id, cx).map(|p| p.read(cx)) {
                 Some(page) if page.launch.is_some() => self.tab_kind(tab, cx).icon(),
                 Some(page) if page.kind == Kind::Shell => "icons/terminal.svg",
@@ -3701,6 +3707,7 @@ impl Workspace {
                 Page::ReviewPreview(page) => page.into_any_element(),
                 Page::WorkPreview(page) => page.into_any_element(),
                 Page::SchedulePreview(page) => page.into_any_element(),
+                Page::WorkflowsPreview(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()

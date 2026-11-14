@@ -33,6 +33,7 @@ mod schedule_preview;
 mod work_live;
 mod work_panel;
 mod work_preview;
+mod workflow_editor_preview;
 mod scorecard;
 mod pr_picker;
 mod prs;

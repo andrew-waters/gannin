@@ -3,7 +3,7 @@
 //! claude runs and nothing is written.
 
 use crate::charts::Theme;
-use crate::work_panel::{Ask, ChangedFile, Feedback, PrState, Question, WorkData, WorkPanel, WorkPr, WorkState, Worktree};
+use crate::work_panel::{Ask, ChangedFile, Feedback, LocalFinding, PrState, Question, StageRun, StageStatus, StepRun, WorkData, WorkPanel, WorkPr, WorkState, WorkflowRun, Worktree};
 use gpui::{div, prelude::*, ClickEvent, Context, Entity, SharedString, Window};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -13,6 +13,8 @@ enum Mock {
     Permission,
     Question,
     YourTurn,
+    LocalReview,
+    CommandFailing,
     PrOpened,
     ChecksFailing,
     ChangesRequested,
@@ -23,12 +25,14 @@ enum Mock {
 }
 
 impl Mock {
-    const ALL: [Mock; 12] = [
+    const ALL: [Mock; 14] = [
         Mock::Starting,
         Mock::Working,
         Mock::Permission,
         Mock::Question,
         Mock::YourTurn,
+        Mock::LocalReview,
+        Mock::CommandFailing,
         Mock::PrOpened,
         Mock::ChecksFailing,
         Mock::ChangesRequested,
@@ -45,6 +49,8 @@ impl Mock {
             Mock::Permission => "Permission",
             Mock::Question => "Question",
             Mock::YourTurn => "Your turn",
+            Mock::LocalReview => "Local review",
+            Mock::CommandFailing => "Command failing",
             Mock::PrOpened => "PR opened",
             Mock::ChecksFailing => "Checks failing",
             Mock::ChangesRequested => "Changes requested",
@@ -59,6 +65,7 @@ impl Mock {
     fn pane(self) -> &'static str {
         match self {
             Mock::Working | Mock::YourTurn => "changes",
+            Mock::LocalReview | Mock::CommandFailing => "workflow",
             Mock::PrOpened | Mock::ChecksFailing | Mock::ChangesRequested | Mock::Conflicts => "issue",
             _ => "issue",
         }
@@ -163,7 +170,7 @@ fn data(mock: Mock) -> WorkData {
     };
     let worktrees = match mock {
         Mock::Starting => Vec::new(),
-        Mock::Working | Mock::Permission | Mock::Question | Mock::YourTurn => {
+        Mock::Working | Mock::Permission | Mock::Question | Mock::YourTurn | Mock::LocalReview | Mock::CommandFailing => {
             vec![Worktree { name: "api".into(), path: String::new(), unpushed: None, base: "main".into(), files: files(), uncommitted: files().into_iter().skip(1).collect() }]
         }
         Mock::Merged => vec![Worktree { name: "api".into(), path: String::new(), unpushed: Some(0), base: "main".into(), files: Vec::new(), uncommitted: Vec::new() }],
@@ -214,6 +221,102 @@ fn data(mock: Mock) -> WorkData {
         context: if mock == Mock::Working { 0.74 } else { 0.42 },
         last_check: if matches!(mock, Mock::Starting) { None } else { Some(mock != Mock::ChecksFailing) },
         idle_days: if mock == Mock::Stale { 5 } else { 0 },
+        workflow: Some(workflow(mock)),
+    }
+}
+
+/// The made-up workflow "Careful": a scout, the session, a local review by
+/// two reviewers and two commands, then a reviewer on the PR and the bots.
+fn workflow(mock: Mock) -> WorkflowRun {
+    use StageStatus::*;
+    let step = |name: &str, provider: &str, status: StageStatus, summary: &str, findings: Vec<LocalFinding>| StepRun { name: name.into(), provider: provider.into(), status, summary: summary.into(), findings };
+    let finding = |severity: &str, path: &str, text: &str, outcome: Option<&str>| LocalFinding { severity: severity.into(), path: path.into(), text: text.into(), outcome: outcome.map(str::to_string) };
+    // How far each mock has got: before the local review, in it, past it.
+    let (prepare, session, local, pr, done) = match mock {
+        Mock::Starting => (Running, Waiting, Waiting, Waiting, Waiting),
+        Mock::Working | Mock::Permission | Mock::Question => (Done, Running, Waiting, Waiting, Waiting),
+        Mock::YourTurn => (Done, Done, Waiting, Waiting, Waiting),
+        Mock::LocalReview | Mock::CommandFailing => (Done, Running, Holding, Waiting, Waiting),
+        Mock::PrOpened | Mock::ChangesRequested | Mock::Conflicts => (Done, Done, Done, Running, Waiting),
+        Mock::ChecksFailing => (Done, Done, Done, Failed, Waiting),
+        Mock::Merged => (Done, Done, Done, Done, Done),
+        Mock::Exited | Mock::Stale => (Done, Done, Done, Running, Waiting),
+    };
+    let reviewing = mock == Mock::LocalReview;
+    let failing = mock == Mock::CommandFailing;
+    let local_steps = if local == Waiting {
+        vec![
+            step("Correctness reviewer", "Claude Code", Waiting, "", vec![]),
+            step("Junie", "Junie", Waiting, "", vec![]),
+            step("cargo test", "Command", Waiting, "", vec![]),
+            step("cargo clippy -- -D warnings", "Command", Waiting, "", vec![]),
+        ]
+    } else {
+        vec![
+            step(
+                "Correctness reviewer",
+                "Claude Code",
+                if reviewing { Holding } else { Done },
+                if reviewing { "Round 2 of 3: 1 blocker still open." } else { "Settled in round 2." },
+                vec![
+                    finding("blocker", "src/webhooks/sender.rs:51", "Retries share one delay, so every failed hook retries at the same moment. Add jitter.", if reviewing { None } else { Some("Fixed in 7c1e9a2") }),
+                    finding("major", "src/webhooks/dead_letters.rs:18", "Dead letters are kept forever; add an expiry.", Some("Fixed in 3b8d410")),
+                    finding("nit", "tests/webhooks.rs:40", "The test name says backoff but checks retries only.", Some("Answered: renamed in the next commit, with the backoff check added.")),
+                ],
+            ),
+            step("Junie", "Junie", Done, "Found nothing new in round 2.", vec![]),
+            step(
+                "cargo test",
+                "Command",
+                if failing { Failed } else { Done },
+                if failing { "Failed: webhooks::retries_with_backoff panicked at 'attempt 3 waited 4s, expected 2s'" } else { "Passed in 48s." },
+                vec![],
+            ),
+            step("cargo clippy -- -D warnings", "Command", Done, "Passed in 12s.", vec![]),
+        ]
+    };
+    WorkflowRun {
+        name: "Careful".into(),
+        stages: vec![
+            StageRun {
+                title: "Prepare".into(),
+                status: prepare,
+                note: String::new(),
+                steps: vec![step(
+                    "Scout",
+                    "Claude Code",
+                    prepare,
+                    if prepare == Done { "Mapped the webhook sender, its callers and the retry settings; noted the dead letters table doesn't exist yet." } else { "Reading the code" },
+                    vec![],
+                )],
+            },
+            StageRun { title: "Session".into(), status: session, note: String::new(), steps: vec![step("Session", "Claude Code", session, "The implementer: the terminal on the left.", vec![])] },
+            StageRun {
+                title: "Local review".into(),
+                status: local,
+                note: match (reviewing, failing, local) {
+                    (true, _, _) => "Round 2 · 1 blocker".into(),
+                    (_, true, _) => "cargo test failing".into(),
+                    (_, _, Done) => "Clear".into(),
+                    _ => String::new(),
+                },
+                steps: local_steps,
+            },
+            StageRun {
+                title: "On the PR".into(),
+                status: pr,
+                note: match mock {
+                    Mock::ChecksFailing => "Checks failing".into(),
+                    Mock::ChangesRequested => "2 comments".into(),
+                    _ => String::new(),
+                },
+                steps: vec![
+                    step("Security reviewer", "Claude Code", if pr == Waiting { Waiting } else { Done }, if pr == Waiting { "" } else { "No findings." }, vec![]),
+                    step("Bot comments", "Session", pr, if pr == Waiting { "" } else { "CodeRabbit: 1 comment, sent to the session." }, vec![]),
+                ],
+            },
+            StageRun { title: "Done".into(), status: done, note: String::new(), steps: vec![] },
+        ],
     }
 }
 
