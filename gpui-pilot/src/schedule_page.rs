@@ -355,12 +355,22 @@ impl SchedulePage {
                     let issues = cx
                         .background_executor()
                         .spawn(async move {
-                            let mut items: Vec<(IssueRef, usize)> = org
-                                .and_then(|o| crate::issues::load(&o).ok())
-                                .unwrap_or_default()
+                            let all = org.and_then(|o| crate::issues::load(&o).ok()).unwrap_or_default();
+                            // How many open sub-issues each has: the loaded list
+                            // knows only each one's parent.
+                            let mut subs: std::collections::HashMap<String, usize> = Default::default();
+                            for i in all.iter().filter(|i| i.closed_at.is_none()) {
+                                if let Some(parent) = &i.parent_id {
+                                    *subs.entry(parent.clone()).or_default() += 1;
+                                }
+                            }
+                            let mut items: Vec<(IssueRef, usize)> = all
                                 .into_iter()
                                 .filter(|i| i.closed_at.is_none())
-                                .map(|i| (IssueRef { id: i.id, repo: i.repo, number: i.number, title: i.title, url: i.url }, i.sub_issues))
+                                .map(|i| {
+                                    let n = subs.get(&i.id).copied().unwrap_or(0);
+                                    (IssueRef { id: i.id, repo: i.repo, number: i.number, title: i.title, url: i.url }, n)
+                                })
                                 .collect();
                             items.sort_by(|a, b| b.0.number.cmp(&a.0.number));
                             items
