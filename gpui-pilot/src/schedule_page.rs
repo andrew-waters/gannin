@@ -76,8 +76,11 @@ struct Picking {
     kind: Kind,
     date: NaiveDate,
     minute: u32,
-    issues: Option<Vec<IssueRef>>,
+    /// Open issues, each with how many sub-issues it has.
+    issues: Option<Vec<(IssueRef, usize)>>,
     picked: Vec<IssueRef>,
+    /// An epic's sub-issues being read, by its id.
+    reading: Option<String>,
 }
 
 pub struct SchedulePage {
@@ -345,21 +348,21 @@ impl SchedulePage {
             }
             Kind::Start | Kind::Sequence => {
                 self.adding = None;
-                self.picking = Some(Picking { kind, date, minute, issues: None, picked: Vec::new() });
+                self.picking = Some(Picking { kind, date, minute, issues: None, picked: Vec::new(), reading: None });
                 self.search_field.update(cx, |e, cx| e.set_text("", window, cx));
                 let org = self.org.clone();
                 cx.spawn(async move |this, cx| {
                     let issues = cx
                         .background_executor()
                         .spawn(async move {
-                            let mut items: Vec<IssueRef> = org
+                            let mut items: Vec<(IssueRef, usize)> = org
                                 .and_then(|o| crate::issues::load(&o).ok())
                                 .unwrap_or_default()
                                 .into_iter()
                                 .filter(|i| i.closed_at.is_none())
-                                .map(|i| IssueRef { id: i.id, repo: i.repo, number: i.number, title: i.title, url: i.url })
+                                .map(|i| (IssueRef { id: i.id, repo: i.repo, number: i.number, title: i.title, url: i.url }, i.sub_issues))
                                 .collect();
-                            items.sort_by(|a, b| b.number.cmp(&a.number));
+                            items.sort_by(|a, b| b.0.number.cmp(&a.0.number));
                             items
                         })
                         .await;
@@ -399,6 +402,41 @@ impl SchedulePage {
                 self.select(Some(id), window, cx);
             }
         }
+    }
+
+    /// Adds an epic's open sub-issues to the sequence being picked, in the
+    /// order set on GitHub, after any already picked.
+    fn add_sub_issues(&mut self, epic: IssueRef, cx: &mut Context<Self>) {
+        let Some(p) = self.picking.as_mut() else { return };
+        p.reading = Some(epic.id.clone());
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let id = epic.id.clone();
+            let found = cx
+                .background_executor()
+                .spawn(async move {
+                    let token = crate::auth::token().ok_or("Sign in first.".to_string())?;
+                    schedule::sub_issues_in_order(&token, &id)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let Some(p) = this.picking.as_mut() else { return };
+                p.reading = None;
+                match found {
+                    Ok(subs) => {
+                        for sub in subs {
+                            if !p.picked.iter().any(|x| x.id == sub.id) {
+                                p.picked.push(sub);
+                            }
+                        }
+                    }
+                    Err(e) => eprintln!("Couldn't read the sub-issues: {e}"),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, on: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
@@ -893,12 +931,12 @@ impl SchedulePage {
     fn picker(&self, picking: &Picking, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let search = self.search_field.read(cx).text(cx).to_lowercase();
         let multi = picking.kind == Kind::Sequence;
-        let list: Vec<IssueRef> = picking
+        let list: Vec<(IssueRef, usize)> = picking
             .issues
             .clone()
             .unwrap_or_default()
             .into_iter()
-            .filter(|i| search.split_whitespace().all(|w| i.title.to_lowercase().contains(w) || i.repo.to_lowercase().contains(w) || i.number.to_string() == w.trim_start_matches('#')))
+            .filter(|(i, _)| search.split_whitespace().all(|w| i.title.to_lowercase().contains(w) || i.repo.to_lowercase().contains(w) || i.number.to_string() == w.trim_start_matches('#')))
             .take(200)
             .collect();
         div()
@@ -937,7 +975,9 @@ impl SchedulePage {
                     .min_h_0()
                     .overflow_y_scroll()
                     .when(picking.issues.is_none(), |d| d.child(div().p_4().text_sm().text_color(theme.secondary).child("Loading issues")))
-                    .children(list.into_iter().map(|issue| {
+                    .children(list.into_iter().map(|(issue, subs)| {
+                        let epic = issue.clone();
+                        let reading = picking.reading.as_deref() == Some(issue.id.as_str());
                         let place = picking.picked.iter().position(|p| p.id == issue.id);
                         let key = issue.id.clone();
                         let (title, repo) = (format!("#{} {}", issue.number, issue.title), issue.repo.clone());
@@ -966,6 +1006,15 @@ impl SchedulePage {
                             }))
                             .child(div().w(px(18.)).text_sm().text_color(theme.selected).child(place.map(|n| (n + 1).to_string()).unwrap_or_default()))
                             .child(div().flex_1().min_w_0().flex().flex_col().child(div().truncate().text_sm().child(title)).child(div().text_xs().text_color(theme.secondary).child(repo)))
+                            // An epic adds its sub-issues, in the order set on GitHub.
+                            .when(multi && subs > 0, |d| {
+                                d.child(
+                                    Self::button(format!("subs-{}", epic.id), if reading { "Reading".to_string() } else { format!("Add its {subs} sub-issues") }, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        this.add_sub_issues(epic.clone(), cx);
+                                    })),
+                                )
+                            })
                     })),
             )
             .child(

@@ -120,6 +120,15 @@ fn main() {
                 }
                 return;
             }
+            // Lists an issue's open sub-issues in GitHub's order (read only).
+            "--sub-issues" => {
+                let token = auth::token().expect("sign in first");
+                match schedule::sub_issues_in_order(&token, &args.next().unwrap_or_default()) {
+                    Ok(subs) => subs.iter().for_each(|s| println!("{}#{} {}", s.repo, s.number, s.title)),
+                    Err(e) => println!("couldn't: {e}"),
+                }
+                return;
+            }
             "--work-changes" => {
                 let folder = std::path::PathBuf::from(args.next().unwrap_or_default());
                 for w in work_live::worktrees(&folder) {

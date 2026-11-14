@@ -1578,15 +1578,44 @@ impl Workspace {
     /// in the order picked; then the Schedule shows, to move it.
     fn schedule_issues(&mut self, issues: Vec<IssueItem>, window: &mut Window, cx: &mut Context<Self>) {
         use crate::schedule::{IssueRef, RunState, Schedule, Sequence};
-        let now = chrono::Local::now();
-        let minute = (chrono::Timelike::hour(&now) * 60 + chrono::Timelike::minute(&now)) / 30 * 30 + 30;
-        let date = if minute >= 24 * 60 { now.date_naive().succ_opt().unwrap_or(now.date_naive()) } else { now.date_naive() };
-        let items: Vec<IssueRef> = issues.iter().map(|i| IssueRef { id: i.id.clone(), repo: i.repo.clone(), number: i.number, title: i.title.clone(), url: i.url.clone() }).collect();
-        let name = if items.len() == 1 { items[0].label() } else { format!("{} issues", items.len()) };
-        let mut sched = Schedule::load();
-        sched.sequences.push(Sequence { id: crate::schedule::new_id(), name, start: crate::schedule::at(date, minute % (24 * 60)), runs: vec![RunState::Waiting; items.len()], items, paused: false });
-        sched.save();
-        self.navigate(Nav::SchedulePreview, false, window, cx);
+        // An epic stands for its open sub-issues, in the order set on
+        // GitHub; read off the main thread, then the sequence is made.
+        let picked: Vec<(IssueRef, bool)> = issues.iter().map(|i| (IssueRef { id: i.id.clone(), repo: i.repo.clone(), number: i.number, title: i.title.clone(), url: i.url.clone() }, i.sub_issues > 0)).collect();
+        let epic_name = (issues.len() == 1 && issues[0].sub_issues > 0).then(|| format!("#{} {}", issues[0].number, issues[0].title));
+        cx.spawn_in(window, async move |this, cx| {
+            let items: Vec<IssueRef> = cx
+                .background_executor()
+                .spawn(async move {
+                    let token = crate::auth::token();
+                    let mut items: Vec<IssueRef> = Vec::new();
+                    for (issue, epic) in picked {
+                        let subs = if epic { token.as_deref().and_then(|t| crate::schedule::sub_issues_in_order(t, &issue.id).ok()).unwrap_or_default() } else { Vec::new() };
+                        let add = if subs.is_empty() { vec![issue] } else { subs };
+                        for item in add {
+                            if !items.iter().any(|x| x.id == item.id) {
+                                items.push(item);
+                            }
+                        }
+                    }
+                    items
+                })
+                .await;
+            this.update_in(cx, |this, window, cx| {
+                if items.is_empty() {
+                    return;
+                }
+                let now = chrono::Local::now();
+                let minute = (chrono::Timelike::hour(&now) * 60 + chrono::Timelike::minute(&now)) / 30 * 30 + 30;
+                let date = if minute >= 24 * 60 { now.date_naive().succ_opt().unwrap_or(now.date_naive()) } else { now.date_naive() };
+                let name = epic_name.clone().unwrap_or_else(|| if items.len() == 1 { items[0].label() } else { format!("{} issues", items.len()) });
+                let mut sched = Schedule::load();
+                sched.sequences.push(Sequence { id: crate::schedule::new_id(), name, start: crate::schedule::at(date, minute % (24 * 60)), runs: vec![RunState::Waiting; items.len()], items, paused: false });
+                sched.save();
+                this.navigate(Nav::SchedulePreview, false, window, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Run Now from the Schedule page: an issue start or a sequence's next

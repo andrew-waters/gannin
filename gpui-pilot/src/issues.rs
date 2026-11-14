@@ -1121,13 +1121,24 @@ impl IssuesPage {
         let order = |a: &usize, b: &usize| compare(&issues[*a], &issues[*b], &sort);
 
         // Narrowed, every match is its own row, so none hides under a
-        // collapsed parent; each says where it belongs instead.
+        // collapsed parent; each says where it belongs instead. One opened
+        // shows all its sub-issues beneath it, filtered or not, so an epic
+        // found by a search still opens.
         if self.filters.is_narrowed() {
             matching.sort_by(order);
-            self.rows = matching
-                .into_iter()
-                .map(|index| Row { index, depth: 0, opens: false, context: self.parent_label(&issues[index]) })
-                .collect();
+            let mut rows = Vec::new();
+            for index in matching {
+                let children: Vec<usize> = {
+                    let mut c: Vec<usize> = issues.iter().enumerate().filter(|(_, i)| i.parent_id.as_deref() == Some(issues[index].id.as_str())).map(|(i, _)| i).collect();
+                    c.sort_by(order);
+                    c
+                };
+                rows.push(Row { index, depth: 0, opens: !children.is_empty(), context: self.parent_label(&issues[index]) });
+                if self.expanded.contains(&issues[index].id) {
+                    rows.extend(children.into_iter().map(|c| Row { index: c, depth: 1, opens: false, context: None }));
+                }
+            }
+            self.rows = rows;
             return;
         }
 

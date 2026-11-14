@@ -232,3 +232,29 @@ exit 0"#,
 
 /// What an unattended session is told, ahead of its brief.
 pub const UNATTENDED: &str = "\n## Nobody is watching\n\nThis session was started by Gannin's schedule, and nobody is watching it. Don't stop to ask questions: make the choice a careful teammate would, and say what you chose and why in the pull request's description. Take the work as far as a pull request that's ready for review; never merge it.\n";
+
+/// An issue's open sub-issues, in the order set on GitHub (the local
+/// cache knows only each one's parent). Read only.
+pub fn sub_issues_in_order(token: &str, issue_id: &str) -> Result<Vec<IssueRef>, String> {
+    let data = crate::github::graphql(
+        token,
+        "query($id: ID!) { node(id: $id) { ... on Issue { subIssues(first: 100) { nodes { id number title url state repository { nameWithOwner } } } } } }",
+        serde_json::json!({ "id": issue_id }),
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(data["node"]["subIssues"]["nodes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|n| n["state"] == "OPEN")
+        .filter_map(|n| {
+            Some(IssueRef {
+                id: n["id"].as_str()?.into(),
+                repo: n["repository"]["nameWithOwner"].as_str()?.into(),
+                number: n["number"].as_i64()?,
+                title: n["title"].as_str().unwrap_or("").into(),
+                url: n["url"].as_str().unwrap_or("").into(),
+            })
+        })
+        .collect())
+}
