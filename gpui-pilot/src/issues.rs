@@ -411,9 +411,16 @@ pub struct Filters {
     milestones: BTreeSet<String>,
     /// (field, value); an empty value is an issue with none.
     fields: BTreeSet<(String, String)>,
+    /// Menus whose picks leave issues out rather than keep them, by
+    /// title ("Field" for board fields).
+    excluding: BTreeSet<String>,
 }
 
 impl Filters {
+    fn excludes(&self, menu: &str) -> bool {
+        self.excluding.contains(menu)
+    }
+
     fn is_narrowed(&self) -> bool {
         !self.search.is_empty() || Key::all().iter().any(|k| !self.values(*k).is_empty()) || !self.fields.is_empty()
     }
@@ -443,51 +450,29 @@ impl Filters {
     /// Everything but the state, less `except` or the field `except_field`,
     /// so a menu counts what picking among its own values would give.
     fn matches(&self, issue: &IssueItem, except: Option<Key>, except_field: Option<&str>) -> bool {
-        if except != Some(Key::Assignee) && !self.assignees.is_empty() {
-            let hit = self.assignees.iter().any(|value| match value.as_str() {
-                UNASSIGNED => issue.assignee_logins.is_empty(),
-                ANYONE_ASSIGNED => !issue.assignee_logins.is_empty(),
-                login => issue.assignee_logins.iter().any(|l| l == login),
+        for key in Key::all() {
+            let picked = self.values(key);
+            if Some(key) == except || picked.is_empty() {
+                continue;
+            }
+            let hit = picked.iter().any(|value| match key {
+                Key::Assignee => match value.as_str() {
+                    UNASSIGNED => issue.assignee_logins.is_empty(),
+                    ANYONE_ASSIGNED => !issue.assignee_logins.is_empty(),
+                    login => issue.assignee_logins.iter().any(|l| l == login),
+                },
+                Key::Repository => issue.repo == *value,
+                Key::Label => issue.labels.contains(value),
+                Key::Board if value == NO_BOARD => issue.has_history && issue.boards.is_empty(),
+                Key::Board => issue.boards.iter().any(|(title, _)| title == value),
+                Key::Status if value == NO_STATUS => issue.statuses.is_empty(),
+                Key::Status => issue.statuses.iter().any(|(name, _)| name == value),
+                Key::Milestone => issue.milestone.as_deref().unwrap_or(NO_MILESTONE) == value,
             });
-            if !hit {
+            // Included, it must have one; excluded, none.
+            if hit == self.excludes(key.title()) {
                 return false;
             }
-        }
-        if except != Some(Key::Repository) && !self.repositories.is_empty() && !self.repositories.contains(&issue.repo) {
-            return false;
-        }
-        if except != Some(Key::Label) && !self.labels.is_empty() && !issue.labels.iter().any(|l| self.labels.contains(l)) {
-            return false;
-        }
-        if except != Some(Key::Board) && !self.boards.is_empty() {
-            let hit = self.boards.iter().any(|board| {
-                if board == NO_BOARD {
-                    issue.has_history && issue.boards.is_empty()
-                } else {
-                    issue.boards.iter().any(|(title, _)| title == board)
-                }
-            });
-            if !hit {
-                return false;
-            }
-        }
-        if except != Some(Key::Status) && !self.statuses.is_empty() {
-            let hit = self.statuses.iter().any(|status| {
-                if status == NO_STATUS {
-                    issue.statuses.is_empty()
-                } else {
-                    issue.statuses.iter().any(|(name, _)| name == status)
-                }
-            });
-            if !hit {
-                return false;
-            }
-        }
-        if except != Some(Key::Milestone)
-            && !self.milestones.is_empty()
-            && !self.milestones.contains(issue.milestone.as_deref().unwrap_or(NO_MILESTONE))
-        {
-            return false;
         }
         let mut by_field: HashMap<&str, Vec<&str>> = HashMap::new();
         for (field, value) in &self.fields {
@@ -495,9 +480,11 @@ impl Filters {
                 by_field.entry(field).or_default().push(value);
             }
         }
+        let excluding_fields = self.excludes("Field");
         for (field, picks) in by_field {
             let have = issue.choices(field);
-            if !picks.iter().any(|value| if value.is_empty() { have.is_empty() } else { have.contains(value) }) {
+            let hit = picks.iter().any(|value| if value.is_empty() { have.is_empty() } else { have.contains(value) });
+            if hit == excluding_fields {
                 return false;
             }
         }
@@ -538,7 +525,7 @@ struct Choice {
 }
 
 /// "a, b", or "a, b and 3 more".
-fn summary(titles: &[String], limit: usize) -> String {
+pub(crate) fn summary(titles: &[String], limit: usize) -> String {
     if titles.len() > limit {
         format!("{} and {} more", titles[..limit].join(", "), titles.len() - limit)
     } else {
@@ -647,7 +634,7 @@ impl Column {
 }
 
 /// A hover label, for avatars shown without names.
-struct Tooltip(String);
+pub(crate) struct Tooltip(pub(crate) String);
 
 impl Render for Tooltip {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -672,7 +659,7 @@ impl Render for Tooltip {
 struct DraggedColumn(Column);
 
 /// What follows the pointer while a header is dragged.
-struct ColumnDrag(String);
+pub(crate) struct ColumnDrag(pub(crate) String);
 
 impl Render for ColumnDrag {
     fn render(&mut self, window: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -1386,7 +1373,8 @@ impl IssuesPage {
                 } else {
                     let mut titles: Vec<String> = picked.iter().map(|v| self.title_for(*key, v)).collect();
                     titles.sort_by_key(|t| t.to_lowercase());
-                    (format!("{}: {}", key.title(), summary(&titles, 2)), true)
+                    let not = if self.filters.excludes(key.title()) { "not " } else { "" };
+                    (format!("{}: {not}{}", key.title(), summary(&titles, 2)), true)
                 }
             }
             Menu::Field => {
@@ -1401,7 +1389,8 @@ impl IssuesPage {
                         None => by_field.push((field.clone(), vec![value])),
                     }
                 }
-                let parts: Vec<String> = by_field.iter().map(|(f, v)| format!("{f}: {}", summary(v, 2))).collect();
+                let not = if self.filters.excludes("Field") { "not " } else { "" };
+                let parts: Vec<String> = by_field.iter().map(|(f, v)| format!("{f}: {not}{}", summary(v, 2))).collect();
                 (parts.join("; "), true)
             }
         }
@@ -1495,6 +1484,7 @@ impl IssuesPage {
                 let picked = self.filters.values(key);
                 let has_leading = !leading.is_empty();
                 panel
+                    .child(self.mode_switch(key.title(), theme, cx))
                     .children(leading.into_iter().map(|c| self.check_row(key, c, picked, theme, cx)))
                     .when(has_leading && !rest.is_empty(), |d| d.child(separator(theme)))
                     .children(rest.into_iter().map(|c| self.check_row(key, c, picked, theme, cx)))
@@ -1502,6 +1492,7 @@ impl IssuesPage {
                         d.child(separator(theme)).child(menu_action("clear", "Clear", theme).on_click(cx.listener(
                             move |page, _: &ClickEvent, _, cx| {
                                 page.filters.values_mut(key).clear();
+                                page.filters.excluding.remove(key.title());
                                 page.refilter();
                                 cx.notify();
                             },
@@ -1537,11 +1528,13 @@ impl IssuesPage {
                 }
                 let any_picked = !self.filters.fields.is_empty();
                 panel
+                    .child(self.mode_switch("Field", theme, cx))
                     .children(rows)
                     .when(any_picked, |d| {
                         d.child(separator(theme)).child(menu_action("clear-fields", "Clear", theme).on_click(cx.listener(
                             |page, _: &ClickEvent, _, cx| {
                                 page.filters.fields.clear();
+                                page.filters.excluding.remove("Field");
                                 page.refilter();
                                 cx.notify();
                             },
@@ -1550,6 +1543,24 @@ impl IssuesPage {
                     .into_any_element()
             }
         }
+    }
+
+    /// Include or Exclude, at the top of a menu: whether its picks keep
+    /// issues or leave them out.
+    fn mode_switch(&self, menu: &'static str, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let include = cx.listener(move |page: &mut Self, _: &ClickEvent, _, cx| page.set_excluding(menu, false, cx));
+        let exclude = cx.listener(move |page: &mut Self, _: &ClickEvent, _, cx| page.set_excluding(menu, true, cx));
+        mode_switch(menu, self.filters.excludes(menu), theme, include, exclude)
+    }
+
+    fn set_excluding(&mut self, menu: &str, exclude: bool, cx: &mut Context<Self>) {
+        if exclude {
+            self.filters.excluding.insert(menu.to_string());
+        } else {
+            self.filters.excluding.remove(menu);
+        }
+        self.refilter();
+        cx.notify();
     }
 
     fn check_row(&self, key: Key, choice: Choice, picked: &BTreeSet<String>, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2031,24 +2042,63 @@ impl IssuesPage {
     }
 }
 
-fn menu_heading(label: &'static str, theme: &Theme) -> impl IntoElement {
+pub(crate) fn menu_heading(label: &'static str, theme: &Theme) -> impl IntoElement {
     div().px_3().pt_1().pb_0p5().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.tertiary).child(label)
 }
 
-fn separator(theme: &Theme) -> impl IntoElement {
+pub(crate) fn separator(theme: &Theme) -> impl IntoElement {
     div().my_1().h(px(1.)).bg(theme.border)
 }
 
-fn menu_action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn menu_action(id: &'static str, label: &'static str, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     menu_action_owned(id.into(), label.to_string(), theme)
 }
 
-fn menu_action_owned(id: SharedString, label: String, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn menu_action_owned(id: SharedString, label: String, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     div().id(id).mx_1().px_2().py_1().rounded_md().cursor_pointer().hover(|s| s.bg(theme.row_selected)).child(label)
 }
 
+/// Include and Exclude side by side, the one in use highlighted; `on`
+/// makes each one's click handler (true for Exclude).
+pub(crate) fn mode_switch(
+    menu: &str,
+    excluding: bool,
+    theme: &Theme,
+    include: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+    exclude: impl Fn(&ClickEvent, &mut Window, &mut gpui::App) + 'static,
+) -> gpui::AnyElement {
+    let mode = |exclude: bool| {
+        let current = exclude == excluding;
+        div()
+            .id(SharedString::from(format!("{menu}-{}", if exclude { "exclude" } else { "include" })))
+            .flex_1()
+            .py_0p5()
+            .flex()
+            .justify_center()
+            .rounded_md()
+            .cursor_pointer()
+            .text_color(if current { theme.fg } else { theme.secondary })
+            .when(current, |d| d.bg(theme.row_selected))
+            .hover(|s| s.bg(theme.row_selected))
+            .child(if exclude { "Exclude" } else { "Include" })
+    };
+    div()
+        .mx_2()
+        .mb_1()
+        .p_0p5()
+        .flex()
+        .flex_row()
+        .gap_0p5()
+        .rounded_md()
+        .bg(theme.tile)
+        .text_xs()
+        .child(mode(false).on_click(include))
+        .child(mode(true).on_click(exclude))
+        .into_any_element()
+}
+
 /// A menu row to tick: a check, the title and its count.
-fn check_row(id: SharedString, checked: bool, title: String, count: usize, indent: f32, theme: &Theme) -> gpui::Stateful<gpui::Div> {
+pub(crate) fn check_row(id: SharedString, checked: bool, title: String, count: usize, indent: f32, theme: &Theme) -> gpui::Stateful<gpui::Div> {
     div()
         .id(id)
         .mx_1()

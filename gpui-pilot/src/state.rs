@@ -4,6 +4,7 @@
 //! clean, so saving only then would lose it).
 
 use crate::issues::IssuesSaved;
+use crate::prs::PrsSaved;
 use crate::metrics::Granularity;
 use crate::shell::Nav;
 use serde::{Deserialize, Serialize};
@@ -25,8 +26,11 @@ pub struct SavedState {
     pub dock_height: f32,
     pub collapsed_sections: Vec<String>,
     pub expanded_groups: Vec<Nav>,
+    /// Names given to tabs, in place of the page's own.
+    pub tab_names: Vec<(Nav, String)>,
     pub ci: CiSaved,
     pub issues: IssuesSaved,
+    pub prs: PrsSaved,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -58,8 +62,10 @@ impl Default for SavedState {
             // Closed to start with, as in the Swift sidebar.
             collapsed_sections: vec!["rituals".into(), "harness".into()],
             expanded_groups: Vec::new(),
+            tab_names: Vec::new(),
             ci: CiSaved::default(),
             issues: IssuesSaved::default(),
+            prs: PrsSaved::default(),
         }
     }
 }

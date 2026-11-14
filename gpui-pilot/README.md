@@ -40,6 +40,7 @@ the two variables. `--org` and `--days` override what was saved.
 | Issues, board fields, status history, linked PRs | `Application Support/StoredIssues/<org>.json` |
 | Descriptions and comments | `Application Support/Details.json`, else `dev.andon.gannin/IssueText.sqlite` |
 | Projects and the issue workflow | `Application Support/UserData/Gannin.store` (org settings) and `Application Support/Harness/*.json` (each harness's `.gannin/project.json`) |
+| Pull requests: review, checks, reviewers, commits | `Application Support/PullRequests/<org>.json` |
 | Your login, PRs you're asked to review and your own PRs | Gannin's `viewer` preference and `Application Support/PullRequests/<org>.json` |
 | Avatars | Downloaded once with `curl` into `~/Library/Caches/GanninGPUIPilot/avatars` |
 
@@ -77,6 +78,14 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   through the `security` tool (an unsigned binary that changes every build would be asked to
   allow keychain access after each one), so signing out here leaves Gannin signed in. Your Work
   reads as the signed-in login, else Gannin's.
+- **Pull Requests** (`src/prs.rs`): built the way Issues was rather than copied from
+  `PullRequestsView`: one list of every PR in the org's cache, a State menu (Open, Merged, Closed)
+  in place of the Open/Merged/All picker and its two sections, filter menus with counts (Status,
+  Author, Reviewer, Checks, Repository, with Me first), and columns each person picks, orders and
+  sizes. PRs closed without merging show too (the work log has them; the Swift page doesn't list
+  them). A row opens a drawer, as an issue does: facts, activity from the work log, linked issues
+  (which open as issue drawers on top), description and comments, and the people with where each
+  reviewer stands. Labels, the base branch and conflicts aren't cached, so they don't show.
 - **Issue drawer** (`src/shell.rs`, `src/detail.rs`, `src/markdown.rs`): what `IssueWindow` shows,
   with timing under the org's workflow and Markdown through pulldown-cmark.
 

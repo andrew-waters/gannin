@@ -9,7 +9,7 @@ use crate::data;
 use crate::format::{compact_duration, duration_or_dash, percent, relative_date};
 use crate::detail::{self, IssueText, Workflow};
 use crate::projects::{self, Project};
-use crate::issues::{pill, IssueItem, IssuesPage, OpenIssue};
+use crate::issues::{pill, ColumnDrag, IssueItem, IssuesPage, OpenIssue};
 use crate::auth::{self, DeviceCode, Poll, Viewer};
 use crate::avatars::avatar;
 use crate::markdown::markdown;
@@ -18,6 +18,7 @@ use std::sync::Arc;
 use crate::metrics::RepoStats;
 use crate::page::{ActionsPage, OpenRepo};
 use crate::session::{self, Changed, Kind, SessionPage, State};
+use crate::prs::{OpenPr, PrItem, PrState, PrsPage};
 use crate::state::SavedState;
 use crate::work::{self, Pr, Work};
 use gpui::{
@@ -194,17 +195,26 @@ enum Inspected {
     Repo(RepoStats),
 }
 
-/// An issue in a drawer, with its parent and sub-issues looked up when it
-/// opened.
+/// An issue or a pull request in a drawer.
 struct Drawer {
     /// Unique per drawer opened, so each one slides in once.
     seq: usize,
-    issue: IssueItem,
-    parent: Option<IssueItem>,
-    sub_issues: Vec<IssueItem>,
+    item: DrawerItem,
     /// Its description and comments: nil while they load, then whatever
     /// Gannin's caches had.
     text: Option<Option<Arc<IssueText>>>,
+}
+
+enum DrawerItem {
+    Issue(IssueDrawer),
+    Pull(PrItem),
+}
+
+/// An issue, with its parent and sub-issues looked up when it opened.
+struct IssueDrawer {
+    issue: IssueItem,
+    parent: Option<IssueItem>,
+    sub_issues: Vec<IssueItem>,
 }
 
 /// Wide enough for the issue and its board fields side by side, as
@@ -220,6 +230,10 @@ enum SignIn {
     Finishing,
     Failed(String),
 }
+
+/// A tab being dragged: where it was, and its name for the drag image.
+#[derive(Clone)]
+struct DraggedTab(usize, String);
 
 /// What a title bar switcher picks.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -238,6 +252,11 @@ struct Switcher {
 pub struct Workspace {
     focus: FocusHandle,
     switcher_focus: FocusHandle,
+    /// Names given to tabs, by the page in them.
+    tab_names: Vec<(Nav, String)>,
+    /// A tab being renamed: which, and the name so far.
+    renaming: Option<(Nav, String)>,
+    rename_focus: FocusHandle,
     orgs: Vec<String>,
     org: Option<String>,
     /// The org's projects, each a harness, and the one picked by its id.
@@ -261,6 +280,7 @@ pub struct Workspace {
     drawer_seq: usize,
     actions_page: Entity<ActionsPage>,
     issues: Entity<IssuesPage>,
+    prs: Entity<PrsPage>,
     sessions: Vec<Entity<SessionPage>>,
     next_session: u32,
     /// Reviews asked of you and your PRs, from the org's PR cache.
@@ -299,15 +319,17 @@ impl Workspace {
                 groups.sort_by_key(|nav| format!("{nav:?}"));
                 groups
             },
+            tab_names: self.tab_names.iter().filter(|(nav, _)| !matches!(nav, Nav::Session(_))).cloned().collect(),
             ci: self.actions_page.read(cx).saved(),
             issues: self.issues.read(cx).saved(),
+            prs: self.prs.read(cx).saved(),
         }
     }
 
     /// Writes the state when it differs from what was last written. Panel
     /// drags are left until they end, rather than written on every move.
     fn persist(&mut self, cx: &App) {
-        if self.resizing.is_some() || self.issues.read(cx).is_resizing() {
+        if self.resizing.is_some() || self.issues.read(cx).is_resizing() || self.prs.read(cx).is_resizing() {
             return;
         }
         let state = self.snapshot(cx);
@@ -331,6 +353,9 @@ impl Workspace {
         });
         let mut workspace = Self::build(saved, window, cx);
         workspace.load_viewer(cx);
+        // Clicking away from a tab's name keeps it.
+        let blur = cx.on_blur(&workspace.rename_focus, window, |this, _, cx| this.finish_rename(true, cx));
+        workspace._subscriptions.push(blur);
         workspace.load_settings(cx);
         workspace
     }
@@ -369,7 +394,8 @@ impl Workspace {
     fn apply_focus(&mut self, cx: &mut Context<Self>) {
         let focus = self.focus_repos();
         self.actions_page.update(cx, |page, cx| page.set_focus(focus.clone(), cx));
-        self.issues.update(cx, |page, cx| page.set_focus(focus, cx));
+        self.issues.update(cx, |page, cx| page.set_focus(focus.clone(), cx));
+        self.prs.update(cx, |page, cx| page.set_focus(focus, cx));
         cx.notify();
     }
 
@@ -388,6 +414,7 @@ impl Workspace {
         let org = saved.org.clone().filter(|org| orgs.contains(org)).or_else(|| orgs.first().cloned());
         let actions_page = cx.new(|cx| ActionsPage::new(org.clone(), &saved.ci, window, cx));
         let issues = cx.new(|cx| IssuesPage::new(org.clone(), &saved.issues, window, cx));
+        let prs = cx.new(|cx| PrsPage::new(org.clone(), &saved.prs, window, cx));
         // A row picked in a list replaces the stack, as a list row does today.
         let open_issue = |this: &mut Self, _: Entity<IssuesPage>, event: &OpenIssue, cx: &mut Context<Self>| {
             this.drawers.clear();
@@ -400,6 +427,14 @@ impl Workspace {
                 cx.notify();
             }),
             cx.subscribe(&issues, open_issue),
+            cx.subscribe(&prs, |this, _, event: &OpenPr, cx| {
+                this.drawers.clear();
+                this.push_pr_drawer(event.0.clone(), cx);
+            }),
+            cx.observe(&prs, |this, _, cx| {
+                this.persist(cx);
+                cx.notify();
+            }),
             cx.observe_window_appearance(window, |_, window, cx| {
                 crate::zed::follow_appearance(window, cx);
                 cx.notify();
@@ -419,6 +454,9 @@ impl Workspace {
         Self {
             focus,
             switcher_focus: cx.focus_handle(),
+            tab_names: saved.tab_names.iter().filter(|(nav, _)| !matches!(nav, Nav::Session(_))).cloned().collect(),
+            renaming: None,
+            rename_focus: cx.focus_handle(),
             orgs,
             org,
             projects: Vec::new(),
@@ -440,6 +478,7 @@ impl Workspace {
             drawer_seq: 0,
             actions_page,
             issues,
+            prs,
             sessions: Vec::new(),
             next_session: 1,
             work: Work::default(),
@@ -572,6 +611,8 @@ impl Workspace {
     fn set_viewer(&mut self, viewer: Option<Viewer>, cx: &mut Context<Self>) {
         if self.viewer != viewer {
             self.viewer = viewer;
+            let me = self.viewer.as_ref().map(|v| v.login.clone());
+            self.prs.update(cx, |page, cx| page.set_me(me, cx));
             // Your Work is read as whoever is signed in.
             if let Some(org) = self.org.clone() {
                 self.load_work(org, cx);
@@ -951,10 +992,19 @@ impl Workspace {
         let store = self.issues.read(cx);
         let parent = issue.parent_id.as_deref().and_then(|id| store.issue(id));
         let sub_issues = store.sub_issues(&issue.id);
+        let id = issue.id.clone();
+        self.open_drawer(DrawerItem::Issue(IssueDrawer { issue, parent, sub_issues }), id, cx);
+    }
+
+    fn push_pr_drawer(&mut self, pr: PrItem, cx: &mut Context<Self>) {
+        let id = pr.id.clone();
+        self.open_drawer(DrawerItem::Pull(pr), id, cx);
+    }
+
+    fn open_drawer(&mut self, item: DrawerItem, id: String, cx: &mut Context<Self>) {
         self.drawer_seq += 1;
         let seq = self.drawer_seq;
-        let id = issue.id.clone();
-        self.drawers.push(Drawer { seq, issue, parent, sub_issues, text: None });
+        self.drawers.push(Drawer { seq, item, text: None });
         // The description and comments, read from Gannin's caches off the
         // main thread.
         cx.spawn(async move |this, cx| {
@@ -1037,7 +1087,10 @@ impl Workspace {
                             .min_h_0()
                             .overflow_y_scroll()
                             .when(!on_top, |d| d.opacity(0.6))
-                            .child(self.issue_page(drawer, theme, cx)),
+                            .child(match &drawer.item {
+                                DrawerItem::Issue(item) => self.issue_page(drawer, item, theme, cx).into_any_element(),
+                                DrawerItem::Pull(pr) => self.pr_page(drawer, pr, theme, cx).into_any_element(),
+                            }),
                     )
                     .with_animation(
                         ("drawer-slide", drawer.seq),
@@ -1074,13 +1127,23 @@ impl Workspace {
                 div()
                     .flex_1()
                     .text_color(theme.secondary)
-                    .child(if count > 1 { format!("Issue · {} of {count}", self.drawers.iter().position(|d| d.seq == drawer.seq).unwrap_or(0) + 1) } else { "Issue".into() }),
+                    .child({
+                        let kind = match drawer.item {
+                            DrawerItem::Issue(_) => "Issue",
+                            DrawerItem::Pull(_) => "Pull Request",
+                        };
+                        if count > 1 {
+                            format!("{kind} · {} of {count}", self.drawers.iter().position(|d| d.seq == drawer.seq).unwrap_or(0) + 1)
+                        } else {
+                            kind.into()
+                        }
+                    }),
             )
             .child(button("close-drawer", "×").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.pop_drawer(cx))))
     }
 
     /// The parent and sub-issues, each opening a drawer on top.
-    fn related(&self, drawer: &Drawer, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    fn related(&self, drawer: &IssueDrawer, seq: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let row = |issue: &IssueItem, key: &'static str, cx: &mut Context<Self>| {
             let opened = issue.clone();
             div()
@@ -1116,7 +1179,7 @@ impl Workspace {
                         .child(div().flex_1().child(heading(format!("Sub-issues · {open} of {} open", drawer.sub_issues.len()))))
                         .child(
                             div()
-                                .id(("show-in-list", drawer.seq))
+                                .id(("show-in-list", seq))
                                 .pb_1()
                                 .text_xs()
                                 .text_color(theme.selected)
@@ -1146,6 +1209,10 @@ impl Workspace {
             page.set_org(Some(org.clone()), cx)
         });
         self.issues.update(cx, |page, cx| {
+            page.set_focus(None, cx);
+            page.set_org(Some(org.clone()), cx)
+        });
+        self.prs.update(cx, |page, cx| {
             page.set_focus(None, cx);
             page.set_org(Some(org), cx)
         });
@@ -1351,6 +1418,7 @@ impl Workspace {
         let status = match self.current() {
             Some(Nav::Ci) => self.actions_page.read(cx).status(),
             Some(Nav::Issues) => self.issues.read(cx).status(),
+            Some(Nav::PullRequests) => self.prs.read(cx).status(),
             Some(Nav::Session(id)) => self.session(id, cx).map(|s| s.read(cx).status(cx)).unwrap_or_default(),
             Some(nav) => format!("{}: not ported", nav.title()),
             None => String::new(),
@@ -1538,6 +1606,95 @@ impl Workspace {
 
     // MARK: Tabs and pages
 
+    /// A tab's name: the one given it, else its page's (a session's from
+    /// its terminal).
+    fn tab_name(&self, nav: Nav, cx: &App) -> String {
+        if let Some((_, name)) = self.tab_names.iter().find(|(n, _)| *n == nav) {
+            return name.clone();
+        }
+        match nav {
+            Nav::Session(id) => self.session(id, cx).map_or("Session".into(), |p| p.read(cx).title(cx)),
+            nav => nav.title().into(),
+        }
+    }
+
+    fn start_rename(&mut self, nav: Nav, window: &mut Window, cx: &mut Context<Self>) {
+        self.renaming = Some((nav, self.tab_name(nav, cx)));
+        window.focus(&self.rename_focus, cx);
+        cx.notify();
+    }
+
+    /// Keeps the name typed; an empty one goes back to the page's own.
+    fn finish_rename(&mut self, keep: bool, cx: &mut Context<Self>) {
+        let Some((nav, name)) = self.renaming.take() else { return };
+        if keep {
+            self.tab_names.retain(|(n, _)| *n != nav);
+            let name = name.trim();
+            if !name.is_empty() && name != self.tab_name(nav, cx) {
+                self.tab_names.push((nav, name.to_string()));
+            }
+        }
+        cx.notify();
+    }
+
+    /// The name field by hand, as GPUI has no text input: printable keys,
+    /// Backspace (Option or Command for more), Command-V, Enter and Escape.
+    fn rename_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let modifiers = &keystroke.modifiers;
+        match keystroke.key.as_str() {
+            "enter" => {
+                self.finish_rename(true, cx);
+                self.focus_current(window, cx);
+            }
+            "escape" => {
+                self.finish_rename(false, cx);
+                self.focus_current(window, cx);
+            }
+            key => {
+                let Some((_, name)) = self.renaming.as_mut() else { return };
+                match key {
+                    "backspace" if modifiers.platform => name.clear(),
+                    "backspace" if modifiers.alt => {
+                        let trimmed = name.trim_end().len();
+                        name.truncate(trimmed);
+                        let cut = name.rfind(' ').map_or(0, |i| i + 1);
+                        name.truncate(cut);
+                    }
+                    "backspace" => {
+                        name.pop();
+                    }
+                    "v" if modifiers.platform => {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|c| c.text()) {
+                            name.push_str(&text.replace(['\n', '\r'], " "));
+                        }
+                    }
+                    _ if modifiers.platform || modifiers.control => return,
+                    _ => match &keystroke.key_char {
+                        Some(text) if !text.chars().any(char::is_control) => name.push_str(text),
+                        _ => return,
+                    },
+                }
+            }
+        }
+        cx.stop_propagation();
+        cx.notify();
+    }
+
+    /// Drops a dragged tab onto another's place; the active tab stays active.
+    fn move_tab(&mut self, from: usize, to: usize, cx: &mut Context<Self>) {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let active = self.tabs.get(self.active).copied();
+        let moved = self.tabs.remove(from);
+        self.tabs.insert(to, moved);
+        if let Some(active) = active {
+            self.active = self.tabs.iter().position(|t| *t == active).unwrap_or(0);
+        }
+        cx.notify();
+    }
+
     fn tab_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .id("tabs")
@@ -1549,8 +1706,10 @@ impl Workspace {
             .bg(theme.sidebar)
             .border_b_1()
             .border_color(theme.border)
-            .children(self.tabs.iter().enumerate().map(|(index, nav)| {
+            .children(self.tabs.clone().into_iter().enumerate().map(|(index, nav)| {
                 let active = index == self.active;
+                let label = self.tab_name(nav, cx);
+                let landing = theme.row_selected;
                 div()
                     .id(("tab", index))
                     .flex()
@@ -1565,19 +1724,53 @@ impl Workspace {
                     .cursor_pointer()
                     .text_color(if active { theme.fg } else { theme.secondary })
                     .when(active, |d| d.bg(theme.bg))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.activate(index, window, cx)))
-                    .map(|d| match nav {
-                        Nav::Session(id) => match self.session(*id, cx) {
-                            Some(page) => {
-                                let page = page.read(cx);
-                                d.child(div().size(px(7.)).rounded_full().bg(state_tint(page.state, theme)))
-                                    .child(div().max_w(px(220.)).truncate().child(page.title(cx)))
-                            }
-                            None => d.child("Session"),
-                        },
-                        nav => d.child(nav.title()),
+                    // A double click renames; a single one switches.
+                    .on_click(cx.listener(move |this, event: &ClickEvent, window, cx| {
+                        if event.click_count() == 2 {
+                            this.start_rename(nav, window, cx);
+                        } else {
+                            this.activate(index, window, cx);
+                        }
+                    }))
+                    .on_mouse_down(
+                        MouseButton::Right,
+                        cx.listener(move |this, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            this.start_rename(nav, window, cx);
+                        }),
+                    )
+                    // Drag a tab onto another to move it there.
+                    .on_drag(DraggedTab(index, label.clone()), |dragged, _, _, cx| cx.new(|_| ColumnDrag(dragged.1.clone())))
+                    .drag_over::<DraggedTab>(move |style, _, _, _| style.bg(landing))
+                    .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| this.move_tab(dragged.0, index, cx)))
+                    .when_some(match nav {
+                        Nav::Session(id) => self.session(id, cx).map(|p| p.read(cx).state),
+                        _ => None,
+                    }, |d, state| d.child(div().size(px(7.)).rounded_full().bg(state_tint(state, theme))))
+                    .map(|d| match &self.renaming {
+                        Some((renamed, name)) if *renamed == nav => d.child(
+                            div()
+                                .id(("rename-tab", index))
+                                .track_focus(&self.rename_focus)
+                                .on_key_down(cx.listener(Self::rename_key))
+                                .min_w(px(80.))
+                                .max_w(px(260.))
+                                .px_1()
+                                .rounded_sm()
+                                .border_1()
+                                .border_color(theme.selected)
+                                .bg(theme.bg)
+                                .text_color(theme.fg)
+                                .truncate()
+                                .child(format!("{name}|")),
+                        ),
+                        _ => d.child(div().max_w(px(220.)).truncate().child(label.clone())),
                     })
-                    .when_some(if *nav == Nav::Issues { self.issues.read(cx).tab_count() } else { None }, |d, count| {
+                    .when_some(match nav {
+                        Nav::Issues if self.renaming.is_none() => self.issues.read(cx).tab_count(),
+                        Nav::PullRequests if self.renaming.is_none() => self.prs.read(cx).tab_count(),
+                        _ => None,
+                    }, |d, count| {
                         d.child(div().text_xs().text_color(theme.secondary).child(count))
                     })
                     .child(
@@ -1604,6 +1797,7 @@ impl Workspace {
             },
             Some(Nav::Ci) => self.actions_page.clone().into_any_element(),
             Some(Nav::Issues) => self.issues.clone().into_any_element(),
+            Some(Nav::PullRequests) => self.prs.clone().into_any_element(),
             Some(nav) => div()
                 .size_full()
                 .flex()
@@ -1974,8 +2168,8 @@ impl Workspace {
     /// across the top; the timeline, board history, linked pull requests,
     /// description, comments, parent and sub-issues on the left; and the
     /// assignees and board fields on the right.
-    fn issue_page(&self, drawer: &Drawer, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let issue = &drawer.issue;
+    fn issue_page(&self, drawer: &Drawer, item: &IssueDrawer, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let issue = &item.issue;
         let seq = drawer.seq;
         let now = Utc::now();
         let timing = detail::timing(issue, &self.workflow, now);
@@ -2243,7 +2437,7 @@ impl Workspace {
             .children(mentioned)
             .child(description)
             .children(comments)
-            .child(self.related(drawer, theme, cx));
+            .child(self.related(item, drawer.seq, theme, cx));
 
         // The right column, as `IssueWindow`'s form: assignees, then each
         // board's fields.
@@ -2290,6 +2484,248 @@ impl Workspace {
             }))
             .when(issue.has_history && issue.boards.is_empty(), |d| d.child(div().text_color(theme.tertiary).child("Not on a board")))
             .when_some(issue.milestone.clone(), |d, m| d.child(div().flex().flex_col().child(group("Milestone".into())).child(m)));
+
+        div().flex().flex_col().child(header).child(div().flex().flex_row().items_start().child(left).child(right))
+    }
+
+    /// A pull request as `PullRequestColumn` shows it: the title and
+    /// headline facts; activity, linked issues, description and comments on
+    /// the left; the people on the right.
+    fn pr_page(&self, drawer: &Drawer, pr: &PrItem, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let seq = drawer.seq;
+        let now = Utc::now();
+        let date = |t: DateTime<Utc>| t.with_timezone(&Local).format("%-d %b %Y").to_string();
+        let fact = |label: &str, value: String| {
+            div()
+                .min_w(px(140.))
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .child(div().text_xs().text_color(theme.secondary).child(label.to_string()))
+                .child(value)
+        };
+        let quiet = |text: String| div().text_xs().text_color(theme.secondary).child(text);
+        let heading = |title: &str, count: Option<usize>| {
+            div()
+                .flex()
+                .flex_row()
+                .gap_1p5()
+                .pb_1()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(title.to_string())
+                .when_some(count, |d, n| d.child(div().text_color(theme.secondary).font_weight(FontWeight::NORMAL).child(n.to_string())))
+        };
+
+        let mut facts = vec![fact("Status", pr.status_title().to_string())];
+        if let Some(branch) = &pr.branch {
+            facts.push(fact("Branch", branch.clone()));
+        }
+        if let Some(checks) = pr.checks {
+            facts.push(fact("Checks", checks.title().into()));
+        }
+        if let (Some(a), Some(d)) = (pr.additions, pr.deletions) {
+            let files = pr.files.map(|f| format!("{f} file{}, ", if f == 1 { "" } else { "s" })).unwrap_or_default();
+            facts.push(fact("Size", format!("{files}+{a} −{d}")));
+        }
+        facts.push(fact("Opened", format!("{}{}", date(pr.created_at), pr.author.as_ref().map(|a| format!(" by {a}")).unwrap_or_default())));
+        if let Some(first) = pr.first_commit_at {
+            facts.push(fact("First commit", date(first)));
+        }
+        if let Some(ready) = pr.ready_at {
+            facts.push(fact("Ready for review", date(ready)));
+        }
+        match pr.state {
+            PrState::Merged => facts.push(fact(
+                "Merged",
+                format!("{}{}", pr.merged_at.map(date).unwrap_or_default(), pr.merged_by.as_ref().map(|m| format!(" by {m}")).unwrap_or_default()),
+            )),
+            PrState::Closed => facts.push(fact("Closed without merging", pr.closed_at.map(date).unwrap_or_default())),
+            PrState::Open => {
+                facts.push(fact("Updated", relative_date(pr.updated_at, now)));
+                if let Some(commit) = pr.last_commit_at {
+                    facts.push(fact("Last commit", relative_date(commit, now)));
+                }
+            }
+        }
+
+        let url = pr.url.clone();
+        let header = div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .px_5()
+            .py_4()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child(pr.title.clone()))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id(("pr-link", seq))
+                            .text_color(theme.selected)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                            .child(format!("{}#{}", pr.repo, pr.number)),
+                    )
+                    .child(crate::prs::state_pill(pr, theme))
+                    .when_some(pr.standing.filter(|_| pr.state == PrState::Open), |d, standing| {
+                        d.child(div().text_color(standing.color(theme)).child(standing.title()))
+                    })
+                    .when(pr.is_stale(now), |d| d.child(pill("Stale", theme.secondary))),
+            )
+            .child(div().flex().flex_row().flex_wrap().gap_x_6().gap_y_3().children(facts));
+
+        // Activity: commits and reviews from the work log, newest first.
+        enum Event<'a> {
+            Commit(&'a crate::prs::Commit),
+            Review(&'a crate::prs::Review),
+        }
+        let mut events: Vec<(DateTime<Utc>, Event)> = pr.commits.iter().map(|c| (c.authored_at, Event::Commit(c))).collect();
+        events.extend(pr.reviews.iter().map(|r| (r.submitted_at, Event::Review(r))));
+        events.sort_by(|a, b| b.0.cmp(&a.0));
+        let activity = (!events.is_empty()).then(|| {
+            div().flex().flex_col().gap_1().child(heading("Activity", Some(events.len()))).children(events.iter().enumerate().map(|(i, (at, event))| {
+                let (tint, kind, who, what, link) = match event {
+                    Event::Commit(c) => (
+                        theme.blue(),
+                        "Commit",
+                        c.author.clone().unwrap_or_default(),
+                        format!("{} · {} lines", c.message.lines().next().unwrap_or(""), c.additions + c.deletions),
+                        c.url.clone(),
+                    ),
+                    Event::Review(r) => {
+                        let (tint, kind) = match r.state.as_str() {
+                            "APPROVED" => (theme.good(), "Approved"),
+                            "CHANGES_REQUESTED" => (theme.orange(), "Changes requested"),
+                            "DISMISSED" => (theme.secondary, "Dismissed"),
+                            _ => (theme.secondary, "Commented"),
+                        };
+                        (tint, kind, r.author.clone(), String::new(), None)
+                    }
+                };
+                div()
+                    .id(SharedString::from(format!("pr-event-{seq}-{i}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .py_0p5()
+                    .when_some(link, |d, url| d.cursor_pointer().hover(|s| s.bg(theme.tile)).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url))))
+                    .child(div().size(px(8.)).flex_none().rounded_full().bg(tint))
+                    .child(div().flex_none().w(px(120.)).child(kind))
+                    .child(div().flex_none().font_weight(FontWeight::MEDIUM).child(who))
+                    .child(div().flex_1().min_w_0().truncate().text_color(theme.secondary).child(what))
+                    .child(quiet(at.with_timezone(&Local).format("%-d %b, %H:%M").to_string()))
+            }))
+        });
+
+        // Linked issues open on top, from the issue store when it has them.
+        let linked = (!pr.linked.is_empty()).then(|| {
+            div().flex().flex_col().gap_1().child(heading("Linked issues", Some(pr.linked.len()))).children(pr.linked.iter().enumerate().map(|(i, issue)| {
+                let (id, url) = (issue.id.clone(), issue.url.clone());
+                let closed = issue.state.as_deref() == Some("CLOSED");
+                div()
+                    .id(SharedString::from(format!("pr-linked-{seq}-{i}")))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .py_1()
+                    .px_2()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.tile))
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| match this.issues.read(cx).issue(&id) {
+                        Some(found) => this.push_drawer(found, cx),
+                        None => cx.open_url(&url),
+                    }))
+                    .child(if closed { pill("Closed", theme.slot(6)) } else { pill("Open", theme.good()) })
+                    .child(div().flex_1().truncate().child(issue.title.clone()))
+                    .child(div().text_color(theme.secondary).child(match issue.repo.as_deref().filter(|r| *r != pr.repo) {
+                        Some(repo) => format!("{}#{}", repo.rsplit('/').next().unwrap_or(repo), issue.number),
+                        None => format!("#{}", issue.number),
+                    }))
+            }))
+        });
+
+        let text: Option<&IssueText> = drawer.text.as_ref().and_then(|t| t.as_deref());
+        let description = div().flex().flex_col().gap_1().child(heading("Description", None)).child(match &drawer.text {
+            None => quiet("Loading".into()).into_any_element(),
+            Some(None) => quiet("Not in Gannin's caches yet: open it in Gannin once, or on GitHub.".into()).into_any_element(),
+            Some(Some(t)) if t.body.trim().is_empty() => div().text_color(theme.tertiary).child("No description").into_any_element(),
+            Some(Some(t)) => markdown(&format!("pr-description-{seq}"), &t.body, theme),
+        });
+        let comments = text.filter(|t| !t.comments.is_empty()).map(|t| {
+            let count = t.comment_count.unwrap_or(t.comments.len());
+            div().flex().flex_col().gap_3().child(heading("Comments", Some(count))).children(t.comments.iter().enumerate().map(|(i, comment)| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(div().font_weight(FontWeight::MEDIUM).child(comment.author.clone()))
+                            .when_some(comment.at, |d, at| d.child(quiet(relative_date(at, now)))),
+                    )
+                    .child(markdown(&format!("pr-comment-{seq}-{i}"), &comment.body, theme))
+            }))
+        });
+
+        let left = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap_6()
+            .p_5()
+            .children(activity)
+            .children(linked)
+            .child(description)
+            .children(comments);
+
+        // The people, each with where they stand.
+        let group = |title: &str| div().pb_1().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(title.to_string());
+        let person = |login: &str, avatar_url: Option<&str>, name: Option<String>, note: Option<String>, cx: &mut Context<Self>| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .py_0p5()
+                .child(avatar(login, avatar_url, 20., theme, cx))
+                .child(div().flex_1().min_w_0().truncate().child(name.unwrap_or_else(|| login.to_string())))
+                .when_some(note, |d, note| d.child(div().text_xs().text_color(theme.secondary).child(note)))
+        };
+        let mut right = div().w(px(280.)).flex_none().flex().flex_col().gap_5().p_4().border_l_1().border_color(theme.border);
+        if let Some(login) = &pr.author {
+            right = right.child(
+                div().flex().flex_col().child(group("Author")).child(person(login, pr.author_avatar.as_deref(), pr.author_name.clone(), pr.author_is_bot.then(|| "bot".into()), cx)),
+            );
+        }
+        let mut assignees = div().flex().flex_col().child(group("Assignees"));
+        if pr.assignees.is_empty() {
+            assignees = assignees.child(div().text_color(theme.tertiary).child("Nobody"));
+        }
+        for (login, url) in &pr.assignees {
+            assignees = assignees.child(person(login, url.as_deref(), None, None, cx));
+        }
+        let mut reviewers = div().flex().flex_col().child(group("Reviewers"));
+        if pr.reviewers.is_empty() {
+            reviewers = reviewers.child(div().text_color(theme.tertiary).child("Nobody asked yet"));
+        }
+        for reviewer in &pr.reviewers {
+            reviewers = reviewers.child(person(&reviewer.login, reviewer.avatar.as_deref(), reviewer.name.clone(), Some(reviewer.standing().into()), cx));
+        }
+        right = right.child(assignees).child(reviewers);
 
         div().flex().flex_col().child(header).child(div().flex().flex_row().items_start().child(left).child(right))
     }

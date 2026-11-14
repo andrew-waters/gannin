@@ -16,6 +16,7 @@ mod markdown;
 mod metrics;
 mod page;
 mod projects;
+mod prs;
 mod session;
 mod shell;
 mod state;
