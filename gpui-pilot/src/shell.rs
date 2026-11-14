@@ -18,7 +18,7 @@ use std::sync::Arc;
 use crate::metrics::RepoStats;
 use crate::page::{ActionsPage, OpenRepo};
 use crate::session::{self, Changed, Kind, SessionPage, State};
-use crate::prs::{OpenPr, PrItem, PrState, PrsPage, PrsSaved};
+use crate::prs::{OpenPr, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs};
 use crate::state::{CiSaved, SavedState, SavedTab};
 use crate::work::{self, Pr, Work};
 use gpui::{
@@ -703,7 +703,7 @@ impl Workspace {
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             _ => Page::None,
         };
-        let subscriptions = Self::watch(&page, cx);
+        let subscriptions = Self::watch(&page, window, cx);
         self._subscriptions.extend(subscriptions);
         let focus = self.focus_repos();
         match &page {
@@ -717,7 +717,7 @@ impl Workspace {
     }
 
     /// Opens drawers, the inspector and saving from a page's events.
-    fn watch(page: &Page, cx: &mut Context<Self>) -> Vec<Subscription> {
+    fn watch(page: &Page, window: &mut Window, cx: &mut Context<Self>) -> Vec<Subscription> {
         match page {
             Page::Issues(page) => vec![
                 // A row picked in a list replaces the stack.
@@ -736,6 +736,7 @@ impl Workspace {
                     this.drawers.clear();
                     this.push_pr_drawer(event.0.clone(), cx);
                 }),
+                cx.subscribe_in(page, window, |this, _, event: &ReviewPrs, window, cx| this.review_many(event.0.clone(), window, cx)),
                 cx.observe(page, |this, _, cx| {
                     this.persist(cx);
                     cx.notify();
@@ -980,6 +981,28 @@ impl Workspace {
         let brief = format!("# Review of {}#{}: {}\n\n{}\n", pr.repo, pr.number, pr.title, pr.url);
         let prompt = launch::review_prompt(&pr.repo, pr.number, &pr.title, &pr.url, &branch);
         self.start_launch(launch, &brief, &prompt, true, window, cx);
+    }
+
+    /// Review with Claude for several PRs picked together: each in a tab of
+    /// its own (or the review it has), after asking, since each runs claude.
+    fn review_many(&mut self, prs: Vec<PrItem>, window: &mut Window, cx: &mut Context<Self>) {
+        if prs.len() == 1 {
+            return self.review_pr(prs[0].clone(), window, cx);
+        }
+        let list: Vec<String> = prs.iter().map(|p| format!("{}#{} {}", p.repo_name, p.number, p.title)).collect();
+        let detail = format!("{}\n\nEach runs Claude Code in a tab of its own. A PR with a review already open shows that one.", list.join("\n"));
+        let answer = window.prompt(gpui::PromptLevel::Info, &format!("Start {} reviews?", prs.len()), Some(&detail), &["Start Reviews", "Cancel"], cx);
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await == Ok(0) {
+                this.update_in(cx, |this, window, cx| {
+                    for pr in prs {
+                        this.review_pr(pr, window, cx);
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     /// New Plan, New Ask or New Quick Change; a plan can be for an issue.

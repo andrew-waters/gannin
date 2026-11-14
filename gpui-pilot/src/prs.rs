@@ -749,6 +749,11 @@ pub struct OpenPr(pub PrItem);
 
 impl EventEmitter<OpenPr> for PrsPage {}
 
+/// Review with Claude for each of these, picked together in the table.
+pub struct ReviewPrs(pub Vec<PrItem>);
+
+impl EventEmitter<ReviewPrs> for PrsPage {}
+
 pub struct PrsPage {
     org: Option<String>,
     prs: Arc<Vec<PrItem>>,
@@ -764,6 +769,10 @@ pub struct PrsPage {
     widths: BTreeMap<String, f32>,
     resizing: Option<(Column, f32, f32)>,
     selected: Option<String>,
+    /// Rows picked together with Command or Shift, by PR id, and the row a
+    /// Shift-click range starts from.
+    picked: Vec<String>,
+    anchor: Option<usize>,
     open_menu: Option<Menu>,
     closed_menu: Option<(Menu, Instant)>,
     search_focus: FocusHandle,
@@ -797,6 +806,8 @@ impl PrsPage {
             widths: saved.widths.clone(),
             resizing: None,
             selected: None,
+            picked: Vec::new(),
+            anchor: None,
             open_menu: None,
             closed_menu: None,
             search_focus,
@@ -1284,9 +1295,11 @@ impl PrsPage {
     fn row(&self, index: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let pr = &self.prs[self.rows[index]];
         let selected = self.selected.as_deref() == Some(pr.id.as_str());
+        let picked = self.picked.contains(&pr.id);
         let opened = pr.clone();
         div()
             .id(("pr", index))
+            .when(picked, |d| d.bg(theme.selected.opacity(0.16)))
             .w_full()
             .h(px(ROW_HEIGHT))
             .px_4()
@@ -1299,9 +1312,37 @@ impl PrsPage {
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.row_selected))
             .when(!selected, |d| d.hover(|s| s.bg(theme.tile)))
-            .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
-                page.selected = Some(opened.id.clone());
-                cx.emit(OpenPr(opened.clone()));
+            .on_click(cx.listener(move |page, event: &ClickEvent, _, cx| {
+                let modifiers = event.modifiers();
+                if modifiers.platform {
+                    // Command toggles a row; the one showing joins the first pick.
+                    if page.picked.is_empty() {
+                        if let Some(current) = page.selected.clone().filter(|c| *c != opened.id) {
+                            page.picked.push(current);
+                        }
+                    }
+                    if let Some(at) = page.picked.iter().position(|id| *id == opened.id) {
+                        page.picked.remove(at);
+                    } else {
+                        page.picked.push(opened.id.clone());
+                    }
+                    page.anchor = Some(index);
+                } else if modifiers.shift {
+                    // Shift picks the rows from the last one clicked to this.
+                    let from = page.anchor.or_else(|| page.selected.as_ref().and_then(|id| page.rows.iter().position(|&r| page.prs[r].id == *id))).unwrap_or(index);
+                    let (a, b) = (from.min(index), from.max(index));
+                    for row in a..=b {
+                        let id = page.prs[page.rows[row]].id.clone();
+                        if !page.picked.contains(&id) {
+                            page.picked.push(id);
+                        }
+                    }
+                } else {
+                    page.picked.clear();
+                    page.anchor = Some(index);
+                    page.selected = Some(opened.id.clone());
+                    cx.emit(OpenPr(opened.clone()));
+                }
                 cx.notify();
             }))
             .children(self.columns.iter().map(|column| self.cell(column, index, theme, cx)))
@@ -1604,6 +1645,59 @@ pub fn state_pill(pr: &PrItem, theme: &Theme) -> impl IntoElement {
     }
 }
 
+impl PrsPage {
+    /// The PRs picked together that are still in the list.
+    fn picked_prs(&self) -> Vec<PrItem> {
+        self.picked.iter().filter_map(|id| self.prs.iter().find(|p| &p.id == id).cloned()).collect()
+    }
+
+    /// Along the foot while rows are picked: how many, and Review with
+    /// Claude for the open ones.
+    fn picked_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let picked = self.picked_prs();
+        let open: Vec<PrItem> = picked.iter().filter(|p| p.state == PrState::Open).cloned().collect();
+        let button = |id: &'static str, label: String, prominent: bool| {
+            div()
+                .id(id)
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .cursor_pointer()
+                .map(|d| if prominent { d.bg(theme.selected).text_color(theme.on_selected) } else { d.border_1().border_color(theme.border) })
+                .hover(|s| s.opacity(0.85))
+                .child(label)
+        };
+        div()
+            .flex_none()
+            .h(px(40.))
+            .px_4()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .border_t_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .child(div().flex_1().text_sm().child(format!("{} selected", picked.len())).when(open.len() < picked.len(), |d| {
+                d.child(div().text_xs().text_color(theme.secondary).child("Only open pull requests can be reviewed."))
+            }))
+            .child(button("picked-clear", "Clear".into(), false).on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
+                page.picked.clear();
+                cx.notify();
+            })))
+            .when(!open.is_empty(), |d| {
+                let count = open.len();
+                d.child(
+                    button("picked-review", if count == 1 { "Review with Claude".into() } else { format!("Review {count} with Claude") }, true).on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                        cx.emit(ReviewPrs(open.clone()));
+                        page.picked.clear();
+                        cx.notify();
+                    })),
+                )
+            })
+    }
+}
+
 impl Render for PrsPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
@@ -1711,6 +1805,7 @@ impl Render for PrsPage {
             .child(self.filter_bar(&theme, window, cx))
             .child(column_header)
             .child(div().flex_1().min_h_0().flex().flex_col().child(body))
+            .when(!self.picked.is_empty(), |d| d.child(self.picked_bar(&theme, cx)))
             .when(self.open_menu.is_some(), |d| {
                 d.child(
                     div()
