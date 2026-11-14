@@ -179,6 +179,7 @@ impl SessionPage {
             let (launch, terminal) = (l.clone(), terminal.clone());
             cx.new(|cx| crate::planning_panel::PlanningPanel::new(launch, terminal, window, cx))
         });
+        let show = if review.is_some() || planning.is_some() { Show::Changes } else { Show::Both };
         let subscriptions = vec![cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {
                 this.last_output = Instant::now();
@@ -208,7 +209,9 @@ impl SessionPage {
             changes,
             review,
             planning,
-            show: Show::Both,
+            // A review or a plan opens on its panel; the terminal is a
+            // switch away, as in Gannin. Other sessions show both.
+            show,
             state: State::Working,
             since: chrono::Local::now(),
             last_output: Instant::now(),
