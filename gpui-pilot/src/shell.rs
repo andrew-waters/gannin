@@ -1586,53 +1586,49 @@ impl Workspace {
     /// Along the foot of the window, as Zed's: panel toggles at each end
     /// and the page's own status between them.
     fn status_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let status = match self.current() {
-            _ if !matches!(self.current_page(), Page::None) => match self.current_page() {
-                Page::Issues(page) => page.read(cx).status(),
-                Page::Prs(page) => page.read(cx).status(),
-                Page::Ci(page) => page.read(cx).status(),
-                Page::None => String::new(),
-            },
-            Some(Nav::Session(id)) => self.session(id, cx).map(|s| s.read(cx).status(cx)).unwrap_or_default(),
-            Some(nav) => format!("{}: not ported", nav.title()),
-            None => String::new(),
-        };
-        let toggle = |id: &'static str, label: &'static str, on: bool, cx: &mut Context<Self>, action: fn(&mut Self)| {
+        let toggle = |id: &'static str, icon: &'static str, tip: &'static str, on: bool, cx: &mut Context<Self>, action: fn(&mut Self)| {
             div()
                 .id(id)
-                .px_2()
-                .py_0p5()
+                .p_1()
                 .rounded_md()
-                .text_xs()
                 .cursor_pointer()
-                .text_color(if on { theme.fg } else { theme.secondary })
                 .when(on, |d| d.bg(theme.row_selected))
                 .hover(|s| s.bg(theme.row_selected))
+                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.to_string())).into())
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     action(this);
                     cx.stop_propagation();
                     cx.notify();
                 }))
-                .child(label)
+                .child(gpui::svg().path(icon).size(px(16.)).text_color(if on { theme.fg } else { theme.secondary }))
         };
         div()
-            .h(px(26.))
+            .h(px(28.))
             .flex_none()
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
             .px_2()
-            .text_xs()
             .bg(theme.sidebar)
             .border_t_1()
             .border_color(theme.border)
-            .child(toggle("toggle-sidebar", "Sidebar", self.sidebar_open, cx, |this| this.sidebar_open = !this.sidebar_open))
-            .child(div().flex_1().px_2().overflow_hidden().whitespace_nowrap().text_color(theme.secondary).child(status))
-            .child(div().px_2().text_color(theme.tertiary).child("Gannin's caches are read only"))
-            .child(toggle("toggle-inspector", "Your Work", self.inspector_open, cx, |this| {
-                this.inspector_open = !this.inspector_open
-            }))
+            .child(toggle(
+                "toggle-sidebar",
+                if self.sidebar_open { "icons/threads_sidebar_left_open.svg" } else { "icons/threads_sidebar_left_closed.svg" },
+                "Sidebar  ⌃⌘S",
+                self.sidebar_open,
+                cx,
+                |this| this.sidebar_open = !this.sidebar_open,
+            ))
+            .child(div().flex_1())
+            .child(toggle(
+                "toggle-inspector",
+                if self.inspector_open { "icons/threads_sidebar_right_open.svg" } else { "icons/threads_sidebar_right_closed.svg" },
+                "Your Work  ⌥⌘I",
+                self.inspector_open,
+                cx,
+                |this| this.inspector_open = !this.inspector_open,
+            ))
     }
 
     // MARK: Sidebar
@@ -1708,15 +1704,6 @@ impl Workspace {
             .bg(theme.sidebar)
             .border_r_1()
             .border_color(theme.border)
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_2()
-                    .p_2()
-                    .child(placeholder_button("New Ask", theme))
-                    .child(placeholder_button("Quick Change", theme)),
-            )
             .child(div().id("nav").flex_1().min_h_0().overflow_y_scroll().px_2().pb_3().children(rows))
             // Settings isn't ported yet.
             // .child(
@@ -3059,18 +3046,6 @@ fn state_tint(state: State, theme: &Theme) -> gpui::Hsla {
     }
 }
 
-fn placeholder_button(label: &'static str, theme: &Theme) -> impl IntoElement {
-    div()
-        .flex_1()
-        .py_1()
-        .flex()
-        .justify_center()
-        .rounded_md()
-        .border_1()
-        .border_color(theme.border)
-        .text_color(theme.secondary)
-        .child(label)
-}
 
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

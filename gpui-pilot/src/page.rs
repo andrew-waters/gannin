@@ -3,10 +3,10 @@
 
 use crate::charts::{self, histogram_cell, legend, spark_bars, Scale, Theme};
 use crate::data::{self, History, CURRENT_VERSION};
-use crate::format::{compact_duration, duration_or_dash, percent, thousands, Change};
+use crate::format::{compact_duration, duration_or_dash, percent, Change};
 use crate::state::CiSaved;
 use crate::metrics::{ActionsMetrics, Granularity, RepoStats, Stacked};
-use chrono::{Local, Utc};
+use chrono::Utc;
 use gpui::{
     div, prelude::*, px, ClickEvent, Context, EventEmitter, FontWeight, Hsla, SharedString, Subscription, Window,
     WindowAppearance,
@@ -97,21 +97,6 @@ impl ActionsPage {
     /// The controls to restore on the next launch.
     pub fn saved(&self) -> CiSaved {
         CiSaved { days: self.days, granularity: self.granularity }
-    }
-
-    /// For the status bar.
-    pub fn status(&self) -> String {
-        match (&self.state, &self.history, &self.metrics) {
-            (LoadState::Ready, Some(history), Some(metrics)) => format!(
-                "{} runs in {} days · cache synced {} · {}",
-                thousands(metrics.current.runs),
-                metrics.days,
-                history.synced_at.with_timezone(&Local).format("%-d %b %H:%M"),
-                self.timings
-            ),
-            (LoadState::Loading, _, _) => "Loading CI".into(),
-            _ => "No CI cache".into(),
-        }
     }
 
     /// Keeps the page to a project's repos, or every repo for none.

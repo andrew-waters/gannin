@@ -906,17 +906,6 @@ impl PrsPage {
         Some(if count == self.pool_count { thousands(count) } else { format!("{} of {}", thousands(count), thousands(self.pool_count)) })
     }
 
-    pub fn status(&self) -> String {
-        if self.loading {
-            return "Loading pull requests".into();
-        }
-        if self.error.is_some() {
-            return "No pull request cache".into();
-        }
-        let open = self.prs.iter().filter(|p| p.state == PrState::Open).count();
-        format!("{} pull requests, {} open · {}", thousands(self.prs.len()), thousands(open), self.timings)
-    }
-
     fn in_focus(&self, pr: &PrItem) -> bool {
         self.focus.as_ref().is_none_or(|repos| repos.contains(&pr.repo))
     }

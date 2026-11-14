@@ -1211,18 +1211,6 @@ fn compare(a: &IssueItem, b: &IssueItem, (column, descending): &(Column, bool)) 
 }
 
 impl IssuesPage {
-    /// For the status bar.
-    pub fn status(&self) -> String {
-        if self.loading {
-            return "Loading issues".into();
-        }
-        if self.error.is_some() {
-            return "No issue store".into();
-        }
-        let open = self.issues.iter().filter(|i| i.is_open()).count();
-        format!("{} issues, {} open · {}", thousands(self.issues.len()), thousands(open), self.timings)
-    }
-
     // MARK: Menus
 
     /// A login's name, as the issues give it.

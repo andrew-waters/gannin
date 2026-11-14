@@ -16,7 +16,6 @@ pub const CURRENT_VERSION: i64 = 1;
 pub struct History {
     pub version: i64,
     pub org_login: String,
-    pub synced_at: DateTime<Utc>,
     pub repositories: HashMap<String, Repository>,
     /// Keyed by run ID; Swift writes `[Int: WorkflowRun]` with string keys.
     pub runs: HashMap<String, WorkflowRun>,

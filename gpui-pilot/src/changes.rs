@@ -127,10 +127,6 @@ impl ChangesView {
         self.visible = visible;
     }
 
-    pub fn file_count(&self) -> usize {
-        self.counts.len()
-    }
-
     fn apply(&mut self, read: Result<Read, String>, cx: &mut Context<Self>) {
         if self.read.as_ref() == Some(&read) {
             return;

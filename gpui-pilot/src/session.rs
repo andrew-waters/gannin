@@ -210,20 +210,6 @@ impl SessionPage {
         self.changes.update(cx, |changes, _| changes.set_visible(show_changes));
     }
 
-    pub fn status(&self, cx: &App) -> String {
-        let files = self.changes.read(cx).file_count();
-        format!(
-            "{} · {} · {}",
-            self.state.label(),
-            self.folder(cx).display(),
-            match files {
-                0 => "no changes".to_string(),
-                1 => "1 file changed".to_string(),
-                n => format!("{n} files changed"),
-            }
-        )
-    }
-
     fn switch(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let option = |id: &'static str, label: &'static str, value: Show, cx: &mut Context<Self>| {
             let on = self.show == value;
