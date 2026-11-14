@@ -28,6 +28,7 @@ mod review;
 mod review_panel;
 mod review_preview;
 mod scorecard;
+mod pr_picker;
 mod prs;
 mod session;
 mod shell;

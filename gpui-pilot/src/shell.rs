@@ -381,6 +381,8 @@ pub struct Workspace {
     harness_counts: std::collections::HashMap<crate::harness::HarnessKind, usize>,
     /// New Plan, New Ask or New Quick Change, over the window.
     launch_form: Option<(Entity<crate::launch_form::LaunchForm>, Subscription)>,
+    /// Review a Pull Request's picker, while it's open.
+    pr_picker: Option<(Entity<crate::pr_picker::PrPicker>, Subscription)>,
     sync: SyncStatus,
     _sync_loop: Option<gpui::Task<()>>,
     /// What was last written, so unchanged state isn't written again.
@@ -616,6 +618,7 @@ impl Workspace {
             new_menu_open: false,
             harness_counts: Default::default(),
             launch_form: None,
+            pr_picker: None,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
             _subscriptions: subscriptions,
@@ -967,6 +970,24 @@ impl Workspace {
             cx.notify();
         });
         self.launch_form = Some((form, subscription));
+        cx.notify();
+    }
+
+    /// Review a Pull Request: pick one of the org's open PRs to review.
+    fn open_pr_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::pr_picker::{PickerEvent, PrPicker};
+        let Some(org) = self.org.clone() else { return };
+        let me = self.viewer.as_ref().map(|v| v.login.clone());
+        let picker = cx.new(|cx| PrPicker::new(org, me, window, cx));
+        let subscription = cx.subscribe_in(&picker, window, |this, _, event: &PickerEvent, window, cx| {
+            this.pr_picker = None;
+            match event {
+                PickerEvent::Pick(pr) => this.review_pr(pr.clone(), window, cx),
+                PickerEvent::Cancel => this.focus_current(window, cx),
+            }
+            cx.notify();
+        });
+        self.pr_picker = Some((picker, subscription));
         cx.notify();
     }
 
@@ -2970,7 +2991,9 @@ impl Workspace {
                                 .child(item("new-menu-quick", "Quick Change", None, |this, window, cx| {
                                     this.open_form(crate::launch::Flow::QuickChange, None, window, cx)
                                 }))
-                                .child(item("new-menu-plan", "New Plan", None, |this, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx))),
+                                .child(item("new-menu-plan", "New Plan", None, |this, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
+                                .child(div().my_1().h(px(1.)).bg(theme.border))
+                                .child(item("new-menu-review", "Review a Pull Request", None, |this, window, cx| this.open_pr_picker(window, cx))),
                         ),
                     )
                     .with_priority(2),
@@ -4467,6 +4490,31 @@ impl Render for Workspace {
                 )
             })
             .when_some(self.sign_in.as_ref(), |d, step| d.child(self.sign_in_sheet(step, &theme, cx)))
+            .when_some(self.pr_picker.as_ref().map(|(picker, _)| picker.clone()), |d, picker| {
+                d.child(
+                    div()
+                        .id("picker-scrim")
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .occlude()
+                        .bg(gpui::black().opacity(0.35))
+                        .flex()
+                        .justify_center()
+                        .pt(px(70.))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                                this.pr_picker = None;
+                                this.focus_current(window, cx);
+                                cx.notify();
+                            }),
+                        )
+                        .child(div().on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()).child(picker)),
+                )
+            })
             .when_some(self.launch_form.as_ref().map(|(form, _)| form.clone()), |d, form| {
                 d.child(
                     div()

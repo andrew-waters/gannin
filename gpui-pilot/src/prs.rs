@@ -460,7 +460,7 @@ fn cache_path(org: &str) -> PathBuf {
     crate::cache::path(crate::cache::Kind::PullRequests, org)
 }
 
-fn load(org: &str) -> Result<Vec<PrItem>, String> {
+pub(crate) fn load(org: &str) -> Result<Vec<PrItem>, String> {
     let bytes = std::fs::read(cache_path(org)).map_err(|e| e.to_string())?;
     let file: File = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
     Ok(file.pull_requests.into_values().filter_map(PrItem::from).collect())
@@ -593,7 +593,7 @@ fn matches(filters: &Filters, pr: &PrItem, except: Option<Key>, me: Option<&str>
 
 /// Every word typed is in the title, the repo, `#123`, the branch or a
 /// person's login or name.
-fn matches_search(search: &str, pr: &PrItem) -> bool {
+pub(crate) fn matches_search(search: &str, pr: &PrItem) -> bool {
     let words: Vec<String> = search.split_whitespace().map(str::to_lowercase).collect();
     if words.is_empty() {
         return true;
