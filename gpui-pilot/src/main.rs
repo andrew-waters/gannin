@@ -29,6 +29,8 @@ mod review;
 mod review_panel;
 mod review_preview;
 mod review_record;
+mod work_panel;
+mod work_preview;
 mod scorecard;
 mod pr_picker;
 mod prs;

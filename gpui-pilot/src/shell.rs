@@ -99,6 +99,8 @@ pub enum Nav {
     Harness(crate::harness::HarnessKind),
     /// The review panel in each state, from a made-up PR (the pilot's own).
     ReviewPreview,
+    /// A Work on This session in each state, from a made-up issue.
+    WorkPreview,
 }
 
 impl Nav {
@@ -138,6 +140,7 @@ impl Nav {
             Nav::Session(_) => "Session",
             Nav::Harness(kind) => kind.title(),
             Nav::ReviewPreview => "Review Preview",
+            Nav::WorkPreview => "Work Preview",
         }
     }
 }
@@ -210,6 +213,8 @@ fn sections() -> Vec<Section> {
         //     title: Some("Agents"),
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
+        // The pilot's own: states to refine a UI against before it's wired.
+        Section { id: "pilot", title: Some("Pilot"), rows: vec![Item(WorkPreview)] },
     ]
 }
 
@@ -333,6 +338,7 @@ enum Page {
     Activity(Entity<crate::activity::ActivityPage>),
     Harness(Entity<crate::harness::HarnessPage>),
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
+    WorkPreview(Entity<crate::work_preview::WorkPreview>),
     None,
 }
 
@@ -761,6 +767,7 @@ impl Workspace {
             Nav::Scorecards => Page::Scorecard(cx.new(|cx| crate::scorecard::ScorecardPage::new(org, cx))),
             Nav::Activity => Page::Activity(cx.new(|cx| crate::activity::ActivityPage::new(org, cx))),
             Nav::ReviewPreview => Page::ReviewPreview(cx.new(|cx| crate::review_preview::ReviewPreview::new(window, cx))),
+            Nav::WorkPreview => Page::WorkPreview(cx.new(|cx| crate::work_preview::WorkPreview::new(window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             _ => Page::None,
         };
@@ -3314,6 +3321,7 @@ impl Workspace {
             Nav::Activity => "icons/git_graph.svg",
             Nav::Harness(_) => "icons/book.svg",
             Nav::ReviewPreview => "icons/eye.svg",
+            Nav::WorkPreview => "icons/pull_request.svg",
             Nav::Session(id) => match self.session(id, cx).map(|p| p.read(cx)) {
                 Some(page) if page.launch.is_some() => self.tab_kind(tab, cx).icon(),
                 Some(page) if page.kind == Kind::Shell => "icons/terminal.svg",
@@ -3479,6 +3487,7 @@ impl Workspace {
                 Page::Activity(page) => page.into_any_element(),
                 Page::Harness(page) => page.into_any_element(),
                 Page::ReviewPreview(page) => page.into_any_element(),
+                Page::WorkPreview(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()
