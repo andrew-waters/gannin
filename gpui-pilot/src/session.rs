@@ -294,6 +294,17 @@ impl SessionPage {
         self.terminal.read(cx).working_directory().unwrap_or_else(|| self.folder.clone())
     }
 
+    /// Types a message into claude's terminal, then Return.
+    pub fn tell(&mut self, text: &str, cx: &mut Context<Self>) {
+        let (terminal, text) = (self.terminal.clone(), text.to_string());
+        cx.spawn(async move |_, cx| {
+            terminal.update(cx, |t, _| t.paste(&text));
+            cx.background_executor().timer(std::time::Duration::from_millis(150)).await;
+            terminal.update(cx, |t, _| t.input(b"\r".to_vec()));
+        })
+        .detach();
+    }
+
     /// A Work on This session's panel.
     pub fn work(&self) -> Option<Entity<crate::work_panel::WorkPanel>> {
         self.work.clone()

@@ -65,6 +65,10 @@ pub struct Launch {
     pub branch: String,
     pub subject: Option<Subject>,
     pub created_at: DateTime<Utc>,
+    /// Started by the schedule: runs in auto mode, can't merge, and keeps
+    /// its pull requests the gap apart. Minutes of that gap.
+    #[serde(default)]
+    pub unattended: Option<u32>,
 }
 
 impl Launch {
@@ -79,6 +83,7 @@ impl Launch {
             branch,
             subject,
             created_at: Utc::now(),
+            unattended: None,
         }
     }
 
@@ -112,7 +117,8 @@ impl Launch {
         let dir = self.dir();
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("brief.md"), brief)?;
-        std::fs::write(dir.join("settings.json"), settings_json(&dir, gate))?;
+        let gap = self.unattended.map(|minutes| crate::schedule::gap_hook(&self.id, minutes));
+        std::fs::write(dir.join("settings.json"), settings_json(&dir, gate, gap))?;
         std::fs::write(dir.join("start.sh"), self.start_script(prompt, disallow_edits))?;
         std::fs::write(dir.join("state"), "starting")?;
         std::fs::write(dir.join("session.json"), serde_json::to_vec_pretty(self).unwrap_or_default())?;
@@ -121,7 +127,13 @@ impl Launch {
 
     /// `SessionScript.harnessStart`, as Gannin writes it.
     pub fn start_script(&self, prompt: &str, disallow_edits: bool) -> String {
-        let disallowed = if disallow_edits { " --disallowedTools 'Edit,MultiEdit,Write,NotebookEdit'" } else { "" };
+        // Unattended: auto mode (never a laxer one), and it can't merge.
+        let disallowed = match (disallow_edits, self.unattended.is_some()) {
+            (true, false) => " --disallowedTools 'Edit,MultiEdit,Write,NotebookEdit'".to_string(),
+            (true, true) => " --permission-mode auto --disallowedTools 'Edit,MultiEdit,Write,NotebookEdit,Bash(gh pr merge:*)'".to_string(),
+            (false, true) => " --permission-mode auto --disallowedTools 'Bash(gh pr merge:*)'".to_string(),
+            (false, false) => String::new(),
+        };
         let about = match &self.subject {
             Some(s) => format!("{}#{}", s.repo, s.number),
             None => self.title.clone(),
@@ -242,7 +254,7 @@ fn quote_path(path: &Path) -> String {
 
 /// Claude Code's settings with Gannin's hooks: each writes the session's
 /// state, or records a change or an opened pull request, into its folder.
-fn settings_json(dir: &Path, gate: bool) -> String {
+fn settings_json(dir: &Path, gate: bool, gap: Option<String>) -> String {
     let file = |name: &str| format!("{}/{name}", quote_path(dir));
     let state = |value: &str| serde_json::json!({ "type": "command", "command": format!("printf {value} > {} 2>/dev/null; exit 0", file("state")) });
     let pr_hook = PR_HOOK.replace("__PR__", &file("pr"));
@@ -271,10 +283,14 @@ fn settings_json(dir: &Path, gate: bool) -> String {
         },
     });
     let mut settings = settings;
-    // A workflow's local review holds pushes until it's clear.
-    if gate {
-        if let Some(pre) = settings["hooks"]["PreToolUse"].as_array_mut() {
+    // A workflow's local review holds pushes until it's clear, and an
+    // unattended session's pull requests keep the gap apart.
+    if let Some(pre) = settings["hooks"]["PreToolUse"].as_array_mut() {
+        if gate {
             pre.push(serde_json::json!({ "matcher": "Bash", "hooks": [{ "type": "command", "command": crate::work_flow::gate_hook(dir) }] }));
+        }
+        if let Some(gap) = gap {
+            pre.push(serde_json::json!({ "matcher": "Bash", "hooks": [{ "type": "command", "command": gap }] }));
         }
     }
     serde_json::to_string_pretty(&settings).unwrap_or_default()

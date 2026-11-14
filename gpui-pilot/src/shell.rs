@@ -459,6 +459,11 @@ pub struct Workspace {
     /// but for the one that was showing (by its launch).
     reopening: usize,
     show_on_reopen: Option<String>,
+    /// The schedule's clock (the first window only), how often it's
+    /// ticked, and this window, for the clock to act in.
+    _scheduler: Option<gpui::Task<()>>,
+    schedule_ticks: u64,
+    window_handle: Option<gpui::AnyWindowHandle>,
     /// Workflows for launches being started, by launch id.
     launch_workflows: std::collections::HashMap<String, crate::workflows::Workflow>,
     /// Explain's sheet, while it's open.
@@ -594,6 +599,10 @@ impl Workspace {
         let active = saved.active;
         let mut workspace = Self::build(saved, window, cx);
         workspace.slot = slot;
+        workspace.window_handle = Some(window.window_handle());
+        if slot == 0 {
+            workspace.start_scheduler(cx);
+        }
         for view in &views {
             let tab = workspace.make_tab(view.nav, Some(view), window, cx);
             workspace.tabs.push(tab);
@@ -759,6 +768,9 @@ impl Workspace {
             pr_picker: None,
             explain: None,
             launch_workflows: Default::default(),
+            _scheduler: None,
+            schedule_ticks: 0,
+            window_handle: None,
             reopening: 0,
             slot: 0,
             show_on_reopen: None,
@@ -1085,10 +1097,12 @@ impl Workspace {
         let (brief, prompt) = (brief.to_string(), prompt.to_string());
         let harness = launch.harness_path.clone();
         let check = cx.background_executor().spawn(async move { crate::launch::harness_branch(&harness) });
+        let unattended = launch.unattended.is_some();
         cx.spawn_in(window, async move |this, cx| {
             let found = check.await;
             this.update_in(cx, |this, window, cx| {
-                let Some(off) = found else {
+                // Nobody's there to answer for a scheduled start: it goes ahead.
+                let Some(off) = found.filter(|_| !unattended) else {
                     return this.start_now(launch, &brief, &prompt, disallow_edits, window, cx);
                 };
                 let place = launch.harness_path.display().to_string().replace(&std::env::var("HOME").unwrap_or_default(), "~");
@@ -1189,17 +1203,31 @@ impl Workspace {
     /// Work on This: Claude Code on the issue in the harness, with Gannin's
     /// brief and opening prompt; or the session it already has.
     fn work_on(&mut self, issue: IssueItem, window: &mut Window, cx: &mut Context<Self>) {
+        self.work_on_with(issue, None, window, cx);
+    }
+
+    /// Work on This, attended or (`unattended`, with the PR gap's minutes)
+    /// started by the schedule. Returns the launch's id when it started one.
+    fn work_on_with(&mut self, issue: IssueItem, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) -> Option<String> {
         use crate::launch::{self, Flow, Launch, Subject};
-        if self.show_session(&issue.id, Flow::Work, window, cx) {
-            return;
+        if unattended.is_none() && self.show_session(&issue.id, Flow::Work, window, cx) {
+            return None;
+        }
+        // The schedule never starts a second session on an issue.
+        if unattended.is_some() && (self.session_for(&issue.id, Flow::Work, cx).is_some() || Self::saved_launch(&issue.id, Flow::Work).is_some()) {
+            return None;
         }
         let (Some(org), Some(harness)) = (self.org.clone(), self.harness_for(&issue.repo)) else {
-            return Self::no_harness(window, cx);
+            if unattended.is_none() {
+                Self::no_harness(window, cx);
+            }
+            return None;
         };
         let branch = launch::issue_branch(issue.number, &issue.title);
         let reference = format!("{}#{}", issue.repo, issue.number);
         let subject = Subject { id: issue.id.clone(), repo: issue.repo.clone(), number: issue.number, title: issue.title.clone(), url: issue.url.clone() };
-        let launch = Launch::new(Flow::Work, format!("#{} {}", issue.number, issue.title), &org, &harness, branch.clone(), Some(subject));
+        let mut launch = Launch::new(Flow::Work, format!("#{} {}", issue.number, issue.title), &org, &harness, branch.clone(), Some(subject));
+        launch.unattended = unattended;
         let text = detail::load_text(&issue.id);
         let parent = issue.parent_id.as_deref().and_then(|id| self.issues.read(cx).issue(id));
         let mut brief = work_brief(&issue, text.as_ref(), parent.as_ref(), &launch);
@@ -1211,22 +1239,42 @@ impl Workspace {
             brief.push_str(&crate::work_flow::brief_section(&workflow, &specialists));
             self.launch_workflows.insert(launch.id.clone(), workflow);
         }
+        if unattended.is_some() {
+            brief.push_str(crate::schedule::UNATTENDED);
+        }
+        let id = launch.id.clone();
         self.start_launch(launch, &brief, &prompt, false, window, cx);
+        Some(id)
     }
 
     /// Review with Claude: a session in the harness with edits disallowed,
     /// Gannin's review prompt, and its findings beside the terminal.
     fn review_pr(&mut self, pr: PrItem, window: &mut Window, cx: &mut Context<Self>) {
+        self.review_pr_with(pr, None, window, cx);
+    }
+
+    /// Review with Claude, attended or started by a review window
+    /// (`unattended`): that one posts by itself when it's done.
+    fn review_pr_with(&mut self, pr: PrItem, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
         use crate::launch::{self, Flow, Launch, Subject};
-        if self.show_session(&pr.id, Flow::Review, window, cx) {
+        if unattended.is_none() && self.show_session(&pr.id, Flow::Review, window, cx) {
             return;
         }
         let (Some(org), Some(harness)) = (self.org.clone(), self.harness_for(&pr.repo)) else {
-            return Self::no_harness(window, cx);
+            if unattended.is_none() {
+                Self::no_harness(window, cx);
+            }
+            return;
         };
         let branch = format!("review-{}-{}", pr.repo_name, pr.number);
         let subject = Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
-        let launch = Launch::new(Flow::Review, format!("Review {}#{}", pr.repo_name, pr.number), &org, &harness, branch.clone(), Some(subject));
+        let mut launch = Launch::new(Flow::Review, format!("Review {}#{}", pr.repo_name, pr.number), &org, &harness, branch.clone(), Some(subject));
+        launch.unattended = unattended;
+        if unattended.is_some() {
+            // It posts by itself once its review is in.
+            let _ = std::fs::create_dir_all(launch.dir());
+            let _ = std::fs::write(launch.dir().join("auto-post"), "");
+        }
         let brief = format!("# Review of {}#{}: {}\n\n{}\n", pr.repo, pr.number, pr.title, pr.url);
         let prompt = launch::review_prompt(&pr.repo, pr.number, &pr.title, &pr.url, &branch);
         self.start_launch(launch, &brief, &prompt, true, window, cx);
@@ -1274,6 +1322,268 @@ impl Workspace {
             }
         })
         .detach();
+    }
+
+    // MARK: The schedule
+
+    /// The schedule's clock: every half minute while the app is open, in
+    /// the first window only.
+    fn start_scheduler(&mut self, cx: &mut Context<Self>) {
+        self._scheduler = Some(cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(std::time::Duration::from_secs(30)).await;
+            let Some(window) = this.update(cx, |this, _| this.window_handle).ok().flatten() else { return };
+            if window.update(cx, |_, window, cx| {
+                this.update(cx, |this, cx| this.schedule_tick(window, cx)).ok();
+            }).is_err() {
+                return;
+            }
+        }));
+    }
+
+    /// Starts what's due, marks what was missed, moves sequences on, lets
+    /// one waiting pull request through when the gap has passed, and fills
+    /// review windows.
+    fn schedule_tick(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::schedule::{due, RunState, Schedule};
+        let mut sched = Schedule::load();
+        let before = sched.clone();
+        let now = chrono::Utc::now();
+        let gap = sched.settings.gap_minutes;
+        // The gap: the hook writes when it last let one through.
+        let gap_dir = crate::schedule::gap_dir();
+        if let Some(last) = std::fs::read_to_string(gap_dir.join("last")).ok().and_then(|t| t.trim().parse::<i64>().ok()).and_then(|t| chrono::DateTime::from_timestamp(t, 0)) {
+            if sched.last_pr.is_none_or(|held| held < last) {
+                sched.last_pr = Some(last);
+            }
+        }
+        if sched.last_pr.is_none_or(|last| now - last >= chrono::Duration::minutes(gap as i64)) {
+            let mut waiting: Vec<(std::time::SystemTime, String)> = std::fs::read_dir(gap_dir.join("requests"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.file_name().to_string_lossy().to_string())))
+                .collect();
+            waiting.sort();
+            if let Some((_, id)) = waiting.first() {
+                let _ = std::fs::create_dir_all(gap_dir.join("allow"));
+                let _ = std::fs::write(gap_dir.join("allow").join(id), "");
+                let _ = std::fs::remove_file(gap_dir.join("requests").join(id));
+                sched.last_pr = Some(now);
+                self.tell_session(id, "The gap since the last unattended pull request has passed: open this one now.", cx);
+            }
+        }
+        if !sched.settings.paused_all {
+            // Issue starts.
+            for i in 0..sched.starts.len() {
+                let start = sched.starts[i].clone();
+                if start.paused || start.run != RunState::Waiting {
+                    continue;
+                }
+                match due(start.at, now) {
+                    Some(true) => {
+                        let run = match self.issues.read(cx).issue(&start.issue.id) {
+                            Some(issue) => match self.work_on_with(issue, Some(gap), window, cx) {
+                                Some(launch) => RunState::Started { launch, at: now },
+                                None => RunState::Failed { reason: "It already has a session, or no harness covers its repo.".into(), at: now },
+                            },
+                            None => RunState::Failed { reason: "The issue isn't in this window's org.".into(), at: now },
+                        };
+                        let outcome = if matches!(run, RunState::Started { .. }) { "started" } else { "failed" };
+                        sched.note(&start.id, &start.issue.label(), outcome, "");
+                        sched.starts[i].run = run;
+                    }
+                    Some(false) => {
+                        sched.starts[i].run = RunState::Missed { at: now };
+                        sched.note(&start.id, &start.issue.label(), "missed", "The app wasn't open.");
+                    }
+                    None => {}
+                }
+            }
+            // Sequences: the first item at its time, each next once the one
+            // before is done.
+            for i in 0..sched.sequences.len() {
+                let mut seq = sched.sequences[i].clone();
+                if seq.paused {
+                    continue;
+                }
+                seq.runs.resize(seq.items.len(), RunState::Waiting);
+                let Some(next) = seq.runs.iter().position(|r| *r == RunState::Waiting) else { continue };
+                let ready = if next == 0 { due(seq.start, now) } else { matches!(seq.runs[next - 1], RunState::Done { .. }).then_some(true) };
+                match ready {
+                    Some(true) => {
+                        let item = seq.items[next].clone();
+                        seq.runs[next] = match self.issues.read(cx).issue(&item.id) {
+                            Some(issue) => match self.work_on_with(issue, Some(gap), window, cx) {
+                                Some(launch) => RunState::Started { launch, at: now },
+                                None => RunState::Failed { reason: "It already has a session, or no harness covers its repo.".into(), at: now },
+                            },
+                            None => RunState::Failed { reason: "The issue isn't in this window's org.".into(), at: now },
+                        };
+                        // A failed item pauses the sequence, so later ones don't pile up.
+                        if matches!(seq.runs[next], RunState::Failed { .. }) {
+                            seq.paused = true;
+                        }
+                        sched.note(&seq.id, &item.label(), if seq.paused { "failed" } else { "started" }, &seq.name);
+                    }
+                    Some(false) => {
+                        seq.runs[0] = RunState::Missed { at: now };
+                        seq.paused = true;
+                        sched.note(&seq.id, &seq.name, "missed", "The app wasn't open at its start.");
+                    }
+                    None => {}
+                }
+                sched.sequences[i] = seq;
+            }
+            // Recurring prompts.
+            let today = chrono::Local::now().date_naive();
+            let weekday = chrono::Datelike::weekday(&today).num_days_from_monday();
+            for i in 0..sched.prompts.len() {
+                let prompt = sched.prompts[i].clone();
+                if prompt.paused || !prompt.weekdays.contains(&weekday) || prompt.last == Some(today) {
+                    continue;
+                }
+                match due(crate::schedule::at(today, prompt.start), now) {
+                    Some(true) => {
+                        let started = self.start_prompt(&prompt.name, &prompt.text, window, cx);
+                        sched.prompts[i].last = Some(today);
+                        sched.note(&prompt.id, &prompt.name, if started { "started" } else { "failed" }, "");
+                    }
+                    Some(false) => {
+                        sched.prompts[i].last = Some(today);
+                        sched.note(&prompt.id, &prompt.name, "missed", "The app wasn't open.");
+                    }
+                    None => {}
+                }
+            }
+            // A review window: one more review of a PR asked of you, up to
+            // the number at once.
+            if sched.window_now(chrono::Local::now()).is_some() {
+                self.fill_review_window(sched.settings.reviews_at_once, gap, window, cx);
+            }
+        }
+        if sched != before {
+            sched.save();
+        }
+        // Done: started runs whose work is complete, checked off the main
+        // thread every couple of minutes.
+        self.schedule_ticks += 1;
+        if self.schedule_ticks % 4 == 0 {
+            self.check_scheduled_done(cx);
+        }
+    }
+
+    /// Marks started runs done once their work is: a PR merged, or open
+    /// with its checks passing and no comments from others left open.
+    fn check_scheduled_done(&mut self, cx: &mut Context<Self>) {
+        use crate::schedule::{RunState, Schedule};
+        let sched = Schedule::load();
+        let started: Vec<String> = sched
+            .starts
+            .iter()
+            .map(|s| &s.run)
+            .chain(sched.sequences.iter().flat_map(|q| q.runs.iter()))
+            .filter_map(|r| match r {
+                RunState::Started { launch, .. } => Some(launch.clone()),
+                _ => None,
+            })
+            .collect();
+        if started.is_empty() {
+            return;
+        }
+        cx.spawn(async move |_, cx| {
+            cx.background_executor()
+                .spawn(async move {
+                    let Some(token) = crate::auth::token() else { return };
+                    let viewer = crate::auth::saved_viewer().map(|v| v.login).unwrap_or_default();
+                    let launches = crate::launch::saved();
+                    let mut done = Vec::new();
+                    for id in started {
+                        let Some(launch) = launches.iter().find(|l| l.id == id) else { continue };
+                        let urls = launch.pull_requests();
+                        if urls.is_empty() {
+                            continue;
+                        }
+                        let prs = crate::work_live::pull_requests(&token, &urls, &viewer);
+                        let complete = prs.iter().any(|p| p.state == crate::work_panel::PrState::Merged)
+                            || prs.iter().any(|p| p.state == crate::work_panel::PrState::Open && p.failed.is_empty() && p.pending.is_empty() && p.feedback.iter().all(|f| f.location.is_none()));
+                        if complete {
+                            done.push(id);
+                        }
+                    }
+                    if done.is_empty() {
+                        return;
+                    }
+                    let mut sched = Schedule::load();
+                    let now = chrono::Utc::now();
+                    let finish = |r: &mut RunState| {
+                        if let RunState::Started { launch, .. } = r {
+                            if done.contains(launch) {
+                                *r = RunState::Done { launch: launch.clone(), at: now };
+                            }
+                        }
+                    };
+                    for s in &mut sched.starts {
+                        finish(&mut s.run);
+                    }
+                    for q in &mut sched.sequences {
+                        q.runs.iter_mut().for_each(finish);
+                    }
+                    sched.save();
+                })
+                .await;
+        })
+        .detach();
+    }
+
+    /// Starts one review of an open PR where you're a requested reviewer
+    /// and none has been started, while fewer than `at_once` are running.
+    fn fill_review_window(&mut self, at_once: usize, gap: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(org) = self.org.clone() else { return };
+        let Some(me) = self.viewer.as_ref().map(|v| v.login.clone()) else { return };
+        let running = self
+            .sessions
+            .iter()
+            .filter(|s| {
+                let s = s.read(cx);
+                s.state != State::Ended && s.launch.as_ref().is_some_and(|l| l.flow == crate::launch::Flow::Review && l.unattended.is_some())
+            })
+            .count();
+        if running >= at_once {
+            return;
+        }
+        let reviewed: Vec<String> = crate::launch::saved().into_iter().filter(|l| l.flow == crate::launch::Flow::Review).filter_map(|l| l.subject.map(|s| s.id)).collect();
+        let Ok(prs) = crate::prs::load(&org) else { return };
+        let next = prs.into_iter().find(|p| {
+            p.state == PrState::Open && !p.draft && !reviewed.contains(&p.id) && p.reviewers.iter().any(|r| r.requested && r.login.eq_ignore_ascii_case(&me))
+        });
+        if let Some(pr) = next {
+            self.review_pr_with(pr, Some(gap), window, cx);
+        }
+    }
+
+    /// A recurring prompt, as an Ask started by the schedule. Whether it
+    /// started.
+    fn start_prompt(&mut self, name: &str, text: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        use crate::launch::{self, Flow, Launch};
+        let (Some(org), Some(harness)) = (self.org.clone(), self.project.clone().or_else(|| self.projects.first().map(|p| p.id.clone()))) else { return false };
+        let mut launch = Launch::new(Flow::Ask, name.to_string(), &org, &harness, String::new(), None);
+        launch.branch = format!("ask-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..8].to_lowercase());
+        launch.unattended = Some(crate::schedule::Schedule::load().settings.gap_minutes);
+        let mut brief = launch::ask_brief(name, &harness, &launch.harness_path, &launch.branch);
+        brief.push_str(crate::schedule::UNATTENDED);
+        let prompt = launch::ask_prompt(text, &launch.branch);
+        let context = launch.dir().join("context");
+        let _ = std::fs::create_dir_all(&context);
+        let _ = std::fs::write(context.join("README.md"), format!("# {org}\n\nStarted by the schedule: {name}.\n"));
+        self.start_launch(launch, &brief, &prompt, false, window, cx);
+        true
+    }
+
+    /// Types a message into a session's terminal, by its launch.
+    fn tell_session(&mut self, launch_id: &str, text: &str, cx: &mut Context<Self>) {
+        if let Some(page) = self.sessions.iter().find(|p| p.read(cx).launch.as_ref().is_some_and(|l| l.id == launch_id)).cloned() {
+            page.update(cx, |page, cx| page.tell(text, cx));
+        }
     }
 
     /// New Plan, New Ask or New Quick Change; a plan can be for an issue.
