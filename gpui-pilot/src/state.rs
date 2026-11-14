@@ -34,6 +34,9 @@ pub struct SavedState {
     /// when `views` is empty.
     pub tabs: Vec<Nav>,
     pub views: Vec<SavedTab>,
+    /// The launches of the session tabs that were open, in tab order, to
+    /// open again (claude resumes in each).
+    pub sessions: Vec<String>,
     pub active: usize,
     pub sidebar_open: bool,
     /// The Harness panel, beside the navigation.
@@ -74,6 +77,7 @@ impl Default for SavedState {
             project: None,
             tabs: vec![Nav::Ci],
             views: Vec::new(),
+            sessions: Vec::new(),
             active: 0,
             sidebar_open: true,
             harness_open: false,

@@ -383,6 +383,8 @@ pub struct Workspace {
     launch_form: Option<(Entity<crate::launch_form::LaunchForm>, Subscription)>,
     /// Review a Pull Request's picker, while it's open.
     pr_picker: Option<(Entity<crate::pr_picker::PrPicker>, Subscription)>,
+    /// Sessions being reopened at launch, which open without switching.
+    reopening: usize,
     /// Explain's sheet, while it's open.
     explain: Option<(Entity<crate::explain::ExplainSheet>, Subscription)>,
     sync: SyncStatus,
@@ -419,7 +421,15 @@ impl Workspace {
                     },
                 })
                 .collect(),
-            // Sessions aren't kept, so the index counts the tabs that are.
+            sessions: self
+                .tabs
+                .iter()
+                .filter_map(|tab| match tab.nav {
+                    Nav::Session(id) => self.session(id, cx).and_then(|p| p.read(cx).launch.as_ref().map(|l| l.id.clone())),
+                    _ => None,
+                })
+                .collect(),
+            // Sessions open after the views, so the index counts the views.
             active: self.tabs.iter().take(self.active).filter(|tab| !matches!(tab.nav, Nav::Session(_))).count(),
             sidebar_open: self.sidebar_open,
             harness_open: self.harness_open,
@@ -477,6 +487,7 @@ impl Workspace {
             !running
         });
         let views = Self::saved_views(&saved);
+        let sessions = saved.sessions.clone();
         let active = saved.active;
         let mut workspace = Self::build(saved, window, cx);
         for view in &views {
@@ -485,6 +496,15 @@ impl Workspace {
         }
         workspace.active = active.min(workspace.tabs.len().saturating_sub(1));
         workspace.load_viewer(cx);
+        // The sessions that were open come back, claude resuming in each.
+        let launches = crate::launch::saved();
+        for id in &sessions {
+            if let Some(launch) = launches.iter().find(|l| &l.id == id).cloned() {
+                let folder = launch.harness_path.clone();
+                workspace.reopening += 1;
+                workspace.open_session(Kind::Claude, folder, Some(launch), window, cx);
+            }
+        }
         if workspace.harness_open {
             workspace.load_harness_counts(cx);
         }
@@ -622,6 +642,7 @@ impl Workspace {
             launch_form: None,
             pr_picker: None,
             explain: None,
+            reopening: 0,
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
             _subscriptions: subscriptions,
@@ -847,7 +868,13 @@ impl Workspace {
                 this.next_tab += 1;
                 let tab = Tab { id: this.next_tab, nav: Nav::Session(id), name: None, page: Page::None };
                 this.tabs.push(tab);
-                this.activate(this.tabs.len() - 1, window, cx);
+                // Sessions reopened at launch don't take the tab that was showing.
+                if this.reopening > 0 {
+                    this.reopening -= 1;
+                    cx.notify();
+                } else {
+                    this.activate(this.tabs.len() - 1, window, cx);
+                }
             })
             .ok();
         })
