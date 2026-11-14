@@ -1662,7 +1662,7 @@ pub fn state_pill(pr: &PrItem, theme: &Theme) -> impl IntoElement {
 
 impl PrsPage {
     /// A checkbox: ticked, part-ticked (some of the rows) or empty.
-    fn checkbox(state: Option<bool>, theme: &Theme) -> gpui::Div {
+    pub(crate) fn checkbox(state: Option<bool>, theme: &Theme) -> gpui::Div {
         let on = state != Some(false);
         div()
             .size(px(14.))

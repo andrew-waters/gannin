@@ -754,6 +754,11 @@ pub struct OpenIssue(pub IssueItem);
 
 impl EventEmitter<OpenIssue> for IssuesPage {}
 
+/// Work on This for each of these, picked together in the table.
+pub struct WorkOnIssues(pub Vec<IssueItem>);
+
+impl EventEmitter<WorkOnIssues> for IssuesPage {}
+
 pub struct IssuesPage {
     org: Option<String>,
     issues: Arc<Vec<IssueItem>>,
@@ -784,6 +789,10 @@ pub struct IssuesPage {
     /// the width then.
     resizing: Option<(Column, f32, f32)>,
     selected: Option<String>,
+    /// Rows picked together (checkbox, Command or Shift), by issue id, and
+    /// the row a Shift-click range starts from.
+    picked: Vec<String>,
+    anchor: Option<usize>,
     open_menu: Option<Menu>,
     /// The menu a click outside just closed, so the same click on its own
     /// button doesn't open it again.
@@ -834,6 +843,8 @@ impl IssuesPage {
             widths: saved.widths.clone(),
             resizing: None,
             selected: None,
+            picked: Vec::new(),
+            anchor: None,
             open_menu: None,
             closed_menu: None,
             expanded_field: None,
@@ -1749,9 +1760,12 @@ impl IssuesPage {
         let row = &self.rows[index];
         let issue = &self.issues[row.index];
         let selected = self.selected.as_deref() == Some(issue.id.as_str());
+        let picked = self.picked.contains(&issue.id);
         let opened = issue.clone();
+        let id = issue.id.clone();
         div()
             .id(("issue", index))
+            .when(picked, |d| d.bg(theme.selected.opacity(0.16)))
             // Each row is laid out on its own and would otherwise shrink to
             // its content, pushing the columns out of line with the header.
             .w_full()
@@ -1766,12 +1780,99 @@ impl IssuesPage {
             .cursor_pointer()
             .when(selected, |d| d.bg(theme.row_selected))
             .when(!selected, |d| d.hover(|s| s.bg(theme.tile)))
-            .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
-                page.selected = Some(opened.id.clone());
-                cx.emit(OpenIssue(opened.clone()));
+            .on_click(cx.listener(move |page, event: &ClickEvent, _, cx| {
+                let modifiers = event.modifiers();
+                if modifiers.platform {
+                    if page.picked.is_empty() {
+                        if let Some(current) = page.selected.clone().filter(|c| *c != opened.id) {
+                            page.picked.push(current);
+                        }
+                    }
+                    page.toggle_pick(&opened.id, index);
+                } else if modifiers.shift {
+                    let from = page.anchor.unwrap_or(index);
+                    for row in from.min(index)..=from.max(index) {
+                        let id = page.issues[page.rows[row].index].id.clone();
+                        if !page.picked.contains(&id) {
+                            page.picked.push(id);
+                        }
+                    }
+                } else {
+                    page.picked.clear();
+                    page.anchor = Some(index);
+                    page.selected = Some(opened.id.clone());
+                    cx.emit(OpenIssue(opened.clone()));
+                }
                 cx.notify();
             }))
+            .child(
+                div()
+                    .id(("pick-issue", index))
+                    .flex_none()
+                    .p_1()
+                    .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        page.toggle_pick(&id, index);
+                        cx.notify();
+                    }))
+                    .child(crate::prs::PrsPage::checkbox(Some(picked), theme)),
+            )
             .children(self.columns.iter().map(|column| self.cell(column, index, theme, cx)))
+    }
+
+    fn toggle_pick(&mut self, id: &str, index: usize) {
+        if let Some(at) = self.picked.iter().position(|p| p == id) {
+            self.picked.remove(at);
+        } else {
+            self.picked.push(id.to_string());
+        }
+        self.anchor = Some(index);
+    }
+
+    /// Along the foot while rows are picked: how many, and Work on This for
+    /// the open ones.
+    fn picked_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let picked: Vec<IssueItem> = self.picked.iter().filter_map(|id| self.issues.iter().find(|i| &i.id == id).cloned()).collect();
+        let open: Vec<IssueItem> = picked.iter().filter(|i| i.closed_at.is_none()).cloned().collect();
+        let button = |id: &'static str, label: String, prominent: bool| {
+            div()
+                .id(id)
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .cursor_pointer()
+                .map(|d| if prominent { d.bg(theme.selected).text_color(theme.on_selected) } else { d.border_1().border_color(theme.border) })
+                .hover(|s| s.opacity(0.85))
+                .child(label)
+        };
+        div()
+            .flex_none()
+            .h(px(40.))
+            .px_4()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .border_t_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar)
+            .child(div().flex_1().text_sm().child(format!("{} selected", picked.len())).when(open.len() < picked.len(), |d| {
+                d.child(div().text_xs().text_color(theme.secondary).child("Only open issues can be worked on."))
+            }))
+            .child(button("picked-clear", "Clear".into(), false).on_click(cx.listener(|page, _: &ClickEvent, _, cx| {
+                page.picked.clear();
+                cx.notify();
+            })))
+            .when(!open.is_empty(), |d| {
+                let count = open.len();
+                d.child(
+                    button("picked-work", if count == 1 { "Work on This".into() } else { format!("Work on {count} with Claude") }, true).on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                        cx.emit(WorkOnIssues(open.clone()));
+                        page.picked.clear();
+                        cx.notify();
+                    })),
+                )
+            })
     }
 }
 
@@ -2177,6 +2278,29 @@ impl Render for IssuesPage {
             .text_xs()
             .font_weight(FontWeight::MEDIUM)
             .text_color(theme.secondary)
+            .child({
+                let visible: Vec<String> = self.rows.iter().map(|r| self.issues[r.index].id.clone()).collect();
+                let ticked = visible.iter().filter(|id| self.picked.contains(id)).count();
+                let state = if ticked == 0 { Some(false) } else if ticked == visible.len() { Some(true) } else { None };
+                div()
+                    .id("pick-all-issues")
+                    .flex_none()
+                    .p_1()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |page, _: &ClickEvent, _, cx| {
+                        if state == Some(true) {
+                            page.picked.retain(|id| !visible.contains(id));
+                        } else {
+                            for id in &visible {
+                                if !page.picked.contains(id) {
+                                    page.picked.push(id.clone());
+                                }
+                            }
+                        }
+                        cx.notify();
+                    }))
+                    .child(crate::prs::PrsPage::checkbox(state, &theme))
+            })
             .children(self.columns.clone().into_iter().map(|column| {
                 let marker = if column == sort { if descending { " ↓" } else { " ↑" } } else { "" };
                 let (sorted, onto, title) = (column.clone(), column.clone(), column.title());
@@ -2267,6 +2391,7 @@ impl Render for IssuesPage {
             .child(self.filter_bar(&theme, window, cx))
             .child(column_header)
             .child(div().flex_1().min_h_0().flex().flex_col().child(body))
+            .when(!self.picked.is_empty(), |d| d.child(self.picked_bar(&theme, cx)))
             // While a menu is open, a click elsewhere on the page only closes
             // it, as a macOS menu does; the menu is drawn above this.
             .when(self.open_menu.is_some(), |d| {

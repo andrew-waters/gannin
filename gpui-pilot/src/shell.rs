@@ -793,6 +793,7 @@ impl Workspace {
                     this.drawers.clear();
                     this.push_drawer(event.0.clone(), cx);
                 }),
+                cx.subscribe_in(page, window, |this, _, event: &crate::issues::WorkOnIssues, window, cx| this.work_on_many(event.0.clone(), window, cx)),
                 // Also redraws the tab, which shows the page's count.
                 cx.observe(page, |this, _, cx| {
                     this.persist(cx);
@@ -1133,6 +1134,28 @@ impl Workspace {
         let brief = format!("# Review of {}#{}: {}\n\n{}\n", pr.repo, pr.number, pr.title, pr.url);
         let prompt = launch::review_prompt(&pr.repo, pr.number, &pr.title, &pr.url, &branch);
         self.start_launch(launch, &brief, &prompt, true, window, cx);
+    }
+
+    /// Work on This for several issues picked together: each in a tab of
+    /// its own (or the session it has), after asking, since each runs claude.
+    fn work_on_many(&mut self, issues: Vec<IssueItem>, window: &mut Window, cx: &mut Context<Self>) {
+        if issues.len() == 1 {
+            return self.work_on(issues[0].clone(), window, cx);
+        }
+        let list: Vec<String> = issues.iter().map(|i| format!("#{} {}", i.number, i.title)).collect();
+        let detail = format!("{}\n\nEach runs Claude Code in a tab of its own, in a worktree of its own. An issue with a session already shows that one.", list.join("\n"));
+        let answer = window.prompt(gpui::PromptLevel::Info, &format!("Start work on {} issues?", issues.len()), Some(&detail), &["Start Work", "Cancel"], cx);
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await == Ok(0) {
+                this.update_in(cx, |this, window, cx| {
+                    for issue in issues {
+                        this.work_on(issue, window, cx);
+                    }
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     /// Review with Claude for several PRs picked together: each in a tab of
