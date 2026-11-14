@@ -582,21 +582,33 @@ impl WorkPanel {
             .gap_5()
             .p_4()
             .when(all_merged || stale, |el| {
+                // A neutral box with an edge in its colour: green when done.
+                let edge = if all_merged { theme.good() } else { theme.secondary };
                 el.child(
                     div()
-                        .p_3()
-                        .rounded_lg()
-                        .bg(if all_merged { theme.good().opacity(0.1) } else { theme.tile })
                         .flex()
-                        .flex_col()
-                        .gap_2()
-                        .child(div().font_weight(FontWeight::SEMIBOLD).child(if all_merged { "Done" } else { "Stale" }))
-                        .child(div().text_sm().child(if all_merged {
-                            "Every pull request from this session is merged, so its worktrees can go."
-                        } else {
-                            "Nothing's happened in this session for over three days. Finish it to remove its worktrees, or leave it be."
-                        }))
-                        .child(div().flex().flex_row().child(Self::button("work-finish", "Finish and Remove Worktrees", all_merged, true, theme))),
+                        .flex_row()
+                        .rounded_lg()
+                        .overflow_hidden()
+                        .bg(theme.bg)
+                        .border_1()
+                        .border_color(theme.border)
+                        .child(div().w(px(3.)).flex_none().bg(edge))
+                        .child(
+                            div()
+                                .flex_1()
+                                .p_3()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(div().font_weight(FontWeight::SEMIBOLD).text_color(edge).child(if all_merged { "Done" } else { "Stale" }))
+                                .child(div().text_sm().text_color(theme.secondary).child(if all_merged {
+                                    "Every pull request from this session is merged, so its worktrees can go."
+                                } else {
+                                    "Nothing's happened in this session for over three days. Finish it to remove its worktrees, or leave it be."
+                                }))
+                                .child(div().flex().flex_row().child(Self::button("work-finish", "Finish and Remove Worktrees", false, true, theme))),
+                        ),
                 )
             })
             // The pull requests first: where the work stands.
