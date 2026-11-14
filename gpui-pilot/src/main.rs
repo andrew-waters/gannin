@@ -14,6 +14,7 @@ mod detail;
 mod format;
 mod github;
 mod issues;
+mod launch;
 mod markdown;
 mod metrics;
 mod page;
@@ -42,6 +43,21 @@ fn main() {
         match arg.as_str() {
             "--org" => org = args.next(),
             "--days" => days = args.next().and_then(|d| d.parse().ok()),
+            // Writes a Work on This launch against the harness folder given
+            // and prints its start script's path: for checking the launch
+            // with a stand-in claude, without starting Claude Code.
+            "--dry-launch" => {
+                let harness = std::path::PathBuf::from(args.next().unwrap_or_default());
+                let subject = launch::Subject { id: "I_dry".into(), repo: "acme/api".into(), number: 12, title: "Fix the thing's \"edge\"".into(), url: "https://github.com/acme/api/issues/12".into() };
+                let branch = launch::issue_branch(12, &subject.title);
+                let mut dry = launch::Launch::new(launch::Flow::Work, "#12 Fix the thing".into(), "acme", "acme/harness", branch.clone(), Some(subject));
+                dry.harness_path = harness;
+                let prompt = launch::opening_prompt("acme/api#12", "Fix the thing's \"edge\"", &branch);
+                let brief = format!("# acme/api#12: Fix\n\n{}", launch::working_here("acme/harness", &dry.harness_path, &branch, Some("acme/api#12"), "acme/api", false));
+                dry.prepare(&brief, &prompt, false).expect("prepare");
+                println!("{}", dry.dir().join("start.sh").display());
+                return;
+            }
             // Runs Your Work's live query and lists what it found.
             "--work" => {
                 let token = auth::token().expect("sign in to the pilot first");

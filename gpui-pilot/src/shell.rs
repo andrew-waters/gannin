@@ -27,6 +27,7 @@ use gpui::{
     WindowAppearance,
 };
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 actions!(shell, [ToggleSidebar, ToggleInspector, NewClaudeSession, NewTerminal, CloseTab, OpenSwitcher]);
 
@@ -722,7 +723,16 @@ impl Workspace {
         cx.spawn_in(window, async move |this, cx| {
             let Ok(Ok(Some(paths))) = paths.await else { return };
             let Some(folder) = paths.into_iter().next() else { return };
-            let Ok(task) = cx.update(|window, cx| session::spawn_terminal(kind, folder.clone(), window, cx)) else { return };
+            this.update_in(cx, |this, window, cx| this.open_session(kind, folder, None, window, cx)).ok();
+        })
+        .detach();
+    }
+
+    /// Opens a session in a tab of its own: a terminal in `folder`, or a
+    /// launch's start script.
+    fn open_session(&mut self, kind: Kind, folder: PathBuf, launch: Option<crate::launch::Launch>, window: &mut Window, cx: &mut Context<Self>) {
+        let task = session::spawn_terminal(kind, folder.clone(), launch.as_ref(), window, cx);
+        cx.spawn_in(window, async move |this, cx| {
             let builder = match task.await {
                 Ok(builder) => builder,
                 Err(error) => {
@@ -733,7 +743,7 @@ impl Workspace {
             this.update_in(cx, |this, window, cx| {
                 let id = this.next_session;
                 this.next_session += 1;
-                let page = cx.new(|cx| SessionPage::new(id, kind, folder, builder, window, cx));
+                let page = cx.new(|cx| SessionPage::new(id, kind, folder, launch, builder, window, cx));
                 this._subscriptions.push(cx.subscribe(&page, |_, _, _: &Changed, cx| cx.notify()));
                 this.sessions.push(page);
                 this.drawers.clear();
@@ -745,6 +755,89 @@ impl Workspace {
             .ok();
         })
         .detach();
+    }
+
+    // MARK: Launching, as Gannin starts sessions
+
+    /// The harness that covers `repo`: the project whose repos include it,
+    /// else the org's first.
+    fn harness_for(&self, repo: &str) -> Option<String> {
+        self.projects.iter().find(|p| p.repos.iter().any(|r| r == repo)).or(self.projects.first()).map(|p| p.id.clone())
+    }
+
+    /// The tab already showing a launch about `subject_id` of this flow.
+    fn session_for(&self, subject_id: &str, flow: crate::launch::Flow, cx: &App) -> Option<usize> {
+        self.tabs.iter().position(|tab| match tab.nav {
+            Nav::Session(id) => self.session(id, cx).and_then(|p| p.read(cx).launch.as_ref()).is_some_and(|l| {
+                l.flow == flow && l.subject.as_ref().is_some_and(|s| s.id == subject_id)
+            }),
+            _ => false,
+        })
+    }
+
+    /// A launch the pilot started before about `subject_id` (in an earlier
+    /// run), to resume.
+    fn saved_launch(subject_id: &str, flow: crate::launch::Flow) -> Option<crate::launch::Launch> {
+        crate::launch::saved().into_iter().find(|l| l.flow == flow && l.subject.as_ref().is_some_and(|s| s.id == subject_id))
+    }
+
+    /// Shows a session about the subject if there is one (opening it again
+    /// from an earlier run), and says whether it did.
+    fn show_session(&mut self, subject_id: &str, flow: crate::launch::Flow, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if let Some(index) = self.session_for(subject_id, flow, cx) {
+            self.drawers.clear();
+            self.activate(index, window, cx);
+            return true;
+        }
+        if let Some(launch) = Self::saved_launch(subject_id, flow) {
+            self.drawers.clear();
+            let folder = launch.harness_path.clone();
+            self.open_session(Kind::Claude, folder, Some(launch), window, cx);
+            return true;
+        }
+        false
+    }
+
+    /// Prepares a launch's files and opens it.
+    fn start_launch(&mut self, launch: crate::launch::Launch, brief: &str, prompt: &str, disallow_edits: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if let Err(error) = launch.prepare(brief, prompt, disallow_edits) {
+            let _ = window.prompt(gpui::PromptLevel::Critical, "Couldn't start the session", Some(&error.to_string()), &["OK"], cx);
+            return;
+        }
+        self.drawers.clear();
+        let folder = launch.harness_path.clone();
+        self.open_session(Kind::Claude, folder, Some(launch), window, cx);
+    }
+
+    fn no_harness(window: &mut Window, cx: &mut App) {
+        let _ = window.prompt(
+            gpui::PromptLevel::Info,
+            "No harness for this org",
+            Some("Sessions run in the org's harness. Pick or create it in Gannin's org Settings, under Harness."),
+            &["OK"],
+            cx,
+        );
+    }
+
+    /// Work on This: Claude Code on the issue in the harness, with Gannin's
+    /// brief and opening prompt; or the session it already has.
+    fn work_on(&mut self, issue: IssueItem, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::launch::{self, Flow, Launch, Subject};
+        if self.show_session(&issue.id, Flow::Work, window, cx) {
+            return;
+        }
+        let (Some(org), Some(harness)) = (self.org.clone(), self.harness_for(&issue.repo)) else {
+            return Self::no_harness(window, cx);
+        };
+        let branch = launch::issue_branch(issue.number, &issue.title);
+        let reference = format!("{}#{}", issue.repo, issue.number);
+        let subject = Subject { id: issue.id.clone(), repo: issue.repo.clone(), number: issue.number, title: issue.title.clone(), url: issue.url.clone() };
+        let launch = Launch::new(Flow::Work, format!("#{} {}", issue.number, issue.title), &org, &harness, branch.clone(), Some(subject));
+        let text = detail::load_text(&issue.id);
+        let parent = issue.parent_id.as_deref().and_then(|id| self.issues.read(cx).issue(id));
+        let brief = work_brief(&issue, text.as_ref(), parent.as_ref(), &launch);
+        let prompt = launch::opening_prompt(&reference, &issue.title, &branch);
+        self.start_launch(launch, &brief, &prompt, false, window, cx);
     }
 
     /// The org's PR cache, read off the main thread.
@@ -1430,7 +1523,61 @@ impl Workspace {
                         }
                     }),
             )
+            .children(self.drawer_actions(drawer, theme, cx))
             .child(button("close-drawer", "×").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.pop_drawer(cx))))
+    }
+
+    /// The drawer bar's buttons, as `IssueSheet`'s and the PR drawer's:
+    /// Open on GitHub, then what Claude can do with it.
+    fn drawer_actions(&self, drawer: &Drawer, theme: &Theme, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        use crate::launch::Flow;
+        let seq = drawer.seq;
+        let action = |id: &'static str, label: String, tip: String| {
+            div()
+                .id((id, seq))
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .cursor_pointer()
+                .border_1()
+                .border_color(theme.border)
+                .hover(|s| s.bg(theme.row_selected))
+                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+                .child(label)
+        };
+        let mut actions: Vec<AnyElement> = Vec::new();
+        match &drawer.item {
+            DrawerItem::Issue(item) => {
+                let issue = item.issue.clone();
+                let url = issue.url.clone();
+                actions.push(
+                    action("issue-github", "Open on GitHub".into(), "Open this issue on GitHub".into())
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                        .into_any_element(),
+                );
+                let has_session = self.session_for(&issue.id, Flow::Work, cx).is_some() || Self::saved_launch(&issue.id, Flow::Work).is_some();
+                let harness = self.harness_for(&issue.repo).unwrap_or_default();
+                let (label, tip) = if has_session {
+                    ("Open Session", format!("Show this issue's Claude Code session, in {harness}"))
+                } else {
+                    ("Work on This", format!("Work on this issue with Claude Code, in {harness}"))
+                };
+                actions.push(
+                    action("work-on-this", label.into(), tip)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.work_on(issue.clone(), window, cx)))
+                        .into_any_element(),
+                );
+            }
+            DrawerItem::Pull(pr) => {
+                let url = pr.url.clone();
+                actions.push(
+                    action("pr-github", "Open on GitHub".into(), "Open this pull request on GitHub".into())
+                        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                        .into_any_element(),
+                );
+            }
+        }
+        actions
     }
 
     /// The parent and sub-issues, each opening a drawer on top.
@@ -3181,6 +3328,68 @@ impl Workspace {
                     .when(matches.is_empty(), |d| d.child(div().px_3().py_2().text_color(theme.secondary).child(none))),
             )
     }
+}
+
+/// `SessionBrief.make` for an issue: its facts, description, recent
+/// comments, and how work goes in the harness.
+fn work_brief(issue: &IssueItem, text: Option<&IssueText>, parent: Option<&IssueItem>, launch: &crate::launch::Launch) -> String {
+    let reference = format!("{}#{}", issue.repo, issue.number);
+    let mut out = format!("# {reference}: {}\n\n{}\n\n", issue.title, issue.url);
+    let mut facts = vec![format!(
+        "- State: {}",
+        match (issue.is_open(), issue.not_planned) {
+            (true, _) => "open",
+            (false, true) => "closed, not planned",
+            (false, false) => "closed",
+        }
+    )];
+    if let Some(kind) = &issue.issue_type {
+        facts.push(format!("- Type: {kind}"));
+    }
+    if !issue.labels.is_empty() {
+        facts.push(format!("- Labels: {}", issue.labels.join(", ")));
+    }
+    if let Some(milestone) = &issue.milestone {
+        facts.push(format!("- Milestone: {milestone}"));
+    }
+    if let Some(author) = &issue.author_login {
+        facts.push(format!("- Opened by: @{author}, {}", issue.created_at.with_timezone(&Local).format("%-d %b %Y")));
+    }
+    if !issue.assignee_logins.is_empty() {
+        facts.push(format!("- Assignees: {}", issue.assignee_logins.iter().map(|l| format!("@{l}")).collect::<Vec<_>>().join(", ")));
+    }
+    if let Some(parent) = parent {
+        facts.push(format!("- Parent: #{} {} ({})", parent.number, parent.title, parent.url));
+    }
+    for (board, values) in &issue.boards {
+        let fields: Vec<String> = values.iter().map(|(name, value)| format!("{name} {value}")).collect();
+        facts.push(format!("- Board \"{board}\": {}", fields.join(", ")));
+    }
+    for pr in &issue.linked_prs {
+        let state = if pr.merged_at.is_some() { "merged".to_string() } else { pr.state.to_lowercase() };
+        facts.push(format!("- Linked PR: #{}, {state} ({})", pr.number, pr.url));
+    }
+    out.push_str(&facts.join("\n"));
+    out.push_str("\n\n## Description\n\n");
+    match text.map(|t| t.body.trim()).filter(|b| !b.is_empty()) {
+        Some(body) => out.push_str(body),
+        None => out.push_str("(No description.)"),
+    }
+    out.push_str("\n\n");
+    if let Some(text) = text.filter(|t| !t.comments.is_empty()) {
+        let total = text.comment_count.unwrap_or(text.comments.len());
+        if total > text.comments.len() {
+            out.push_str(&format!("## Recent comments ({} of {total})\n\n", text.comments.len()));
+        } else {
+            out.push_str("## Comments\n\n");
+        }
+        for comment in &text.comments {
+            let at = comment.at.map(|at| format!(", {}", at.with_timezone(&Local).format("%-d %b %Y %H:%M"))).unwrap_or_default();
+            out.push_str(&format!("### @{}{at}\n\n{}\n\n", comment.author, comment.body.trim()));
+        }
+    }
+    out.push_str(&crate::launch::working_here(&launch.harness_repo, &launch.harness_path, &launch.branch, Some(&reference), &issue.repo, false));
+    out
 }
 
 /// A session's state as a colour, as `SessionState.color`.

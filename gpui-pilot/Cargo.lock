@@ -2866,6 +2866,7 @@ dependencies = [
  "theme",
  "theme_settings",
  "util",
+ "uuid",
  "workspace",
 ]
 

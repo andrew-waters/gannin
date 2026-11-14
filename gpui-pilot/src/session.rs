@@ -65,6 +65,9 @@ const QUIET: Duration = Duration::from_millis(1500);
 pub struct SessionPage {
     pub id: u32,
     pub kind: Kind,
+    /// Started the way Gannin starts a session (Work on This, a review, an
+    /// Ask and so on): its state comes from the hooks' files, not the screen.
+    pub launch: Option<crate::launch::Launch>,
     folder: PathBuf,
     terminal: Entity<Terminal>,
     view: Entity<TerminalView>,
@@ -85,10 +88,28 @@ pub struct Changed;
 impl gpui::EventEmitter<Changed> for SessionPage {}
 
 /// Starts the process in a pty; the page is made once it's running.
-pub fn spawn_terminal(kind: Kind, folder: PathBuf, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
+pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
     use settings::Settings;
     let settings = terminal::terminal_settings::TerminalSettings::get_global(cx).clone();
-    let shell = match kind {
+    // A launch runs its start script in a login shell from home, as
+    // Gannin's terminal does.
+    let (folder, shell) = match launch {
+        Some(launch) => (
+            std::env::var_os("HOME").map(PathBuf::from).unwrap_or(folder),
+            Some(util::shell::Shell::WithArguments {
+                program: std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()),
+                args: vec![
+                    "-l".into(),
+                    "-i".into(),
+                    "-c".into(),
+                    format!("bash {}", crate::launch::quote(&launch.dir().join("start.sh").to_string_lossy())),
+                ],
+                title_override: None,
+            }),
+        ),
+        None => (folder, None),
+    };
+    let shell = if let Some(shell) = shell { shell } else { match kind {
         Kind::Shell => util::shell::Shell::System,
         // Through a login shell, so claude is on the PATH the user's
         // profile sets up.
@@ -97,7 +118,7 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, window: &Window, cx: &mut App
             args: vec!["-l".into(), "-i".into(), "-c".into(), "claude".into()],
             title_override: None,
         },
-    };
+    } };
     TerminalBuilder::new(
         Some(folder),
         terminal::TerminalMode::interactive(),
@@ -117,7 +138,16 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, window: &Window, cx: &mut App
 }
 
 impl SessionPage {
-    pub fn new(id: u32, kind: Kind, folder: PathBuf, builder: TerminalBuilder, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        id: u32,
+        kind: Kind,
+        folder: PathBuf,
+        launch: Option<crate::launch::Launch>,
+        builder: TerminalBuilder,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let session_folder = launch.as_ref().map(|l| l.folder());
         let terminal = cx.new(|cx| builder.subscribe(cx));
         // Zed's terminal view, with no Zed workspace or project around it:
         // the handles are empty, and what needs them (opening a path the
@@ -129,6 +159,7 @@ impl SessionPage {
             ChangesView::new(
                 move |cx| watched.upgrade().and_then(|t| t.read(cx).working_directory()).or_else(|| Some(start.clone())),
                 std::time::SystemTime::now(),
+                session_folder,
                 window,
                 cx,
             )
@@ -136,7 +167,7 @@ impl SessionPage {
         let subscriptions = vec![cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {
                 this.last_output = Instant::now();
-                if this.state != State::Working && this.state != State::Ended {
+                if this.launch.is_none() && this.state != State::Working && this.state != State::Ended {
                     this.set_state(State::Working, cx);
                 }
             }
@@ -155,6 +186,7 @@ impl SessionPage {
         Self {
             id,
             kind,
+            launch,
             folder,
             terminal,
             view,
@@ -178,6 +210,17 @@ impl SessionPage {
     }
 
     fn settle(&mut self, cx: &mut Context<Self>) {
+        // A launched session's hooks say where it is.
+        if let Some(launch) = &self.launch {
+            let state = match launch.state().as_deref() {
+                Some("needs-you") => State::NeedsYou,
+                Some("idle") => State::YourTurn,
+                Some("exited") | Some("stopped") => State::Ended,
+                _ => State::Working,
+            };
+            self.set_state(state, cx);
+            return;
+        }
         if self.state != State::Working || self.last_output.elapsed() < QUIET {
             return;
         }
@@ -188,6 +231,9 @@ impl SessionPage {
     /// The title Claude Code (or the shell) gives the terminal, else what
     /// it runs and where.
     pub fn title(&self, cx: &App) -> String {
+        if let Some(launch) = &self.launch {
+            return launch.title.clone();
+        }
         let terminal = self.terminal.read(cx);
         let title = terminal.breadcrumb_text.trim();
         if !title.is_empty() {

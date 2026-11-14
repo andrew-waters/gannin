@@ -95,7 +95,16 @@ pub struct ChangesView {
 }
 
 impl ChangesView {
-    pub fn new(folder: impl Fn(&App) -> Option<PathBuf> + 'static, since: SystemTime, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// `session_folder` is a launched session's folder in the harness, whose
+    /// repo worktrees (`.worktrees/<branch>/<name>`, of `projects/` clones,
+    /// not of the harness) are read too.
+    pub fn new(
+        folder: impl Fn(&App) -> Option<PathBuf> + 'static,
+        since: SystemTime,
+        session_folder: Option<PathBuf>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let multibuffer = cx.new(|_| MultiBuffer::new(Capability::ReadOnly));
         let editor = cx.new(|cx| {
             let mut editor = Editor::new(EditorMode::full(), multibuffer.clone(), None, window, cx);
@@ -113,7 +122,8 @@ impl ChangesView {
                 }
                 continue;
             };
-            let read = cx.background_executor().spawn(async move { read(&folder, since) }).await;
+            let session = session_folder.clone();
+            let read = cx.background_executor().spawn(async move { read(&folder, since, session.as_deref()) }).await;
             if this.update(cx, |this, cx| this.apply(read, cx)).is_err() {
                 return;
             }
@@ -346,7 +356,7 @@ fn text(bytes: Vec<u8>) -> String {
     String::from_utf8_lossy(&bytes).trim().to_string()
 }
 
-fn read(folder: &Path, since: SystemTime) -> Result<Read, String> {
+fn read(folder: &Path, since: SystemTime, session_folder: Option<&Path>) -> Result<Read, String> {
     let root = git(folder, &["rev-parse", "--show-toplevel"]).map_err(|_| format!("{} isn't in a git repository", folder.display()))?;
     let root = PathBuf::from(text(root));
     // Every worktree of the repo, the main folder first.
@@ -369,6 +379,20 @@ fn read(folder: &Path, since: SystemTime) -> Result<Read, String> {
         }
         let label = branch.unwrap_or_else(|| path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default());
         trees.push(read_tree(&path, label)?);
+    }
+    // A session's repo worktrees, each a checkout of its own.
+    if let Some(session) = session_folder {
+        let mut children: Vec<PathBuf> =
+            std::fs::read_dir(session).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.join(".git").exists()).collect();
+        children.sort();
+        for child in children {
+            if trees.iter().any(|t| t.path == child) {
+                continue;
+            }
+            let name = child.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            let branch = git(&child, &["rev-parse", "--abbrev-ref", "HEAD"]).map(text).unwrap_or_default();
+            trees.push(read_tree(&child, format!("{name} on {branch}"))?);
+        }
     }
     Ok(Read { trees })
 }
