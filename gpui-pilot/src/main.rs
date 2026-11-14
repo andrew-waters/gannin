@@ -26,6 +26,7 @@ mod planning_panel;
 mod projects;
 mod review;
 mod review_panel;
+mod review_preview;
 mod scorecard;
 mod prs;
 mod session;

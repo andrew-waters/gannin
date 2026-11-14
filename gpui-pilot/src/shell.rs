@@ -88,6 +88,8 @@ pub enum Nav {
     Session(u32),
     /// A kind of document in the team's harness.
     Harness(crate::harness::HarnessKind),
+    /// The review panel in each state, from a made-up PR (the pilot's own).
+    ReviewPreview,
 }
 
 impl Nav {
@@ -126,6 +128,7 @@ impl Nav {
             Nav::Settings => "Settings",
             Nav::Session(_) => "Session",
             Nav::Harness(kind) => kind.title(),
+            Nav::ReviewPreview => "Review Preview",
         }
     }
 }
@@ -198,6 +201,8 @@ fn sections() -> Vec<Section> {
         //     title: Some("Agents"),
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
+        // The pilot's own: states to refine the UI against.
+        Section { id: "pilot", title: Some("Pilot"), rows: vec![Item(ReviewPreview)] },
     ]
 }
 
@@ -285,6 +290,7 @@ enum Page {
     Scorecard(Entity<crate::scorecard::ScorecardPage>),
     Activity(Entity<crate::activity::ActivityPage>),
     Harness(Entity<crate::harness::HarnessPage>),
+    ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
     None,
 }
 
@@ -657,6 +663,7 @@ impl Workspace {
             }
             Nav::Scorecards => Page::Scorecard(cx.new(|cx| crate::scorecard::ScorecardPage::new(org, cx))),
             Nav::Activity => Page::Activity(cx.new(|cx| crate::activity::ActivityPage::new(org, cx))),
+            Nav::ReviewPreview => Page::ReviewPreview(cx.new(|cx| crate::review_preview::ReviewPreview::new(window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             _ => Page::None,
         };
@@ -3010,6 +3017,7 @@ impl Workspace {
                 Page::Scorecard(page) => page.into_any_element(),
                 Page::Activity(page) => page.into_any_element(),
                 Page::Harness(page) => page.into_any_element(),
+                Page::ReviewPreview(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()

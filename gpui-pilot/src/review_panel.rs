@@ -14,7 +14,7 @@ use std::time::Duration;
 use terminal::Terminal;
 
 /// The Post Review sheet, step by step.
-enum Post {
+pub enum Post {
     Loading,
     Ready { snapshot: Arc<Snapshot>, draft: Arc<Draft>, event: &'static str, body: Entity<editor::Editor> },
     Posting,
@@ -22,13 +22,19 @@ enum Post {
     Failed(String),
 }
 
+/// Where a panel's review comes from: a live session, or the Review
+/// Preview's made-up one, which never runs claude or calls GitHub.
+enum Source {
+    Live { launch: Launch, terminal: Entity<Terminal> },
+    Preview { repo: String, number: i64, url: String, idle: bool, snapshot: Arc<Snapshot> },
+}
+
 pub struct ReviewPanel {
-    launch: Launch,
-    terminal: Entity<Terminal>,
+    source: Source,
     result: Option<ReviewResult>,
     dismissed: HashSet<String>,
     post: Option<Post>,
-    _poll: Task<()>,
+    _poll: Option<Task<()>>,
 }
 
 impl ReviewPanel {
@@ -52,24 +58,61 @@ impl ReviewPanel {
             }
             cx.background_executor().timer(Duration::from_secs(4)).await;
         });
-        Self { launch, terminal, result: None, dismissed: HashSet::new(), post: None, _poll: poll }
+        Self { source: Source::Live { launch, terminal }, result: None, dismissed: HashSet::new(), post: None, _poll: Some(poll) }
+    }
+
+    /// A panel showing a made-up review in one state, for the Review
+    /// Preview. `idle` is whether claude would be waiting for the person.
+    pub fn preview(repo: &str, number: i64, result: Option<ReviewResult>, idle: bool, snapshot: Snapshot, post: Option<Post>) -> Self {
+        Self {
+            source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, snapshot: Arc::new(snapshot) },
+            result,
+            dismissed: HashSet::new(),
+            post,
+            _poll: None,
+        }
     }
 
     fn subject(&self) -> (String, i64) {
-        self.launch.subject.as_ref().map(|s| (s.repo.clone(), s.number)).unwrap_or_default()
+        match &self.source {
+            Source::Live { launch, .. } => launch.subject.as_ref().map(|s| (s.repo.clone(), s.number)).unwrap_or_default(),
+            Source::Preview { repo, number, .. } => (repo.clone(), *number),
+        }
+    }
+
+    fn url(&self) -> String {
+        match &self.source {
+            Source::Live { launch, .. } => launch.subject.as_ref().map(|s| s.url.clone()).unwrap_or_default(),
+            Source::Preview { url, .. } => url.clone(),
+        }
+    }
+
+    /// Whether claude is waiting for the person, so Review Again can go.
+    fn idle(&self) -> bool {
+        match &self.source {
+            Source::Live { launch, .. } => matches!(launch.state().as_deref(), Some("idle")),
+            Source::Preview { idle, .. } => *idle,
+        }
     }
 
     /// Asks claude to review it afresh, as Gannin's Review Again.
     fn review_again(&mut self, cx: &mut Context<Self>) {
-        self.terminal.update(cx, |terminal, _| {
-            terminal.paste(crate::launch::REVIEW_AGAIN);
-            terminal.input(b"\r".to_vec());
-        });
+        if let Source::Live { terminal, .. } = &self.source {
+            terminal.update(cx, |terminal, _| {
+                terminal.paste(crate::launch::REVIEW_AGAIN);
+                terminal.input(b"\r".to_vec());
+            });
+        }
     }
 
     /// Opens the sheet: the PR, its files and what's been said, fetched now.
     fn open_post(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(result) = self.result.clone() else { return };
+        if let Source::Preview { snapshot, .. } = &self.source {
+            self.post = Some(Self::ready(&result, &self.dismissed, snapshot.clone(), window, cx));
+            cx.notify();
+            return;
+        }
         self.post = Some(Post::Loading);
         let (repo, number) = self.subject();
         let dismissed = self.dismissed.clone();
@@ -84,17 +127,7 @@ impl ReviewPanel {
                 .await;
             this.update_in(cx, |this, window, cx| {
                 this.post = Some(match fetched {
-                    Ok(snapshot) => {
-                        let draft = review::draft(&result, &dismissed, &snapshot);
-                        let event = review::default_event(&result, snapshot.is_own());
-                        let text = draft.body.clone();
-                        let body = cx.new(|cx| {
-                            let mut editor = editor::Editor::auto_height(4, 14, window, cx);
-                            editor.set_text(text, window, cx);
-                            editor
-                        });
-                        Post::Ready { snapshot: Arc::new(snapshot), draft: Arc::new(draft), event, body }
-                    }
+                    Ok(snapshot) => Self::ready(&result, &dismissed, Arc::new(snapshot), window, cx),
                     Err(error) => Post::Failed(error),
                 });
                 cx.notify();
@@ -104,7 +137,22 @@ impl ReviewPanel {
         .detach();
     }
 
-    /// Sends it: only from the person's click on Post to GitHub.
+    /// The sheet ready to post: the draft from the findings kept, and the
+    /// event the verdict suggests.
+    pub fn ready(result: &ReviewResult, dismissed: &HashSet<String>, snapshot: Arc<Snapshot>, window: &mut Window, cx: &mut gpui::App) -> Post {
+        let draft = review::draft(result, dismissed, &snapshot);
+        let event = review::default_event(result, snapshot.is_own());
+        let text = draft.body.clone();
+        let body = cx.new(|cx| {
+            let mut editor = editor::Editor::auto_height(4, 14, window, cx);
+            editor.set_text(text, window, cx);
+            editor
+        });
+        Post::Ready { snapshot, draft: Arc::new(draft), event, body }
+    }
+
+    /// Sends it: only from the person's click on Post to GitHub. A preview
+    /// only pretends, after a moment.
     fn confirm_post(&mut self, cx: &mut Context<Self>) {
         let Some(Post::Ready { snapshot, draft, event, body }) = self.post.take() else { return };
         let text = body.read(cx).text(cx);
@@ -112,6 +160,19 @@ impl ReviewPanel {
         let (repo, number) = self.subject();
         self.post = Some(Post::Posting);
         cx.notify();
+        if matches!(self.source, Source::Preview { .. }) {
+            let url = format!("{}#pullrequestreview-0", self.url());
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(Duration::from_millis(1200)).await;
+                this.update(cx, |this, cx| {
+                    this.post = Some(Post::Posted(url));
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+            return;
+        }
         cx.spawn(async move |this, cx| {
             let posted = cx
                 .background_executor()
@@ -393,10 +454,10 @@ impl Render for ReviewPanel {
                     .into_any_element()
             }
         };
-        let idle = matches!(self.launch.state().as_deref(), Some("idle"));
+        let idle = self.idle();
         let has_result = self.result.is_some();
         let (repo, number) = self.subject();
-        let url = self.launch.subject.as_ref().map(|s| s.url.clone()).unwrap_or_default();
+        let url = self.url();
         let bar = div()
             .flex_none()
             .flex()

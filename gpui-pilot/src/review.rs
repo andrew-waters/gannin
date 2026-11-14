@@ -193,6 +193,19 @@ pub struct Snapshot {
 }
 
 impl Snapshot {
+    /// A made-up PR for the Review Preview: no GitHub call. `lines` are the
+    /// new-side lines each file's diff shows.
+    pub fn sample(own: bool, lines: &[(&str, std::ops::RangeInclusive<i64>)]) -> Self {
+        Self {
+            head_sha: "0000000".into(),
+            author: if own { "you".into() } else { "someone".into() },
+            viewer: "you".into(),
+            lines: lines.iter().map(|(path, range)| (path.to_string(), range.clone().collect())).collect(),
+            comments: Vec::new(),
+            reviews: Vec::new(),
+        }
+    }
+
     pub fn is_own(&self) -> bool {
         self.author.eq_ignore_ascii_case(&self.viewer)
     }
