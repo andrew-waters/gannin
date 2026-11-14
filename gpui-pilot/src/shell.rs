@@ -457,6 +457,8 @@ pub struct Workspace {
     /// but for the one that was showing (by its launch).
     reopening: usize,
     show_on_reopen: Option<String>,
+    /// Workflows for launches being started, by launch id.
+    launch_workflows: std::collections::HashMap<String, crate::workflows::Workflow>,
     /// Explain's sheet, while it's open.
     explain: Option<(Entity<crate::explain::ExplainSheet>, Subscription)>,
     sync: SyncStatus,
@@ -747,6 +749,7 @@ impl Workspace {
             launch_form: None,
             pr_picker: None,
             explain: None,
+            launch_workflows: Default::default(),
             reopening: 0,
             slot: 0,
             show_on_reopen: None,
@@ -1121,13 +1124,47 @@ impl Workspace {
     }
 
     fn start_now(&mut self, launch: crate::launch::Launch, brief: &str, prompt: &str, disallow_edits: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if let Err(error) = launch.prepare(brief, prompt, disallow_edits) {
+        let workflow = self.launch_workflows.remove(&launch.id);
+        let gate = workflow.as_ref().is_some_and(|w| !w.steps_when(crate::workflows::When::Local).is_empty());
+        if let Err(error) = launch.prepare(brief, prompt, disallow_edits, gate) {
             let _ = window.prompt(gpui::PromptLevel::Critical, "Couldn't start the session", Some(&error.to_string()), &["OK"], cx);
             return;
+        }
+        if let Some(workflow) = workflow {
+            self.start_workflow(&launch, workflow, cx);
         }
         self.drawers.clear();
         let folder = launch.harness_path.clone();
         self.open_session(Kind::Claude, folder, Some(launch), window, cx);
+    }
+
+    /// Keeps the workflow with the session, and runs its prepare steps
+    /// while the start script waits (`preparing`), adding their notes to the
+    /// brief.
+    fn start_workflow(&mut self, launch: &crate::launch::Launch, workflow: crate::workflows::Workflow, cx: &mut Context<Self>) {
+        use crate::work_flow::{prepare, write_run, Run};
+        let dir = launch.dir();
+        let _ = std::fs::write(dir.join("workflow.json"), serde_json::to_vec_pretty(&workflow).unwrap_or_default());
+        let has_prepare = workflow.steps_when(crate::workflows::When::Prepare).iter().any(|s| s.command.is_none());
+        write_run(&dir, &Run { workflow: workflow.name.clone(), prepare: if has_prepare { "running".into() } else { "skipped".into() }, ..Default::default() });
+        if !has_prepare {
+            return;
+        }
+        let _ = std::fs::write(dir.join("preparing"), "");
+        let harness = launch.harness_path.clone();
+        cx.background_executor()
+            .spawn(async move {
+                let specialists = crate::workflows::specialists(&harness);
+                let brief = std::fs::read_to_string(dir.join("brief.md")).unwrap_or_default();
+                let notes = prepare(&harness, &brief, &workflow, &specialists);
+                let _ = std::fs::write(dir.join("brief.md"), format!("{brief}{notes}"));
+                if let Some(mut run) = crate::work_flow::read_run(&dir) {
+                    run.prepare = "done".into();
+                    write_run(&dir, &run);
+                }
+                let _ = std::fs::remove_file(dir.join("preparing"));
+            })
+            .detach();
     }
 
     fn no_harness(window: &mut Window, cx: &mut App) {
@@ -1156,8 +1193,15 @@ impl Workspace {
         let launch = Launch::new(Flow::Work, format!("#{} {}", issue.number, issue.title), &org, &harness, branch.clone(), Some(subject));
         let text = detail::load_text(&issue.id);
         let parent = issue.parent_id.as_deref().and_then(|id| self.issues.read(cx).issue(id));
-        let brief = work_brief(&issue, text.as_ref(), parent.as_ref(), &launch);
+        let mut brief = work_brief(&issue, text.as_ref(), parent.as_ref(), &launch);
         let prompt = launch::opening_prompt(&reference, &issue.title, &branch);
+        // Your workflow for Work on This; Gannin's own runs the session alone.
+        let workflow = crate::workflows::default_for("work", Some(&launch.harness_path));
+        if !workflow.is_built_in() {
+            let specialists = crate::workflows::specialists(&launch.harness_path);
+            brief.push_str(&crate::work_flow::brief_section(&workflow, &specialists));
+            self.launch_workflows.insert(launch.id.clone(), workflow);
+        }
         self.start_launch(launch, &brief, &prompt, false, window, cx);
     }
 

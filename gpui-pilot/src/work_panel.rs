@@ -225,6 +225,13 @@ pub struct WorkPanel {
     /// Diffs read for a live session, by worktree, path and mode.
     diffs: std::collections::HashMap<(String, String, bool), Vec<String>>,
     _poll: Option<gpui::Task<()>>,
+    /// The workflow the live session runs through, and its local review:
+    /// whether a round is going, the request last taken up, and a message
+    /// waiting for claude's turn to end.
+    flow: Option<crate::workflows::Workflow>,
+    round_running: bool,
+    handled_request: Option<std::time::SystemTime>,
+    pending_message: Option<String>,
     pane: Pane,
     /// The workflow stage whose detail shows.
     stage: usize,
@@ -260,6 +267,10 @@ impl WorkPanel {
             live: None,
             diffs: Default::default(),
             _poll: None,
+            flow: None,
+            round_running: false,
+            handled_request: None,
+            pending_message: None,
             pane: Pane::Issue,
             stage: 0,
             panel_open: true,
@@ -298,6 +309,7 @@ impl WorkPanel {
         };
         let mut panel = Self::new(data, Some(view), window, cx);
         let (folder, claude_id, dir) = (launch.folder(), launch.claude_id(), launch.dir());
+        panel.flow = crate::work_flow::read_workflow(&launch.dir());
         panel.live = Some(Live { launch, terminal });
         panel._poll = Some(cx.spawn(async move |this, cx| {
             let mut tick = 0u32;
@@ -334,6 +346,7 @@ impl WorkPanel {
                             }
                         }
                         this.refresh_state(&dir, cx);
+                        this.step_workflow(&dir, cx);
                         cx.notify();
                     })
                     .is_ok();
@@ -345,6 +358,184 @@ impl WorkPanel {
             }
         }));
         panel
+    }
+
+    /// The workflow's local review: takes up a held push (a round on its
+    /// worktree and commit), sends a round's findings once claude's turn has
+    /// ended, and redraws the strip.
+    fn step_workflow(&mut self, dir: &std::path::Path, cx: &mut Context<Self>) {
+        let Some(flow) = self.flow.clone() else { return };
+        if !self.round_running {
+            if let Some((worktree, sha, at)) = crate::work_flow::pending_request(dir) {
+                if self.handled_request != Some(at) {
+                    self.handled_request = Some(at);
+                    self.start_round(dir.to_path_buf(), worktree, sha, flow.clone(), cx);
+                }
+            }
+        }
+        if self.data.state != WorkState::Working {
+            if let Some(message) = self.pending_message.take() {
+                self.send(message, false, cx);
+            }
+        }
+        self.data.workflow = Some(self.live_strip(&flow, dir));
+    }
+
+    fn start_round(&mut self, dir: std::path::PathBuf, worktree: std::path::PathBuf, sha: String, flow: crate::workflows::Workflow, cx: &mut Context<Self>) {
+        use crate::work_flow::{read_run, write_run};
+        let mut run = read_run(&dir).unwrap_or_default();
+        // A new series after the last one cleared; else the next round.
+        let earlier: Vec<crate::work_flow::Finding> = if run.local.status == "clear" { Vec::new() } else { run.local.steps.iter().flat_map(|s| s.findings.clone()).collect() };
+        run.local.round = if run.local.status == "clear" || run.local.round == 0 { 1 } else { run.local.round + 1 };
+        run.local.status = "running".into();
+        run.local.sha = sha.clone();
+        run.local.overridden = false;
+        write_run(&dir, &run);
+        self.round_running = true;
+        let round = run.local.round;
+        cx.spawn(async move |this, cx| {
+            let (results, clear) = cx
+                .background_executor()
+                .spawn({
+                    let (worktree, flow) = (worktree.clone(), flow.clone());
+                    async move {
+                        let harness = worktree.ancestors().find(|p| p.join(".gannin").is_dir() || p.join("specialists").is_dir()).map(|p| p.to_path_buf());
+                        let specialists = harness.map(|h| crate::workflows::specialists(&h)).unwrap_or_default();
+                        crate::work_flow::local_round(&worktree, &flow, &specialists, round, &earlier)
+                    }
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                let mut run = read_run(&dir).unwrap_or_default();
+                run.local.steps = results.clone();
+                run.local.status = if clear { "clear".into() } else { "holding".into() };
+                write_run(&dir, &run);
+                if clear {
+                    crate::work_flow::clear(&dir, &sha);
+                }
+                this.pending_message = Some(crate::work_flow::round_message(round, &sha, &results, clear));
+                this.round_running = false;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The strip for a live session, from its workflow and where it's got.
+    fn live_strip(&self, flow: &crate::workflows::Workflow, dir: &std::path::Path) -> WorkflowRun {
+        use crate::workflows::When;
+        let run = crate::work_flow::read_run(dir).unwrap_or_default();
+        let mut stages = Vec::new();
+        let prepare = flow.steps_when(When::Prepare);
+        if !prepare.is_empty() {
+            let status = match run.prepare.as_str() {
+                "done" => StageStatus::Done,
+                "running" => StageStatus::Running,
+                _ => StageStatus::Waiting,
+            };
+            stages.push(StageRun {
+                title: "Prepare".into(),
+                status,
+                note: String::new(),
+                steps: prepare.iter().map(|s| StepRun { name: s.label(&[]), provider: "Claude Code".into(), status, summary: if status == StageStatus::Done { "Its notes are in the session's brief.".into() } else { String::new() }, findings: vec![] }).collect(),
+            });
+        }
+        let merged = !self.data.prs.is_empty() && self.data.prs.iter().all(|p| p.state == PrState::Merged);
+        let session = if merged { StageStatus::Done } else if self.data.state == WorkState::Starting { StageStatus::Waiting } else { StageStatus::Running };
+        stages.push(StageRun { title: "Session".into(), status: session, note: self.data.state.label().into(), steps: vec![StepRun { name: "Session".into(), provider: "Claude Code".into(), status: session, summary: "The terminal on the left.".into(), findings: vec![] }] });
+        let local = flow.steps_when(When::Local);
+        if !local.is_empty() {
+            let status = match run.local.status.as_str() {
+                "running" => StageStatus::Running,
+                "holding" => StageStatus::Holding,
+                "clear" => StageStatus::Done,
+                _ => StageStatus::Waiting,
+            };
+            let blocking = run.local.steps.iter().flat_map(|s| s.findings.iter()).filter(|f| matches!(f.severity.as_str(), "blocker" | "major")).count();
+            let failed = run.local.steps.iter().filter(|s| s.provider == "Command" && s.status == "failed").count();
+            let note = match status {
+                StageStatus::Running => format!("Round {}", run.local.round),
+                StageStatus::Holding => {
+                    let mut parts = vec![format!("Round {}", run.local.round)];
+                    if blocking > 0 {
+                        parts.push(format!("{blocking} to fix"));
+                    }
+                    if failed > 0 {
+                        parts.push(format!("{failed} failing"));
+                    }
+                    parts.join(" · ")
+                }
+                StageStatus::Done if run.local.overridden => "Pushed anyway".into(),
+                StageStatus::Done => "Clear".into(),
+                _ => String::new(),
+            };
+            let steps = if run.local.steps.is_empty() {
+                local.iter().map(|s| StepRun { name: s.label(&[]), provider: if s.command.is_some() { "Command".into() } else { "Claude Code".into() }, status: StageStatus::Waiting, summary: "Runs when the session first pushes.".into(), findings: vec![] }).collect()
+            } else {
+                run.local
+                    .steps
+                    .iter()
+                    .map(|r| StepRun {
+                        name: r.label.clone(),
+                        provider: r.provider.clone(),
+                        status: match r.status.as_str() {
+                            "failed" => StageStatus::Failed,
+                            "holding" => StageStatus::Holding,
+                            _ => StageStatus::Done,
+                        },
+                        summary: r.summary.clone(),
+                        findings: r.findings.iter().map(|f| LocalFinding { severity: f.severity.clone(), path: format!("{}{}", f.path, f.line.map(|l| format!(":{l}")).unwrap_or_default()), text: f.comment.clone(), outcome: None }).collect(),
+                    })
+                    .collect()
+            };
+            stages.push(StageRun { title: "Local review".into(), status, note, steps });
+        }
+        let failing = self.data.prs.iter().any(|p| p.state == PrState::Open && !p.failed.is_empty());
+        let open_feedback = self.data.prs.iter().filter(|p| p.state == PrState::Open).map(|p| p.feedback.iter().filter(|f| !f.sent).count()).sum::<usize>();
+        let pr = if self.data.prs.is_empty() {
+            StageStatus::Waiting
+        } else if merged {
+            StageStatus::Done
+        } else if failing {
+            StageStatus::Failed
+        } else {
+            StageStatus::Running
+        };
+        stages.push(StageRun {
+            title: "On the PR".into(),
+            status: pr,
+            note: if failing { "Checks failing".into() } else if open_feedback > 0 { format!("{open_feedback} comments") } else { String::new() },
+            steps: self
+                .data
+                .prs
+                .iter()
+                .map(|p| StepRun {
+                    name: format!("{}#{}", p.repo.rsplit('/').next().unwrap_or(&p.repo), p.number),
+                    provider: "Pull request".into(),
+                    status: if p.state == PrState::Merged { StageStatus::Done } else if !p.failed.is_empty() { StageStatus::Failed } else { StageStatus::Running },
+                    summary: format!("{} passed, {} failed, {} running; {} comments.", p.passed, p.failed.len(), p.pending.len(), p.feedback.len()),
+                    findings: vec![],
+                })
+                .collect(),
+        });
+        let done = merged || (!self.data.prs.is_empty() && !failing && open_feedback == 0 && self.data.prs.iter().all(|p| p.pending.is_empty()));
+        stages.push(StageRun { title: "Done".into(), status: if done { StageStatus::Done } else { StageStatus::Waiting }, note: String::new(), steps: vec![] });
+        WorkflowRun { name: flow.name.clone(), stages }
+    }
+
+    /// Push Anyway: lets the held commit through, and tells claude.
+    fn push_anyway(&mut self, cx: &mut Context<Self>) {
+        let Some(live) = &self.live else { return };
+        let dir = live.launch.dir();
+        let Some(mut run) = crate::work_flow::read_run(&dir) else { return };
+        crate::work_flow::clear(&dir, &run.local.sha);
+        run.local.status = "clear".into();
+        run.local.overridden = true;
+        crate::work_flow::write_run(&dir, &run);
+        let short: String = run.local.sha.chars().take(7).collect();
+        self.send(format!("Gannin's local review was overridden for {short}: push it now. Its findings still stand, so deal with them in a later commit."), false, cx);
+        cx.notify();
     }
 
     /// Where claude is, from the hooks' state file, and what it's asking.
@@ -386,7 +577,7 @@ impl WorkPanel {
         let terminal = live.terminal.clone();
         cx.spawn(async move |_, cx| {
             if escape_first {
-                terminal.update(cx, |t, _| t.input(b"\x1b".to_vec()));
+                terminal.update(cx, |t, _| t.input(b"\x1b[27u".to_vec()));
                 cx.background_executor().timer(std::time::Duration::from_millis(400)).await;
             }
             terminal.update(cx, |t, _| t.paste(&text));
@@ -396,7 +587,9 @@ impl WorkPanel {
         .detach();
     }
 
-    /// Raw keys to the terminal (a choice's digit, Return, Esc).
+    /// Keys to the terminal: a choice's digit, Return, or Esc. Claude Code
+    /// turns on the kitty keyboard protocol, so Esc goes as `CSI 27 u`: a
+    /// bare escape byte is ignored.
     fn keys(&self, bytes: &[u8], cx: &mut Context<Self>) {
         if let Some(live) = &self.live {
             let bytes = bytes.to_vec();
@@ -462,9 +655,9 @@ impl WorkPanel {
         let Some(live) = &self.live else { return };
         let terminal = live.terminal.clone();
         cx.spawn(async move |_, cx| {
-            terminal.update(cx, |t, _| t.input(b"\x03".to_vec()));
+            terminal.update(cx, |t, _| t.input(b"\x1b[99;5u".to_vec()));
             cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
-            terminal.update(cx, |t, _| t.input(b"\x03".to_vec()));
+            terminal.update(cx, |t, _| t.input(b"\x1b[99;5u".to_vec()));
         })
         .detach();
     }
@@ -698,6 +891,9 @@ impl WorkPanel {
                         .child(Self::button("push-anyway", "Push Anyway", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             // The gate lets this commit through; the review's
                             // findings stay for the session.
+                            if this.live.is_some() {
+                                return this.push_anyway(cx);
+                            }
                             let stage = this.stage;
                             if let Some(s) = this.data.workflow.as_mut().and_then(|w| w.stages.get_mut(stage)) {
                                 s.status = StageStatus::Done;
@@ -929,7 +1125,7 @@ impl WorkPanel {
             .child(Self::button("work-send", "Send", false, running, theme).when(running, |b| b.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send_composer(window, cx)))))
             .child(Self::button("work-stop", "Stop", false, state == WorkState::Working, theme).when(state == WorkState::Working, |b| {
                 // Esc stops claude mid-turn, to say something else.
-                b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b", cx)))
+                b.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b[27u", cx)))
             }))
             .when_some(self.data.last_check, |d, passed| {
                 d.child(div().flex_none().text_xs().text_color(if passed { theme.good() } else { theme.critical() }).child(if passed { "Passed" } else { "Failed" }))
@@ -997,7 +1193,7 @@ impl WorkPanel {
                         .gap_2()
                         // The terminal's own choices, each picked by its digit;
                         // without them, Allow (Return) and Deny (Esc).
-                        .child(Self::button("perm-deny", "Deny", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b", cx))))
+                        .child(Self::button("perm-deny", "Deny", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b[27u", cx))))
                         .map(|row| {
                             if choices.is_empty() {
                                 row.child(Self::button("perm-allow", "Allow", true, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\r", cx))))
@@ -1090,7 +1286,7 @@ impl WorkPanel {
                         } else {
                             format!("{answered} of {} answered. Any left go as \"your call\".", questions.len())
                         }))
-                        .child(Self::button("q-dismiss", "Dismiss", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b", cx))))
+                        .child(Self::button("q-dismiss", "Dismiss", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.keys(b"\x1b[27u", cx))))
                         .child(Self::button("q-send", "Send Answers", true, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.send_answers(cx)))),
                 )
             }

@@ -108,11 +108,11 @@ impl Launch {
 
     /// Writes the brief, the hooks and the start script, and the session's
     /// record; `extra` adds files the flow needs (Ask's context README).
-    pub fn prepare(&self, brief: &str, prompt: &str, disallow_edits: bool) -> std::io::Result<()> {
+    pub fn prepare(&self, brief: &str, prompt: &str, disallow_edits: bool, gate: bool) -> std::io::Result<()> {
         let dir = self.dir();
         std::fs::create_dir_all(&dir)?;
         std::fs::write(dir.join("brief.md"), brief)?;
-        std::fs::write(dir.join("settings.json"), settings_json(&dir))?;
+        std::fs::write(dir.join("settings.json"), settings_json(&dir, gate))?;
         std::fs::write(dir.join("start.sh"), self.start_script(prompt, disallow_edits))?;
         std::fs::write(dir.join("state"), "starting")?;
         std::fs::write(dir.join("session.json"), serde_json::to_vec_pretty(self).unwrap_or_default())?;
@@ -178,6 +178,11 @@ done
 mkdir -p "$folder/.gannin" || fail "Couldn't make $folder."
 cp "$session/brief.md" "$folder/.gannin/"
 {copies}cp "$session/settings.json" "$folder/.gannin/settings.json"
+if [ -e "$session/preparing" ]; then
+  note "Waiting for the workflow's prepare steps"
+  while [ -e "$session/preparing" ]; do sleep 1; done
+  cp "$session/brief.md" "$folder/.gannin/"
+fi
 cd "$harness" || fail "The harness isn't there."
 command -v claude >/dev/null 2>&1 || fail "claude isn't on your PATH. Install Claude Code, then Resume the session."
 if [ -e "$session/started" ]; then
@@ -237,7 +242,7 @@ fn quote_path(path: &Path) -> String {
 
 /// Claude Code's settings with Gannin's hooks: each writes the session's
 /// state, or records a change or an opened pull request, into its folder.
-fn settings_json(dir: &Path) -> String {
+fn settings_json(dir: &Path, gate: bool) -> String {
     let file = |name: &str| format!("{}/{name}", quote_path(dir));
     let state = |value: &str| serde_json::json!({ "type": "command", "command": format!("printf {value} > {} 2>/dev/null; exit 0", file("state")) });
     let pr_hook = PR_HOOK.replace("__PR__", &file("pr"));
@@ -265,6 +270,13 @@ fn settings_json(dir: &Path) -> String {
             ] }],
         },
     });
+    let mut settings = settings;
+    // A workflow's local review holds pushes until it's clear.
+    if gate {
+        if let Some(pre) = settings["hooks"]["PreToolUse"].as_array_mut() {
+            pre.push(serde_json::json!({ "matcher": "Bash", "hooks": [{ "type": "command", "command": crate::work_flow::gate_hook(dir) }] }));
+        }
+    }
     serde_json::to_string_pretty(&settings).unwrap_or_default()
 }
 

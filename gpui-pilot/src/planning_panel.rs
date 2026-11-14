@@ -73,7 +73,7 @@ impl PlanningPanel {
         let terminal = self.terminal.clone();
         cx.spawn_in(window, async move |_, cx| {
             if waiting {
-                terminal.update(cx, |t, _| t.input(b"\x1b".to_vec()));
+                terminal.update(cx, |t, _| t.input(b"\x1b[27u".to_vec()));
                 cx.background_executor().timer(Duration::from_millis(400)).await;
             }
             terminal.update(cx, |t, _| t.paste(&message));

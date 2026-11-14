@@ -30,9 +30,11 @@ mod review_panel;
 mod review_preview;
 mod review_record;
 mod schedule_preview;
+mod work_flow;
 mod work_live;
 mod work_panel;
 mod work_preview;
+mod workflows;
 mod workflow_editor_preview;
 mod scorecard;
 mod pr_picker;
@@ -70,7 +72,7 @@ fn main() {
                 dry.harness_path = harness;
                 let prompt = launch::opening_prompt("acme/api#12", "Fix the thing's \"edge\"", &branch);
                 let brief = format!("# acme/api#12: Fix\n\n{}", launch::working_here("acme/harness", &dry.harness_path, &branch, Some("acme/api#12"), "acme/api", false));
-                dry.prepare(&brief, &prompt, false).expect("prepare");
+                dry.prepare(&brief, &prompt, false, false).expect("prepare");
                 println!("{}", dry.dir().join("start.sh").display());
                 return;
             }
