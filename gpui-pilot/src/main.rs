@@ -1,10 +1,11 @@
-//! Gannin's Actions page on GPUI: a pilot to judge whether the app's
-//! charts, tables and feel survive a move off SwiftUI. Read-only: it opens
-//! the Swift app's Actions cache and never calls GitHub.
+//! Gannin on GPUI: a pilot to judge whether the app's pages, sessions and
+//! feel survive a move off SwiftUI. It reads Gannin's caches, never writes
+//! them, and never calls GitHub; its sessions run claude or a shell.
 //!
 //! cargo run --release -- [--org NAME] [--days 7|30|90]
 
 mod avatars;
+mod changes;
 mod charts;
 mod data;
 mod detail;
@@ -14,14 +15,17 @@ mod markdown;
 mod metrics;
 mod page;
 mod projects;
+mod session;
 mod shell;
 mod state;
+mod work;
+mod zed;
 
 use gpui::{
-    actions, point, px, size, App, AppContext, Application, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions,
+    actions, point, px, size, App, AppContext, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions,
     WindowBounds, WindowOptions,
 };
-use shell::{CloseTab, OpenSwitcher, ToggleDock, ToggleInspector, ToggleSidebar, Workspace};
+use shell::{CloseTab, NewClaudeSession, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
 
 actions!(pilot, [Quit]);
 
@@ -37,28 +41,36 @@ fn main() {
         }
     }
 
-    Application::new().run(move |cx: &mut App| {
+    gpui_platform::application().with_assets(assets::Assets).run(move |cx: &mut App| {
+        zed::init(cx);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
         cx.bind_keys(shell::key_bindings());
-        cx.on_action(|_: &Quit, cx| cx.quit());
         cx.set_menus(vec![
-            Menu { name: "Gannin GPUI Pilot".into(), items: vec![MenuItem::action("Quit", Quit)] },
+            Menu { name: "Gannin GPUI Pilot".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false },
             Menu {
                 name: "File".into(),
-                items: vec![MenuItem::action("Switch Org", OpenSwitcher), MenuItem::separator(), MenuItem::action("Close Tab", CloseTab)],
+                items: vec![
+                    MenuItem::action("New Claude Code Session", NewClaudeSession),
+                    MenuItem::action("New Terminal", NewTerminal),
+                    MenuItem::separator(),
+                    MenuItem::action("Switch Org", OpenSwitcher),
+                    MenuItem::separator(),
+                    MenuItem::action("Close Tab", CloseTab),
+                ],
+                disabled: false,
             },
             Menu {
                 name: "View".into(),
                 items: vec![
                     MenuItem::action("Toggle Sidebar", ToggleSidebar),
-                    MenuItem::action("Toggle Inspector", ToggleInspector),
-                    MenuItem::action("Toggle Claude Code", ToggleDock),
+                    MenuItem::action("Toggle Your Work", ToggleInspector),
                 ],
+                disabled: false,
             },
         ]);
 
         let bounds = Bounds::centered(None, size(px(1440.), px(940.)), cx);
-        cx.open_window(
+        let workspace = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 // The app draws its own title bar, with the traffic lights over it.
@@ -82,7 +94,13 @@ fn main() {
             },
         )
         .expect("open the window");
-        cx.on_window_closed(|cx| {
+        // Quit asks first while sessions run.
+        cx.on_action(move |_: &Quit, cx| {
+            if workspace.update(cx, |workspace, window, cx| workspace.quit(window, cx)).is_err() {
+                cx.quit();
+            }
+        });
+        cx.on_window_closed(|cx, _| {
             if cx.windows().is_empty() {
                 cx.quit();
             }

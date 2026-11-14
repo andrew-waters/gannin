@@ -2,25 +2,33 @@
 
 A pilot for moving Gannin off SwiftUI onto [GPUI](https://www.gpui.rs), Zed's Rust UI framework,
 and for consolidating its windows into one. It rebuilds the CI page (the part of the app that
-leans hardest on Swift Charts) and the Issues page with its drawer, inside a single-window shell.
+leans hardest on Swift Charts), the Issues page with its drawer, and sessions (Claude Code in Zed's
+terminal beside its code change in Zed's diff view), inside a single-window shell.
 
-It's a separate Cargo binary and isn't part of the Xcode build. It only reads: it opens Gannin's
-caches and settings and never calls GitHub. Open CI and Issues in Gannin at least once so there's
+**Licence:** it builds on Zed's own crates from Zed's repository (`terminal`, `terminal_view`,
+`editor`, `buffer_diff`, `multi_buffer` and what they need), which are GPL-3.0. Anything shipped on
+this code would have to be GPL-3.0 too. Only `gpui` and a few utility crates are Apache-2.0.
+
+It's a separate Cargo binary and isn't part of the Xcode build. It reads Gannin's caches and
+settings, never writes them and never calls GitHub; a session's terminal runs whatever you run in it. Open CI and Issues in Gannin at least once so there's
 something to read.
 
 ## Running it
 
-Needs a Rust toolchain (`rustup`) and Xcode's command line tools. The `runtime_shaders` feature
+Needs a Rust toolchain (`rustup`), Xcode's command line tools and `cmake` (tree-sitter's wasm
+runtime, which Zed's `language` crate pulls in, builds with it). The `runtime_shaders` feature
 compiles GPUI's Metal shaders at launch, so the separate Metal toolchain download isn't needed.
 
 ```bash
-brew install rustup && rustup default stable   # rustup is keg-only: add /opt/homebrew/opt/rustup/bin to PATH
+brew install rustup cmake && rustup default stable   # rustup is keg-only: add /opt/homebrew/opt/rustup/bin to PATH
 cd gpui-pilot
 export SDKROOT="$(xcrun --show-sdk-path)" BINDGEN_EXTRA_CLANG_ARGS="-isysroot $SDKROOT"
 cargo run --release -- [--org <org>] [--days 30]
 ```
 
-GPUI's build script runs bindgen over `dispatch.h`, which can't find the macOS SDK on its own, hence
+The first build compiles Zed's dependency tree (over a thousand crates) and takes a while; after
+that a change rebuilds in seconds. Zed is pinned to one commit in `Cargo.toml`, and the lockfile
+started from Zed's own so the versions match its. GPUI's build script runs bindgen over `dispatch.h`, which can't find the macOS SDK on its own, hence
 the two variables. `--org` and `--days` override what was saved.
 
 ## What it reads
@@ -31,6 +39,7 @@ the two variables. `--org` and `--days` override what was saved.
 | Issues, board fields, status history, linked PRs | `Application Support/StoredIssues/<org>.json` |
 | Descriptions and comments | `Application Support/Details.json`, else `dev.andon.gannin/IssueText.sqlite` |
 | Projects and the issue workflow | `Application Support/UserData/Gannin.store` (org settings) and `Application Support/Harness/*.json` (each harness's `.gannin/project.json`) |
+| Your login, PRs you're asked to review and your own PRs | Gannin's `viewer` preference and `Application Support/PullRequests/<org>.json` |
 | Avatars | Downloaded once with `curl` into `~/Library/Caches/GanninGPUIPilot/avatars` |
 
 Where the window was left (org, project, tabs, panels, each page's controls and columns) is saved
@@ -50,17 +59,33 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   `IssueFilterBar` (search, multi-select State, Assignee, Repository, Label, Board, Field,
   Milestone), the sub-issue tree with a drill-down into a parent, and columns each person chooses,
   orders by dragging and sizes, with board fields as columns.
+- **Sessions** (`src/session.rs`, `src/changes.rs`): New Claude Code (Command-T) or New Terminal
+  asks for a folder and opens a tab with Zed's own `TerminalView` beside the folder's uncommitted
+  changes in Zed's editor, as a multibuffer of hunks per file, read with git every two seconds
+  while the tab shows. Zed's views run without a Zed workspace or project (empty handles), with
+  Zed's default settings, theme and fonts (`src/zed.rs`). State comes from the terminal, as no
+  hooks are installed: output moving is Working, a prompt on screen or the bell is Needs you,
+  quiet is Your turn.
+- **Your Work** (`src/shell.rs`, `src/work.rs`): the right-hand panel, after the menu bar's list.
+  Sessions waiting on you, reviews asked of you, your PRs needing you, sessions working, your
+  other PRs and issues assigned to you, in that order. A session or an issue switches to its tab;
+  a PR opens on GitHub. Built from caches, so Conflicts and team review requests don't show.
 - **Issue drawer** (`src/shell.rs`, `src/detail.rs`, `src/markdown.rs`): what `IssueWindow` shows,
   with timing under the org's workflow and Markdown through pulldown-cmark.
 
-Left out: Me in filters (no signed-in viewer), images in Markdown, commits in the timeline (they
+Left out: Me in filters, images in Markdown, commits in the timeline (they
 need the work log), session and agent actions, the Investment picker, harness documents, every
-write to GitHub and every other page.
+write to GitHub, Gannin's own sessions (their state is only in its memory), staging or committing
+from the diff, syntax colours in it (Zed's grammars aren't loaded) and every other page.
 
 ## What it has shown
 
 - **Missing from GPUI:** charts, a text field (the search fields take keys by hand: no cursor,
   selection or paste beyond Command-V), a Markdown renderer, tooltips as plain strings, loading
   images from a URL without wiring in an HTTP client, SF Symbols, and accessibility.
+- **Zed's GPL crates fill most of it:** its terminal and diff editor run outside Zed with empty
+  workspace and project handles and its default settings. The cost is the licence, a much bigger
+  first build, and tracking Zed's main branch, whose gpui API moves (focus now takes the app,
+  menus have `disabled`, text needs `gpui_platform`'s `font-kit` feature).
 - **Possible regardless:** custom chrome, drawers with animation, drag and drop, virtualised
   lists, popovers and keyboard handling all came together quickly from GPUI's primitives.

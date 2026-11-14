@@ -54,7 +54,7 @@ fn path(login: &str, url: Option<&str>, cx: &mut App) -> Option<PathBuf> {
     });
     cx.spawn(async move |cx| {
         if task.await {
-            cx.update(|cx| cx.refresh_windows()).ok();
+            cx.update(|cx| cx.refresh_windows());
         }
     })
     .detach();

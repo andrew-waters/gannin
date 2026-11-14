@@ -1055,6 +1055,14 @@ impl IssuesPage {
         self.issues.iter().find(|i| i.id == id).cloned()
     }
 
+    /// Open issues assigned to `login`, recently updated first.
+    pub fn assigned_to(&self, login: &str) -> Vec<IssueItem> {
+        let mut assigned: Vec<IssueItem> =
+            self.issues.iter().filter(|i| i.is_open() && i.assignee_logins.iter().any(|l| l == login)).cloned().collect();
+        assigned.sort_by_key(|i| std::cmp::Reverse(i.updated_at.unwrap_or(i.created_at)));
+        assigned
+    }
+
     /// Its sub-issues, open ones first, then by number.
     pub fn sub_issues(&self, id: &str) -> Vec<IssueItem> {
         let mut children: Vec<IssueItem> = self.issues.iter().filter(|i| i.parent_id.as_deref() == Some(id)).cloned().collect();
@@ -1618,7 +1626,7 @@ impl IssuesPage {
             .track_focus(&self.search_focus)
             .on_key_down(cx.listener(Self::search_key))
             .on_click(cx.listener(|page, _: &ClickEvent, window, cx| {
-                window.focus(&page.search_focus);
+                window.focus(&page.search_focus, cx);
                 cx.notify();
             }))
             .w(px(240.))
@@ -1767,7 +1775,7 @@ impl IssuesPage {
                 .gap_1()
                 .overflow_hidden()
                 .when_some(issue.statuses.first(), |d, (status, _)| {
-                    d.child(div().flex_shrink().min_w_0().truncate().px_1p5().rounded_sm().bg(theme.tile).child(status.clone()))
+                    d.child(div().flex_shrink(1.).min_w_0().truncate().px_1p5().rounded_sm().bg(theme.tile).child(status.clone()))
                 })
                 .when(issue.statuses.len() > 1, |d| {
                     d.child(div().flex_none().text_xs().text_color(theme.secondary).child(format!("+{}", issue.statuses.len() - 1)))
@@ -1868,7 +1876,7 @@ impl IssuesPage {
             .items_center()
             .gap_1p5()
             .pl(px(row.depth as f32 * 18.))
-            .child(div().flex_shrink().min_w(px(60.)).truncate().child(issue.title.clone()))
+            .child(div().flex_shrink(1.).min_w(px(60.)).truncate().child(issue.title.clone()))
             .when_some(row.context.clone(), |d, context| {
                 d.child(div().flex_1().min_w_0().truncate().text_xs().text_color(theme.tertiary).child(context))
             })

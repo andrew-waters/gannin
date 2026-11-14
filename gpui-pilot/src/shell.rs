@@ -1,8 +1,8 @@
 //! A consolidated, single-window shell: the title bar with the org
-//! switcher, the navigation sidebar, pages as tabs, an inspector on the
-//! right (in place of drawers and the Pull Request, Issue and Explain
-//! windows) and a dock for Claude Code sessions (in place of its window).
-//! Structure only: CI is the one real page.
+//! switcher, the navigation sidebar, pages as tabs (a session, its terminal
+//! and its code change, is a tab too, in place of the Claude Code window),
+//! and on the right the menu bar's "Your work", which lists what's in
+//! flight and switches to it.
 
 use crate::charts::{histogram_cell, spark_bars, Theme};
 use crate::data;
@@ -16,21 +16,24 @@ use chrono::{DateTime, Local, Utc};
 use std::sync::Arc;
 use crate::metrics::RepoStats;
 use crate::page::{ActionsPage, OpenRepo};
+use crate::session::{self, Changed, Kind, SessionPage, State};
 use crate::state::SavedState;
+use crate::work::{self, Pr, Work};
 use gpui::{
-    actions, anchored, black, deferred, div, ease_out_quint, prelude::*, px, relative, Animation, AnimationExt, AnyElement, ClickEvent, Context, App, Entity, FocusHandle, FontWeight, KeyBinding,
+    actions, anchored, Focusable, black, deferred, div, ease_out_quint, prelude::*, px, relative, Animation, AnimationExt, AnyElement, ClickEvent, Context, App, Entity, FocusHandle, FontWeight, KeyBinding,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Subscription, Window,
     WindowAppearance,
 };
 use std::collections::HashSet;
 
-actions!(workspace, [ToggleSidebar, ToggleInspector, ToggleDock, CloseTab, OpenSwitcher]);
+actions!(shell, [ToggleSidebar, ToggleInspector, NewClaudeSession, NewTerminal, CloseTab, OpenSwitcher]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
         KeyBinding::new("ctrl-cmd-s", ToggleSidebar, None),
         KeyBinding::new("cmd-alt-i", ToggleInspector, None),
-        KeyBinding::new("cmd-j", ToggleDock, None),
+        KeyBinding::new("cmd-t", NewClaudeSession, None),
+        KeyBinding::new("ctrl-`", NewTerminal, None),
         KeyBinding::new("cmd-w", CloseTab, None),
         KeyBinding::new("cmd-alt-o", OpenSwitcher, None),
     ]
@@ -76,6 +79,9 @@ pub enum Nav {
     Routines,
     Queue,
     Settings,
+    /// A session's tab, by the pilot's own number for it. Not restored at
+    /// launch: its terminal ended with the last run.
+    Session(u32),
 }
 
 impl Nav {
@@ -112,6 +118,7 @@ impl Nav {
             Nav::Routines => "Routines",
             Nav::Queue => "Queue",
             Nav::Settings => "Settings",
+            Nav::Session(_) => "Session",
         }
     }
 }
@@ -179,7 +186,6 @@ fn sections() -> Vec<Section> {
 enum Edge {
     Sidebar,
     Inspector,
-    Dock,
 }
 
 /// What the inspector shows; issues open in drawers instead.
@@ -237,10 +243,8 @@ pub struct Workspace {
     inspector: Option<Inspected>,
     sidebar_open: bool,
     inspector_open: bool,
-    dock_open: bool,
     sidebar_width: f32,
     inspector_width: f32,
-    dock_height: f32,
     resizing: Option<Edge>,
     switcher: Option<Switcher>,
     /// Bottom first; the last is on top.
@@ -248,6 +252,10 @@ pub struct Workspace {
     drawer_seq: usize,
     actions_page: Entity<ActionsPage>,
     issues: Entity<IssuesPage>,
+    sessions: Vec<Entity<SessionPage>>,
+    next_session: u32,
+    /// Reviews asked of you and your PRs, from the org's PR cache.
+    work: Work,
     /// What was last written, so unchanged state isn't written again.
     last_saved: Option<SavedState>,
     _subscriptions: Vec<Subscription>,
@@ -262,10 +270,10 @@ impl Workspace {
             active: self.active,
             sidebar_open: self.sidebar_open,
             inspector_open: self.inspector_open,
-            dock_open: self.dock_open,
+            dock_open: false,
             sidebar_width: self.sidebar_width,
             inspector_width: self.inspector_width,
-            dock_height: self.dock_height,
+            dock_height: 220.0,
             collapsed_sections: {
                 let mut ids: Vec<String> = self.collapsed_sections.iter().map(|id| id.to_string()).collect();
                 ids.sort();
@@ -295,6 +303,17 @@ impl Workspace {
     }
 
     pub fn new(saved: SavedState, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // The window's close button is a quit (it's the only window), so it
+        // asks the same way.
+        let this = cx.entity().downgrade();
+        window.on_window_should_close(cx, move |window, cx| {
+            let Some(this) = this.upgrade() else { return true };
+            let running = !this.read(cx).running(cx).is_empty();
+            if running {
+                this.update(cx, |this, cx| this.quit(window, cx));
+            }
+            !running
+        });
         let mut workspace = Self::build(saved, window, cx);
         workspace.load_settings(cx);
         workspace
@@ -305,6 +324,7 @@ impl Workspace {
     /// falls back to home).
     fn load_settings(&mut self, cx: &mut Context<Self>) {
         let Some(org) = self.org.clone() else { return };
+        self.load_work(org.clone(), cx);
         cx.spawn(async move |this, cx| {
             let loaded = org.clone();
             let settings = cx.background_executor().spawn(async move { projects::load(&loaded) }).await;
@@ -342,7 +362,7 @@ impl Workspace {
         self.switcher = None;
         self.drawers.clear();
         self.inspector = None;
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         self.apply_focus(cx);
     }
 
@@ -364,7 +384,10 @@ impl Workspace {
                 cx.notify();
             }),
             cx.subscribe(&issues, open_issue),
-            cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
+            cx.observe_window_appearance(window, |_, window, cx| {
+                crate::zed::follow_appearance(window, cx);
+                cx.notify();
+            }),
             // Page controls change without the workspace redrawing.
             cx.observe(&actions_page, |this, _, cx| this.persist(cx)),
             // Also redraws the tab, which shows the page's count.
@@ -373,9 +396,10 @@ impl Workspace {
                 cx.notify();
             }),
         ];
-        let tabs: Vec<Nav> = saved.tabs.clone();
+        let tabs: Vec<Nav> = saved.tabs.iter().copied().filter(|nav| !matches!(nav, Nav::Session(_))).collect();
+        crate::zed::follow_appearance(window, cx);
         let focus = cx.focus_handle();
-        window.focus(&focus);
+        window.focus(&focus, cx);
         Self {
             focus,
             switcher_focus: cx.focus_handle(),
@@ -391,10 +415,8 @@ impl Workspace {
             inspector: None,
             sidebar_open: saved.sidebar_open,
             inspector_open: saved.inspector_open,
-            dock_open: saved.dock_open,
             sidebar_width: saved.sidebar_width,
             inspector_width: saved.inspector_width,
-            dock_height: saved.dock_height,
             last_saved: Some(saved),
             resizing: None,
             switcher: None,
@@ -402,6 +424,9 @@ impl Workspace {
             drawer_seq: 0,
             actions_page,
             issues,
+            sessions: Vec::new(),
+            next_session: 1,
+            work: Work::default(),
             _subscriptions: subscriptions,
         }
     }
@@ -416,19 +441,179 @@ impl Workspace {
         } else if new_tab || self.tabs.is_empty() {
             self.tabs.push(nav);
             self.active = self.tabs.len() - 1;
+        } else if matches!(self.tabs[self.active], Nav::Session(_)) {
+            // A session's tab keeps its session: the page opens beside it.
+            self.tabs.insert(self.active + 1, nav);
+            self.active += 1;
         } else {
             self.tabs[self.active] = nav;
         }
         cx.notify();
     }
 
+    fn session(&self, id: u32, cx: &App) -> Option<&Entity<SessionPage>> {
+        self.sessions.iter().find(|s| s.read(cx).id == id)
+    }
+
+    /// Switches to a tab, giving a session's terminal the keyboard.
+    fn activate(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.active != index {
+            self.drawers.clear();
+        }
+        self.active = index.min(self.tabs.len().saturating_sub(1));
+        self.focus_current(window, cx);
+        cx.notify();
+    }
+
+    fn focus_current(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.current() {
+            Some(Nav::Session(id)) => {
+                if let Some(page) = self.session(id, cx) {
+                    let handle = page.focus_handle(cx);
+                    window.focus(&handle, cx);
+                }
+            }
+            _ => window.focus(&self.focus, cx),
+        }
+    }
+
+    /// Asks where to start, then opens the session in a tab of its own.
+    fn new_session(&mut self, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some(match kind {
+                Kind::Claude => "Start Claude Code Here".into(),
+                Kind::Shell => "Open Terminal Here".into(),
+            }),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let Some(folder) = paths.into_iter().next() else { return };
+            let Ok(task) = cx.update(|window, cx| session::spawn_terminal(kind, folder.clone(), window, cx)) else { return };
+            let builder = match task.await {
+                Ok(builder) => builder,
+                Err(error) => {
+                    eprintln!("Couldn't start the terminal: {error:#}");
+                    return;
+                }
+            };
+            this.update_in(cx, |this, window, cx| {
+                let id = this.next_session;
+                this.next_session += 1;
+                let page = cx.new(|cx| SessionPage::new(id, kind, folder, builder, window, cx));
+                this._subscriptions.push(cx.subscribe(&page, |_, _, _: &Changed, cx| cx.notify()));
+                this.sessions.push(page);
+                this.drawers.clear();
+                this.tabs.push(Nav::Session(id));
+                this.activate(this.tabs.len() - 1, window, cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// The org's PR cache, read off the main thread.
+    fn load_work(&mut self, org: String, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let loaded = org.clone();
+            let work = cx.background_executor().spawn(async move { work::load(&loaded) }).await;
+            this.update(cx, |this, cx| {
+                if this.org.as_deref() == Some(org.as_str()) {
+                    this.work = work;
+                    cx.notify();
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Sessions whose process is still running.
+    fn running(&self, cx: &App) -> Vec<Entity<SessionPage>> {
+        self.sessions.iter().filter(|s| s.read(cx).state != State::Ended).cloned().collect()
+    }
+
+    /// What ending a session leaves behind, for the confirmations.
+    fn ending_detail(pages: &[Entity<SessionPage>], cx: &App) -> String {
+        let mut lines: Vec<String> = pages
+            .iter()
+            .map(|page| {
+                let page = page.read(cx);
+                format!("{} ({}) in {}", page.title(cx), page.state.label(), page.folder(cx).display())
+            })
+            .collect();
+        let claude = pages.iter().any(|p| p.read(cx).kind == Kind::Claude);
+        lines.push(String::new());
+        lines.push("Its process ends. Files it changed and commits it made stay where they are.".into());
+        if claude {
+            lines.push("To pick a Claude Code session up again, run claude --continue in its folder.".into());
+        }
+        lines.join("\n")
+    }
+
     /// Closing the last tab leaves an empty pane, as Zed's does; the window
-    /// stays open.
-    fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
+    /// stays open. A session still running asks first, as ending the tab
+    /// ends its process.
+    fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(nav) = self.tabs.get(index).copied() else { return };
+        if let Nav::Session(id) = nav {
+            if let Some(page) = self.session(id, cx).filter(|p| p.read(cx).state != State::Ended).cloned() {
+                let title = page.read(cx).title(cx);
+                let detail = Self::ending_detail(&[page], cx);
+                let answer = window.prompt(
+                    gpui::PromptLevel::Warning,
+                    &format!("End \u{201c}{title}\u{201d}?"),
+                    Some(&detail),
+                    &["End Session", "Cancel"],
+                    cx,
+                );
+                cx.spawn_in(window, async move |this, cx| {
+                    if answer.await == Ok(0) {
+                        this.update(cx, |this, cx| {
+                            if let Some(index) = this.tabs.iter().position(|t| *t == Nav::Session(id)) {
+                                this.remove_tab(index, cx);
+                            }
+                        })
+                        .ok();
+                    }
+                })
+                .detach();
+                return;
+            }
+        }
+        self.remove_tab(index, cx);
+    }
+
+    /// Quitting with sessions running asks first, as Gannin's quit guard does.
+    pub fn quit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let running = self.running(cx);
+        if running.is_empty() {
+            return cx.quit();
+        }
+        let message = match running.len() {
+            1 => "Quit and end the session that's running?".to_string(),
+            n => format!("Quit and end the {n} sessions that are running?"),
+        };
+        let detail = Self::ending_detail(&running, cx);
+        let answer = window.prompt(gpui::PromptLevel::Warning, &message, Some(&detail), &["Quit", "Cancel"], cx);
+        cx.spawn(async move |_, cx| {
+            if answer.await == Ok(0) {
+                cx.update(|cx| cx.quit());
+            }
+        })
+        .detach();
+    }
+
+    fn remove_tab(&mut self, index: usize, cx: &mut Context<Self>) {
         if index >= self.tabs.len() {
             return;
         }
-        self.tabs.remove(index);
+        // Dropping a session's terminal ends its process (a hangup).
+        if let Nav::Session(id) = self.tabs.remove(index) {
+            self.sessions.retain(|s| s.read(cx).id != id);
+        }
         if self.active >= self.tabs.len() || self.active > index {
             self.active = self.active.saturating_sub(1);
         }
@@ -642,7 +827,7 @@ impl Workspace {
             page.set_org(Some(org), cx)
         });
         self.load_settings(cx);
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -653,13 +838,13 @@ impl Workspace {
         };
         let highlighted = self.switcher_items(pick, "").iter().position(|(_, key)| Some(key) == current.as_ref()).unwrap_or(0);
         self.switcher = Some(Switcher { pick, query: String::new(), highlighted });
-        window.focus(&self.switcher_focus);
+        window.focus(&self.switcher_focus, cx);
         cx.notify();
     }
 
     fn close_switcher(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.switcher = None;
-        window.focus(&self.focus);
+        window.focus(&self.focus, cx);
         cx.notify();
     }
 
@@ -731,12 +916,11 @@ impl Workspace {
             return;
         }
         let size = window.viewport_size();
-        let (width, height) = (f32::from(size.width), f32::from(size.height));
-        let (x, y) = (f32::from(event.position.x), f32::from(event.position.y));
+        let width = f32::from(size.width);
+        let x = f32::from(event.position.x);
         match edge {
             Edge::Sidebar => self.sidebar_width = x.clamp(180.0, 420.0),
             Edge::Inspector => self.inspector_width = (width - x).clamp(260.0, 640.0),
-            Edge::Dock => self.dock_height = (height - y).max(120.0).min((height - 200.0).max(120.0)),
         }
         cx.notify();
     }
@@ -756,7 +940,6 @@ impl Workspace {
         match edge {
             Edge::Sidebar => handle.top_0().bottom_0().right(px(-3.)).w(px(6.)).cursor_col_resize(),
             Edge::Inspector => handle.top_0().bottom_0().left(px(-3.)).w(px(6.)).cursor_col_resize(),
-            Edge::Dock => handle.left_0().right_0().top(px(-3.)).h(px(6.)).cursor_row_resize(),
         }
     }
 
@@ -843,6 +1026,7 @@ impl Workspace {
         let status = match self.current() {
             Some(Nav::Ci) => self.actions_page.read(cx).status(),
             Some(Nav::Issues) => self.issues.read(cx).status(),
+            Some(Nav::Session(id)) => self.session(id, cx).map(|s| s.read(cx).status(cx)).unwrap_or_default(),
             Some(nav) => format!("{}: not ported", nav.title()),
             None => String::new(),
         };
@@ -877,10 +1061,9 @@ impl Workspace {
             .border_t_1()
             .border_color(theme.border)
             .child(toggle("toggle-sidebar", "Sidebar", self.sidebar_open, cx, |this| this.sidebar_open = !this.sidebar_open))
-            .child(toggle("toggle-dock", "Claude Code", self.dock_open, cx, |this| this.dock_open = !this.dock_open))
             .child(div().flex_1().px_2().overflow_hidden().whitespace_nowrap().text_color(theme.secondary).child(status))
-            .child(div().px_2().text_color(theme.tertiary).child("Read only, from Gannin's caches"))
-            .child(toggle("toggle-inspector", "Inspector", self.inspector_open, cx, |this| {
+            .child(div().px_2().text_color(theme.tertiary).child("Gannin's caches are read only"))
+            .child(toggle("toggle-inspector", "Your Work", self.inspector_open, cx, |this| {
                 this.inspector_open = !this.inspector_open
             }))
     }
@@ -1057,14 +1240,18 @@ impl Workspace {
                     .cursor_pointer()
                     .text_color(if active { theme.fg } else { theme.secondary })
                     .when(active, |d| d.bg(theme.bg))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        if this.active != index {
-                            this.drawers.clear();
-                        }
-                        this.active = index;
-                        cx.notify();
-                    }))
-                    .child(nav.title())
+                    .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.activate(index, window, cx)))
+                    .map(|d| match nav {
+                        Nav::Session(id) => match self.session(*id, cx) {
+                            Some(page) => {
+                                let page = page.read(cx);
+                                d.child(div().size(px(7.)).rounded_full().bg(state_tint(page.state, theme)))
+                                    .child(div().max_w(px(220.)).truncate().child(page.title(cx)))
+                            }
+                            None => d.child("Session"),
+                        },
+                        nav => d.child(nav.title()),
+                    })
                     .when_some(if *nav == Nav::Issues { self.issues.read(cx).tab_count() } else { None }, |d, count| {
                         d.child(div().text_xs().text_color(theme.secondary).child(count))
                     })
@@ -1075,17 +1262,21 @@ impl Workspace {
                             .rounded_sm()
                             .text_color(theme.tertiary)
                             .hover(|s| s.bg(theme.row_selected))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                                 cx.stop_propagation();
-                                this.close_tab(index, cx);
+                                this.close_tab(index, window, cx);
                             }))
                             .child("×"),
                     )
             }))
     }
 
-    fn page(&self, theme: &Theme) -> AnyElement {
+    fn page(&self, theme: &Theme, cx: &App) -> AnyElement {
         match self.current() {
+            Some(Nav::Session(id)) => match self.session(id, cx) {
+                Some(page) => page.clone().into_any_element(),
+                None => div().into_any_element(),
+            },
             Some(Nav::Ci) => self.actions_page.clone().into_any_element(),
             Some(Nav::Issues) => self.issues.clone().into_any_element(),
             Some(nav) => div()
@@ -1119,7 +1310,227 @@ impl Workspace {
         }
     }
 
-    // MARK: Inspector and dock
+    // MARK: Your work
+
+    /// The menu bar's list in the window: sessions wanting you first, then
+    /// reviews asked of you, your PRs needing you, the rest of your PRs,
+    /// the sessions still working, and issues assigned to you. A session or
+    /// an issue switches to its tab; a PR opens on GitHub (no PR page yet).
+    fn your_work(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut waiting: Vec<&Entity<SessionPage>> =
+            self.sessions.iter().filter(|s| matches!(s.read(cx).state, State::NeedsYou | State::YourTurn)).collect();
+        waiting.sort_by_key(|s| (s.read(cx).state.rank(), s.read(cx).since));
+        let working: Vec<&Entity<SessionPage>> = self.sessions.iter().filter(|s| s.read(cx).state == State::Working).collect();
+        let ended: Vec<&Entity<SessionPage>> = self.sessions.iter().filter(|s| s.read(cx).state == State::Ended).collect();
+        let needing: Vec<&Pr> = self.work.mine.iter().filter(|p| p.needs().is_some_and(|n| n != "Ready to merge")).collect();
+        let others: Vec<&Pr> = self.work.mine.iter().filter(|p| !p.needs().is_some_and(|n| n != "Ready to merge")).collect();
+        let assigned = match &self.work.login {
+            Some(login) => self.issues.read(cx).assigned_to(login),
+            None => Vec::new(),
+        };
+        let count = waiting.len() + self.work.reviews.len() + needing.len();
+        let orange: gpui::Hsla = gpui::rgb(0xFF9F0A).into();
+        let red: gpui::Hsla = gpui::rgb(0xFF453A).into();
+        let green: gpui::Hsla = gpui::rgb(0x30D158).into();
+
+        let section = |title: &'static str, count: usize, tint: gpui::Hsla| {
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .px_1()
+                .pt_3()
+                .pb_1()
+                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(title))
+                .child(
+                    div()
+                        .px_1p5()
+                        .rounded_full()
+                        .text_xs()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .bg(tint.opacity(0.18))
+                        .text_color(tint)
+                        .child(count.to_string()),
+                )
+        };
+        let row = |id: (&'static str, usize), tint: gpui::Hsla, title: String, detail: String| {
+            div()
+                .id(id)
+                .flex()
+                .flex_row()
+                .items_start()
+                .gap_2()
+                .px_1()
+                .py_1()
+                .rounded_md()
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.row_selected))
+                .child(div().mt(px(5.)).size(px(8.)).flex_none().rounded_full().bg(tint))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().truncate().child(title))
+                        .child(div().text_xs().text_color(theme.secondary).truncate().child(detail)),
+                )
+        };
+        let session_row = |index: usize, page: &Entity<SessionPage>, cx: &mut Context<Self>| {
+            let p = page.read(cx);
+            let id = p.id;
+            let detail = format!("{} · {}", p.state.label(), relative_date(p.since.with_timezone(&Utc), Utc::now()));
+            row(("work-session", index), state_tint(p.state, theme), p.title(cx), detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                if let Some(index) = this.tabs.iter().position(|t| *t == Nav::Session(id)) {
+                    this.activate(index, window, cx);
+                }
+            }))
+        };
+        let pr_row = |index: usize, pr: &Pr, tint: gpui::Hsla, detail: String, cx: &mut Context<Self>| {
+            let url = pr.url.clone();
+            row(("work-pr", index), tint, pr.title.clone(), detail).on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+        };
+        let mine_tint = |pr: &Pr| match pr.needs() {
+            Some("Checks failing") => red,
+            Some("Changes requested") => orange,
+            Some("Ready to merge") => green,
+            _ => theme.tertiary,
+        };
+
+        let mut list = div().flex().flex_col();
+        let mut index = 0;
+        if count == 0 {
+            list = list.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap_1()
+                    .py_4()
+                    .child(div().text_color(green).text_lg().child("✓"))
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child("All clear"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.secondary)
+                            .text_center()
+                            .child("No reviews waiting, nothing failing, no session waiting on you."),
+                    ),
+            );
+        }
+        if !waiting.is_empty() {
+            list = list.child(section("Sessions waiting on you", waiting.len(), orange));
+            for page in &waiting {
+                list = list.child(session_row(index, page, cx));
+                index += 1;
+            }
+        }
+        if !self.work.reviews.is_empty() {
+            list = list.child(section("Reviews asked of you", self.work.reviews.len(), theme.selected));
+            for pr in &self.work.reviews {
+                let detail = format!(
+                    "{}#{}{} · {}",
+                    pr.short_repo(),
+                    pr.number,
+                    pr.author.as_ref().map(|a| format!(" · {a}")).unwrap_or_default(),
+                    relative_date(pr.updated, Utc::now())
+                );
+                list = list.child(pr_row(index, pr, theme.selected, detail, cx));
+                index += 1;
+            }
+        }
+        if !needing.is_empty() {
+            list = list.child(section("Your PRs needing you", needing.len(), red));
+            for pr in &needing {
+                let detail = format!("{}#{} · {}", pr.short_repo(), pr.number, pr.standing());
+                list = list.child(pr_row(index, pr, mine_tint(pr), detail, cx));
+                index += 1;
+            }
+        }
+        if !working.is_empty() {
+            list = list.child(section("Sessions working", working.len(), green));
+            for page in &working {
+                list = list.child(session_row(index, page, cx));
+                index += 1;
+            }
+        }
+        if !others.is_empty() {
+            list = list.child(section("Your other PRs", others.len(), theme.secondary));
+            for pr in &others {
+                let detail = format!("{}#{} · {}", pr.short_repo(), pr.number, pr.standing());
+                list = list.child(pr_row(index, pr, mine_tint(pr), detail, cx));
+                index += 1;
+            }
+        }
+        if !assigned.is_empty() {
+            list = list.child(section("Assigned to you", assigned.len(), green));
+            for issue in assigned.into_iter().take(8) {
+                let detail = format!("{}#{} · updated {}", issue.repo_name, issue.number, relative_date(issue.updated_at.unwrap_or(issue.created_at), Utc::now()));
+                let title = issue.title.clone();
+                list = list.child(row(("work-issue", index), green, title, detail).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                    this.navigate(Nav::Issues, true, cx);
+                    this.focus_current(window, cx);
+                    this.push_drawer(issue.clone(), cx);
+                })));
+                index += 1;
+            }
+        }
+        if !ended.is_empty() {
+            list = list.child(section("Ended", ended.len(), theme.tertiary));
+            for page in &ended {
+                list = list.child(session_row(index, page, cx));
+                index += 1;
+            }
+        }
+
+        let button = |id: &'static str, label: &'static str| {
+            div()
+                .id(id)
+                .flex_1()
+                .py_1()
+                .flex()
+                .justify_center()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.row_selected))
+                .child(label)
+        };
+        let summary = match &self.work.login {
+            Some(login) => format!(
+                "{} · {}",
+                login,
+                match count {
+                    0 => "nothing waiting".to_string(),
+                    1 => "1 thing waiting".to_string(),
+                    n => format!("{n} things waiting"),
+                }
+            ),
+            None => "Not signed in to Gannin: only sessions show".to_string(),
+        };
+        div()
+            .flex()
+            .flex_col()
+            .child(div().text_xs().text_color(theme.secondary).child(summary))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .pt_2()
+                    .child(button("new-claude", "New Claude Code").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.new_session(Kind::Claude, window, cx)
+                    })))
+                    .child(button("new-terminal", "New Terminal").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        this.new_session(Kind::Shell, window, cx)
+                    }))),
+            )
+            .child(list)
+    }
+
+    // MARK: Inspector
 
     fn inspector(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let body: AnyElement = match &self.inspector {
@@ -1175,10 +1586,7 @@ impl Workspace {
                     )
                     .into_any_element()
             }
-            None => div()
-                .text_color(theme.secondary)
-                .child("Click a repository on CI to open it here.")
-                .into_any_element(),
+            None => self.your_work(theme, cx).into_any_element(),
         };
         div()
             .relative()
@@ -1201,7 +1609,7 @@ impl Workspace {
                     .bg(theme.sidebar)
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(div().flex_1().text_color(theme.secondary).child("Inspector"))
+                    .child(div().flex_1().text_color(theme.secondary).child(if self.inspector.is_some() { "Repository" } else { "Your Work" }))
                     .child(
                         div()
                             .id("close-inspector")
@@ -1217,7 +1625,23 @@ impl Workspace {
                             .child("×"),
                     ),
             )
-            .child(div().id("inspector-body").flex_1().min_h_0().overflow_y_scroll().p_4().child(body))
+            .when(self.inspector.is_some(), |d| {
+                d.child(
+                    div()
+                        .id("back-to-work")
+                        .px_3()
+                        .pt_2()
+                        .text_xs()
+                        .cursor_pointer()
+                        .text_color(theme.selected)
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.inspector = None;
+                            cx.notify();
+                        }))
+                        .child("‹ Your Work"),
+                )
+            })
+            .child(div().id("inspector-body").flex_1().min_h_0().overflow_y_scroll().p_3().child(body))
             .child(self.resize_handle("resize-inspector", Edge::Inspector, cx))
     }
 
@@ -1545,41 +1969,6 @@ impl Workspace {
         div().flex().flex_col().child(header).child(div().flex().flex_row().items_start().child(left).child(right))
     }
 
-    fn dock(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .relative()
-            .h(px(self.dock_height))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .bg(theme.bg)
-            .border_t_1()
-            .border_color(theme.border)
-            .child(
-                div()
-                    .h(px(30.))
-                    .flex_none()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap_3()
-                    .px_3()
-                    .bg(theme.sidebar)
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(div().font_weight(FontWeight::MEDIUM).child("Claude Code"))
-                    .child(div().text_xs().text_color(theme.tertiary).child("A tab per session would sit here")),
-            )
-            .child(
-                div()
-                    .flex_1()
-                    .p_4()
-                    .text_color(theme.secondary)
-                    .child("Sessions dock here in place of the Claude Code window. The terminal is the next pilot."),
-            )
-            .child(self.resize_handle("resize-dock", Edge::Dock, cx))
-    }
-
     // MARK: Switcher
 
     /// Behind an open switcher: a click anywhere else closes it.
@@ -1731,6 +2120,16 @@ impl Workspace {
     }
 }
 
+/// A session's state as a colour, as `SessionState.color`.
+fn state_tint(state: State, theme: &Theme) -> gpui::Hsla {
+    match state {
+        State::NeedsYou => gpui::rgb(0xFF9F0A).into(),
+        State::YourTurn => theme.selected,
+        State::Working => gpui::rgb(0x30D158).into(),
+        State::Ended => theme.tertiary,
+    }
+}
+
 fn placeholder_button(label: &'static str, theme: &Theme) -> impl IntoElement {
     div()
         .flex_1()
@@ -1747,6 +2146,12 @@ fn placeholder_button(label: &'static str, theme: &Theme) -> impl IntoElement {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.persist(cx);
+        // Only the session in view reads its folder's changes.
+        let current = self.current();
+        for page in &self.sessions {
+            let visible = current == Some(Nav::Session(page.read(cx).id));
+            page.update(cx, |page, cx| page.set_visible(visible, cx));
+        }
         let theme = Theme::new(matches!(window.appearance(), WindowAppearance::Dark | WindowAppearance::VibrantDark));
         let center = div()
             .flex_1()
@@ -1760,10 +2165,10 @@ impl Render for Workspace {
                     .flex_1()
                     .min_h_0()
                     .relative()
-                    .child(self.page(&theme))
+                    .child(self.page(&theme, cx))
                     .when(!self.drawers.is_empty(), |d| d.child(self.drawer_stack(&theme, cx))),
             )
-            .when(self.dock_open, |d| d.child(self.dock(&theme, cx)));
+;
         div()
             .id("workspace")
             .key_context("Workspace")
@@ -1776,11 +2181,9 @@ impl Render for Workspace {
                 this.inspector_open = !this.inspector_open;
                 cx.notify();
             }))
-            .on_action(cx.listener(|this, _: &ToggleDock, _, cx| {
-                this.dock_open = !this.dock_open;
-                cx.notify();
-            }))
-            .on_action(cx.listener(|this, _: &CloseTab, _, cx| this.close_tab(this.active, cx)))
+            .on_action(cx.listener(|this, _: &NewClaudeSession, window, cx| this.new_session(Kind::Claude, window, cx)))
+            .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.new_session(Kind::Shell, window, cx)))
+            .on_action(cx.listener(|this, _: &CloseTab, window, cx| this.close_tab(this.active, window, cx)))
             .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Org, window, cx)))
             // Escape closes the top drawer; the switcher takes it first when open.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
