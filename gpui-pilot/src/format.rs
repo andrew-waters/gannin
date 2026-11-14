@@ -1,7 +1,7 @@
 //! Number formatting as the Swift app shows it (`compactDuration`,
 //! `ActionsView.percent`, `StatChange`).
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Datelike, Local, Utc};
 
 /// "today", "3 days ago", "2 months ago", as a relative date reads.
 pub fn relative_date(time: DateTime<Utc>, now: DateTime<Utc>) -> String {
@@ -85,5 +85,19 @@ impl Change {
             text: format!("{}{} pp", if rounded > 0.0 { "+" } else { "" }, rounded as i64),
             is_worse: Some(higher_is_worse == (rounded > 0.0)),
         })
+    }
+}
+
+/// A date for a table cell, in local time: the time alone when it's today,
+/// else the day and time, with the year when it isn't this one.
+pub fn table_date(time: DateTime<Utc>) -> String {
+    let local = time.with_timezone(&Local);
+    let today = Local::now().date_naive();
+    if local.date_naive() == today {
+        local.format("%H:%M").to_string()
+    } else if local.year() == today.year() {
+        local.format("%-d %b, %H:%M").to_string()
+    } else {
+        local.format("%-d %b %Y").to_string()
     }
 }

@@ -29,7 +29,7 @@ use gpui::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleInspector, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, OpenSwitcher]);
+actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, OpenSwitcher]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
@@ -39,6 +39,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-`", NewTerminal, None),
         KeyBinding::new("cmd-w", CloseTab, None),
         KeyBinding::new("cmd-alt-o", OpenSwitcher, None),
+        KeyBinding::new("cmd-r", Refresh, None),
     ]
 }
 
@@ -241,10 +242,25 @@ const DRAWER_PEEK: f32 = 14.0;
 struct SyncStatus {
     running: bool,
     error: Option<String>,
+    /// The steps of the sync under way, or of the last one.
+    progress: crate::sync::Progress,
+    /// The org being synced now, or last.
+    org: Option<String>,
+    /// Recent syncs, newest first.
+    runs: Vec<SyncRun>,
+    open: bool,
+    prefs: crate::state::SyncPrefs,
+    /// When Your Work's live query last ran.
+    work_at: Option<std::time::Instant>,
 }
 
-/// How often the workload syncs, as Gannin's default.
-const SYNC_EVERY: chrono::Duration = chrono::Duration::minutes(5);
+/// One sync, for the popover's log.
+struct SyncRun {
+    org: String,
+    at: chrono::DateTime<chrono::Utc>,
+    took: std::time::Duration,
+    result: Result<crate::sync::Report, String>,
+}
 
 /// Signing in with GitHub, step by step, as `SignInView`.
 enum SignIn {
@@ -390,6 +406,7 @@ impl Workspace {
                 groups
             },
             tab_names: Vec::new(),
+            sync: self.sync.prefs.clone(),
             ci: self.template_ci(cx),
             issues: self.template_issues(cx),
             prs: self.template_prs(cx),
@@ -435,6 +452,7 @@ impl Workspace {
         }
         workspace.active = active.min(workspace.tabs.len().saturating_sub(1));
         workspace.load_viewer(cx);
+        crate::github::set_reserve(workspace.sync.prefs.reserve);
         workspace.start_sync_loop(cx);
         workspace.load_settings(cx);
         workspace
@@ -514,6 +532,7 @@ impl Workspace {
     }
 
     fn build(saved: SavedState, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let sync_prefs = saved.sync.clone();
         let orgs = data::orgs();
         // The saved org, while it still has a cache.
         let org = saved.org.clone().filter(|org| orgs.contains(org)).or_else(|| orgs.first().cloned());
@@ -561,7 +580,7 @@ impl Workspace {
             sign_in_task: None,
             account_open: false,
             launch_form: None,
-            sync: SyncStatus::default(),
+            sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
             _subscriptions: subscriptions,
         }
@@ -998,6 +1017,7 @@ impl Workspace {
 
     /// The org's PR cache, read off the main thread.
     fn load_work(&mut self, org: String, cx: &mut Context<Self>) {
+        self.sync.work_at = Some(std::time::Instant::now());
         cx.spawn(async move |this, cx| {
             let loaded = org.clone();
             let login = this.update(cx, |this, _| this.viewer.as_ref().map(|v| v.login.clone())).ok().flatten();
@@ -1028,11 +1048,18 @@ impl Workspace {
         self._sync_loop = Some(cx.spawn(async move |this, cx| loop {
             cx.background_executor().timer(std::time::Duration::from_secs(60)).await;
             let Ok(()) = this.update(cx, |this, cx| {
-                let due = this.org.as_deref().is_some_and(|org| {
-                    crate::sync::last_synced(org).is_none_or(|at| chrono::Utc::now() - at >= SYNC_EVERY)
-                });
+                let every = chrono::Duration::minutes(this.sync.prefs.workload_minutes.max(1) as i64);
+                let due = this.org.as_deref().is_some_and(|org| crate::sync::last_synced(org).is_none_or(|at| chrono::Utc::now() - at >= every));
                 if due && !crate::github::should_hold_off() {
-                    this.sync_now(cx);
+                    this.sync_now(None, false, cx);
+                }
+                // Your Work's live query, on its own interval.
+                let work = this.sync.prefs.work_minutes;
+                let work_due = work > 0 && this.sync.work_at.is_none_or(|at| at.elapsed() >= std::time::Duration::from_secs(work as u64 * 60));
+                if work_due && this.viewer.is_some() && !crate::github::should_hold_off() {
+                    if let Some(org) = this.org.clone() {
+                        this.load_work(org, cx);
+                    }
                 }
             }) else {
                 return;
@@ -1040,32 +1067,59 @@ impl Workspace {
         }));
     }
 
-    /// Syncs the current org now, then has its pages read their caches again.
-    fn sync_now(&mut self, cx: &mut Context<Self>) {
+    /// Syncs an org (the current one by default) now, then has its pages
+    /// read their caches again. `full` searches everything, not only what
+    /// changed, as Gannin's Full Refresh.
+    fn sync_now(&mut self, org: Option<String>, full: bool, cx: &mut Context<Self>) {
         if self.sync.running || self.viewer.is_none() {
             return;
         }
-        let Some(org) = self.org.clone() else { return };
+        let Some(org) = org.or_else(|| self.org.clone()) else { return };
         let viewer = self.viewer.as_ref().map(|v| v.login.clone());
         self.sync.running = true;
         self.sync.error = None;
+        self.sync.org = Some(org.clone());
+        self.sync.progress = Default::default();
+        let progress = self.sync.progress.clone();
+        let options = crate::sync::Options {
+            lookback_days: self.sync.prefs.lookback_days.unwrap_or_else(crate::sync::gannin_lookback_days),
+            full_every: chrono::Duration::hours(self.sync.prefs.full_hours.max(1) as i64),
+        };
         cx.notify();
+        // The popover's steps tick off as they finish.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(std::time::Duration::from_millis(250)).await;
+            let Ok(running) = this.update(cx, |this, cx| {
+                cx.notify();
+                this.sync.running
+            }) else {
+                return;
+            };
+            if !running {
+                return;
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let synced_org = org.clone();
+            let started = std::time::Instant::now();
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let token = auth::token().ok_or(crate::github::Error::Unauthorised)?;
-                    crate::sync::sync_org(&token, &synced_org, viewer.as_deref())
+                    crate::sync::sync_org(&token, &synced_org, viewer.as_deref(), full, options, &progress)
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.sync.running = false;
-                match result {
-                    Ok(_) => this.refresh_pages(cx),
-                    Err(error) => this.sync.error = Some(error.to_string()),
+                let result = result.map_err(|e| e.to_string());
+                match &result {
+                    Ok(_) if this.org.as_deref() == Some(org.as_str()) => this.refresh_pages(cx),
+                    Ok(_) => {}
+                    Err(error) => this.sync.error = Some(error.clone()),
                 }
-                let _ = org;
+                this.sync.runs.insert(0, SyncRun { org: org.clone(), at: chrono::Utc::now(), took: started.elapsed(), result });
+                this.sync.runs.truncate(6);
                 cx.notify();
             })
             .ok();
@@ -1090,42 +1144,366 @@ impl Workspace {
         }
     }
 
-    /// "Synced 3 min ago", "Syncing", or why it isn't; a click syncs now.
+    /// "Synced 3m ago", "Syncing", or why it isn't; a click opens the sync
+    /// popover.
     fn sync_button(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let now = chrono::Utc::now();
         let last = self.org.as_deref().and_then(crate::sync::last_synced);
-        let (label, tip): (String, String) = if self.sync.running {
-            ("Syncing".into(), "Fetching changes from GitHub".into())
+        let label: String = if self.sync.running {
+            let steps = self.sync.progress.lock().map(|s| (s.iter().filter(|s| s.done).count(), s.len())).unwrap_or_default();
+            if steps.1 > 0 { format!("Syncing {} of {}", steps.0, steps.1) } else { "Syncing".into() }
         } else if let Some(until) = crate::github::paused_until() {
-            (
-                format!("Paused until {}", until.with_timezone(&Local).format("%H:%M")),
-                "GitHub's rate limit is spent; syncing waits for its reset".into(),
-            )
-        } else if let Some(error) = &self.sync.error {
-            ("Sync failed".into(), format!("{error}. Click to try again."))
+            format!("Paused to {}", until.with_timezone(&Local).format("%H:%M"))
+        } else if self.sync.error.is_some() {
+            "Sync failed".into()
         } else if let Some(at) = last {
-            (format!("Synced {}", relative_date(at, now)), "Click to sync now; it syncs every 5 minutes".into())
+            format!("Synced {}", crate::format::table_date(at))
         } else {
-            ("Sync".into(), "Fetch this org's open PRs and issues from GitHub into the pilot's own copy".into())
+            "Sync".into()
         };
-        let budget = crate::github::rate_limit().map(|r| format!(" · {} of {} left this hour", r.remaining, r.limit)).unwrap_or_default();
-        let tip = format!("{tip}{budget}");
+        let open = self.sync.open;
+        // While it runs, a thin bar beneath the label fills as it goes.
+        let fraction = self.sync_fraction();
         div()
-            .id("sync")
-            .px_2()
-            .py_0p5()
-            .mr_2()
-            .rounded_md()
-            .text_xs()
-            .cursor_pointer()
-            .text_color(if self.sync.error.is_some() { theme.critical() } else { theme.secondary })
-            .hover(|s| s.bg(theme.row_selected))
-            .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
-            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                cx.stop_propagation();
-                this.sync_now(cx);
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id("sync")
+                    .px_2()
+                    .py_0p5()
+                    .mr_2()
+                    .rounded_md()
+                    .text_xs()
+                    .cursor_pointer()
+                    .text_color(if self.sync.error.is_some() { theme.critical() } else { theme.secondary })
+                    .when(open, |d| d.bg(theme.row_selected))
+                    .hover(|s| s.bg(theme.row_selected))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        cx.stop_propagation();
+                        this.refresh(cx);
+                    }))
+                    .child(label)
+                    .when_some(fraction.filter(|_| self.sync.running), |d, f| {
+                        d.child(div().mt_0p5().h(px(2.)).w_full().rounded_full().bg(theme.tile).child(div().h_full().w(relative(f)).rounded_full().bg(theme.selected)))
+                    }),
+            )
+    }
+
+    /// How far through the sync under way is, 0 to 1, by its steps.
+    fn sync_fraction(&self) -> Option<f32> {
+        let steps = self.sync.progress.lock().ok()?;
+        (!steps.is_empty()).then(|| steps.iter().map(|s| s.fraction()).sum::<f32>() / steps.len() as f32)
+    }
+
+    /// A refresh by hand (the sync button, Command-R): syncs now and shows
+    /// the Sync panel. The background syncs leave it as it is.
+    fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.sync.open = true;
+        self.sync_now(None, false, cx);
+        cx.notify();
+    }
+
+    /// The Sync panel on the right, after Gannin's sync panel: the budget,
+    /// the steps of the sync under way (or the last), each org and when it
+    /// last synced, Refresh and Full Refresh, and the last few syncs.
+    fn sync_panel(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(320.))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(theme.bg)
+            .border_l_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .h(px(32.))
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .px_3()
+                    .bg(theme.sidebar)
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(div().flex_1().text_color(theme.secondary).child("Sync"))
+                    .child(
+                        div()
+                            .id("close-sync")
+                            .px_1()
+                            .rounded_sm()
+                            .cursor_pointer()
+                            .text_color(theme.tertiary)
+                            .hover(|s| s.bg(theme.row_selected))
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.sync.open = false;
+                                cx.notify();
+                            }))
+                            .child("×"),
+                    ),
+            )
+            .child(div().id("sync-body").flex_1().min_h_0().overflow_y_scroll().child(self.sync_body(theme, cx)))
+    }
+
+    /// Settings, as Gannin's Settings › Sync for what the pilot fetches.
+    fn sync_settings(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let prefs = &self.sync.prefs;
+        let quiet = |text: &str| div().text_xs().text_color(theme.secondary).child(text.to_string());
+        let title = |text: &str| div().text_xs().font_weight(FontWeight::MEDIUM).child(text.to_string());
+        let chip = |id: SharedString, label: String, on: bool| {
+            div()
+                .id(id)
+                .px_1p5()
+                .py_0p5()
+                .rounded_md()
+                .text_xs()
+                .cursor_pointer()
+                .text_color(if on { theme.fg } else { theme.secondary })
+                .when(on, |d| d.bg(theme.row_selected))
+                .hover(|s| s.bg(theme.row_selected))
+                .child(label)
+        };
+        let minutes = |m: u32| if m >= 60 { format!("{}h", m / 60) } else { format!("{m}m") };
+        let hours = |h: u32| if h >= 24 { format!("{}d", h / 24) } else { format!("{h}h") };
+        let row = |children: Vec<gpui::AnyElement>| div().p_0p5().flex().flex_row().flex_wrap().gap_0p5().rounded_md().bg(theme.tile).children(children);
+        let workload: Vec<gpui::AnyElement> = [2u32, 5, 10, 15, 30, 60]
+            .into_iter()
+            .map(|m| {
+                chip(SharedString::from(format!("workload-{m}")), minutes(m), prefs.workload_minutes == m)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.sync.prefs.workload_minutes = m;
+                        this.persist(cx);
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let full: Vec<gpui::AnyElement> = [6u32, 12, 24, 72, 168]
+            .into_iter()
+            .map(|h| {
+                chip(SharedString::from(format!("full-{h}")), hours(h), prefs.full_hours == h)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.sync.prefs.full_hours = h;
+                        this.persist(cx);
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let work: Vec<gpui::AnyElement> = [0u32, 1, 2, 5, 10, 15, 30, 60]
+            .into_iter()
+            .map(|m| {
+                chip(SharedString::from(format!("work-{m}")), if m == 0 { "Off".into() } else { minutes(m) }, prefs.work_minutes == m)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.sync.prefs.work_minutes = m;
+                        this.persist(cx);
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let reserve: Vec<gpui::AnyElement> = [250i64, 500, 1000, 1500, 2500]
+            .into_iter()
+            .map(|points| {
+                chip(SharedString::from(format!("reserve-{points}")), format!("{points}"), prefs.reserve == points)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.sync.prefs.reserve = points;
+                        crate::github::set_reserve(points);
+                        this.persist(cx);
+                        cx.notify();
+                    }))
+                    .into_any_element()
+            })
+            .collect();
+        let lookback = prefs.lookback_days.unwrap_or_else(crate::sync::gannin_lookback_days);
+        let step = |id: &'static str, label: &'static str, by: i64| {
+            chip(id.into(), label.into(), false).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let now = this.sync.prefs.lookback_days.unwrap_or_else(crate::sync::gannin_lookback_days);
+                this.sync.prefs.lookback_days = Some((now + by).clamp(1, 90));
+                this.persist(cx);
+                cx.notify();
             }))
-            .child(label)
+        };
+        // Each setting a group of its own, with a divider between them.
+        let divider = || div().my_1().h(px(1.)).bg(theme.border);
+        let group = || div().flex().flex_col().gap_1();
+        div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .pt_2()
+            .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.tertiary).child("Settings"))
+            .child(group().child(title("Open PRs and issues, every")).child(row(workload)).child(quiet("What changed since the last fetch, and PRs merged in the lookback.")))
+            .child(divider())
+            .child(group().child(title("Everything searched again, every")).child(row(full)))
+            .child(divider())
+            .child(group().child(title("Your reviews and PRs, every")).child(row(work)).child(quiet("PRs your review is asked on, your own PRs and your issues, for Your Work.")))
+            .child(divider())
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(title(&format!("Merged work from the last {lookback} days")))
+                    .child(div().flex_1())
+                    .child(row(vec![step("lookback-less", "−", -1).into_any_element(), step("lookback-more", "+", 1).into_any_element()])),
+            )
+            .child(quiet("The lookback applies on the next refresh, which searches everything again."))
+            .child(divider())
+            .child(title("Keep in reserve (points)"))
+            .child(row(reserve))
+            .child(quiet("Automatic fetches wait for the reset once fewer are left, so what you open or Refresh still has budget."))
+    }
+
+    fn sync_body(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let now = chrono::Utc::now();
+        let quiet = |text: String| div().text_xs().text_color(theme.secondary).child(text);
+        let heading = |text: &str| div().pt_2().pb_0p5().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.tertiary).child(text.to_string());
+        let link = |id: SharedString, label: &str, enabled: bool| {
+            div()
+                .id(id)
+                .text_xs()
+                .text_color(if enabled { theme.selected } else { theme.tertiary })
+                .when(enabled, |d| d.cursor_pointer())
+                .child(label.to_string())
+        };
+        // GitHub's hourly budget: share left and the time to its reset.
+        let budget = match (crate::github::rate_limit(), crate::github::paused_until()) {
+            (_, Some(until)) => div().text_color(theme.critical()).text_xs().child(format!(
+                "GitHub's rate limit is spent: syncing waits until {}",
+                until.with_timezone(&Local).format("%H:%M")
+            )),
+            (Some(rate), None) => {
+                let share = rate.remaining as f32 / rate.limit.max(1) as f32;
+                let minutes = (rate.reset_at - now).num_minutes().max(0);
+                let tint = if rate.is_low() { theme.critical() } else { theme.good() };
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .justify_between()
+                            .child(quiet(format!("{:.0}% of GitHub's hourly budget left", share * 100.)))
+                            .child(quiet(if minutes < 1 { "<1m to reset".into() } else { format!("{minutes}m to reset") })),
+                    )
+                    .child(div().h(px(4.)).w_full().rounded_full().bg(theme.tile).child(div().h_full().w(relative(share)).rounded_full().bg(tint)))
+                    .child(quiet(format!("{} of {} points; automatic syncs hold off under {}", rate.remaining, rate.limit, crate::github::reserve())))
+            }
+            _ => quiet("GitHub's budget shows after the first sync.".into()),
+        };
+        let steps = self.sync.progress.lock().map(|s| s.clone()).unwrap_or_default();
+        let current = self.sync.org.clone().or_else(|| self.org.clone()).unwrap_or_default();
+        let run = div()
+            .flex()
+            .flex_col()
+            .gap_0p5()
+            .child(heading(&if self.sync.running { format!("Syncing {current}") } else if steps.is_empty() { "Last sync".into() } else { format!("Last sync of {current}") }))
+            .map(|d| {
+                if steps.is_empty() {
+                    d.child(quiet("Nothing synced yet this session.".into()))
+                } else {
+                    let running = self.sync.running;
+                    let overall = self.sync_fraction().unwrap_or(0.);
+                    d.when(running, |d| {
+                        d.child(div().my_1().h(px(4.)).w_full().rounded_full().bg(theme.tile).child(div().h_full().w(relative(overall)).rounded_full().bg(theme.selected)))
+                    })
+                    .children(steps.into_iter().map(|step| {
+                        let fraction = step.fraction();
+                        let tally = match (step.done, step.count, step.total) {
+                            (true, Some(n), _) => n.to_string(),
+                            (false, _, Some(total)) => format!("{} of {total}", step.fetched),
+                            _ => String::new(),
+                        };
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_0p5()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(div().w(px(14.)).text_color(if step.done { theme.good() } else { theme.tertiary }).child(if step.done { "✓" } else { "•" }))
+                                    .child(div().flex_1().text_xs().child(step.title))
+                                    .child(quiet(tally)),
+                            )
+                            .when(running && !step.done && step.total.is_some(), |d| {
+                                d.child(div().ml(px(22.)).h(px(3.)).rounded_full().bg(theme.tile).child(div().h_full().w(relative(fraction)).rounded_full().bg(theme.blue())))
+                            })
+                    }))
+                }
+            })
+            .when_some(self.sync.error.clone(), |d, e| d.child(div().text_xs().text_color(theme.critical()).child(e)));
+        let can_sync = !self.sync.running && self.viewer.is_some();
+        let orgs = div().flex().flex_col().gap_0p5().child(heading("Orgs")).children(self.orgs.iter().enumerate().map(|(i, org)| {
+            let last = crate::sync::last_synced(org);
+            let synced = org.clone();
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(div().flex_1().text_xs().when(self.org.as_deref() == Some(org.as_str()), |d| d.font_weight(FontWeight::SEMIBOLD)).child(org.clone()))
+                .child(quiet(last.map(|at| format!("synced {}", crate::format::table_date(at))).unwrap_or_else(|| "not yet".into())))
+                .child(link(SharedString::from(format!("sync-org-{i}")), "Sync", can_sync).when(can_sync, |d| {
+                    d.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.sync_now(Some(synced.clone()), false, cx)))
+                }))
+        }));
+        let log = (!self.sync.runs.is_empty()).then(|| {
+            div().flex().flex_col().gap_0p5().child(heading("Recent")).children(self.sync.runs.iter().map(|run| {
+                let what = match &run.result {
+                    Ok(report) => format!(
+                        "{} · {} PRs, {} issues",
+                        if report.full { "full" } else { "changes" },
+                        report.pull_requests,
+                        report.issues
+                    ),
+                    Err(error) => error.clone(),
+                };
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .text_xs()
+                    .child(div().w(px(44.)).flex_none().text_color(theme.secondary).child(run.at.with_timezone(&Local).format("%H:%M").to_string()))
+                    .child(div().flex_1().truncate().text_color(if run.result.is_err() { theme.critical() } else { theme.fg }).child(format!("{} · {what}", run.org)))
+                    .child(div().text_color(theme.tertiary).child(format!("{:.1}s", run.took.as_secs_f32())))
+            }))
+        });
+        div()
+            .p_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_3()
+                    .child(div().flex_1().font_weight(FontWeight::SEMIBOLD).child("Sync"))
+                    .child(link("sync-refresh".into(), "Refresh", can_sync).when(can_sync, |d| {
+                        d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.sync_now(None, false, cx)))
+                    }))
+                    .child(link("sync-full".into(), "Full Refresh", can_sync).when(can_sync, |d| {
+                        d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.sync_now(None, true, cx)))
+                    })),
+            )
+            .child(budget)
+            .child(run)
+            .child(orgs)
+            .children(log)
+            .child(self.sync_settings(theme, cx))
+            .child(quiet(
+                "Synced into the pilot's own copy. Metrics, work logs and CI runs are read from Gannin's caches."
+                    .into(),
+            ))
     }
 
     // MARK: Account
@@ -2089,6 +2467,14 @@ impl Workspace {
                 |this| this.sidebar_open = !this.sidebar_open,
             ))
             .child(div().flex_1())
+            .child(toggle(
+                "toggle-sync",
+                "icons/arrow_circle.svg",
+                "Sync  ⌘R refreshes",
+                self.sync.open,
+                cx,
+                |this| this.sync.open = !this.sync.open,
+            ))
             .child(toggle(
                 "toggle-inspector",
                 if self.inspector_open { "icons/threads_sidebar_right_open.svg" } else { "icons/threads_sidebar_right_closed.svg" },
@@ -3653,6 +4039,11 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &NewClaudeSession, window, cx| this.new_session(Kind::Claude, window, cx)))
             .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.new_session(Kind::Shell, window, cx)))
+            .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
+            .on_action(cx.listener(|this, _: &ToggleSync, _, cx| {
+                this.sync.open = !this.sync.open;
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &NewAsk, window, cx| this.open_form(crate::launch::Flow::Ask, None, window, cx)))
             .on_action(cx.listener(|this, _: &NewQuickChange, window, cx| this.open_form(crate::launch::Flow::QuickChange, None, window, cx)))
             .on_action(cx.listener(|this, _: &NewPlan, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
@@ -3698,7 +4089,8 @@ impl Render for Workspace {
                     .flex_row()
                     .when(self.sidebar_open, |d| d.child(self.sidebar(&theme, cx)))
                     .child(center)
-                    .when(self.inspector_open, |d| d.child(self.inspector(&theme, cx))),
+                    .when(self.inspector_open, |d| d.child(self.inspector(&theme, cx)))
+                    .when(self.sync.open, |d| d.child(self.sync_panel(&theme, cx))),
             )
             .child(self.status_bar(&theme, cx))
             .when(self.switcher.is_some(), |d| d.child(self.switcher_backdrop(cx)))

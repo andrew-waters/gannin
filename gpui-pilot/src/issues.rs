@@ -9,7 +9,7 @@
 
 use crate::avatars::{avatar, stack};
 use crate::charts::Theme;
-use crate::format::{relative_date, thousands};
+use crate::format::thousands;
 use chrono::{DateTime, Utc};
 use gpui::{
     anchored, deferred, div, prelude::*, px, uniform_list, ClickEvent, Context, EventEmitter, FocusHandle, FontWeight,
@@ -1774,11 +1774,10 @@ impl IssuesPage {
     fn cell(&self, column: &Column, index: usize, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
         let row = &self.rows[index];
         let issue = &self.issues[row.index];
-        let now = Utc::now();
         let width = self.column_width(column).unwrap_or(0.);
         let text = |value: String| div().w(px(width)).flex_none().truncate().child(value);
         let quiet = |value: String| text(value).text_color(theme.secondary);
-        let when = |date: Option<DateTime<Utc>>| quiet(date.map(|d| relative_date(d, now)).unwrap_or_default());
+        let when = |date: Option<DateTime<Utc>>| quiet(date.map(crate::format::table_date).unwrap_or_default());
         match column {
             Column::Title => self.title_cell(index, theme).into_any_element(),
             Column::State => div().w(px(width)).flex_none().flex().overflow_hidden().child(state_pill(issue, theme)).into_any_element(),

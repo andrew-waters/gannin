@@ -49,6 +49,7 @@ pub struct SavedState {
     pub ci: CiSaved,
     pub issues: IssuesSaved,
     pub prs: PrsSaved,
+    pub sync: SyncPrefs,
 }
 
 #[derive(Serialize, Deserialize, Clone, PartialEq)]
@@ -85,6 +86,7 @@ impl Default for SavedState {
             ci: CiSaved::default(),
             issues: IssuesSaved::default(),
             prs: PrsSaved::default(),
+            sync: SyncPrefs::default(),
         }
     }
 }
@@ -113,5 +115,28 @@ impl SavedState {
         if std::fs::write(&temporary, json).is_ok() {
             let _ = std::fs::rename(&temporary, &path);
         }
+    }
+}
+
+/// Sync settings, as Gannin's Settings › Sync for what the pilot fetches,
+/// kept in the pilot's own state.
+#[derive(Serialize, Deserialize, Clone, PartialEq)]
+#[serde(default)]
+pub struct SyncPrefs {
+    /// Open PRs and issues: minutes between syncs.
+    pub workload_minutes: u32,
+    /// Everything searched again: hours between full searches.
+    pub full_hours: u32,
+    /// Your reviews and PRs (Your Work's live query): minutes, 0 for off.
+    pub work_minutes: u32,
+    /// Merged work from the last this many days; Gannin's when unset.
+    pub lookback_days: Option<i64>,
+    /// Points kept for what you do by hand.
+    pub reserve: i64,
+}
+
+impl Default for SyncPrefs {
+    fn default() -> Self {
+        Self { workload_minutes: 5, full_hours: 24, work_minutes: 5, lookback_days: None, reserve: 500 }
     }
 }

@@ -22,8 +22,19 @@ pub struct RateLimit {
 impl RateLimit {
     /// Under the reserve (500, or half the limit), before the reset.
     pub fn is_low(&self) -> bool {
-        self.remaining < 500.min(self.limit / 2) && self.reset_at > Utc::now()
+        self.remaining < reserve().min(self.limit / 2) && self.reset_at > Utc::now()
     }
+}
+
+/// Points kept for what's done by hand (Settings: Keep in reserve).
+static RESERVE: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(500);
+
+pub fn reserve() -> i64 {
+    RESERVE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_reserve(points: i64) {
+    RESERVE.store(points, std::sync::atomic::Ordering::Relaxed);
 }
 
 struct Budget {
@@ -191,7 +202,9 @@ pub fn graphql(token: &str, query: &str, variables: Value) -> Result<Value, Erro
 
 /// A search's nodes, page by page, up to GitHub's 1000; also whether
 /// GitHub had more than that (`issueCount > 1000`).
-pub fn search(token: &str, query: &str, page_size: usize, fields: &str) -> Result<(Vec<Value>, bool), Error> {
+/// Tells `on_page` after each page how many it has and how many there are
+/// (capped at 1000), for a progress bar.
+pub fn search_reporting(token: &str, query: &str, page_size: usize, fields: &str, on_page: &dyn Fn(usize, usize)) -> Result<(Vec<Value>, bool), Error> {
     let text = format!(
         "query($q: String!, $cursor: String) {{ search(query: $q, type: ISSUE, first: {page_size}, after: $cursor) {{ issueCount pageInfo {{ hasNextPage endCursor }} nodes {{ {fields} }} }} }}"
     );
@@ -203,6 +216,8 @@ pub fn search(token: &str, query: &str, page_size: usize, fields: &str) -> Resul
         let search = &data["search"];
         truncated = search["issueCount"].as_i64().unwrap_or(0) > 1000;
         nodes.extend(search["nodes"].as_array().cloned().unwrap_or_default().into_iter().filter(|n| n.get("id").is_some()));
+        let total = (search["issueCount"].as_i64().unwrap_or(0).max(0) as usize).min(1000);
+        on_page(nodes.len().min(total.max(nodes.len())), total.max(nodes.len()));
         let more = search["pageInfo"]["hasNextPage"].as_bool().unwrap_or(false);
         cursor = search["pageInfo"]["endCursor"].as_str().map(str::to_string);
         if !more || cursor.is_none() || nodes.len() >= 1000 {

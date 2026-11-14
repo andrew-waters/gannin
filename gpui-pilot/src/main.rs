@@ -37,7 +37,7 @@ use gpui::{
     actions, point, px, size, App, AppContext, Bounds, KeyBinding, Menu, MenuItem, TitlebarOptions,
     WindowBounds, WindowOptions,
 };
-use shell::{CloseTab, NewAsk, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
+use shell::{CloseTab, NewAsk, Refresh, ToggleSync, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
 
 actions!(pilot, [Quit]);
 
@@ -117,7 +117,7 @@ fn main() {
                 let token = auth::token().expect("sign in to the pilot first");
                 let viewer = auth::saved_viewer().map(|v| v.login);
                 let started = std::time::Instant::now();
-                match sync::sync_org(&token, &org, viewer.as_deref()) {
+                match sync::sync_org(&token, &org, viewer.as_deref(), false, Default::default(), &Default::default()) {
                     Ok(report) => println!("{org}: {report:?} in {:?}; budget {:?}", started.elapsed(), github::rate_limit()),
                     Err(error) => println!("{org}: failed: {error}"),
                 }
@@ -153,6 +153,9 @@ fn main() {
                 items: vec![
                     MenuItem::action("Toggle Sidebar", ToggleSidebar),
                     MenuItem::action("Toggle Your Work", ToggleInspector),
+                    MenuItem::action("Toggle Sync", ToggleSync),
+                    MenuItem::separator(),
+                    MenuItem::action("Refresh", Refresh),
                 ],
                 disabled: false,
             },

@@ -52,7 +52,7 @@ pub fn last_synced(org: &str) -> Option<DateTime<Utc>> {
 }
 
 /// Gannin's lookback for merged PRs (Settings), else its default 14 days.
-fn lookback_days() -> i64 {
+pub fn gannin_lookback_days() -> i64 {
     std::process::Command::new("/usr/bin/defaults")
         .args(["read", "dev.andon.gannin", "lookbackDays"])
         .output()
@@ -67,6 +67,60 @@ fn search_stamp(time: DateTime<Utc>) -> String {
     time.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
 }
 
+/// A step of a sync, for the sync popover: what it fetches, how many it
+/// found, and whether it's done.
+#[derive(Clone, Debug)]
+pub struct Step {
+    pub title: String,
+    pub count: Option<usize>,
+    pub done: bool,
+    /// Results fetched so far, and how many there are, while it runs.
+    pub fetched: usize,
+    pub total: Option<usize>,
+}
+
+impl Step {
+    /// How far through it is, 0 to 1.
+    pub fn fraction(&self) -> f32 {
+        if self.done {
+            return 1.;
+        }
+        match self.total {
+            Some(0) => 1.,
+            Some(total) => self.fetched as f32 / total as f32,
+            None => 0.,
+        }
+    }
+}
+
+/// Records a page fetched for a step.
+fn advance(progress: &Progress, title: &str, fetched: usize, total: usize) {
+    if let Ok(mut steps) = progress.lock() {
+        if let Some(step) = steps.iter_mut().rev().find(|s| s.title == title && !s.done) {
+            step.fetched = fetched;
+            step.total = Some(total);
+        }
+    }
+}
+
+/// The steps of the sync under way, shared with the window as it runs.
+pub type Progress = std::sync::Arc<std::sync::Mutex<Vec<Step>>>;
+
+fn begin(progress: &Progress, titles: &[&str]) {
+    if let Ok(mut steps) = progress.lock() {
+        steps.extend(titles.iter().map(|t| Step { title: t.to_string(), count: None, done: false, fetched: 0, total: None }));
+    }
+}
+
+fn finish(progress: &Progress, title: &str, count: Option<usize>) {
+    if let Ok(mut steps) = progress.lock() {
+        if let Some(step) = steps.iter_mut().rev().find(|s| s.title == title && !s.done) {
+            step.done = true;
+            step.count = count;
+        }
+    }
+}
+
 #[derive(Default, Debug)]
 pub struct Report {
     pub full: bool,
@@ -77,14 +131,27 @@ pub struct Report {
 /// Syncs one org's PRs and issues into the pilot's caches. `viewer` is the
 /// signed-in login, for a personal account's `user:` searches. Blocking:
 /// run it off the main thread.
-pub fn sync_org(token: &str, org: &str, viewer: Option<&str>) -> Result<Report, Error> {
+/// How a sync runs, from the settings.
+#[derive(Clone, Copy)]
+pub struct Options {
+    pub lookback_days: i64,
+    pub full_every: Duration,
+}
+
+impl Default for Options {
+    fn default() -> Self {
+        Self { lookback_days: gannin_lookback_days(), full_every: Duration::hours(24) }
+    }
+}
+
+pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, options: Options, progress: &Progress) -> Result<Report, Error> {
     let now = Utc::now();
-    let lookback = lookback_days();
+    let lookback = options.lookback_days;
     let mut all = read_synced();
     let previous = all.get(org).cloned().unwrap_or_default();
     let scope = format!("{}:{org} archived:false", if viewer == Some(org) { "user" } else { "org" });
     let since = previous.at.map(|at| at - Duration::minutes(5));
-    let full_due = previous.full_at.is_none_or(|at| now - at > Duration::hours(24)) || previous.lookback_days != lookback;
+    let full_due = force_full || previous.full_at.is_none_or(|at| now - at > options.full_every) || previous.lookback_days != lookback;
     let merged_since = (now - Duration::days(lookback)).date_naive();
 
     let mut report = Report::default();
@@ -93,9 +160,18 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>) -> Result<Report, 
     let mut changes: Option<(Vec<Value>, Vec<Value>)> = None;
     if let (Some(since), false) = (since, full_due) {
         let stamp = search_stamp(since);
+        begin(progress, &["Changed pull requests", "Changed issues"]);
         let (prs, issues) = std::thread::scope(|scope_| {
-            let prs = scope_.spawn(|| github::search(token, &format!("{scope} is:pr updated:>={stamp}"), 50, PR_FIELDS));
-            let issues = scope_.spawn(|| github::search(token, &format!("{scope} is:issue updated:>={stamp}"), 100, ISSUE_FIELDS));
+            let prs = scope_.spawn(|| {
+                let found = github::search_reporting(token, &format!("{scope} is:pr updated:>={stamp}"), 50, PR_FIELDS, &|f, t| advance(progress, "Changed pull requests", f, t));
+                finish(progress, "Changed pull requests", found.as_ref().ok().map(|f| f.0.len()));
+                found
+            });
+            let issues = scope_.spawn(|| {
+                let found = github::search_reporting(token, &format!("{scope} is:issue updated:>={stamp}"), 100, ISSUE_FIELDS, &|f, t| advance(progress, "Changed issues", f, t));
+                finish(progress, "Changed issues", found.as_ref().ok().map(|f| f.0.len()));
+                found
+            });
             (prs.join().expect("search thread"), issues.join().expect("search thread"))
         });
         let (prs, prs_cut) = prs?;
@@ -110,10 +186,19 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>) -> Result<Report, 
             report.full = true;
             // The three searches at once, as Gannin runs them.
             let merged_query = format!("{scope} is:pr is:merged merged:>={} sort:updated-desc", merged_since.format("%Y-%m-%d"));
+            let merged_title = format!("Pull requests merged in {lookback} days");
+            begin(progress, &["Open pull requests", &merged_title, "Open issues"]);
+            let search = |title: &str, query: &str, size: usize, fields: &str| {
+                let found = github::search_reporting(token, query, size, fields, &|f, t| advance(progress, title, f, t));
+                finish(progress, title, found.as_ref().ok().map(|f| f.0.len()));
+                found
+            };
+            let search = &search;
+            let (open_query, issues_query) = (format!("{scope} is:pr is:open sort:updated-desc"), format!("{scope} is:issue is:open sort:updated-desc"));
             let (open, merged, issues) = std::thread::scope(|scope_| {
-                let open = scope_.spawn(|| github::search(token, &format!("{scope} is:pr is:open sort:updated-desc"), 50, PR_FIELDS));
-                let merged = scope_.spawn(|| github::search(token, &merged_query, 50, PR_FIELDS));
-                let issues = scope_.spawn(|| github::search(token, &format!("{scope} is:issue is:open sort:updated-desc"), 100, ISSUE_FIELDS));
+                let open = scope_.spawn(|| search("Open pull requests", &open_query, 50, PR_FIELDS));
+                let merged = scope_.spawn(|| search(&merged_title, &merged_query, 50, PR_FIELDS));
+                let issues = scope_.spawn(|| search("Open issues", &issues_query, 100, ISSUE_FIELDS));
                 (open.join().expect("search thread"), merged.join().expect("search thread"), issues.join().expect("search thread"))
             });
             let mut prs = open?.0;
@@ -125,6 +210,7 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>) -> Result<Report, 
     report.issues = issues.len();
 
     let cutoff = merged_since.and_hms_opt(0, 0, 0).map(|t| t.and_utc());
+    begin(progress, &["Saving the pilot's copy"]);
     merge_pull_requests(org, &prs, report.full, cutoff).map_err(|e| Error::Other(format!("Couldn't save pull requests: {e}")))?;
     merge_issues(org, &issues, report.full).map_err(|e| Error::Other(format!("Couldn't save issues: {e}")))?;
 
@@ -133,6 +219,7 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>) -> Result<Report, 
         Synced { at: Some(now), full_at: if report.full { Some(now) } else { previous.full_at }, lookback_days: lookback },
     );
     write_synced(&all);
+    finish(progress, "Saving the pilot's copy", None);
     Ok(report)
 }
 

@@ -14,7 +14,7 @@
 
 use crate::avatars::{avatar, stack};
 use crate::charts::Theme;
-use crate::format::{relative_date, thousands};
+use crate::format::thousands;
 use crate::issues::{check_row, menu_action, menu_action_owned, menu_heading, mode_switch, pill, separator, summary, ColumnDrag, Tooltip};
 use chrono::{DateTime, Utc};
 use gpui::{
@@ -1313,7 +1313,7 @@ impl PrsPage {
         let width = self.column_width(column).unwrap_or(0.);
         let text = |value: String| div().w(px(width)).flex_none().truncate().child(value);
         let quiet = |value: String| text(value).text_color(theme.secondary);
-        let when = |date: Option<DateTime<Utc>>| quiet(date.map(|d| relative_date(d, now)).unwrap_or_default());
+        let when = |date: Option<DateTime<Utc>>| quiet(date.map(crate::format::table_date).unwrap_or_default());
         let count = |n: usize| quiet(if n > 0 { n.to_string() } else { String::new() });
         match column {
             Column::Title => div()
