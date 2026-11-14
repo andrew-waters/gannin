@@ -130,6 +130,23 @@ fn main() {
                 }
                 return;
             }
+            // Scouts an issue as scheduling does: `--scout <harness> <owner/repo> <number>`.
+            "--scout" => {
+                let harness = std::path::PathBuf::from(args.next().unwrap_or_default());
+                let repo = args.next().unwrap_or_default();
+                let number: i64 = args.next().and_then(|n| n.parse().ok()).unwrap_or(0);
+                let issue = schedule::IssueRef { id: String::new(), url: format!("https://github.com/{repo}/issues/{number}"), repo, number, title: String::new() };
+                let r = schedule::scout(&harness, &issue);
+                println!("state: {} {}", r.state, r.error.unwrap_or_default());
+                println!("notes: {}", r.notes.lines().take(6).collect::<Vec<_>>().join("\n       "));
+                for d in &r.decisions {
+                    println!("decision: {} [{}] recommended {:?}", d.question, d.options.iter().map(|o| o.0.clone()).collect::<Vec<_>>().join(" | "), d.recommended);
+                }
+                for b in &r.blockers {
+                    println!("blocker: {b}");
+                }
+                return;
+            }
             "--work-changes" => {
                 let folder = std::path::PathBuf::from(args.next().unwrap_or_default());
                 for w in work_live::worktrees(&folder) {

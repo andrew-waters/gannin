@@ -460,6 +460,10 @@ pub struct Workspace {
     window_handle: Option<gpui::AnyWindowHandle>,
     /// Workflows for launches being started, by launch id.
     launch_workflows: std::collections::HashMap<String, crate::workflows::Workflow>,
+    /// Scheduled issues being scouted now, and a scheduled start's
+    /// scouting for its brief, while it's being started.
+    scouting: std::collections::HashSet<String>,
+    prepared: Option<String>,
     /// Add to Schedule's sheet, while it's open.
     schedule_sheet: Option<(Entity<crate::schedule_sheet::ScheduleSheet>, Subscription)>,
     /// Explain's sheet, while it's open.
@@ -764,6 +768,8 @@ impl Workspace {
             pr_picker: None,
             explain: None,
             schedule_sheet: None,
+            scouting: Default::default(),
+            prepared: None,
             launch_workflows: Default::default(),
             _scheduler: None,
             schedule_ticks: 0,
@@ -1240,6 +1246,16 @@ impl Workspace {
         if unattended.is_some() {
             brief.push_str(crate::schedule::UNATTENDED);
         }
+        // Scouted when it was scheduled: its notes and decisions are in the
+        // brief, so the workflow's prepare steps needn't run again.
+        if let Some(prepared) = self.prepared.clone() {
+            brief.push_str(&prepared);
+            if let Some(workflow) = self.launch_workflows.get_mut(&launch.id) {
+                let kinds: Vec<crate::workflows::When> = workflow.staged().iter().map(|(k, _)| *k).collect();
+                let mut k = kinds.into_iter();
+                workflow.stages.retain(|_| k.next() != Some(crate::workflows::When::Prepare));
+            }
+        }
         let id = launch.id.clone();
         self.start_launch(launch, &brief, &prompt, false, window, cx);
         Some(id)
@@ -1371,6 +1387,11 @@ impl Workspace {
             }
         }
         if !sched.settings.paused_all {
+            // The first tick after launch: anything whose time passed while
+            // the app was closed is missed, never caught up. After that, an
+            // item held for its decisions starts late, once it's ready.
+            let first_tick = self.schedule_ticks == 0;
+            let ready = |sched: &Schedule, id: &str| sched.readiness.get(id).is_some_and(|r| r.is_ready());
             // Issue starts.
             for i in 0..sched.starts.len() {
                 let start = sched.starts[i].clone();
@@ -1378,72 +1399,59 @@ impl Workspace {
                     continue;
                 }
                 match due(start.at, now) {
-                    Some(true) => {
-                        let run = match self.issues.read(cx).issue(&start.issue.id) {
-                            Some(issue) => match self.work_on_with(issue, Some(gap), window, cx) {
-                                Some(launch) => RunState::Started { launch, at: now },
-                                None => RunState::Failed { reason: "It already has a session, or no harness covers its repo.".into(), at: now },
-                            },
-                            None => RunState::Failed { reason: "The issue isn't in this window's org.".into(), at: now },
-                        };
+                    Some(false) if first_tick => {
+                        sched.starts[i].run = RunState::Missed { at: now };
+                        sched.note(&start.id, &start.issue.label(), "missed", "The app wasn't open.");
+                    }
+                    Some(_) if ready(&sched, &start.issue.id) => {
+                        let run = self.start_scheduled(&start.issue, gap, window, cx, now, &sched);
                         let outcome = if matches!(run, RunState::Started { .. }) { "started" } else { "failed" };
                         sched.note(&start.id, &start.issue.label(), outcome, "");
                         sched.starts[i].run = run;
                     }
-                    Some(false) => {
-                        sched.starts[i].run = RunState::Missed { at: now };
-                        sched.note(&start.id, &start.issue.label(), "missed", "The app wasn't open.");
-                    }
-                    None => {}
+                    _ => {}
                 }
             }
-            // Sequences: the first item at its time, each next once the one
-            // before is done.
+            // Sequences: one item at a time, each at least the interval after
+            // the one before started. The next is the first that's ready: one
+            // still needing decisions is skipped, and comes back once it's
+            // ready.
             for i in 0..sched.sequences.len() {
                 let mut seq = sched.sequences[i].clone();
                 if seq.paused {
                     continue;
                 }
                 seq.runs.resize(seq.items.len(), RunState::Waiting);
-                let Some(next) = seq.runs.iter().position(|r| *r == RunState::Waiting) else { continue };
-                // The next once the one before is done and the interval since
-                // it started has passed.
-                let ready = if next == 0 {
-                    due(seq.start, now)
-                } else {
-                    match &seq.runs[next - 1] {
-                        RunState::Done { .. } => {
-                            let earliest = seq.planned().get(next - 1).copied().unwrap_or(now) + chrono::Duration::minutes(seq.interval.max(5) as i64);
-                            (now >= earliest).then_some(true)
-                        }
-                        _ => None,
-                    }
-                };
-                match ready {
-                    Some(true) => {
-                        let item = seq.items[next].clone();
-                        seq.runs[next] = match self.issues.read(cx).issue(&item.id) {
-                            Some(issue) => match self.work_on_with(issue, Some(gap), window, cx) {
-                                Some(launch) => RunState::Started { launch, at: now },
-                                None => RunState::Failed { reason: "It already has a session, or no harness covers its repo.".into(), at: now },
-                            },
-                            None => RunState::Failed { reason: "The issue isn't in this window's org.".into(), at: now },
-                        };
-                        // A failed item pauses the sequence, so later ones don't pile up.
-                        if matches!(seq.runs[next], RunState::Failed { .. }) {
-                            seq.paused = true;
-                        }
-                        sched.note(&seq.id, &item.label(), if seq.paused { "failed" } else { "started" }, &seq.name);
-                    }
-                    Some(false) => {
-                        seq.runs[0] = RunState::Missed { at: now };
-                        seq.paused = true;
-                        sched.note(&seq.id, &seq.name, "missed", "The app wasn't open at its start.");
-                    }
-                    None => {}
+                if seq.runs.iter().any(|r| matches!(r, RunState::Started { .. })) {
+                    continue;
                 }
+                let last = seq.runs.iter().filter_map(|r| match r {
+                    RunState::Done { at, .. } => Some(*at),
+                    _ => None,
+                }).max();
+                let earliest = last.map(|at| at + chrono::Duration::minutes(seq.interval.max(5) as i64)).unwrap_or(seq.start);
+                if now < earliest {
+                    continue;
+                }
+                if last.is_none() && first_tick && due(seq.start, now) == Some(false) {
+                    seq.runs[0] = RunState::Missed { at: now };
+                    seq.paused = true;
+                    sched.note(&seq.id, &seq.name, "missed", "The app wasn't open at its start.");
+                    sched.sequences[i] = seq;
+                    continue;
+                }
+                let Some(next) = (0..seq.items.len()).find(|&n| seq.runs[n] == RunState::Waiting && ready(&sched, &seq.items[n].id)) else { continue };
+                let item = seq.items[next].clone();
+                seq.runs[next] = self.start_scheduled(&item, gap, window, cx, now, &sched);
+                // A failed item pauses the sequence, so later ones don't pile up.
+                if matches!(seq.runs[next], RunState::Failed { .. }) {
+                    seq.paused = true;
+                }
+                sched.note(&seq.id, &item.label(), if seq.paused { "failed" } else { "started" }, &seq.name);
                 sched.sequences[i] = seq;
             }
+            // Scouting what's been scheduled and not scouted yet.
+            self.start_scouts(&mut sched, cx);
             // Recurring prompts.
             let today = chrono::Local::now().date_naive();
             let weekday = chrono::Datelike::weekday(&today).num_days_from_monday();
@@ -1479,6 +1487,60 @@ impl Workspace {
         self.schedule_ticks += 1;
         if self.schedule_ticks % 4 == 0 {
             self.check_scheduled_done(cx);
+        }
+    }
+
+    /// Starts a scheduled issue unattended, with what scouting it found and
+    /// the decisions made in its brief.
+    fn start_scheduled(&mut self, issue: &crate::schedule::IssueRef, gap: u32, window: &mut Window, cx: &mut Context<Self>, now: chrono::DateTime<chrono::Utc>, sched: &crate::schedule::Schedule) -> crate::schedule::RunState {
+        use crate::schedule::RunState;
+        let Some(item) = self.issues.read(cx).issue(&issue.id) else {
+            return RunState::Failed { reason: "The issue isn't in this window's org.".into(), at: now };
+        };
+        self.prepared = sched.readiness.get(&issue.id).map(|r| r.brief());
+        let started = self.work_on_with(item, Some(gap), window, cx);
+        self.prepared = None;
+        match started {
+            Some(launch) => RunState::Started { launch, at: now },
+            None => RunState::Failed { reason: "It already has a session, or no harness covers its repo.".into(), at: now },
+        }
+    }
+
+    /// Scouts scheduled issues that haven't been, two at a time, off the
+    /// main thread, each in the harness that covers its repo.
+    fn start_scouts(&mut self, sched: &mut crate::schedule::Schedule, cx: &mut Context<Self>) {
+        let Some(org) = self.org.clone() else { return };
+        for issue in crate::schedule::unscouted(sched) {
+            if self.scouting.len() >= 2 {
+                break;
+            }
+            let Some(harness) = self.harness_for(&issue.repo) else { continue };
+            let path = crate::launch::harness_path(&org, &harness);
+            sched.readiness.insert(issue.id.clone(), crate::schedule::Readiness { state: "scouting".into(), ..Default::default() });
+            self.scouting.insert(issue.id.clone());
+            let id = issue.id.clone();
+            cx.spawn(async move |this, cx| {
+                let found = cx.background_executor().spawn(async move { crate::schedule::scout(&path, &issue) }).await;
+                let mut sched = crate::schedule::Schedule::load();
+                sched.readiness.insert(id.clone(), found);
+                sched.save();
+                this.update(cx, |this, cx| {
+                    this.scouting.remove(&id);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    /// Kicks scouting off now, for what was just scheduled.
+    fn scout_now(&mut self, cx: &mut Context<Self>) {
+        let mut sched = crate::schedule::Schedule::load();
+        let before = sched.clone();
+        self.start_scouts(&mut sched, cx);
+        if sched != before {
+            sched.save();
         }
     }
 
@@ -1627,6 +1689,8 @@ impl Workspace {
                 let sheet = cx.new(|cx| crate::schedule_sheet::ScheduleSheet::new(name, items, window, cx));
                 let subscription = cx.subscribe_in(&sheet, window, |this, _, _: &crate::schedule_sheet::SheetEvent, window, cx| {
                     this.schedule_sheet = None;
+                    // Scouting starts as soon as it's scheduled.
+                    this.scout_now(cx);
                     this.focus_current(window, cx);
                     cx.notify();
                 });

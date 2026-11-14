@@ -23,10 +23,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const READ_ONLY: &str = "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(gh issue view:*),Bash(gh pr view:*),Bash(ls:*)";
+const READ_ONLY: &str = "Read,Grep,Glob,Bash(git diff:*),Bash(git diff *),Bash(git log:*),Bash(git log *),Bash(git show:*),Bash(git show *),Bash(git status:*),Bash(git status),Bash(git merge-base:*),Bash(git merge-base *),Bash(gh issue view:*),Bash(gh issue view *),Bash(gh pr view:*),Bash(gh pr view *),Bash(ls:*),Bash(ls *)";
 
 /// One headless claude turn: its final reply, or why not.
-fn ask_claude(dir: &Path, prompt: &str, model: Option<&str>, timeout: Duration) -> Result<String, String> {
+pub(crate) fn ask_claude(dir: &Path, prompt: &str, model: Option<&str>, timeout: Duration) -> Result<String, String> {
     let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
     let mut args = vec!["-p".to_string(), "--output-format".into(), "json".into(), "--allowedTools".into(), READ_ONLY.into(), "--disallowedTools".into(), "Edit,MultiEdit,Write,NotebookEdit".into()];
     if let Some(model) = model.filter(|m| !m.is_empty() && *m != "Each person's") {

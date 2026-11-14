@@ -126,6 +126,8 @@ pub struct Busy {
     pub status: &'static str,
     pub paused: bool,
     pub place: Option<(usize, usize)>,
+    /// The issue it works on, for its readiness.
+    pub issue: Option<String>,
 }
 
 pub fn status_of(run: &RunState) -> &'static str {
@@ -149,12 +151,12 @@ impl Schedule {
         let weekday = date.weekday().num_days_from_monday();
         let mut out = Vec::new();
         for w in self.windows.iter().filter(|w| w.weekdays.contains(&weekday)) {
-            out.push(Busy { kind: "window", id: w.id.clone(), title: w.name.clone(), start: w.start, length: w.length, status: "", paused: w.paused, place: None });
+            out.push(Busy { kind: "window", id: w.id.clone(), title: w.name.clone(), start: w.start, length: w.length, status: "", paused: w.paused, place: None, issue: None });
         }
         for st in &self.starts {
             let (d, m) = local(st.at);
             if d == date {
-                out.push(Busy { kind: "start", id: st.id.clone(), title: st.issue.label(), start: m, length: 90, status: status_of(&st.run), paused: st.paused, place: None });
+                out.push(Busy { kind: "start", id: st.id.clone(), title: st.issue.label(), start: m, length: 90, status: status_of(&st.run), paused: st.paused, place: None, issue: Some(st.issue.id.clone()) });
             }
         }
         for q in &self.sequences {
@@ -163,7 +165,7 @@ impl Schedule {
                 let (d, m) = local(at);
                 if d == date {
                     let run = q.runs.get(i).cloned().unwrap_or_default();
-                    out.push(Busy { kind: "sequence", id: q.id.clone(), title: item.label(), start: m, length: q.interval.max(15).saturating_sub(5), status: status_of(&run), paused: q.paused, place: Some((i + 1, q.items.len())) });
+                    out.push(Busy { kind: "sequence", id: q.id.clone(), title: item.label(), start: m, length: q.interval.max(15).saturating_sub(5), status: status_of(&run), paused: q.paused, place: Some((i + 1, q.items.len())), issue: Some(item.id.clone()) });
                 }
             }
         }
@@ -177,7 +179,7 @@ impl Schedule {
             } else {
                 None
             };
-            out.push(Busy { kind: "prompt", id: p.id.clone(), title: p.name.clone(), start: p.start, length: 20, status: status.unwrap_or(""), paused: p.paused, place: None });
+            out.push(Busy { kind: "prompt", id: p.id.clone(), title: p.name.clone(), start: p.start, length: 20, status: status.unwrap_or(""), paused: p.paused, place: None, issue: None });
         }
         out.sort_by_key(|b| b.start);
         out
@@ -245,6 +247,74 @@ pub struct Schedule {
     /// When the last unattended pull request was let through.
     #[serde(default)]
     pub last_pr: Option<DateTime<Utc>>,
+    /// Each scheduled issue's scouting, by its id.
+    #[serde(default)]
+    pub readiness: std::collections::BTreeMap<String, Readiness>,
+}
+
+/// A decision a scout found the work needs, its options (the first
+/// recommended, when it said), and the answer given.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Decision {
+    pub question: String,
+    pub options: Vec<(String, String)>,
+    #[serde(default)]
+    pub recommended: Option<usize>,
+    #[serde(default)]
+    pub answer: Option<String>,
+}
+
+/// What scouting an issue found when it was scheduled, so its run starts
+/// with the decisions made: notes for the session, decisions to answer and
+/// blockers to clear.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct Readiness {
+    /// scouting, ready, needs, blocked, failed
+    pub state: String,
+    #[serde(default)]
+    pub notes: String,
+    #[serde(default)]
+    pub decisions: Vec<Decision>,
+    #[serde(default)]
+    pub blockers: Vec<String>,
+    #[serde(default)]
+    pub scouted_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl Readiness {
+    /// Ready once every decision has an answer and nothing blocks it.
+    pub fn settle(&mut self) {
+        if self.state == "scouting" || self.state == "failed" {
+            return;
+        }
+        self.state = if !self.blockers.is_empty() {
+            "blocked".into()
+        } else if self.decisions.iter().any(|d| d.answer.is_none()) {
+            "needs".into()
+        } else {
+            "ready".into()
+        };
+    }
+
+    pub fn is_ready(&self) -> bool {
+        self.state == "ready"
+    }
+
+    /// What goes in the session's brief: the scout's notes and the
+    /// decisions made.
+    pub fn brief(&self) -> String {
+        let mut out = String::from("\n## Prepared when it was scheduled\n\nThis issue was scouted when it was scheduled, and its decisions were made then. Follow them.\n");
+        if !self.notes.trim().is_empty() {
+            out.push_str(&format!("\n### Notes\n\n{}\n", self.notes.trim()));
+        }
+        let made: Vec<String> = self.decisions.iter().filter_map(|d| Some(format!("- {}: {}", d.question, d.answer.as_ref()?))).collect();
+        if !made.is_empty() {
+            out.push_str(&format!("\n### Decisions made\n\n{}\n", made.join("\n")));
+        }
+        out
+    }
 }
 
 pub fn folder() -> PathBuf {
@@ -355,4 +425,86 @@ pub fn sub_issues_in_order(token: &str, issue_id: &str) -> Result<Vec<IssueRef>,
             })
         })
         .collect())
+}
+
+/// Every scheduled issue still to run, with no scouting yet.
+pub fn unscouted(s: &Schedule) -> Vec<IssueRef> {
+    let mut out: Vec<IssueRef> = Vec::new();
+    let waiting = s.starts.iter().filter(|x| x.run == RunState::Waiting).map(|x| x.issue.clone()).chain(
+        s.sequences.iter().flat_map(|q| q.items.iter().enumerate().filter(|(i, _)| q.runs.get(*i).is_none_or(|r| *r == RunState::Waiting)).map(|(_, it)| it.clone())),
+    );
+    for issue in waiting {
+        if !s.readiness.contains_key(&issue.id) && !out.iter().any(|o| o.id == issue.id) {
+            out.push(issue);
+        }
+    }
+    out
+}
+
+/// Scouts an issue in its harness, read only: notes for the session, the
+/// decisions it needs (with options, the recommended one first), and what
+/// blocks it. Blocking; a few minutes.
+/// The issue's title, text and recent comments, read for the scout (it
+/// can't run gh itself under its read-only rules).
+fn issue_text(issue: &IssueRef) -> Option<String> {
+    let token = crate::auth::token()?;
+    let (owner, name) = issue.repo.split_once('/')?;
+    let data = crate::github::graphql(
+        &token,
+        "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { issue(number: $number) { title body comments(last: 30) { nodes { author { login } body } } } } }",
+        serde_json::json!({ "owner": owner, "name": name, "number": issue.number }),
+    )
+    .ok()?;
+    let i = &data["repository"]["issue"];
+    let comments: Vec<String> = i["comments"]["nodes"].as_array().into_iter().flatten().filter_map(|c| Some(format!("@{}: {}", c["author"]["login"].as_str().unwrap_or("someone"), c["body"].as_str()?.trim()))).collect();
+    Some(format!("# {}\n\n{}\n\n## Comments\n\n{}", i["title"].as_str()?, i["body"].as_str().unwrap_or("").trim(), if comments.is_empty() { "None.".into() } else { comments.join("\n\n") }))
+}
+
+pub fn scout(harness: &std::path::Path, issue: &IssueRef) -> Readiness {
+    let text = issue_text(issue).unwrap_or_else(|| "(Gannin couldn't read it: work from the title and the code.)".into());
+    let prompt = format!(
+        "Scout {repo}#{n}, \"{title}\" ({url}), ahead of an unattended Claude Code session that will work on it later with nobody watching. Don't change anything. The issue, as it is now:\n\n{text}\n\nRead the code it touches (the code repos are under projects/, or this checkout if it's the repo).\n\nFind what that session would otherwise have to stop and ask: choices the issue leaves open that a person should make (scope, approach, naming, behaviour), each with two to four options, the one you'd recommend first. Leave out choices a careful engineer would just make. Also list blockers: what would stop the work outright (missing access, another issue that must land first, an unclear requirement no option settles).\n\nEnd your reply with one fenced ```json block: {{\"notes\": \"<what the session should know: where the code is, how it fits, risks; Markdown>\", \"decisions\": [{{\"question\": \"<the question>\", \"options\": [{{\"label\": \"<short>\", \"description\": \"<what it means>\"}}], \"recommended\": 0}}], \"blockers\": [\"<what blocks it>\"]}}. Use [] for none.",
+        repo = issue.repo,
+        n = issue.number,
+        title = issue.title,
+        url = issue.url,
+        text = text
+    );
+    let now = Utc::now();
+    match crate::work_flow::ask_claude(harness, &prompt, None, std::time::Duration::from_secs(15 * 60)) {
+        Ok(reply) => {
+            let parsed = reply.rfind("```json").and_then(|start| {
+                let start = start + "```json".len();
+                let end = start + reply[start..].find("```")?;
+                serde_json::from_str::<serde_json::Value>(reply[start..end].trim()).ok()
+            });
+            let Some(v) = parsed else {
+                return Readiness { state: "failed".into(), error: Some("The scout gave no findings.".into()), scouted_at: Some(now), ..Default::default() };
+            };
+            let decisions = v["decisions"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|d| {
+                    Some(Decision {
+                        question: d["question"].as_str()?.to_string(),
+                        options: d["options"].as_array().into_iter().flatten().filter_map(|o| Some((o["label"].as_str()?.to_string(), o["description"].as_str().unwrap_or("").to_string()))).collect(),
+                        recommended: d["recommended"].as_u64().map(|r| r as usize),
+                        answer: None,
+                    })
+                })
+                .collect();
+            let mut r = Readiness {
+                state: String::new(),
+                notes: v["notes"].as_str().unwrap_or("").to_string(),
+                decisions,
+                blockers: v["blockers"].as_array().into_iter().flatten().filter_map(|b| b.as_str().map(str::to_string)).collect(),
+                scouted_at: Some(now),
+                error: None,
+            };
+            r.settle();
+            r
+        }
+        Err(e) => Readiness { state: "failed".into(), error: Some(e), scouted_at: Some(now), ..Default::default() },
+    }
 }

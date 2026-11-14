@@ -90,6 +90,8 @@ pub struct SchedulePage {
     week: NaiveDate,
     selected: Option<String>,
     adding: Option<(NaiveDate, u32)>,
+    /// The panel of decisions waiting on you shows.
+    deciding: bool,
     picking: Option<Picking>,
     name_field: Entity<editor::Editor>,
     time_field: Entity<editor::Editor>,
@@ -216,6 +218,7 @@ impl SchedulePage {
             week: monday(Local::now().date_naive()),
             selected: None,
             adding: None,
+            deciding: false,
             picking: None,
             name_field,
             time_field,
@@ -269,16 +272,128 @@ impl SchedulePage {
                 title: b.title,
                 start: b.start,
                 length: b.length,
-                status: b.status,
+                // One still to run shows where its scouting stands.
+                status: match (b.status, b.issue.as_ref().and_then(|i| self.schedule.readiness.get(i))) {
+                    ("", Some(r)) => match r.state.as_str() {
+                        "scouting" => "scouting",
+                        "needs" => "needs",
+                        "blocked" => "blocked",
+                        "failed" => "scoutfail",
+                        _ => "",
+                    },
+                    ("", None) if b.issue.is_some() => "scouting",
+                    (status, _) => status,
+                },
                 paused: b.paused,
                 place: b.place,
             })
             .collect()
     }
 
+    /// Scheduled issues waiting on you: decisions to make, blockers to
+    /// clear, or a scout that failed.
+    fn waiting_on_you(&self) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        let titles = self.schedule.starts.iter().map(|x| x.issue.clone()).chain(self.schedule.sequences.iter().flat_map(|q| q.items.clone()));
+        for issue in titles {
+            if let Some(r) = self.schedule.readiness.get(&issue.id) {
+                if matches!(r.state.as_str(), "needs" | "blocked" | "failed") && !out.iter().any(|(id, _)| *id == issue.id) {
+                    out.push((issue.id.clone(), issue.label()));
+                }
+            }
+        }
+        out
+    }
+
+    /// The panel of what's waiting on you: each issue's decisions as
+    /// options to pick, its blockers to clear, or Scout Again.
+    fn decisions_panel(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let waiting = self.waiting_on_you();
+        let mut body = div().flex().flex_col().gap_4().child(div().font_weight(FontWeight::SEMIBOLD).child("Waiting on you")).child(div().text_xs().text_color(theme.secondary).child(
+            "Scouted when they were scheduled. Answer before their time and they start with the decisions made; one still waiting at its time is skipped, and starts once it's ready.",
+        ));
+        if waiting.is_empty() {
+            body = body.child(div().text_sm().text_color(theme.secondary).child("Nothing: every scheduled issue is ready or still being scouted."));
+        }
+        for (issue_id, title) in waiting {
+            let Some(r) = self.schedule.readiness.get(&issue_id).cloned() else { continue };
+            let mut card = div().flex().flex_col().gap_2().p(px(10.)).rounded_lg().bg(theme.bg).border_1().border_color(theme.border).child(div().font_weight(FontWeight::MEDIUM).text_sm().child(title));
+            if let Some(error) = &r.error {
+                card = card.child(div().text_xs().text_color(theme.critical()).child(format!("The scout couldn't finish: {error}")));
+            }
+            for (di, d) in r.decisions.iter().enumerate() {
+                let answered = d.answer.clone();
+                card = card.child(div().text_sm().child(d.question.clone())).child(div().flex().flex_row().flex_wrap().gap_1().children(d.options.iter().enumerate().map(|(oi, (label, desc))| {
+                    let on = answered.as_deref() == Some(label.as_str());
+                    let (iid, label2) = (issue_id.clone(), label.clone());
+                    let mark = if d.recommended == Some(oi) { " (recommended)" } else { "" };
+                    div()
+                        .id(SharedString::from(format!("dec-{issue_id}-{di}-{oi}")))
+                        .px_2()
+                        .py_0p5()
+                        .rounded_md()
+                        .text_xs()
+                        .cursor_pointer()
+                        .border_1()
+                        .border_color(if on { theme.selected } else { theme.border })
+                        .when(on, |d| d.bg(theme.selected.opacity(0.15)).text_color(theme.selected))
+                        .hover(|s| s.bg(theme.row_selected))
+                        .tooltip({
+                            let desc = desc.clone();
+                            move |_, cx| cx.new(|_| crate::issues::Tooltip(desc.clone())).into()
+                        })
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            let (iid, label2) = (iid.clone(), label2.clone());
+                            this.change_all(cx, move |s| {
+                                if let Some(r) = s.readiness.get_mut(&iid) {
+                                    if let Some(d) = r.decisions.get_mut(di) {
+                                        d.answer = Some(label2);
+                                    }
+                                    r.settle();
+                                }
+                            })
+                        }))
+                        .child(format!("{label}{mark}"))
+                })));
+            }
+            for (bi, b) in r.blockers.iter().enumerate() {
+                let iid = issue_id.clone();
+                card = card.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .child(div().flex_1().text_sm().text_color(theme.critical()).child(format!("Blocked: {b}")))
+                        .child(Self::button(format!("clear-{issue_id}-{bi}"), "Cleared", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            let iid = iid.clone();
+                            this.change_all(cx, move |s| {
+                                if let Some(r) = s.readiness.get_mut(&iid) {
+                                    if bi < r.blockers.len() {
+                                        r.blockers.remove(bi);
+                                    }
+                                    r.settle();
+                                }
+                            })
+                        }))),
+                );
+            }
+            let iid = issue_id.clone();
+            card = card.child(div().flex().flex_row().child(Self::button(format!("rescout-{issue_id}"), "Scout Again", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                let iid = iid.clone();
+                this.change_all(cx, move |s| {
+                    s.readiness.remove(&iid);
+                })
+            }))));
+            body = body.child(card);
+        }
+        body.into_any_element()
+    }
+
     fn select(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = id.clone();
         self.adding = None;
+        self.deciding = false;
         let s = &self.schedule;
         let (name, time, text) = match id.as_deref() {
             Some(id) => {
@@ -483,6 +598,17 @@ impl SchedulePage {
             })))
             .child(div().pl_2().font_weight(FontWeight::SEMIBOLD).child(label))
             .child(div().flex_1())
+            .child({
+                let n = self.waiting_on_you().len();
+                Self::button("waiting", if n == 0 { "Waiting on you".to_string() } else { format!("Waiting on you · {n}") }, self.deciding, theme)
+                    .when(n > 0, |b| b.text_color(theme.orange()))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.deciding = !this.deciding;
+                        this.adding = None;
+                        this.selected = None;
+                        cx.notify();
+                    }))
+            })
             .child(Self::button("gap", format!("PRs {} min apart", settings.gap_minutes), false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.change_all(cx, |s| {
                     s.settings.gap_minutes = match s.settings.gap_minutes {
@@ -513,6 +639,10 @@ impl SchedulePage {
             "failed" => ("✕", theme.critical()),
             "missed" => ("○", theme.secondary),
             "running" => ("●", theme.good()),
+            "needs" => ("?", theme.orange()),
+            "blocked" => ("!", theme.critical()),
+            "scoutfail" => ("!", theme.secondary),
+            "scouting" => ("◌", theme.secondary),
             _ => ("", theme.secondary),
         };
         div()
@@ -601,6 +731,7 @@ impl SchedulePage {
                         .hover(|s| s.bg(theme.row_selected.opacity(0.3)))
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.adding = Some((date, minute));
+                            this.deciding = false;
                             this.selected = None;
                             cx.notify();
                         }))
@@ -678,6 +809,9 @@ impl SchedulePage {
     fn side(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let label = |text: &str| div().text_xs().text_color(theme.secondary).child(text.to_string());
         let input = |e: &Entity<editor::Editor>| div().px_2().py_1().rounded_md().border_1().border_color(theme.border).bg(theme.bg).text_sm().child(e.clone());
+        if self.deciding {
+            return Some(self.decisions_panel(theme, cx));
+        }
         if let Some((date, minute)) = self.adding {
             return Some(
                 div()
