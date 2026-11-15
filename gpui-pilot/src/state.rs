@@ -47,6 +47,8 @@ pub struct SavedState {
     pub harness_open: bool,
     /// The tab bar's filter by kind, and whether tabs group by kind.
     pub tab_filter: Option<crate::shell::TabKind>,
+    /// Tabs shown by whether their session runs: active or stopped.
+    pub tab_status: Option<crate::shell::TabStatus>,
     pub group_tabs: bool,
     pub collapsed_kinds: Vec<crate::shell::TabKind>,
     pub inspector_open: bool,
@@ -92,6 +94,7 @@ impl Default for SavedState {
             sidebar_open: true,
             harness_open: false,
             tab_filter: None,
+            tab_status: None,
             group_tabs: false,
             collapsed_kinds: Vec::new(),
             inspector_open: false,
