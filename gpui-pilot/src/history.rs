@@ -109,7 +109,7 @@ fn first_by_pilot(file: &Value) -> bool {
 
 /// Puts an incoming slot on a PR, unless the held one is newer; the core
 /// merges as the workload sync merges it.
-fn put_slot(entries: &mut Map<String, Value>, id: &str, core: Value, slot: &str, value: Value) {
+pub(crate) fn put_slot(entries: &mut Map<String, Value>, id: &str, core: Value, slot: &str, value: Value) {
     let entry = entries.entry(id.to_string()).or_insert_with(|| json!({}));
     let merged = merge_core(entry.get("core"), core);
     entry["core"] = merged;
@@ -483,7 +483,7 @@ pub fn sync_work_log(token: &str, org: &str, scope: &str, window_days: i64, forc
 
 // MARK: - Issue history
 
-const ISSUE_HISTORY_FIELDS: &str = "... on Issue { id number title url createdAt updatedAt closedAt stateReason repository { nameWithOwner } author { login } assignees(first: 10) { nodes { login } } labels(first: 20) { nodes { name } } issueType { name } milestone { title } parent { id } timelineItems(itemTypes: [PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, ASSIGNED_EVENT, REOPENED_EVENT, SUB_ISSUE_ADDED_EVENT], first: 100) { nodes { __typename ... on ProjectV2ItemStatusChangedEvent { createdAt status project { number title } } ... on AssignedEvent { createdAt } ... on ReopenedEvent { createdAt } ... on SubIssueAddedEvent { createdAt } } } projectItems(first: 5) { nodes { project { number title } fieldValues(first: 30) { nodes { ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name dataType } } } ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name dataType } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name dataType } } } ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { id } } } } ... on ProjectV2ItemFieldIterationValue { title startDate field { ... on ProjectV2FieldCommon { name dataType } } } ... on ProjectV2ItemFieldMultiSelectValue { options { name } field { ... on ProjectV2FieldCommon { name dataType } } } } } } } closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number url createdAt mergedAt state repository { nameWithOwner } commits(last: 50) { nodes { commit { authoredDate } } } reviews(last: 20) { nodes { submittedAt } } } } mentionedInPullRequests: timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 20) { nodes { ... on CrossReferencedEvent { source { ... on PullRequest { number url createdAt mergedAt state repository { nameWithOwner } } } } } } }";
+pub(crate) const ISSUE_HISTORY_FIELDS: &str = "... on Issue { id number title url createdAt updatedAt closedAt stateReason repository { nameWithOwner } author { login } assignees(first: 10) { nodes { login } } labels(first: 20) { nodes { name } } issueType { name } milestone { title } parent { id } timelineItems(itemTypes: [PROJECT_V2_ITEM_STATUS_CHANGED_EVENT, ASSIGNED_EVENT, REOPENED_EVENT, SUB_ISSUE_ADDED_EVENT], first: 100) { nodes { __typename ... on ProjectV2ItemStatusChangedEvent { createdAt status project { number title } } ... on AssignedEvent { createdAt } ... on ReopenedEvent { createdAt } ... on SubIssueAddedEvent { createdAt } } } projectItems(first: 5) { nodes { project { number title } fieldValues(first: 30) { nodes { ... on ProjectV2ItemFieldTextValue { text field { ... on ProjectV2FieldCommon { name dataType } } } ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name dataType } } } ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name dataType } } } ... on ProjectV2ItemFieldSingleSelectValue { name optionId field { ... on ProjectV2FieldCommon { name dataType } ... on ProjectV2SingleSelectField { options { id } } } } ... on ProjectV2ItemFieldIterationValue { title startDate field { ... on ProjectV2FieldCommon { name dataType } } } ... on ProjectV2ItemFieldMultiSelectValue { options { name } field { ... on ProjectV2FieldCommon { name dataType } } } } } } } closedByPullRequestsReferences(first: 5, includeClosedPrs: true) { nodes { number url createdAt mergedAt state repository { nameWithOwner } commits(last: 50) { nodes { commit { authoredDate } } } reviews(last: 20) { nodes { submittedAt } } } } mentionedInPullRequests: timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 20) { nodes { ... on CrossReferencedEvent { source { ... on PullRequest { number url createdAt mergedAt state repository { nameWithOwner } } } } } } }";
 
 /// A `YYYY-MM-DD` as Swift stores it: UTC midnight.
 fn day_value(text: &str) -> Option<String> {
@@ -527,7 +527,7 @@ fn project_values(values: &[Value]) -> Map<String, Value> {
 }
 
 /// An issue's `history` slot and its core, from a history search node.
-fn issue_history(node: &Value) -> Option<(String, Value, Value)> {
+pub(crate) fn issue_history(node: &Value) -> Option<(String, Value, Value)> {
     let id = node["id"].as_str()?.to_string();
     let repo = node["repository"]["nameWithOwner"].as_str().unwrap_or("");
     let mut core = Map::new();
@@ -672,6 +672,7 @@ pub fn sync_issue_history(token: &str, org: &str, scope: &str, window_days: i64,
         }
         advance(progress, title, ((done + 1) * 4).min(total), total);
     }
+    let guard = cache::STORE.lock();
     let mut store = read_store(Kind::Issues, org, "issues");
     let entries = store["issues"].as_object_mut().expect("store map");
     let mut ids: std::collections::BTreeSet<String> = history["storedIDs"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
@@ -682,6 +683,7 @@ pub fn sync_issue_history(token: &str, org: &str, scope: &str, window_days: i64,
         }
     }
     save(Kind::Issues, org, &store)?;
+    drop(guard);
     history["storedIDs"] = json!(ids.into_iter().collect::<Vec<_>>());
     history["coveredFrom"] = json!(iso(covered_from.min(start)));
     history["syncedAt"] = json!(iso(now));

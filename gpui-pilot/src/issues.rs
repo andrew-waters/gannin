@@ -1,7 +1,8 @@
 //! The Issues page, one list with the filter bar from `IssueFilterBar`
 //! (search, Assignee, Repository, Label, Board, Field and Milestone, and the
-//! state), read from the Swift app's shared issue store:
-//! `~/Library/Application Support/StoredIssues/<org>.json`. Not on a board
+//! state), read from the pilot's issue store, which its own sync fills
+//! (`GanninGPUIPilot/Caches/StoredIssues/<org>.json`, Gannin's shape). New
+//! Issue at the end of the filter bar opens the form (`new_issue.rs`). Not on a board
 //! is a Board filter here rather than a page of its own. Rows are a
 //! virtualised `uniform_list`, so only those on screen are built.
 //! Left out: Me (there's no signed-in viewer), sub-issue nesting, avatars,
@@ -319,6 +320,14 @@ pub(crate) fn load(org: &str) -> Result<Vec<IssueItem>, String> {
         return Err(format!("Store format {} isn't {CURRENT_FORMAT}", file.format_version));
     }
     Ok(file.issues.into_values().map(IssueItem::from).collect())
+}
+
+/// One issue from the store, as the list would show it.
+pub(crate) fn load_one(org: &str, id: &str) -> Option<IssueItem> {
+    let bytes = std::fs::read(cache_path(org)).ok()?;
+    let mut file: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let entry = file["issues"].get_mut(id)?.take();
+    serde_json::from_value::<Stored>(entry).ok().map(IssueItem::from)
 }
 
 // MARK: - Filters
@@ -758,6 +767,11 @@ impl EventEmitter<OpenIssue> for IssuesPage {}
 pub struct WorkOnIssues(pub Vec<IssueItem>);
 
 impl EventEmitter<WorkOnIssues> for IssuesPage {}
+
+/// New Issue from the filter bar.
+pub struct NewIssue;
+
+impl EventEmitter<NewIssue> for IssuesPage {}
 
 /// Add these to the schedule, as a sequence in the order picked.
 pub struct ScheduleIssues(pub Vec<IssueItem>);
@@ -1768,6 +1782,30 @@ impl IssuesPage {
                 )
             })
             .child(self.menu_button(Menu::Columns, theme, cx))
+            .child(
+                div()
+                    .id("new-issue")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .border_1()
+                    .border_color(theme.border)
+                    .hover(|s| s.bg(theme.row_selected))
+                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(NewIssue)))
+                    .child("New Issue"),
+            )
+    }
+
+    /// Where New Issue starts from this list: the repository when the
+    /// filter has exactly one, and the open issues a parent can be.
+    pub fn new_issue_start(&self) -> (Option<String>, Vec<IssueItem>) {
+        let repo = (self.filters.repositories.len() == 1 && !self.filters.excludes(Key::Repository.title()))
+            .then(|| self.filters.repositories.iter().next().cloned())
+            .flatten();
+        let mut open: Vec<IssueItem> = self.issues.iter().filter(|i| i.is_open()).cloned().collect();
+        open.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        (repo, open)
     }
 
     // MARK: Rows

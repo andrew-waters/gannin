@@ -71,6 +71,11 @@ pub fn path(kind: Kind, org: &str) -> PathBuf {
     path
 }
 
+/// Held while reading, changing and writing back a store that more than
+/// one thread updates (the issue store: the sync, the issue history and a
+/// drawer's refresh), so one never writes over another's change.
+pub static STORE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// Writes a cache through a temporary file and a rename.
 pub fn write(kind: Kind, org: &str, bytes: &[u8]) -> std::io::Result<()> {
     let path = path(kind, org);

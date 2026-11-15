@@ -4,7 +4,8 @@
 //! low. Requests go through the system's curl, with the token in a config
 //! on standard input so it never shows in the process list.
 //!
-//! Reads only: the pilot sends no mutations from here.
+//! Mostly reads. `mutate` sends a write; its only callers are the New
+//! Issue form's Create on GitHub, after the form has shown what will be sent.
 
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{json, Value};
@@ -138,6 +139,27 @@ fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
 /// Runs a query with variables and returns its `data`. Partial data with
 /// errors is accepted, as Gannin does; a 502-504 is tried twice more.
 pub fn graphql(token: &str, query: &str, variables: Value) -> Result<Value, Error> {
+    let (data, errors) = request(token, query, variables)?;
+    match data {
+        Some(data) => Ok(data),
+        None => Err(Error::Other(errors.first().and_then(|e| e["message"].as_str()).unwrap_or("GitHub sent no data").to_string())),
+    }
+}
+
+/// A write. GitHub answers a refused mutation (no write access, a repo
+/// gone read-only) with its payload null beside an error, so a null
+/// `payload` is a failure with GitHub's message, never a quiet success.
+pub fn mutate(token: &str, query: &str, variables: Value, payload: &str) -> Result<Value, Error> {
+    let (data, errors) = request(token, query, variables)?;
+    let message = || errors.first().and_then(|e| e["message"].as_str()).unwrap_or("GitHub didn't take it").to_string();
+    match data.as_ref().map(|d| &d[payload]) {
+        Some(value) if !value.is_null() => Ok(value.clone()),
+        _ => Err(Error::Other(message())),
+    }
+}
+
+/// Sends a query or mutation; its `data` (when there is any) and errors.
+fn request(token: &str, query: &str, variables: Value) -> Result<(Option<Value>, Vec<Value>), Error> {
     if let Some(until) = paused_until() {
         return Err(Error::Paused(until));
     }
@@ -192,12 +214,7 @@ pub fn graphql(token: &str, query: &str, variables: Value) -> Result<Value, Erro
         pause(until);
         return Err(Error::Paused(until));
     }
-    match json.get("data") {
-        Some(data) if !data.is_null() => Ok(data.clone()),
-        _ => Err(Error::Other(
-            errors.first().and_then(|e| e["message"].as_str()).unwrap_or("GitHub sent no data").to_string(),
-        )),
-    }
+    Ok((json.get("data").filter(|d| !d.is_null()).cloned(), errors))
 }
 
 /// A search's nodes, page by page, up to GitHub's 1000; also whether

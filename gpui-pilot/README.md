@@ -13,8 +13,9 @@ this code would have to be GPL-3.0 too. Only `gpui` and a few utility crates are
 It's a separate Cargo binary and isn't part of the Xcode build. It reads Gannin's caches and
 settings and never writes them: it keeps its own copies of the PR, issue and CI caches (seeded from
 Gannin's) under `Application Support/GanninGPUIPilot/`, and its own sessions there too. Its calls to
-GitHub are reads (signing in, syncing, Your Work), plus posting a review, which only happens from
-the Post to GitHub button after the review sheet has shown what will be sent. A session's terminal
+GitHub are reads (signing in, syncing, Your Work, an opened drawer), plus two writes, each only
+after the app has shown what will be sent: posting a review (Post to GitHub) and creating an issue
+(Create on GitHub). A session's terminal
 runs claude, which acts as you, as in Gannin.
 
 ## Running it
@@ -41,7 +42,9 @@ the two variables. `--org` and `--days` override what was saved.
 | --- | --- |
 | CI runs | The pilot's copy of `Actions/<org>.json` |
 | Issues, board fields, status history, linked PRs | The pilot's copy of `StoredIssues/<org>.json`, synced |
-| Descriptions and comments | `Application Support/Details.json`, else `dev.andon.gannin/IssueText.sqlite` |
+| Descriptions and comments | Fetched from GitHub as a drawer opens, kept in the pilot's `Caches/Details.json`; before that answers, Gannin's `Details.json` or `IssueText.sqlite` if Gannin is installed |
+| An opened issue | Fetched with its drawer (core, board fields, status history, linked PRs) into the pilot's issue store, so the list shows it as it is now |
+| New Issue | Live from GitHub: the org's repositories, boards and issue types; a repository's labels and assignable people; a board's single-select fields |
 | Projects and the issue workflow | `Application Support/UserData/Gannin.store` (org settings) and `Application Support/Harness/*.json` (each harness's `.gannin/project.json`) |
 | Pull requests: review, checks, reviewers, commits | The pilot's copy of `PullRequests/<org>.json`, synced |
 | Your Work | Live from GitHub when signed in, else the PR cache |
@@ -111,13 +114,19 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
 - **Planning, Ask, Quick Change** (`src/launch_form.rs`, `src/planning_panel.rs`): forms with
   Zed's editor; a plan's `planning.json` shown as stages, requirement, design, tasks and
   decisions, with "From the room". A quick change files no issue.
+- **New Issue** (`src/new_issue.rs`): New Issue at the end of the Issues filter bar, in the + menu, or
+  New Sub-issue in an issue's drawer, opens a subpage over the tab: Claude on the left, the issue
+  on the right. Say what it's about and Claude scouts the code (one read-only `claude -p` turn in
+  the harness covering the repository) and fills in the repository, title, description, labels,
+  type and board fields; Revise as often as needed. Back keeps the draft and the page beneath as
+  they were; New Issue resumes it. Review shows every write, and Create on GitHub sends them in
+  Gannin's order (create, sub-issue, board, fields), then opens the new issue's drawer.
 - **Scorecards** (`src/scorecard.rs`): the org's goals as tiles and a period table, with Gannin's
   metric definitions. `--scorecard <org>` prints recent weeks.
 - **Activity** (`src/activity.rs`): the work log grid of dots and Threads. `--activity <org>`.
 
 Left out: Me in Issues filters, images in Markdown, the Investment picker, harness documents,
-writes to GitHub other than posting a review (board fields, assignees, reviewers, new issues and
-sub-issues, filing a quick change's issue, recording sessions in the harness, a plan's Agree),
+writes to GitHub other than posting a review and New Issue (editing board fields, assignees, reviewers, filing a quick change's issue, recording sessions in the harness, a plan's Agree),
 Gannin's own sessions, staging or committing from the diff, syntax colours in it, Schedule for
 Agent, Hide, Scorecards' editing, breakdowns and issue and CI metrics, Activity's Punchcards, the
 Actions sync, and the other pages (commented out in `sections()`).

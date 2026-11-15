@@ -22,6 +22,7 @@ mod launch;
 mod launch_form;
 mod markdown;
 mod metrics;
+mod new_issue;
 mod page;
 mod planning_panel;
 mod projects;

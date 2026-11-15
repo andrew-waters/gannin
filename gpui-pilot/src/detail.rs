@@ -2,11 +2,13 @@
 //! has it: the description and comments, timing under the workflow, and the
 //! timeline.
 //!
-//! Text comes from Gannin's caches, read only: `Details.json` (what an
-//! opened drawer fetched: the description and the last 20 comments with
-//! their dates) and, failing that, the issue text index
-//! (`dev.andon.gannin/IssueText.sqlite`: descriptions and comments as
-//! "@login: text", without dates). Nothing is fetched from GitHub.
+//! Text is fetched from GitHub when a drawer opens (`sync::refresh_item`)
+//! and kept in the pilot's own `GanninGPUIPilot/Caches/Details.json`, in
+//! Gannin's shape: the description and the last 20 comments with their
+//! dates. Until that answers, or when signed out, the drawer shows the
+//! pilot's copy, else what Gannin has, read only and only if Gannin is
+//! installed: its `Details.json`, then its issue text index
+//! (`dev.andon.gannin/IssueText.sqlite`: "@login: text", without dates).
 //!
 //! Timing follows the org's issue workflow (`IssueWorkflow`), read with
 //! its projects from Gannin's settings store (`projects.rs`).
@@ -35,12 +37,12 @@ pub struct IssueText {
     pub comments: Vec<Comment>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize, Clone)]
 struct Cached {
     detail: Detail,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct Detail {
     body: String,
@@ -49,7 +51,7 @@ struct Detail {
     recent_comments: Vec<CachedComment>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct CachedComment {
     url: String,
@@ -58,7 +60,7 @@ struct CachedComment {
     created_at: DateTime<Utc>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, serde::Serialize, Clone)]
 struct CachedPerson {
     login: String,
 }
@@ -80,26 +82,87 @@ fn details() -> &'static HashMap<String, Detail> {
     })
 }
 
-/// The issue's description and comments, from whichever cache has them.
-/// Runs off the main thread.
+fn own_path() -> PathBuf {
+    support().join("GanninGPUIPilot/Caches/Details.json")
+}
+
+/// The pilot's own `Details.json`, read on first use and written through
+/// as drawers fetch.
+fn own() -> &'static std::sync::Mutex<HashMap<String, Cached>> {
+    static OWN: OnceLock<std::sync::Mutex<HashMap<String, Cached>>> = OnceLock::new();
+    OWN.get_or_init(|| {
+        let held = std::fs::read(own_path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
+        std::sync::Mutex::new(held)
+    })
+}
+
+fn text_of(detail: &Detail) -> IssueText {
+    IssueText {
+        body: detail.body.clone(),
+        comment_count: Some(detail.comment_count),
+        comments: detail
+            .recent_comments
+            .iter()
+            .map(|c| Comment {
+                author: c.author.as_ref().map_or("ghost".into(), |a| a.login.clone()),
+                body: c.body.clone(),
+                at: Some(c.created_at),
+                url: Some(c.url.clone()),
+            })
+            .collect(),
+    }
+}
+
+/// The issue's description and comments, from whichever cache has them:
+/// the pilot's, then Gannin's. Runs off the main thread.
 pub fn load_text(id: &str) -> Option<IssueText> {
+    if let Some(cached) = own().lock().ok().and_then(|own| own.get(id).cloned()) {
+        return Some(text_of(&cached.detail));
+    }
     if let Some(detail) = details().get(id) {
-        return Some(IssueText {
-            body: detail.body.clone(),
-            comment_count: Some(detail.comment_count),
-            comments: detail
-                .recent_comments
-                .iter()
-                .map(|c| Comment {
-                    author: c.author.as_ref().map_or("ghost".into(), |a| a.login.clone()),
-                    body: c.body.clone(),
-                    at: Some(c.created_at),
-                    url: Some(c.url.clone()),
-                })
-                .collect(),
-        });
+        return Some(text_of(detail));
     }
     from_index(id)
+}
+
+/// Keeps what GitHub sent for an issue or PR (its `body` and
+/// `comments(last: 20) { totalCount nodes { url body createdAt author { login } } }`)
+/// in the pilot's copy, and returns it as the drawer shows it.
+pub fn remember(id: &str, node: &serde_json::Value) -> Option<IssueText> {
+    let body = node["body"].as_str()?.to_string();
+    let comments = &node["comments"];
+    let detail = Detail {
+        body,
+        comment_count: comments["totalCount"].as_u64().unwrap_or(0) as usize,
+        recent_comments: comments["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|c| {
+                Some(CachedComment {
+                    url: c["url"].as_str()?.to_string(),
+                    author: c["author"]["login"].as_str().map(|login| CachedPerson { login: login.to_string() }),
+                    body: c["body"].as_str().unwrap_or("").to_string(),
+                    created_at: c["createdAt"].as_str()?.parse().ok()?,
+                })
+            })
+            .collect(),
+    };
+    let text = text_of(&detail);
+    if let Ok(mut own) = own().lock() {
+        own.insert(id.to_string(), Cached { detail });
+        if let Ok(bytes) = serde_json::to_vec(&*own) {
+            let path = own_path();
+            if let Some(folder) = path.parent() {
+                let _ = std::fs::create_dir_all(folder);
+            }
+            let partial = path.with_extension("json.part");
+            if std::fs::write(&partial, bytes).is_ok() {
+                let _ = std::fs::rename(&partial, &path);
+            }
+        }
+    }
+    Some(text)
 }
 
 fn from_index(id: &str) -> Option<IssueText> {

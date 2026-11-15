@@ -531,6 +531,7 @@ fn issue_slots(node: &Value) -> Option<(String, Value, Value, bool)> {
 }
 
 fn merge_issues(org: &str, nodes: &[Value], full: bool) -> std::io::Result<()> {
+    let _guard = cache::STORE.lock();
     let mut store = read_store(Kind::Issues, org, "issues");
     let entries = store["issues"].as_object_mut().expect("store map");
     let mut kept: HashSet<String> = HashSet::new();
@@ -555,6 +556,56 @@ fn merge_issues(org: &str, nodes: &[Value], full: bool) -> std::io::Result<()> {
         for id in stale {
             drop_workload(entries, &id, &others);
         }
+    }
+    cache::write(Kind::Issues, org, &serde_json::to_vec(&store).unwrap_or_default())
+}
+
+// MARK: - One issue
+
+const TEXT_FIELDS: &str = "... on Issue { body comments(last: 20) { totalCount nodes { url body createdAt author { login } } } } ... on PullRequest { body comments(last: 20) { totalCount nodes { url body createdAt author { login } } } }";
+
+/// Fetches one issue or PR as its drawer opens: its description and
+/// comments, kept in the pilot's `Details.json`; and for an issue in this
+/// org, its row in the pilot's issue store as the sync and the issue
+/// history would write it (core, workload while open, history with its
+/// board fields), so a list read after shows it as GitHub has it now.
+/// Three aliases of one node in one request, as the sync's and the
+/// history's selections ask for the same fields with different arguments.
+/// Blocking: run it off the main thread.
+pub fn refresh_item(token: &str, org: &str, id: &str) -> Result<Option<crate::detail::IssueText>, Error> {
+    let query = format!(
+        "query($id: ID!) {{ text: node(id: $id) {{ __typename {TEXT_FIELDS} }} workload: node(id: $id) {{ {ISSUE_FIELDS} }} history: node(id: $id) {{ {} }} }}",
+        crate::history::ISSUE_HISTORY_FIELDS
+    );
+    let data = github::graphql(token, &query, json!({ "id": id }))?;
+    let text = crate::detail::remember(id, &data["text"]);
+    if data["text"]["__typename"] == "Issue" {
+        let owner = data["workload"]["repository"]["nameWithOwner"].as_str().and_then(|r| r.split('/').next()).unwrap_or("");
+        if owner.eq_ignore_ascii_case(org) {
+            store_issue(org, &data["workload"], &data["history"]).map_err(|e| Error::Other(format!("Couldn't save the issue: {e}")))?;
+        }
+    }
+    Ok(text)
+}
+
+fn store_issue(org: &str, workload_node: &Value, history_node: &Value) -> std::io::Result<()> {
+    let _guard = cache::STORE.lock();
+    let mut store = read_store(Kind::Issues, org, "issues");
+    let entries = store["issues"].as_object_mut().expect("store map");
+    if let Some((id, core, workload, open)) = issue_slots(workload_node) {
+        let entry = entries.entry(id.clone()).or_insert_with(|| json!({}));
+        let merged = merge_core(entry.get("core"), core);
+        entry["core"] = merged;
+        if open {
+            if entry.get("workload").is_none_or(|held| !held_is_newer(held, &workload)) {
+                entry["workload"] = workload;
+            }
+        } else {
+            drop_workload(entries, &id, &["history"]);
+        }
+    }
+    if let Some((id, core, history)) = crate::history::issue_history(history_node) {
+        crate::history::put_slot(entries, &id, core, "history", history);
     }
     cache::write(Kind::Issues, org, &serde_json::to_vec(&store).unwrap_or_default())
 }

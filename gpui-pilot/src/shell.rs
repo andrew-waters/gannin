@@ -282,13 +282,20 @@ enum Inspected {
     Repo(RepoStats),
 }
 
+struct NewIssueSubpage {
+    form: Entity<crate::new_issue::NewIssueForm>,
+    _subscription: Subscription,
+    tab: u64,
+    showing: bool,
+}
+
 /// An issue or a pull request in a drawer.
 struct Drawer {
     /// Unique per drawer opened, so each one slides in once.
     seq: usize,
     item: DrawerItem,
-    /// Its description and comments: nil while they load, then whatever
-    /// Gannin's caches had.
+    /// Its description and comments: nil while they load, then what's
+    /// cached, then what GitHub sent.
     text: Option<Option<Arc<IssueText>>>,
 }
 
@@ -440,6 +447,10 @@ pub struct Workspace {
     launch_form: Option<(Entity<crate::launch_form::LaunchForm>, Subscription)>,
     /// Review a Pull Request's picker, while it's open.
     pr_picker: Option<(Entity<crate::pr_picker::PrPicker>, Subscription)>,
+    /// New Issue: a subpage over the tab it was opened on (whose page
+    /// stays as it was beneath), kept when you go back from it so it
+    /// resumes. The tab's ID, and whether it's showing.
+    new_issue: Option<NewIssueSubpage>,
     /// The tab bar's filter by kind (None is all), whether tabs group by
     /// kind, and whether its menu is open.
     tab_filter: Option<TabKind>,
@@ -772,6 +783,7 @@ impl Workspace {
             new_menu_open: false,
             harness_counts: Default::default(),
             launch_form: None,
+            new_issue: None,
             pr_picker: None,
             explain: None,
             schedule_sheet: None,
@@ -870,6 +882,7 @@ impl Workspace {
                     this.push_drawer(event.0.clone(), cx);
                 }),
                 cx.subscribe_in(page, window, |this, _, event: &crate::issues::WorkOnIssues, window, cx| this.work_on_many(event.0.clone(), window, cx)),
+                cx.subscribe_in(page, window, |this, _, _: &crate::issues::NewIssue, window, cx| this.open_new_issue(None, window, cx)),
                 cx.subscribe_in(page, window, |this, _, event: &crate::issues::ScheduleIssues, window, cx| this.schedule_issues(event.0.clone(), window, cx)),
                 // Also redraws the tab, which shows the page's count.
                 cx.observe(page, |this, _, cx| {
@@ -1770,6 +1783,98 @@ impl Workspace {
         });
         self.launch_form = Some((form, subscription));
         cx.notify();
+    }
+
+    /// New Issue, from the Issues page, the + menu, or an issue's drawer
+    /// as New Sub-issue (`parent`): a subpage over the current tab. A
+    /// draft kept from before resumes rather than starting again.
+    fn open_new_issue(&mut self, parent: Option<IssueItem>, window: &mut Window, cx: &mut Context<Self>) {
+        use crate::new_issue::{NewIssueEvent, NewIssueForm, Start};
+        let Some(org) = self.org.clone() else { return };
+        if self.viewer.is_none() {
+            self.sync.error = Some("Sign in to GitHub to create issues.".into());
+            return cx.notify();
+        }
+        let Some(tab) = self.tabs.get(self.active).map(|t| t.id) else { return };
+        let back_title = self.tabs.get(self.active).map(|t| t.name.clone().unwrap_or_else(|| t.nav.title().to_string())).unwrap_or_default();
+        if let Some(sub) = self.new_issue.as_mut() {
+            sub.tab = tab;
+            sub.showing = true;
+            sub.form.update(cx, |form, cx| {
+                form.set_back_title(back_title);
+                if let Some(parent) = parent {
+                    form.set_parent(parent, cx);
+                }
+                form.focus(window, cx);
+            });
+            return cx.notify();
+        }
+        let (repo, open_issues) = self.issues.read(cx).new_issue_start();
+        let start = Start {
+            repo: parent.as_ref().map(|p| p.repo.clone()).or(repo),
+            parent,
+            open_issues,
+            board_number: self.workflow.project_number,
+            viewer: self.viewer.as_ref().map(|v| v.login.clone()),
+            projects: self.projects.clone(),
+            back_title,
+        };
+        let form = cx.new(|cx| NewIssueForm::new(org, start, window, cx));
+        let subscription = cx.subscribe_in(&form, window, |this, _, event: &NewIssueEvent, window, cx| {
+            match event {
+                NewIssueEvent::Back => {
+                    if let Some(sub) = this.new_issue.as_mut() {
+                        sub.showing = false;
+                    }
+                    this.focus_current(window, cx);
+                }
+                NewIssueEvent::Created(created) => {
+                    this.new_issue = None;
+                    this.show_created(created.clone(), cx);
+                }
+                NewIssueEvent::Cancel => {
+                    this.new_issue = None;
+                    this.focus_current(window, cx);
+                }
+            }
+            cx.notify();
+        });
+        self.new_issue = Some(NewIssueSubpage { form, _subscription: subscription, tab, showing: true });
+        cx.notify();
+    }
+
+    /// The New Issue subpage, when it's showing over the tab in view.
+    fn new_issue_showing(&self) -> Option<Entity<crate::new_issue::NewIssueForm>> {
+        let tab = self.tabs.get(self.active)?.id;
+        self.new_issue.as_ref().filter(|s| s.showing && s.tab == tab).map(|s| s.form.clone())
+    }
+
+    /// Fetches a new issue into the store, then lists and opens it.
+    fn show_created(&mut self, created: crate::new_issue::Created, cx: &mut Context<Self>) {
+        let Some(org) = self.org.clone() else { return };
+        cx.spawn(async move |this, cx| {
+            let id = created.id.clone();
+            let issue = cx
+                .background_executor()
+                .spawn(async move {
+                    let token = auth::token()?;
+                    crate::sync::refresh_item(&token, &org, &id).ok()?;
+                    crate::issues::load_one(&org, &id)
+                })
+                .await;
+            this.update(cx, |this, cx| {
+                this.issues.update(cx, |page, cx| page.reload(cx));
+                match issue {
+                    Some(issue) => {
+                        this.drawers.clear();
+                        this.push_drawer(issue, cx);
+                    }
+                    None => cx.open_url(&created.url),
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Review a Pull Request: pick one of the org's open PRs to review.
@@ -2922,16 +3027,49 @@ impl Workspace {
     fn open_drawer(&mut self, item: DrawerItem, id: String, cx: &mut Context<Self>) {
         self.drawer_seq += 1;
         let seq = self.drawer_seq;
+        let is_issue = matches!(item, DrawerItem::Issue(_));
+        let on_github = !matches!(item, DrawerItem::Doc(_));
         self.drawers.push(Drawer { seq, item, text: None });
-        // The description and comments, read from Gannin's caches off the
-        // main thread.
+        // What's cached shows at once, off the main thread; then, signed in,
+        // the item is fetched from GitHub and the drawer (and for an issue,
+        // the list) shows it as it is now.
+        let org = self.org.clone();
+        let live = on_github && self.viewer.is_some() && !crate::github::should_hold_off();
         cx.spawn(async move |this, cx| {
-            let text = cx.background_executor().spawn(async move { detail::load_text(&id).map(Arc::new) }).await;
-            this.update(cx, |this, cx| {
-                if let Some(drawer) = this.drawers.iter_mut().find(|d| d.seq == seq) {
+            let cached_id = id.clone();
+            let text = cx.background_executor().spawn(async move { detail::load_text(&cached_id).map(Arc::new) }).await;
+            let shown = this
+                .update(cx, |this, cx| {
+                    let Some(drawer) = this.drawers.iter_mut().find(|d| d.seq == seq) else { return false };
                     drawer.text = Some(text);
                     cx.notify();
+                    true
+                })
+                .unwrap_or(false);
+            let Some(org) = org.filter(|_| live && shown) else { return };
+            let fetched = cx
+                .background_executor()
+                .spawn(async move {
+                    let token = auth::token()?;
+                    let text = crate::sync::refresh_item(&token, &org, &id).ok()?;
+                    let issue = if is_issue { crate::issues::load_one(&org, &id) } else { None };
+                    Some((text, issue))
+                })
+                .await;
+            let Some((text, issue)) = fetched else { return };
+            this.update(cx, |this, cx| {
+                if let Some(drawer) = this.drawers.iter_mut().find(|d| d.seq == seq) {
+                    if let Some(text) = text {
+                        drawer.text = Some(Some(Arc::new(text)));
+                    }
+                    if let (Some(fresh), DrawerItem::Issue(item)) = (issue.clone(), &mut drawer.item) {
+                        item.issue = fresh;
+                    }
                 }
+                if issue.is_some() {
+                    this.issues.update(cx, |page, cx| page.reload(cx));
+                }
+                cx.notify();
             })
             .ok();
         })
@@ -3098,6 +3236,12 @@ impl Workspace {
                 } else {
                     ("Work on This", format!("Work on this issue with Claude Code, in {harness}"))
                 };
+                let parent = issue.clone();
+                actions.push(
+                    action("new-sub-issue", "New Sub-issue".into(), "Create an issue under this one, drafted with Claude".into())
+                        .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.open_new_issue(Some(parent.clone()), window, cx)))
+                        .into_any_element(),
+                );
                 let has_plan = self.session_for(&issue.id, Flow::Plan, cx).is_some() || Self::saved_launch(&issue.id, Flow::Plan).is_some();
                 let planned = issue.clone();
                 actions.push(
@@ -3864,6 +4008,7 @@ impl Workspace {
                                     this.open_form(crate::launch::Flow::QuickChange, None, window, cx)
                                 }))
                                 .child(item("new-menu-plan", "New Plan", None, |this, window, cx| this.open_form(crate::launch::Flow::Plan, None, window, cx)))
+                                .child(item("new-menu-issue", "New Issue", None, |this, window, cx| this.open_new_issue(None, window, cx)))
                                 .child(div().my_1().h(px(1.)).bg(theme.border))
                                 .child(item("new-menu-review", "Review a Pull Request", None, |this, window, cx| this.open_pr_picker(window, cx)))
                                 .child(div().my_1().h(px(1.)).bg(theme.border))
@@ -5512,7 +5657,10 @@ impl Render for Workspace {
                     .min_h_0()
                     .relative()
                     .child(self.page(&theme, cx))
-                    .when(!self.drawers.is_empty(), |d| d.child(self.drawer_stack(&theme, cx))),
+                    .when(!self.drawers.is_empty(), |d| d.child(self.drawer_stack(&theme, cx)))
+                    // New Issue covers the page and its drawers, which stay
+                    // as they were for Back.
+                    .when_some(self.new_issue_showing(), |d, form| d.child(div().absolute().top_0().left_0().right_0().bottom_0().occlude().child(form))),
             )
 ;
         div()
