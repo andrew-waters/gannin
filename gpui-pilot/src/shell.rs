@@ -846,12 +846,14 @@ impl Workspace {
 
     /// Shows `nav`: switches to a tab of it that hasn't been named, else
     /// puts it in the current tab, else (Command held, or the current tab is
-    /// named or a session's) opens a new tab beside it. A named tab is a view
-    /// someone made, so it's never switched to or replaced from here.
+    /// named, a session's, or holds a New Issue draft) opens a new tab beside
+    /// it. A named tab is a view someone made, and a draft is work started,
+    /// so neither is switched to or replaced from here.
     fn navigate(&mut self, nav: Nav, new_tab: bool, window: &mut Window, cx: &mut Context<Self>) {
         // Drawers belong to the page under them.
         self.drawers.clear();
-        let reusable = |tab: &Tab| tab.name.is_none() && !matches!(tab.nav, Nav::Session(_));
+        let draft_tab = self.new_issue.as_ref().map(|s| s.tab);
+        let reusable = |tab: &Tab| tab.name.is_none() && !matches!(tab.nav, Nav::Session(_)) && Some(tab.id) != draft_tab;
         if !new_tab {
             if let Some(index) = self.tabs.iter().position(|tab| tab.nav == nav && reusable(tab)) {
                 self.activate(index, window, cx);
@@ -3890,6 +3892,10 @@ impl Workspace {
     /// A tab's name: the one given it, else its page's (a session's from
     /// its terminal).
     fn tab_name(&self, tab: &Tab, cx: &App) -> String {
+        // The tab New Issue shows over says so.
+        if self.new_issue.as_ref().is_some_and(|s| s.showing && s.tab == tab.id) {
+            return "New Issue".into();
+        }
         if let Some(name) = &tab.name {
             return name.clone();
         }
