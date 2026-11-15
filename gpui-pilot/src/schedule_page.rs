@@ -7,6 +7,7 @@
 //! runs them is the workspace's (`schedule_tick`); Run Now asks it.
 
 use crate::charts::Theme;
+use crate::approve::ApproveRules;
 use crate::schedule::{self, IssueRef, Prompt, ReviewWindow, RunState, Schedule, Sequence};
 use chrono::{Datelike, Duration, Local, NaiveDate, Timelike};
 use gpui::{div, prelude::*, px, ClickEvent, Context, Entity, EventEmitter, FontWeight, Hsla, SharedString, Subscription, Task, Window};
@@ -98,6 +99,11 @@ pub struct SchedulePage {
     time_field: Entity<editor::Editor>,
     text_field: Entity<editor::Editor>,
     search_field: Entity<editor::Editor>,
+    /// The window's author picker is open, filtered by `author_field`;
+    /// the org's members it lists, read when it opens.
+    picking_authors: bool,
+    author_field: Entity<editor::Editor>,
+    members: Vec<String>,
     _fields: Vec<Subscription>,
     _reload: Task<()>,
     /// The week's scroll, set to the morning the first time it shows.
@@ -147,6 +153,7 @@ impl SchedulePage {
         let name_field = field("Name", window, cx);
         let time_field = field("9:00", window, cx);
         let search_field = field("Search issues", window, cx);
+        let author_field = field("Filter people", window, cx);
         let text_field = cx.new(|cx| {
             let mut e = editor::Editor::auto_height(3, 10, window, cx);
             e.set_placeholder_text("What claude should do, as you'd ask it", window, cx);
@@ -195,6 +202,7 @@ impl SchedulePage {
                 });
             }),
             cx.observe(&search_field, |_, _, cx| cx.notify()),
+            cx.observe(&author_field, |_, _, cx| cx.notify()),
         ];
         // The clock changes the file as it runs things: read it again now and then.
         let reload = cx.spawn(async move |this, cx| loop {
@@ -226,6 +234,9 @@ impl SchedulePage {
             time_field,
             text_field,
             search_field,
+            picking_authors: false,
+            author_field,
+            members: Vec::new(),
             _fields: subs,
             _reload: reload,
             week_scroll: gpui::ScrollHandle::new(),
@@ -248,6 +259,24 @@ impl SchedulePage {
             self.schedule = fresh;
             cx.notify();
         }
+    }
+
+    /// Changes the selected window's approving rules.
+    fn change_rules(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut ApproveRules)) {
+        self.change(cx, |s, id| {
+            if let Some(w) = s.windows.iter_mut().find(|w| w.id == id) {
+                f(&mut w.approve);
+            }
+        })
+    }
+
+    /// The org's members' logins, from the people cache, sorted.
+    fn read_members(&mut self) {
+        let Some(org) = self.org.as_deref() else { return };
+        let snapshot: serde_json::Value = std::fs::read(crate::cache::path(crate::cache::Kind::Snapshots, org)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let mut logins: Vec<String> = snapshot["members"].as_array().into_iter().flatten().filter_map(|m| m["login"].as_str().map(str::to_string)).collect();
+        logins.sort_by_key(|l| l.to_lowercase());
+        self.members = logins;
     }
 
     fn change_all(&mut self, cx: &mut Context<Self>, f: impl FnOnce(&mut Schedule)) {
@@ -461,6 +490,7 @@ impl SchedulePage {
 
     fn select(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = id.clone();
+        self.picking_authors = false;
         self.adding = None;
         self.deciding = false;
         let s = &self.schedule;
@@ -492,7 +522,7 @@ impl SchedulePage {
         match kind {
             Kind::Window => {
                 let days = if weekday < 5 { vec![0, 1, 2, 3, 4] } else { vec![weekday] };
-                let new = ReviewWindow { id: id.clone(), name: "Reviews".into(), weekdays: days, start: minute, length: 60, paused: false };
+                let new = ReviewWindow { id: id.clone(), name: "Reviews".into(), weekdays: days, start: minute, length: 60, paused: false, approve: Default::default() };
                 self.change_all(cx, |s| s.windows.push(new));
                 self.select(Some(id), window, cx);
             }
@@ -604,6 +634,189 @@ impl SchedulePage {
         .detach();
     }
 
+    /// The window's Approves by itself toggle and, when it's on, its
+    /// conditions.
+    fn approve_section(&self, w: &ReviewWindow, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let label = |text: &str| div().text_xs().text_color(theme.secondary).child(text.to_string());
+        let rules = w.approve.clone();
+        let mut section = div().flex().flex_col().gap_2().child(
+            div().flex().flex_row().child(Self::button("approve-on", "Approves by itself", rules.enabled, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.change_rules(cx, |r| r.enabled = !r.enabled)
+            }))),
+        );
+        if !rules.enabled {
+            return section.into_any_element();
+        }
+        // Authors: anyone, or the members picked.
+        let authors = if rules.authors.is_empty() { "Anyone".to_string() } else { rules.authors.join(", ") };
+        section = section
+            .child(label("Authors"))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(Self::button("authors", format!("{authors} ▾"), self.picking_authors, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.picking_authors = !this.picking_authors;
+                        if this.picking_authors {
+                            this.read_members();
+                        }
+                        cx.notify();
+                    })))
+                    .child(Self::button("bots", "Bots allowed", rules.allow_bots, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.change_rules(cx, |r| r.allow_bots = !r.allow_bots)
+                    }))),
+            );
+        if self.picking_authors {
+            let filter = self.author_field.read(cx).text(cx).trim().to_lowercase();
+            // Picked logins first (some may have left the org), then the rest.
+            let mut listed: Vec<String> = rules.authors.clone();
+            listed.extend(self.members.iter().filter(|m| !rules.authors.iter().any(|a| a.eq_ignore_ascii_case(m))).cloned());
+            let shown: Vec<String> = listed.into_iter().filter(|l| filter.is_empty() || l.to_lowercase().contains(&filter)).take(200).collect();
+            let picked = rules.authors.clone();
+            section = section.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .p_2()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .bg(theme.bg)
+                    .child(div().px_2().py_1().rounded_md().border_1().border_color(theme.border).text_sm().child(self.author_field.clone()))
+                    .child(
+                        div()
+                            .id("author-list")
+                            .max_h(px(220.))
+                            .overflow_y_scroll()
+                            .flex()
+                            .flex_col()
+                            .when(shown.is_empty(), |d| d.child(label(if self.members.is_empty() { "No people cached for this org yet." } else { "Nobody matches." })))
+                            .children(shown.into_iter().map(|login| {
+                                let on = picked.iter().any(|a| a.eq_ignore_ascii_case(&login));
+                                div()
+                                    .id(SharedString::from(format!("author-{login}")))
+                                    .flex()
+                                    .flex_row()
+                                    .gap_2()
+                                    .px_1()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .text_sm()
+                                    .cursor_pointer()
+                                    .hover(|s| s.bg(theme.row_selected))
+                                    .child(div().w(px(12.)).text_color(theme.selected).child(if on { "✓" } else { "" }))
+                                    .child(login.clone())
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                        let login = login.clone();
+                                        this.change_rules(cx, move |r| {
+                                            if let Some(at) = r.authors.iter().position(|a| a.eq_ignore_ascii_case(&login)) {
+                                                r.authors.remove(at);
+                                            } else {
+                                                r.authors.push(login);
+                                            }
+                                        })
+                                    }))
+                            })),
+                    )
+                    .when(!picked.is_empty(), |d| {
+                        d.child(div().flex().flex_row().child(Self::button("authors-any", "Anyone", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.change_rules(cx, |r| r.authors.clear())
+                        }))))
+                    }),
+            );
+        }
+        // Size: no limit, or a step on the scale.
+        const LINES: [u32; 7] = [25, 50, 100, 200, 400, 800, 1600];
+        const FILES: [u32; 7] = [1, 2, 3, 5, 10, 20, 50];
+        let stepper = |id: &'static str, value: Option<u32>, unit: &'static str, steps: &'static [u32], set: fn(&mut ApproveRules, Option<u32>), cx: &mut Context<Self>| {
+            let at = value.and_then(|v| steps.iter().position(|s| *s >= v));
+            let less = match at {
+                None => None,
+                Some(0) => Some(None),
+                Some(i) => Some(Some(steps[i - 1])),
+            };
+            let more = match at {
+                None => Some(Some(steps[0])),
+                Some(i) if i + 1 < steps.len() => Some(Some(steps[i + 1])),
+                Some(_) => Some(None),
+            };
+            div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .child(Self::button(format!("{id}-less"), "−", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(v) = less {
+                        this.change_rules(cx, |r| set(r, v))
+                    }
+                })))
+                .child(div().text_sm().child(match value {
+                    Some(v) => format!("At most {v} {unit}"),
+                    None => "No limit".to_string(),
+                }))
+                .child(Self::button(format!("{id}-more"), "+", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    if let Some(v) = more {
+                        this.change_rules(cx, |r| set(r, v))
+                    }
+                })))
+        };
+        section = section
+            .child(label("Lines changed"))
+            .child(stepper("lines", rules.max_lines, "lines", &LINES, |r, v| r.max_lines = v, cx))
+            .child(label("Files changed"))
+            .child(stepper("files", rules.max_files, "files", &FILES, |r, v| r.max_files = v, cx));
+        let choices = |id: &'static str, options: Vec<(&'static str, Option<String>)>, current: Option<String>, set: fn(&mut ApproveRules, Option<String>), cx: &mut Context<Self>| {
+            div().flex().flex_row().flex_wrap().gap_1().children(options.into_iter().map(|(text, value)| {
+                let on = value == current;
+                Self::button(format!("{id}-{text}"), text, on, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    let value = value.clone();
+                    this.change_rules(cx, |r| set(r, value))
+                }))
+            }))
+        };
+        let effort_options = std::iter::once(("Any", None)).chain([("1", "1"), ("2", "2"), ("3", "3"), ("4", "4")].map(|(t, v)| (t, Some(v.to_string())))).collect();
+        section
+            .child(label("Effort, at most"))
+            .child(choices("effort", effort_options, rules.max_effort.map(|e| e.to_string()), |r, v| r.max_effort = v.and_then(|v| v.parse().ok()), cx))
+            .child(label("Findings"))
+            .child(choices(
+                "severity",
+                vec![
+                    ("Any", None),
+                    ("No blockers", Some("blocker".into())),
+                    ("No majors or worse", Some("major".into())),
+                    ("No minors or worse", Some("minor".into())),
+                    ("No findings", Some("nit".into())),
+                ],
+                rules.block_severity.clone(),
+                |r, v| r.block_severity = v,
+                cx,
+            ))
+            .child(label("Risk"))
+            .child(choices("risk", vec![("Any", None), ("Low only", Some("low".into())), ("Medium or lower", Some("medium".into()))], rules.max_risk.clone(), |r, v| r.max_risk = v, cx))
+            .child(label("A condition the review or GitHub can't answer (no effort or risk given, size unknown) counts as failed."))
+            .into_any_element()
+    }
+
+    /// A window's last few posts, from the schedule's history: approved,
+    /// or commented and why.
+    fn last_runs(&self, id: &str, theme: &Theme) -> impl IntoElement {
+        let runs = self.schedule.ran_for(id, 5);
+        div().when(!runs.is_empty(), |d| {
+            d.flex().flex_col().gap_1().child(div().text_xs().text_color(theme.secondary).child("Last runs")).children(runs.into_iter().map(|r| {
+                div()
+                    .flex()
+                    .flex_col()
+                    .text_sm()
+                    .child(div().flex().flex_row().gap_2().child(div().text_color(theme.secondary).child(r.at.with_timezone(&Local).format("%a %-d %b %H:%M").to_string())).child(r.title.clone()))
+                    .when(!r.note.is_empty(), |d| d.child(div().text_xs().text_color(theme.secondary).child(r.note.clone())))
+            }))
+        })
+    }
+
     fn button(id: impl Into<SharedString>, label: impl Into<SharedString>, on: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
         div()
             .id(gpui::ElementId::Name(id.into()))
@@ -690,9 +903,6 @@ impl SchedulePage {
             })))
             .child(Self::button("at-once", format!("{} review{} at once", settings.reviews_at_once, if settings.reviews_at_once == 1 { "" } else { "s" }), false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.change_all(cx, |s| s.settings.reviews_at_once = s.settings.reviews_at_once % 3 + 1)
-            })))
-            .child(Self::button("approve", "Approve by itself", settings.approve_by_itself, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                this.change_all(cx, |s| s.settings.approve_by_itself = !s.settings.approve_by_itself)
             })))
             .child(Self::button("pause-all", if settings.paused_all { "Resume All" } else { "Pause All" }, settings.paused_all, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.change_all(cx, |s| s.settings.paused_all = !s.settings.paused_all)
@@ -986,11 +1196,19 @@ impl SchedulePage {
                                 }
                             })))),
                     )
+                    .child(self.approve_section(&w, theme, cx))
                     .child(div().text_xs().text_color(theme.secondary).child(format!(
-                        "Reviews of pull requests where you're a requested reviewer start in it, {} at once, and post by themselves{}.",
+                        "Reviews of pull requests where you're a requested reviewer start in it, {} at once, and post by themselves. {}",
                         s.settings.reviews_at_once,
-                        if s.settings.approve_by_itself { ", approving when the review says to" } else { "; an approval posts as a comment for you to approve" }
-                    )));
+                        if !w.approve.enabled {
+                            "An approval posts as a comment for you to approve."
+                        } else if w.approve == (ApproveRules { enabled: true, ..Default::default() }) {
+                            "They approve when the review says to, except on your own pull requests."
+                        } else {
+                            "They approve when the review says to and every condition above passes; otherwise the approval posts as a comment, saying why."
+                        }
+                    )))
+                    .child(self.last_runs(&w.id, theme));
             }
             Kind::Prompt => {
                 let p = s.prompts.iter().find(|p| p.id == id).cloned().unwrap_or_default();

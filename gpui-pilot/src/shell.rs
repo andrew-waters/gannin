@@ -1339,8 +1339,9 @@ impl Workspace {
     }
 
     /// Review with Claude, attended or started by a review window
-    /// (`unattended`): that one posts by itself when it's done.
-    fn review_pr_with(&mut self, pr: PrItem, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
+    /// (`unattended`: the PR gap and the window's id): that one posts by
+    /// itself when it's done, approving only as the window's rules allow.
+    fn review_pr_with(&mut self, pr: PrItem, unattended: Option<(u32, String)>, window: &mut Window, cx: &mut Context<Self>) {
         use crate::launch::{self, Flow, Launch, Subject};
         if unattended.is_none() && self.show_session(&pr.id, Flow::Review, window, cx) {
             return;
@@ -1354,8 +1355,9 @@ impl Workspace {
         let branch = format!("review-{}-{}", pr.repo_name, pr.number);
         let subject = Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
         let mut launch = Launch::new(Flow::Review, format!("Review {}#{}", pr.repo_name, pr.number), &org, &harness, branch.clone(), Some(subject));
-        launch.unattended = unattended;
-        if unattended.is_some() {
+        if let Some((gap, from)) = unattended {
+            launch.unattended = Some(gap);
+            launch.window = Some(from);
             // It posts by itself once its review is in.
             let _ = std::fs::create_dir_all(launch.dir());
             let _ = std::fs::write(launch.dir().join("auto-post"), "");
@@ -1546,8 +1548,9 @@ impl Workspace {
             }
             // A review window: one more review of a PR asked of you, up to
             // the number at once.
-            if sched.window_now(chrono::Local::now()).is_some() {
-                self.fill_review_window(sched.settings.reviews_at_once, gap, window, cx);
+            if let Some(open) = sched.window_now(chrono::Local::now()) {
+                let open = open.id.clone();
+                self.fill_review_window(&open, sched.settings.reviews_at_once, gap, window, cx);
             }
         }
         if sched != before {
@@ -1683,7 +1686,7 @@ impl Workspace {
 
     /// Starts one review of an open PR where you're a requested reviewer
     /// and none has been started, while fewer than `at_once` are running.
-    fn fill_review_window(&mut self, at_once: usize, gap: u32, window: &mut Window, cx: &mut Context<Self>) {
+    fn fill_review_window(&mut self, from: &str, at_once: usize, gap: u32, window: &mut Window, cx: &mut Context<Self>) {
         let Some(org) = self.org.clone() else { return };
         let Some(me) = self.viewer.as_ref().map(|v| v.login.clone()) else { return };
         let running = self
@@ -1703,7 +1706,7 @@ impl Workspace {
             p.state == PrState::Open && !p.draft && !reviewed.contains(&p.id) && p.reviewers.iter().any(|r| r.requested && r.login.eq_ignore_ascii_case(&me))
         });
         if let Some(pr) = next {
-            self.review_pr_with(pr, Some(gap), window, cx);
+            self.review_pr_with(pr, Some((gap, from.to_string())), window, cx);
         }
     }
 

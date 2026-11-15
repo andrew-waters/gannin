@@ -6,6 +6,7 @@
 
 mod auth;
 mod activity;
+mod approve;
 mod avatars;
 mod cache;
 mod changes;

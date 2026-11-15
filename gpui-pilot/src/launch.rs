@@ -69,6 +69,10 @@ pub struct Launch {
     /// its pull requests the gap apart. Minutes of that gap.
     #[serde(default)]
     pub unattended: Option<u32>,
+    /// The review window that started it, whose rules say whether it may
+    /// approve by itself.
+    #[serde(default)]
+    pub window: Option<String>,
 }
 
 impl Launch {
@@ -84,6 +88,7 @@ impl Launch {
             subject,
             created_at: Utc::now(),
             unattended: None,
+            window: None,
         }
     }
 

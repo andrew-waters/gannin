@@ -41,6 +41,9 @@ pub struct Posted {
     pub event: String,
     pub at: chrono::DateTime<chrono::Utc>,
     pub url: String,
+    /// Why a window's review that would have approved commented instead.
+    #[serde(default)]
+    pub held: Option<String>,
 }
 
 /// Ask the workspace to explain this PR in a session of its own.
@@ -234,7 +237,7 @@ impl ReviewPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let posted = matches!(post, Some(Post::Posted(_))).then(|| Posted { event: "COMMENT".into(), at: chrono::Utc::now(), url: format!("https://github.com/{repo}/pull/{number}") });
+        let posted = matches!(post, Some(Post::Posted(_))).then(|| Posted { event: "COMMENT".into(), at: chrono::Utc::now(), url: format!("https://github.com/{repo}/pull/{number}"), held: None });
         Self {
             focus: cx.focus_handle(),
             posted,
@@ -498,7 +501,7 @@ impl ReviewPanel {
                 if let Ok(changes) = &found {
                     if let Some((state, at, url)) = &changes.mine {
                         if this.posted.as_ref().is_none_or(|p| p.at < *at) {
-                            this.record_posted(Posted { event: state.clone(), at: *at, url: url.clone() });
+                            this.record_posted(Posted { event: state.clone(), at: *at, url: url.clone(), held: None });
                         }
                     }
                 }
@@ -583,7 +586,8 @@ impl ReviewPanel {
 
     /// A review a review window started posts by itself, once, when its
     /// result is in: the event from the verdict, but an approval only when
-    /// the schedule allows it (else a comment); then it's recorded.
+    /// that window's rules allow it (else a comment, saying why); then it's
+    /// recorded, and noted in the schedule's history.
     fn auto_post(&mut self, cx: &mut Context<Self>) {
         let Source::Live { launch, .. } = &self.source else { return };
         let dir = launch.dir();
@@ -593,8 +597,10 @@ impl ReviewPanel {
         let Some(result) = self.kept() else { return };
         let _ = std::fs::write(dir.join("auto-posted"), "");
         let (repo, number) = self.subject();
-        let approve = crate::schedule::Schedule::load().settings.approve_by_itself;
+        let from = launch.window.clone();
+        let rules = from.as_deref().and_then(|id| crate::schedule::Schedule::load().windows.into_iter().find(|w| w.id == id)).map(|w| w.approve);
         cx.spawn(async move |this, cx| {
+            let label = format!("{repo}#{number}");
             let posted = cx
                 .background_executor()
                 .spawn(async move {
@@ -602,21 +608,39 @@ impl ReviewPanel {
                     let snapshot = review::snapshot(&token, &repo, number).map_err(|e| e.to_string())?;
                     let draft = review::draft(&result, &HashSet::new(), &snapshot);
                     let mut event = review::default_event(&result, snapshot.is_own());
-                    if event == "APPROVE" && !approve {
-                        event = "COMMENT";
+                    let mut held = None;
+                    if event == "APPROVE" {
+                        let decided = match &rules {
+                            Some(rules) => crate::approve::decide(rules, &crate::approve::Facts::of(&snapshot), &result),
+                            None => Err(vec!["the window that started it is gone".to_string()]),
+                        };
+                        if let Err(why) = decided {
+                            event = "COMMENT";
+                            held = Some(crate::approve::commented_note(&why));
+                        }
                     }
                     let url = review::post(&token, &repo, number, event, &draft, &snapshot).map_err(|e| e.to_string())?;
-                    Ok::<_, String>((event, url))
+                    Ok::<_, String>((event, url, held))
                 })
                 .await;
             this.update(cx, |this, cx| {
-                match posted {
-                    Ok((event, url)) => {
+                let note = match posted {
+                    Ok((event, url, held)) => {
                         let at = chrono::Utc::now();
-                        this.record_posted(Posted { event: event.to_string(), at, url });
+                        this.record_posted(Posted { event: event.to_string(), at, url, held: held.clone() });
                         this.record(Some((event.to_string(), at)), cx);
+                        held.unwrap_or_else(|| posted_label(event).to_string())
                     }
-                    Err(error) => this.record_note = Some(format!("Couldn't post by itself: {error}")),
+                    Err(error) => {
+                        let note = format!("Couldn't post by itself: {error}");
+                        this.record_note = Some(note.clone());
+                        note
+                    }
+                };
+                if let Some(id) = &from {
+                    let mut sched = crate::schedule::Schedule::load();
+                    sched.note(id, &label, "posted", &note);
+                    sched.save();
                 }
                 cx.notify();
             })
@@ -660,7 +684,7 @@ impl ReviewPanel {
             cx.spawn(async move |this, cx| {
                 cx.background_executor().timer(Duration::from_millis(1200)).await;
                 this.update(cx, |this, cx| {
-                    this.posted = Some(Posted { event: event.to_string(), at: chrono::Utc::now(), url: url.clone() });
+                    this.posted = Some(Posted { event: event.to_string(), at: chrono::Utc::now(), url: url.clone(), held: None });
                     this.post = Some(Post::Posted(url));
                     cx.notify();
                 })
@@ -681,7 +705,7 @@ impl ReviewPanel {
                 this.post = Some(match posted {
                     Ok(url) => {
                         let at = chrono::Utc::now();
-                        this.record_posted(Posted { event: event.to_string(), at, url: url.clone() });
+                        this.record_posted(Posted { event: event.to_string(), at, url: url.clone(), held: None });
                         if this.record_with_post {
                             this.record(Some((event.to_string(), at)), cx);
                         }
@@ -792,6 +816,14 @@ impl ReviewPanel {
                         .child(format!("{e}/5")),
                 )
             })
+            .when_some(self.result.as_ref().and_then(|r| r.risk.clone()), |d, risk| {
+                let tint = match risk.as_str() {
+                    "high" => theme.critical(),
+                    "medium" => theme.orange(),
+                    _ => theme.good(),
+                };
+                d.child(div().flex().flex_row().items_center().gap_2().text_sm().text_color(theme.secondary).child("Risk").child(div().text_color(tint).child(capitalised(&risk))))
+            })
             .when_some(self.record_note.clone(), |d, note| d.child(div().text_xs().text_color(theme.orange()).child(note)))
             // What Check for Changes last found.
             .when_some(self.check_text(), |d, text| d.child(div().text_sm().text_color(if self.has_changes() { theme.selected } else { theme.secondary }).child(text)))
@@ -813,6 +845,7 @@ impl ReviewPanel {
                         .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                         .child(format!("{} {}", posted_label(&posted.event), ago(posted.at))),
                 )
+                .when_some(posted.held.clone(), |d, held| d.child(div().text_xs().text_color(theme.secondary).child(held)))
             })
     }
 

@@ -60,6 +60,9 @@ pub struct ReviewWindow {
     pub length: u32,
     #[serde(default)]
     pub paused: bool,
+    /// Whether its reviews approve by themselves, and when.
+    #[serde(default)]
+    pub approve: crate::approve::ApproveRules,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -205,8 +208,9 @@ pub struct Settings {
     /// Minutes between unattended pull requests.
     pub gap_minutes: u32,
     pub paused_all: bool,
-    /// A review window's reviews approve by themselves; otherwise an
-    /// approve verdict posts as a comment.
+    /// The old global switch, now each window's: read so a schedule saved
+    /// with it on carries over (see `Schedule::load`), never written.
+    #[serde(default, skip_serializing)]
     pub approve_by_itself: bool,
     /// At most this many window reviews at once.
     pub reviews_at_once: usize,
@@ -358,7 +362,24 @@ pub fn gap_dir() -> PathBuf {
 
 impl Schedule {
     pub fn load() -> Self {
-        std::fs::read(path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let mut s: Self = std::fs::read(path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        s.migrate();
+        s
+    }
+
+    /// A schedule saved with the old global Approve by itself on: every
+    /// window approves, with no conditions, as it did.
+    pub(crate) fn migrate(&mut self) {
+        if std::mem::take(&mut self.settings.approve_by_itself) {
+            for w in &mut self.windows {
+                w.approve.enabled = true;
+            }
+        }
+    }
+
+    /// A window's last runs, newest first.
+    pub fn ran_for(&self, item: &str, count: usize) -> Vec<&Ran> {
+        self.ran.iter().rev().filter(|r| r.item == item).take(count).collect()
     }
 
     pub fn save(&self) {
