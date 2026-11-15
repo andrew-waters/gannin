@@ -247,6 +247,13 @@ pub struct WorkPanel {
     /// Feedback ticked to send, by PR and index.
     ticked: Vec<(i64, usize)>,
     auto_feedback: bool,
+    /// Feedback passed to claude already (failing checks and comments, by
+    /// key), and what's waiting for its turn to end.
+    feedback_sent: std::collections::HashSet<String>,
+    feedback_queue: Vec<String>,
+    /// No record of what was sent yet (a session from before this): the
+    /// first look takes what's there as known, and sends nothing.
+    feedback_seeding: bool,
 }
 
 /// A comment's gist for its row: the first line of words, with HTML
@@ -309,6 +316,9 @@ impl WorkPanel {
             picked,
             ticked: Vec::new(),
             auto_feedback: true,
+            feedback_sent: Default::default(),
+            feedback_queue: Vec::new(),
+            feedback_seeding: false,
         }
     }
 
@@ -338,6 +348,14 @@ impl WorkPanel {
         let mut panel = Self::new(data, Some(view), window, cx);
         let (folder, claude_id, dir) = (launch.folder(), launch.claude_id(), launch.dir());
         panel.flow = crate::work_flow::read_workflow(&launch.dir());
+        // New feedback goes to claude unless it's been turned off for this
+        // session; an unattended one always has it.
+        panel.auto_feedback = launch.unattended.is_some() || !launch.dir().join("auto-feedback-off").exists();
+        let record = std::fs::read(launch.dir().join("feedback-sent.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
+        // A session opened before feedback went by itself, with PRs already:
+        // what's on them now isn't new.
+        panel.feedback_seeding = record.is_none() && !launch.pull_requests().is_empty();
+        panel.feedback_sent = record.unwrap_or_default();
         panel.live = Some(Live { launch, terminal });
         panel._poll = Some(cx.spawn(async move |this, cx| {
             let mut tick = 0u32;
@@ -372,9 +390,11 @@ impl WorkPanel {
                             for pr in &mut this.data.prs {
                                 pr.failures_sent = sent.iter().any(|(n, s)| *n == pr.number && *s);
                             }
+                            this.collect_feedback(&dir);
                         }
                         this.refresh_state(&dir, cx);
                         this.step_workflow(&dir, cx);
+                        this.deliver_feedback(cx);
                         cx.notify();
                     })
                     .is_ok();
@@ -564,6 +584,74 @@ impl WorkPanel {
         let short: String = run.local.sha.chars().take(7).collect();
         self.send(format!("Gannin's local review was overridden for {short}: push it now. Its findings still stand, so deal with them in a later commit."), false, cx);
         cx.notify();
+    }
+
+    /// New feedback on the session's open PRs since it was last passed on:
+    /// checks that fail (one that passes again can fail anew) and others'
+    /// comments and review threads. Queued for claude's turn to end.
+    fn collect_feedback(&mut self, dir: &std::path::Path) {
+        if !self.auto_feedback {
+            return;
+        }
+        let mut lines: Vec<String> = Vec::new();
+        let mut failing_now = std::collections::HashSet::new();
+        for pr in self.data.prs.iter().filter(|p| p.state == PrState::Open) {
+            let at = format!("{}#{}", pr.repo, pr.number);
+            let mut failures = Vec::new();
+            for check in &pr.failed {
+                let key = format!("check:{at}:{check}");
+                failing_now.insert(key.clone());
+                if self.feedback_sent.insert(key) {
+                    failures.push(check.clone());
+                }
+            }
+            let mut comments = Vec::new();
+            for f in &pr.feedback {
+                let digest = f.body.chars().filter(|c| c.is_alphanumeric()).take(80).collect::<String>();
+                let key = format!("comment:{at}:{}:{}:{digest}", f.author, f.location.clone().unwrap_or_default());
+                if self.feedback_sent.insert(key) {
+                    let body: String = f.body.chars().take(800).collect();
+                    comments.push(format!("- @{}{}: {}", f.author, f.location.as_ref().map(|l| format!(" on {l}")).unwrap_or_default(), body.trim()));
+                }
+            }
+            if failures.is_empty() && comments.is_empty() {
+                continue;
+            }
+            let mut text = format!("New feedback on {at}:");
+            if !failures.is_empty() {
+                text.push_str(&format!(
+                    "\n\nChecks failing: {}. Look at why (gh pr checks {} --repo {}, and gh run view --log-failed for a run), fix them and push.",
+                    failures.join(", "),
+                    pr.number,
+                    pr.repo
+                ));
+            }
+            if !comments.is_empty() {
+                text.push_str(&format!("\n\nComments:\n{}", comments.join("\n")));
+            }
+            lines.push(text);
+        }
+        // A check that passes again can fail anew.
+        self.feedback_sent.retain(|k| !k.starts_with("check:") || failing_now.contains(k));
+        if std::mem::take(&mut self.feedback_seeding) {
+            lines.clear();
+        }
+        if !lines.is_empty() {
+            lines.push("Fix what you agree with and say why not for the rest, commit and push, then reply briefly on each review thread you've dealt with.".into());
+            self.feedback_queue.push(lines.join("\n\n"));
+        }
+        let _ = std::fs::write(dir.join("feedback-sent.json"), serde_json::to_vec(&self.feedback_sent).unwrap_or_default());
+    }
+
+    /// Passes queued feedback to claude once its turn has ended, never
+    /// mid-work or while it's asking something.
+    fn deliver_feedback(&mut self, cx: &mut Context<Self>) {
+        if self.feedback_queue.is_empty() || self.data.state != WorkState::YourTurn {
+            return;
+        }
+        let text = self.feedback_queue.join("\n\n");
+        self.feedback_queue.clear();
+        self.send(text, false, cx);
     }
 
     /// Where claude is, from the hooks' state file, and what it's asking.
@@ -1738,8 +1826,7 @@ impl WorkPanel {
                         ).text_xs().when(running && !ticked.is_empty(), |b| b.on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.send_feedback(number, cx))))))
                     })
             }))
-            // Sending new feedback by itself isn't wired yet: the preview shows it.
-            .when(any_open && self.live.is_none(), |d| {
+            .when(any_open, |d| {
                 d.child(
                     div()
                         .id("auto-feedback")
@@ -1752,6 +1839,11 @@ impl WorkPanel {
                         .cursor_pointer()
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.auto_feedback = !auto;
+                            // Kept with the session, so a relaunch keeps it.
+                            if let Some(live) = &this.live {
+                                let off = live.launch.dir().join("auto-feedback-off");
+                                let _ = if auto { std::fs::write(off, "") } else { std::fs::remove_file(off) };
+                            }
                             cx.notify();
                         }))
                         .child(div().size(px(13.)).rounded(px(3.)).border_1().border_color(if auto { theme.selected } else { theme.secondary }).when(auto, |d| d.bg(theme.selected)).flex().items_center().justify_center().text_color(theme.on_selected).child(if auto { "✓" } else { "" }))
