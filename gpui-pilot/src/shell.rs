@@ -5833,6 +5833,9 @@ fn state_tint(state: State, theme: &Theme) -> gpui::Hsla {
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.persist(cx);
+        // A promised file or picture dropped on the window goes to New
+        // Issue while it shows.
+        crate::promise_drop::set_accepting(self.new_issue_showing().is_some());
         // Only the session in view reads its folder's changes.
         let current = self.current();
         for page in &self.sessions {

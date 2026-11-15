@@ -27,6 +27,7 @@ mod new_issue;
 mod page;
 mod planning_panel;
 mod projects;
+mod promise_drop;
 mod review;
 mod review_panel;
 mod review_preview;

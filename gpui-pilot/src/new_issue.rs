@@ -524,6 +524,24 @@ impl NewIssueForm {
         } else {
             form.load_skills(cx);
         }
+        // The screenshot thumbnail's drags, and pictures, which GPUI's own
+        // drop doesn't take (`promise_drop.rs`): picked up as they land.
+        crate::promise_drop::install();
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor().timer(std::time::Duration::from_millis(300)).await;
+            let paths = crate::promise_drop::take();
+            let alive = this
+                .update_in(cx, |form, window, cx| {
+                    if !paths.is_empty() && form.step == Step::Edit {
+                        form.add_paths(&paths, window, cx);
+                    }
+                })
+                .is_ok();
+            if !alive {
+                return;
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let fetched = cx
                 .background_executor()
