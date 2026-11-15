@@ -47,6 +47,8 @@ pub struct ReviewResult {
     pub summary: String,
     pub verdict: Option<String>,
     pub effort: Option<i64>,
+    /// low, medium or high: what the change could break if it's wrong.
+    pub risk: Option<String>,
     pub findings: Vec<Finding>,
     /// The change in areas, in the order to read them.
     pub walkthrough: Vec<Area>,
@@ -182,6 +184,7 @@ pub fn parse(reply: &str) -> Option<ReviewResult> {
         summary,
         verdict: text(&value["verdict"]),
         effort: value["effort"].as_i64().map(|e| e.clamp(1, 5)),
+        risk: value["risk"].as_str().map(str::to_lowercase).filter(|r| matches!(r.as_str(), "low" | "medium" | "high")),
         findings,
         walkthrough,
         flow: value["flow"].as_array().map(|a| a.iter().filter_map(text).collect()).unwrap_or_default(),
@@ -289,7 +292,12 @@ struct Existing {
 pub struct Snapshot {
     pub head_sha: String,
     pub author: String,
+    pub author_is_bot: bool,
     pub viewer: String,
+    /// Lines added and removed, and files changed, when GitHub gave them.
+    pub additions: Option<i64>,
+    pub deletions: Option<i64>,
+    pub changed_files: Option<i64>,
     /// path -> new-side line numbers the diff shows.
     lines: std::collections::HashMap<String, HashSet<i64>>,
     comments: Vec<Existing>,
@@ -304,7 +312,11 @@ impl Snapshot {
         Self {
             head_sha: "0000000".into(),
             author: if own { "you".into() } else { "someone".into() },
+            author_is_bot: false,
             viewer: "you".into(),
+            additions: Some(40),
+            deletions: Some(12),
+            changed_files: Some(lines.len() as i64),
             lines: lines.iter().map(|(path, range)| (path.to_string(), range.clone().collect())).collect(),
             comments: Vec::new(),
             reviews: Vec::new(),
@@ -373,7 +385,11 @@ pub fn snapshot(token: &str, repo: &str, number: i64) -> Result<Snapshot, String
     Ok(Snapshot {
         head_sha: pr["head"]["sha"].as_str().unwrap_or_default().to_string(),
         author: pr["user"]["login"].as_str().unwrap_or_default().to_string(),
+        author_is_bot: pr["user"]["type"] == "Bot",
         viewer,
+        additions: pr["additions"].as_i64(),
+        deletions: pr["deletions"].as_i64(),
+        changed_files: pr["changed_files"].as_i64(),
         lines,
         comments,
         reviews,
