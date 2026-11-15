@@ -126,6 +126,27 @@ struct ReviewRunStoreTests {
         #expect(sessions.sessions[made.id]?.reviewResult == again)
     }
 
+    @Test func aLeadsSecondRoundAddsToTheFirstAndNeitherReplacesTheMergedResult() throws {
+        defer { clean() }
+        let sessions = store()
+        let first = result("Round 1.", finding: "First round.", line: 3)
+        let second = result("Round 2.", finding: "Second round.", line: 5)
+        let made = lead { id in
+            var lead = step("lead", session: id, state: .done)
+            lead.rounds = 2
+            lead.results = [first, second]
+            return [lead]
+        }
+        sessions.add(made)
+        sessions.advanceRun(made.id)
+        let merged = try #require(sessions.sessions[made.id]?.reviewResult)
+        #expect(Set(merged.findings.map(\.comment)) == ["First round.", "Second round."])
+
+        // The transcript reports the latest round when it's read again.
+        sessions.keepReview(second, for: made.id)
+        #expect(sessions.sessions[made.id]?.reviewResult == merged)
+    }
+
     @Test func aLaterStageStartsOnceTheEarlierOneFinishesAndSeesItsFindings() throws {
         defer { clean() }
         let sessions = store()
