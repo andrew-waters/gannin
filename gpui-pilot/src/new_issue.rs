@@ -1,7 +1,9 @@
-//! New Issue, after Gannin's `NewIssueSheet` (without templates or
-//! images): say what it's about and Claude scouts the code and drafts it,
-//! then the repository, type, title and description, labels, assignees, a
-//! parent, and a board with its single-select fields, to check and change.
+//! New Issue, after Gannin's `NewIssueSheet`: say what it's about and
+//! Claude scouts the code and drafts it, following the template and the
+//! harness skills picked; then the repository, template, type, title and
+//! description, images, labels, assignees, a parent, and a board with its
+//! single-select fields, to check and change. Templates, skills and images
+//! are in `issue_parts.rs`.
 //!
 //! The draft is one headless `claude -p` turn, read only, in the harness
 //! that covers the repository (its `projects/` clones are the code it
@@ -14,14 +16,16 @@
 //! picked (labels, assignable people, the board's fields), never from
 //! Gannin's caches. Nothing is written until Review shows what will be
 //! sent and Create on GitHub is pressed. Then it writes in Gannin's order:
-//! `createIssue`, `addSubIssue`, `addProjectV2ItemById`, then each field.
+//! the images (one commit to the harness), `createIssue`, `addSubIssue`,
+//! `addProjectV2ItemById`, then each field. Images committed before a
+//! refusal are linked, not committed again, on a retry to the same place.
 
 use crate::charts::Theme;
 use crate::github::{self, Error};
 use crate::issues::IssueItem;
 use gpui::{div, prelude::*, px, relative, ClickEvent, Context, Entity, EventEmitter, Focusable, FontWeight, KeyDownEvent, SharedString, Subscription, Window};
 use serde_json::{json, Value};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 
 // MARK: - What GitHub offers
@@ -169,12 +173,26 @@ struct Plan {
     board: Option<Board>,
     /// (field, option ID, field name, option name).
     fields: Vec<(String, String, String, String)>,
+    /// (ID, file name, bytes) of each image attached.
+    images: Vec<(u64, String, Vec<u8>)>,
+    /// Where images are committed: the harness covering the repository.
+    harness: Option<String>,
+    /// The folder they go in.
+    folder: String,
+    /// Links to those already committed for this harness and repo.
+    committed: HashMap<u64, String>,
 }
 
 impl Plan {
     /// What will happen, a line a write, for Review.
     fn lines(&self) -> Vec<String> {
-        let mut lines = vec![format!("Create “{}” in {}", self.title, self.repo)];
+        let mut lines = Vec::new();
+        let pending = self.images.iter().filter(|(id, ..)| !self.committed.contains_key(id)).count();
+        if pending > 0 {
+            let harness = self.harness.as_deref().unwrap_or("the harness");
+            lines.push(format!("Commit {} to {harness}, in {}/", if pending == 1 { "1 image".to_string() } else { format!("{pending} images") }, self.folder));
+        }
+        lines.push(format!("Create “{}” in {}", self.title, self.repo));
         if let Some((_, name)) = &self.issue_type {
             lines.push(format!("as a {name}"));
         }
@@ -206,13 +224,33 @@ pub struct Created {
 
 /// Sends the plan, telling `steps` as each write lands. Once the issue is
 /// made, a later failure says so rather than leaving it unmentioned.
-fn create(token: &str, plan: &Plan, steps: &Mutex<Vec<String>>) -> Result<Created, (Option<Created>, String)> {
+/// Also returns the links to the images committed, kept for a retry.
+fn create(token: &str, plan: &Plan, steps: &Mutex<Vec<String>>) -> (Result<Created, (Option<Created>, String)>, HashMap<u64, String>) {
+    let mut committed = plan.committed.clone();
+    let result = create_committing(token, plan, steps, &mut committed);
+    (result, committed)
+}
+
+fn create_committing(token: &str, plan: &Plan, steps: &Mutex<Vec<String>>, committed: &mut HashMap<u64, String>) -> Result<Created, (Option<Created>, String)> {
     let note = |line: String| {
         if let Ok(mut steps) = steps.lock() {
             steps.push(line);
         }
     };
-    let mut input = json!({ "repositoryId": plan.repo_id, "title": plan.title, "body": plan.body });
+    let pending: Vec<&(u64, String, Vec<u8>)> = plan.images.iter().filter(|(id, ..)| !committed.contains_key(id)).collect();
+    if !pending.is_empty() {
+        let harness = plan.harness.as_deref().ok_or((None, "Images go in the org's harness, and this org has none set up.".to_string()))?;
+        let files: Vec<(String, Vec<u8>)> = pending.iter().map(|(_, name, data)| (format!("{}/{name}", plan.folder), data.clone())).collect();
+        let message = format!("Gannin: {} for a new issue in {}", if pending.len() == 1 { "an image".to_string() } else { format!("{} images", pending.len()) }, plan.repo);
+        let commit = crate::issue_parts::commit_files(token, harness, &files, &message).map_err(|e| (None, format!("GitHub didn't take the images: {e}")))?;
+        for (id, name, _) in &pending {
+            committed.insert(*id, crate::issue_parts::url(harness, &commit, &format!("{}/{name}", plan.folder)));
+        }
+        note(format!("Committed {} to {harness}", if pending.len() == 1 { "an image".to_string() } else { format!("{} images", pending.len()) }));
+    }
+    let links: Vec<(String, String)> = plan.images.iter().filter_map(|(id, name, _)| Some((name.clone(), committed.get(id)?.clone()))).collect();
+    let body = crate::issue_parts::body(&plan.body, &links);
+    let mut input = json!({ "repositoryId": plan.repo_id, "title": plan.title, "body": body });
     if !plan.labels.is_empty() {
         input["labelIds"] = json!(plan.labels.iter().map(|l| &l.id).collect::<Vec<_>>());
     }
@@ -223,7 +261,10 @@ fn create(token: &str, plan: &Plan, steps: &Mutex<Vec<String>>) -> Result<Create
         input["issueTypeId"] = json!(id);
     }
     let issue = github::mutate(token, "mutation($input: CreateIssueInput!) { createIssue(input: $input) { issue { id number url } } }", json!({ "input": input }), "createIssue")
-        .map_err(|e| (None, format!("GitHub didn't take the issue: {e}")))?;
+        .map_err(|e| {
+            let kept = if links.is_empty() { String::new() } else { " The images are committed, and trying again links them rather than committing them twice.".into() };
+            (None, format!("GitHub didn't take the issue: {e}.{kept}"))
+        })?;
     let created = Created {
         id: issue["issue"]["id"].as_str().unwrap_or_default().to_string(),
         number: issue["issue"]["number"].as_i64().unwrap_or_default(),
@@ -346,7 +387,31 @@ pub struct NewIssueForm {
     /// Bumped per draft, so a cancelled form or a later draft drops an
     /// earlier answer.
     draft_generation: usize,
+    /// The repository's issue templates; None while they load.
+    templates: Option<Vec<crate::issue_parts::Template>>,
+    template: Option<String>,
+    /// The harness's skills, and which harness they're from.
+    skills: Vec<crate::issue_parts::Skill>,
+    skills_from: Option<String>,
+    picked_skills: BTreeSet<String>,
+    images: Vec<Attached>,
+    /// Links to images committed, and the (harness, repo) they were
+    /// committed for: another commits them again there.
+    committed: HashMap<u64, String>,
+    committed_for: Option<(String, String)>,
+    /// Names the images' folder, from when the form opened.
+    started: chrono::DateTime<chrono::Utc>,
+    folder_id: u64,
+    next_image: u64,
     _subscriptions: Vec<Subscription>,
+}
+
+/// An image attached to the issue.
+struct Attached {
+    id: u64,
+    name: String,
+    data: Vec<u8>,
+    image: Arc<gpui::Image>,
 }
 
 /// What Claude sent back.
@@ -441,10 +506,23 @@ impl NewIssueForm {
             conversation: Vec::new(),
             drafting: None,
             draft_generation: 0,
+            templates: None,
+            template: None,
+            skills: Vec::new(),
+            skills_from: None,
+            picked_skills: BTreeSet::new(),
+            images: Vec::new(),
+            committed: HashMap::new(),
+            committed_for: None,
+            started: chrono::Utc::now(),
+            folder_id: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0) ^ std::process::id() as u64,
+            next_image: 0,
             _subscriptions: subscriptions,
         };
         if let Some(repo) = repo {
             form.pick_repo(repo, cx);
+        } else {
+            form.load_skills(cx);
         }
         cx.spawn(async move |this, cx| {
             let fetched = cx
@@ -504,6 +582,9 @@ impl NewIssueForm {
         self.repo = Some(repo.clone());
         self.picking_repo = false;
         self.repo_options = None;
+        self.templates = None;
+        self.template = None;
+        self.load_skills(cx);
         // Labels are the repository's own: those the new one lacks go once
         // it's read. People may carry over.
         cx.notify();
@@ -513,13 +594,20 @@ impl NewIssueForm {
                 .background_executor()
                 .spawn(async move {
                     let token = crate::auth::token().ok_or(Error::Unauthorised)?;
-                    fetch_repo(&token, &wanted)
+                    // A repo without templates, or one GitHub won't show
+                    // them for, has none.
+                    let templates = crate::issue_parts::fetch_templates(&token, &wanted).unwrap_or_default();
+                    fetch_repo(&token, &wanted).map(|options| (options, templates))
                 })
                 .await;
             this.update(cx, |form, cx| {
                 if form.repo.as_deref() != Some(repo.as_str()) {
                     return;
                 }
+                let fetched = fetched.map(|(options, templates)| {
+                    form.templates = Some(templates);
+                    options
+                });
                 match fetched {
                     Ok(options) => {
                         form.assignees.retain(|login| options.people.iter().any(|p| &p.login == login));
@@ -531,6 +619,148 @@ impl NewIssueForm {
                 cx.notify();
             })
             .ok();
+        })
+        .detach();
+    }
+
+    /// The harness covering the repository, else the org's first.
+    fn harness(&self) -> Option<String> {
+        self.repo
+            .as_ref()
+            .and_then(|repo| self.projects.iter().find(|p| p.repos.contains(repo)))
+            .or(self.projects.first())
+            .map(|p| p.id.clone())
+    }
+
+    /// Reads the skills of the harness covering the repository, when it's
+    /// another than they're from; those about issues start ticked.
+    fn load_skills(&mut self, cx: &mut Context<Self>) {
+        let Some(harness) = self.harness() else { return };
+        if self.skills_from.as_deref() == Some(harness.as_str()) {
+            return;
+        }
+        self.skills_from = Some(harness.clone());
+        let org = self.org.clone();
+        cx.spawn(async move |this, cx| {
+            let wanted = harness.clone();
+            let skills = cx.background_executor().spawn(async move { crate::issue_parts::skills(&crate::launch::harness_path(&org, &wanted)) }).await;
+            this.update(cx, |form, cx| {
+                if form.skills_from.as_deref() != Some(harness.as_str()) {
+                    return;
+                }
+                form.picked_skills = skills.iter().filter(|s| s.about_issues()).map(|s| s.path.clone()).collect();
+                form.skills = skills;
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Fills in from a template: its title when there's none yet, its body,
+    /// its labels the repository has, and its assignees.
+    fn apply_template(&mut self, file: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.template = file.clone();
+        let Some(template) = file.and_then(|f| self.templates.as_ref()?.iter().find(|t| t.file == f).cloned()) else { return cx.notify() };
+        if self.title.read(cx).text(cx).trim().is_empty() && !template.title.is_empty() {
+            self.title.update(cx, |e, cx| e.set_text(template.title.clone(), window, cx));
+        }
+        // Images keep their places at the end.
+        let placeholders: Vec<String> = self.images.iter().map(|i| crate::issue_parts::placeholder(&i.name)).collect();
+        let mut body = template.body.clone();
+        for tag in placeholders {
+            body = format!("{}\n\n{tag}", body.trim_end());
+        }
+        self.body.update(cx, |e, cx| e.set_text(body, window, cx));
+        let known = |name: &String| self.repo_options.as_ref().is_none_or(|o| o.labels.iter().any(|l| &l.name == name));
+        let labels: Vec<String> = template.labels.iter().filter(|l| known(l)).cloned().collect();
+        self.labels.extend(labels);
+        self.assignees.extend(template.assignees.iter().cloned());
+        cx.notify();
+    }
+
+    /// Attaches an image: prepared off the main thread, then shown, with its
+    /// placeholder at the end of the description.
+    fn add_image(&mut self, name: String, bytes: Vec<u8>, window: &mut Window, cx: &mut Context<Self>) {
+        if self.harness().is_none() {
+            self.error = Some("Images are committed to the org's harness, and this org has none set up.".into());
+            return cx.notify();
+        }
+        cx.spawn_in(window, async move |this, cx| {
+            let prepared = cx.background_executor().spawn(async move { crate::issue_parts::prepare(&name, bytes) }).await;
+            this.update_in(cx, |form, window, cx| {
+                match prepared {
+                    Ok((name, data)) => {
+                        // A name unique among them.
+                        let (stem, ext) = name.rsplit_once('.').map(|(s, e)| (s.to_string(), e.to_string())).unwrap_or((name.clone(), "png".into()));
+                        let mut unique = name.clone();
+                        let mut n = 2;
+                        while form.images.iter().any(|i| i.name == unique) {
+                            unique = format!("{stem}-{n}.{ext}");
+                            n += 1;
+                        }
+                        form.next_image += 1;
+                        let image = Arc::new(gpui::Image::from_bytes(crate::issue_parts::gpui_format(&unique), data.clone()));
+                        let body = crate::issue_parts::appending_placeholder(&form.body.read(cx).text(cx), &unique);
+                        form.body.update(cx, |e, cx| e.set_text(body, window, cx));
+                        form.images.push(Attached { id: form.next_image, name: unique, data, image });
+                    }
+                    Err(e) => form.error = Some(e),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn remove_image(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(at) = self.images.iter().position(|i| i.id == id) else { return };
+        let image = self.images.remove(at);
+        let body = crate::issue_parts::removing_placeholder(&self.body.read(cx).text(cx), &image.name);
+        self.body.update(cx, |e, cx| e.set_text(body, window, cx));
+        cx.notify();
+    }
+
+    fn add_paths(&mut self, paths: &[std::path::PathBuf], window: &mut Window, cx: &mut Context<Self>) {
+        for path in paths {
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "image.png".into());
+            match std::fs::read(path) {
+                Ok(bytes) => self.add_image(name, bytes, window, cx),
+                Err(e) => self.error = Some(format!("Couldn't read {name}: {e}")),
+            }
+        }
+    }
+
+    /// ⌘V with pictures or image files on the clipboard attaches them;
+    /// false leaves the keystroke to the field (text pastes as usual).
+    fn paste_images(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        let Some(item) = cx.read_from_clipboard() else { return false };
+        let mut pictures = Vec::new();
+        let mut paths = Vec::new();
+        for entry in item.entries() {
+            match entry {
+                gpui::ClipboardEntry::Image(image) => pictures.push((image.format, image.bytes.clone())),
+                gpui::ClipboardEntry::ExternalPaths(external) => paths.extend(external.paths().iter().cloned()),
+                gpui::ClipboardEntry::String(_) => {}
+            }
+        }
+        if pictures.is_empty() && paths.is_empty() {
+            return false;
+        }
+        for (format, bytes) in pictures {
+            let name = format!("pasted.{}", crate::issue_parts::extension(format));
+            self.add_image(name, bytes, window, cx);
+        }
+        self.add_paths(&paths, window, cx);
+        true
+    }
+
+    fn pick_images(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions { files: true, directories: false, multiple: true, prompt: Some("Attach".into()) });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else { return };
+            this.update_in(cx, |form, window, cx| form.add_paths(&paths, window, cx)).ok();
         })
         .detach();
     }
@@ -577,7 +807,7 @@ impl NewIssueForm {
         if !self.conversation.is_empty() || !title.trim().is_empty() || !body.trim().is_empty() {
             parts.push(format!("What's written so far, to improve on rather than start over (keep what I wrote unless I ask otherwise):\n\nTitle: {title}\n\n{body}"));
         }
-        parts.push("Scout before you write. Don't change anything. The code repos are shared clones under projects/ (or this checkout, when it's the code repo and has no projects/): find where this lives in the code, what it touches and how it behaves today, so the description names the real files, types and behaviour, says what's in and out of scope, and gives acceptance criteria someone can check. If the harness has a skill for writing issues (under skills/ or .claude/skills/, such as create-issue), follow it. Keep it as long as it needs to be and no longer.".into());
+        parts.push("Scout before you write. Don't change anything. The code repos are shared clones under projects/ (or this checkout, when it's the code repo and has no projects/): find where this lives in the code, what it touches and how it behaves today, so the description names the real files, types and behaviour, says what's in and out of scope, and gives acceptance criteria someone can check. Keep it as long as it needs to be and no longer.".into());
         match &self.repo {
             Some(repo) => parts.push(format!("The repo is {repo}; say if the code shows it belongs in another, and name it in \"repo\".")),
             None => {
@@ -599,6 +829,19 @@ impl NewIssueForm {
         }
         if let Some(parent) = &self.parent {
             parts.push(format!("It's a sub-issue of {}#{}: {}.", parent.repo, parent.number, parent.title));
+        }
+        if let Some(template) = self.template.as_ref().and_then(|f| self.templates.as_ref()?.iter().find(|t| &t.file == f)) {
+            parts.push(format!("Follow the repo's {} template: keep its headings.\n\n{}", template.name, template.body));
+        }
+        if !self.images.is_empty() {
+            parts.push(format!(
+                "The description has images as placeholders, lines like `{}`. Keep every one exactly as it is, each where it fits best.",
+                crate::issue_parts::placeholder(&self.images[0].name)
+            ));
+        }
+        let skills: Vec<&str> = self.skills.iter().filter(|s| self.picked_skills.contains(&s.path)).map(|s| s.path.as_str()).collect();
+        if !skills.is_empty() {
+            parts.push(format!("Follow these skills from the team's harness, at these paths here: {}. Read them first.", skills.iter().map(|p| format!("`{p}`")).collect::<Vec<_>>().join(", ")));
         }
         parts.push("Don't invent details: say in the description what's unknown. End your reply with one fenced ```json block: {\"repo\": \"owner/name\", \"title\": \"...\", \"body\": \"<Markdown>\", \"labels\": [\"...\"], \"type\": \"<issue type or null>\", \"fields\": {\"Field\": \"option\"}, \"note\": \"one line to me: what you found, or what you need to know\"}".into());
         parts.join("\n\n")
@@ -742,6 +985,10 @@ impl NewIssueForm {
                     Some((f.id.clone(), option.clone(), f.name.clone(), name))
                 })
                 .collect(),
+            images: self.images.iter().map(|i| (i.id, i.name.clone(), i.data.clone())).collect(),
+            harness: self.harness(),
+            folder: crate::issue_parts::folder(self.repo.as_deref().unwrap_or(""), self.started, self.folder_id),
+            committed: if self.committed_for == self.harness().zip(self.repo.clone()) { self.committed.clone() } else { HashMap::new() },
         });
         self.step = Step::Review;
         cx.notify();
@@ -775,11 +1022,18 @@ impl NewIssueForm {
             let result = cx
                 .background_executor()
                 .spawn(async move {
-                    let token = crate::auth::token().ok_or((None, "Sign in to GitHub first.".to_string()))?;
-                    create(&token, &plan, &steps)
+                    let committed_for = plan.harness.clone().zip(Some(plan.repo.clone()));
+                    let Some(token) = crate::auth::token() else { return (Err((None, "Sign in to GitHub first.".to_string())), plan.committed.clone(), committed_for) };
+                    let (result, committed) = create(&token, &plan, &steps);
+                    (result, committed, committed_for)
                 })
                 .await;
             this.update(cx, |form, cx| {
+                let (result, committed, committed_for) = result;
+                if !committed.is_empty() {
+                    form.committed = committed;
+                    form.committed_for = committed_for;
+                }
                 match result {
                     Ok(created) => cx.emit(NewIssueEvent::Created(created)),
                     Err((made, message)) => {
@@ -871,6 +1125,46 @@ impl Render for NewIssueForm {
                             .on_click(cx.listener(|form, _: &ClickEvent, window, cx| form.draft(window, cx))),
                     }),
                 );
+                let skills = (!self.skills.is_empty()).then(|| {
+                    div()
+                        .id("new-issue-skills")
+                        .flex_none()
+                        .max_h(px(180.))
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(label("Skills Claude follows"))
+                        .children(self.skills.iter().enumerate().map(|(i, skill)| {
+                            let on = self.picked_skills.contains(&skill.path);
+                            let path = skill.path.clone();
+                            div()
+                                .id(("skill", i))
+                                .flex()
+                                .flex_row()
+                                .gap_2()
+                                .px_1()
+                                .py_0p5()
+                                .rounded_md()
+                                .cursor_pointer()
+                                .hover(|s| s.bg(theme.row_selected))
+                                .on_click(cx.listener(move |form, _: &ClickEvent, _, cx| {
+                                    if !form.picked_skills.remove(&path) {
+                                        form.picked_skills.insert(path.clone());
+                                    }
+                                    cx.notify();
+                                }))
+                                .child(div().flex_none().text_color(if on { theme.selected } else { theme.tertiary }).child(if on { "☑" } else { "☐" }))
+                                .child(
+                                    div()
+                                        .min_w_0()
+                                        .flex()
+                                        .flex_col()
+                                        .child(div().text_sm().child(skill.name.clone()))
+                                        .when_some(skill.summary.clone(), |d, summary| d.child(div().text_xs().text_color(theme.secondary).truncate().child(summary))),
+                                )
+                        }))
+                });
                 claude_column = Some(
                     div()
                         .w(relative(0.38))
@@ -886,6 +1180,7 @@ impl Render for NewIssueForm {
                         .bg(theme.sidebar)
                         .child(label("Claude"))
                         .child(claude)
+                        .children(skills)
                         .child(composer),
                 );
                 // Repository.
@@ -923,6 +1218,26 @@ impl Render for NewIssueForm {
                     }
                 }
 
+                // Template.
+                match &self.templates {
+                    None if self.repo.is_some() => {}
+                    Some(templates) if !templates.is_empty() => {
+                        body = body.child(label("Template")).child(
+                            row()
+                                .child(chip("template-none".into(), "None".into(), self.template.is_none()).on_click(cx.listener(|form, _: &ClickEvent, window, cx| form.apply_template(None, window, cx))))
+                                .children(templates.iter().enumerate().map(|(i, t)| {
+                                    let on = self.template.as_deref() == Some(t.file.as_str());
+                                    let file = t.file.clone();
+                                    let about = t.about.clone().unwrap_or_default();
+                                    chip(SharedString::from(format!("template-{i}")), t.name.clone(), on)
+                                        .when(!about.is_empty(), |d| d.tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(about.clone())).into()))
+                                        .on_click(cx.listener(move |form, _: &ClickEvent, window, cx| form.apply_template(Some(file.clone()), window, cx)))
+                                })),
+                        );
+                    }
+                    _ => {}
+                }
+
                 // Type.
                 let types = self.options.as_ref().map(|o| o.types.clone()).unwrap_or_default();
                 if !types.is_empty() {
@@ -943,6 +1258,70 @@ impl Render for NewIssueForm {
                 }
 
                 body = body.child(label("Title")).child(field(&self.title)).child(label("Description")).child(field(&self.body));
+
+                // Images: dropped anywhere on the page, pasted, or added.
+                let harness = self.harness();
+                body = body.child(label("Images"));
+                match &harness {
+                    None => body = body.child(note("Images are committed to the org's harness, and this org has none set up.")),
+                    Some(harness) => {
+                        if !self.images.is_empty() {
+                            body = body.child(row().gap_2().children(self.images.iter().map(|image| {
+                                let id = image.id;
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0p5()
+                                    .w(px(120.))
+                                    .child(
+                                        div()
+                                            .relative()
+                                            .size(px(120.))
+                                            .rounded_md()
+                                            .overflow_hidden()
+                                            .border_1()
+                                            .border_color(theme.border)
+                                            .bg(theme.tile)
+                                            .child(gpui::img(image.image.clone()).size_full().object_fit(gpui::ObjectFit::Contain))
+                                            .child(
+                                                div()
+                                                    .id(("remove-image", id))
+                                                    .absolute()
+                                                    .top_1()
+                                                    .right_1()
+                                                    .px_1()
+                                                    .rounded_sm()
+                                                    .bg(theme.popover)
+                                                    .cursor_pointer()
+                                                    .text_xs()
+                                                    .on_click(cx.listener(move |form, _: &ClickEvent, window, cx| form.remove_image(id, window, cx)))
+                                                    .child("×"),
+                                            ),
+                                    )
+                                    .child(div().text_xs().text_color(theme.secondary).truncate().child(image.name.clone()))
+                            })));
+                        }
+                        body = body
+                            .child(
+                                div()
+                                    .id("image-drop")
+                                    .h(px(52.))
+                                    .flex()
+                                    .flex_row()
+                                    .items_center()
+                                    .justify_center()
+                                    .gap_3()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_dashed()
+                                    .border_color(theme.border)
+                                    .drag_over::<gpui::ExternalPaths>({ let over = theme.row_selected; move |s, _, _, _| s.bg(over) })
+                                    .child(div().text_sm().text_color(theme.secondary).child("Drop images here, or paste them (⌘V)"))
+                                    .child(button("add-images", "Add Images".into(), false).on_click(cx.listener(|form, _: &ClickEvent, window, cx| form.pick_images(window, cx)))),
+                            )
+                            .child(note(&crate::issue_parts::audience(harness, self.repo.as_deref().unwrap_or(harness))));
+                    }
+                }
 
                 // Labels and assignees, once the repository is read.
                 match &self.repo_options {
@@ -1098,6 +1477,9 @@ impl Render for NewIssueForm {
                 if let Some(plan) = &self.plan {
                     body = body.child(label(if self.step == Step::Working { "Sending to GitHub" } else { "This will be sent to GitHub, as you" }));
                     body = body.child(div().flex().flex_col().gap_1().children(plan.lines().into_iter().map(|line| div().text_sm().child(format!("•  {line}")))));
+                    if let (false, Some(harness)) = (plan.images.is_empty(), &plan.harness) {
+                        body = body.child(note(&crate::issue_parts::audience(harness, &plan.repo)));
+                    }
                     if !plan.body.is_empty() {
                         body = body.child(label("Description")).child(
                             div().p_3().rounded_md().border_1().border_color(theme.border).child(crate::markdown::markdown("new-issue-preview", &plan.body, &theme)),
@@ -1110,6 +1492,12 @@ impl Render for NewIssueForm {
             }
         }
 
+        let pending_images = self.plan.as_ref().map_or(0, |p| p.images.iter().filter(|(id, ..)| !p.committed.contains_key(id)).count());
+        let create_label = match pending_images {
+            0 => "Create on GitHub  ⌘↩".to_string(),
+            1 => "Commit 1 Image and Create on GitHub  ⌘↩".to_string(),
+            n => format!("Commit {n} Images and Create on GitHub  ⌘↩"),
+        };
         let actions = match self.step {
             Step::Edit => div()
                 .flex()
@@ -1127,7 +1515,7 @@ impl Render for NewIssueForm {
                         form.error = None;
                         cx.notify();
                     })))
-                    .child(button("new-issue-create", "Create on GitHub  ⌘↩".into(), true).on_click(cx.listener(|form, _: &ClickEvent, _, cx| form.send(cx))))
+                    .child(button("new-issue-create", create_label, true).on_click(cx.listener(|form, _: &ClickEvent, _, cx| form.send(cx))))
                 })
                 .when(self.made.is_some(), |d| d.child(button("new-issue-done", "Close".into(), true).on_click(cx.listener(|form, _: &ClickEvent, _, cx| form.cancel(cx))))),
             Step::Working => div().child(note("Creating…")),
@@ -1184,6 +1572,18 @@ impl Render for NewIssueForm {
             .flex()
             .flex_col()
             .bg(theme.bg)
+            // Pictures and image files on the clipboard attach before the
+            // field under the cursor sees ⌘V; text pastes as usual.
+            .capture_key_down(cx.listener(|form, event: &KeyDownEvent, window, cx| {
+                if form.step == Step::Edit && event.keystroke.key == "v" && event.keystroke.modifiers.platform && form.paste_images(window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+            .on_drop(cx.listener(|form, paths: &gpui::ExternalPaths, window, cx| {
+                if form.step == Step::Edit {
+                    form.add_paths(paths.paths(), window, cx);
+                }
+            }))
             .on_key_down(cx.listener(|form, event: &KeyDownEvent, window, cx| {
                 if event.keystroke.key == "escape" {
                     cx.stop_propagation();

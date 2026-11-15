@@ -4,8 +4,9 @@
 //! low. Requests go through the system's curl, with the token in a config
 //! on standard input so it never shows in the process list.
 //!
-//! Mostly reads. `mutate` sends a write; its only callers are the New
-//! Issue form's Create on GitHub, after the form has shown what will be sent.
+//! Mostly reads. `mutate` sends a write; its callers are New Issue's
+//! Create on GitHub (the issue, and its images committed to the harness),
+//! after the form has shown what will be sent.
 
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{json, Value};
@@ -97,10 +98,29 @@ fn asking_for_rate_limit(query: &str) -> String {
 /// One POST; returns the status, headers (lowercased names) and body.
 fn post(token: &str, body: &str) -> Result<(u16, Vec<(String, String)>, String), Error> {
     let escape = |s: &str| s.replace('\\', "\\\\").replace('"', "\\\"");
+    // A large body (images for the harness) goes through a file of its own
+    // rather than one line of the config; the token stays in the config.
+    let spill = (body.len() > 256 * 1024).then(|| {
+        let path = std::env::temp_dir().join(format!("gannin-gpui-{}-{}.json", std::process::id(), Utc::now().timestamp_nanos_opt().unwrap_or_default()));
+        std::fs::write(&path, body).map(|_| path)
+    });
+    let data_line = match &spill {
+        Some(Ok(path)) => format!("data-binary = \"@{}\"", escape(&path.to_string_lossy())),
+        Some(Err(e)) => return Err(Error::Other(format!("Couldn't stage the request: {e}"))),
+        None => format!("data = \"{}\"", escape(body)),
+    };
     let config = format!(
-        "header = \"Authorization: Bearer {token}\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: gannin-gpui-pilot\"\ndata = \"{}\"\n",
-        escape(body)
+        "header = \"Authorization: Bearer {token}\"\nheader = \"Content-Type: application/json\"\nheader = \"User-Agent: gannin-gpui-pilot\"\n{data_line}\n"
     );
+    struct Remove(Option<std::path::PathBuf>);
+    impl Drop for Remove {
+        fn drop(&mut self) {
+            if let Some(path) = &self.0 {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
+    let _cleanup = Remove(spill.and_then(Result::ok));
     let mut child = Command::new("/usr/bin/curl")
         .args(["-sS", "--max-time", "60", "-X", "POST", "-D", "-", "-w", "\n%{http_code}", "-K", "-", "https://api.github.com/graphql"])
         .stdin(Stdio::piped())

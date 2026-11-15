@@ -13,9 +13,9 @@ this code would have to be GPL-3.0 too. Only `gpui` and a few utility crates are
 It's a separate Cargo binary and isn't part of the Xcode build. It reads Gannin's caches and
 settings and never writes them: it keeps its own copies of the PR, issue and CI caches (seeded from
 Gannin's) under `Application Support/GanninGPUIPilot/`, and its own sessions there too. Its calls to
-GitHub are reads (signing in, syncing, Your Work, an opened drawer), plus two writes, each only
-after the app has shown what will be sent: posting a review (Post to GitHub) and creating an issue
-(Create on GitHub). A session's terminal
+GitHub are reads (signing in, syncing, Your Work, an opened drawer), plus writes only after the app
+has shown what will be sent: posting a review (Post to GitHub), and creating an issue with its
+images committed to the harness (Create on GitHub). A session's terminal
 runs claude, which acts as you, as in Gannin.
 
 ## Running it
@@ -44,7 +44,7 @@ the two variables. `--org` and `--days` override what was saved.
 | Issues, board fields, status history, linked PRs | The pilot's copy of `StoredIssues/<org>.json`, synced |
 | Descriptions and comments | Fetched from GitHub as a drawer opens, kept in the pilot's `Caches/Details.json`; before that answers, Gannin's `Details.json` or `IssueText.sqlite` if Gannin is installed |
 | An opened issue | Fetched with its drawer (core, board fields, status history, linked PRs) into the pilot's issue store, so the list shows it as it is now |
-| New Issue | Live from GitHub: the org's repositories, boards and issue types; a repository's labels and assignable people; a board's single-select fields |
+| New Issue | Live from GitHub: the org's repositories, boards and issue types; a repository's labels, assignable people and issue templates; a board's single-select fields. Skills from the harness checkout on this Mac |
 | Projects and the issue workflow | `Application Support/UserData/Gannin.store` (org settings) and `Application Support/Harness/*.json` (each harness's `.gannin/project.json`) |
 | Pull requests: review, checks, reviewers, commits | The pilot's copy of `PullRequests/<org>.json`, synced |
 | Your Work | Live from GitHub when signed in, else the PR cache |
@@ -76,6 +76,10 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   Zed's default settings, theme and fonts (`src/zed.rs`). State comes from the terminal, as no
   hooks are installed: output moving is Working, a prompt on screen or the bell is Needs you,
   quiet is Your turn.
+- **Tab bar** (`src/shell.rs`): the filter menu at its left picks a kind of tab and, below, Active
+  or Stopped (a session whose claude has ended); Find PR # beside it keeps the sessions that own a
+  number (a review's PR, a work session's issue, or a PR it opened) or whose name matches the words
+  typed. Enter opens the first found, Escape clears it.
 - **Your Work** (`src/shell.rs`, `src/work.rs`): the right-hand panel, after the menu bar's list.
   Sessions waiting on you, reviews asked of you, your PRs needing you, sessions working, your
   other PRs and issues assigned to you, in that order. A session or an issue switches to its tab;
@@ -118,7 +122,11 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   New Sub-issue in an issue's drawer, opens a subpage over the tab: Claude on the left, the issue
   on the right. Say what it's about and Claude scouts the code (one read-only `claude -p` turn in
   the harness covering the repository) and fills in the repository, title, description, labels,
-  type and board fields; Revise as often as needed. Back keeps the draft and the page beneath as
+  type and board fields; Revise as often as needed. It follows the repository's issue template
+  (from `.github/ISSUE_TEMPLATE`, picked under Template) and the harness skills ticked beside it
+  (read from the harness checkout, those about issues ticked to start). Images dropped on the page,
+  pasted or added are committed to the harness in one commit before the issue is made
+  (`src/issue_parts.rs`), and linked at that commit. Back keeps the draft and the page beneath as
   they were; New Issue resumes it. Review shows every write, and Create on GitHub sends them in
   Gannin's order (create, sub-issue, board, fields), then opens the new issue's drawer.
 - **Scorecards** (`src/scorecard.rs`): the org's goals as tiles and a period table, with Gannin's

@@ -30,6 +30,9 @@ text = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d
 assets = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Already in the tree through Zed's crates: New Issue's images.
+image = "0.25"
+base64 = "0.22"
 anyhow = "1"
 uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
