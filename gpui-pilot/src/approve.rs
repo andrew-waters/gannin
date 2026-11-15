@@ -259,6 +259,29 @@ mod tests {
         .unwrap();
         s.migrate();
         assert!(s.windows[0].approve.enabled);
-        assert!(!serde_json::to_string(&s).unwrap().contains("approve_by_itself"));
+        // Still written, as false, so an older build can read the file.
+        assert!(serde_json::to_string(&s).unwrap().contains("\"approve_by_itself\":false"));
+    }
+
+    #[test]
+    fn an_unparsable_schedule_is_never_saved_over() {
+        let s = crate::schedule::Schedule::parse(br#"{"settings": "#);
+        assert!(s.unreadable);
+        assert!(crate::schedule::Schedule::parse(b"{}").unreadable == false);
+    }
+
+    #[test]
+    fn a_file_saved_by_this_build_reads_in_an_older_one() {
+        // The older build's Settings had every field required.
+        #[derive(serde::Deserialize)]
+        #[allow(dead_code)]
+        struct OldSettings {
+            gap_minutes: u32,
+            paused_all: bool,
+            approve_by_itself: bool,
+            reviews_at_once: usize,
+        }
+        let json = serde_json::to_value(crate::schedule::Schedule::default()).unwrap();
+        assert!(serde_json::from_value::<OldSettings>(json["settings"].clone()).is_ok());
     }
 }

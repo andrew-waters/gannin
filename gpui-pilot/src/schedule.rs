@@ -208,9 +208,10 @@ pub struct Settings {
     /// Minutes between unattended pull requests.
     pub gap_minutes: u32,
     pub paused_all: bool,
-    /// The old global switch, now each window's: read so a schedule saved
-    /// with it on carries over (see `Schedule::load`), never written.
-    #[serde(default, skip_serializing)]
+    /// The old global switch, now each window's: a schedule saved with it on
+    /// carries over (see `Schedule::migrate`). Still written, as false:
+    /// builds from before per-window rules need it to read the file.
+    #[serde(default)]
     pub approve_by_itself: bool,
     /// At most this many window reviews at once.
     pub reviews_at_once: usize,
@@ -254,6 +255,10 @@ pub struct Schedule {
     /// Each scheduled issue's scouting, by its id.
     #[serde(default)]
     pub readiness: std::collections::BTreeMap<String, Readiness>,
+    /// The file was there but couldn't be read: this is an empty stand-in,
+    /// and saving it would replace what's there, so `save` won't.
+    #[serde(skip)]
+    pub unreadable: bool,
 }
 
 /// A decision a scout found the work needs, its options (the first
@@ -361,10 +366,27 @@ pub fn gap_dir() -> PathBuf {
 }
 
 impl Schedule {
+    /// The schedule, or an empty one when there's no file yet. A file that's
+    /// there but can't be read or parsed gives an empty one marked
+    /// unreadable, which is never saved over it.
     pub fn load() -> Self {
-        let mut s: Self = std::fs::read(path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
+        let mut s = match std::fs::read(path()) {
+            Ok(bytes) => Self::parse(&bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Self::default(),
+            Err(e) => {
+                eprintln!("schedule.json couldn't be read, so it won't be saved over: {e}");
+                Self { unreadable: true, ..Default::default() }
+            }
+        };
         s.migrate();
         s
+    }
+
+    pub(crate) fn parse(bytes: &[u8]) -> Self {
+        serde_json::from_slice(bytes).unwrap_or_else(|e| {
+            eprintln!("schedule.json couldn't be parsed, so it won't be saved over: {e}");
+            Self { unreadable: true, ..Default::default() }
+        })
     }
 
     /// A schedule saved with the old global Approve by itself on: every
@@ -383,6 +405,9 @@ impl Schedule {
     }
 
     pub fn save(&self) {
+        if self.unreadable {
+            return;
+        }
         let path = path();
         let _ = std::fs::create_dir_all(folder());
         let tmp = path.with_extension("json.tmp");
