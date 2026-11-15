@@ -93,6 +93,20 @@ struct ReviewRunStoreTests {
         #expect(sessions.sessions[made.id]?.reviewRun?.steps[1].state == .waiting)
     }
 
+    @Test func theLeadsOwnRoundReadAgainDoesNotReplaceAFinishedRunsResult() {
+        let leadID = UUID()
+        let round = SessionTranscript.ReviewResult(summary: "Lead.", verdict: "comment", findings: [])
+        let lookAgain = SessionTranscript.ReviewResult(summary: "Again.", verdict: "approve", findings: [])
+        var lead = step("lead", session: leadID, state: .done)
+        lead.results = [round]
+        var run = ReviewRun(workflowID: "w", workflowName: "W", steps: [lead, step("other", session: UUID(), state: .done)])
+        #expect(!ReviewRunMerge.isRound(round, ofFinishedRunLedBy: leadID, in: run))
+        run.finishedAt = .now
+        #expect(ReviewRunMerge.isRound(round, ofFinishedRunLedBy: leadID, in: run))
+        #expect(!ReviewRunMerge.isRound(lookAgain, ofFinishedRunLedBy: leadID, in: run))
+        #expect(!ReviewRunMerge.isRound(round, ofFinishedRunLedBy: leadID, in: nil))
+    }
+
     @Test func aRunLeftByAQuitIsPickedUp() throws {
         defer { clean() }
         let sessions = store()

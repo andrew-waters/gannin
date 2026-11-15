@@ -1561,8 +1561,11 @@ final class SessionStore {
             pairRoundRead(id)
             return
         }
-        // A review's result is kept with it, for the history.
-        if sessions[id]?.isPullRequestReview == true, !moreToRead, let review = reader.summary.review, sessions[id]?.reviewResult != review {
+        // A review's result is kept with it, for the history. A finished
+        // run's merged result isn't replaced by the lead's own round read
+        // again; only a later review (Look Again) replaces it.
+        if sessions[id]?.isPullRequestReview == true, !moreToRead, let review = reader.summary.review, sessions[id]?.reviewResult != review,
+           !ReviewRunMerge.isRound(review, ofFinishedRunLedBy: id, in: sessions[id]?.reviewRun) {
             sessions[id]?.reviewResult = review
             reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
             save()

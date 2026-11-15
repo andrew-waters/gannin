@@ -37,6 +37,7 @@ paths:
 - A step's findings are one per `Finding.key` (line and the start of the comment): two points on one line are two findings, and a new point on a flagged line counts as new for the round rule.
 - Steps never edit or post: helpers are `isReviewer` (edits disallowed); one-shot CLIs run in a throwaway copy of a detached checkout, removed after, and only on this Mac.
 - Merge with `PairReview.merge(labelled:)`, by file and line. A step's earlier stages' findings go into its prompt; those beside it never do.
+- Never let a re-read of the lead's transcript replace a finished run's merged result: `store` skips a review the lead's step already gave (`ReviewRunMerge.isRound`), or the review reverts to the lead's findings alone.
 - After a run finishes, Look Again asks the lead alone, and its result replaces the run's.
 
 ## Diff highlighting
