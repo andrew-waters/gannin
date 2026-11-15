@@ -6,8 +6,14 @@ windows and overrides, each on screens of their own.
 ## What it schedules
 
 1. **Review times.** Windows (say weekdays 9:00 to 11:00) when automatic reviews may start: reviews of
-   pull requests where I'm a requested reviewer. They post by themselves; they approve by themselves only
-   when a setting allows it, otherwise an approve verdict posts as a comment and waits for me.
+   pull requests where I'm a requested reviewer. They post by themselves. Each window says whether its
+   reviews approve by themselves, and under which conditions: authors (picked from the org's members,
+   and whether bots count), lines and files changed (from GitHub when the review posts), Claude's effort
+   (1 to 5), no finding at or above a severity, and Claude's risk (low, medium, high: what the change
+   could break if it's wrong). An unset condition doesn't restrict; one that can't be answered (no
+   effort or risk given, size unknown) fails. An approve verdict that fails any condition posts as a
+   comment and waits for me, and the review and the window's last runs say why. Your own pull
+   requests only ever get a comment, and requesting changes posts as it is.
 2. **Issue starts.** An issue pinned to an exact time: Work on This starts then, unattended.
 3. **Sequences.** "This, then this, then this": a list of issues worked one after another, each to
    completion before the next starts.
