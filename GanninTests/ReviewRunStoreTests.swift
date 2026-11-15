@@ -93,18 +93,56 @@ struct ReviewRunStoreTests {
         #expect(sessions.sessions[made.id]?.reviewRun?.steps[1].state == .waiting)
     }
 
-    @Test func theLeadsOwnRoundReadAgainDoesNotReplaceAFinishedRunsResult() {
-        let leadID = UUID()
-        let round = SessionTranscript.ReviewResult(summary: "Lead.", verdict: "comment", findings: [])
-        let lookAgain = SessionTranscript.ReviewResult(summary: "Again.", verdict: "approve", findings: [])
-        var lead = step("lead", session: leadID, state: .done)
-        lead.results = [round]
-        var run = ReviewRun(workflowID: "w", workflowName: "W", steps: [lead, step("other", session: UUID(), state: .done)])
-        #expect(!ReviewRunMerge.isRound(round, ofFinishedRunLedBy: leadID, in: run))
-        run.finishedAt = .now
-        #expect(ReviewRunMerge.isRound(round, ofFinishedRunLedBy: leadID, in: run))
-        #expect(!ReviewRunMerge.isRound(lookAgain, ofFinishedRunLedBy: leadID, in: run))
-        #expect(!ReviewRunMerge.isRound(round, ofFinishedRunLedBy: leadID, in: nil))
+    private func result(_ summary: String, verdict: String = "comment", finding: String? = nil, line: Int = 3) -> SessionTranscript.ReviewResult {
+        SessionTranscript.ReviewResult(
+            summary: summary, verdict: verdict,
+            findings: finding.map { [SessionTranscript.Finding(path: "a.swift", line: line, comment: $0)] } ?? []
+        )
+    }
+
+    @Test func theLeadsOwnRoundReadAgainDoesNotReplaceAFinishedRunsResult() throws {
+        defer { clean() }
+        let sessions = store()
+        let round = result("Lead.", finding: "From the lead.")
+        let made = lead { id in
+            var first = step("lead", session: id, state: .done)
+            first.results = [round]
+            var second = step("other", session: UUID(), state: .done)
+            second.results = [result("Other.", finding: "From the other.", line: 9)]
+            return [first, second]
+        }
+        sessions.add(made)
+        sessions.advanceRun(made.id)
+        let merged = try #require(sessions.sessions[made.id]?.reviewResult)
+        #expect(merged.findings.count == 2)
+
+        // The lead's transcript is read again: its own round isn't the review.
+        sessions.keepReview(round, for: made.id)
+        #expect(sessions.sessions[made.id]?.reviewResult == merged)
+
+        // Look Again gives a different review, which does replace the run's.
+        let again = result("Again.", verdict: "approve")
+        sessions.keepReview(again, for: made.id)
+        #expect(sessions.sessions[made.id]?.reviewResult == again)
+    }
+
+    @Test func aLaterStageStartsOnceTheEarlierOneFinishesAndSeesItsFindings() throws {
+        defer { clean() }
+        let sessions = store()
+        let made = lead { [step("lead", session: $0, state: .running), step("next", stage: 1, provider: "junie")] }
+        sessions.add(made)
+        sessions.advanceRun(made.id)
+        // Stage 1 waits while stage 0 runs.
+        #expect(sessions.sessions[made.id]?.reviewRun?.steps[1].state == .waiting)
+
+        sessions.stepResult(result("Lead.", finding: "Missing nil check."), from: made.id)
+        let run = try #require(sessions.sessions[made.id]?.reviewRun)
+        #expect(run.steps[0].state == .done)
+        #expect(run.stage == 1)
+        #expect(run.steps[1].state == .running)
+
+        let prompt = SessionStore.stepInstructions(run.steps[1], of: run, specialist: nil)
+        #expect(prompt.contains("Missing nil check."))
     }
 
     @Test func aRunLeftByAQuitIsPickedUp() throws {
