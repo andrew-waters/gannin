@@ -1561,14 +1561,20 @@ final class SessionStore {
             pairRoundRead(id)
             return
         }
-        // A review's result is kept with it, for the history.
-        if sessions[id]?.isPullRequestReview == true, !moreToRead, let review = reader.summary.review, sessions[id]?.reviewResult != review {
-            sessions[id]?.reviewResult = review
-            reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
-            save()
-            reviewFinished(id)
-        }
+        if !moreToRead, let review = reader.summary.review { keepReview(review, for: id) }
         pairRoundRead(id)
+    }
+
+    /// A review's result is kept with it, for the history. A finished
+    /// run's merged result isn't replaced by the lead's own round read
+    /// again; only a later review (Look Again) replaces it.
+    func keepReview(_ review: SessionTranscript.ReviewResult, for id: UUID) {
+        guard sessions[id]?.isPullRequestReview == true, sessions[id]?.reviewResult != review,
+              !ReviewRunMerge.isRound(review, ofFinishedRunLedBy: id, in: sessions[id]?.reviewRun) else { return }
+        sessions[id]?.reviewResult = review
+        reviewDrafts[id, default: sessions[id]?.reviewDraft ?? ReviewDraft()].resultAt = .now
+        save()
+        reviewFinished(id)
     }
 
     /// `wake` restarts a loop that's asleep, for a session that needs a

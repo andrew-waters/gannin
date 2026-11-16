@@ -114,6 +114,15 @@ enum ReviewRunMerge {
         return !added(last, after: Array(step.results.dropLast())).isEmpty
     }
 
+    /// Whether `review` is one the lead's own step already gave to a run
+    /// that has finished. The lead's transcript is read again after the run
+    /// ends, and that review must not replace the run's merged result with
+    /// the lead's alone. A later review from Look Again is a new one.
+    static func isRound(_ review: SessionTranscript.ReviewResult, ofFinishedRunLedBy lead: UUID, in run: ReviewRun?) -> Bool {
+        guard let run, run.finishedAt != nil else { return false }
+        return run.steps.first { $0.session == lead }?.results.contains(review) ?? false
+    }
+
     /// The strictest of the steps' verdicts.
     static func strictest(_ verdicts: [String?]) -> String? {
         let order = ["request_changes", "comment", "approve"]
