@@ -1,0 +1,14 @@
+{
+  "box" : "Anius",
+  "branch" : "quick-add-a-keyboard-shortcut-to-e127",
+  "pullRequests" : [
+
+  ],
+  "repos" : [
+    "andrew-waters/gannin"
+  ],
+  "startedAt" : "2026-11-16T10:47:11Z",
+  "startedBy" : "dwrss",
+  "title" : "Add a keyboard shortcut to \"Finish\" a review",
+  "url" : "https://github.com/andrew-waters/gannin"
+}
