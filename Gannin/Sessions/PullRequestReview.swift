@@ -1423,7 +1423,8 @@ struct PullRequestReviewView: View {
                 .help("Take it out of the history and pick the conversation back up")
             } else {
                 Button("Finish") { confirmingFinish = true }
-                    .help("End the reviewer and keep the review in your history")
+                    .keyboardShortcut("f", modifiers: [.command, .shift])
+                    .help("End the reviewer and keep the review in your history (⇧⌘F)")
             }
             Button("Post Review") { posting = true }
                 .buttonStyle(.borderedProminent)

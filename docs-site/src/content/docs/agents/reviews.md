@@ -59,7 +59,7 @@ Nothing is posted until you press it, unless you've turned on Post automatic rev
 
 ## Finish and Resume
 
-Finish ends the reviewer and removes its checkout, but keeps the review. It then shows under Agents › Reviews after the active ones, opens read-only, and Resume brings it back. PRs that have a review show a badge in the Pull Requests table and the Inbox, which opens its tab.
+Finish (or ⇧⌘F) asks first, then ends the reviewer and removes its checkout, but keeps the review. It then shows under Agents › Reviews after the active ones, opens read-only, and Resume brings it back. PRs that have a review show a badge in the Pull Requests table and the Inbox, which opens its tab.
 
 ## Metrics
 

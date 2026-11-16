@@ -9,6 +9,9 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ## [Unreleased]
 
+### Added
+- ⇧⌘F finishes a PR review, asking first as the Finish button does
+
 ### Changed
 - A PR review's Overview says "Approved" when the PR has been approved on GitHub
 - Added and removed lines in code diffs have stronger green and red tints, so changes stand out more
