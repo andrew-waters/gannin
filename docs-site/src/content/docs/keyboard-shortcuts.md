@@ -89,6 +89,7 @@ A drawer's arrow keys only work when nothing inside it wants them, so typing in 
 | ⌘↩ | Sends a follow-up question to the reviewer | Not in a menu |
 | ⌘↩ | Sends your challenge to a learning the reviewer applied | Not in a menu |
 | ⌘↩ | Adds your own comment to a line of the diff | Not in a menu |
+| ⇧⌘F | Finishes the review, after asking you first | Not in a menu |
 
 ## Planning
 
