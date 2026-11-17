@@ -933,6 +933,7 @@ impl AssistantPreview {
     /// The scope and the menu, at the right of the title bar.
     fn title_controls(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let waiting = self.queue().len();
+        let unread = self.unread_count();
         div()
             .flex_none()
             .child(
@@ -960,6 +961,26 @@ impl AssistantPreview {
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.toggle_panel(window, cx))),
                     )
                     .when(self.focus_mode, |d| d.child(div().text_xs().text_color(theme.blue()).child(format!("Focus{}", if self.held > 0 { format!(" · {} held", self.held) } else { String::new() }))))
+                    // Only unread threads, with how many.
+                    .child(div()
+                        .id("unread-toggle")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .when(self.unread_only, |d| d.bg(theme.selected))
+                        .when(!self.unread_only, |d| d.hover(|s| s.bg(theme.row_selected)))
+                        .child(gpui::svg().path("icons/filter.svg").size(px(14.)).text_color(if self.unread_only { theme.on_selected } else { theme.secondary }))
+                        .child(div().text_xs().text_color(if self.unread_only { theme.on_selected } else { theme.secondary }).child(format!("{unread}")))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.unread_only = !this.unread_only;
+                            cx.notify();
+                        })),
+                )
                     .child(
                         div()
                             .id("scope")
@@ -1212,7 +1233,6 @@ impl AssistantPreview {
     /// Right-click a thread to pin, mute or mark it read or unread.
     fn threads_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let listed = self.listed();
-        let unread = self.unread_count();
         let (pins, rest): (Vec<usize>, Vec<usize>) = listed.into_iter().partition(|&t| self.threads[t].pinned);
         let rest_count = rest.len();
         div()
@@ -1222,30 +1242,7 @@ impl AssistantPreview {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .pb_2()
-            // Only unread, as an icon with its count, at the right.
-            .child(
-                div().flex().flex_row().justify_end().px_3().pt_2().child(
-                    div()
-                        .id("unread-toggle")
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .px_1p5()
-                        .py_0p5()
-                        .rounded_md()
-                        .cursor_pointer()
-                        .when(self.unread_only, |d| d.bg(theme.selected))
-                        .when(!self.unread_only, |d| d.hover(|s| s.bg(theme.row_selected)))
-                        .child(gpui::svg().path("icons/filter.svg").size(px(14.)).text_color(if self.unread_only { theme.on_selected } else { theme.secondary }))
-                        .child(div().text_xs().text_color(if self.unread_only { theme.on_selected } else { theme.secondary }).child(format!("{unread}")))
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                            this.unread_only = !this.unread_only;
-                            cx.notify();
-                        })),
-                ),
-            )
+            .py_2()
             .children(pins.iter().map(|&t| self.full_row(t, false, cx)))
             .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().my_2().h(px(1.)).bg(theme.border)))
             .children(rest.iter().map(|&t| self.full_row(t, false, cx)))
