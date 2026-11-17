@@ -29,7 +29,7 @@ use gpui::{
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, NewWindow]);
+actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, NewWindow]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
@@ -433,6 +433,8 @@ pub struct Workspace {
     active: usize,
     inspector: Option<Inspected>,
     sidebar_open: bool,
+    /// Tabs in a column on the left, in place of the bar across the top.
+    tabs_on_left: bool,
     inspector_open: bool,
     sidebar_width: f32,
     harness_width: f32,
@@ -553,6 +555,7 @@ impl Workspace {
             // Sessions open after the views, so the index counts the views.
             active: self.tabs.iter().take(self.active).filter(|tab| !matches!(tab.nav, Nav::Session(_))).count(),
             sidebar_open: self.sidebar_open,
+            tabs_on_left: self.tabs_on_left,
             harness_open: self.harness_open,
             tab_filter: self.tab_filter,
             tab_status: self.tab_status,
@@ -797,6 +800,7 @@ impl Workspace {
             templates: (saved.issues.clone(), saved.prs.clone(), saved.ci.clone()),
             inspector: None,
             sidebar_open: saved.sidebar_open,
+            tabs_on_left: saved.tabs_on_left,
             collapsed_kinds: saved.collapsed_kinds.iter().copied().collect(),
             tab_filter: saved.tab_filter,
             tab_status: saved.tab_status,
@@ -1097,6 +1101,11 @@ impl Workspace {
                 }));
                 this._subscriptions.push(cx.subscribe_in(&page, window, |this, _, event: &crate::review_panel::ExplainPr, window, cx| {
                     this.open_explain(event.0.clone(), event.1.clone(), window, cx)
+                }));
+                this._subscriptions.push(cx.subscribe(&page, |this, _, event: &crate::harness::OpenDoc, cx| {
+                    this.drawers.clear();
+                    let id = event.0.path.clone();
+                    this.open_drawer(DrawerItem::Doc(event.0.clone()), id, cx);
                 }));
                 this.sessions.push(page);
                 this.drawers.clear();
@@ -2228,10 +2237,17 @@ impl Workspace {
         (!steps.is_empty()).then(|| steps.iter().map(|s| s.fraction()).sum::<f32>() / steps.len() as f32)
     }
 
-    /// A refresh by hand (the sync button, Command-R): syncs now and shows
-    /// the Sync panel. The background syncs leave it as it is.
+    /// The sync button: syncs now and shows the Sync panel. The background
+    /// syncs and Command-R leave it as it is.
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.sync.open = true;
+        self.sync_now(None, false, cx);
+        cx.notify();
+    }
+
+    /// Command-R (View › Refresh): syncs now in the background, the panel
+    /// left as it is; the sync button's bar shows it going, and red if it fails.
+    fn refresh_quietly(&mut self, cx: &mut Context<Self>) {
         self.sync_now(None, false, cx);
         cx.notify();
     }
@@ -3698,6 +3714,15 @@ impl Workspace {
                 this.sidebar_open = !this.sidebar_open
             }))
             .child(toggle("toggle-harness", "icons/book.svg", "Harness", self.harness_open, cx, |this, cx| this.toggle_harness(cx)))
+            // Tabs down a column on the left, or across the top (View › Toggle Tabs on Left).
+            .child(toggle(
+                "toggle-tabs-left",
+                if self.tabs_on_left { "icons/threads_sidebar_left_open.svg" } else { "icons/threads_sidebar_left_closed.svg" },
+                "Tabs on Left",
+                self.tabs_on_left,
+                cx,
+                |this, _| this.tabs_on_left = !this.tabs_on_left,
+            ))
             .child(div().flex_1())
             .child(toggle(
                 "toggle-sync",
@@ -3982,8 +4007,36 @@ impl Workspace {
             .border_color(theme.border)
             .child(self.tab_filter_menu(theme, cx))
             .child(self.tab_search_box(theme, cx))
-            .child(self.tabs(theme, cx))
+            .child(self.tabs(false, theme, cx))
             .child(self.new_menu(theme, cx))
+    }
+
+    /// The tabs in a column on the left (View › Toggle Tabs on Left): the
+    /// bar's filter, search and "+" across its top, the tabs listed below,
+    /// each group's heading a row of its own.
+    fn tab_column(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .w(px(240.))
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_col()
+            .bg(theme.sidebar)
+            .border_r_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .h(px(32.))
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(self.tab_filter_menu(theme, cx))
+                    .child(div().flex_1().min_w_0().h_full().child(self.tab_search_box(theme, cx)))
+                    .child(self.new_menu(theme, cx)),
+            )
+            .child(self.tabs(true, theme, cx))
     }
 
     /// The "+" at the right of the tab bar, as the Claude Code window's in
@@ -4076,7 +4129,8 @@ impl Workspace {
             })
     }
 
-    fn tabs(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The tabs showing, across the bar or (`vertical`) down the column.
+    fn tabs(&self, vertical: bool, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         // The tabs showing, in order: those of the kind picked, grouped by
         // kind with its icon between groups when asked.
         let mut order: Vec<usize> = (0..self.tabs.len()).filter(|&i| self.tab_shows(&self.tabs[i], cx)).collect();
@@ -4097,13 +4151,12 @@ impl Workspace {
                     div()
                         .id(SharedString::from(format!("tab-group-{}", kind.title())))
                         .flex_none()
-                        .h_full()
+                        .map(|d| if vertical { d.w_full().h(px(26.)).border_b_1() } else { d.h_full().border_r_1() })
                         .flex()
                         .flex_row()
                         .items_center()
                         .gap_1()
                         .px_2()
-                        .border_r_1()
                         .border_color(theme.border)
                         .bg(theme.tile)
                         .text_xs()
@@ -4127,10 +4180,14 @@ impl Workspace {
             last = Some(kind);
             // A folded group still shows the tab that's open.
             if !collapsed || index == self.active {
-                elements.push(self.tab_element(index, theme, cx).into_any_element());
+                elements.push(self.tab_element(index, vertical, theme, cx).into_any_element());
             }
         }
-        div().id("tabs").flex_1().min_w_0().h_full().flex().flex_row().overflow_x_scroll().children(elements)
+        if vertical {
+            div().id("tabs").flex_1().min_h_0().w_full().flex().flex_col().overflow_y_scroll().children(elements)
+        } else {
+            div().id("tabs").flex_1().min_w_0().h_full().flex().flex_row().overflow_x_scroll().children(elements)
+        }
     }
 
     /// Next or previous among the tabs showing, in the order they show.
@@ -4151,7 +4208,7 @@ impl Workspace {
         self.activate(order[next], window, cx);
     }
 
-    fn tab_element(&self, index: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    fn tab_element(&self, index: usize, vertical: bool, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
                 let tab = &self.tabs[index];
                 let (icon, tint) = (self.tab_icon(tab, cx), self.tab_tint(tab, theme, cx));
                 // Filtered to one kind, the tabs need no icon to tell them
@@ -4170,8 +4227,8 @@ impl Workspace {
                     .gap_2()
                     .pl_3()
                     .pr_2()
-                    .h_full()
-                    .border_r_1()
+                    // A row of the column, or a tab across the bar.
+                    .map(|d| if vertical { d.flex_none().w_full().h(px(30.)).border_b_1() } else { d.h_full().border_r_1() })
                     .border_color(theme.border)
                     .cursor_pointer()
                     .text_color(match session_tint.filter(|_| filtered) {
@@ -4209,7 +4266,7 @@ impl Workspace {
                                 // switch or drag the tab.
                                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                                 .on_click(|_, _, cx| cx.stop_propagation())
-                                .w(px(180.))
+                                .map(|d| if vertical { d.flex_1().min_w_0() } else { d.w(px(180.)) })
                                 .px_1()
                                 .rounded_sm()
                                 .border_1()
@@ -4217,7 +4274,8 @@ impl Workspace {
                                 .bg(theme.bg)
                                 .child(field.clone()),
                         ),
-                        _ => d.child(div().max_w(px(220.)).truncate().child(label.clone())),
+                        // Down the column the name takes the width, the close at the end.
+                        _ => d.child(div().map(|d| if vertical { d.flex_1().min_w_0() } else { d.max_w(px(220.)) }).truncate().child(label.clone())),
                     })
                     .when_some(match &page {
                         _ if self.renaming.as_ref().is_some_and(|(r, _)| *r == id) => None,
@@ -5855,7 +5913,7 @@ impl Render for Workspace {
             .h_full()
             .flex()
             .flex_col()
-            .child(self.tab_bar(&theme, cx))
+            .when(!self.tabs_on_left, |d| d.child(self.tab_bar(&theme, cx)))
             .child(
                 div()
                     .flex_1()
@@ -5882,7 +5940,11 @@ impl Render for Workspace {
             }))
             .on_action(cx.listener(|this, _: &NewClaudeSession, window, cx| this.new_session(Kind::Claude, window, cx)))
             .on_action(cx.listener(|this, _: &NewTerminal, window, cx| this.new_session(Kind::Shell, window, cx)))
-            .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh(cx)))
+            .on_action(cx.listener(|this, _: &Refresh, _, cx| this.refresh_quietly(cx)))
+            .on_action(cx.listener(|this, _: &ToggleTabsOnLeft, _, cx| {
+                this.tabs_on_left = !this.tabs_on_left;
+                cx.notify();
+            }))
             .on_action(cx.listener(|this, _: &ToggleSync, _, cx| {
                 this.sync.open = !this.sync.open;
                 cx.notify();
@@ -5936,6 +5998,7 @@ impl Render for Workspace {
                     .flex_row()
                     .when(self.sidebar_open, |d| d.child(self.sidebar(&theme, cx)))
                     .when(self.harness_open, |d| d.child(self.harness_panel(&theme, cx)))
+                    .when(self.tabs_on_left, |d| d.child(self.tab_column(&theme, cx)))
                     .child(center)
                     .when(self.inspector_open, |d| d.child(self.inspector(&theme, cx)))
                     .when(self.sync.open, |d| d.child(self.sync_panel(&theme, cx))),

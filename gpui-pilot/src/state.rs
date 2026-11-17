@@ -51,6 +51,8 @@ pub struct SavedState {
     pub tab_status: Option<crate::shell::TabStatus>,
     pub group_tabs: bool,
     pub collapsed_kinds: Vec<crate::shell::TabKind>,
+    /// Tabs in a column on the left, in place of the bar across the top.
+    pub tabs_on_left: bool,
     pub inspector_open: bool,
     pub dock_open: bool,
     pub sidebar_width: f32,
@@ -92,6 +94,7 @@ impl Default for SavedState {
             active_session: None,
             active: 0,
             sidebar_open: true,
+            tabs_on_left: false,
             harness_open: false,
             tab_filter: None,
             tab_status: None,

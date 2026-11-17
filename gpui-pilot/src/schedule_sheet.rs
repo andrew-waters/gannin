@@ -267,7 +267,7 @@ impl Render for ScheduleSheet {
                     .py_2()
                     .border_t_1()
                     .border_color(theme.border)
-                    .child(div().flex_1().text_sm().text_color(theme.secondary).child(match self.start {
+                    .child(div().flex_1().min_w_0().text_sm().text_color(theme.secondary).child(match self.start {
                         Some(m) => format!("Starts {} at {}", self.day.format("%a %-d %b"), clock(m)),
                         None => "Pick a time to start".into(),
                     }))

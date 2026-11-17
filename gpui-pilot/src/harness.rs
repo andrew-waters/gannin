@@ -82,6 +82,8 @@ pub struct Doc {
     pub references: Vec<(Option<String>, i64, bool)>,
     /// Every front matter field, for the drawer's facts.
     pub front_matter: Vec<(String, String)>,
+    /// Has front matter and a summary, as Gannin's `followsStandard`.
+    pub standard: bool,
 }
 
 impl Doc {
@@ -150,6 +152,7 @@ pub fn load(org: &str) -> Vec<Doc> {
                 tasks_done: doc["tasksDone"].as_i64().unwrap_or(0),
                 references,
                 front_matter,
+                standard: doc["hasFrontMatter"] == true && text(&doc["summary"]).is_some(),
             });
         }
     }
@@ -299,6 +302,75 @@ impl HarnessPage {
             })
             .child(div().w(px(96.)).flex_none().text_color(theme.secondary).child(doc.date.map(|d| d.format("%-d %b %Y").to_string()).unwrap_or_default()))
     }
+}
+
+/// The documents about or mentioning any of these issues or PRs, as
+/// Gannin's "Plans and requirements": only those that follow the standard,
+/// with whether one is about them (`isSubject`); those about them first.
+/// A bare `#12` (no repo) isn't matched: which repo it means isn't known here.
+pub fn linked(docs: &[Doc], items: &[(String, i64)]) -> Vec<(Doc, bool)> {
+    let mut found: Vec<(Doc, bool)> = docs
+        .iter()
+        .filter(|d| d.standard)
+        .filter_map(|d| {
+            let about: Vec<bool> = d
+                .references
+                .iter()
+                .filter(|(repo, number, _)| repo.as_deref().is_some_and(|repo| items.iter().any(|(r, n)| r.eq_ignore_ascii_case(repo) && n == number)))
+                .map(|r| r.2)
+                .collect();
+            (!about.is_empty()).then(|| (d.clone(), about.contains(&true)))
+        })
+        .collect();
+    found.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.path.cmp(&b.0.path)));
+    found
+}
+
+/// The linked documents' rows, for a session or a review: title, path (and
+/// whether it only mentions the work), and its ticked tasks as a ring with
+/// "done/total". A click asks the workspace to open it in a drawer.
+pub fn plan_rows<T: EventEmitter<OpenDoc> + 'static>(id: &'static str, plans: &[(Doc, bool)], theme: &Theme, cx: &mut Context<T>) -> Vec<gpui::AnyElement> {
+    plans
+        .iter()
+        .enumerate()
+        .map(|(i, (doc, about))| {
+            let opened = doc.clone();
+            div()
+                .id((id, i))
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .py_1()
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.8))
+                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.emit(OpenDoc(opened.clone()))))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_sm().truncate().child(doc.title.clone()))
+                        .child(div().text_xs().text_color(theme.secondary).truncate().child(if *about { doc.path.clone() } else { format!("{} · mentions it", doc.path) })),
+                )
+                .when(doc.tasks > 0, |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1p5()
+                            .text_xs()
+                            .text_color(theme.secondary)
+                            .child(crate::charts::progress_ring(doc.tasks_done, doc.tasks, 14., theme))
+                            .child(format!("{}/{}", doc.tasks_done, doc.tasks)),
+                    )
+                })
+                .into_any_element()
+        })
+        .collect()
 }
 
 /// The status in a word or two, as Gannin's `shortStatus`.

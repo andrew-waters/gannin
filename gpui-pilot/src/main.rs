@@ -53,7 +53,7 @@ mod zed;
 use gpui::{
     actions, App, AppContext, KeyBinding, Menu, MenuItem,
 };
-use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
+use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, ToggleTabsOnLeft, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
 
 actions!(pilot, [Quit]);
 
@@ -239,6 +239,7 @@ fn main() {
                     MenuItem::action("Toggle Sidebar", ToggleSidebar),
                     MenuItem::action("Toggle Your Work", ToggleInspector),
                     MenuItem::action("Toggle Sync", ToggleSync),
+                    MenuItem::action("Toggle Tabs on Left", ToggleTabsOnLeft),
                     MenuItem::separator(),
                     MenuItem::action("Refresh", Refresh),
                 ],

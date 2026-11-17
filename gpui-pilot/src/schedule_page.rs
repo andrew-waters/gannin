@@ -407,7 +407,7 @@ impl SchedulePage {
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .child(div().flex_1().text_sm().text_color(theme.critical()).child(format!("Blocked: {b}")))
+                        .child(div().flex_1().min_w_0().text_sm().text_color(theme.critical()).child(format!("Blocked: {b}")))
                         .child(Self::button(format!("clear-{issue_id}-{bi}"), "Cleared", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             let iid = iid.clone();
                             this.change_all(cx, move |s| {

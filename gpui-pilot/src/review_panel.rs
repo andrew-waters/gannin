@@ -47,6 +47,7 @@ pub struct Posted {
 pub struct ExplainPr(pub crate::launch::Subject, pub Vec<review::Area>);
 
 impl gpui::EventEmitter<ExplainPr> for ReviewPanel {}
+impl gpui::EventEmitter<crate::harness::OpenDoc> for ReviewPanel {}
 
 /// "Approved", "Changes requested" or "Commented", from GitHub's event or
 /// review state.
@@ -112,6 +113,11 @@ pub struct ReviewPanel {
     record_note: Option<String>,
     /// What resolving the threads claude says are dealt with did.
     resolve_note: Option<String>,
+    /// The harness documents about or mentioning the PR or the issues it
+    /// closes, with their progress: empty until found, or when none.
+    plans: Vec<(crate::harness::Doc, bool)>,
+    /// Who opened the PR, once read; shown beside its number.
+    author: Option<review::Author>,
     /// Record it in the harness when posting (the app-wide setting).
     record_with_post: bool,
     _poll: Option<Task<()>>,
@@ -197,6 +203,34 @@ impl ReviewPanel {
         let decisions: serde_json::Value = std::fs::read(launch.dir().join("decisions.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
         let dismissed = decisions["dismissed"].as_array().map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default();
         let edits = decisions["edits"].as_object().map(|m| m.iter().filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_string()))).collect()).unwrap_or_default();
+        // The plans linked to the PR or the issues it closes, once, off the
+        // main thread: how far the work it delivers has got.
+        if let Some(subject) = launch.subject.clone() {
+            let org = launch.org.clone();
+            cx.spawn(async move |this, cx| {
+                let (author, plans) = cx
+                    .background_executor()
+                    .spawn(async move {
+                        let mut items = vec![(subject.repo.clone(), subject.number)];
+                        let mut author = None;
+                        if let Some(token) = crate::auth::token() {
+                            if let Ok((who, closing)) = review::pr_facts(&token, &subject.repo, subject.number) {
+                                author = who;
+                                items.extend(closing);
+                            }
+                        }
+                        (author, crate::harness::linked(&crate::harness::load(&org), &items))
+                    })
+                    .await;
+                this.update(cx, |this, cx| {
+                    this.author = author;
+                    this.plans = plans;
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
         Self {
             focus: cx.focus_handle(),
             posted,
@@ -204,6 +238,8 @@ impl ReviewPanel {
             checking: false,
             record_note: None,
             resolve_note: None,
+            plans: Vec::new(),
+            author: None,
             record_with_post: crate::review_record::recording(),
             _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
@@ -245,6 +281,8 @@ impl ReviewPanel {
             checking: false,
             record_note: None,
             resolve_note: None,
+            plans: Vec::new(),
+            author: None,
             record_with_post: crate::review_record::recording(),
             _clock: Self::clock(cx),
             source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, working, snapshot: Arc::new(snapshot) },
@@ -759,16 +797,7 @@ impl ReviewPanel {
             })
             .unwrap_or_default();
         let has_result = self.result.is_some();
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_2()
-            .pt_1()
-            .pb_2p5()
-            .mb_1()
-            .border_b_1()
-            .border_color(theme.border)
+        Self::well(theme)
             .child(
                 div()
                     .flex()
@@ -824,6 +853,27 @@ impl ReviewPanel {
                         .child(format!("{} {}", posted_label(&posted.event), ago(posted.at))),
                 )
             })
+    }
+
+    /// The plans the PR delivers on, with how far each has got, in a well
+    /// at the top of the sidebar: nothing when there are none.
+    fn plans_well(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if self.plans.is_empty() {
+            return None;
+        }
+        let rows = crate::harness::plan_rows("review-plan", &self.plans, theme, cx);
+        Some(
+            Self::well(theme)
+                .child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child("PLANS AND REQUIREMENTS"))
+                .children(rows)
+                .into_any_element(),
+        )
+    }
+
+    /// A group in the sidebar, as the work sidebar's: the page's background
+    /// in a rounded, bordered box on the sidebar's tint.
+    fn well(theme: &Theme) -> gpui::Div {
+        div().flex().flex_col().gap_1().p_2p5().mb_2().rounded_lg().bg(theme.bg).border_1().border_color(theme.border)
     }
 
     fn effort_pips(effort: i64, theme: &Theme) -> impl IntoElement {
@@ -930,7 +980,30 @@ impl ReviewPanel {
                             .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&link)))
                             .child(title),
                     )
-                    .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{repo}#{number}"))),
+                    .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{repo}#{number}")))
+                    // Who opened it: their avatar and name, the login in its tooltip.
+                    .when_some(self.author.clone(), |d, author| {
+                        let shown = author.name.clone().unwrap_or_else(|| author.login.clone());
+                        let tip = match &author.name {
+                            Some(name) => format!("Opened by {name} ({})", author.login),
+                            None => format!("Opened by {}", author.login),
+                        };
+                        d.child(
+                            div()
+                                .id("review-author")
+                                .flex_shrink(1.)
+                                .min_w_0()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_1p5()
+                                .text_sm()
+                                .text_color(theme.secondary)
+                                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+                                .child(crate::avatars::avatar(&author.login, author.avatar.as_deref(), 18., theme, cx))
+                                .child(div().min_w_0().truncate().child(shown)),
+                        )
+                    }),
             )
             .child(controls)
     }
@@ -996,6 +1069,9 @@ impl ReviewPanel {
         // Where the review stands, above everything, as icons with the
         // words in their tooltips: claude's state, the verdict, the findings
         // still kept by severity (how ready it is to merge), and the effort.
+        if let Some(plans) = self.plans_well(theme, cx) {
+            rows.push(plans);
+        }
         rows.push(self.standing(theme, cx).into_any_element());
         rows.push(self.list_row("row-overview".into(), Selected::Overview, "Overview".into(), None, None, theme, cx).into_any_element());
         let general = self.general();

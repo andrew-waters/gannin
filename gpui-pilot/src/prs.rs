@@ -473,23 +473,42 @@ const ME: &str = "@me";
 const NO_REVIEWER: &str = "";
 const NO_CHECKS: &str = "";
 
+/// Whether you're asked to review a PR, for the Requested column and
+/// filter: asked and not yet reviewed since, reviewed it without a request
+/// now, or neither. Only a request to you by name counts: a team's request
+/// isn't cached with its members. None when signed out.
+const ASKED: &str = "Requested";
+const REVIEWED: &str = "Reviewed";
+const NOT_ASKED: &str = "Not requested";
+
+fn your_request(pr: &PrItem, me: Option<&str>) -> Option<&'static str> {
+    let me = me?;
+    Some(match pr.reviewers.iter().find(|r| r.login.eq_ignore_ascii_case(me)) {
+        Some(r) if r.requested => ASKED,
+        Some(_) => REVIEWED,
+        None => NOT_ASKED,
+    })
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Key {
     Status,
     Author,
     Reviewer,
+    Requested,
     Checks,
     Repository,
 }
 
 impl Key {
-    const ALL: [Key; 5] = [Key::Status, Key::Author, Key::Reviewer, Key::Checks, Key::Repository];
+    const ALL: [Key; 6] = [Key::Status, Key::Author, Key::Reviewer, Key::Requested, Key::Checks, Key::Repository];
 
     fn title(self) -> &'static str {
         match self {
             Key::Status => "Status",
             Key::Author => "Author",
             Key::Reviewer => "Reviewer",
+            Key::Requested => "Requested",
             Key::Checks => "Checks",
             Key::Repository => "Repository",
         }
@@ -510,6 +529,8 @@ pub struct Filters {
     statuses: BTreeSet<String>,
     authors: BTreeSet<String>,
     reviewers: BTreeSet<String>,
+    /// Requested of you, Reviewed or Not requested.
+    requested: BTreeSet<String>,
     checks: BTreeSet<String>,
     repositories: BTreeSet<String>,
     /// Menus whose picks leave PRs out rather than keep them, by title.
@@ -530,6 +551,7 @@ impl Filters {
             Key::Status => &self.statuses,
             Key::Author => &self.authors,
             Key::Reviewer => &self.reviewers,
+            Key::Requested => &self.requested,
             Key::Checks => &self.checks,
             Key::Repository => &self.repositories,
         }
@@ -540,6 +562,7 @@ impl Filters {
             Key::Status => &mut self.statuses,
             Key::Author => &mut self.authors,
             Key::Reviewer => &mut self.reviewers,
+            Key::Requested => &mut self.requested,
             Key::Checks => &mut self.checks,
             Key::Repository => &mut self.repositories,
         }
@@ -568,6 +591,7 @@ fn values_of(pr: &PrItem, key: Key, me: Option<&str>) -> Vec<String> {
             }
             v
         }
+        Key::Requested => your_request(pr, me).map(|v| vec![v.to_string()]).unwrap_or_default(),
         // Only open PRs with details have checks to speak of.
         Key::Checks if pr.state == PrState::Open && pr.has_details => {
             vec![pr.checks.map_or(NO_CHECKS.to_string(), |c| c.title().to_string())]
@@ -628,6 +652,8 @@ enum Column {
     Number,
     Author,
     Reviewers,
+    /// Whether you're asked to review it.
+    Requested,
     Assignees,
     Checks,
     Linked,
@@ -643,12 +669,12 @@ enum Column {
 impl Column {
     fn defaults() -> Vec<Column> {
         use Column::*;
-        vec![State, Status, Title, Repository, Number, Author, Reviewers, Checks, Size, Updated]
+        vec![State, Status, Title, Repository, Number, Author, Reviewers, Requested, Checks, Size, Updated]
     }
 
     fn all() -> Vec<Column> {
         use Column::*;
-        vec![State, Status, Title, Repository, Number, Author, Reviewers, Assignees, Checks, Linked, Files, Size, Branch, Opened, Updated, Merged, Closed]
+        vec![State, Status, Title, Repository, Number, Author, Reviewers, Requested, Assignees, Checks, Linked, Files, Size, Branch, Opened, Updated, Merged, Closed]
     }
 
     fn title(&self) -> &'static str {
@@ -660,6 +686,7 @@ impl Column {
             Column::Number => "Number",
             Column::Author => "Author",
             Column::Reviewers => "Reviewers",
+            Column::Requested => "Requested",
             Column::Assignees => "Assignees",
             Column::Checks => "Checks",
             Column::Linked => "Linked",
@@ -682,6 +709,7 @@ impl Column {
             Column::Number => 64.,
             Column::Author => 64.,
             Column::Reviewers | Column::Assignees => 100.,
+            Column::Requested => 104.,
             Column::Checks => 56.,
             Column::Linked | Column::Files => 56.,
             Column::Size => 110.,
@@ -832,6 +860,7 @@ impl PrsPage {
                 checks: self.filters.checks.clone(),
                 authors: mine_only(&self.filters.authors),
                 reviewers: mine_only(&self.filters.reviewers),
+                requested: self.filters.requested.clone(),
                 ..Filters::default()
             };
             self.load(cx);
@@ -947,7 +976,7 @@ impl PrsPage {
             .filter(|&i| self.in_focus(&prs[i]) && self.in_state(&prs[i]) && matches(&self.filters, &prs[i], None, me))
             .collect();
         let sort = self.sort.clone();
-        rows.sort_by(|a, b| compare(&prs[*a], &prs[*b], &sort));
+        rows.sort_by(|a, b| compare(&prs[*a], &prs[*b], &sort, me));
         self.rows = rows;
     }
 
@@ -993,6 +1022,7 @@ impl PrsPage {
             Key::Author if me.is_some() => vec![ME],
             Key::Reviewer if me.is_some() => vec![ME, NO_REVIEWER],
             Key::Reviewer => vec![NO_REVIEWER],
+            Key::Requested => vec![ASKED, REVIEWED, NOT_ASKED],
             Key::Checks => vec![NO_CHECKS],
             _ => Vec::new(),
         };
@@ -1006,7 +1036,7 @@ impl PrsPage {
                 Key::Status => Standing::from_title(&a.value).cmp(&Standing::from_title(&b.value)),
                 Key::Checks => a.value.cmp(&b.value),
                 Key::Author | Key::Reviewer => b.count.cmp(&a.count),
-                Key::Repository => std::cmp::Ordering::Equal,
+                Key::Requested | Key::Repository => std::cmp::Ordering::Equal,
             };
             first.then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase()))
         });
@@ -1270,6 +1300,7 @@ impl PrsPage {
             .when(any_open || !self.filters.statuses.is_empty(), |d| d.child(self.menu_button(Menu::Key(Key::Status), theme, cx)))
             .child(self.menu_button(Menu::Key(Key::Author), theme, cx))
             .child(self.menu_button(Menu::Key(Key::Reviewer), theme, cx))
+            .when(self.me.is_some(), |d| d.child(self.menu_button(Menu::Key(Key::Requested), theme, cx)))
             .when(any_open || !self.filters.checks.is_empty(), |d| d.child(self.menu_button(Menu::Key(Key::Checks), theme, cx)))
             .child(self.menu_button(Menu::Key(Key::Repository), theme, cx))
             .when(self.filters.is_narrowed(), |d| {
@@ -1424,6 +1455,27 @@ impl PrsPage {
                     .items_center()
                     .overflow_hidden()
                     .when(!people.is_empty(), |d| d.child(stack(&people, 20., theme, cx)).tooltip(move |_, cx| cx.new(|_| Tooltip(names.clone())).into()))
+                    .into_any_element()
+            }
+            // Requested with an orange dot (it's waiting on you), Reviewed
+            // quieter, nothing when you're not involved.
+            Column::Requested => {
+                let (label, waiting) = match your_request(pr, self.me.as_deref()) {
+                    Some(ASKED) => (ASKED, true),
+                    Some(REVIEWED) => (REVIEWED, false),
+                    _ => ("", false),
+                };
+                div()
+                    .w(px(width))
+                    .flex_none()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1p5()
+                    .overflow_hidden()
+                    .text_color(if waiting { theme.fg } else { theme.secondary })
+                    .when(waiting, |d| d.child(div().size(px(7.)).flex_none().rounded_full().bg(theme.orange())))
+                    .child(div().min_w_0().truncate().child(label))
                     .into_any_element()
             }
             Column::Assignees => {
@@ -1588,7 +1640,7 @@ impl PrsPage {
     }
 }
 
-fn compare(a: &PrItem, b: &PrItem, (column, descending): &(Column, bool)) -> std::cmp::Ordering {
+fn compare(a: &PrItem, b: &PrItem, (column, descending): &(Column, bool), me: Option<&str>) -> std::cmp::Ordering {
     fn present<T: Ord>(a: Option<T>, b: Option<T>) -> std::cmp::Ordering {
         match (a, b) {
             (Some(a), Some(b)) => a.cmp(&b),
@@ -1608,6 +1660,14 @@ fn compare(a: &PrItem, b: &PrItem, (column, descending): &(Column, bool)) -> std
         Column::Number => a.number.cmp(&b.number),
         Column::Author => a.author.cmp(&b.author),
         Column::Reviewers => reviewers(a).cmp(&reviewers(b)),
+        Column::Requested => {
+            let rank = |p: &PrItem| match your_request(p, me) {
+                Some(ASKED) => 0,
+                Some(REVIEWED) => 1,
+                _ => 2,
+            };
+            rank(a).cmp(&rank(b))
+        }
         Column::Assignees => a.assignees.first().map(|x| &x.0).cmp(&b.assignees.first().map(|x| &x.0)),
         Column::Checks => present(a.checks, b.checks),
         Column::Linked => a.linked.len().cmp(&b.linked.len()),
@@ -1723,7 +1783,7 @@ impl PrsPage {
             .border_t_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(div().flex_1().text_sm().child(format!("{} selected", picked.len())).when(open.len() < picked.len(), |d| {
+            .child(div().flex_1().min_w_0().text_sm().child(format!("{} selected", picked.len())).when(open.len() < picked.len(), |d| {
                 d.child(div().text_xs().text_color(theme.secondary).child("Only open pull requests can be reviewed."))
             }))
             .child(button("picked-clear", "Clear".into(), false).on_click(cx.listener(|page, _: &ClickEvent, _, cx| {

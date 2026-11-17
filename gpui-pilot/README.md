@@ -79,7 +79,8 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
 - **Tab bar** (`src/shell.rs`): the filter menu at its left picks a kind of tab and, below, Active
   or Stopped (a session whose claude has ended); Find PR # beside it keeps the sessions that own a
   number (a review's PR, a work session's issue, or a PR it opened) or whose name matches the words
-  typed. Enter opens the first found, Escape clears it.
+  typed. Enter opens the first found, Escape clears it. View › Toggle Tabs on Left (or its button in the status bar) moves the tabs
+  to a column beside the content (filter, search and "+" at its top), kept with the window's state.
 - **Your Work** (`src/shell.rs`, `src/work.rs`): the right-hand panel, after the menu bar's list.
   Sessions waiting on you, reviews asked of you, your PRs needing you, sessions working, your
   other PRs and issues assigned to you, in that order. A session or an issue switches to its tab;
@@ -93,8 +94,10 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
 - **Pull Requests** (`src/prs.rs`): built the way Issues was rather than copied from
   `PullRequestsView`: one list of every PR in the org's cache, a State menu (Open, Merged, Closed)
   in place of the Open/Merged/All picker and its two sections, filter menus with counts (Status,
-  Author, Reviewer, Checks, Repository, with Me first), and columns each person picks, orders and
-  sizes. PRs closed without merging show too (the work log has them; the Swift page doesn't list
+  Author, Reviewer, Requested, Checks, Repository, with Me first), and columns each person picks,
+  orders and sizes. Requested (a menu and a column) is whether you're asked to review: Requested,
+  Reviewed or Not requested; only a request to you by name counts, as team requests aren't cached
+  with their members. PRs closed without merging show too (the work log has them; the Swift page doesn't list
   them). A row opens a drawer, as an issue does: facts, activity from the work log, linked issues
   (which open as issue drawers on top), description and comments, and the people with where each
   reviewer stands. Labels, the base branch and conflicts aren't cached, so they don't show.
@@ -114,7 +117,12 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
 - **Reviews** (`src/review.rs`, `src/review_panel.rs`): edits disallowed, Gannin's prompt; the
   result read from claude's transcript beside the terminal, findings to dismiss or restore, Review
   Again, and Post Review with Gannin's rules (Comment only on your own PR, inline only on diff
-  lines, duplicates left out after re-fetching, never the same review twice).
+  lines, duplicates left out after re-fetching, never the same review twice), then the threads
+  claude says are dealt with resolved (only unresolved ones of yours on that PR). The plans the PR
+  or its closing issues link to show under the verdict, each with its ticked tasks as a ring.
+- **Plans and requirements** (`src/harness.rs`): a Work on This session's Issue pane lists the
+  harness documents about or mentioning its issue or PRs, with their progress, read again every
+  minute; a row opens the document in a drawer.
 - **Planning, Ask, Quick Change** (`src/launch_form.rs`, `src/planning_panel.rs`): forms with
   Zed's editor; a plan's `planning.json` shown as stages, requirement, design, tasks and
   decisions, with "From the room". A quick change files no issue.

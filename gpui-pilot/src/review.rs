@@ -556,6 +556,30 @@ pub fn resolve_threads(token: &str, snapshot: &Snapshot, ids: &[String]) -> Opti
     (!notes.is_empty()).then(|| notes.join(". "))
 }
 
+/// Who opened a PR: login, name (when they've given one) and avatar.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Author {
+    pub login: String,
+    pub name: Option<String>,
+    pub avatar: Option<String>,
+}
+
+/// What the review panel reads about its PR once: who opened it, and the
+/// issues it closes as `(repo, number)`, for the plans linked to it.
+pub fn pr_facts(token: &str, repo: &str, number: i64) -> Result<(Option<Author>, Vec<(String, i64)>), String> {
+    let (owner, name) = repo.split_once('/').ok_or("Not a repository")?;
+    let query = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { author { login avatarUrl ... on User { name } } closingIssuesReferences(first: 20) { nodes { number repository { nameWithOwner } } } } } }";
+    let data = crate::github::graphql(token, query, json!({ "owner": owner, "name": name, "number": number })).map_err(|e| e.to_string())?;
+    let pr = &data["repository"]["pullRequest"];
+    let text = |v: &Value| v.as_str().map(str::to_string).filter(|s| !s.is_empty());
+    let author = text(&pr["author"]["login"]).map(|login| Author { login, name: text(&pr["author"]["name"]), avatar: text(&pr["author"]["avatarUrl"]) });
+    let closing = pr["closingIssuesReferences"]["nodes"]
+        .as_array()
+        .map(|nodes| nodes.iter().filter_map(|n| Some((n["repository"]["nameWithOwner"].as_str()?.to_string(), n["number"].as_i64()?))).collect())
+        .unwrap_or_default();
+    Ok((author, closing))
+}
+
 // MARK: - Changes since the review
 
 /// What's happened on the PR since the review, as Check for Changes finds.

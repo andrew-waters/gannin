@@ -95,6 +95,7 @@ pub struct Changed;
 impl gpui::EventEmitter<Changed> for SessionPage {}
 impl gpui::EventEmitter<crate::review_panel::ExplainPr> for SessionPage {}
 impl gpui::EventEmitter<crate::work_panel::WorkEvent> for SessionPage {}
+impl gpui::EventEmitter<crate::harness::OpenDoc> for SessionPage {}
 
 /// Starts the process in a pty; the page is made once it's running.
 pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
@@ -198,10 +199,13 @@ impl SessionPage {
                     crate::work_panel::WorkEvent::Forget => crate::work_panel::WorkEvent::Forget,
                 })
             }));
+            // A plan's row opens it in a drawer, which the workspace holds.
+            subscriptions.push(cx.subscribe(work, |_, _, event: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(event.0.clone()))));
         }
         if let Some(review) = &review {
             // Explain starts a session of its own, so the workspace hears of it.
             subscriptions.push(cx.subscribe(review, |_, _, event: &crate::review_panel::ExplainPr, cx| cx.emit(crate::review_panel::ExplainPr(event.0.clone(), event.1.clone()))));
+            subscriptions.push(cx.subscribe(review, |_, _, event: &crate::harness::OpenDoc, cx| cx.emit(crate::harness::OpenDoc(event.0.clone()))));
         }
         subscriptions.push(cx.subscribe(&terminal, |this, _, event: &terminal::Event, cx| match event {
             terminal::Event::Wakeup => {

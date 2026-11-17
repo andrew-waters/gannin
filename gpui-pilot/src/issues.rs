@@ -1910,7 +1910,7 @@ impl IssuesPage {
             .border_t_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(div().flex_1().text_sm().child(format!("{} selected", picked.len())).when(open.len() < picked.len(), |d| {
+            .child(div().flex_1().min_w_0().text_sm().child(format!("{} selected", picked.len())).when(open.len() < picked.len(), |d| {
                 d.child(div().text_xs().text_color(theme.secondary).child("Only open issues can be worked on."))
             }))
             .child(button("picked-clear", "Clear".into(), false).on_click(cx.listener(|page, _: &ClickEvent, _, cx| {

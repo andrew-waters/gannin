@@ -211,6 +211,7 @@ pub enum WorkEvent {
 }
 
 impl gpui::EventEmitter<WorkEvent> for WorkPanel {}
+impl gpui::EventEmitter<crate::harness::OpenDoc> for WorkPanel {}
 
 /// A live session's launch and terminal, for its data and to send to it.
 struct Live {
@@ -254,6 +255,9 @@ pub struct WorkPanel {
     /// No record of what was sent yet (a session from before this): the
     /// first look takes what's there as known, and sends nothing.
     feedback_seeding: bool,
+    /// The harness documents about or mentioning the issue or its PRs, once
+    /// looked for: Gannin's "Plans and requirements", with their progress.
+    plans: Option<Vec<(crate::harness::Doc, bool)>>,
 }
 
 /// A comment's gist for its row: the first line of words, with HTML
@@ -319,6 +323,7 @@ impl WorkPanel {
             feedback_sent: Default::default(),
             feedback_queue: Vec::new(),
             feedback_seeding: false,
+            plans: None,
         }
     }
 
@@ -375,6 +380,13 @@ impl WorkPanel {
                     ),
                     _ => None,
                 };
+                // The plans linked to the issue and its PRs, every minute, as
+                // claude may commit or tick one off while it works.
+                let items = if tick % 20 == 0 { this.update(cx, |this, _| this.plan_items()).ok() } else { None };
+                let plans = match items {
+                    Some((org, items)) if !items.is_empty() => Some(cx.background_executor().spawn(async move { crate::harness::linked(&crate::harness::load(&org), &items) }).await),
+                    _ => None,
+                };
                 let dir = dir.clone();
                 let alive = this
                     .update(cx, |this, cx| {
@@ -391,6 +403,9 @@ impl WorkPanel {
                                 pr.failures_sent = sent.iter().any(|(n, s)| *n == pr.number && *s);
                             }
                             this.collect_feedback(&dir);
+                        }
+                        if let Some(plans) = plans {
+                            this.plans = Some(plans);
                         }
                         this.refresh_state(&dir, cx);
                         this.step_workflow(&dir, cx);
@@ -989,7 +1004,7 @@ impl WorkPanel {
                         .p_2()
                         .rounded_md()
                         .bg(theme.orange().opacity(0.1))
-                        .child(div().flex_1().text_sm().child("Pushing waits for this review."))
+                        .child(div().flex_1().min_w_0().text_sm().child("Pushing waits for this review."))
                         .child(Self::button("push-anyway", "Push Anyway", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             // The gate lets this commit through; the review's
                             // findings stay for the session.
@@ -1088,12 +1103,40 @@ impl WorkPanel {
         div().flex_none().size(px(size)).rounded_full().bg(color)
     }
 
+    /// A group in the sidebar, in a well: the page's background in a
+    /// rounded, bordered box on the sidebar's tint, as the Done box is.
     fn section(title: &str, theme: &Theme) -> gpui::Div {
-        div().flex().flex_col().gap_1p5().child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(title.to_uppercase()))
+        div().flex().flex_col().gap_1p5().p_3().rounded_lg().bg(theme.bg).border_1().border_color(theme.border).child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(title.to_uppercase()))
     }
 
     fn fact(label: &str, value: impl IntoElement, theme: &Theme) -> gpui::Div {
         div().flex().flex_row().gap_3().text_sm().child(div().w(px(90.)).flex_none().text_color(theme.secondary).child(label.to_string())).child(div().flex_1().min_w_0().child(value))
+    }
+
+    /// The org whose harnesses to look in, and the issue and PRs a plan
+    /// may be linked to.
+    fn plan_items(&self) -> (String, Vec<(String, i64)>) {
+        let Some(live) = &self.live else { return (String::new(), Vec::new()) };
+        let mut items: Vec<(String, i64)> = live.launch.subject.iter().map(|s| (s.repo.clone(), s.number)).collect();
+        items.extend(self.data.prs.iter().map(|p| (p.repo.clone(), p.number)));
+        (live.launch.org.clone(), items)
+    }
+
+    /// "Plans and requirements": shown even when there are none yet, as
+    /// claude may be writing the plan.
+    fn plans_section(&self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let title = match &self.plans {
+            Some(plans) if !plans.is_empty() => format!("Plans and requirements · {}", plans.len()),
+            _ => "Plans and requirements".into(),
+        };
+        let section = Self::section(&title, theme);
+        match &self.plans {
+            None => section.child(div().text_sm().text_color(theme.secondary).child("Looking in the harness")),
+            Some(plans) if plans.is_empty() => section.child(
+                div().text_sm().text_color(theme.secondary).child("None in the harness yet. A plan claude commits there shows here once the harness is fetched again."),
+            ),
+            Some(plans) => section.children(crate::harness::plan_rows("work-plan", plans, theme, cx)),
+        }
     }
 
     fn file_count(&self) -> usize {
@@ -1283,7 +1326,7 @@ impl WorkPanel {
                         .items_center()
                         .gap_2()
                         .child(Self::dot(orange, 10.))
-                        .child(div().flex_1().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+                        .child(div().flex_1().min_w_0().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
                         .child(away),
                 )
                 .child(div().p_2().rounded_md().bg(theme.bg).font_family("SF Mono").text_sm().child(text.clone()))
@@ -1320,7 +1363,7 @@ impl WorkPanel {
                         .items_center()
                         .gap_2()
                         .child(Self::dot(orange, 10.))
-                        .child(div().flex_1().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
+                        .child(div().flex_1().min_w_0().text_lg().font_weight(FontWeight::SEMIBOLD).child(title))
                         .child(away),
                 )
                 .children(questions.iter().enumerate().map(|(qi, q)| {
@@ -1383,7 +1426,7 @@ impl WorkPanel {
                         .flex_row()
                         .items_center()
                         .gap_2()
-                        .child(div().flex_1().text_sm().text_color(theme.secondary).child(if answered == questions.len() {
+                        .child(div().flex_1().min_w_0().text_sm().text_color(theme.secondary).child(if answered == questions.len() {
                             "Ready to send.".to_string()
                         } else {
                             format!("{answered} of {} answered. Any left go as \"your call\".", questions.len())
@@ -1473,8 +1516,8 @@ impl WorkPanel {
         div()
             .flex()
             .flex_col()
-            .gap_5()
-            .p_4()
+            .gap_3()
+            .p_3()
             .when(all_merged || stale, |el| {
                 // A neutral box with an edge in its colour: green when done.
                 let edge = if all_merged { theme.good() } else { theme.secondary };
@@ -1491,6 +1534,7 @@ impl WorkPanel {
                         .child(
                             div()
                                 .flex_1()
+                                .min_w_0()
                                 .p_3()
                                 .flex()
                                 .flex_col()
@@ -1505,7 +1549,9 @@ impl WorkPanel {
                         ),
                 )
             })
-            // The pull requests first: where the work stands.
+            // The plans first: how far the work has got against them.
+            .when(self.live.is_some() && !d.reference.is_empty(), |el| el.child(self.plans_section(theme, cx)))
+            // Then the pull requests: where the work stands.
             .when(!d.prs.is_empty(), |el| el.child(Self::section("Pull requests", theme).child(self.pr_cards(theme, cx))))
             .child(
                 Self::section("Issue", theme)
@@ -1531,7 +1577,16 @@ impl WorkPanel {
                     .when(!d.prs.is_empty(), |el| {
                         el.child(Self::fact(
                             "Pull request",
-                            div().flex().flex_col().children(d.prs.iter().map(|p| div().text_color(theme.selected).child(format!("{}#{}", p.repo.rsplit('/').next().unwrap_or(&p.repo), p.number)))),
+                            div().flex().flex_col().children(d.prs.iter().map(|p| {
+                                let url = format!("https://github.com/{}/pull/{}", p.repo, p.number);
+                                div()
+                                    .id(("work-pr-link", p.number as usize))
+                                    .text_color(theme.selected)
+                                    .cursor_pointer()
+                                    .hover(|s| s.opacity(0.8))
+                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+                                    .child(format!("{}#{}", p.repo.rsplit('/').next().unwrap_or(&p.repo), p.number))
+                            })),
                             theme,
                         ))
                     })
@@ -1632,7 +1687,7 @@ impl WorkPanel {
                             .gap_2()
                             .px_1()
                             .pb_1()
-                            .child(div().flex_1().text_sm().font_weight(FontWeight::SEMIBOLD).child(w.name.clone()))
+                            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).child(w.name.clone()))
                             .child(div().text_xs().text_color(pushed.1).child(pushed.0))
                             .when(!uncommitted, |d| d.child(div().text_xs().text_color(theme.tertiary).child(format!("against {}", w.base)))),
                     )
@@ -1733,16 +1788,23 @@ impl WorkPanel {
                     .bg(theme.bg)
                     .border_1()
                     .border_color(if open && (pr.conflicts || !pr.failed.is_empty()) { theme.critical().opacity(0.5) } else { theme.border })
-                    .child(
+                    // The header opens the PR on GitHub; the card's buttons
+                    // below keep their own clicks.
+                    .child({
+                        let url = format!("https://github.com/{}/pull/{number}", pr.repo);
                         div()
+                            .id(("work-pr-open", number as usize))
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap_2()
+                            .cursor_pointer()
+                            .hover(|s| s.opacity(0.8))
+                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                             .child(Self::dot(tint, 8.))
                             .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{name}#{number}")))
-                            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::MEDIUM).child(pr.title.clone())),
-                    )
+                            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::MEDIUM).child(pr.title.clone()))
+                    })
                     .child(
                         div()
                             .flex()
@@ -1857,8 +1919,8 @@ impl WorkPanel {
         div()
             .flex()
             .flex_col()
-            .gap_5()
-            .p_4()
+            .gap_3()
+            .p_3()
             .child(
                 Self::section("Claude Code", theme)
                     .child(Self::fact("Model", d.model.clone(), theme))
@@ -1879,7 +1941,7 @@ impl WorkPanel {
                     }))
                 } else {
                     el.children(d.activity.iter().map(|(at, what)| {
-                        div().flex().flex_row().gap_3().text_sm().child(div().w(px(44.)).flex_none().text_color(theme.tertiary).child(at.clone())).child(div().flex_1().child(what.clone()))
+                        div().flex().flex_row().gap_3().text_sm().child(div().w(px(44.)).flex_none().text_color(theme.tertiary).child(at.clone())).child(div().flex_1().min_w_0().child(what.clone()))
                     }))
                 }
             }))
