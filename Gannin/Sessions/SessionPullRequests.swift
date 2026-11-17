@@ -447,8 +447,8 @@ extension GitHubAPI {
             }
             fragment SessionPR on PullRequest {
               id number title url state isDraft reviewDecision mergeable baseRefName
-              latestOpinionatedReviews(first: 30) { nodes { state author { login } } }
-              reviewRequests(first: 30) { nodes { requestedReviewer { ... on User { login } } } }
+              latestOpinionatedReviews(first: 10) { nodes { state author { login } } }
+              reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
               author { login }
               repository { nameWithOwner }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 80) { nodes {
@@ -517,7 +517,7 @@ extension GitHubAPI {
             }
             fragment Probe on PullRequest {
               id state updatedAt mergeable reviewDecision
-              reviewRequests(first: 30) { nodes { requestedReviewer { ... on User { login } } } }
+              reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
               commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
             }
             """
