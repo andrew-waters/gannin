@@ -309,6 +309,18 @@ impl SessionPage {
         .detach();
     }
 
+    /// Stops claude mid-turn, as Esc in its terminal does. Claude Code
+    /// turns on the kitty keyboard protocol, so Esc goes as `CSI 27 u`.
+    /// Claude Code's Stop hook doesn't run on an interrupt, so a launched
+    /// session's state file is set to idle here, as that hook would; the
+    /// next prompt's hook sets it working again.
+    pub fn interrupt(&mut self, cx: &mut Context<Self>) {
+        self.terminal.update(cx, |t, _| t.input(b"\x1b[27u".to_vec()));
+        if let Some(launch) = &self.launch {
+            let _ = std::fs::write(launch.dir().join("state"), "idle");
+        }
+    }
+
     /// A Work on This session's panel.
     pub fn work(&self) -> Option<Entity<crate::work_panel::WorkPanel>> {
         self.work.clone()

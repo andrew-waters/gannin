@@ -252,6 +252,9 @@ impl TabStatus {
     }
 }
 
+/// What Resume All tells each session Pause All stopped.
+const RESUME: &str = "Carry on from where you were interrupted.";
+
 /// What a tab is, for its icon and the tab bar's filter; in the order
 /// grouped tabs go.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, serde::Serialize, serde::Deserialize)]
@@ -483,6 +486,8 @@ pub struct Workspace {
     session_prs: std::cell::RefCell<std::collections::HashMap<String, (std::time::Instant, Vec<i64>)>>,
     group_tabs: bool,
     tab_filter_open: bool,
+    /// Sessions Pause All stopped, for Resume All to start again.
+    paused_sessions: std::collections::HashSet<u32>,
     /// Kinds whose group of tabs is folded away.
     collapsed_kinds: std::collections::HashSet<TabKind>,
     /// Which window this is, for where its state is saved (0 is the first).
@@ -842,6 +847,7 @@ impl Workspace {
             slot: 0,
             show_on_reopen: None,
             tab_filter_open: false,
+            paused_sessions: Default::default(),
             sync: SyncStatus { prefs: sync_prefs, ..SyncStatus::default() },
             _sync_loop: None,
             _subscriptions: subscriptions,
@@ -4008,7 +4014,74 @@ impl Workspace {
             .child(self.tab_filter_menu(theme, cx))
             .child(self.tab_search_box(theme, cx))
             .child(self.tabs(false, theme, cx))
+            .child(self.pause_controls(theme, cx))
             .child(self.new_menu(theme, cx))
+    }
+
+    /// Pause All stops every session that's working, as Esc in each would;
+    /// Resume All tells just those to carry on. Ended ones, and ones you've
+    /// since spoken to (working again), are left alone.
+    fn pause_all(&mut self, cx: &mut Context<Self>) {
+        for session in self.sessions.clone() {
+            if session.read(cx).state == State::Working {
+                let id = session.read(cx).id;
+                session.update(cx, |s, cx| s.interrupt(cx));
+                self.paused_sessions.insert(id);
+            }
+        }
+        cx.notify();
+    }
+
+    fn resume_all(&mut self, cx: &mut Context<Self>) {
+        let paused = std::mem::take(&mut self.paused_sessions);
+        for session in self.sessions.clone() {
+            let page = session.read(cx);
+            if paused.contains(&page.id) && !matches!(page.state, State::Ended | State::Working) {
+                session.update(cx, |s, cx| s.tell(RESUME, cx));
+            }
+        }
+        cx.notify();
+    }
+
+    /// Pause All and Resume All, beside the "+": each shows only when it
+    /// would do something.
+    fn pause_controls(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let working = self.sessions.iter().filter(|s| s.read(cx).state == State::Working).count();
+        let paused = self.paused_sessions.iter().filter(|id| self.session(**id, cx).is_some_and(|s| s.read(cx).state != State::Ended)).count();
+        let button = |id: &'static str, label: String, tip: String| {
+            div()
+                .id(id)
+                .flex_none()
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .text_sm()
+                .cursor_pointer()
+                .text_color(theme.secondary)
+                .hover(|s| s.bg(theme.row_selected).text_color(theme.fg))
+                .tooltip(move |_, cx| cx.new(|_| crate::issues::Tooltip(tip.clone())).into())
+                .child(label)
+        };
+        div()
+            .flex_none()
+            .h_full()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1()
+            .when(working > 0 || paused > 0, |d| d.px_1().border_l_1().border_color(theme.border))
+            .when(working > 0, |d| {
+                d.child(button("pause-all", format!("Pause All ({working})"), "Stop every working session, as Esc in each".into()).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.pause_all(cx);
+                })))
+            })
+            .when(paused > 0, |d| {
+                d.child(button("resume-all", format!("Resume All ({paused})"), "Tell the sessions Pause All stopped to carry on".into()).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.resume_all(cx);
+                })))
+            })
     }
 
     /// The tabs in a column on the left (View › Toggle Tabs on Left): the
@@ -4034,6 +4107,7 @@ impl Workspace {
                     .border_color(theme.border)
                     .child(self.tab_filter_menu(theme, cx))
                     .child(div().flex_1().min_w_0().h_full().child(self.tab_search_box(theme, cx)))
+                    .child(self.pause_controls(theme, cx))
                     .child(self.new_menu(theme, cx)),
             )
             .child(self.tabs(true, theme, cx))
