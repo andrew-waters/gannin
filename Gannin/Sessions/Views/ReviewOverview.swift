@@ -113,6 +113,10 @@ struct ReviewReadiness {
                 waiting.append("it's approved")
                 items.append(Item(id: "approval", tier: .waiting, text: "Waiting for an approving review", action: .url(url)))
             }
+            if status.reviewDecision == "APPROVED", status.approvalStands == false {
+                waiting.append("the approver has looked again")
+                items.append(Item(id: "re-review", tier: .waiting, text: "Asked to review again", detail: "GitHub still counts the earlier approval, but its reviewer has been asked back", action: .url(url)))
+            }
             if status.mergeable == "UNKNOWN" {
                 waiting.append("GitHub has checked it merges cleanly")
                 items.append(Item(id: "mergeable", tier: .waiting, text: "GitHub is still checking whether it merges cleanly"))
@@ -175,8 +179,8 @@ struct ReviewReadiness {
         self.items = items
         // GitHub's decision can predate the newest commits, and it keeps an
         // approval after its reviewer is asked again, so neither a stale
-        // review nor an approval that no longer stands claims the PR as it is
-        // is approved.
+        // review nor an approval that no longer stands says the PR as it
+        // stands is approved.
         let approved = status?.reviewDecision == "APPROVED" && !isStale && status?.approvalStands != false
         if !blocking.isEmpty {
             sentence = (approved ? "Approved, but can't merge: " : "Can't merge: ") + Self.list(blocking)

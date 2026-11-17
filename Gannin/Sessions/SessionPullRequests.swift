@@ -383,7 +383,7 @@ struct SessionPullRequestsPane: View {
 
     private func reviewLabel(_ pr: SessionPullRequest) -> String? {
         switch pr.reviewDecision {
-        case "APPROVED": "Approved"
+        case "APPROVED": pr.approvalStands == false ? "Re-review requested" : "Approved"
         case "CHANGES_REQUESTED": "Changes requested"
         case "REVIEW_REQUIRED": pr.state == "OPEN" ? "Review required" : nil
         default: nil
@@ -517,6 +517,7 @@ extension GitHubAPI {
             }
             fragment Probe on PullRequest {
               id state updatedAt mergeable reviewDecision
+              reviewRequests(first: 30) { nodes { requestedReviewer { ... on User { login } } } }
               commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
             }
             """
@@ -569,12 +570,25 @@ struct ProbeResponse: Decodable {
         let updatedAt: String?
         let mergeable: String?
         let reviewDecision: String?
+        let reviewRequests: Requests?
         let commits: Commits?
+
+        /// Who is asked to review, which the full read turns into whether
+        /// an approval still stands: a re-request leaves `reviewDecision`
+        /// as it was, so only the requests tell the probe something changed.
+        struct Requests: Decodable {
+            struct Node: Decodable {
+                struct Reviewer: Decodable { let login: String? }
+                let requestedReviewer: Reviewer?
+            }
+            let nodes: [Node?]?
+        }
 
         var fingerprint: String? {
             guard let id else { return nil }
             let commit = commits?.nodes?.compactMap { $0 }.first?.commit
-            return [id, state, updatedAt, mergeable, reviewDecision, commit?.oid, commit?.statusCheckRollup?.state]
+            let asked = (reviewRequests?.nodes ?? []).compactMap { $0?.requestedReviewer?.login }.sorted().joined(separator: ",")
+            return [id, state, updatedAt, mergeable, reviewDecision, asked, commit?.oid, commit?.statusCheckRollup?.state]
                 .map { $0 ?? "-" }
                 .joined(separator: "|")
         }

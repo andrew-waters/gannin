@@ -33,7 +33,7 @@ struct ReviewReadinessTests {
     @Test func anApprovalThatNoLongerStandsIsNotClaimed() {
         var lapsed = status(decision: "APPROVED")
         lapsed.approvalStands = false
-        #expect(sentence(lapsed) == "Ready to merge")
+        #expect(sentence(lapsed) == "Ready once the approver has looked again")
         var current = status(decision: "APPROVED")
         current.approvalStands = true
         #expect(sentence(current) == "Approved, ready to merge")
