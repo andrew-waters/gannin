@@ -3,7 +3,7 @@
 //! timeline.
 //!
 //! Text is fetched from GitHub when a drawer opens (`sync::refresh_item`)
-//! and kept in the pilot's own `GanninGPUIPilot/Caches/Details.json`, in
+//! and kept in the pilot's own `Details.json` beside the org's caches, in
 //! Gannin's shape: the description and the last 20 comments with their
 //! dates. Until that answers, or when signed out, the drawer shows the
 //! pilot's copy, else what Gannin has, read only and only if Gannin is
@@ -82,18 +82,20 @@ fn details() -> &'static HashMap<String, Detail> {
     })
 }
 
-fn own_path() -> PathBuf {
-    support().join("GanninGPUIPilot/Caches/Details.json")
+fn own_path(org: &str) -> PathBuf {
+    crate::cache::org_file(org, "Details.json", "Details.json")
 }
 
-/// The pilot's own `Details.json`, read on first use and written through
-/// as drawers fetch.
-fn own() -> &'static std::sync::Mutex<HashMap<String, Cached>> {
-    static OWN: OnceLock<std::sync::Mutex<HashMap<String, Cached>>> = OnceLock::new();
-    OWN.get_or_init(|| {
-        let held = std::fs::read(own_path()).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
-        std::sync::Mutex::new(held)
-    })
+/// The pilot's own `Details.json` for each org, beside its caches: read on
+/// first use and written through as drawers fetch.
+fn own() -> &'static std::sync::Mutex<HashMap<String, HashMap<String, Cached>>> {
+    static OWN: OnceLock<std::sync::Mutex<HashMap<String, HashMap<String, Cached>>>> = OnceLock::new();
+    OWN.get_or_init(Default::default)
+}
+
+fn own_for<'a>(all: &'a mut HashMap<String, HashMap<String, Cached>>, org: &str) -> &'a mut HashMap<String, Cached> {
+    all.entry(org.to_string())
+        .or_insert_with(|| std::fs::read(own_path(org)).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default())
 }
 
 fn text_of(detail: &Detail) -> IssueText {
@@ -115,8 +117,8 @@ fn text_of(detail: &Detail) -> IssueText {
 
 /// The issue's description and comments, from whichever cache has them:
 /// the pilot's, then Gannin's. Runs off the main thread.
-pub fn load_text(id: &str) -> Option<IssueText> {
-    if let Some(cached) = own().lock().ok().and_then(|own| own.get(id).cloned()) {
+pub fn load_text(org: &str, id: &str) -> Option<IssueText> {
+    if let Some(cached) = own().lock().ok().and_then(|mut all| own_for(&mut all, org).get(id).cloned()) {
         return Some(text_of(&cached.detail));
     }
     if let Some(detail) = details().get(id) {
@@ -128,7 +130,7 @@ pub fn load_text(id: &str) -> Option<IssueText> {
 /// Keeps what GitHub sent for an issue or PR (its `body` and
 /// `comments(last: 20) { totalCount nodes { url body createdAt author { login } } }`)
 /// in the pilot's copy, and returns it as the drawer shows it.
-pub fn remember(id: &str, node: &serde_json::Value) -> Option<IssueText> {
+pub fn remember(org: &str, id: &str, node: &serde_json::Value) -> Option<IssueText> {
     let body = node["body"].as_str()?.to_string();
     let comments = &node["comments"];
     let detail = Detail {
@@ -149,10 +151,11 @@ pub fn remember(id: &str, node: &serde_json::Value) -> Option<IssueText> {
             .collect(),
     };
     let text = text_of(&detail);
-    if let Ok(mut own) = own().lock() {
+    if let Ok(mut all) = own().lock() {
+        let own = own_for(&mut all, org);
         own.insert(id.to_string(), Cached { detail });
         if let Ok(bytes) = serde_json::to_vec(&*own) {
-            let path = own_path();
+            let path = own_path(org);
             if let Some(folder) = path.parent() {
                 let _ = std::fs::create_dir_all(folder);
             }

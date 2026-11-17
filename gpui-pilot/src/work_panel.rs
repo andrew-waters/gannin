@@ -342,7 +342,7 @@ impl WorkPanel {
             reference: subject.as_ref().map(|s| format!("{}#{}", s.repo, s.number)).unwrap_or_default(),
             title: subject.as_ref().map(|s| s.title.clone()).unwrap_or_else(|| launch.title.clone()),
             issue_url: subject.as_ref().map(|s| s.url.clone()).unwrap_or_default(),
-            issue_body: subject.as_ref().and_then(|s| crate::detail::load_text(&s.id)).map(|t| t.body).unwrap_or_default(),
+            issue_body: subject.as_ref().and_then(|s| crate::detail::load_text(&launch.org, &s.id)).map(|t| t.body).unwrap_or_default(),
             state: WorkState::Starting,
             branch: launch.branch.clone(),
             folder: launch.folder().to_string_lossy().to_string(),

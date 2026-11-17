@@ -1,7 +1,7 @@
 //! The Issues page, one list with the filter bar from `IssueFilterBar`
 //! (search, Assignee, Repository, Label, Board, Field and Milestone, and the
 //! state), read from the pilot's issue store, which its own sync fills
-//! (`GanninGPUIPilot/Caches/StoredIssues/<org>.json`, Gannin's shape). New
+//! (`StoredIssues/<org>.json` in the org's harness `.gannin-cache/`, Gannin's shape). New
 //! Issue at the end of the filter bar opens the form (`new_issue.rs`). Not on a board
 //! is a Board filter here rather than a page of its own. Rows are a
 //! virtualised `uniform_list`, so only those on screen are built.

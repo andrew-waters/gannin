@@ -22,7 +22,7 @@ const PR_FIELDS: &str = "... on PullRequest { id number title url isDraft state 
 
 const ISSUE_FIELDS: &str = "... on Issue { id number title url state createdAt updatedAt closedAt repository { nameWithOwner } author { login avatarUrl } assignees(first: 10) { nodes { login avatarUrl } } labels(first: 10) { nodes { name color } } closedByPullRequestsReferences(first: 10, includeClosedPrs: true) { nodes { id number title url state repository { nameWithOwner } } } }";
 
-/// When an org was last synced, kept beside the pilot's caches.
+/// When an org was last synced, kept beside its caches.
 #[derive(Default, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 struct Synced {
@@ -31,24 +31,30 @@ struct Synced {
     lookback_days: i64,
 }
 
-fn synced_path() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Application Support/GanninGPUIPilot/Caches/synced.json")
+/// The org's `synced.json`, beside its caches. It used to be one file for
+/// every org, keyed by org; that's read once for an org without its own.
+fn read_synced(org: &str) -> Synced {
+    let path = cache::root(org).join("synced.json");
+    if let Some(synced) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Synced>(&b).ok()) {
+        return synced;
+    }
+    let earlier = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Library/Application Support/GanninGPUIPilot/Caches/synced.json");
+    std::fs::read(earlier).ok().and_then(|b| serde_json::from_slice::<BTreeMap<String, Synced>>(&b).ok()).and_then(|mut all| all.remove(org)).unwrap_or_default()
 }
 
-fn read_synced() -> BTreeMap<String, Synced> {
-    std::fs::read(synced_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-}
-
-fn write_synced(all: &BTreeMap<String, Synced>) {
-    if let Ok(json) = serde_json::to_vec_pretty(all) {
-        let _ = std::fs::write(synced_path(), json);
+fn write_synced(org: &str, synced: &Synced) {
+    if let Ok(json) = serde_json::to_vec_pretty(synced) {
+        let path = cache::root(org).join("synced.json");
+        if let Some(folder) = path.parent() {
+            let _ = std::fs::create_dir_all(folder);
+        }
+        let _ = std::fs::write(path, json);
     }
 }
 
 /// When the org was last synced by the pilot.
 pub fn last_synced(org: &str) -> Option<DateTime<Utc>> {
-    read_synced().get(org).and_then(|s| s.at)
+    read_synced(org).at
 }
 
 /// Gannin's lookback for merged PRs (Settings), else its default 14 days.
@@ -147,8 +153,7 @@ impl Default for Options {
 pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, options: Options, progress: &Progress) -> Result<Report, Error> {
     let now = Utc::now();
     let lookback = options.lookback_days;
-    let mut all = read_synced();
-    let previous = all.get(org).cloned().unwrap_or_default();
+    let previous = read_synced(org);
     let scope = format!("{}:{org} archived:false", if viewer == Some(org) { "user" } else { "org" });
     let since = previous.at.map(|at| at - Duration::minutes(5));
     let full_due = force_full || previous.full_at.is_none_or(|at| now - at > options.full_every) || previous.lookback_days != lookback;
@@ -214,11 +219,7 @@ pub fn sync_org(token: &str, org: &str, viewer: Option<&str>, force_full: bool, 
     merge_pull_requests(org, &prs, report.full, cutoff).map_err(|e| Error::Other(format!("Couldn't save pull requests: {e}")))?;
     merge_issues(org, &issues, report.full).map_err(|e| Error::Other(format!("Couldn't save issues: {e}")))?;
 
-    all.insert(
-        org.to_string(),
-        Synced { at: Some(now), full_at: if report.full { Some(now) } else { previous.full_at }, lookback_days: lookback },
-    );
-    write_synced(&all);
+    write_synced(org, &Synced { at: Some(now), full_at: if report.full { Some(now) } else { previous.full_at }, lookback_days: lookback });
     finish(progress, "Saving", None);
 
     // The longer histories Scorecards and Activity read, each when it's due.
@@ -565,7 +566,7 @@ fn merge_issues(org: &str, nodes: &[Value], full: bool) -> std::io::Result<()> {
 const TEXT_FIELDS: &str = "... on Issue { body comments(last: 20) { totalCount nodes { url body createdAt author { login } } } } ... on PullRequest { body comments(last: 20) { totalCount nodes { url body createdAt author { login } } } }";
 
 /// Fetches one issue or PR as its drawer opens: its description and
-/// comments, kept in the pilot's `Details.json`; and for an issue in this
+/// comments, kept in the org's `Details.json`; and for an issue in this
 /// org, its row in the pilot's issue store as the sync and the issue
 /// history would write it (core, workload while open, history with its
 /// board fields), so a list read after shows it as GitHub has it now.
@@ -578,7 +579,7 @@ pub fn refresh_item(token: &str, org: &str, id: &str) -> Result<Option<crate::de
         crate::history::ISSUE_HISTORY_FIELDS
     );
     let data = github::graphql(token, &query, json!({ "id": id }))?;
-    let text = crate::detail::remember(id, &data["text"]);
+    let text = crate::detail::remember(org, id, &data["text"]);
     if data["text"]["__typename"] == "Issue" {
         let owner = data["workload"]["repository"]["nameWithOwner"].as_str().and_then(|r| r.split('/').next()).unwrap_or("");
         if owner.eq_ignore_ascii_case(org) {

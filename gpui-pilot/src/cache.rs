@@ -1,8 +1,11 @@
 //! The pilot's own copies of Gannin's GitHub caches, in the same formats,
-//! under `Application Support/GanninGPUIPilot/Caches/`. The first read of
-//! one copies Gannin's file as a start; from then on the pilot's sync keeps
-//! its copy current and Gannin's files are never written, so the two apps
-//! can't overwrite each other.
+//! in a hidden folder in the org's home harness checkout
+//! (`<harness>/.gannin-cache/`), which ignores itself in git so it's never
+//! committed. With no checkout of the harness on this Mac they stay in
+//! `Application Support/GanninGPUIPilot/Caches/`. The first read of one
+//! copies the pilot's earlier copy, else Gannin's, as a start; from then on
+//! the pilot's sync keeps its copy current and Gannin's files are never
+//! written, so the two apps can't overwrite each other.
 
 use std::path::PathBuf;
 
@@ -53,21 +56,78 @@ pub fn gannin_path(kind: Kind, org: &str) -> PathBuf {
     support().join(kind.folder()).join(file_name(org))
 }
 
-/// The pilot's copy, made from Gannin's the first time it's asked for.
-pub fn path(kind: Kind, org: &str) -> PathBuf {
-    let folder = support().join("GanninGPUIPilot/Caches").join(kind.folder());
-    let path = folder.join(file_name(org));
-    if !path.exists() {
-        let source = gannin_path(kind, org);
-        if source.exists() {
-            let _ = std::fs::create_dir_all(&folder);
-            // Through a temporary file, so a half-copied cache is never read.
-            let partial = path.with_extension("json.part");
-            if std::fs::copy(&source, &partial).is_ok() {
-                let _ = std::fs::rename(&partial, &path);
-            }
-        }
+/// Where the pilot kept its caches before they moved into the harness, and
+/// still keeps them for an org with no harness checkout here.
+fn fallback() -> PathBuf {
+    support().join("GanninGPUIPilot/Caches")
+}
+
+/// The folder an org's synced data lives in: `.gannin-cache/` in its home
+/// harness (its first project's, as the pages order them) when that's
+/// checked out here, else the fallback. Worked out once per org, as it runs
+/// git and reads the harness indexes.
+pub fn root(org: &str) -> PathBuf {
+    static ROOTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, PathBuf>>> = std::sync::OnceLock::new();
+    let roots = ROOTS.get_or_init(Default::default);
+    if let Some(root) = roots.lock().ok().and_then(|r| r.get(org).cloned()) {
+        return root;
     }
+    let root = harness_root(org).unwrap_or_else(fallback);
+    if let Ok(mut roots) = roots.lock() {
+        roots.insert(org.to_string(), root.clone());
+    }
+    root
+}
+
+fn harness_root(org: &str) -> Option<PathBuf> {
+    if org.is_empty() {
+        return None;
+    }
+    let repo = crate::projects::load(org).projects.first().map(|p| p.id.clone()).filter(|id| id.contains('/'))?;
+    let checkout = crate::launch::harness_path(org, &repo);
+    if !checkout.join(".git").exists() {
+        return None;
+    }
+    let root = checkout.join(".gannin-cache");
+    std::fs::create_dir_all(&root).ok()?;
+    // The folder ignores itself, so nothing in it is ever committed and the
+    // harness's own .gitignore needn't change.
+    let ignore = root.join(".gitignore");
+    if !ignore.exists() {
+        std::fs::write(&ignore, "# Gannin's synced GitHub data, kept on this Mac only.\n*\n").ok()?;
+    }
+    Some(root)
+}
+
+/// Copies `source` to `path` through a temporary file, so a half-copied
+/// cache is never read.
+fn seed(path: &std::path::Path, source: &std::path::Path) {
+    if path.exists() || !source.exists() {
+        return;
+    }
+    if let Some(folder) = path.parent() {
+        let _ = std::fs::create_dir_all(folder);
+    }
+    let partial = path.with_extension("json.part");
+    if std::fs::copy(source, &partial).is_ok() {
+        let _ = std::fs::rename(&partial, path);
+    }
+}
+
+/// A file of the org's beside its caches (`synced.json`, `Details.json`),
+/// started from the pilot's earlier copy of `earlier` the first time.
+pub fn org_file(org: &str, name: &str, earlier: &str) -> PathBuf {
+    let path = root(org).join(name);
+    seed(&path, &fallback().join(earlier));
+    path
+}
+
+/// The pilot's copy, made from its earlier copy or Gannin's the first time
+/// it's asked for.
+pub fn path(kind: Kind, org: &str) -> PathBuf {
+    let path = root(org).join(kind.folder()).join(file_name(org));
+    seed(&path, &fallback().join(kind.folder()).join(file_name(org)));
+    seed(&path, &gannin_path(kind, org));
     path
 }
 

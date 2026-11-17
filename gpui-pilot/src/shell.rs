@@ -1388,7 +1388,7 @@ impl Workspace {
         let subject = Subject { id: issue.id.clone(), repo: issue.repo.clone(), number: issue.number, title: issue.title.clone(), url: issue.url.clone() };
         let mut launch = self.new_launch(Flow::Work, format!("#{} {}", issue.number, issue.title), &org, &harness, branch.clone(), Some(subject));
         launch.unattended = unattended;
-        let text = detail::load_text(&issue.id);
+        let text = detail::load_text(&org, &issue.id);
         let parent = issue.parent_id.as_deref().and_then(|id| self.issues.read(cx).issue(id));
         let mut brief = work_brief(&issue, text.as_ref(), parent.as_ref(), &launch);
         let prompt = launch::opening_prompt(&reference, &issue.title, &branch);
@@ -3188,7 +3188,8 @@ impl Workspace {
         let live = on_github && self.viewer.is_some() && !crate::github::should_hold_off();
         cx.spawn(async move |this, cx| {
             let cached_id = id.clone();
-            let text = cx.background_executor().spawn(async move { detail::load_text(&cached_id).map(Arc::new) }).await;
+            let cached_org = org.clone().unwrap_or_default();
+            let text = cx.background_executor().spawn(async move { detail::load_text(&cached_org, &cached_id).map(Arc::new) }).await;
             let shown = this
                 .update(cx, |this, cx| {
                     let Some(drawer) = this.drawers.iter_mut().find(|d| d.seq == seq) else { return false };
