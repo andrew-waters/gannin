@@ -16,8 +16,10 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - A PR review's Overview no longer says "Approved" when the reviewer who approved has been asked to review again: it waits on them, and a session's PR row says "Re-review requested"
 - A PR review's Overview says "Approved" when the PR has been approved on GitHub
 - Added and removed lines in code diffs have stronger green and red tints, so changes stand out more
+- The work log no longer keeps its own copy of each issue's title, repo and author: it shares the one the rest of the app holds, and takes issue changes from the change feed. Existing work log caches carry over without refetching
 
 ### Fixed
+- The work log no longer drops issues when a week has more than 1000 updated: that week is searched a day at a time
 - A review from a workflow with several steps keeps every step's findings once the run finishes, instead of reverting to the first reviewer's alone when its session is read again
 - The "waiting" count in the sidebar and the Dock badge no longer include a review that has finished a turn but has nothing for you to post; reviews count while they need you or have a result you haven't posted
 - Finish Review closes the review's tab right away, instead of waiting on its harness record to be written first

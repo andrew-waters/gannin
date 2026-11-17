@@ -64,6 +64,13 @@ struct WorkLogIssue: Codable, Hashable, Identifiable {
     let createdAt: Date
     /// The last comments on it (up to 30), oldest first.
     let comments: [WorkLogIssueComment]
+    /// What the shared issue store keeps once for every store that fetches the
+    /// issue; nil on an issue read from a cache from before the work log
+    /// fetched them. `updatedAt` is what the change feed compares.
+    var closedAt: Date? = nil
+    var updatedAt: Date? = nil
+    var assignees: [String]? = nil
+    var labels: [String]? = nil
 }
 
 struct WorkLogIssueComment: Codable, Hashable {
@@ -76,7 +83,7 @@ struct WorkLogIssueComment: Codable, Hashable {
 struct WorkLogHistory: Codable {
     /// Bumped when the stored shape gains fields old caches can't fill in,
     /// so they're fetched again.
-    static let currentVersion = 5
+    static let currentVersion = 6
 
     var version: Int? = Self.currentVersion
     let orgLogin: String
@@ -89,10 +96,14 @@ struct WorkLogHistory: Codable {
     /// store that has since been cleared isn't taken as covering them.
     var storedCount: Int?
     /// Issues updated in the same range, for issues opened and comments.
+    /// Kept in `SharedIssueStore`, not in the log's own file.
     var issues: [String: WorkLogIssue] = [:]
+    /// How many issues the store held for this log when it was saved (see
+    /// `storedCount`).
+    var storedIssueCount: Int?
 
     enum CodingKeys: String, CodingKey {
-        case version, orgLogin, coveredFrom, fetchedAt, storedCount, issues
+        case version, orgLogin, coveredFrom, fetchedAt, storedCount, storedIssueCount
     }
 
     /// The version before PRs moved to `PullRequestStore`, read to carry them over.
@@ -100,6 +111,13 @@ struct WorkLogHistory: Codable {
         static let version = 4
         var version: Int?
         var pullRequests: [String: WorkLogPullRequest]
+    }
+
+    /// Versions 4 and 5 kept their issues in the log's own file, read to carry
+    /// them into `SharedIssueStore`.
+    struct LegacyIssues: Decodable {
+        static let versions = [Legacy.version, 5]
+        var issues: [String: WorkLogIssue]?
     }
 }
 

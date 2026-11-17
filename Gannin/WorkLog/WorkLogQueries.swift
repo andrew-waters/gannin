@@ -27,6 +27,11 @@ extension GitHubAPI {
         return nodes.compactMap { $0.value?.model }
     }
 
+    /// The issues with these node IDs, in the same shape as a search.
+    func workLogIssues(ids: [String], onPage: @escaping (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }) async throws -> [WorkLogIssue] {
+        try await nodes(ids: ids, fields: RawWorkLogIssue.fields, batchSize: 50, progress: onPage) { (raw: RawWorkLogIssue) in raw.model }
+    }
+
     /// PRs matching a `workLogSearch`, with their commits and reviews.
     /// GitHub caps a search at 1000 results, so callers search a week at a time.
     func workLogPullRequests(query: String, onPage: (_ fetched: Int, _ total: Int?) -> Void = { _, _ in }) async throws -> [WorkLogPullRequest] {
@@ -178,20 +183,30 @@ private struct RawWorkLogIssue: Decodable {
         let author: Actor?
     }
 
+    struct Label: Decodable { let name: String }
+
     let id: String
     let number: Int
     let title: String
     let url: URL
     let createdAt: Date
+    let closedAt: Date?
+    let updatedAt: Date
     let repository: Repository
     let author: Actor?
     let comments: Connection<Comment>?
+    let assignees: Connection<Actor>?
+    let labels: Connection<Label>?
 
+    // Assignees and labels are read, as names, so saving the issue into the
+    // shared store doesn't replace the lists another store fetched with empty ones.
     static let fields = """
         ... on Issue {
-          id number title url createdAt
+          id number title url createdAt closedAt updatedAt
           repository { nameWithOwner }
           author { login }
+          assignees(first: 20) { nodes { login } }
+          labels(first: 50) { nodes { name } }
           comments(last: 30) { nodes { createdAt url author { login } } }
         }
         """
@@ -208,7 +223,11 @@ private struct RawWorkLogIssue: Decodable {
             comments: (comments?.nodes ?? []).compactMap { comment in
                 guard let login = comment.author?.login else { return nil }
                 return WorkLogIssueComment(createdAt: comment.createdAt, author: login, url: comment.url)
-            }
+            },
+            closedAt: closedAt,
+            updatedAt: updatedAt,
+            assignees: (assignees?.nodes ?? []).map(\.login),
+            labels: (labels?.nodes ?? []).map(\.name)
         )
     }
 }

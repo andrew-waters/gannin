@@ -43,10 +43,20 @@ enum ParallelSearches {
 
     /// Week-long `[start, end)` ranges covering `[from, to)`.
     static func weeks(from: Date, to: Date) -> [(Date, Date)] {
+        ranges(from: from, to: to, dayCount: 7)
+    }
+
+    /// Day-long `[start, end)` ranges covering `[from, to)`, for a week whose
+    /// search reached `searchCap`.
+    static func days(from: Date, to: Date) -> [(Date, Date)] {
+        ranges(from: from, to: to, dayCount: 1)
+    }
+
+    private static func ranges(from: Date, to: Date, dayCount: Int) -> [(Date, Date)] {
         var ranges: [(Date, Date)] = []
         var start = from
         while start < to {
-            let end = min(Calendar.current.date(byAdding: .day, value: 7, to: start) ?? to, to)
+            let end = min(Calendar.current.date(byAdding: .day, value: dayCount, to: start) ?? to, to)
             ranges.append((start, end))
             start = end
         }
