@@ -433,16 +433,19 @@ impl ReviewPanel {
             terminal.update(cx, |t, _| t.input(b"\r".to_vec()));
         })
         .detach();
-        self.conversation = Some(true);
         cx.notify();
     }
 
+    /// Sends what was typed, and shows the conversation, where claude's
+    /// answer is. Review Again leaves it as it was: the panel shows the
+    /// review being redone.
     fn send_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let text = self.composer.read(cx).text(cx).trim().to_string();
         if text.is_empty() {
             return;
         }
         self.composer.update(cx, |editor, cx| editor.set_text("", window, cx));
+        self.conversation = Some(true);
         self.tell(text, window, cx);
     }
 
