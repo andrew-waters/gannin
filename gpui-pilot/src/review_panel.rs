@@ -15,7 +15,7 @@ use crate::review::{self, Draft, Finding, ReviewResult, Snapshot};
 use gpui::{div, prelude::*, px, AnyView, ClickEvent, Context, Entity, Focusable, FontWeight, Hsla, KeyDownEvent, SharedString, Task, Window};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use terminal::Terminal;
 
 /// The Post Review sheet, step by step.
@@ -81,6 +81,9 @@ enum Selected {
     File(String),
 }
 
+/// How long claude's input takes to be ready after its SessionStart hook.
+const SETTLE: Duration = Duration::from_millis(1500);
+
 pub struct ReviewPanel {
     /// The panel's own focus, so the window's shortcuts work with the
     /// terminal hidden.
@@ -115,6 +118,10 @@ pub struct ReviewPanel {
     resolve_note: Option<String>,
     /// The hooks' state file as last read, to redraw when it changes.
     seen_state: Option<String>,
+    /// When claude was first seen past starting (its SessionStart hook ran),
+    /// for `ready`; and when the panel opened, for its fallback.
+    started_at: Option<Instant>,
+    opened_at: Instant,
     /// The team's sensitive paths for this PR's repo, read once.
     sensitive: Vec<crate::risk::Sensitive>,
     /// The harness documents about or mentioning the PR or the issues it
@@ -213,6 +220,16 @@ impl ReviewPanel {
                         this.seen_state = state;
                         cx.notify();
                     }
+                    // Claude's up: its input takes a moment more to be
+                    // ready, so the buttons wait that long, then redraw.
+                    if this.started_at.is_none() && this.claude_state().is_some_and(|s| s != "starting") {
+                        this.started_at = Some(Instant::now());
+                        cx.spawn(async move |this, cx| {
+                            cx.background_executor().timer(SETTLE).await;
+                            this.update(cx, |_, cx| cx.notify()).ok();
+                        })
+                        .detach();
+                    }
                     if this.activity != activity {
                         this.activity = activity;
                         cx.notify();
@@ -222,7 +239,8 @@ impl ReviewPanel {
             {
                 return;
             }
-            cx.background_executor().timer(Duration::from_secs(4)).await;
+            let fast = this.read_with(cx, |this, _| !this.takes_input()).unwrap_or(false);
+            cx.background_executor().timer(if fast { Duration::from_millis(750) } else { Duration::from_secs(4) }).await;
         });
         let posted = std::fs::read(launch.dir().join("posted.json")).ok().and_then(|b| serde_json::from_slice(&b).ok());
         let decisions: serde_json::Value = std::fs::read(launch.dir().join("decisions.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default();
@@ -264,6 +282,8 @@ impl ReviewPanel {
             record_note: None,
             resolve_note: None,
             seen_state: None,
+            started_at: None,
+            opened_at: Instant::now(),
             plans: Vec::new(),
             author: None,
             record_with_post: crate::review_record::recording(),
@@ -309,6 +329,8 @@ impl ReviewPanel {
             record_note: None,
             resolve_note: None,
             seen_state: None,
+            started_at: None,
+            opened_at: Instant::now(),
             sensitive: Vec::new(),
             plans: Vec::new(),
             author: None,
@@ -379,6 +401,17 @@ impl ReviewPanel {
         }
     }
 
+    /// Whether claude's terminal takes input: its SessionStart hook has run
+    /// (the state's past "starting") and a moment's passed. A session whose
+    /// hooks never say (one from before the state was reset on resume) is
+    /// taken as ready a while after the panel opened.
+    fn takes_input(&self) -> bool {
+        if matches!(self.source, Source::Preview { .. }) {
+            return true;
+        }
+        self.started_at.is_some_and(|at| at.elapsed() >= SETTLE) || (self.claude_state().as_deref() == Some("starting") && self.opened_at.elapsed() >= Duration::from_secs(45))
+    }
+
     /// Whether claude is waiting for the person, so Review Again can go.
     fn idle(&self) -> bool {
         self.claude_state().as_deref() == Some("idle")
@@ -444,6 +477,9 @@ impl ReviewPanel {
         if text.is_empty() {
             return;
         }
+        if !self.takes_input() {
+            return;
+        }
         self.composer.update(cx, |editor, cx| editor.set_text("", window, cx));
         self.conversation = Some(true);
         self.tell(text, window, cx);
@@ -451,6 +487,9 @@ impl ReviewPanel {
 
     /// Asks claude to review it afresh, as Gannin's Review Again.
     fn review_again(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.takes_input() {
+            return;
+        }
         self.tell(crate::launch::REVIEW_AGAIN.to_string(), window, cx);
     }
 
@@ -972,6 +1011,7 @@ impl ReviewPanel {
         match self.claude_state().as_deref() {
             Some("exited") | Some("stopped") => ("Not running".into(), theme.secondary),
             Some("needs-you") => ("Needs you".into(), theme.orange()),
+            Some("starting") if self.result.is_some() => ("Starting Claude Code".into(), theme.secondary),
             _ if self.working() => (if self.result.is_some() { "Reviewing again".into() } else { "Reading the PR".into() }, theme.secondary),
             _ if self.result.is_some() => ("Review ready".into(), theme.good()),
             _ => (String::new(), theme.secondary),
@@ -1015,9 +1055,16 @@ impl ReviewPanel {
                 .child(Self::button("review-check", "Check for Changes", false, !self.checking, theme).when(!self.checking, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.check_for_changes(cx)))
                 }))
-                .child(Self::button("review-again", "Review Again", false, can_again, theme).when(can_again, |d| {
-                    d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx)))
-                }))
+                .map(|d| {
+                    if live && self.running() && !self.takes_input() {
+                        // Claude Code is still starting: its terminal won't take the prompt yet.
+                        d.child(Self::busy_button("review-again", "Review Again", theme))
+                    } else {
+                        d.child(Self::button("review-again", "Review Again", false, can_again, theme).when(can_again, |d| {
+                            d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.review_again(window, cx)))
+                        }))
+                    }
+                })
                 .child(Self::button("review-post", "Post Review", true, can_post, theme).when(can_post, |d| {
                     d.on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.open_post(window, cx)))
                 }))
@@ -1344,7 +1391,8 @@ impl ReviewPanel {
             return None;
         }
         let needs_you = self.claude_state().as_deref() == Some("needs-you");
-        if !self.working() && !needs_you {
+        // A resumed session starting up isn't reviewing again: the header says it's starting.
+        if (!self.working() && !needs_you) || self.claude_state().as_deref() == Some("starting") {
             return None;
         }
         let shown = self.shows_conversation();
@@ -1820,9 +1868,33 @@ impl ReviewPanel {
                                     this.send_composer(window, cx);
                                 }
                             }))
-                            .child(self.composer.clone()),
+                            .map(|d| {
+                                if self.takes_input() {
+                                    d.child(self.composer.clone())
+                                } else {
+                                    d.flex().flex_row().items_center().gap_2().text_sm().text_color(theme.secondary).child(Self::spinner("composer-starting", 12., theme)).child("Claude Code is starting")
+                                }
+                            }),
                     ),
             )
+    }
+
+    /// A button that can't go yet, with a spinner, while Claude Code starts.
+    fn busy_button(id: &'static str, label: &str, theme: &Theme) -> impl IntoElement {
+        div()
+            .id(id)
+            .px_2()
+            .py_0p5()
+            .rounded_md()
+            .border_1()
+            .border_color(theme.border)
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1p5()
+            .text_color(theme.secondary)
+            .child(Self::spinner("starting-spinner", 12., theme))
+            .child(label.to_string())
     }
 
     fn button(id: &'static str, label: &str, prominent: bool, enabled: bool, theme: &Theme) -> gpui::Stateful<gpui::Div> {
