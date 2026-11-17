@@ -97,7 +97,8 @@ They say what to do, not what happened, with buttons for the usual answers.
   at the top of Needs you.
 - **Focus:** while it's on, everything but blocked items is held and summed up in one notification when
   it goes off ("3 things while you were busy"), listing them. On by itself while I'm typing in a
-  session, and with macOS Focus.
+  session, and with macOS Focus. The moon in the title bar switches it; while it's on, the title bar is
+  purple with a "Focus" chip saying how many are held.
 - **Quiet hours,** with a morning digest instead.
 
 ## Open
