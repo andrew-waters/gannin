@@ -4,6 +4,7 @@
 //!
 //! cargo run --release -- [--org NAME] [--days 7|30|90]
 
+mod actions;
 mod auth;
 mod activity;
 mod agent_metrics;
@@ -18,6 +19,8 @@ mod format;
 mod explain;
 mod github;
 mod harness;
+mod harness_doc;
+mod harness_git;
 mod history;
 mod issue_parts;
 mod issues;
@@ -30,7 +33,17 @@ mod page;
 mod planning_panel;
 mod paths;
 mod projects;
+#[cfg(target_os = "macos")]
 mod promise_drop;
+/// File promises are a macOS drag; elsewhere GPUI's own file drops are all.
+#[cfg(not(target_os = "macos"))]
+mod promise_drop {
+    pub fn install() {}
+    pub fn set_accepting(_on: bool) {}
+    pub fn take() -> Vec<std::path::PathBuf> {
+        Vec::new()
+    }
+}
 mod review;
 mod review_panel;
 mod review_preview;
@@ -50,6 +63,7 @@ mod prs;
 mod servers;
 mod remotes;
 mod session;
+mod session_move;
 mod shell;
 mod state;
 mod sync;
@@ -116,6 +130,24 @@ fn main() {
             // ~/.gannin, as the window does on opening.
             "--migrate" => {
                 paths::migrate();
+                return;
+            }
+            // What the org's harnesses hold, read with git: projects,
+            // documents by kind and review records.
+            "--harness" => {
+                let org = args.next().unwrap_or_default();
+                for snapshot in harness_git::snapshots(&org) {
+                    let reviews = snapshot.under(".gannin/reviews/").count();
+                    println!("{} at {} on {}: {} files, {} review records", snapshot.repo, &snapshot.commit[..8.min(snapshot.commit.len())], snapshot.branch, snapshot.files.len(), reviews);
+                }
+                for project in projects::load(&org).projects {
+                    println!("project {} ({}), {} repos", project.name, project.id, project.repos.len());
+                }
+                let docs = harness::load(&org);
+                let counts = harness::counts(&docs);
+                for kind in harness::HarnessKind::ALL {
+                    println!("{}: {} ({} standard)", kind.title(), counts.get(&kind).copied().unwrap_or(0), docs.iter().filter(|d| d.kind == kind && d.standard).count());
+                }
                 return;
             }
             // Reads a review session's result from claude's transcript.
@@ -251,7 +283,7 @@ fn main() {
     paths::migrate();
     gpui_platform::application().with_assets(assets::Assets).run(move |cx: &mut App| {
         zed::init(cx);
-        cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+        cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
         cx.bind_keys(shell::key_bindings());
         cx.set_menus(vec![
             Menu { name: "Gannin".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false },

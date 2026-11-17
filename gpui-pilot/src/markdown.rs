@@ -191,7 +191,7 @@ impl<'a> Renderer<'a> {
                             .p_2()
                             .rounded_md()
                             .bg(self.theme.tile)
-                            .font_family("Menlo")
+                            .font_family(crate::zed::MONO)
                             .text_xs()
                             .child(code.trim_end().to_string())
                             .into_any_element(),

@@ -27,7 +27,7 @@ const READ_ONLY: &str = "Read,Grep,Glob,Bash(git diff:*),Bash(git diff *),Bash(g
 
 /// One headless claude turn: its final reply, or why not.
 pub(crate) fn ask_claude(dir: &Path, prompt: &str, model: Option<&str>, timeout: Duration) -> Result<String, String> {
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let shell = crate::paths::shell();
     let mut args = vec!["-p".to_string(), "--output-format".into(), "json".into(), "--allowedTools".into(), READ_ONLY.into(), "--disallowedTools".into(), "Edit,MultiEdit,Write,NotebookEdit".into()];
     if let Some(model) = model.filter(|m| !m.is_empty() && *m != "Each person's") {
         args.push("--model".into());
@@ -266,7 +266,7 @@ fn findings_in(reply: &str, reviewer: &str) -> Option<Vec<Finding>> {
 
 fn run_command(dir: &Path, command: &str) -> (bool, String, Duration) {
     let started = Instant::now();
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let shell = crate::paths::shell();
     let out = Command::new(shell).args(["-l", "-c", &format!("{command} 2>&1")]).current_dir(dir).output();
     let took = started.elapsed();
     match out {

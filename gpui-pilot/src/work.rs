@@ -9,7 +9,6 @@ use chrono::{DateTime, Utc};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
 
 #[derive(Clone)]
 pub struct Pr {
@@ -131,22 +130,6 @@ pub fn load_live(token: &str, login: Option<String>) -> Result<Work, crate::gith
     })
 }
 
-/// The signed-in login from Gannin's `viewer` preference (JSON in a data
-/// value), read with the system's tools.
-fn viewer() -> Option<String> {
-    #[derive(Deserialize)]
-    struct Viewer {
-        login: String,
-    }
-    let output = Command::new("/bin/sh")
-        .arg("-c")
-        .arg("/usr/bin/defaults export dev.andon.gannin - | /usr/bin/plutil -extract viewer raw -o - - | /usr/bin/base64 -d")
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
-    serde_json::from_slice::<Viewer>(&output.stdout).ok().map(|v| v.login)
-}
-
 #[derive(Deserialize)]
 struct Store {
     #[serde(rename = "pullRequests", default)]
@@ -191,11 +174,10 @@ fn store_path(org: &str) -> PathBuf {
     crate::cache::path(crate::cache::Kind::PullRequests, org)
 }
 
-/// Reads the org's PR cache as `login` (the pilot's signed-in viewer),
-/// else as whoever Gannin is signed in as; call off the main thread (it
-/// can be tens of MB).
+/// Reads the org's PR cache as `login`, else as the pilot's signed-in
+/// viewer; call off the main thread (it can be tens of MB).
 pub fn load(org: &str, login: Option<String>) -> Work {
-    let login = login.or_else(viewer);
+    let login = login.or_else(|| crate::auth::saved_viewer().map(|v| v.login));
     let mut work = Work { login: login.clone(), ..Default::default() };
     let Some(login) = login else { return work };
     let Ok(bytes) = std::fs::read(store_path(org)) else { return work };

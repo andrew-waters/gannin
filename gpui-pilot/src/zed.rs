@@ -15,7 +15,7 @@ pub fn init(cx: &mut App) {
     // (`EditorFontStore.defaultFont`), and the window's own background and
     // text colours rather than One Dark's and One Light's.
     cx.update_global::<settings::SettingsStore, _>(|store, cx| {
-        let _ = store.set_user_settings(LOOK, cx);
+        let _ = store.set_user_settings(&look(), cx);
     });
     editor::init(cx);
     terminal_view::init(cx);
@@ -44,6 +44,14 @@ fn terminal_and_editor_keys(cx: &App) -> Vec<KeyBinding> {
 pub fn follow_appearance(window: &gpui::Window, cx: &mut App) {
     *theme::SystemAppearance::global_mut(cx) = theme::SystemAppearance(window.appearance().into());
     theme_settings::reload_theme(cx);
+}
+
+/// The monospace font: the system's on a Mac, else Zed's own (Lilex, loaded
+/// with its assets), which every platform has.
+pub const MONO: &str = if cfg!(target_os = "macos") { "SF Mono" } else { "Lilex" };
+
+fn look() -> String {
+    LOOK.replace("SF Mono", MONO).replace("[\"Menlo\"]", if cfg!(target_os = "macos") { "[\"Menlo\"]" } else { "[]" })
 }
 
 const LOOK: &str = r##"{

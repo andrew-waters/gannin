@@ -183,7 +183,7 @@ fn run_claude(session: &str, prompt: &str, resume: bool, run: &Arc<Mutex<Run>>) 
         folder.display(),
         if resume { "--resume" } else { "--session-id" }
     );
-    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+    let shell = crate::paths::shell();
     let mut command = Command::new(shell);
     command.args(["-l", "-i", "-c", "bash -s"]).current_dir(std::env::var("HOME").unwrap_or_default()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
     for (key, _) in std::env::vars() {

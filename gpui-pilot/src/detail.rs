@@ -6,12 +6,10 @@
 //! and kept in the pilot's own `Details.json` beside the org's caches, in
 //! Gannin's shape: the description and the last 20 comments with their
 //! dates. Until that answers, or when signed out, the drawer shows the
-//! pilot's copy, else what Gannin has, read only and only if Gannin is
-//! installed: its `Details.json`, then its issue text index
-//! (`dev.andon.gannin/IssueText.sqlite`: "@login: text", without dates).
+//! pilot's copy.
 //!
 //! Timing follows the org's issue workflow (`IssueWorkflow`), read with
-//! its projects from Gannin's settings store (`projects.rs`).
+//! its projects from the home harness's `workflow.json` (`projects.rs`).
 
 use crate::issues::IssueItem;
 use chrono::{DateTime, Local, NaiveDate, Utc};
@@ -65,23 +63,6 @@ struct CachedPerson {
     login: String,
 }
 
-fn support() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Application Support")
-}
-
-/// `Details.json`'s issues, read once.
-fn details() -> &'static HashMap<String, Detail> {
-    static DETAILS: OnceLock<HashMap<String, Detail>> = OnceLock::new();
-    DETAILS.get_or_init(|| {
-        std::fs::read(support().join("Details.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<HashMap<String, Cached>>(&bytes).ok())
-            .map(|all| all.into_iter().map(|(id, cached)| (id, cached.detail)).collect())
-            .unwrap_or_default()
-    })
-}
-
 fn own_path(org: &str) -> PathBuf {
     crate::cache::org_file(org, "Details.json", "Details.json")
 }
@@ -115,16 +96,11 @@ fn text_of(detail: &Detail) -> IssueText {
     }
 }
 
-/// The issue's description and comments, from whichever cache has them:
-/// the pilot's, then Gannin's. Runs off the main thread.
+/// The issue's description and comments, from the pilot's copy. Runs off
+/// the main thread.
 pub fn load_text(org: &str, id: &str) -> Option<IssueText> {
-    if let Some(cached) = own().lock().ok().and_then(|mut all| own_for(&mut all, org).get(id).cloned()) {
-        return Some(text_of(&cached.detail));
-    }
-    if let Some(detail) = details().get(id) {
-        return Some(text_of(detail));
-    }
-    from_index(id)
+    let cached = own().lock().ok().and_then(|mut all| own_for(&mut all, org).get(id).cloned())?;
+    Some(text_of(&cached.detail))
 }
 
 /// Keeps what GitHub sent for an issue or PR (its `body` and
@@ -166,30 +142,6 @@ pub fn remember(org: &str, id: &str, node: &serde_json::Value) -> Option<IssueTe
         }
     }
     Some(text)
-}
-
-fn from_index(id: &str) -> Option<IssueText> {
-    use rusqlite::{Connection, OpenFlags};
-    let path = support().join("dev.andon.gannin/IssueText.sqlite");
-    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).ok()?;
-    // The index's own columns: id, org, title, body, comments.
-    let (body, comments): (String, String) = db
-        .query_row("SELECT c3, c4 FROM fts_content WHERE c0 = ?1", [id], |row| Ok((row.get(0)?, row.get(1)?)))
-        .ok()?;
-    // Joined as "@login: text", a blank line apart.
-    let comments: Vec<Comment> = if comments.trim().is_empty() {
-        Vec::new()
-    } else {
-        comments
-            .split("\n\n@")
-            .map(|piece| {
-                let piece = piece.strip_prefix('@').unwrap_or(piece);
-                let (author, body) = piece.split_once(": ").unwrap_or(("someone", piece));
-                Comment { author: author.to_string(), body: body.to_string(), at: None, url: None }
-            })
-            .collect()
-    };
-    Some(IssueText { body, comment_count: None, comments })
 }
 
 // MARK: - Timing

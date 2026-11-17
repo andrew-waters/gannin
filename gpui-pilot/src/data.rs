@@ -1,7 +1,6 @@
-//! The Swift app's Actions cache, read as it is on disk:
-//! `~/Library/Application Support/Actions/<org>.json`, written by
-//! `OrgJSONCache` (dates as ISO 8601). Only the fields the page uses are
-//! decoded; jobs are skipped.
+//! The org's Actions history, in the Swift app's `ActionsHistory` shape
+//! (dates as ISO 8601), kept by the pilot's own sync (`actions.rs`). Only
+//! the fields the page uses are decoded; jobs are skipped.
 
 use chrono::{DateTime, Utc};
 use serde::Deserialize;
@@ -84,36 +83,26 @@ impl WorkflowRun {
     }
 }
 
-/// The shared Application Support folder the Swift app writes to (it isn't
-/// sandboxed, so this is not a container).
-pub fn cache_dir() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Application Support/Actions")
-}
-
 pub fn cache_path(org: &str) -> PathBuf {
     crate::cache::path(crate::cache::Kind::Actions, org)
 }
 
-/// Orgs with a saved file, by name.
+/// The orgs the pilot knows: those of folders opened here, those with
+/// settings of their own, and those with caches from before they moved into
+/// their harness. By name, once each.
 pub fn orgs() -> Vec<String> {
-    let mut orgs: Vec<String> = std::fs::read_dir(cache_dir())
-        .into_iter()
-        .flatten()
-        .flatten()
-        .filter_map(|entry| {
-            let path = entry.path();
-            if path.extension()? != "json" {
-                return None;
-            }
-            Some(percent_decode(&path.file_stem()?.to_string_lossy()))
-        })
-        .collect();
+    let mut orgs: Vec<String> = Vec::new();
+    let found = crate::folders::recent().into_iter().filter_map(|r| r.org);
+    for org in found.chain(crate::projects::orgs_with_settings()).chain(crate::cache::fallback_orgs()) {
+        if !org.is_empty() && !orgs.iter().any(|o| o.eq_ignore_ascii_case(&org)) {
+            orgs.push(org);
+        }
+    }
     orgs.sort_by_key(|org| org.to_lowercase());
     orgs
 }
 
-fn percent_decode(text: &str) -> String {
+pub fn percent_decode(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;

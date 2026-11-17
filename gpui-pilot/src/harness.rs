@@ -3,15 +3,13 @@
 //! specialists, each a page of its documents, newest first. A document opens
 //! in a drawer with its facts and its text.
 //!
-//! Read from the harness index Gannin keeps (`Application Support/Harness/
-//! <org>@<owner>~<name>.json`, every harness the org has), which holds each
-//! document whole: its title, status, summary, front matter and text. Read
-//! only: writing or editing documents isn't here.
+//! Read with git from each of the org's harnesses' default branch
+//! (`harness_git`), each document parsed as Gannin parses it
+//! (`harness_doc`). Read only: writing or editing documents isn't here.
 
 use crate::charts::Theme;
 use chrono::{DateTime, Utc};
 use gpui::{div, prelude::*, px, uniform_list, ClickEvent, Context, Entity, EventEmitter, FontWeight, SharedString, Window};
-use serde_json::Value;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -57,10 +55,6 @@ impl HarnessKind {
             HarnessKind::Specialists => "Specialists",
         }
     }
-
-    fn from_title(title: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|k| k.title() == title)
-    }
 }
 
 /// A document in the harness.
@@ -103,59 +97,13 @@ impl Doc {
     }
 }
 
-fn support() -> std::path::PathBuf {
-    std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Library/Application Support")
-}
-
-/// Every document in the org's harnesses. Large: call off the main thread.
+/// Every document in the org's harnesses. Fetches and runs git: call off
+/// the main thread.
 pub fn load(org: &str) -> Vec<Doc> {
-    let prefix = format!("{org}@");
-    let mut docs = Vec::new();
-    for entry in std::fs::read_dir(support().join("Harness")).into_iter().flatten().flatten() {
-        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
-            continue;
-        }
-        let Some(index) = std::fs::read(entry.path()).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { continue };
-        let harness = index["repo"].as_str().unwrap_or("").to_string();
-        let branch = index["branch"].as_str().unwrap_or("main").to_string();
-        for doc in index["documents"].as_array().into_iter().flatten() {
-            let Some(kind) = doc["kind"].as_str().and_then(HarnessKind::from_title) else { continue };
-            let text = |v: &Value| v.as_str().map(str::to_string).filter(|s| !s.is_empty());
-            let area = doc["domains"].as_array().and_then(|d| d.first()).and_then(|d| d.as_str()).map(str::to_string).or_else(|| text(&doc["module"]));
-            let references = doc["references"]
-                .as_array()
-                .map(|r| r.iter().filter_map(|r| Some((r["repo"].as_str().map(str::to_string), r["number"].as_i64()?, r["isSubject"] == true))).collect())
-                .unwrap_or_default();
-            let mut front_matter: Vec<(String, String)> = doc["frontMatter"]
-                .as_object()
-                .map(|m| {
-                    m.iter()
-                        .filter(|(k, _)| !matches!(k.as_str(), "summary" | "status" | "type"))
-                        .map(|(k, v)| (k.clone(), v.as_array().map(|a| a.iter().filter_map(|x| x.as_str()).collect::<Vec<_>>().join(", ")).unwrap_or_default()))
-                        .filter(|(_, v)| !v.is_empty())
-                        .collect()
-                })
-                .unwrap_or_default();
-            front_matter.sort();
-            docs.push(Doc {
-                path: doc["path"].as_str().unwrap_or("").to_string(),
-                harness: harness.clone(),
-                branch: branch.clone(),
-                kind,
-                title: doc["title"].as_str().unwrap_or("Untitled").to_string(),
-                text: doc["text"].as_str().unwrap_or("").to_string(),
-                status: text(&doc["status"]),
-                summary: text(&doc["summary"]),
-                date: doc["date"].as_str().and_then(|d| d.parse().ok()),
-                area,
-                tasks: doc["tasks"].as_i64().unwrap_or(0),
-                tasks_done: doc["tasksDone"].as_i64().unwrap_or(0),
-                references,
-                front_matter,
-                standard: doc["hasFrontMatter"] == true && text(&doc["summary"]).is_some(),
-            });
-        }
-    }
+    let mut docs: Vec<Doc> = crate::harness_git::snapshots(org)
+        .iter()
+        .flat_map(|snapshot| snapshot.files.iter().filter_map(|(path, text)| crate::harness_doc::parse(path, text, &snapshot.repo, &snapshot.branch)))
+        .collect();
     // Newest first; undated ones after, by title.
     docs.sort_by(|a, b| b.date.cmp(&a.date).then_with(|| a.title.to_lowercase().cmp(&b.title.to_lowercase())));
     docs

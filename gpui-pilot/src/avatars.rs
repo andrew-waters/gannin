@@ -11,8 +11,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 fn folder() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Caches/GanninGPUIPilot/avatars")
+    crate::paths::cache_dir().join("avatars")
 }
 
 fn file(login: &str) -> PathBuf {
@@ -44,7 +43,7 @@ fn path(login: &str, url: Option<&str>, cx: &mut App) -> Option<PathBuf> {
     let task = cx.background_executor().spawn(async move {
         let _ = std::fs::create_dir_all(folder());
         let partial = target.with_extension("part");
-        let fetched = std::process::Command::new("/usr/bin/curl")
+        let fetched = std::process::Command::new(crate::paths::curl())
             .args(["-sSfL", "--max-time", "15", "-o"])
             .arg(&partial)
             .arg(&source)

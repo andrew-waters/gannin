@@ -261,7 +261,7 @@ fn rest(token: &str, method: &str, path: &str, body: Option<&Value>) -> Result<V
         config.push_str("header = \"Content-Type: application/json\"\n");
         config.push_str(&format!("data = \"{}\"\n", body.to_string().replace('\\', "\\\\").replace('"', "\\\"")));
     }
-    let mut child = Command::new("/usr/bin/curl")
+    let mut child = Command::new(crate::paths::curl())
         .args(["-sS", "--max-time", "60", "-X", method, "-w", "\n%{http_code}", "-K", "-"])
         .arg(format!("https://api.github.com/{path}"))
         .stdin(Stdio::piped())

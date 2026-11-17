@@ -7,8 +7,12 @@
 //!   schedule, personal workflows, Open Recent, the session index) in
 //!   `~/.gannin/`.
 //!
-//! Gannin's own Application Support files are still read, never written, to
-//! start the app's copies from.
+//! - Each org's own settings in `~/.gannin/orgs/<org>.json`, and a clone of
+//!   a harness with no checkout here in `~/.gannin/harnesses/`.
+//!
+//! Nothing of the Swift app's is read: the pilot runs without it, and on
+//! Linux. What differs by platform (the system tools, the cache folder) is
+//! named here.
 
 use std::path::{Path, PathBuf};
 
@@ -19,6 +23,24 @@ fn home() -> PathBuf {
 /// `~/.gannin`: what isn't one org's.
 pub fn app_dir() -> PathBuf {
     home().join(".gannin")
+}
+
+/// Files that can be fetched again (avatars): the system's caches folder.
+pub fn cache_dir() -> PathBuf {
+    if cfg!(target_os = "macos") {
+        return home().join("Library/Caches/GanninGPUIPilot");
+    }
+    std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from).filter(|p| p.is_absolute()).unwrap_or_else(|| home().join(".cache")).join("gannin")
+}
+
+/// curl: the system's own on a Mac, else the first on the PATH.
+pub fn curl() -> &'static str {
+    if cfg!(target_os = "macos") { "/usr/bin/curl" } else { "curl" }
+}
+
+/// The person's login shell, else the platform's usual one.
+pub fn shell() -> String {
+    std::env::var("SHELL").ok().filter(|s| !s.is_empty()).unwrap_or_else(|| if cfg!(target_os = "macos") { "/bin/zsh".into() } else { "/bin/sh".into() })
 }
 
 /// Where everything was kept before it moved out of Application Support.

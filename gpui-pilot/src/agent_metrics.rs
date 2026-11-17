@@ -1,6 +1,6 @@
 //! Agents › Metrics, as Gannin's `AgentMetricsPage`: how Claude's reviews
 //! land, from the records each review commits to the harness
-//! (`.gannin/reviews/...`, read from the org's cached harness indexes), so
+//! (`.gannin/reviews/...`, read with git from the org's harnesses), so
 //! it's the team's, not only this Mac's: who reviews with Gannin, how many
 //! findings are posted and dismissed, and how many of those posted were
 //! acted on (their threads resolved), by severity and category.
@@ -56,22 +56,15 @@ impl Record {
 /// Every review record in the org's harnesses, one per PR and reviewer
 /// (the newest copy), read leniently.
 fn load(org: &str) -> Vec<Record> {
-    let dir = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Library/Application Support/Harness");
-    let prefix = format!("{org}@");
     let time = |v: &Value| v.as_str().and_then(|t| t.parse::<DateTime<Utc>>().ok());
     let text = |v: &Value| v.as_str().filter(|s| !s.is_empty()).map(str::to_string);
     let mut records: HashMap<String, Record> = HashMap::new();
-    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        if !entry.file_name().to_string_lossy().starts_with(&prefix) {
-            continue;
-        }
-        let Some(index) = std::fs::read(entry.path()).ok().and_then(|b| serde_json::from_slice::<Value>(&b).ok()) else { continue };
-        for file in index["dataFiles"].as_array().into_iter().flatten() {
-            let path = file["path"].as_str().unwrap_or("");
-            if !path.starts_with(".gannin/reviews/") || !path.ends_with(".json") {
+    for snapshot in crate::harness_git::snapshots(org) {
+        for (path, body) in snapshot.under(".gannin/reviews/") {
+            if !path.ends_with(".json") {
                 continue;
             }
-            let Some(r) = file["text"].as_str().and_then(|t| serde_json::from_str::<Value>(t).ok()) else { continue };
+            let Some(r) = serde_json::from_str::<Value>(body).ok() else { continue };
             let (Some(repo), Some(number), Some(reviewer), Some(started_at)) = (text(&r["repo"]), r["number"].as_i64(), text(&r["reviewer"]), time(&r["started_at"])) else { continue };
             let record = Record {
                 title: text(&r["title"]).unwrap_or_default(),

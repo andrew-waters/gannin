@@ -373,19 +373,11 @@ pub fn switch_harness(harness: &Path, default: &str) -> Result<(), String> {
     run(&["pull", "--ff-only", "--quiet"])
 }
 
-/// Where the org's harness is checked out on this Mac, as
-/// `SessionStore.localHarnessPath` finds it: Gannin's setting for it, else
-/// an existing checkout of it in the usual places, else `~/Gannin/<org>-<name>`.
+/// Where the org's harness is checked out here, as
+/// `SessionStore.localHarnessPath` finds it: where a folder opened here has
+/// it, else an existing checkout of it in the usual places, else
+/// `~/Gannin/<org>-<name>`.
 pub fn harness_path(org: &str, repo: &str) -> PathBuf {
-    let setting = std::process::Command::new("/usr/bin/defaults")
-        .args(["read", "dev.andon.gannin", &format!("sessionsHarnessPath.{org}.{repo}")])
-        .output()
-        .ok()
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|p| !p.is_empty());
-    if let Some(path) = setting {
-        return PathBuf::from(path.replacen('~', &home().to_string_lossy(), 1));
-    }
     // Where a folder opened here (Open Recent) has it.
     if let Some(path) = crate::folders::known_path(repo) {
         return path;

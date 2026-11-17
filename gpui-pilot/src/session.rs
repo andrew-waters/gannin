@@ -117,7 +117,7 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch
         Some(launch) => (
             std::env::var_os("HOME").map(PathBuf::from).unwrap_or(folder),
             Some(util::shell::Shell::WithArguments {
-                program: std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()),
+                program: crate::paths::shell(),
                 args: vec![
                     "-l".into(),
                     "-i".into(),
@@ -142,7 +142,7 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch
         // Through a login shell, so claude is on the PATH the user's
         // profile sets up.
         Kind::Claude => util::shell::Shell::WithArguments {
-            program: std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into()),
+            program: crate::paths::shell(),
             args: vec!["-l".into(), "-i".into(), "-c".into(), "claude".into()],
             title_override: None,
         },
@@ -210,11 +210,12 @@ impl SessionPage {
         let show = if review.is_some() || planning.is_some() { Show::Changes } else { Show::Both };
         let mut subscriptions = Vec::new();
         if let Some(work) = &work {
-            // Resume, Finish and Forget act on the tab, so the workspace hears of them.
+            // Resume, Finish, Forget and Move to Server act on the tab, so the workspace hears of them.
             subscriptions.push(cx.subscribe(work, |_, _, event: &crate::work_panel::WorkEvent, cx| {
                 cx.emit(match event {
                     crate::work_panel::WorkEvent::Resume => crate::work_panel::WorkEvent::Resume,
                     crate::work_panel::WorkEvent::Forget => crate::work_panel::WorkEvent::Forget,
+                    crate::work_panel::WorkEvent::MoveToServer => crate::work_panel::WorkEvent::MoveToServer,
                 })
             }));
             // A plan's row opens it in a drawer, which the workspace holds.

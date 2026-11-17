@@ -121,7 +121,7 @@ fn post(token: &str, body: &str) -> Result<(u16, Vec<(String, String)>, String),
         }
     }
     let _cleanup = Remove(spill.and_then(Result::ok));
-    let mut child = Command::new("/usr/bin/curl")
+    let mut child = Command::new(crate::paths::curl())
         .args(["-sS", "--max-time", "60", "-X", "POST", "-D", "-", "-w", "\n%{http_code}", "-K", "-", "https://api.github.com/graphql"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -235,6 +235,46 @@ fn request(token: &str, query: &str, variables: Value) -> Result<(Option<Value>,
         return Err(Error::Paused(until));
     }
     Ok((json.get("data").filter(|d| !d.is_null()).cloned(), errors))
+}
+
+/// A GET against the REST API (Actions runs, which GraphQL doesn't have):
+/// its JSON, or the status and body GitHub answered with (status 0 for a
+/// network failure). A 502-504 is tried twice more. REST has a budget of
+/// its own, so a refusal here doesn't pause GraphQL.
+pub fn rest_get(token: &str, path: &str) -> Result<Value, (u16, String)> {
+    let config = format!(
+        "header = \"Authorization: Bearer {token}\"\nheader = \"Accept: application/vnd.github+json\"\nheader = \"X-GitHub-Api-Version: 2022-11-28\"\nheader = \"User-Agent: gannin-gpui-pilot\"\nurl = \"https://api.github.com/{}\"\n",
+        path.replace('\\', "\\\\").replace('"', "\\\"")
+    );
+    let mut attempt = 0;
+    loop {
+        let mut child = Command::new(crate::paths::curl())
+            .args(["-sS", "--max-time", "60", "-w", "\n%{http_code}", "-K", "-"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| (0, format!("Couldn't run curl: {e}")))?;
+        if let Some(mut pipe) = child.stdin.take() {
+            pipe.write_all(config.as_bytes()).map_err(|e| (0, e.to_string()))?;
+        }
+        let output = child.wait_with_output().map_err(|e| (0, e.to_string()))?;
+        if !output.status.success() {
+            return Err((0, format!("Network error: {}", String::from_utf8_lossy(&output.stderr).trim())));
+        }
+        let text = String::from_utf8_lossy(&output.stdout).into_owned();
+        let (body, code) = text.rsplit_once('\n').unwrap_or((&text, "0"));
+        let status: u16 = code.trim().parse().unwrap_or(0);
+        if (502..=504).contains(&status) && attempt < 2 {
+            attempt += 1;
+            std::thread::sleep(std::time::Duration::from_secs(2 * attempt));
+            continue;
+        }
+        if !(200..300).contains(&status) {
+            return Err((status, body.to_string()));
+        }
+        return serde_json::from_str(body).map_err(|_| (status, "GitHub sent something unreadable".to_string()));
+    }
 }
 
 /// A search's nodes, page by page, up to GitHub's 1000; also whether

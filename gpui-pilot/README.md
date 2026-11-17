@@ -10,15 +10,18 @@ Quick Change, Explain) in Zed's terminal, beside the code change in Zed's diff v
 `editor`, `buffer_diff`, `multi_buffer` and what they need), which are GPL-3.0. Anything shipped on
 this code would have to be GPL-3.0 too. Only `gpui` and a few utility crates are Apache-2.0.
 
-It's a separate Cargo binary and isn't part of the Xcode build. It reads Gannin's caches and
-settings and never writes them: it keeps its own copies of the PR, issue and CI caches (seeded from
-Gannin's) under `Application Support/GanninGPUIPilot/`, and its own sessions there too. Its calls to
+It's a separate Cargo binary and isn't part of the Xcode build, and it needs nothing of the Swift
+app's: it syncs its own PR, issue and CI caches into the org's harness checkout
+(`<harness>/.gannin-cache/`, ignored by git), reads the harness itself with git, and keeps
+everything else in `~/.gannin/`. It builds and runs on macOS and Linux. Its calls to
 GitHub are reads (signing in, syncing, Your Work, an opened drawer), plus writes only after the app
 has shown what will be sent: posting a review (Post to GitHub), and creating an issue with its
 images committed to the harness (Create on GitHub). A session's terminal
 runs claude, which acts as you, as in Gannin.
 
 ## Running it
+
+### macOS
 
 Needs a Rust toolchain (`rustup`), Xcode's command line tools and `cmake` (tree-sitter's wasm
 runtime, which Zed's `language` crate pulls in, builds with it). The `runtime_shaders` feature
@@ -34,26 +37,45 @@ cargo run --release -- [--org <org>] [--days 30]
 The first build compiles Zed's dependency tree (over a thousand crates) and takes a while; after
 that a change rebuilds in seconds. Zed is pinned to one commit in `Cargo.toml`, and the lockfile
 started from Zed's own so the versions match its. GPUI's build script runs bindgen over `dispatch.h`, which can't find the macOS SDK on its own, hence
-the two variables. `--org` and `--days` override what was saved.
+the two variables. `--org` and `--days` override what was saved. `scripts/bundle.sh` builds it and
+wraps it as `target/release/Gannin.app`.
+
+### Linux
+
+Needs a Rust toolchain, `cmake`, `clang`, `git`, `curl` and `gh` (signed in: the pilot uses gh's
+token, `gh auth token`, and signing in from the app signs gh in), plus GPUI's libraries for
+Wayland and X11 (on Debian or Ubuntu: `libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev
+libvulkan-dev libx11-xcb-dev libxcb1-dev libfontconfig-dev libssl-dev`), as Zed's own
+`script/linux` installs them.
+
+```bash
+cd gpui-pilot
+cargo run --release
+```
+
+Mac only: the screenshot thumbnail's file promises (New Issue takes plain file drops on Linux)
+and `scripts/bundle.sh`. Shortcuts use Command on a Mac and Control on Linux; the Linux build
+hasn't been run yet.
 
 ## What it reads
 
 | Data | From |
 | --- | --- |
-| CI runs | The pilot's copy of `Actions/<org>.json` |
+| CI runs | `Actions/<org>.json` in the org's cache, synced by the pilot from GitHub's REST API when the CI page opens (every 10 minutes at most) and on Refresh |
 | Issues, board fields, status history, linked PRs | The pilot's copy of `StoredIssues/<org>.json`, synced |
-| Descriptions and comments | Fetched from GitHub as a drawer opens, kept in the pilot's `Caches/Details.json`; before that answers, Gannin's `Details.json` or `IssueText.sqlite` if Gannin is installed |
+| Descriptions and comments | Fetched from GitHub as a drawer opens, kept in the org's `Details.json` |
 | An opened issue | Fetched with its drawer (core, board fields, status history, linked PRs) into the pilot's issue store, so the list shows it as it is now |
 | New Issue | Live from GitHub: the org's repositories, boards and issue types; a repository's labels, assignable people and issue templates; a board's single-select fields. Skills from the harness checkout on this Mac |
-| Projects and the issue workflow | `Application Support/UserData/Gannin.store` (org settings) and `Application Support/Harness/*.json` (each harness's `.gannin/project.json`) |
+| Projects and the issue workflow | The org's harnesses (those in folders opened here, kept in order in `~/.gannin/orgs/<org>.json`), each read with git from its default branch: `.gannin/project.json`, `workflow.json` and the other team files |
+| Harness documents, Agents › Metrics | The same: the documents' folders, parsed as Gannin parses them (`src/harness_doc.rs`), and `.gannin/reviews/`. A harness with no checkout here is cloned into `~/.gannin/harnesses/` |
 | Pull requests: review, checks, reviewers, commits | The pilot's copy of `PullRequests/<org>.json`, synced |
 | Your Work | Live from GitHub when signed in, else the PR cache |
-| Scorecards and Activity | Gannin's own `PullRequests/`, `Metrics/`, `WorkLog/` and `Snapshots/` (the metrics and work-log slots the pilot doesn't sync), and the org's goals and exclusions from its settings |
-| Session state | Hook files in the pilot's `Sessions/<id>/`, and claude's transcript for a review's result |
-| Avatars | Downloaded once with `curl` into `~/Library/Caches/GanninGPUIPilot/avatars` |
+| Scorecards and Activity | The org's synced `PullRequests/`, `Metrics/`, `WorkLog/` and `Snapshots/`, and its goals and exclusions from the home harness's team files |
+| Session state | Hook files in the session's folder (`<harness>/.gannin-cache/sessions/<id>/`), and claude's transcript for a review's result |
+| Avatars | Downloaded once with `curl` into the system's caches folder (`~/Library/Caches/GanninGPUIPilot` or `~/.cache/gannin`) |
 
 Where the window was left (org, project, tabs, panels, each page's controls and columns) is saved
-in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folders.
+in `~/.gannin/state.json`. Headless checks: `--harness <org>` prints what the harnesses hold.
 
 ## What's built
 
@@ -76,6 +98,11 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   Zed's default settings, theme and fonts (`src/zed.rs`). State comes from the terminal, as no
   hooks are installed: output moving is Working, a prompt on screen or the bell is Needs you,
   quiet is Your turn.
+- **Move to Server** (`src/session_move.rs`): a stopped session started on this Mac moves to the
+  window's server and resumes there. Its worktrees are made there at the same commits (branches
+  go as git bundles, nothing is pushed), with what isn't committed copied as files, and Claude's
+  conversation goes to the project folder Claude Code keeps for the harness's path there. The
+  copies on this Mac are left as they were.
 - **Tab bar** (`src/shell.rs`): the filter menu at its left picks a kind of tab and, below, Active
   or Stopped (a session whose claude has ended); Find PR # beside it keeps the sessions that own a
   number (a review's PR, a work session's issue, or a PR it opened) or whose name matches the words
@@ -87,10 +114,10 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   a PR opens on GitHub. Built from caches, so Conflicts and team review requests don't show.
 - **Account** (`src/auth.rs`): at the right of the title bar, as Zed's: Sign In when signed out,
   else your avatar with a menu (profile, Sign Out). Signing in is GitHub's device flow on Gannin's
-  OAuth app, as Gannin's sign-in. The token is the pilot's own, in its own keychain item, reached
-  through the `security` tool (an unsigned binary that changes every build would be asked to
-  allow keychain access after each one), so signing out here leaves Gannin signed in. Your Work
-  reads as the signed-in login, else Gannin's.
+  OAuth app, as Gannin's sign-in. On a Mac the token is the pilot's own, in its own keychain item,
+  reached through the `security` tool (an unsigned binary that changes every build would be asked
+  to allow keychain access after each one), so signing out here leaves Gannin signed in. On Linux
+  it's gh's. Your Work reads as the signed-in login.
 - **Pull Requests** (`src/prs.rs`): built the way Issues was rather than copied from
   `PullRequestsView`: one list of every PR in the org's cache, a State menu (Open, Merged, Closed)
   in place of the Open/Merged/All picker and its two sections, filter menus with counts (Status,

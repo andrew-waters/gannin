@@ -33,24 +33,24 @@ actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, R
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("ctrl-cmd-s", ToggleSidebar, None),
-        KeyBinding::new("cmd-alt-i", ToggleInspector, None),
-        KeyBinding::new("cmd-t", NewClaudeSession, None),
+        KeyBinding::new("ctrl-secondary-s", ToggleSidebar, None),
+        KeyBinding::new("secondary-alt-i", ToggleInspector, None),
+        KeyBinding::new("secondary-t", NewClaudeSession, None),
         KeyBinding::new("ctrl-`", NewTerminal, None),
-        KeyBinding::new("cmd-w", CloseTab, None),
-        KeyBinding::new("cmd-shift-n", NewWindow, None),
-        KeyBinding::new("cmd-shift-right", NextTab, None),
-        KeyBinding::new("cmd-shift-left", PreviousTab, None),
-        KeyBinding::new("cmd-shift-]", NextTab, None),
-        KeyBinding::new("cmd-shift-[", PreviousTab, None),
+        KeyBinding::new("secondary-w", CloseTab, None),
+        KeyBinding::new("secondary-shift-n", NewWindow, None),
+        KeyBinding::new("secondary-shift-right", NextTab, None),
+        KeyBinding::new("secondary-shift-left", PreviousTab, None),
+        KeyBinding::new("secondary-shift-]", NextTab, None),
+        KeyBinding::new("secondary-shift-[", PreviousTab, None),
         // ⇧⌘[ and ⇧⌘] arrive as ⌘{ and ⌘}, as Zed binds them.
-        KeyBinding::new("cmd-}", NextTab, None),
-        KeyBinding::new("cmd-{", PreviousTab, None),
+        KeyBinding::new("secondary-}", NextTab, None),
+        KeyBinding::new("secondary-{", PreviousTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
-        KeyBinding::new("cmd-alt-o", OpenSwitcher, None),
-        KeyBinding::new("cmd-o", OpenFolder, None),
-        KeyBinding::new("cmd-r", Refresh, None),
+        KeyBinding::new("secondary-alt-o", OpenSwitcher, None),
+        KeyBinding::new("secondary-o", OpenFolder, None),
+        KeyBinding::new("secondary-r", Refresh, None),
     ]
 }
 
@@ -1120,6 +1120,49 @@ impl Workspace {
         .detach();
     }
 
+    /// Move to Server: asks first, naming the server (the window's folder's,
+    /// else the only one set up), then moves the session there off the main
+    /// thread and resumes it there in its tab's place.
+    fn move_to_server(&mut self, session: u32, launch: crate::launch::Launch, window: &mut Window, cx: &mut Context<Self>) {
+        let servers = crate::servers::load().servers;
+        let server = self.folder.as_ref().and_then(|f| f.location.server.clone()).or_else(|| (servers.len() == 1).then(|| servers[0].clone()));
+        let Some(server) = server else {
+            let _ = window.prompt(
+                gpui::PromptLevel::Info,
+                "Which server?",
+                Some("Open the session's harness on the server (Remotes in the title bar), then Move to Server from that window."),
+                &["OK"],
+                cx,
+            );
+            return;
+        };
+        let detail = format!(
+            "Its worktrees go to {name} at the same commits, with what isn't committed, and Claude's conversation with them. Nothing is pushed to GitHub. The copies on this Mac stay as they are. Then it resumes on {name}.",
+            name = server.name()
+        );
+        let answer = window.prompt(gpui::PromptLevel::Info, &format!("Move this session to {}?", server.name()), Some(&detail), &["Move", "Cancel"], cx);
+        cx.spawn_in(window, async move |this, cx| {
+            if answer.await.ok() != Some(0) {
+                return;
+            }
+            let moved = cx.background_executor().spawn(async move { crate::session_move::move_to(&launch, &server) }).await;
+            this.update_in(cx, |this, window, cx| match moved {
+                Ok(launch) => {
+                    if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(session)) {
+                        this.remove_tab(index, cx);
+                    }
+                    let folder = launch.harness_path.clone();
+                    this.open_session(Kind::Claude, folder, Some(launch), window, cx);
+                }
+                Err(error) => {
+                    let _ = window.prompt(gpui::PromptLevel::Warning, "Couldn't move the session", Some(&error), &["OK"], cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Opens a session in a tab of its own: a terminal in `folder`, or a
     /// launch's start script.
     fn open_session(&mut self, kind: Kind, folder: PathBuf, launch: Option<crate::launch::Launch>, window: &mut Window, cx: &mut Context<Self>) {
@@ -1142,6 +1185,10 @@ impl Workspace {
                 }));
                 this._subscriptions.push(cx.subscribe_in(&page, window, move |this, page, event: &crate::work_panel::WorkEvent, window, cx| {
                     let launch = page.read(cx).launch.clone();
+                    if let (crate::work_panel::WorkEvent::MoveToServer, Some(launch)) = (event, launch.clone()) {
+                        this.move_to_server(id, launch, window, cx);
+                        return;
+                    }
                     let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) else { return };
                     this.remove_tab(index, cx);
                     match (event, launch) {
@@ -2201,7 +2248,7 @@ impl Workspace {
         self.sync.progress = Default::default();
         let progress = self.sync.progress.clone();
         let options = crate::sync::Options {
-            lookback_days: self.sync.prefs.lookback_days.unwrap_or_else(crate::sync::gannin_lookback_days),
+            lookback_days: self.sync.prefs.lookback_days.unwrap_or_else(crate::sync::default_lookback_days),
             full_every: chrono::Duration::hours(self.sync.prefs.full_hours.max(1) as i64),
         };
         cx.notify();
@@ -2333,13 +2380,24 @@ impl Workspace {
     fn refresh(&mut self, cx: &mut Context<Self>) {
         self.sync.open = true;
         self.sync_now(None, false, cx);
+        self.refresh_runs(cx);
         cx.notify();
+    }
+
+    /// Fetches the workflow runs for every CI tab now, whatever their age.
+    fn refresh_runs(&mut self, cx: &mut Context<Self>) {
+        for page in self.pages() {
+            if let Page::Ci(page) = page {
+                page.update(cx, |page, cx| page.sync_runs(true, cx));
+            }
+        }
     }
 
     /// Command-R (View › Refresh): syncs now in the background, the panel
     /// left as it is; the sync button's bar shows it going, and red if it fails.
     fn refresh_quietly(&mut self, cx: &mut Context<Self>) {
         self.sync_now(None, false, cx);
+        self.refresh_runs(cx);
         cx.notify();
     }
 
@@ -2456,10 +2514,10 @@ impl Workspace {
                     .into_any_element()
             })
             .collect();
-        let lookback = prefs.lookback_days.unwrap_or_else(crate::sync::gannin_lookback_days);
+        let lookback = prefs.lookback_days.unwrap_or_else(crate::sync::default_lookback_days);
         let step = |id: &'static str, label: &'static str, by: i64| {
             chip(id.into(), label.into(), false).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                let now = this.sync.prefs.lookback_days.unwrap_or_else(crate::sync::gannin_lookback_days);
+                let now = this.sync.prefs.lookback_days.unwrap_or_else(crate::sync::default_lookback_days);
                 this.sync.prefs.lookback_days = Some((now + by).clamp(1, 90));
                 this.persist(cx);
                 cx.notify();
@@ -3912,8 +3970,8 @@ impl Workspace {
                     .gap_1p5()
                     .cursor_pointer()
                     .text_sm()
-                    .bg(theme.selected.opacity(if open { 0.22 } else { 0.10 }))
-                    .hover(|s| s.bg(theme.selected.opacity(0.22)))
+                    .when(open, |d| d.bg(theme.row_selected))
+                    .hover(|s| s.bg(theme.row_selected))
                     .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         this.toggle_remotes(window, cx);
@@ -4006,7 +4064,7 @@ impl Workspace {
                     .cursor_pointer()
                     .map(|d| {
                         if chip {
-                            d.text_color(theme.selected).bg(theme.selected.opacity(if open { 0.28 } else { 0.16 }))
+                            d.text_color(theme.selected).when(open, |d| d.bg(theme.row_selected))
                         } else {
                             d.text_color(theme.fg).when(open, |d| d.bg(theme.row_selected))
                         }

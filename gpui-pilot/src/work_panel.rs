@@ -208,6 +208,9 @@ enum Pane {
 pub enum WorkEvent {
     Resume,
     Forget,
+    /// Move to Server: a stopped session on this Mac, to resume on the
+    /// window's server.
+    MoveToServer,
 }
 
 impl gpui::EventEmitter<WorkEvent> for WorkPanel {}
@@ -1587,8 +1590,8 @@ impl WorkPanel {
                             .flex_row()
                             .gap_2()
                             .pt_1()
-                            .child(Self::button("work-finder", "Show in Finder", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, _| {
-                                let _ = std::process::Command::new("open").arg(&this.data.folder).spawn();
+                            .child(Self::button("work-finder", if cfg!(target_os = "macos") { "Show in Finder" } else { "Show in Files" }, false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                cx.open_with_system(std::path::Path::new(&this.data.folder));
                             })))
                             .child(Self::button("work-stop-resume", if state.running() { "Stop Claude" } else { "Resume" }, false, true, theme).on_click(cx.listener(
                                 move |this, _: &ClickEvent, _, cx| {
@@ -1599,12 +1602,15 @@ impl WorkPanel {
                                     }
                                 },
                             )))
+                            .when(!state.running() && self.live.as_ref().is_some_and(|l| l.launch.server.is_none()), |d| {
+                                d.child(Self::button("work-move", "Move to Server", false, true, theme).on_click(cx.listener(|_, _: &ClickEvent, _, cx| cx.emit(WorkEvent::MoveToServer))))
+                            })
                             .child(Self::button("work-forget", "Forget", false, true, theme).on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.forget(window, cx)))),
                     )
                     .child(div().text_xs().text_color(theme.secondary).child(if state.running() {
                         "Stop Claude ends it and keeps the worktree, to resume later. Forget ends claude and takes the session out of Gannin; its files stay."
                     } else {
-                        "Resume starts claude again where the conversation left off. Forget takes the session out of Gannin; its files stay."
+                        "Resume starts claude again where the conversation left off. Move to Server takes it, its worktrees and the conversation to the window's server, to resume there. Forget takes the session out of Gannin; its files stay."
                     })),
             )
     }

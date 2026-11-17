@@ -300,6 +300,10 @@ fn watched() -> &'static Mutex<HashMap<String, Watched>> {
     WATCHED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// git's environment for anything run there: gh as github.com's credential
+/// helper, and never a prompt (see `start_command`).
+pub const GIT_ENV: &str = "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= GIT_CONFIG_KEY_1=credential.https://github.com.helper 'GIT_CONFIG_VALUE_1=!gh auth git-credential' GIT_TERMINAL_PROMPT=0";
+
 /// The shell command that starts a session on its server: copies the
 /// session's folder up (not the files the server writes back), sets its
 /// state, then runs `start.sh` there in a login shell with a terminal.
@@ -314,8 +318,7 @@ pub fn start_command(server: &Server, launch: &crate::launch::Launch) -> String 
     // the session hangs. gh keeps its token where ssh can read it: the
     // session's git (the harness pull, worktrees, claude's pushes) uses gh
     // for github.com, and never prompts. The server's git config is left as it is.
-    let git_env = "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= GIT_CONFIG_KEY_1=credential.https://github.com.helper 'GIT_CONFIG_VALUE_1=!gh auth git-credential' GIT_TERMINAL_PROMPT=0";
-    let run = format!(r#"exec env {git_env} "${{SHELL:-/bin/bash}}" -lic 'exec bash "$0"' {remote}/start.sh"#);
+    let run = format!(r#"exec env {GIT_ENV} "${{SHELL:-/bin/bash}}" -lic 'exec bash "$0"' {remote}/start.sh"#);
     format!(
         "printf '\\033[90m%s\\033[0m\\n' {note} && COPYFILE_DISABLE=1 tar -C {local}{excludes} -cf - . | {upload} {unpack} || {{ printf '\\033[31mGannin: %s\\033[0m\\n' {failed}; exec \"${{SHELL:-/bin/zsh}}\" -l; }}; exec {terminal} {run}",
         note = crate::launch::quote(&format!("Starting on {}", server.name())),

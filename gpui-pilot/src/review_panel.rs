@@ -1338,7 +1338,7 @@ impl ReviewPanel {
                         None => d
                             .child(markdown(&format!("finding-{id}"), &text, theme))
                             .when_some(finding.suggestion.clone(), |d, s| {
-                                d.child(div().p_2().rounded_md().bg(theme.good().opacity(0.12)).font_family("SF Mono").text_xs().child(s))
+                                d.child(div().p_2().rounded_md().bg(theme.good().opacity(0.12)).font_family(crate::zed::MONO).text_xs().child(s))
                             }),
                     }),
             )
@@ -1662,7 +1662,7 @@ impl ReviewPanel {
                                                 .px_1p5()
                                                 .rounded_sm()
                                                 .bg(theme.grid)
-                                                .font_family("SF Mono")
+                                                .font_family(crate::zed::MONO)
                                                 .text_xs()
                                                 .cursor_pointer()
                                                 .hover(|s| s.bg(theme.row_selected))
@@ -1702,7 +1702,7 @@ impl ReviewPanel {
             .flex_col()
             .gap_3()
             .max_w(px(860.))
-            .child(div().font_family("SF Mono").text_sm().child(path.to_string()))
+            .child(div().font_family(crate::zed::MONO).text_sm().child(path.to_string()))
             .when_some(area, |d, (i, area)| {
                 d.child(
                     div()
@@ -1730,7 +1730,7 @@ impl ReviewPanel {
             .bg(yellow.opacity(0.1))
             .child(div().font_weight(FontWeight::MEDIUM).child(format!("Applied: {}", applied.learning)))
             .when_some(applied.path.clone(), |d, path| {
-                d.child(div().font_family("SF Mono").text_xs().text_color(theme.secondary).child(match applied.line {
+                d.child(div().font_family(crate::zed::MONO).text_xs().text_color(theme.secondary).child(match applied.line {
                     Some(line) => format!("{path}:{line}"),
                     None => path,
                 }))
@@ -1782,7 +1782,7 @@ impl ReviewPanel {
                                 .bg(yellow.opacity(0.08))
                                 .child(div().font_weight(FontWeight::MEDIUM).child(l.rule.clone()))
                                 .when_some(l.reason.clone(), |d, r| d.child(div().text_sm().child(r)))
-                                .child(div().font_family("SF Mono").text_xs().text_color(theme.secondary).child(lines))
+                                .child(div().font_family(crate::zed::MONO).text_xs().text_color(theme.secondary).child(lines))
                                 .when_some(l.author.clone(), |d, a| d.child(div().text_xs().text_color(theme.secondary).child(format!("From @{a}"))))
                         })),
                 )
@@ -2052,7 +2052,7 @@ impl ReviewPanel {
                                 .p_2()
                                 .rounded_md()
                                 .bg(theme.tile)
-                                .child(div().font_family("SF Mono").text_xs().text_color(theme.selected).child(format!("{path}:{line}")))
+                                .child(div().font_family(crate::zed::MONO).text_xs().text_color(theme.selected).child(format!("{path}:{line}")))
                                 .child(div().text_sm().child(body.clone()))
                         })),
                 )

@@ -2,11 +2,15 @@
 //! OAuth device flow on Gannin's OAuth app, then the viewer's login, name
 //! and avatar from GraphQL.
 //!
-//! The token is the pilot's own, in a keychain item of its own, so signing
-//! out here never signs Gannin out. The keychain is reached through the
-//! system's `security` tool, with the token on its standard input rather
+//! On a Mac the token is the pilot's own, in a keychain item of its own, so
+//! signing out here never signs Gannin out. The keychain is reached through
+//! the system's `security` tool, with the token on its standard input rather
 //! than its command line: an unsigned binary that changes every build
 //! would otherwise be asked to allow access after each one.
+//!
+//! Elsewhere (Linux) the token is gh's: `gh auth token`, and a sign-in here
+//! signs gh in with it (`gh auth login --with-token`). Signing out only
+//! stops the pilot using it, so gh stays signed in.
 //!
 //! These are the pilot's only calls to GitHub besides avatars, and they're
 //! reads: the device flow, and `viewer { login name avatarUrl }`.
@@ -20,7 +24,9 @@ use std::time::Duration;
 /// Gannin's GitHub OAuth app (`GitHubOAuthConfig`).
 const CLIENT_ID: &str = "Ov23lict75KEMvZoPley";
 const SCOPES: &str = "read:user read:org repo project";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const SERVICE: &str = "dev.andon.gannin.gpui-pilot.github";
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const ACCOUNT: &str = "access_token";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -44,10 +50,12 @@ fn viewer_path() -> PathBuf {
     crate::paths::app_dir().join("viewer.json")
 }
 
-// MARK: - Keychain
+// MARK: - Where the token is kept
 
-fn security(args: &[&str], stdin: Option<&str>) -> Option<String> {
-    let mut child = Command::new("/usr/bin/security")
+/// Runs a tool with `stdin` on its standard input, never its command line;
+/// its trimmed output when it succeeds.
+fn run(program: &str, args: &[&str], stdin: Option<&str>) -> Option<String> {
+    let mut child = Command::new(program)
         .args(args)
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
@@ -61,8 +69,76 @@ fn security(args: &[&str], stdin: Option<&str>) -> Option<String> {
     output.status.success().then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
+#[cfg(target_os = "macos")]
+mod store {
+    use super::{run, ACCOUNT, SERVICE};
+
+    pub fn token() -> Option<String> {
+        run("/usr/bin/security", &["find-generic-password", "-s", SERVICE, "-a", ACCOUNT, "-w"], None).filter(|t| !t.is_empty())
+    }
+
+    pub fn set_token(token: &str) -> Result<(), String> {
+        let command = format!("add-generic-password -U -s {SERVICE} -a {ACCOUNT} -w {token}\n");
+        run("/usr/bin/security", &["-i"], Some(&command)).map(|_| ()).ok_or_else(|| "Couldn't save the token in the keychain".into())
+    }
+
+    pub fn forget() {
+        let _ = run("/usr/bin/security", &["delete-generic-password", "-s", SERVICE, "-a", ACCOUNT], None);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+mod store {
+    use super::run;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+
+    /// gh's token, asked again after a minute, as every request wants it.
+    static CACHED: Mutex<Option<(Instant, Option<String>)>> = Mutex::new(None);
+
+    /// Set when signed out here: gh keeps its token, the pilot leaves it.
+    fn signed_out() -> std::path::PathBuf {
+        crate::paths::app_dir().join("signed-out")
+    }
+
+    pub fn token() -> Option<String> {
+        if signed_out().exists() {
+            return None;
+        }
+        let mut cached = CACHED.lock().ok()?;
+        if let Some((at, token)) = cached.as_ref() {
+            if at.elapsed() < Duration::from_secs(60) {
+                return token.clone();
+            }
+        }
+        let token = run("gh", &["auth", "token", "--hostname", "github.com"], None).filter(|t| !t.is_empty());
+        *cached = Some((Instant::now(), token.clone()));
+        token
+    }
+
+    pub fn set_token(token: &str) -> Result<(), String> {
+        run("gh", &["auth", "login", "--hostname", "github.com", "--with-token"], Some(token)).ok_or("Couldn't sign gh in with the token: is gh installed?")?;
+        let _ = std::fs::remove_file(signed_out());
+        if let Ok(mut cached) = CACHED.lock() {
+            *cached = None;
+        }
+        Ok(())
+    }
+
+    pub fn forget() {
+        let path = signed_out();
+        if let Some(folder) = path.parent() {
+            let _ = std::fs::create_dir_all(folder);
+        }
+        let _ = std::fs::write(path, "");
+        if let Ok(mut cached) = CACHED.lock() {
+            *cached = None;
+        }
+    }
+}
+
 pub fn token() -> Option<String> {
-    security(&["find-generic-password", "-s", SERVICE, "-a", ACCOUNT, "-w"], None).filter(|t| !t.is_empty())
+    store::token()
 }
 
 fn set_token(token: &str) -> Result<(), String> {
@@ -70,13 +146,12 @@ fn set_token(token: &str) -> Result<(), String> {
     if !token.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
         return Err("GitHub sent a token in an unexpected form".into());
     }
-    let command = format!("add-generic-password -U -s {SERVICE} -a {ACCOUNT} -w {token}\n");
-    security(&["-i"], Some(&command)).map(|_| ()).ok_or_else(|| "Couldn't save the token in the keychain".into())
+    store::set_token(token)
 }
 
 // MARK: - The signed-in viewer
 
-/// Who was signed in last, while the keychain still has the token.
+/// Who was signed in last, while the token is still there.
 pub fn saved_viewer() -> Option<Viewer> {
     let viewer = std::fs::read(viewer_path()).ok().and_then(|b| serde_json::from_slice(&b).ok())?;
     token().map(|_| viewer)
@@ -93,7 +168,7 @@ fn save_viewer(viewer: &Viewer) {
 }
 
 pub fn sign_out() {
-    let _ = security(&["delete-generic-password", "-s", SERVICE, "-a", ACCOUNT], None);
+    store::forget();
     let _ = std::fs::remove_file(viewer_path());
 }
 
@@ -110,7 +185,7 @@ fn post(url: &str, form: &[(&str, &str)], token: Option<&str>, json: Option<&str
         config.push_str("header = \"Content-Type: application/json\"\n");
         config.push_str(&format!("data = \"{}\"\n", json.replace('\\', "\\\\").replace('"', "\\\"")));
     }
-    let mut command = Command::new("/usr/bin/curl");
+    let mut command = Command::new(crate::paths::curl());
     command.args(["-sS", "--max-time", "20", "-X", "POST", "-H", "Accept: application/json", "-K", "-"]);
     for (key, value) in form {
         command.arg("--data-urlencode").arg(format!("{key}={value}"));

@@ -3,9 +3,9 @@
 //! (`<harness>/.gannin-cache/`), which ignores itself in git so it's never
 //! committed. With no checkout of the harness on this Mac they're kept in
 //! `~/.gannin/caches/`. The first read of one
-//! copies the pilot's earlier copy, else Gannin's, as a start; from then on
-//! the pilot's sync keeps its copy current and Gannin's files are never
-//! written, so the two apps can't overwrite each other.
+//! copies the pilot's earlier copy (from before they moved into the harness)
+//! as a start; the pilot's sync keeps its copy current. The Swift app's
+//! caches are never read.
 
 use std::path::PathBuf;
 
@@ -40,20 +40,10 @@ impl Kind {
     }
 }
 
-fn support() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Application Support")
-}
-
 /// The file name for an org, percent-encoded as `OrgJSONCache` does.
 fn file_name(org: &str) -> String {
     let encoded = org.replace('%', "%25").replace(' ', "%20").replace('/', "%2F");
     format!("{encoded}.json")
-}
-
-/// Gannin's own copy, read only.
-pub fn gannin_path(kind: Kind, org: &str) -> PathBuf {
-    support().join(kind.folder()).join(file_name(org))
 }
 
 /// Where the pilot kept its caches before they moved into the harness, and
@@ -64,8 +54,7 @@ fn fallback() -> PathBuf {
 
 /// The folder an org's synced data lives in: `.gannin-cache/` in its home
 /// harness (its first project's, as the pages order them) when that's
-/// checked out here, else the fallback. Worked out once per org, as it runs
-/// git and reads the harness indexes.
+/// checked out here, else the fallback. Worked out once per org.
 pub fn root(org: &str) -> PathBuf {
     static ROOTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, PathBuf>>> = std::sync::OnceLock::new();
     let roots = ROOTS.get_or_init(Default::default);
@@ -83,7 +72,7 @@ fn harness_root(org: &str) -> Option<PathBuf> {
     if org.is_empty() {
         return None;
     }
-    let repo = crate::projects::load(org).projects.first().map(|p| p.id.clone()).filter(|id| id.contains('/'))?;
+    let repo = crate::projects::harness_repos(org).into_iter().next().filter(|id| id.contains('/'))?;
     crate::paths::harness_cache(&crate::launch::harness_path(org, &repo))
 }
 
@@ -110,13 +99,29 @@ pub fn org_file(org: &str, name: &str, earlier: &str) -> PathBuf {
     path
 }
 
-/// The pilot's copy, made from its earlier copy or Gannin's the first time
-/// it's asked for.
+/// The pilot's copy, made from its earlier copy the first time it's asked
+/// for.
 pub fn path(kind: Kind, org: &str) -> PathBuf {
     let path = root(org).join(kind.folder()).join(file_name(org));
     seed(&path, &fallback().join(kind.folder()).join(file_name(org)));
-    seed(&path, &gannin_path(kind, org));
     path
+}
+
+/// The orgs with a copy in the fallback folder, from before an org's caches
+/// moved into its harness.
+pub fn fallback_orgs() -> Vec<String> {
+    let mut orgs = Vec::new();
+    for kind in [Kind::PullRequests, Kind::Issues, Kind::Actions] {
+        for entry in std::fs::read_dir(fallback().join(kind.folder())).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension().is_some_and(|e| e == "json") {
+                if let Some(stem) = path.file_stem() {
+                    orgs.push(crate::data::percent_decode(&stem.to_string_lossy()));
+                }
+            }
+        }
+    }
+    orgs
 }
 
 /// Held while reading, changing and writing back a store that more than

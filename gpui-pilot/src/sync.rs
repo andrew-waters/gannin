@@ -56,15 +56,10 @@ pub fn last_synced(org: &str) -> Option<DateTime<Utc>> {
     read_synced(org).at
 }
 
-/// Gannin's lookback for merged PRs (Settings), else its default 14 days.
-pub fn gannin_lookback_days() -> i64 {
-    std::process::Command::new("/usr/bin/defaults")
-        .args(["read", "dev.andon.gannin", "lookbackDays"])
-        .output()
-        .ok()
-        .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok())
-        .filter(|d: &i64| *d > 0)
-        .unwrap_or(14)
+/// The lookback for merged PRs when the pilot's own isn't set: Gannin's
+/// default, 14 days.
+pub fn default_lookback_days() -> i64 {
+    14
 }
 
 /// GitHub's ISO time with an explicit offset, as Gannin's searches use.
@@ -145,7 +140,7 @@ pub struct Options {
 
 impl Default for Options {
     fn default() -> Self {
-        Self { lookback_days: gannin_lookback_days(), full_every: Duration::hours(24) }
+        Self { lookback_days: default_lookback_days(), full_every: Duration::hours(24) }
     }
 }
 

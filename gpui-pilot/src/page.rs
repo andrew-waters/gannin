@@ -67,6 +67,8 @@ pub struct ActionsPage {
     repo_sort: (RepoSort, bool),
     /// Bumped on every load, so a slow one finishing late is dropped.
     generation: u64,
+    /// The runs are being fetched.
+    syncing: bool,
     _appearance: Subscription,
 }
 
@@ -76,7 +78,7 @@ impl ActionsPage {
             state: if org.is_some() {
                 LoadState::Loading
             } else {
-                LoadState::Empty(format!("No Actions cache in {}. Open Actions in Gannin first.", data::cache_dir().display()))
+                LoadState::Empty("Open a folder to choose an org.".into())
             },
             org,
             focus: None,
@@ -88,6 +90,7 @@ impl ActionsPage {
             hover: None,
             repo_sort: (RepoSort::RunTime, true),
             generation: 0,
+            syncing: false,
             _appearance: cx.observe_window_appearance(window, |_, _, cx| cx.notify()),
         };
         page.load(cx);
@@ -168,7 +171,49 @@ impl ActionsPage {
                         page.metrics = Some(metrics);
                         page.state = LoadState::Ready;
                     }
+                    // No runs yet: they're being fetched.
+                    Err(_) if page.org.as_deref().is_some_and(|org| !data::cache_path(org).exists()) => page.state = LoadState::Empty("Fetching the workflow runs".into()),
                     Err(error) => page.state = LoadState::Failed(error),
+                }
+                // Then the runs are brought up to date when they're old.
+                page.sync_runs(false, cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Fetches the org's workflow runs (`actions.rs`), when older than the
+    /// sync interval or `force`d, then reads them again if anything changed.
+    pub fn sync_runs(&mut self, force: bool, cx: &mut Context<Self>) {
+        let Some(org) = self.org.clone() else { return };
+        if self.syncing {
+            return;
+        }
+        self.syncing = true;
+        let days = self.days;
+        cx.spawn(async move |this, cx| {
+            let synced = cx.background_executor().spawn({
+                let org = org.clone();
+                async move { crate::actions::sync(&org, days, force) }
+            }).await;
+            this.update(cx, |page, cx| {
+                page.syncing = false;
+                if page.org.as_deref() != Some(org.as_str()) {
+                    return;
+                }
+                match synced {
+                    Ok(true) => {
+                        page.history = None;
+                        page.load(cx);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        if page.history.is_none() {
+                            page.state = LoadState::Failed(error);
+                        }
+                    }
                 }
                 cx.notify();
             })
