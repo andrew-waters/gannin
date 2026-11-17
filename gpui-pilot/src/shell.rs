@@ -1095,8 +1095,14 @@ impl Workspace {
         }
     }
 
-    /// Asks where to start, then opens the session in a tab of its own.
+    /// Opens the session in a tab of its own, in the window's folder. Only
+    /// a window with no folder, or one on a server (a plain session runs on
+    /// this Mac), asks where to start.
     fn new_session(&mut self, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(folder) = self.folder.as_ref().filter(|f| f.location.server.is_none()).map(|f| f.location.path.clone()) {
+            self.open_session(kind, folder, None, window, cx);
+            return;
+        }
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: false,
             directories: true,

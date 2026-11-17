@@ -70,7 +70,7 @@ in `Application Support/GanninGPUIPilot/state.json`, never in Gannin's own folde
   Milestone), the sub-issue tree with a drill-down into a parent, and columns each person chooses,
   orders by dragging and sizes, with board fields as columns.
 - **Sessions** (`src/session.rs`, `src/changes.rs`): New Claude Code (Command-T) or New Terminal
-  asks for a folder and opens a tab with Zed's own `TerminalView` beside the folder's uncommitted
+  opens a tab in the window's folder (asking for one only when the window has none, or is on a server) with Zed's own `TerminalView` beside the folder's uncommitted
   changes in Zed's editor, as a multibuffer of hunks per file, read with git every two seconds
   while the tab shows. Zed's views run without a Zed workspace or project (empty handles), with
   Zed's default settings, theme and fonts (`src/zed.rs`). State comes from the terminal, as no
