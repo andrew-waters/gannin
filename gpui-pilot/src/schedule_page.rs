@@ -694,7 +694,7 @@ impl SchedulePage {
             .child(Self::button("approve", "Approve by itself", settings.approve_by_itself, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.change_all(cx, |s| s.settings.approve_by_itself = !s.settings.approve_by_itself)
             })))
-            .child(Self::button("pause-all", if settings.paused_all { "Resume All" } else { "Pause All" }, settings.paused_all, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+            .child(Self::button("pause-all", if settings.paused_all { "▶ All" } else { "❚❚ All" }, settings.paused_all, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                 this.change_all(cx, |s| s.settings.paused_all = !s.settings.paused_all)
             })))
     }
