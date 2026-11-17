@@ -346,7 +346,7 @@ impl AssistantPreview {
         // for a new line and Command-Return to send.
         let composer = cx.new(|cx| {
             let mut editor = editor::Editor::auto_height(2, 10, window, cx);
-            editor.set_placeholder_text("Message the assistant. / for commands, @ to mention", window, cx);
+            editor.set_placeholder_text("Message the assistant", window, cx);
             editor
         });
         let edits = cx.subscribe(&composer, |this: &mut Self, _, event: &editor::EditorEvent, cx| {
@@ -1205,7 +1205,7 @@ impl AssistantPreview {
             .flex_col()
             .py_2()
             .children(pins.iter().map(|&t| self.full_row(t, false, cx)))
-            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().my_2().mx_4().h(px(1.)).bg(theme.secondary.opacity(0.4))))
+            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().flex_none().w_full().px_4().my_2().child(div().w_full().h(px(1.)).bg(theme.secondary.opacity(0.4)))))
             .children(rest.iter().map(|&t| self.full_row(t, false, cx)))
     }
 
@@ -1260,8 +1260,8 @@ impl AssistantPreview {
             .items_center()
             .pl_1()
             .cursor_pointer()
-            .when(self.row_menu.is_some_and(|(m, _)| m == t), |d| d.bg(theme.row_selected))
-            .hover(|s| s.bg(theme.row_selected))
+            .when(self.row_menu.is_some_and(|(m, _)| m == t), |d| d.bg(theme.tile))
+            .hover(|s| s.bg(theme.tile))
             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(t, cx)))
             .on_mouse_down(
                 gpui::MouseButton::Right,
@@ -1817,7 +1817,7 @@ impl AssistantPreview {
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send(window, cx))),
                     ),
             )
-            .child(div().text_xs().text_color(theme.tertiary).child("↩ new line · ⌘↩ send · / commands · @ mention · Esc to the list"))
+            .child(div().truncate().text_xs().text_color(theme.tertiary).child("⌘↩ send · / commands · @ mention"))
     }
 
     fn toasts_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1886,7 +1886,7 @@ impl Render for AssistantPreview {
             .flex_row()
             .items_center()
             .gap_2()
-            .pl(px(78.))
+            .pl(px(86.))
             .pr_3()
             .h(px(40.))
             .border_b_1()
