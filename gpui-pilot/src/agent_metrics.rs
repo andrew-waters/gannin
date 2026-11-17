@@ -7,7 +7,7 @@
 
 use crate::charts::Theme;
 use chrono::{DateTime, Datelike, Duration, NaiveDate, Utc};
-use gpui::{div, prelude::*, px, ClickEvent, Context, FontWeight, Hsla, SharedString, Window};
+use gpui::{div, prelude::*, px, uniform_list, ClickEvent, Context, FontWeight, Hsla, SharedString, Window};
 use serde_json::Value;
 use std::collections::{BTreeMap, HashMap};
 
@@ -125,6 +125,50 @@ pub struct AgentMetricsPage {
 }
 
 impl AgentMetricsPage {
+    /// The records in the range, for the reviewer picked, newest first.
+    fn shown(&self) -> Vec<&Record> {
+        let since = (self.days > 0).then(|| Utc::now() - Duration::days(self.days));
+        self.records
+            .iter()
+            .flatten()
+            .filter(|r| since.is_none_or(|s| r.date() >= s) && self.reviewer.as_ref().is_none_or(|who| r.reviewer.eq_ignore_ascii_case(who)))
+            .collect()
+    }
+
+    /// One review in the Reviews list; a click opens its PR.
+    fn review_row(i: usize, r: &Record, theme: &Theme, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let cell = |text: String, w: f32| div().w(px(w)).flex_none().truncate().child(text);
+        let url = format!("https://github.com/{}/pull/{}", r.repo, r.number);
+        div()
+            .id(("review-row", i))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_3()
+            .px_2()
+            .py_1()
+            .text_sm()
+            .cursor_pointer()
+            .hover(|s| s.bg(theme.row_selected))
+            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_col()
+                    .child(div().truncate().child(r.title.clone()))
+                    .child(div().truncate().text_xs().text_color(theme.secondary).child(format!("{}#{}{}", r.repo, r.number, r.author.as_ref().map(|a| format!(" by @{a}")).unwrap_or_default()))),
+            )
+            .child(cell(format!("@{}", r.reviewer), 120.))
+            .child(cell(verdict(r.verdict.as_deref()).into(), 120.).text_color(theme.secondary))
+            .child(cell(r.effort.map(|e| e.to_string()).unwrap_or_default(), 50.))
+            .child(cell(if r.posted_at.is_none() { "Not yet".into() } else { format!("{} of {}", r.posted().count(), r.findings.len()) }, 70.))
+            .child(cell(if r.posted().count() == 0 { String::new() } else { r.accepted().to_string() }, 70.))
+            .child(cell(r.state.as_deref().map(capitalised).unwrap_or_default(), 70.).text_color(theme.secondary))
+            .child(cell(ago(r.date()), 80.).text_color(theme.secondary))
+            .into_any_element()
+    }
     pub fn new(org: Option<String>, cx: &mut Context<Self>) -> Self {
         let mut page = Self { org, records: None, days: 30, reviewer: None, listing: false };
         page.reload(cx);
@@ -308,11 +352,8 @@ impl Render for AgentMetricsPage {
         let Some(all) = self.records.clone() else {
             return div().size_full().p_4().bg(theme.bg).text_color(theme.secondary).child("Reading the review records").into_any_element();
         };
-        let since = (self.days > 0).then(|| Utc::now() - Duration::days(self.days));
-        let records: Vec<&Record> = all
-            .iter()
-            .filter(|r| since.is_none_or(|s| r.date() >= s) && self.reviewer.as_ref().is_none_or(|who| r.reviewer.eq_ignore_ascii_case(who)))
-            .collect();
+        let records: Vec<Record> = self.shown().into_iter().cloned().collect();
+        let records: Vec<&Record> = records.iter().collect();
         let mut reviewers: Vec<String> = all.iter().map(|r| r.reviewer.to_lowercase()).collect();
         reviewers.sort();
         reviewers.dedup();
@@ -473,40 +514,6 @@ impl Render for AgentMetricsPage {
 
         let reviewer_rows: Vec<gpui::AnyElement> = reviewer_rows.map(|r| r.into_any_element()).collect();
 
-        // Reviews, newest first (the first 200).
-        let review_rows = records.iter().take(200).enumerate().map(|(i, r)| {
-            let url = format!("https://github.com/{}/pull/{}", r.repo, r.number);
-            div()
-                .id(("review-row", i))
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_3()
-                .px_2()
-                .py_1()
-                .text_sm()
-                .cursor_pointer()
-                .hover(|s| s.bg(theme.row_selected))
-                .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .child(div().truncate().child(r.title.clone()))
-                        .child(div().truncate().text_xs().text_color(theme.secondary).child(format!("{}#{}{}", r.repo, r.number, r.author.as_ref().map(|a| format!(" by @{a}")).unwrap_or_default()))),
-                )
-                .child(cell(format!("@{}", r.reviewer), 120.))
-                .child(cell(verdict(r.verdict.as_deref()).into(), 120.).text_color(theme.secondary))
-                .child(cell(r.effort.map(|e| e.to_string()).unwrap_or_default(), 50.))
-                .child(cell(if r.posted_at.is_none() { "Not yet".into() } else { format!("{} of {}", r.posted().count(), r.findings.len()) }, 70.))
-                .child(cell(if r.posted().count() == 0 { String::new() } else { r.accepted().to_string() }, 70.))
-                .child(cell(r.state.as_deref().map(capitalised).unwrap_or_default(), 70.).text_color(theme.secondary))
-                .child(cell(ago(r.date()), 80.).text_color(theme.secondary))
-        });
-        let review_rows: Vec<gpui::AnyElement> = review_rows.map(|r| r.into_any_element()).collect();
-        let more = records.len().saturating_sub(200);
         if listing {
             return div()
                 .size_full()
@@ -516,18 +523,31 @@ impl Render for AgentMetricsPage {
                 .text_color(theme.fg)
                 .child(bar)
                 .child(
-                    div().id("agent-reviews").flex_1().min_h_0().overflow_y_scroll().child(
-                        div()
-                            .p_5()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(div().text_xs().text_color(theme.secondary).child("Every review in the range, newest first. Click one to open its PR."))
-                            .child(header(vec![("Pull request", 0.), ("Reviewer", 120.), ("Verdict", 120.), ("Effort", 50.), ("Posted", 70.), ("Acted on", 70.), ("PR", 70.), ("When", 80.)]))
-                            .children(review_rows)
-                            .when(more > 0, |d| d.child(div().px_2().text_xs().text_color(theme.secondary).child(format!("And {more} older"))))
-                            .child(div().pt_2().text_xs().text_color(theme.secondary).child("\"Acted on\" is a posted finding whose GitHub thread was resolved (fixed, or answered), as last looked at: when the review was posted again, finished, or its PR merged or closed while watched.")),
-                    ),
+                    // Every review in the range, drawn only as it scrolls
+                    // into view, so the whole history shows.
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .p_5()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(div().text_xs().text_color(theme.secondary).child(format!("All {} reviews in the range, newest first. Click one to open its PR.", records.len())))
+                        .child(header(vec![("Pull request", 0.), ("Reviewer", 120.), ("Verdict", 120.), ("Effort", 50.), ("Posted", 70.), ("Acted on", 70.), ("PR", 70.), ("When", 80.)]))
+                        .child(
+                            uniform_list(
+                                "agent-reviews",
+                                records.len(),
+                                cx.processor(|page, range: std::ops::Range<usize>, window, cx| {
+                                    let theme = Theme::for_window(window);
+                                    let shown = page.shown();
+                                    range.filter_map(|i| shown.get(i).map(|r| Self::review_row(i, r, &theme, cx))).collect::<Vec<_>>()
+                                }),
+                            )
+                            .flex_1()
+                            .min_h_0(),
+                        )
+                        .child(div().pt_2().text_xs().text_color(theme.secondary).child("\"Acted on\" is a posted finding whose GitHub thread was resolved (fixed, or answered), as last looked at: when the review was posted again, finished, or its PR merged or closed while watched.")),
                 )
                 .into_any_element();
         }
