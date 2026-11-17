@@ -321,6 +321,9 @@ pub struct AssistantPreview {
     thread_menu: bool,
     /// The thread shown in the drawer beside the panel, when one's open.
     drawer: Option<usize>,
+    /// Whether the panel shows: hidden until it's called up (the title
+    /// bar's button, Command-J, a notification) and hidden again with Escape.
+    panel_shown: bool,
     /// A thread's right-click menu: which, and where.
     row_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     /// The window's theme, as of the last render.
@@ -377,6 +380,7 @@ impl AssistantPreview {
             more_open: false,
             thread_menu: false,
             drawer: None,
+            panel_shown: true,
             row_menu: None,
             theme: Theme::for_window(window),
             suggest: 0,
@@ -390,7 +394,7 @@ impl AssistantPreview {
             next_toast: 0,
             focus_mode: false,
             held: 0,
-            workspace: "Your workspace: Issues, PRs and session tabs".into(),
+            workspace: "Your Gannin window as it is today: Issues, PRs and session tabs.\nThe assistant is a panel down its right side, hidden until you call it up.".into(),
         }
     }
 
@@ -744,7 +748,21 @@ impl AssistantPreview {
 
     // MARK: Keys
 
+    fn toggle_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.panel_shown = !self.panel_shown;
+        if self.panel_shown {
+            window.focus(&self.composer.focus_handle(cx), cx);
+        } else {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key == "j" && event.keystroke.modifiers.platform {
+            self.toggle_panel(window, cx);
+            return;
+        }
         if self.composer.focus_handle(cx).is_focused(window) {
             if event.keystroke.key == "escape" {
                 window.focus(&self.focus, cx);
@@ -798,6 +816,7 @@ impl AssistantPreview {
                 }
             }
             "escape" if self.drawer.is_some() => self.drawer = None,
+            "escape" if self.open.is_none() && !self.scope_menu && !self.more_menu => self.panel_shown = false,
             "escape" => {
                 self.open = None;
                 self.scope_menu = false;
@@ -873,6 +892,17 @@ fn avatar_view(kind: Kind, unread: bool, size: f32, icon: f32, theme: &Theme) ->
 
 /// How long ago, said as such: "now", "2m ago", "1h ago".
 
+/// An open ring turning: working, without arrows.
+fn spinner(id: impl Into<gpui::ElementId>, size: f32, theme: &Theme) -> impl IntoElement {
+    use gpui::{Animation, AnimationExt, Transformation};
+    gpui::svg()
+        .path("icons/load_circle.svg")
+        .size(px(size))
+        .flex_none()
+        .text_color(theme.blue())
+        .with_animation(id, Animation::new(Duration::from_millis(900)).repeat(), |svg, delta| svg.with_transformation(Transformation::rotate(gpui::percentage(delta))))
+}
+
 fn ago(minutes: u32) -> String {
     match minutes {
         0 => "now".into(),
@@ -902,6 +932,7 @@ fn age_color(minutes: u32, theme: &Theme) -> Hsla {
 impl AssistantPreview {
     /// The scope and the menu, at the right of the title bar.
     fn title_controls(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let waiting = self.queue().len();
         div()
             .flex_none()
             .child(
@@ -910,6 +941,24 @@ impl AssistantPreview {
                     .flex_row()
                     .items_center()
                     .gap_2()
+                    // Shows or hides the panel (Command-J), with what needs you.
+                    .child(
+                        div()
+                            .id("assistant-toggle")
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .px_1p5()
+                            .py_0p5()
+                            .rounded_md()
+                            .cursor_pointer()
+                            .when(self.panel_shown, |d| d.bg(theme.row_selected))
+                            .hover(|s| s.bg(theme.row_selected))
+                            .child(gpui::svg().path("icons/sparkle.svg").size(px(14.)).text_color(if self.panel_shown { theme.fg } else { theme.secondary }))
+                            .when(waiting > 0, |d| d.child(div().px_1().rounded_full().bg(theme.orange()).text_xs().text_color(gpui::white()).child(format!("{waiting}"))))
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.toggle_panel(window, cx))),
+                    )
                     .when(self.focus_mode, |d| d.child(div().text_xs().text_color(theme.blue()).child(format!("Focus{}", if self.held > 0 { format!(" · {} held", self.held) } else { String::new() }))))
                     .child(
                         div()
@@ -1198,8 +1247,8 @@ impl AssistantPreview {
                 ),
             )
             .children(pins.iter().map(|&t| self.full_row(t, false, cx)))
-            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().mt_1().mb_1().h(px(1.)).bg(theme.border)))
-            .children(rest.iter().enumerate().map(|(row, &t)| self.full_row(t, row + 1 < rest_count, cx)))
+            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().my_2().h(px(1.)).bg(theme.border)))
+            .children(rest.iter().map(|&t| self.full_row(t, false, cx)))
     }
 
     /// A thread as two lines beside its kind's icon: the name, mute and
@@ -1228,7 +1277,13 @@ impl AssistantPreview {
                             .gap_2()
                             .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
                             .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
-                            .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) }))
+                            .map(|d| {
+                                if thread.state == State::Working {
+                                    d.child(spinner(SharedString::from(format!("row-spin-{t}")), 14., theme))
+                                } else {
+                                    d.child(div().text_xs().text_color(theme.secondary).child(ago(thread.minutes)))
+                                }
+                            })
                             .child(div().text_sm().text_color(theme.tertiary).child("›")),
                     )
                     .child(div().truncate().text_xs().text_color(if thread.muted { theme.tertiary } else { theme.secondary }).child(thread.last.clone())),
@@ -1630,7 +1685,7 @@ impl AssistantPreview {
                         self.message_view(t, m, message, named, theme, cx)
                     }))
                     .when_some(thread.doing.clone(), |d, doing| {
-                        d.child(div().flex().flex_col().items_start().child(div().px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.secondary).child(format!("• • •  {doing}"))))
+                        d.child(div().flex().flex_col().items_start().child(div().flex().flex_row().items_center().gap_2().px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.secondary).child(spinner(SharedString::from(format!("doing-spin-{t}")), 14., theme)).child(doing)))
                     }),
             )
     }
@@ -1989,6 +2044,7 @@ impl AssistantPreview {
                         d.child(div().flex().flex_row().gap_1().pt_1().children(toast.actions.iter().enumerate().map(|(n, &action)| {
                             button(format!("toast-{id}-{n}"), action, n == 0, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.toasts.retain(|t| t.id != id);
+                                this.panel_shown = true;
                                 match (action, thread) {
                                     ("Open", Some(t)) => this.open_drawer(t, cx),
                                     (_, Some(t)) => {
@@ -2070,7 +2126,7 @@ impl Render for AssistantPreview {
             .flex_col()
             .bg(theme.bg)
             .child(controls)
-            .child(div().flex_1().min_h_0().flex().flex_row().child(workspace).when_some(self.drawer, |d, t| d.child(self.drawer_view(t, &theme, cx))).child(panel))
+            .child(div().flex_1().min_h_0().flex().flex_row().child(workspace).when_some(self.drawer, |d, t| d.child(self.drawer_view(t, &theme, cx))).when(self.panel_shown, |d| d.child(panel)))
             .child(self.toasts_view(&theme, cx))
             .when_some(menus, |d, menus| d.child(menus))
             .when_some(self.row_menu_view(cx), |d, menu| d.child(menu))
