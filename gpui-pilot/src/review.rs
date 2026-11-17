@@ -127,7 +127,17 @@ pub fn read_result(claude_id: &str) -> Option<ReviewResult> {
 /// used and on what, or "Writing the review" once it's replying.
 pub fn activity(claude_id: &str) -> Option<String> {
     let text = std::fs::read_to_string(transcript(claude_id)?).ok()?;
-    let entry = text.lines().rev().filter_map(|line| serde_json::from_str::<Value>(line).ok()).find(|e| e["type"] == "assistant" && e["isSidechain"] != true)?;
+    // The last turn's entry: a prompt typed after claude's last reply
+    // (Review Again) means it hasn't started on it yet, so the reply before
+    // isn't what it's doing.
+    let entry = text
+        .lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|e| e["isSidechain"] != true && (e["type"] == "assistant" || (e["type"] == "user" && e["isMeta"] != true && is_prompt(e))))?;
+    if entry["type"] == "user" {
+        return Some("Reading your message".into());
+    }
     let block = entry["message"]["content"].as_array()?.last()?.clone();
     if block["type"] == "text" {
         return Some("Writing the review".into());
@@ -140,6 +150,15 @@ pub fn activity(claude_id: &str) -> Option<String> {
     let what: String = what.lines().next().unwrap_or("").chars().take(90).collect();
     let name = block["name"].as_str().unwrap_or("Working");
     Some(if what.is_empty() { name.to_string() } else { format!("{name}: {what}") })
+}
+
+/// A message the person sent, not a tool's result coming back.
+fn is_prompt(entry: &Value) -> bool {
+    match &entry["message"]["content"] {
+        Value::String(_) => true,
+        Value::Array(blocks) => blocks.iter().all(|b| b["type"] == "text"),
+        _ => false,
+    }
 }
 
 pub fn parse(reply: &str) -> Option<ReviewResult> {

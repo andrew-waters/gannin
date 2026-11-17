@@ -1261,6 +1261,47 @@ impl ReviewPanel {
             })
     }
 
+    /// While claude reviews again with the last result still showing: a
+    /// spinner and what it's doing, as the first review's waiting page, so
+    /// it's clear without the terminal open. Needs-you says so instead.
+    fn again_strip(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if self.result.is_none() {
+            return None;
+        }
+        let needs_you = self.claude_state().as_deref() == Some("needs-you");
+        if !self.working() && !needs_you {
+            return None;
+        }
+        let shown = self.shows_conversation();
+        let text = match (&self.activity, needs_you) {
+            (_, true) => "Claude is asking something in its terminal.".to_string(),
+            (Some(activity), _) => activity.clone(),
+            (None, _) => "The new result replaces this one once it's done.".to_string(),
+        };
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py_2()
+                .bg(theme.sidebar)
+                .border_b_1()
+                .border_color(theme.border)
+                .when(!needs_you, |d| d.child(Self::spinner("review-again-spinner", 16., theme)))
+                .child(div().flex_none().text_sm().font_weight(FontWeight::MEDIUM).text_color(if needs_you { theme.orange() } else { theme.fg }).child(if needs_you { "Needs you" } else { "Reviewing again" }))
+                .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.secondary).child(text))
+                .when(needs_you || !shown, |d| {
+                    d.child(Self::button("again-terminal", if needs_you { "Answer in Terminal" } else { "Show Terminal" }, needs_you, true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.conversation = Some(true);
+                        cx.notify();
+                    })))
+                }),
+        )
+    }
+
     fn section_heading(text: &str) -> impl IntoElement {
         div().text_base().font_weight(FontWeight::SEMIBOLD).child(text.to_string())
     }
@@ -1793,6 +1834,7 @@ impl Render for ReviewPanel {
                 cx.listener(|this, _: &gpui::MouseUpEvent, _, _| this.resizing = None),
             )
             .child(self.header(&theme, cx))
+            .when_some(self.again_strip(&theme, cx), |d, strip| d.child(strip))
             .child(
                 div()
                     .flex_1()
