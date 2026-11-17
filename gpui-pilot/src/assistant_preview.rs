@@ -319,11 +319,6 @@ pub struct AssistantPreview {
     more_open: bool,
     /// The open thread's Pin, Mute and Mark as unread.
     thread_menu: bool,
-    /// The thread shown in the drawer beside the panel, when one's open.
-    drawer: Option<usize>,
-    /// Whether the panel shows: hidden until it's called up (the title
-    /// bar's button, Command-J, a notification) and hidden again with Escape.
-    panel_shown: bool,
     /// A thread's right-click menu: which, and where.
     row_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     /// The window's theme, as of the last render.
@@ -343,8 +338,6 @@ pub struct AssistantPreview {
     next_toast: usize,
     focus_mode: bool,
     held: usize,
-    /// What the fake workspace shows, after Open.
-    workspace: String,
 }
 
 impl AssistantPreview {
@@ -379,8 +372,6 @@ impl AssistantPreview {
             later_menu: false,
             more_open: false,
             thread_menu: false,
-            drawer: None,
-            panel_shown: true,
             row_menu: None,
             theme: Theme::for_window(window),
             suggest: 0,
@@ -394,7 +385,6 @@ impl AssistantPreview {
             next_toast: 0,
             focus_mode: false,
             held: 0,
-            workspace: "Your Gannin window as it is today: Issues, PRs and session tabs.\nThe assistant is a panel down its right side, hidden until you call it up.".into(),
         }
     }
 
@@ -437,8 +427,8 @@ impl AssistantPreview {
         match action {
             "Open" | "Look" | "Open on GitHub" => {
                 match it.thread {
-                    Some(t) => self.open_drawer(t, cx),
-                    None => self.workspace = format!("{} would open on GitHub.", it.subject),
+                    Some(t) => self.open_in_gannin(t, cx),
+                    None => self.notify(format!("{} opens on GitHub", it.subject), "In your browser".into(), vec![], None, cx),
                 }
                 cx.notify();
                 return;
@@ -505,11 +495,13 @@ impl AssistantPreview {
         self.threads[0].minutes = 0;
     }
 
-    /// Shows a thread in the drawer beside the panel, and marks it read.
-    fn open_drawer(&mut self, t: usize, cx: &mut Context<Self>) {
-        self.drawer = Some(t);
+    /// Open: the main Gannin window comes forward on the thread's tab (its
+    /// session, or the question or investigation as a tab). Here, a note
+    /// says so.
+    fn open_in_gannin(&mut self, t: usize, cx: &mut Context<Self>) {
         self.threads[t].unread = false;
-        cx.notify();
+        let title = self.threads[t].title.clone();
+        self.notify("Opened in Gannin".into(), format!("The main window switched to {title}"), vec![], None, cx);
     }
 
     fn open_thread(&mut self, t: usize, cx: &mut Context<Self>) {
@@ -748,21 +740,7 @@ impl AssistantPreview {
 
     // MARK: Keys
 
-    fn toggle_panel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.panel_shown = !self.panel_shown;
-        if self.panel_shown {
-            window.focus(&self.composer.focus_handle(cx), cx);
-        } else {
-            window.focus(&self.focus, cx);
-        }
-        cx.notify();
-    }
-
     fn key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        if event.keystroke.key == "j" && event.keystroke.modifiers.platform {
-            self.toggle_panel(window, cx);
-            return;
-        }
         if self.composer.focus_handle(cx).is_focused(window) {
             if event.keystroke.key == "escape" {
                 window.focus(&self.focus, cx);
@@ -815,8 +793,6 @@ impl AssistantPreview {
                     self.threads[t].unread = !self.threads[t].unread;
                 }
             }
-            "escape" if self.drawer.is_some() => self.drawer = None,
-            "escape" if self.open.is_none() && !self.scope_menu && !self.more_menu => self.panel_shown = false,
             "escape" => {
                 self.open = None;
                 self.scope_menu = false;
@@ -932,7 +908,6 @@ fn age_color(minutes: u32, theme: &Theme) -> Hsla {
 impl AssistantPreview {
     /// The scope and the menu, at the right of the title bar.
     fn title_controls(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let waiting = self.queue().len();
         let unread = self.unread_count();
         div()
             .flex_none()
@@ -942,25 +917,6 @@ impl AssistantPreview {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    // Shows or hides the panel (Command-J), with what needs you.
-                    .child(
-                        div()
-                            .id("assistant-toggle")
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_1()
-                            .px_1p5()
-                            .py_0p5()
-                            .rounded_md()
-                            .cursor_pointer()
-                            .when(self.panel_shown, |d| d.bg(theme.row_selected))
-                            .hover(|s| s.bg(theme.row_selected))
-                            .child(gpui::svg().path("icons/sparkle.svg").size(px(14.)).text_color(if self.panel_shown { theme.fg } else { theme.secondary }))
-                            .when(waiting > 0, |d| d.child(div().px_1().rounded_full().bg(theme.orange()).text_xs().text_color(gpui::white()).child(format!("{waiting}"))))
-                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.toggle_panel(window, cx))),
-                    )
-                    .when(self.focus_mode, |d| d.child(div().text_xs().text_color(theme.blue()).child(format!("Focus{}", if self.held > 0 { format!(" · {} held", self.held) } else { String::new() }))))
                     // Only unread threads, with how many.
                     .child(div()
                         .id("unread-toggle")
@@ -1058,13 +1014,13 @@ impl AssistantPreview {
             );
         }
         if self.more_menu {
-            let entries = ["Done today", "Compact now", "New conversation", "Edit notes", "Mark all read", "Focus on/off"];
+            let entries = ["Done today", "Compact now", "New conversation", "Edit notes", "Mark all read", "Focus on/off", "Simulate: session blocked", "Simulate: comment on a done thread", "Simulate: review finished"];
             return Some(
                 div()
                     .absolute()
                     .top(px(38.))
                     .right(px(10.))
-                    .w(px(220.))
+                    .w(px(270.))
                     .p_1()
                     .bg(theme.popover)
                     .border_1()
@@ -1086,20 +1042,25 @@ impl AssistantPreview {
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.more_menu = false;
                                 match i {
-                                    0 => this.workspace = format!("Done today\n\n{}", this.done.iter().map(|d| format!("✓ {d}")).collect::<Vec<_>>().join("\n")),
+                                    0 => {
+                                        let done = this.done.iter().map(|d| format!("- {d}")).collect::<Vec<_>>().join("\n");
+                                        this.threads[0].messages.push(Message { who: Who::Assistant, body: Body::Long { point: format!("{} done today.", this.done.len()), body: done } });
+                                        this.open = Some(0);
+                                    }
                                     1 => {
                                         this.threads[0].messages.push(text(Who::Event, "Compacted. Notes and threads are kept; the summary replaces older turns."));
                                     }
                                     2 => {
                                         this.threads[0].messages.push(text(Who::Event, "New conversation. assistant-notes.md loaded; the old one stays above."));
                                     }
-                                    3 => this.workspace = "assistant-notes.md would open here:\n\n- Prefers Comment on Friday PRs\n- Watching mono#1539 for a re-review\n- SGN numbers: exclude drafts".into(),
+                                    3 => this.notify("assistant-notes.md".into(), "Opens in your editor".into(), vec![], None, cx),
                                     4 => {
                                         for t in &mut this.threads {
                                             t.unread = false;
                                         }
                                     }
-                                    _ => this.simulate(3, cx),
+                                    5 => this.simulate(3, cx),
+                                    n => this.simulate(n - 6, cx),
                                 }
                                 cx.notify();
                             }))
@@ -1244,7 +1205,7 @@ impl AssistantPreview {
             .flex_col()
             .py_2()
             .children(pins.iter().map(|&t| self.full_row(t, false, cx)))
-            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().my_2().h(px(1.)).bg(theme.border)))
+            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().my_2().mx_4().h(px(1.)).bg(theme.secondary.opacity(0.4))))
             .children(rest.iter().map(|&t| self.full_row(t, false, cx)))
     }
 
@@ -1431,7 +1392,7 @@ impl AssistantPreview {
                                     match label {
                                         "Follow up" => window.focus(&this.composer.focus_handle(cx), cx),
                                         "Copy" => this.notify("Copied".into(), "Plain text, ready for Slack or notes".into(), vec![], None, cx),
-                                        "Open session" => this.open_drawer(t, cx),
+                                        "Open session" => this.open_in_gannin(t, cx),
                                         _ => this.threads[t].messages.push(text(Who::Event, &format!("{label}: done (preview)"))),
                                     }
                                     cx.notify();
@@ -1618,7 +1579,7 @@ impl AssistantPreview {
                             .px_1()
                             .cursor_pointer()
                             .child(gpui::svg().path("icons/maximize.svg").size(px(14.)).text_color(theme.selected))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_drawer(t, cx))),
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_in_gannin(t, cx))),
                     )
                     .child(
                         div()
@@ -1744,157 +1705,6 @@ impl AssistantPreview {
         });
         self.suggest = 0;
         cx.notify();
-    }
-
-    /// The drawer: what a thread opens to, beside the panel and hidden till
-    /// then. A session shows its own view (the review panel, or terminal and
-    /// Changes) with a strip saying where you left off; a question or an
-    /// investigation shows its thread at full width beside its evidence.
-    fn drawer_view(&self, t: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let thread = &self.threads[t];
-        let since = thread.messages.iter().find_map(|m| match &m.body {
-            Body::Since { what, since, wants } => Some((what.clone(), since.clone(), wants.clone())),
-            _ => None,
-        });
-        let header = div()
-            .flex_none()
-            .flex()
-            .flex_row()
-            .items_center()
-            .gap_2()
-            .px_4()
-            .h(px(52.))
-            .border_b_1()
-            .border_color(theme.border)
-            .child(avatar_view(thread.kind, false, 26., 15., theme))
-            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(thread.title.clone()))
-            .child(button("drawer-tab", "Open as Tab", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                this.workspace = format!("{} is now a tab in your workspace.", this.threads[t].title);
-                this.drawer = None;
-                cx.notify();
-            })))
-            .child(
-                div()
-                    .id("drawer-close")
-                    .px_1()
-                    .cursor_pointer()
-                    .child(gpui::svg().path("icons/close.svg").size(px(14.)).text_color(theme.secondary))
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.drawer = None;
-                        cx.notify();
-                    })),
-            );
-        let strip = since.map(|(what, since, wants)| {
-            div()
-                .flex_none()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_3()
-                .px_4()
-                .py_2()
-                .bg(theme.sidebar)
-                .border_b_1()
-                .border_color(theme.border)
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .flex()
-                        .flex_col()
-                        .child(div().text_xs().text_color(theme.secondary).child(format!("{what}. Since you looked: {since}.")))
-                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {wants}"))),
-                )
-                .child(button("strip-dismiss", "Dismiss", false, theme))
-        });
-        let body: AnyElement = match thread.kind {
-            Kind::Review => div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .gap_3()
-                .p_4()
-                .child(div().text_xs().text_color(theme.tertiary).child("The review panel, as it is today"))
-                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child("Ready to merge, with 2 minor points"))
-                .child(div().text_sm().text_color(theme.secondary).child("Adds retries with backoff to permit exports. The new commits fixed both earlier findings."))
-                .children(["nit · export/retry.go:42 · log at info, not debug", "nit · export/retry.go:18 · name the backoff cap"].into_iter().map(|f| div().p_2().rounded_md().bg(theme.tile).text_sm().text_color(theme.fg).child(f)))
-                .child(div().flex_1())
-                .child(div().flex().flex_row().gap_1().child(button("d-again", "Review Again", false, theme)).child(button("d-post", "Post Review", true, theme)))
-                .into_any_element(),
-            Kind::Build => div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_col()
-                .child(div().px_4().pt_3().text_xs().text_color(theme.tertiary).child("The session tab, as it is today: terminal and Changes"))
-                .child(
-                    div()
-                        .flex_1()
-                        .m_4()
-                        .p_3()
-                        .rounded_md()
-                        .bg(gpui::rgb(0x111111))
-                        .font_family("Menlo")
-                        .text_xs()
-                        .text_color(gpui::rgb(0xD0D0D0))
-                        .children(["✓ unit tests: 48 passed", "", "● I'd like to run the e2e suite:", "  pnpm e2e --project mobile", "", "  Allow?  1. Yes   2. Yes, always   3. No"].into_iter().map(|l| div().child(l))),
-                )
-                .child(div().px_4().pb_4().flex().flex_col().gap_0p5().child(section("Changes · 6 files", theme)).children(["M  mobile/log-job/Picker.tsx", "M  mobile/log-job/search.ts", "A  mobile/log-job/search.test.ts"].into_iter().map(|f| div().font_family("Menlo").text_xs().text_color(theme.secondary).child(f))))
-                .into_any_element(),
-            _ => div()
-                .flex_1()
-                .min_h_0()
-                .flex()
-                .flex_row()
-                .child(
-                    div()
-                        .id(SharedString::from(format!("drawer-thread-{t}")))
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_y_scroll()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .p_4()
-                        .children(thread.messages.iter().enumerate().map(|(m, message)| {
-                            let named = m == 0 || std::mem::discriminant(&thread.messages[m - 1].who) != std::mem::discriminant(&message.who);
-                            self.message_view(t, m, message, named, theme, cx)
-                        })),
-                )
-                .child(
-                    div()
-                        .w(px(190.))
-                        .flex_none()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .p_3()
-                        .border_l_1()
-                        .border_color(theme.border)
-                        .bg(theme.sidebar)
-                        .child(section("Evidence", theme))
-                        .children(["HyperDX trace ↗", "mongo explain", "Migration 0142 ↗"].into_iter().map(|e| div().text_xs().text_color(theme.selected).child(e)))
-                        .child(div().pt_2().child(section("Skills used", theme)))
-                        .children(["triage", "hyperdx", "mongo (prod, read only)"].into_iter().map(|e| div().text_xs().text_color(theme.secondary).child(e)))
-                        .child(div().flex_1())
-                        .child(button("d-terminal", "Show Terminal", false, theme))
-                        .when(thread.kind == Kind::Investigation, |d| d.child(button("d-fix", "Start fix", true, theme))),
-                )
-                .into_any_element(),
-        };
-        div()
-            .w(px(620.))
-            .flex_none()
-            .flex()
-            .flex_col()
-            .border_l_1()
-            .border_color(theme.border)
-            .bg(theme.bg)
-            .shadow_lg()
-            .child(header)
-            .when_some(strip, |d, strip| d.child(strip))
-            .child(body)
     }
 
     fn composer_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2041,9 +1851,8 @@ impl AssistantPreview {
                         d.child(div().flex().flex_row().gap_1().pt_1().children(toast.actions.iter().enumerate().map(|(n, &action)| {
                             button(format!("toast-{id}-{n}"), action, n == 0, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.toasts.retain(|t| t.id != id);
-                                this.panel_shown = true;
                                 match (action, thread) {
-                                    ("Open", Some(t)) => this.open_drawer(t, cx),
+                                    ("Open", Some(t)) => this.open_in_gannin(t, cx),
                                     (_, Some(t)) => {
                                         if let Some(i) = this.items.iter().position(|it| it.thread == Some(t)) {
                                             this.act(i, action, cx);
@@ -2069,44 +1878,30 @@ impl Render for AssistantPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
         self.theme = theme;
-        let scenarios = ["Session blocked", "Comment on a done thread", "Review finished", if self.focus_mode { "Focus off" } else { "Focus on" }];
+        // The window's own title bar: the traffic lights, its name, and the
+        // filter, scope and menu at the right.
         let controls = div()
             .flex_none()
             .flex()
             .flex_row()
             .items_center()
-            .gap_1()
-            .pl(px(84.))
+            .gap_2()
+            .pl(px(78.))
             .pr_3()
-            .py_2()
+            .h(px(40.))
             .border_b_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(div().pr_2().text_xs().text_color(theme.secondary).child("Simulate"))
-            .children(scenarios.into_iter().enumerate().map(|(n, label)| pill(format!("sim-{n}"), label, n == 3 && self.focus_mode, &theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.simulate(n, cx)))))
+            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child("Assistant"))
             .child(div().flex_1())
             .child(self.title_controls(&theme, cx));
-        let workspace = div()
-            .flex_1()
-            .min_w_0()
-            .flex()
-            .flex_col()
-            .items_center()
-            .justify_center()
-            .p_8()
-            .bg(theme.sidebar)
-            .text_sm()
-            .text_color(theme.tertiary)
-            .children(self.workspace.lines().map(|l| div().child(l.to_string())));
         let menus = self.menus(&theme, cx);
         let panel = div()
             .relative()
-            .w(px(460.))
-            .flex_none()
+            .flex_1()
+            .min_h_0()
             .flex()
             .flex_col()
-            .border_l_1()
-            .border_color(theme.border)
             .bg(theme.bg)
             .map(|d| match self.open {
                 Some(t) => d.child(self.thread_view(t, &theme, cx)),
@@ -2123,7 +1918,7 @@ impl Render for AssistantPreview {
             .flex_col()
             .bg(theme.bg)
             .child(controls)
-            .child(div().flex_1().min_h_0().flex().flex_row().child(workspace).when_some(self.drawer, |d, t| d.child(self.drawer_view(t, &theme, cx))).when(self.panel_shown, |d| d.child(panel)))
+            .child(panel)
             .child(self.toasts_view(&theme, cx))
             .when_some(menus, |d, menus| d.child(menus))
             .when_some(self.row_menu_view(cx), |d, menu| d.child(menu))

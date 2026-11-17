@@ -93,8 +93,8 @@ fn main() {
                     cx.on_action(|_: &Quit, cx| cx.quit());
                     cx.set_menus(vec![Menu { name: "Assistant Preview".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false }]);
                     let options = gpui::WindowOptions {
-                        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(1280.), gpui::px(860.)), cx))),
-                        titlebar: Some(gpui::TitlebarOptions { title: Some("Assistant Preview".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(gpui::px(14.), gpui::px(12.))) }),
+                        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(460.), gpui::px(860.)), cx))),
+                        titlebar: Some(gpui::TitlebarOptions { title: Some("Assistant".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(gpui::px(14.), gpui::px(13.))) }),
                         ..Default::default()
                     };
                     cx.open_window(options, |window, cx| cx.new(|cx| assistant_preview::AssistantPreview::new(window, cx))).expect("open the preview");
