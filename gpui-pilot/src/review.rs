@@ -288,6 +288,8 @@ struct Existing {
 /// lines each file's diff shows, and what's already been said.
 pub struct Snapshot {
     pub head_sha: String,
+    /// The PR's GraphQL node ID, which a thread's PR is checked against.
+    pub node_id: String,
     pub author: String,
     pub viewer: String,
     /// path -> new-side line numbers the diff shows.
@@ -303,6 +305,7 @@ impl Snapshot {
     pub fn sample(own: bool, lines: &[(&str, std::ops::RangeInclusive<i64>)]) -> Self {
         Self {
             head_sha: "0000000".into(),
+            node_id: String::new(),
             author: if own { "you".into() } else { "someone".into() },
             viewer: "you".into(),
             lines: lines.iter().map(|(path, range)| (path.to_string(), range.clone().collect())).collect(),
@@ -372,6 +375,7 @@ pub fn snapshot(token: &str, repo: &str, number: i64) -> Result<Snapshot, String
         .collect();
     Ok(Snapshot {
         head_sha: pr["head"]["sha"].as_str().unwrap_or_default().to_string(),
+        node_id: pr["node_id"].as_str().unwrap_or_default().to_string(),
         author: pr["user"]["login"].as_str().unwrap_or_default().to_string(),
         viewer,
         lines,
@@ -512,6 +516,44 @@ pub fn post(token: &str, repo: &str, number: i64, event: &str, draft: &Draft, sn
     let payload = json!({ "commit_id": snapshot.head_sha, "event": event, "body": draft.body, "comments": comments });
     let posted = rest(token, "POST", &format!("repos/{repo}/pulls/{number}/reviews"), Some(&payload)).map_err(|e| format!("GitHub didn't take it: {e}"))?;
     Ok(posted["html_url"].as_str().unwrap_or_default().to_string())
+}
+
+/// Resolves the threads the review says are dealt with, once it's posted,
+/// as Gannin's `resolvableThreads`: only unresolved review threads on this
+/// PR that the viewer started, whatever IDs claude gave. A write: each is
+/// tried once. The note to show, if any.
+pub fn resolve_threads(token: &str, snapshot: &Snapshot, ids: &[String]) -> Option<String> {
+    if ids.is_empty() || snapshot.node_id.is_empty() {
+        return None;
+    }
+    let ids: Vec<&String> = ids.iter().collect::<HashSet<_>>().into_iter().collect();
+    let query = "query($ids: [ID!]!) { nodes(ids: $ids) { ... on PullRequestReviewThread { id isResolved pullRequest { id } comments(first: 1) { nodes { author { login } } } } } }";
+    let data = match crate::github::graphql(token, query, json!({ "ids": ids })) {
+        Ok(data) => data,
+        Err(error) => return Some(format!("Couldn't look up the threads to resolve: {error}")),
+    };
+    let threads: Vec<String> = data["nodes"]
+        .as_array()
+        .map(|nodes| {
+            nodes
+                .iter()
+                .filter(|n| n["isResolved"] == false && n["pullRequest"]["id"].as_str() == Some(snapshot.node_id.as_str()))
+                .filter(|n| n["comments"]["nodes"][0]["author"]["login"].as_str().is_some_and(|l| l.eq_ignore_ascii_case(&snapshot.viewer)))
+                .filter_map(|n| n["id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mutation = "mutation($thread: ID!) { resolveReviewThread(input: { threadId: $thread }) { thread { id } } }";
+    let resolved = threads.iter().filter(|id| crate::github::mutate(token, mutation, json!({ "thread": id }), "resolveReviewThread").is_ok()).count();
+    let failed = threads.len() - resolved;
+    let mut notes = Vec::new();
+    if resolved > 0 {
+        notes.push(format!("Resolved {resolved} thread{} now dealt with", if resolved == 1 { "" } else { "s" }));
+    }
+    if failed > 0 {
+        notes.push(format!("GitHub didn't resolve {failed} thread{} claude says {} dealt with; resolve {} on GitHub", if failed == 1 { "" } else { "s" }, if failed == 1 { "is" } else { "are" }, if failed == 1 { "it" } else { "them" }));
+    }
+    (!notes.is_empty()).then(|| notes.join(". "))
 }
 
 // MARK: - Changes since the review

@@ -110,6 +110,8 @@ pub struct ReviewPanel {
     /// Something to say about the review's record in the harness (a pull
     /// request left open, or a failure).
     record_note: Option<String>,
+    /// What resolving the threads claude says are dealt with did.
+    resolve_note: Option<String>,
     /// Record it in the harness when posting (the app-wide setting).
     record_with_post: bool,
     _poll: Option<Task<()>>,
@@ -201,6 +203,7 @@ impl ReviewPanel {
             checked: None,
             checking: false,
             record_note: None,
+            resolve_note: None,
             record_with_post: crate::review_record::recording(),
             _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
@@ -241,6 +244,7 @@ impl ReviewPanel {
             checked: None,
             checking: false,
             record_note: None,
+            resolve_note: None,
             record_with_post: crate::review_record::recording(),
             _clock: Self::clock(cx),
             source: Source::Preview { repo: repo.into(), number, url: format!("https://github.com/{repo}/pull/{number}"), idle, working, snapshot: Arc::new(snapshot) },
@@ -606,12 +610,14 @@ impl ReviewPanel {
                         event = "COMMENT";
                     }
                     let url = review::post(&token, &repo, number, event, &draft, &snapshot).map_err(|e| e.to_string())?;
-                    Ok::<_, String>((event, url))
+                    let resolved = review::resolve_threads(&token, &snapshot, &result.resolved);
+                    Ok::<_, String>((event, url, resolved))
                 })
                 .await;
             this.update(cx, |this, cx| {
                 match posted {
-                    Ok((event, url)) => {
+                    Ok((event, url, resolved)) => {
+                        this.resolve_note = resolved;
                         let at = chrono::Utc::now();
                         this.record_posted(Posted { event: event.to_string(), at, url });
                         this.record(Some((event.to_string(), at)), cx);
@@ -653,6 +659,7 @@ impl ReviewPanel {
         let text = body.read(cx).text(cx);
         let draft = Draft { body: text, comments: draft.comments.clone(), left_out: draft.left_out.clone() };
         let (repo, number) = self.subject();
+        let resolved = self.result.as_ref().map(|r| r.resolved.clone()).unwrap_or_default();
         self.post = Some(Post::Posting);
         cx.notify();
         if matches!(self.source, Source::Preview { .. }) {
@@ -674,12 +681,14 @@ impl ReviewPanel {
                 .background_executor()
                 .spawn(async move {
                     let token = crate::auth::token().ok_or("Sign in to post a review.")?;
-                    review::post(&token, &repo, number, event, &draft, &snapshot)
+                    let url = review::post(&token, &repo, number, event, &draft, &snapshot)?;
+                    Ok::<_, String>((url, review::resolve_threads(&token, &snapshot, &resolved)))
                 })
                 .await;
             this.update(cx, |this, cx| {
                 this.post = Some(match posted {
-                    Ok(url) => {
+                    Ok((url, resolved)) => {
+                        this.resolve_note = resolved;
                         let at = chrono::Utc::now();
                         this.record_posted(Posted { event: event.to_string(), at, url: url.clone() });
                         if this.record_with_post {
@@ -793,6 +802,7 @@ impl ReviewPanel {
                 )
             })
             .when_some(self.record_note.clone(), |d, note| d.child(div().text_xs().text_color(theme.orange()).child(note)))
+            .when_some(self.resolve_note.clone(), |d, note| d.child(div().text_xs().text_color(theme.secondary).child(note)))
             // What Check for Changes last found.
             .when_some(self.check_text(), |d, text| d.child(div().text_sm().text_color(if self.has_changes() { theme.selected } else { theme.secondary }).child(text)))
             // What was posted and when, a link to it.
