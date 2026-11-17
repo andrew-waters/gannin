@@ -6,8 +6,8 @@ equal measure, I lose track of what needs me. Marra keeps that list so I don't h
 brings things back when I've parked them, and says where I left off when I return. Chat is for
 everything else: ad hoc questions, data, investigations.
 
-The clickable prototype is `gannin-gpui-pilot --assistant-preview` (branch `assistant-prototype`):
-canned data, nothing runs claude or calls GitHub.
+The clickable prototype is `gannin-gpui-pilot --assistant-preview`: canned data, nothing runs claude
+or calls GitHub. The real one opens with ⌘J; "Built so far" at the end says what's in it.
 
 ## The window
 
@@ -210,3 +210,34 @@ Not discussed in detail; change any of them.
 - Review requests with no session yet go in Needs you.
 - Which harness, when a question doesn't say: Marra guesses from the question and shows its guess on
   the card.
+
+## Built so far
+
+- **Engine** (`marra.rs`): as designed, with one change: permissions use claude's own stdio control
+  protocol (`--permission-prompt-tool stdio`, a `can_use_tool` request answered on stdin), so no MCP
+  tool is needed for them. Read-only tools (Read, Grep, Glob, a short list of read-only shell
+  commands, Gannin's read tools) are allowed without a card. The model is in the menu (claude's
+  default unless picked) and `/model`.
+- **MCP server** (`marra_mcp.rs`): streamable HTTP with JSON replies on 127.0.0.1, a token per
+  launch in a 0600 config file. Tools: `list_sessions`, `waiting`, `read_session`, `open_tab`,
+  `workload`, `list_skills`, `send_to_session` (behind a card), `start_errand`, `notes`. Not yet:
+  `show` (cards drawn by Marra), `answer_question`, `start_session`.
+- **Window** (`marra_view.rs`): floating (kept up when Gannin is in the background, on every Space)
+  or docked, from the ⋯ menu. Needs you, threads (pins, mute, read and unread, right-click), the
+  thread view, the input with / and @. Lanes are ⌥B, ⌥R and ⌥A, since the input always has the
+  keyboard.
+- **Instant commands:** `/waiting`, `/review`, `/open`, `/later`, `/compact`, `/new`, `/model`,
+  `/notes`, `/help`. Prompted: `/catch-up`, `/standup`, `/ask`, `/investigate`. Saved prompts in the
+  harness aren't read yet.
+- **Errands:** a worker per errand in the harness folder, Edit and Write disallowed, the reply
+  contract parsed when its turn ends. Answer and findings cards (figures, charts, Start fix) aren't
+  drawn yet: the body shows as Markdown.
+- **Notifications:** macOS notifications through `osascript`, which can't carry buttons or open
+  Marra on a click. Focus, quiet hours (22:00 to 07:00) and Remind me as designed; Focus doesn't yet
+  turn on by itself.
+- **Unread** for a session thread follows its state changes; there's no event log yet, so "where you
+  left off" shows what the session is and wants, not what happened since you looked.
+- **Review requests** open on GitHub: Your Work's list doesn't carry the PR's node id that starting
+  a review needs.
+- **Not started:** the HTTP API and the phone (step 8), Done today, archive.
+
