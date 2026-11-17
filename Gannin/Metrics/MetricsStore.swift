@@ -13,6 +13,9 @@ final class MetricsStore {
     private(set) var syncing: Set<String> = []
     private(set) var errors: [String: String] = [:]
 
+    /// How far before the last sync a top-up's merged-PR search starts.
+    private static let topUpOverlap: TimeInterval = 60 * 60
+
     private let auth: AuthStore
     private let activity: SyncActivity
     private let pullRequestStore: PullRequestStore
@@ -56,10 +59,13 @@ final class MetricsStore {
         if auth.shouldWaitForBudget(force: force, hasData: histories[org] != nil) { return }
 
         // Backfill anything older than we hold, then top up since the last
-        // sync with a day of overlap, a week per search.
+        // sync with a short overlap, a week per search.
         let backfill = history.coveredFrom > start ? GitHubAPI.weeklyChunks(from: start, to: history.coveredFrom) : []
         // The first top-up search starts at `topUpSince` itself, not its day.
-        let topUpSince = history.syncedAt.addingTimeInterval(-24 * 60 * 60)
+        // `syncedAt` is when the last sync began, so the overlap only covers
+        // search indexing lag; a day's overlap refetched every PR merged in
+        // the last day on each sync.
+        let topUpSince = history.syncedAt.addingTimeInterval(-Self.topUpOverlap)
         let topUp = history.syncedAt != .distantPast ? GitHubAPI.weeklyChunks(from: topUpSince, to: now) : []
         // Opened counts are cheap: fetch missing weeks and refresh the last
         // two, which may still be changing.

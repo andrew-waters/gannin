@@ -20,6 +20,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 
 ### Fixed
 - The work log no longer drops issues when a week has more than 1000 updated: that week is searched a day at a time
+- Syncing metrics refetches only PRs merged since the last sync (with an hour of overlap) instead of every PR merged in the last day
 - Syncing Actions no longer refetches a repo's whole window of workflow runs every time because one run is stuck as queued or waiting; only runs started in the last week hold the top-up back
 - A review from a workflow with several steps keeps every step's findings once the run finishes, instead of reverting to the first reviewer's alone when its session is read again
 - The "waiting" count in the sidebar and the Dock badge no longer include a review that has finished a turn but has nothing for you to post; reviews count while they need you or have a result you haven't posted
