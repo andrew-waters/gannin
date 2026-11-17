@@ -113,6 +113,8 @@ pub struct ReviewPanel {
     record_note: Option<String>,
     /// What resolving the threads claude says are dealt with did.
     resolve_note: Option<String>,
+    /// The hooks' state file as last read, to redraw when it changes.
+    seen_state: Option<String>,
     /// The harness documents about or mentioning the PR or the issues it
     /// closes, with their progress: empty until found, or when none.
     plans: Vec<(crate::harness::Doc, bool)>,
@@ -170,11 +172,16 @@ impl ReviewPanel {
 
     pub fn new(launch: Launch, terminal: Entity<Terminal>, view: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let claude_id = launch.claude_id();
+        let state_file = launch.dir().join("state");
         // The transcript is read again every few seconds, off the main
         // thread, until a result is there and whenever it may have changed.
         let poll = cx.spawn(async move |this, cx| loop {
             let id = claude_id.clone();
-            let (result, activity) = cx.background_executor().spawn(async move { (review::read_result(&id), review::activity(&id)) }).await;
+            let file = state_file.clone();
+            let (result, activity, state) = cx
+                .background_executor()
+                .spawn(async move { (review::read_result(&id), review::activity(&id), std::fs::read_to_string(&file).ok()) })
+                .await;
             if this
                 .update(cx, |this, cx| {
                     if result.is_some() && this.result != result {
@@ -186,6 +193,12 @@ impl ReviewPanel {
                             this.check_for_changes(cx);
                         }
                         this.auto_post(cx);
+                        cx.notify();
+                    }
+                    // Review Again goes by the hooks' state, which can
+                    // change with nothing else in the transcript.
+                    if this.seen_state != state {
+                        this.seen_state = state;
                         cx.notify();
                     }
                     if this.activity != activity {
@@ -238,6 +251,7 @@ impl ReviewPanel {
             checking: false,
             record_note: None,
             resolve_note: None,
+            seen_state: None,
             plans: Vec::new(),
             author: None,
             record_with_post: crate::review_record::recording(),
@@ -281,6 +295,7 @@ impl ReviewPanel {
             checking: false,
             record_note: None,
             resolve_note: None,
+            seen_state: None,
             plans: Vec::new(),
             author: None,
             record_with_post: crate::review_record::recording(),

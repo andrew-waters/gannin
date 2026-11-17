@@ -101,6 +101,15 @@ impl gpui::EventEmitter<crate::harness::OpenDoc> for SessionPage {}
 pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
     use settings::Settings;
     let settings = terminal::terminal_settings::TerminalSettings::get_global(cx).clone();
+    // A resumed claude waits for the person, but a session cut off mid-turn
+    // (the app quit) left its state saying it's working. Older sessions'
+    // start scripts don't reset it, so it's done here too.
+    if let Some(launch) = launch {
+        let dir = launch.dir();
+        if dir.join("started").exists() {
+            let _ = std::fs::write(dir.join("state"), "idle");
+        }
+    }
     // A launch runs its start script in a login shell from home, as
     // Gannin's terminal does.
     let (folder, shell) = match launch {
