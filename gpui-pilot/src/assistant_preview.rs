@@ -263,7 +263,7 @@ fn seed() -> (Vec<Thread>, Vec<Item>) {
             last: "Posted as Comment".into(),
             doing: None,
             unread: false,
-            muted: false,
+            muted: true,
             pinned: false,
             minutes: 64,
             scope: 2,
@@ -1179,7 +1179,8 @@ impl AssistantPreview {
                                     .items_center()
                                     .gap_2()
                                     .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
-                                    .when(thread.pinned, |d| d.child(div().text_xs().text_color(theme.tertiary).child("📌")))
+                                    .when(thread.pinned, |d| d.child(gpui::svg().path("icons/pin.svg").size(px(12.)).flex_none().text_color(theme.tertiary)))
+                                    .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(12.)).flex_none().text_color(theme.tertiary)))
                                     .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) }))
                                     .child(div().text_sm().text_color(theme.tertiary).child("›")),
                             )
