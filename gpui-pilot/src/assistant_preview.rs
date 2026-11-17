@@ -40,16 +40,6 @@ enum Need {
     Back,
 }
 
-impl Need {
-    fn title(self) -> &'static str {
-        match self {
-            Need::Blocked => "Blocked",
-            Need::Decide => "Decide",
-            Need::Respond => "Respond",
-            Need::Back => "Back",
-        }
-    }
-}
 
 #[derive(Clone)]
 struct Item {
@@ -75,17 +65,6 @@ enum Kind {
     Review,
 }
 
-impl Kind {
-    fn title(self) -> &'static str {
-        match self {
-            Kind::Main => "",
-            Kind::Question => "Question",
-            Kind::Investigation => "Investigation",
-            Kind::Build => "Build",
-            Kind::Review => "Review",
-        }
-    }
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
@@ -95,16 +74,6 @@ enum State {
     Waiting,
 }
 
-impl State {
-    fn glyph(self) -> &'static str {
-        match self {
-            State::Working => "◐",
-            State::Done => "✓",
-            State::Parked => "⏸",
-            State::Waiting => "●",
-        }
-    }
-}
 
 #[derive(Clone)]
 enum Who {
@@ -325,6 +294,8 @@ pub struct AssistantPreview {
     scope_menu: bool,
     more_menu: bool,
     later_menu: bool,
+    /// The rest of the queue, below its top item.
+    more_open: bool,
     unread_only: bool,
     open: Option<usize>,
     /// Answer cards whose "How I got it" is open: (thread, message).
@@ -359,6 +330,7 @@ impl AssistantPreview {
             scope_menu: false,
             more_menu: false,
             later_menu: false,
+            more_open: false,
             unread_only: false,
             open: None,
             how_open: HashSet::new(),
@@ -366,7 +338,7 @@ impl AssistantPreview {
             next_toast: 0,
             focus_mode: false,
             held: 0,
-            workspace: "Your tabs would be here.".into(),
+            workspace: "Your workspace: Issues, PRs and session tabs".into(),
         }
     }
 
@@ -399,10 +371,6 @@ impl AssistantPreview {
 
     fn unread_count(&self) -> usize {
         (0..self.threads.len()).filter(|&i| self.in_scope(self.threads[i].scope) && self.is_unread(i)).count()
-    }
-
-    fn lane_count(&self, lane: Lane) -> usize {
-        self.items.iter().filter(|i| i.lane == lane && self.in_scope(i.scope)).count()
     }
 
     // MARK: Actions
@@ -827,15 +795,12 @@ fn age_color(minutes: u32, theme: &Theme) -> Hsla {
 
 impl AssistantPreview {
     fn header(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let waiting = self.queue().len();
-        let working = (0..self.threads.len()).filter(|&i| self.in_scope(self.threads[i].scope) && self.threads[i].state == State::Working).count();
-        let done = (0..self.threads.len()).filter(|&i| self.in_scope(self.threads[i].scope) && self.threads[i].state == State::Done && self.is_unread(i)).count();
         div()
             .flex_none()
             .flex()
             .flex_col()
             .gap_1()
-            .px_3()
+            .px_4()
             .py_2()
             .border_b_1()
             .border_color(theme.border)
@@ -882,16 +847,6 @@ impl AssistantPreview {
                             })),
                     ),
             )
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .gap_3()
-                    .text_xs()
-                    .child(div().text_color(if waiting > 0 { theme.orange() } else { theme.secondary }).child(format!("● {waiting} need you")))
-                    .child(div().text_color(theme.blue()).child(format!("◐ {working} working")))
-                    .child(div().text_color(theme.good()).child(format!("✓ {done} done, unread"))),
-            )
     }
 
     fn menus(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
@@ -935,7 +890,7 @@ impl AssistantPreview {
             );
         }
         if self.more_menu {
-            let entries = ["Compact now", "New conversation", "Edit notes", "Mark all read", "Focus on/off"];
+            let entries = ["Done today", "Compact now", "New conversation", "Edit notes", "Mark all read", "Focus on/off"];
             return Some(
                 div()
                     .absolute()
@@ -963,14 +918,15 @@ impl AssistantPreview {
                             .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.more_menu = false;
                                 match i {
-                                    0 => {
+                                    0 => this.workspace = format!("Done today\n\n{}", this.done.iter().map(|d| format!("✓ {d}")).collect::<Vec<_>>().join("\n")),
+                                    1 => {
                                         this.threads[0].messages.push(text(Who::Event, "Compacted. Notes and threads are kept; the summary replaces older turns."));
                                     }
-                                    1 => {
+                                    2 => {
                                         this.threads[0].messages.push(text(Who::Event, "New conversation. assistant-notes.md loaded; the old one stays above."));
                                     }
-                                    2 => this.workspace = "assistant-notes.md would open here:\n\n- Prefers Comment on Friday PRs\n- Watching mono#1539 for a re-review\n- SGN numbers: exclude drafts".into(),
-                                    3 => {
+                                    3 => this.workspace = "assistant-notes.md would open here:\n\n- Prefers Comment on Friday PRs\n- Watching mono#1539 for a re-review\n- SGN numbers: exclude drafts".into(),
+                                    4 => {
                                         for t in &mut this.threads {
                                             t.unread = false;
                                         }
@@ -988,16 +944,21 @@ impl AssistantPreview {
         None
     }
 
+    /// One thing at a time: the top item, expanded, and the rest behind
+    /// "more". The lane shows only while one is picked (B, R, A).
     fn queue_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let queue = self.queue();
         let selected = self.selected.min(queue.len().saturating_sub(1));
+        let rest: Vec<(usize, usize)> = queue.iter().copied().enumerate().filter(|&(row, _)| row != selected).collect();
+        let top = queue.get(selected).copied();
         div()
             .flex_none()
             .flex()
             .flex_col()
-            .gap_1()
-            .px_3()
-            .py_2()
+            .gap_2()
+            .px_4()
+            .pt_3()
+            .pb_3()
             .border_b_1()
             .border_color(theme.border)
             .child(
@@ -1005,83 +966,98 @@ impl AssistantPreview {
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_1()
-                    .child(section(format!("NEEDS YOU ({})", queue.len()), theme))
-                    .child(div().flex_1())
-                    .children([Lane::Build, Lane::Review, Lane::Ask].into_iter().map(|lane| {
-                        pill(format!("lane-{}", lane.title()), format!("{} {}", lane.title(), self.lane_count(lane)), self.lane == Some(lane), theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                            this.lane = if this.lane == Some(lane) { None } else { Some(lane) };
-                            this.selected = 0;
+                    .gap_2()
+                    .child(section(if queue.is_empty() { "Nothing needs you".to_string() } else { format!("Needs you · {}", queue.len()) }, theme))
+                    .when_some(self.lane, |d, lane| {
+                        d.child(pill("lane", format!("{} ✕", lane.title()), true, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.lane = None;
                             cx.notify();
-                        }))
-                    })),
+                        })))
+                    }),
             )
-            .when(queue.is_empty(), |d| d.child(div().py_2().text_sm().text_color(theme.secondary).child("Nothing needs you. ✓")))
-            .children(queue.iter().enumerate().map(|(row, &i)| {
+            .when_some(top, |d, i| {
                 let it = &self.items[i];
-                let on = row == selected;
-                div()
-                    .id(SharedString::from(format!("item-{i}-{}", it.subject)))
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
-                    .cursor_pointer()
-                    .when(on, |d| d.bg(theme.tile).border_1().border_color(theme.border))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.selected = row;
-                        this.later_menu = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_2()
-                            .child(div().text_xs().text_color(if it.need == Need::Blocked { theme.orange() } else { theme.secondary }).child(if on { "▶" } else { "○" }))
-                            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(it.subject.clone()))
-                            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.fg).child(it.task.clone()))
-                            .child(div().text_xs().text_color(age_color(it.minutes, theme)).child(ago(it.minutes))),
-                    )
-                    .when(on, |d| {
-                        d.child(
-                            div()
-                                .pl_5()
-                                .flex()
-                                .flex_row()
-                                .gap_2()
-                                .text_xs()
-                                .text_color(theme.secondary)
-                                .child(div().child(format!("{} · {}", it.need.title(), it.lane.title())))
-                                .child(div().flex_1().min_w_0().truncate().child(it.detail.clone())),
-                        )
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .p_3()
+                        .rounded_lg()
+                        .bg(theme.tile)
                         .child(
                             div()
-                                .pl_5()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap_2()
+                                .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(it.subject.clone()))
+                                .child(div().flex_1())
+                                .child(div().text_xs().text_color(age_color(it.minutes, theme)).child(ago(it.minutes))),
+                        )
+                        .child(div().text_base().text_color(theme.fg).child(it.task.clone()))
+                        .child(div().text_xs().text_color(theme.secondary).child(it.detail.clone()))
+                        .child(
+                            div()
                                 .flex()
                                 .flex_row()
                                 .flex_wrap()
                                 .gap_1()
-                                .children(it.actions.iter().enumerate().map(|(n, &action)| {
-                                    button(format!("act-{i}-{n}"), if n == 0 { format!("{action} ↩") } else { action.to_string() }, n == 0, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.act(i, action, cx)))
+                                .pt_1()
+                                .children(it.actions.iter().enumerate().filter(|(_, a)| !a.starts_with("Open")).map(|(n, &action)| {
+                                    button(format!("act-{i}-{n}"), action, n == 0, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.act(i, action, cx)))
                                 }))
-                                .child(button(format!("later-{i}"), "Later ▾", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                .child(div().flex_1())
+                                .child(button(format!("open-{i}"), "Open", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.act(i, "Open", cx))))
+                                .child(button(format!("later-{i}"), "Later", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                     this.later_menu = !this.later_menu;
                                     cx.notify();
                                 }))),
                         )
                         .when(self.later_menu, |d| {
-                            d.child(
-                                div().pl_5().flex().flex_row().flex_wrap().gap_1().children(["30 minutes", "after lunch", "tomorrow morning", "CI passes"].into_iter().enumerate().map(|(n, when)| {
-                                    pill(format!("when-{n}"), format!("{} {}", n + 1, if n == 3 { "When CI passes".to_string() } else { when.to_string() }), false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.later(i, when, cx)))
-                                })),
-                            )
-                        })
-                    })
-            }))
+                            d.child(div().flex().flex_row().flex_wrap().gap_1().children(["30 minutes", "after lunch", "tomorrow morning", "CI passes"].into_iter().enumerate().map(|(n, when)| {
+                                pill(format!("when-{n}"), if n == 3 { "When CI passes".to_string() } else { format!("In {when}").replace("In after", "After").replace("In tomorrow", "Tomorrow") }, false, theme)
+                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.later(i, when, cx)))
+                            })))
+                        }),
+                )
+            })
+            .when(!rest.is_empty(), |d| {
+                d.child(
+                    div()
+                        .id("more-queue")
+                        .text_xs()
+                        .text_color(theme.secondary)
+                        .cursor_pointer()
+                        .hover(|s| s.text_color(theme.fg))
+                        .child(if self.more_open { "Hide the rest".to_string() } else { format!("{} more", rest.len()) })
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.more_open = !this.more_open;
+                            cx.notify();
+                        })),
+                )
+                .when(self.more_open, |d| {
+                    d.children(rest.iter().map(|&(row, i)| {
+                        let it = &self.items[i];
+                        div()
+                            .id(SharedString::from(format!("item-{i}")))
+                            .flex()
+                            .flex_row()
+                            .gap_2()
+                            .py_0p5()
+                            .cursor_pointer()
+                            .hover(|s| s.bg(theme.row_selected))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                this.selected = row;
+                                this.later_menu = false;
+                                cx.notify();
+                            }))
+                            .child(div().text_sm().text_color(theme.fg).child(it.subject.clone()))
+                            .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.secondary).child(it.task.clone()))
+                            .child(div().text_xs().text_color(age_color(it.minutes, theme)).child(ago(it.minutes)))
+                    }))
+                })
+            })
     }
 
     fn threads_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1094,48 +1070,46 @@ impl AssistantPreview {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .px_3()
-            .py_2()
-            .gap_0p5()
+            .px_4()
+            .py_3()
+            .gap_1()
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_1()
+                    .gap_2()
                     .pb_1()
-                    .child(section("THREADS", theme))
+                    .child(section("Threads", theme))
                     .child(div().flex_1())
-                    .child(pill("unread-only", format!("Unread {unread}"), self.unread_only, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.unread_only = true;
-                        cx.notify();
-                    })))
-                    .child(pill("all-threads", "All", !self.unread_only, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.unread_only = false;
-                        cx.notify();
-                    }))),
+                    .child(
+                        div()
+                            .id("unread-toggle")
+                            .text_xs()
+                            .cursor_pointer()
+                            .text_color(if self.unread_only { theme.selected } else { theme.secondary })
+                            .child(if self.unread_only { format!("Unread {unread} · show all") } else { format!("{unread} unread") })
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.unread_only = !this.unread_only;
+                                cx.notify();
+                            })),
+                    ),
             )
             .children(listed.into_iter().map(|t| {
                 let thread = &self.threads[t];
                 let unread = self.is_unread(t);
-                let state_color = match thread.state {
-                    State::Working => theme.blue(),
-                    State::Done => theme.good(),
-                    State::Parked => theme.secondary,
-                    State::Waiting => theme.orange(),
-                };
                 div()
                     .id(SharedString::from(format!("thread-{t}")))
                     .flex()
                     .flex_row()
                     .gap_2()
                     .px_2()
-                    .py_1()
+                    .py_1p5()
                     .rounded_md()
                     .cursor_pointer()
                     .hover(|s| s.bg(theme.row_selected))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(t, cx)))
-                    .child(div().w(px(8.)).pt_1().text_xs().text_color(theme.selected).child(if unread { "●" } else { "" }))
+                    .child(div().w(px(10.)).pt(px(5.)).child(div().size(px(7.)).rounded_full().when(unread, |d| d.bg(theme.selected))))
                     .child(
                         div()
                             .flex_1()
@@ -1146,25 +1120,13 @@ impl AssistantPreview {
                                 div()
                                     .flex()
                                     .flex_row()
-                                    .items_center()
                                     .gap_2()
-                                    .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.fg).when(unread, |d| d.font_weight(FontWeight::SEMIBOLD)).child(format!("{}{}", if thread.pinned { "📌 " } else { "" }, thread.title)))
-                                    .child(div().text_xs().text_color(theme.tertiary).child(thread.kind.title()))
-                                    .child(div().text_xs().text_color(state_color).child(thread.state.glyph()))
-                                    .child(div().w(px(28.)).text_xs().text_color(theme.secondary).child(ago(thread.minutes))),
+                                    .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.fg).when(unread, |d| d.font_weight(FontWeight::SEMIBOLD)).child(thread.title.clone()))
+                                    .child(div().text_xs().text_color(theme.tertiary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) })),
                             )
-                            .child(div().truncate().text_xs().text_color(if thread.muted { theme.tertiary } else { theme.secondary }).child(thread.last.clone())),
+                            .child(div().truncate().text_xs().text_color(theme.secondary).child(thread.last.clone())),
                     )
             }))
-            .child(
-                div()
-                    .pt_3()
-                    .flex()
-                    .flex_col()
-                    .gap_0p5()
-                    .child(section("DONE TODAY", theme))
-                    .children(self.done.iter().take(5).map(|d| div().text_xs().text_color(theme.secondary).child(format!("✓ {d}")))),
-            )
     }
 
     fn message_view(&self, t: usize, m: usize, message: &Message, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
@@ -1360,35 +1322,17 @@ impl AssistantPreview {
     }
 
     fn composer_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let target = match self.open {
-            Some(t) if t != 0 => format!("To {}'s worker", self.threads[t].title),
-            _ => "To the assistant".into(),
-        };
+        let target = self.open.filter(|&t| t != 0).map(|t| format!("To {}'s worker", self.threads[t].title));
         div()
             .flex_none()
             .flex()
             .flex_col()
             .gap_1()
-            .px_3()
-            .py_2()
+            .px_4()
+            .py_3()
             .border_t_1()
             .border_color(theme.border)
-            .child(
-                div().flex().flex_row().flex_wrap().gap_1().children(["Waiting", "Catch me up", "Standup", "Review next"].into_iter().enumerate().map(|(n, chip)| {
-                    pill(format!("chip-{n}"), chip, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                        let typed = match chip {
-                            "Waiting" => "/waiting",
-                            "Catch me up" => "catch me up",
-                            "Standup" => "what did I do yesterday, for standup?",
-                            _ => "/waiting",
-                        };
-                        this.open = Some(0);
-                        this.composer.update(cx, |e, cx| e.set_text(typed, window, cx));
-                        this.send(window, cx);
-                    }))
-                })),
-            )
-            .child(div().text_xs().text_color(theme.tertiary).child(target))
+            .when_some(target, |d, target| d.child(div().text_xs().text_color(theme.tertiary).child(target)))
             .child(
                 div()
                     .px_2()
@@ -1468,7 +1412,6 @@ impl Render for AssistantPreview {
             .flex_none()
             .flex()
             .flex_row()
-            .flex_wrap()
             .items_center()
             .gap_1()
             .pl(px(84.))
@@ -1477,23 +1420,20 @@ impl Render for AssistantPreview {
             .border_b_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(div().pr_2().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child("Assistant Preview"))
-            .child(div().pr_1().text_xs().text_color(theme.secondary).child("Simulate:"))
-            .children(scenarios.into_iter().enumerate().map(|(n, label)| pill(format!("sim-{n}"), label, n == 3 && self.focus_mode, &theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.simulate(n, cx)))))
-            .child(div().flex_1())
-            .child(div().text_xs().text_color(theme.tertiary).child("J/K move · ↩ do · O open · L later · B/R/A lane · N next unread · U unread · / type · Esc back"));
+            .child(div().pr_2().text_xs().text_color(theme.secondary).child("Simulate"))
+            .children(scenarios.into_iter().enumerate().map(|(n, label)| pill(format!("sim-{n}"), label, n == 3 && self.focus_mode, &theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.simulate(n, cx)))));
         let workspace = div()
             .flex_1()
             .min_w_0()
             .flex()
             .flex_col()
-            .bg(theme.bg)
-            .child(
-                div().flex_none().flex().flex_row().gap_1().px_3().py_2().border_b_1().border_color(theme.border).children(["Issues", "mono#1539", "clients#2466", "mono#1528", "api#12"].into_iter().map(|tab| {
-                    div().px_2().py_0p5().rounded_md().text_xs().text_color(theme.secondary).bg(theme.tile).child(tab)
-                })),
-            )
-            .child(div().flex_1().flex().items_center().justify_center().p_8().text_sm().text_color(theme.tertiary).children(self.workspace.lines().map(|l| div().child(l.to_string()))));
+            .items_center()
+            .justify_center()
+            .p_8()
+            .bg(theme.sidebar)
+            .text_sm()
+            .text_color(theme.tertiary)
+            .children(self.workspace.lines().map(|l| div().child(l.to_string())));
         let menus = self.menus(&theme, cx);
         let panel = div()
             .relative()
