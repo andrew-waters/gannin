@@ -83,6 +83,9 @@ pub struct SessionPage {
     pub state: State,
     /// When the state last changed, for "waiting since".
     pub since: chrono::DateTime<chrono::Local>,
+    /// The server a plain session runs on, its folder being a path there:
+    /// no Changes, as the folder isn't on this Mac.
+    server: Option<crate::servers::Server>,
     /// While Move to Server runs: where it's going and the step it's on.
     /// The whole page is covered, so nothing in it can be used meanwhile.
     pub moving: Option<(String, String)>,
@@ -101,7 +104,9 @@ impl gpui::EventEmitter<crate::work_panel::WorkEvent> for SessionPage {}
 impl gpui::EventEmitter<crate::harness::OpenDoc> for SessionPage {}
 
 /// Starts the process in a pty; the page is made once it's running.
-pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
+/// `server`: a plain session (no launch) on a server, run there over ssh
+/// in `folder`, a path on the server.
+pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch::Launch>, server: Option<&crate::servers::Server>, window: &Window, cx: &mut App) -> Task<anyhow::Result<TerminalBuilder>> {
     use settings::Settings;
     let settings = terminal::terminal_settings::TerminalSettings::get_global(cx).clone();
     // A resumed claude is starting until its SessionStart hook says it's
@@ -138,7 +143,27 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch
                 title_override: None,
             }),
         ),
-        None => (folder, None),
+        // A plain session on a server: ssh there, into its folder, with
+        // claude (or the shell) from a login shell so the profile's PATH is
+        // set up.
+        None => match server {
+            Some(server) => {
+                let run = match kind {
+                    Kind::Claude => "exec \"${SHELL:-/bin/bash}\" -lic claude",
+                    Kind::Shell => "exec \"${SHELL:-/bin/bash}\" -l",
+                };
+                let remote = format!("cd {} && {run}", crate::launch::quote_path(&folder));
+                (
+                    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default(),
+                    Some(util::shell::Shell::WithArguments {
+                        program: crate::paths::shell(),
+                        args: vec!["-l".into(), "-c".into(), format!("{} {}", server.ssh_command(true), crate::launch::quote(&remote))],
+                        title_override: None,
+                    }),
+                )
+            }
+            None => (folder, None),
+        },
     };
     let shell = if let Some(shell) = shell { shell } else { match kind {
         Kind::Shell => util::shell::Shell::System,
@@ -174,6 +199,7 @@ impl SessionPage {
         kind: Kind,
         folder: PathBuf,
         launch: Option<crate::launch::Launch>,
+        server: Option<crate::servers::Server>,
         builder: TerminalBuilder,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -210,7 +236,9 @@ impl SessionPage {
             let (launch, terminal) = (l.clone(), terminal.clone());
             cx.new(|cx| crate::planning_panel::PlanningPanel::new(launch, terminal, window, cx))
         });
-        let show = if review.is_some() || planning.is_some() { Show::Changes } else { Show::Both };
+        // Reviews and plans open on their panel; every other session on its
+        // terminal, Changes a switch away.
+        let show = if review.is_some() || planning.is_some() { Show::Changes } else { Show::Terminal };
         let mut subscriptions = Vec::new();
         if let Some(work) = &work {
             // Resume, Finish, Forget and Move to Server act on the tab, so the workspace hears of them.
@@ -264,6 +292,7 @@ impl SessionPage {
             show,
             state: State::Working,
             since: chrono::Local::now(),
+            server,
             moving: None,
             last_output: Instant::now(),
             _subscriptions: subscriptions,
@@ -311,9 +340,10 @@ impl SessionPage {
             return title.to_string();
         }
         let folder = self.folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let on = self.server.as_ref().map(|s| format!(" on {}", s.name())).unwrap_or_default();
         match self.kind {
-            Kind::Claude => format!("Claude Code in {folder}"),
-            Kind::Shell => format!("Terminal in {folder}"),
+            Kind::Claude => format!("Claude Code in {folder}{on}"),
+            Kind::Shell => format!("Terminal in {folder}{on}"),
         }
     }
 
@@ -492,7 +522,7 @@ impl Render for SessionPage {
             })
             .child(div().flex_1())
             // A review lays out its own conversation pane, so has no switch.
-            .when(self.review.is_none(), |d| d.child(self.switch(&theme, cx)));
+            .when(self.review.is_none() && self.server.is_none(), |d| d.child(self.switch(&theme, cx)));
         let terminal = div().flex_1().min_w_0().h_full().child(self.view.clone());
         let changes = div().flex_1().min_w_0().h_full().map(|d| match (&self.review, &self.planning) {
             (Some(review), _) => d.child(review.clone()),

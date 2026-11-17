@@ -1095,12 +1095,12 @@ impl Workspace {
         }
     }
 
-    /// Opens the session in a tab of its own, in the window's folder. Only
-    /// a window with no folder, or one on a server (a plain session runs on
-    /// this Mac), asks where to start.
+    /// Opens the session in a tab of its own, in the window's folder: on
+    /// this Mac, or over ssh in that folder on the window's server. Only a
+    /// window with no folder asks where to start.
     fn new_session(&mut self, kind: Kind, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(folder) = self.folder.as_ref().filter(|f| f.location.server.is_none()).map(|f| f.location.path.clone()) {
-            self.open_session(kind, folder, None, window, cx);
+        if let Some(location) = self.folder.as_ref().map(|f| f.location.clone()) {
+            self.open_session_on(kind, location.path, None, location.server, window, cx);
             return;
         }
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
@@ -1229,7 +1229,13 @@ impl Workspace {
     /// Opens a session in a tab of its own: a terminal in `folder`, or a
     /// launch's start script.
     fn open_session(&mut self, kind: Kind, folder: PathBuf, launch: Option<crate::launch::Launch>, window: &mut Window, cx: &mut Context<Self>) {
-        let task = session::spawn_terminal(kind, folder.clone(), launch.as_ref(), window, cx);
+        self.open_session_on(kind, folder, launch, None, window, cx);
+    }
+
+    /// As `open_session`, for a plain session on `server`: `folder` is a
+    /// path there.
+    fn open_session_on(&mut self, kind: Kind, folder: PathBuf, launch: Option<crate::launch::Launch>, server: Option<crate::servers::Server>, window: &mut Window, cx: &mut Context<Self>) {
+        let task = session::spawn_terminal(kind, folder.clone(), launch.as_ref(), server.as_ref(), window, cx);
         cx.spawn_in(window, async move |this, cx| {
             let builder = match task.await {
                 Ok(builder) => builder,
@@ -1241,7 +1247,7 @@ impl Workspace {
             this.update_in(cx, |this, window, cx| {
                 let id = this.next_session;
                 this.next_session += 1;
-                let page = cx.new(|cx| SessionPage::new(id, kind, folder, launch, builder, window, cx));
+                let page = cx.new(|cx| SessionPage::new(id, kind, folder, launch, server, builder, window, cx));
                 this._subscriptions.push(cx.subscribe(&page, |this, _, _: &Changed, cx| {
                     this.sync_reviewing(cx);
                     cx.notify();
