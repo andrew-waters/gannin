@@ -272,12 +272,12 @@ impl Engine {
             }
             args.extend(["--mcp-config".into(), path.display().to_string()]);
         }
-        // The login shell's PATH finds claude as a terminal would; exec hands
-        // it the pipes.
+        // An interactive login shell's PATH finds claude as a terminal would
+        // (as explain.rs starts it); exec hands it the pipes.
         let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
         let line = format!("command -v claude >/dev/null 2>&1 || {{ echo 'Claude Code is not installed on this Mac.' >&2; exit 127; }}; exec claude {}", quoted.join(" "));
         let mut command = Command::new(crate::paths::shell());
-        command.args(["-l", "-c", &line]).current_dir(&folder).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+        command.args(["-l", "-i", "-c", &line]).current_dir(&folder).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         for (key, _) in std::env::vars() {
             if key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_") {
                 command.env_remove(key);

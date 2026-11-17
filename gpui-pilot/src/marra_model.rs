@@ -344,6 +344,8 @@ pub enum Act {
     Confirm(u64, bool),
     /// Says the action to the errand, as the user.
     Reply(String, String),
+    /// Review with Claude, in the front Gannin window.
+    StartReview(crate::launch::Subject),
 }
 
 /// Something the user has to act on.
@@ -680,6 +682,18 @@ impl Marra {
         cx.notify();
     }
 
+    /// Review with Claude in the front Gannin window (it asks for nothing
+    /// on GitHub; posting confirms in the review as always).
+    pub fn start_review(&mut self, subject: crate::launch::Subject, cx: &mut App) {
+        let target = cx.active_window().and_then(|w| w.downcast::<Workspace>()).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));
+        if let Some(window) = target {
+            let _ = window.update(cx, |workspace, window, cx| {
+                workspace.review_for_marra(subject, window, cx);
+                window.activate_window();
+            });
+        }
+    }
+
     /// Brings a session's window forward on its tab.
     pub fn open_session(&mut self, key: &str, cx: &mut App) -> bool {
         let Some(s) = sessions(cx).into_iter().find(|s| s.key == key) else { return false };
@@ -793,7 +807,11 @@ impl Marra {
         }
         let work = work(cx);
         let org_of = |repo: &str| repo.split('/').next().map(str::to_string);
+        let subjects: Vec<String> = sessions(cx).into_iter().filter_map(|s| s.subject).collect();
         for pr in &work.reviews {
+            if subjects.contains(&format!("{}#{}", pr.repo, pr.number)) {
+                continue;
+            }
             out.push(Need {
                 key: format!("review-request:{}", pr.url),
                 rank: 2,
@@ -801,7 +819,11 @@ impl Marra {
                 task: "Review requested".into(),
                 detail: format!("{}{}", pr.title, pr.author.as_ref().map(|a| format!(" by {a}")).unwrap_or_default()),
                 since: pr.updated.with_timezone(&Local),
-                actions: vec![("Open on GitHub".into(), Act::Url(pr.url.clone()))],
+                actions: if pr.id.is_empty() {
+                    vec![("Open on GitHub".into(), Act::Url(pr.url.clone()))]
+                } else {
+                    vec![("Start review".into(), Act::StartReview(crate::launch::Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() })), ("Open on GitHub".into(), Act::Url(pr.url.clone()))]
+                },
                 open: Some(Act::Url(pr.url.clone())),
                 thread: None,
                 lane: Lane::Review,
@@ -898,6 +920,11 @@ impl Marra {
         }
         self.seen.retain(|k| keys.contains(k));
         self.reminded.retain(|k, _| keys.contains(k));
+        // The morning digest: what quiet hours held, once they end.
+        if !quiet_hours() && !self.saved.focus && !self.held.is_empty() {
+            let held = std::mem::take(&mut self.held);
+            notify(&format!("{} while you were away", if held.len() == 1 { "1 thing".to_string() } else { format!("{} things", held.len()) }), &held.join("\n"));
+        }
     }
 
     /// A notification that says what to do; held by Focus and quiet hours

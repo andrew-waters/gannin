@@ -237,7 +237,7 @@ Not discussed in detail; change any of them.
   turn on by itself.
 - **Unread** for a session thread follows its state changes; there's no event log yet, so "where you
   left off" shows what the session is and wants, not what happened since you looked.
-- **Review requests** open on GitHub: Your Work's list doesn't carry the PR's node id that starting
-  a review needs.
+- **Review requests** offer Start review (Gannin's Review with Claude, in the front window) once
+  Your Work knows the PR's node id; until its next load, Open on GitHub only.
 - **Not started:** the HTTP API and the phone (step 8), Done today, archive.
 

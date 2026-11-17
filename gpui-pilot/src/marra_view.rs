@@ -231,6 +231,7 @@ impl MarraView {
             }
             Act::OpenThread(id) => self.open_thread(id, cx),
             Act::Url(url) => cx.open_url(&url),
+            Act::StartReview(subject) => self.marra.update(cx, |m, cx| m.start_review(subject, cx)),
             Act::Allow(who, request, always) => self.marra.update(cx, |m, cx| {
                 if let Some(key) = m.convo_mut(&who).and_then(|c| c.decide(&request, true, always)) {
                     m.saved.always.push(key);

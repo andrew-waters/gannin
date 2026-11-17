@@ -1576,7 +1576,17 @@ impl Workspace {
     /// Review with Claude, attended or started by a review window
     /// (`unattended`): that one posts by itself when it's done.
     fn review_pr_with(&mut self, pr: PrItem, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
+        self.review_subject(crate::launch::Subject { id: pr.id, repo: pr.repo, number: pr.number, title: pr.title, url: pr.url }, unattended, window, cx);
+    }
+
+    /// Review with Claude, from Marra's Needs you: a review request.
+    pub fn review_for_marra(&mut self, subject: crate::launch::Subject, window: &mut Window, cx: &mut Context<Self>) {
+        self.review_subject(subject, None, window, cx);
+    }
+
+    fn review_subject(&mut self, pr: crate::launch::Subject, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
         use crate::launch::{self, Flow, Subject};
+        let repo_name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string();
         if unattended.is_none() && self.show_session(&pr.id, Flow::Review, window, cx) {
             return;
         }
@@ -1586,9 +1596,9 @@ impl Workspace {
             }
             return;
         };
-        let branch = format!("review-{}-{}", pr.repo_name, pr.number);
+        let branch = format!("review-{}-{}", repo_name, pr.number);
         let subject = Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
-        let mut launch = self.new_launch(Flow::Review, format!("Review {}#{}", pr.repo_name, pr.number), &org, &harness, branch.clone(), Some(subject));
+        let mut launch = self.new_launch(Flow::Review, format!("Review {}#{}", repo_name, pr.number), &org, &harness, branch.clone(), Some(subject));
         launch.unattended = unattended;
         if unattended.is_some() {
             // It posts by itself once its review is in.

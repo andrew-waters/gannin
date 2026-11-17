@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 #[derive(Clone)]
 pub struct Pr {
+    /// GitHub's node id, which starting a review needs; empty if unknown.
+    pub id: String,
     pub repo: String,
     pub number: i64,
     pub title: String,
@@ -95,6 +97,7 @@ pub fn load_live(token: &str, login: Option<String>) -> Result<Work, crate::gith
     let data = crate::github::graphql(token, &query, serde_json::json!({}))?;
     let pr = |node: &serde_json::Value| -> Option<Pr> {
         Some(Pr {
+            id: node["id"].as_str().unwrap_or_default().to_string(),
             repo: node["repository"]["nameWithOwner"].as_str()?.to_string(),
             number: node["number"].as_i64()?,
             title: node["title"].as_str()?.to_string(),
@@ -145,6 +148,8 @@ struct Stored {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Core {
+    #[serde(default)]
+    id: String,
     number: i64,
     title: String,
     url: String,
@@ -190,6 +195,7 @@ pub fn load(org: &str, login: Option<String>) -> Work {
         let author = stored.core.author.map(|a| a.login);
         let asked = workload.requested_reviewers.iter().any(|p| p.login == login);
         let pr = Pr {
+            id: stored.core.id,
             repo: stored.core.repo,
             number: stored.core.number,
             title: stored.core.title,

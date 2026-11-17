@@ -372,6 +372,9 @@ fn main() {
         // The other windows that were open come back too.
         Workspace::reopen_windows(cx);
         let _ = workspace;
+        // Marra watches from the start, so what needs you notifies before
+        // its window is first opened; claude itself waits for a message.
+        marra_model::Marra::get(cx);
         // Quit asks first while sessions run, in any window.
         cx.on_action(move |_: &Quit, cx| {
             let window = cx.active_window().and_then(|w| w.downcast::<Workspace>()).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));
