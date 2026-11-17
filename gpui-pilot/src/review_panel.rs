@@ -83,6 +83,8 @@ enum Selected {
 
 /// How long claude's input takes to be ready after its SessionStart hook.
 const SETTLE: Duration = Duration::from_millis(1500);
+/// How long Review Again waits for claude to show it took the prompt.
+const AGAIN_PATIENCE: Duration = Duration::from_secs(60);
 
 pub struct ReviewPanel {
     /// The panel's own focus, so the window's shortcuts work with the
@@ -121,6 +123,10 @@ pub struct ReviewPanel {
     /// When claude was first seen past starting (its SessionStart hook ran),
     /// for `ready`; and when the panel opened, for its fallback.
     started_at: Option<Instant>,
+    /// When Review Again was pressed, until claude's state shows it took
+    /// it: the hooks take a few seconds to say so, and till then the button
+    /// would stay live and the banner wouldn't show.
+    again_sent: Option<Instant>,
     opened_at: Instant,
     /// The team's sensitive paths for this PR's repo, read once.
     sensitive: Vec<crate::risk::Sensitive>,
@@ -218,6 +224,9 @@ impl ReviewPanel {
                     // change with nothing else in the transcript.
                     if this.seen_state != state {
                         this.seen_state = state;
+                        if this.again_sent.is_some() && !this.idle() {
+                            this.again_sent = None;
+                        }
                         cx.notify();
                     }
                     // Claude's up: its input takes a moment more to be
@@ -283,6 +292,7 @@ impl ReviewPanel {
             resolve_note: None,
             seen_state: None,
             started_at: None,
+            again_sent: None,
             opened_at: Instant::now(),
             plans: Vec::new(),
             author: None,
@@ -330,6 +340,7 @@ impl ReviewPanel {
             resolve_note: None,
             seen_state: None,
             started_at: None,
+            again_sent: None,
             opened_at: Instant::now(),
             sensitive: Vec::new(),
             plans: Vec::new(),
@@ -417,6 +428,13 @@ impl ReviewPanel {
         self.claude_state().as_deref() == Some("idle")
     }
 
+    /// Review Again was pressed and claude hasn't shown it's started yet.
+    /// Given up on after a while, so a prompt claude never took doesn't
+    /// leave the button off.
+    fn again_pending(&self) -> bool {
+        self.again_sent.is_some_and(|at| at.elapsed() < AGAIN_PATIENCE) && self.idle()
+    }
+
     fn working(&self) -> bool {
         !matches!(self.claude_state().as_deref(), Some("idle") | Some("exited") | Some("stopped") | Some("needs-you"))
     }
@@ -490,7 +508,14 @@ impl ReviewPanel {
         if !self.takes_input() {
             return;
         }
+        self.again_sent = Some(Instant::now());
         self.tell(crate::launch::REVIEW_AGAIN.to_string(), window, cx);
+        // Redraw when the wait's given up on, in case nothing else does.
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(AGAIN_PATIENCE).await;
+            this.update(cx, |_, cx| cx.notify()).ok();
+        })
+        .detach();
     }
 
     fn start_edit(&mut self, finding: &Finding, window: &mut Window, cx: &mut Context<Self>) {
@@ -1026,7 +1051,7 @@ impl ReviewPanel {
         let url = self.url();
         let link = url.clone();
         let has_result = self.result.is_some();
-        let can_again = self.idle() && has_result && self.has_changes();
+        let can_again = self.idle() && has_result && self.has_changes() && !self.again_pending();
         let (_, status_tint) = self.status(theme);
         let shown = self.shows_conversation();
         let title = self.title().unwrap_or_else(|| format!("{repo}#{number}"));
@@ -1056,7 +1081,7 @@ impl ReviewPanel {
                     d.on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.check_for_changes(cx)))
                 }))
                 .map(|d| {
-                    if live && self.running() && !self.takes_input() {
+                    if live && ((self.running() && !self.takes_input()) || self.again_pending()) {
                         // Claude Code is still starting: its terminal won't take the prompt yet.
                         d.child(Self::busy_button("review-again", "Review Again", theme))
                     } else {
@@ -1391,13 +1416,21 @@ impl ReviewPanel {
             return None;
         }
         let needs_you = self.claude_state().as_deref() == Some("needs-you");
+        let pending = self.again_pending();
         // A resumed session starting up isn't reviewing again: the header says it's starting.
-        if (!self.working() && !needs_you) || self.claude_state().as_deref() == Some("starting") {
+        if !pending && ((!self.working() && !needs_you) || self.claude_state().as_deref() == Some("starting")) {
             return None;
         }
         let shown = self.shows_conversation();
+        // Just pressed: what it's looking at, from the last check, until
+        // claude's own activity takes over.
+        let changes = match &self.checked {
+            Some((_, Ok(changes))) => format!("Since the last review: {}. ", changes.summary().to_lowercase()),
+            _ => String::new(),
+        };
         let text = match (&self.activity, needs_you) {
             (_, true) => "Claude is asking something in its terminal.".to_string(),
+            _ if pending => format!("{changes}Sent to Claude; it's starting on it."),
             (Some(activity), _) => activity.clone(),
             (None, _) => "The new result replaces this one once it's done.".to_string(),
         };
