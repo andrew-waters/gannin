@@ -80,15 +80,27 @@ struct HistoryIssueExtras: Codable, Hashable {
     var projectFields: [IssueProjectFields]
 }
 
+/// What only the work log fetch reads, kept beside the core.
+struct WorkLogIssueExtras: Codable, Hashable {
+    /// The issue's `updatedAt` when this was fetched (see `HistoryIssueExtras`).
+    /// Nil on an issue carried over from an old cache, which is fetched once
+    /// when the change feed next reports it changed.
+    var updatedAt: Date?
+    /// The last comments on it (up to 30), oldest first.
+    let comments: [WorkLogIssueComment]
+}
+
 struct StoredIssue: Codable, Hashable, Identifiable {
     /// The part of a stored issue one store owns.
-    enum Slot { case workload, history }
+    enum Slot { case workload, history, workLog }
 
     var core: IssueCore
     /// Nil until a workload refresh has fetched the issue.
     var workload: WorkloadIssueExtras?
     /// Nil until an issue history sync has fetched the issue.
     var history: HistoryIssueExtras?
+    /// Nil until a work log sync has fetched the issue.
+    var workLog: WorkLogIssueExtras?
 
     var id: String { core.id }
 }
@@ -131,6 +143,29 @@ final class SharedIssueStore {
             var next = issue
             if let existing = held[issue.id] {
                 next = existing.merged(with: issue)
+                guard next != existing else { continue }
+            }
+            held[issue.id] = next
+            changed = true
+        }
+        guard changed else { return }
+        loaded[org] = held
+        save(org)
+    }
+
+    /// Adds issues carried over from an old cache, which have no `updatedAt`,
+    /// assignees, labels or `closedAt` of their own. A held issue keeps its
+    /// core, since the incoming one could empty its lists when the held core
+    /// has no `updatedAt` either; only the incoming work log part is laid over it.
+    func mergeCarriedOver(_ incoming: [StoredIssue], org: String) {
+        var held = load(org)
+        var changed = false
+        for issue in incoming {
+            var next = issue
+            if let existing = held[issue.id] {
+                var workLogOnly = existing
+                workLogOnly.workLog = issue.workLog
+                next = existing.merged(with: workLogOnly)
                 guard next != existing else { continue }
             }
             held[issue.id] = next
@@ -222,6 +257,7 @@ extension StoredIssue {
         switch slot {
         case .workload: workload = nil
         case .history: history = nil
+        case .workLog: workLog = nil
         }
     }
 
@@ -229,11 +265,12 @@ extension StoredIssue {
         switch slot {
         case .workload: workload != nil
         case .history: history != nil
+        case .workLog: workLog != nil
         }
     }
 
     /// Whether no store has a part of it.
-    var isEmpty: Bool { workload == nil && history == nil }
+    var isEmpty: Bool { workload == nil && history == nil && workLog == nil }
 
     /// This issue with `incoming` laid over it: core field by field, and each
     /// store's part replaced only by a part fetched at least as recently.
@@ -242,6 +279,7 @@ extension StoredIssue {
         next.core = core.merged(with: incoming.core)
         next.workload = Self.newer(workload, incoming.workload) { $0.updatedAt }
         next.history = Self.newer(history, incoming.history) { $0.updatedAt }
+        next.workLog = Self.newer(workLog, incoming.workLog) { $0.updatedAt }
         return next
     }
 
@@ -297,6 +335,31 @@ extension StoredIssue {
     /// The assignees an assignee edit left on the issue.
     mutating func setAssignees(_ people: [Person]) {
         core.assignees = people
+    }
+
+    /// An issue as the work log fetch has it. A log carried over from before
+    /// issues were shared has no `updatedAt`, so its core never outranks one
+    /// a fetch saved.
+    init(workLog issue: WorkLogIssue) {
+        core = IssueCore(
+            id: issue.id, number: issue.number, title: issue.title, url: issue.url, repo: issue.repo,
+            author: issue.author.map { Person(login: $0, name: nil, avatarUrl: nil) },
+            createdAt: issue.createdAt, closedAt: issue.closedAt, updatedAt: issue.updatedAt,
+            assignees: (issue.assignees ?? []).map { Person(login: $0, name: nil, avatarUrl: nil) },
+            labels: (issue.labels ?? []).map { StoredLabel(name: $0, color: nil) }
+        )
+        workLog = WorkLogIssueExtras(updatedAt: issue.updatedAt, comments: issue.comments)
+    }
+
+    /// Nil until a work log sync has fetched it.
+    var workLogIssue: WorkLogIssue? {
+        guard let workLog else { return nil }
+        return WorkLogIssue(
+            id: core.id, number: core.number, title: core.title, url: core.url, repo: core.repo,
+            author: core.author?.login, createdAt: core.createdAt, comments: workLog.comments,
+            closedAt: core.closedAt, updatedAt: workLog.updatedAt,
+            assignees: core.assignees.map(\.login), labels: core.labels.map(\.name)
+        )
     }
 
     /// An issue as the issue history fetch has it.
