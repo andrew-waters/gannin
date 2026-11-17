@@ -346,7 +346,7 @@ impl AssistantPreview {
         // for a new line and Command-Return to send.
         let composer = cx.new(|cx| {
             let mut editor = editor::Editor::auto_height(2, 10, window, cx);
-            editor.set_placeholder_text("Message the assistant", window, cx);
+            editor.set_placeholder_text("Message Marra", window, cx);
             editor
         });
         let edits = cx.subscribe(&composer, |this: &mut Self, _, event: &editor::EditorEvent, cx| {
@@ -731,7 +731,7 @@ impl AssistantPreview {
                 if !self.focus_mode && self.held > 0 {
                     let held = self.held;
                     self.held = 0;
-                    self.notify(format!("{held} things while you were busy"), "Open the assistant to see them".into(), vec!["Open"], None, cx);
+                    self.notify(format!("{held} things while you were busy"), "Open Marra to see them".into(), vec!["Open"], None, cx);
                 }
             }
         }
@@ -1051,9 +1051,9 @@ impl AssistantPreview {
                                         this.threads[0].messages.push(text(Who::Event, "Compacted. Notes and threads are kept; the summary replaces older turns."));
                                     }
                                     2 => {
-                                        this.threads[0].messages.push(text(Who::Event, "New conversation. assistant-notes.md loaded; the old one stays above."));
+                                        this.threads[0].messages.push(text(Who::Event, "New conversation. marra-notes.md loaded; the old one stays above."));
                                     }
-                                    3 => this.notify("assistant-notes.md".into(), "Opens in your editor".into(), vec![], None, cx),
+                                    3 => this.notify("marra-notes.md".into(), "Opens in your editor".into(), vec![], None, cx),
                                     4 => {
                                         for t in &mut this.threads {
                                             t.unread = false;
@@ -1330,7 +1330,7 @@ impl AssistantPreview {
     fn message_view(&self, t: usize, m: usize, message: &Message, named: bool, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let label = match message.who {
             Who::You | Who::Event => "",
-            Who::Assistant => "Assistant",
+            Who::Assistant => "Marra",
             Who::Worker => "Worker",
         };
         let body: AnyElement = match &message.body {
@@ -1713,7 +1713,7 @@ impl AssistantPreview {
             Kind::Investigation => "investigation's worker",
             Kind::Build => "session",
             Kind::Review => "review session",
-            Kind::Main => "assistant",
+            Kind::Main => "Marra",
         }));
         let token = self.typing_token(cx);
         let options = token.as_deref().map(|t| self.suggestions(t)).unwrap_or_default();
@@ -1892,7 +1892,7 @@ impl Render for AssistantPreview {
             .border_b_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child("Assistant"))
+            .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child("Marra"))
             .child(div().flex_1())
             .child(self.title_controls(&theme, cx));
         let menus = self.menus(&theme, cx);
