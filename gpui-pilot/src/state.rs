@@ -30,6 +30,8 @@ pub struct SavedState {
     pub org: Option<String>,
     /// The project picked, by its harness repo.
     pub project: Option<String>,
+    /// The folder the window has open (Open Recent), here or on a server.
+    pub folder: Option<crate::folders::Location>,
     /// Before tabs had their own controls: the pages, in order. Read once
     /// when `views` is empty.
     #[serde(deserialize_with = "lenient")]
@@ -88,6 +90,7 @@ impl Default for SavedState {
         Self {
             org: None,
             project: None,
+            folder: None,
             tabs: vec![Nav::Ci],
             views: Vec::new(),
             sessions: Vec::new(),

@@ -4,8 +4,8 @@
 //! works. Kept in `servers.json` in the pilot's folder, shaped like Zed's
 //! `ssh_connections` (host, username, port, args, nickname).
 //!
-//! A session started while Settings › Servers says "Run new sessions on" a
-//! server keeps it (`Launch::server`), and everything about it goes over one
+//! A session started in a window whose folder is on a server (Open Recent)
+//! keeps that server (`Launch::server`), and everything about it goes over one
 //! ssh connection per server (a ControlMaster, as Zed's):
 //!
 //! - its terminal: the session's folder is copied up, then `start.sh` runs
@@ -16,8 +16,7 @@
 //!   it does for a session on this Mac;
 //! - git in the session's worktrees, for Changes, over ssh.
 //!
-//! The harness is at the same place under the server's home as here (the
-//! start script clones it when it's missing). Batch mode: ssh never asks for
+//! The harness is wherever the window's folder has it on the server. Batch mode: ssh never asks for
 //! a password, so a server needs key (or agent) sign-in, as Zed recommends.
 
 use base64::Engine;
@@ -119,8 +118,9 @@ impl Server {
 pub struct Servers {
     #[serde(default)]
     pub servers: Vec<Server>,
-    /// The key of the server new sessions run on; None is this Mac.
-    #[serde(default)]
+    /// Before a window's folder said where its sessions run: the server
+    /// they all ran on. Kept so the file reads back; no longer used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub run_on: Option<String>,
 }
 
@@ -137,13 +137,6 @@ pub fn save(servers: &Servers) {
         let _ = std::fs::create_dir_all(dir);
     }
     let _ = std::fs::write(servers_path(), serde_json::to_vec_pretty(servers).unwrap_or_default());
-}
-
-/// Where a new session runs: the server picked, while it's still saved.
-pub fn run_on() -> Option<Server> {
-    let saved = load();
-    let key = saved.run_on?;
-    saved.servers.into_iter().find(|s| s.key() == key)
 }
 
 /// The hosts named in `~/.ssh/config` (not patterns), offered when adding
@@ -290,7 +283,7 @@ pub fn start_command(server: &Server, launch: &crate::launch::Launch) -> String 
     let remote = crate::launch::quote_path(&local);
     let keep = ["state", "started", "changed", "pr", "tool.json", "transcript.jsonl", "risk.json", "auto-posted", "posted.json", "decisions.json"];
     let excludes: String = keep.iter().map(|f| format!(" --exclude {}", crate::launch::quote(&format!("./{f}")))).collect();
-    let unpack = format!("mkdir -p {remote} && tar -C {remote} -xf - && if [ -e {remote}/started ]; then printf idle > {remote}/state; else printf starting > {remote}/state; fi");
+    let unpack = format!("mkdir -p {remote} && tar -C {remote} -xf - && printf starting > {remote}/state");
     let run = format!(r#"exec "${{SHELL:-/bin/bash}}" -lic 'exec bash "$0"' {remote}/start.sh"#);
     format!(
         "printf '\\033[90m%s\\033[0m\\n' {note} && COPYFILE_DISABLE=1 tar -C {local}{excludes} -cf - . | {upload} {unpack} || {{ printf '\\033[31mGannin: %s\\033[0m\\n' {failed}; exec \"${{SHELL:-/bin/zsh}}\" -l; }}; exec {terminal} {run}",

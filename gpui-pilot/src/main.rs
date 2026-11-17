@@ -13,6 +13,7 @@ mod changes;
 mod charts;
 mod data;
 mod detail;
+mod folders;
 mod format;
 mod explain;
 mod github;
@@ -57,7 +58,7 @@ mod zed;
 use gpui::{
     actions, App, AppContext, KeyBinding, Menu, MenuItem,
 };
-use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, ToggleTabsOnLeft, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
+use shell::{CloseTab, NewAsk, NewWindow, Refresh, ToggleSync, ToggleTabsOnLeft, NewClaudeSession, NewPlan, NewQuickChange, NewTerminal, OpenFolder, OpenSwitcher, ToggleInspector, ToggleSidebar, Workspace};
 
 actions!(pilot, [Quit]);
 
@@ -82,6 +83,32 @@ fn main() {
                 let brief = format!("# acme/api#12: Fix\n\n{}", launch::working_here("acme/harness", &dry.harness_path, &branch, Some("acme/api#12"), "acme/api", false));
                 dry.prepare(&brief, &prompt, false, false).expect("prepare");
                 println!("{}", dry.dir().join("start.sh").display());
+                return;
+            }
+            // What a window would make of a folder: its org and harnesses.
+            "--open-folder" => {
+                let location = folders::Location::here(std::path::PathBuf::from(args.next().unwrap_or_default()));
+                match folders::inspect(&location) {
+                    Ok(opened) => {
+                        let org = opened.org(&data::orgs());
+                        println!("{} org {:?}, empty {}", opened.location.place(), org, opened.empty);
+                        for h in &opened.harnesses {
+                            println!("  harness {} {:?} name {:?}, {} repos", h.path.display(), h.repo, h.name, h.repos.len());
+                        }
+                        println!("  {} other repos", opened.repos.len());
+                    }
+                    Err(error) => println!("{error}"),
+                }
+                return;
+            }
+            // Sets up the starter harness in a folder: `--set-up-harness <dir> <org>`.
+            "--set-up-harness" => {
+                let location = folders::Location::here(std::path::PathBuf::from(args.next().unwrap_or_default()));
+                let org = args.next().unwrap_or_default();
+                match folders::inspect(&location).and_then(|opened| folders::set_up_harness(&opened, &org)) {
+                    Ok(path) => println!("set up {}", path.display()),
+                    Err(error) => println!("{error}"),
+                }
                 return;
             }
             // Reads a review session's result from claude's transcript.
@@ -231,7 +258,8 @@ fn main() {
                     MenuItem::separator(),
                     MenuItem::action("New Window", NewWindow),
                     MenuItem::separator(),
-                    MenuItem::action("Switch Org", OpenSwitcher),
+                    MenuItem::action("Open Folder", OpenFolder),
+                    MenuItem::action("Open Recent", OpenSwitcher),
                     MenuItem::separator(),
                     MenuItem::action("Close Tab", CloseTab),
                 ],

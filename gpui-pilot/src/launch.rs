@@ -87,7 +87,9 @@ impl Launch {
             subject,
             created_at: Utc::now(),
             unattended: None,
-            server: crate::servers::run_on(),
+            // Set from the window's folder (`Workspace::place`): a session
+            // runs where the window's harness is.
+            server: None,
         }
     }
 
@@ -353,6 +355,10 @@ pub fn harness_path(org: &str, repo: &str) -> PathBuf {
         .filter(|p| !p.is_empty());
     if let Some(path) = setting {
         return PathBuf::from(path.replacen('~', &home().to_string_lossy(), 1));
+    }
+    // Where a folder opened here (Open Recent) has it.
+    if let Some(path) = crate::folders::known_path(repo) {
+        return path;
     }
     let (owner, name) = repo.split_once('/').unwrap_or(("", repo));
     let home = home();

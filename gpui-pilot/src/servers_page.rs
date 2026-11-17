@@ -106,16 +106,7 @@ impl ServersPage {
 
     fn remove(&mut self, key: &str, cx: &mut Context<Self>) {
         self.saved.servers.retain(|s| s.key() != key);
-        if self.saved.run_on.as_deref() == Some(key) {
-            self.saved.run_on = None;
-        }
         self.checks.remove(key);
-        servers::save(&self.saved);
-        cx.notify();
-    }
-
-    fn run_on(&mut self, key: Option<String>, cx: &mut Context<Self>) {
-        self.saved.run_on = key;
         servers::save(&self.saved);
         cx.notify();
     }
@@ -215,13 +206,6 @@ impl Render for ServersPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
         let quiet = |text: &str| div().text_sm().text_color(theme.secondary).child(text.to_string());
-        let run_on = self.saved.run_on.clone();
-        let mut places = vec![Self::chip("run-on-here", "This Mac".into(), run_on.is_none(), &theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.run_on(None, cx))).into_any_element()];
-        for server in &self.saved.servers {
-            let key = server.key();
-            let on = run_on.as_deref() == Some(key.as_str());
-            places.push(Self::chip(format!("run-on-{key}"), server.name(), on, &theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.run_on(Some(key.clone()), cx))).into_any_element());
-        }
         let rows: Vec<gpui::AnyElement> = self.saved.servers.clone().iter().map(|s| self.server_row(s, &theme, cx).into_any_element()).collect();
         let saved_hosts: Vec<String> = self.saved.servers.iter().map(|s| s.host.clone()).collect();
         let picks: Vec<gpui::AnyElement> = self
@@ -260,8 +244,7 @@ impl Render for ServersPage {
                     .flex_col()
                     .gap_4()
                     .child(div().text_xl().font_weight(FontWeight::SEMIBOLD).child("Servers"))
-                    .child(quiet("Run Claude Code sessions on another machine over ssh. The session's terminal and panels stay here; claude, git and the harness run there. A session keeps the server it started on."))
-                    .child(div().flex().flex_col().gap_1().child(div().text_sm().font_weight(FontWeight::MEDIUM).child("Run new sessions on")).child(div().flex().flex_row().flex_wrap().gap_1().children(places)))
+                    .child(quiet("Run Claude Code sessions on another machine over ssh. Open a folder on a server (Open Recent, ⌥⌘O) and that window's sessions run there: claude, git and the harness on the server, the terminal and panels here. A session keeps the server it started on."))
                     .children(rows)
                     .child(
                         div()

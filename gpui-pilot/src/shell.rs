@@ -29,7 +29,7 @@ use gpui::{
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
-actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, NewWindow]);
+actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, OpenFolder, NewWindow]);
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
@@ -49,6 +49,7 @@ pub fn key_bindings() -> Vec<KeyBinding> {
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
         KeyBinding::new("cmd-alt-o", OpenSwitcher, None),
+        KeyBinding::new("cmd-o", OpenFolder, None),
         KeyBinding::new("cmd-r", Refresh, None),
     ]
 }
@@ -405,7 +406,8 @@ struct DraggedTab(usize, String);
 /// What a title bar switcher picks.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Pick {
-    Org,
+    /// Open Recent: the folders opened, and opening another.
+    Folder,
     Project,
 }
 
@@ -414,6 +416,8 @@ struct Switcher {
     pick: Pick,
     query: String,
     highlighted: usize,
+    /// Typing a path on this server to open, in place of the list.
+    server: Option<crate::servers::Server>,
 }
 
 pub struct Workspace {
@@ -427,6 +431,15 @@ pub struct Workspace {
     /// The org's projects, each a harness, and the one picked by its id.
     projects: Vec<Project>,
     project: Option<String>,
+    /// The folder the window has open, as a Zed window has a project: its
+    /// org's harnesses there are the window's projects, and its sessions
+    /// run where it is (this Mac or a server).
+    folder: Option<crate::folders::Opened>,
+    /// The folder saved, kept while it can't be read (a server that's
+    /// off), so it isn't forgotten.
+    saved_folder: Option<crate::folders::Location>,
+    /// A folder being read, by its place, for the title bar.
+    opening: Option<String>,
     /// How the org's issues move through its board, for drawer timing.
     workflow: Workflow,
     collapsed_sections: HashSet<&'static str>,
@@ -525,6 +538,7 @@ impl Workspace {
         SavedState {
             org: self.org.clone(),
             project: self.project.clone(),
+            folder: self.folder.as_ref().map(|f| f.location.clone()).or_else(|| self.saved_folder.clone()),
             tabs: Vec::new(),
             views: self
                 .tabs
@@ -680,6 +694,16 @@ impl Workspace {
         crate::github::set_reserve(workspace.sync.prefs.reserve);
         workspace.start_sync_loop(cx);
         workspace.load_settings(cx);
+        // The folder it had open; a window from before folders opens its
+        // project's harness, where it's checked out here.
+        let folder = workspace.saved_folder.clone().or_else(|| {
+            let (org, project) = (workspace.org.clone()?, workspace.project.clone()?);
+            let path = crate::launch::harness_path(&org, &project);
+            path.is_dir().then(|| crate::folders::Location::here(path))
+        });
+        if let Some(folder) = folder {
+            workspace.open_folder(folder, false, window, cx);
+        }
         workspace
     }
 
@@ -716,7 +740,7 @@ impl Workspace {
                 if this.org.as_deref() != Some(org.as_str()) {
                     return;
                 }
-                this.projects = settings.projects;
+                this.projects = this.folder_projects(settings.projects);
                 this.workflow = settings.workflow;
                 if !this.project.as_ref().is_some_and(|id| this.projects.iter().any(|p| &p.id == id)) {
                     this.project = this.projects.first().map(|p| p.id.clone());
@@ -798,6 +822,9 @@ impl Workspace {
             org,
             projects: Vec::new(),
             project: saved.project.clone(),
+            folder: None,
+            saved_folder: saved.folder.clone(),
+            opening: None,
             workflow: Workflow::default(),
             collapsed_sections: sections().iter().map(|s| s.id).filter(|id| saved.collapsed_sections.iter().any(|c| c == id)).collect(),
             expanded_groups: saved.expanded_groups.iter().copied().collect(),
@@ -1342,7 +1369,7 @@ impl Workspace {
     /// Work on This, attended or (`unattended`, with the PR gap's minutes)
     /// started by the schedule. Returns the launch's id when it started one.
     fn work_on_with(&mut self, issue: IssueItem, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) -> Option<String> {
-        use crate::launch::{self, Flow, Launch, Subject};
+        use crate::launch::{self, Flow, Subject};
         if unattended.is_none() && self.show_session(&issue.id, Flow::Work, window, cx) {
             return None;
         }
@@ -1359,7 +1386,7 @@ impl Workspace {
         let branch = launch::issue_branch(issue.number, &issue.title);
         let reference = format!("{}#{}", issue.repo, issue.number);
         let subject = Subject { id: issue.id.clone(), repo: issue.repo.clone(), number: issue.number, title: issue.title.clone(), url: issue.url.clone() };
-        let mut launch = Launch::new(Flow::Work, format!("#{} {}", issue.number, issue.title), &org, &harness, branch.clone(), Some(subject));
+        let mut launch = self.new_launch(Flow::Work, format!("#{} {}", issue.number, issue.title), &org, &harness, branch.clone(), Some(subject));
         launch.unattended = unattended;
         let text = detail::load_text(&issue.id);
         let parent = issue.parent_id.as_deref().and_then(|id| self.issues.read(cx).issue(id));
@@ -1399,7 +1426,7 @@ impl Workspace {
     /// Review with Claude, attended or started by a review window
     /// (`unattended`): that one posts by itself when it's done.
     fn review_pr_with(&mut self, pr: PrItem, unattended: Option<u32>, window: &mut Window, cx: &mut Context<Self>) {
-        use crate::launch::{self, Flow, Launch, Subject};
+        use crate::launch::{self, Flow, Subject};
         if unattended.is_none() && self.show_session(&pr.id, Flow::Review, window, cx) {
             return;
         }
@@ -1411,7 +1438,7 @@ impl Workspace {
         };
         let branch = format!("review-{}-{}", pr.repo_name, pr.number);
         let subject = Subject { id: pr.id.clone(), repo: pr.repo.clone(), number: pr.number, title: pr.title.clone(), url: pr.url.clone() };
-        let mut launch = Launch::new(Flow::Review, format!("Review {}#{}", pr.repo_name, pr.number), &org, &harness, branch.clone(), Some(subject));
+        let mut launch = self.new_launch(Flow::Review, format!("Review {}#{}", pr.repo_name, pr.number), &org, &harness, branch.clone(), Some(subject));
         launch.unattended = unattended;
         if unattended.is_some() {
             // It posts by itself once its review is in.
@@ -1769,9 +1796,9 @@ impl Workspace {
     /// A recurring prompt, as an Ask started by the schedule. Whether it
     /// started.
     fn start_prompt(&mut self, name: &str, text: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        use crate::launch::{self, Flow, Launch};
+        use crate::launch::{self, Flow};
         let (Some(org), Some(harness)) = (self.org.clone(), self.project.clone().or_else(|| self.projects.first().map(|p| p.id.clone()))) else { return false };
-        let mut launch = Launch::new(Flow::Ask, name.to_string(), &org, &harness, String::new(), None);
+        let mut launch = self.new_launch(Flow::Ask, name.to_string(), &org, &harness, String::new(), None);
         launch.branch = format!("ask-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..8].to_lowercase());
         launch.unattended = Some(crate::schedule::Schedule::load().settings.gap_minutes);
         let mut brief = launch::ask_brief(name, &harness, &launch.harness_path, &launch.branch);
@@ -2006,7 +2033,7 @@ impl Workspace {
     }
 
     fn start_from_form(&mut self, started: &crate::launch_form::Started, window: &mut Window, cx: &mut Context<Self>) {
-        use crate::launch::{self, Flow, Launch, Subject};
+        use crate::launch::{self, Flow, Subject};
         let Some(org) = self.org.clone() else { return };
         let harness = started.harness.clone();
         match started.flow {
@@ -2015,7 +2042,7 @@ impl Workspace {
                 let slug = launch::slug(&topic, 40);
                 let branch = format!("plan-{}", if slug.is_empty() { "plan" } else { slug.as_str() });
                 let subject = started.issue.as_ref().map(|i| Subject { id: i.id.clone(), repo: i.repo.clone(), number: i.number, title: i.title.clone(), url: i.url.clone() });
-                let launch = Launch::new(Flow::Plan, format!("Plan: {}", launch::short_title(&topic)), &org, &harness, branch.clone(), subject);
+                let launch = self.new_launch(Flow::Plan, format!("Plan: {}", launch::short_title(&topic)), &org, &harness, branch.clone(), subject);
                 let mut brief = format!("# Planning: {topic}\n\n");
                 let reference = started.issue.as_ref().map(|i| (format!("{}#{}", i.repo, i.number), i.number, i.repo.clone()));
                 if let Some(issue) = &started.issue {
@@ -2030,7 +2057,7 @@ impl Workspace {
             }
             Flow::Ask => {
                 let title = launch::short_title(&started.text);
-                let mut launch = Launch::new(Flow::Ask, format!("Ask: {title}"), &org, &harness, String::new(), None);
+                let mut launch = self.new_launch(Flow::Ask, format!("Ask: {title}"), &org, &harness, String::new(), None);
                 launch.branch = format!("ask-{}-{}", chrono::Local::now().format("%Y-%m-%d"), launch.id[..8].to_lowercase());
                 let brief = launch::ask_brief(&title, &harness, &launch.harness_path, &launch.branch);
                 let prompt = launch::ask_prompt(&started.text, &launch.branch);
@@ -2046,7 +2073,7 @@ impl Workspace {
             Flow::QuickChange => {
                 let Some(repo) = started.repo.clone() else { return };
                 let title = if started.extra.is_empty() { launch::short_title(&started.text) } else { started.extra.clone() };
-                let mut launch = Launch::new(Flow::QuickChange, format!("Quick change: {title}"), &org, &harness, String::new(), None);
+                let mut launch = self.new_launch(Flow::QuickChange, format!("Quick change: {title}"), &org, &harness, String::new(), None);
                 let hex = launch.id[..4].to_lowercase();
                 let slug = launch::slug(&title, 32);
                 launch.branch = if slug.is_empty() { format!("quick-{hex}") } else { format!("quick-{slug}-{hex}") };
@@ -3057,16 +3084,17 @@ impl Workspace {
         .detach();
     }
 
-    /// New Window: another window, on this one's org, to pick its own
-    /// project; it opens again after a relaunch until it's closed.
+    /// New Window: another window, which opens a folder of its own (Open
+    /// Recent); it opens again after a relaunch until it's closed.
     fn new_window(&mut self, cx: &mut Context<Self>) {
         let open: Vec<usize> = cx.windows().into_iter().filter_map(|h| h.downcast::<Workspace>()).filter_map(|h| h.read(cx).ok().map(|w| w.slot)).chain(std::iter::once(self.slot)).collect();
         let slot = open.iter().chain(crate::state::extra_slots().iter()).max().copied().unwrap_or(0) + 1;
         let saved = SavedState { org: self.org.clone(), ..SavedState::default() };
         let options = window_options(cx);
         let opened = cx.open_window(options, move |window, cx| cx.new(|cx| Workspace::new(saved, slot, window, cx)));
+        // A new window opens a folder of its own, as Zed's does.
         if let Ok(handle) = opened {
-            handle.update(cx, |workspace, window, cx| workspace.open_switcher(Pick::Project, window, cx)).ok();
+            handle.update(cx, |workspace, window, cx| workspace.open_switcher(Pick::Folder, window, cx)).ok();
         }
     }
 
@@ -3479,6 +3507,143 @@ impl Workspace {
         section
     }
 
+    /// The window's projects: with a folder open, its harnesses that are
+    /// the org's (named as the org's settings name them, else by their
+    /// project file or folder); without one, every project of the org.
+    fn folder_projects(&self, known: Vec<Project>) -> Vec<Project> {
+        let (Some(folder), Some(org)) = (&self.folder, &self.org) else { return known };
+        folder
+            .harnesses_of(org)
+            .into_iter()
+            .map(|h| {
+                let id = h.repo_id(org);
+                known.iter().find(|p| p.id.eq_ignore_ascii_case(&id)).cloned().unwrap_or_else(|| Project {
+                    name: h.name.clone().unwrap_or_else(|| h.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| id.clone())),
+                    repos: h.repos.clone(),
+                    id,
+                })
+            })
+            .collect()
+    }
+
+    /// A new session, where the window's folder is: its harness's checkout
+    /// there, and its server.
+    fn new_launch(&self, flow: crate::launch::Flow, title: String, org: &str, harness: &str, branch: String, subject: Option<crate::launch::Subject>) -> crate::launch::Launch {
+        let mut launch = crate::launch::Launch::new(flow, title, org, harness, branch, subject);
+        if let Some(folder) = &self.folder {
+            if let Some(found) = folder.harnesses.iter().find(|h| h.repo_id(org).eq_ignore_ascii_case(harness)) {
+                launch.harness_path = found.path.clone();
+            }
+            launch.server = folder.location.server.clone();
+        }
+        launch
+    }
+
+    /// Opens a folder in this window, as Zed opens a project: reads what's
+    /// in it (off the main thread, over ssh for a server's), takes its org
+    /// and its harnesses as the projects, and offers to set up a harness
+    /// when there's none. `asked`: the person picked it, so a failure says so.
+    fn open_folder(&mut self, location: crate::folders::Location, asked: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.switcher = None;
+        self.opening = Some(location.place());
+        cx.notify();
+        let reading = location.clone();
+        cx.spawn_in(window, async move |this, cx| {
+            let opened = cx.background_executor().spawn(async move { crate::folders::inspect(&reading) }).await;
+            this.update_in(cx, |this, window, cx| {
+                this.opening = None;
+                match opened {
+                    Ok(opened) => this.opened(opened, window, cx),
+                    Err(error) => {
+                        if asked {
+                            let _ = window.prompt(gpui::PromptLevel::Warning, &format!("Couldn't open {}", location.name()), Some(&error), &["OK"], cx);
+                        }
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn opened(&mut self, opened: crate::folders::Opened, window: &mut Window, cx: &mut Context<Self>) {
+        let org = opened.org(&self.orgs);
+        crate::folders::remember(&opened, org.as_deref());
+        self.saved_folder = Some(opened.location.clone());
+        let none = opened.harnesses.is_empty();
+        self.folder = Some(opened.clone());
+        match org.clone() {
+            Some(org) if self.org.as_deref() != Some(org.as_str()) => self.choose_org(org, window, cx),
+            _ => self.load_settings(cx),
+        }
+        if none {
+            self.offer_harness(opened, org, window, cx);
+        }
+        cx.notify();
+    }
+
+    /// A folder with no harness: asks whose it is when that's not clear,
+    /// then offers Gannin's starter harness, set up as a local git repo.
+    fn offer_harness(&mut self, opened: crate::folders::Opened, org: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let orgs = self.orgs.clone();
+        let target = crate::folders::new_harness_path(&opened);
+        let place = crate::folders::Location { path: target.clone(), server: opened.location.server.clone() }.place();
+        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "harness".into());
+        cx.spawn_in(window, async move |this, cx| {
+            let org = match org {
+                Some(org) => org,
+                None if orgs.len() == 1 => orgs[0].clone(),
+                None => {
+                    let mut buttons: Vec<&str> = orgs.iter().take(6).map(String::as_str).collect();
+                    buttons.push("Cancel");
+                    let Ok(answer) = this.update_in(cx, |_, window, cx| {
+                        window.prompt(gpui::PromptLevel::Info, "Which org is this folder's harness for?", Some("There's no harness here yet, and nothing in the folder says whose it is."), &buttons, cx)
+                    }) else {
+                        return;
+                    };
+                    match answer.await {
+                        Ok(i) if i < orgs.len().min(6) => orgs[i].clone(),
+                        _ => return,
+                    }
+                }
+            };
+            let detail = format!(
+                "There's no harness in {}. Set one up at {place}: the starter files Gannin's Set Up Harness makes (CLAUDE.md, plans, requirements, decisions, findings, skills, prompts and Gannin's settings), committed to a new git repo.\n\nNothing goes to GitHub. Create {org}/{name} there and push when you're ready.",
+                opened.location.place()
+            );
+            let Ok(answer) = this.update_in(cx, |_, window, cx| window.prompt(gpui::PromptLevel::Info, "Set up a harness here?", Some(&detail), &["Set Up Harness", "Not Now"], cx)) else {
+                return;
+            };
+            if answer.await != Ok(0) {
+                return;
+            }
+            let (folder, wanted) = (opened.clone(), org.clone());
+            let made = cx.background_executor().spawn(async move { crate::folders::set_up_harness(&folder, &wanted) }).await;
+            this.update_in(cx, |this, window, cx| match made {
+                Ok(_) => this.open_folder(opened.location.clone(), true, window, cx),
+                Err(error) => {
+                    let _ = window.prompt(gpui::PromptLevel::Warning, "Couldn't set up the harness", Some(&error), &["OK"], cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Open Folder: the system's folder picker, for a folder on this Mac.
+    fn pick_folder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.switcher = None;
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions { files: false, directories: true, multiple: false, prompt: Some("Open".into()) });
+        cx.spawn_in(window, async move |this, cx| {
+            let Ok(Ok(Some(paths))) = paths.await else { return };
+            let Some(path) = paths.into_iter().next() else { return };
+            this.update_in(cx, |this, window, cx| this.open_folder(crate::folders::Location::here(path), true, window, cx)).ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
     fn choose_org(&mut self, org: String, window: &mut Window, cx: &mut Context<Self>) {
         self.org = Some(org.clone());
         self.inspector = None;
@@ -3521,11 +3686,11 @@ impl Workspace {
 
     fn open_switcher(&mut self, pick: Pick, window: &mut Window, cx: &mut Context<Self>) {
         let current = match pick {
-            Pick::Org => self.org.clone(),
+            Pick::Folder => self.folder.as_ref().map(|f| f.location.key()),
             Pick::Project => self.project.clone(),
         };
         let highlighted = self.switcher_items(pick, "").iter().position(|(_, key)| Some(key) == current.as_ref()).unwrap_or(0);
-        self.switcher = Some(Switcher { pick, query: String::new(), highlighted });
+        self.switcher = Some(Switcher { pick, query: String::new(), highlighted, server: None });
         window.focus(&self.switcher_focus, cx);
         cx.notify();
     }
@@ -3540,7 +3705,7 @@ impl Workspace {
     fn switcher_items(&self, pick: Pick, query: &str) -> Vec<(String, String)> {
         let query = query.to_lowercase();
         let all: Vec<(String, String)> = match pick {
-            Pick::Org => self.orgs.iter().map(|o| (o.clone(), o.clone())).collect(),
+            Pick::Folder => crate::folders::recent().into_iter().map(|r| (r.location.name(), r.location.key())).collect(),
             Pick::Project => self.projects.iter().map(|p| (p.name.clone(), p.id.clone())).collect(),
         };
         all.into_iter().filter(|(label, _)| label.to_lowercase().contains(&query)).collect()
@@ -3548,7 +3713,11 @@ impl Workspace {
 
     fn choose(&mut self, pick: Pick, key: String, window: &mut Window, cx: &mut Context<Self>) {
         match pick {
-            Pick::Org => self.choose_org(key, window, cx),
+            Pick::Folder => {
+                if let Some(recent) = crate::folders::recent().into_iter().find(|r| r.location.key() == key) {
+                    self.open_folder(recent.location, true, window, cx);
+                }
+            }
             Pick::Project => self.choose_project(key, window, cx),
         }
     }
@@ -3561,6 +3730,25 @@ impl Workspace {
         let matches = self.switcher_items(pick, &switcher.query);
         let keystroke = &event.keystroke;
         match keystroke.key.as_str() {
+            // Typing a path on a server: Escape goes back to the list.
+            "escape" if switcher.server.is_some() => {
+                cx.stop_propagation();
+                if let Some(switcher) = self.switcher.as_mut() {
+                    switcher.server = None;
+                    switcher.query.clear();
+                    switcher.highlighted = 0;
+                }
+                cx.notify();
+                return;
+            }
+            "enter" if switcher.server.is_some() => {
+                cx.stop_propagation();
+                let path = switcher.query.trim().to_string();
+                if let (Some(server), false) = (switcher.server.clone(), path.is_empty()) {
+                    self.open_folder(crate::folders::Location { path: PathBuf::from(path), server: Some(server) }, true, window, cx);
+                }
+                return;
+            }
             "escape" => {
                 cx.stop_propagation();
                 return self.close_switcher(window, cx);
@@ -3638,7 +3826,17 @@ impl Workspace {
     // MARK: Title bar
 
     fn title_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let org = self.org.clone().unwrap_or_else(|| "No org".into());
+        // The folder open, as Zed names a window's project; its org beside
+        // it when the name doesn't say. A window from before folders shows
+        // its org until its folder's read.
+        let label = match (&self.opening, &self.folder, &self.org) {
+            (Some(place), _, _) => format!("Opening {place}"),
+            (None, Some(folder), _) => folder.location.name(),
+            (None, None, Some(org)) => org.clone(),
+            (None, None, None) => "Open a Folder".into(),
+        };
+        let org_beside = self.folder.as_ref().zip(self.org.as_ref()).filter(|(f, org)| !f.location.name().eq_ignore_ascii_case(org)).map(|(_, org)| org.clone());
+        let server = self.folder.as_ref().and_then(|f| f.location.server.as_ref()).map(|s| s.name());
         div()
             .id("title-bar")
             .h(px(TITLE_BAR))
@@ -3658,7 +3856,9 @@ impl Workspace {
                     window.titlebar_double_click();
                 }
             })
-            .child(self.switcher_button(Pick::Org, org, theme, cx))
+            .child(self.switcher_button(Pick::Folder, label, theme, cx))
+            .when_some(server, |d, server| d.child(div().text_sm().text_color(theme.secondary).child(format!("on {server}"))))
+            .when_some(org_beside, |d, org| d.child(div().text_sm().text_color(theme.tertiary).child(org)))
             .when(!self.projects.is_empty(), |d| {
                 let name = self
                     .projects
@@ -3683,7 +3883,7 @@ impl Workspace {
             .child(
                 div()
                     .id(match pick {
-                        Pick::Org => "org-button",
+                        Pick::Folder => "folder-button",
                         Pick::Project => "project-button",
                     })
                     .px_2()
@@ -5814,30 +6014,77 @@ impl Workspace {
             .on_mouse_down(MouseButton::Left, cx.listener(|this, _: &MouseDownEvent, window, cx| this.close_switcher(window, cx)))
     }
 
-    /// The second line under an org: which of its caches the pilot found.
-    fn org_detail(&self, org: &str) -> String {
-        let support = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Library/Application Support");
-        let has = |folder: &str| support.join(folder).join(format!("{org}.json")).exists();
-        let mut found = Vec::new();
-        if has("StoredIssues") {
-            found.push("Issues");
-        }
-        if has("Actions") {
-            found.push("CI");
-        }
-        if found.is_empty() { "Nothing cached yet".into() } else { found.join(" • ") }
-    }
-
     fn switcher_panel(&self, switcher: &Switcher, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let pick = switcher.pick;
         let matches = self.switcher_items(pick, &switcher.query);
         let current = match pick {
-            Pick::Org => self.org.clone(),
+            Pick::Folder => self.folder.as_ref().map(|f| f.location.key()),
             Pick::Project => self.project.clone(),
         };
-        let (prompt, none, action) = match pick {
-            Pick::Org => ("Find an org", "No org matches", "Org settings"),
-            Pick::Project => ("Find a project", "No project matches", "Project settings"),
+        let typing_path = switcher.server.as_ref().map(|s| s.name());
+        let (prompt, none) = match (pick, &typing_path) {
+            (_, Some(server)) => (format!("A folder's path on {server}, such as ~/Code/acme"), String::new()),
+            (Pick::Folder, None) => ("Find a recent folder".to_string(), "No recent folder matches".to_string()),
+            (Pick::Project, None) => ("Find a project".to_string(), "No project matches".to_string()),
+        };
+        let matches = if typing_path.is_some() { Vec::new() } else { matches };
+        let recents = if pick == Pick::Folder { crate::folders::recent() } else { Vec::new() };
+        let servers = if pick == Pick::Folder && typing_path.is_none() { crate::servers::load().servers } else { Vec::new() };
+        // Actions first: Open Folder and Open on each server for folders;
+        // the project's settings for projects.
+        let action_row = |id: gpui::ElementId, glyph: &'static str, label: String| {
+            div()
+                .id(id)
+                .mx_1()
+                .px_2()
+                .py_1p5()
+                .rounded_md()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.row_selected))
+                .child(div().w(px(16.)).text_color(theme.secondary).child(glyph))
+                .child(label)
+        };
+        let actions: Vec<gpui::AnyElement> = match (pick, &typing_path) {
+            (_, Some(server)) => vec![div()
+                .mx_1()
+                .px_2()
+                .py_1p5()
+                .text_sm()
+                .text_color(theme.secondary)
+                .child(format!("Return opens it on {server}; Escape goes back. It's read there, and its sessions run there."))
+                .into_any_element()],
+            (Pick::Folder, None) => {
+                let mut rows = vec![action_row("switcher-open-folder".into(), "▢", "Open Folder".into())
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.pick_folder(window, cx)))
+                    .into_any_element()];
+                for (index, server) in servers.into_iter().enumerate() {
+                    let name = server.name();
+                    rows.push(
+                        action_row(("switcher-open-on", index).into(), "⇄", format!("Open on {name}"))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                                if let Some(switcher) = this.switcher.as_mut() {
+                                    switcher.server = Some(server.clone());
+                                    switcher.query = "~/".into();
+                                    switcher.highlighted = 0;
+                                }
+                                window.focus(&this.switcher_focus, cx);
+                                cx.notify();
+                            }))
+                            .into_any_element(),
+                    );
+                }
+                rows
+            }
+            (Pick::Project, None) => vec![action_row("switcher-settings".into(), "⚙", "Project settings".into())
+                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.close_switcher(window, cx);
+                    this.navigate(Nav::Settings, false, window, cx);
+                }))
+                .into_any_element()],
         };
         div()
             .id("switcher")
@@ -5876,28 +6123,7 @@ impl Workspace {
                     }),
             )
             // Actions first, then the list.
-            .child(
-                div().flex().flex_col().py_1().border_b_1().border_color(theme.border).child(
-                    div()
-                        .id("switcher-settings")
-                        .mx_1()
-                        .px_2()
-                        .py_1p5()
-                        .rounded_md()
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_3()
-                        .cursor_pointer()
-                        .hover(|s| s.bg(theme.row_selected))
-                        .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                            this.close_switcher(window, cx);
-                            this.navigate(Nav::Settings, false, window, cx);
-                        }))
-                        .child(div().w(px(16.)).text_color(theme.secondary).child("⚙"))
-                        .child(action),
-                ),
-            )
+            .child(div().flex().flex_col().py_1().when(typing_path.is_none(), |d| d.border_b_1().border_color(theme.border)).children(actions))
             .child(
                 div()
                     .id("switcher-list")
@@ -5910,7 +6136,10 @@ impl Workspace {
                         let is_current = current.as_ref() == Some(key);
                         let chosen = key.clone();
                         let detail = match pick {
-                            Pick::Org => self.org_detail(key),
+                            Pick::Folder => recents.iter().find(|r| &r.location.key() == key).map_or_else(String::new, |r| match &r.org {
+                                Some(org) => format!("{} • {org}", r.location.place()),
+                                None => r.location.place(),
+                            }),
                             Pick::Project => self.projects.iter().find(|p| &p.id == key).map_or_else(String::new, |p| {
                                 let repos = match p.repos.len() {
                                     0 => "every repo".to_string(),
@@ -5945,7 +6174,7 @@ impl Workspace {
                                     .child(div().text_sm().text_color(theme.secondary).truncate().child(detail)),
                             )
                     }))
-                    .when(matches.is_empty(), |d| d.child(div().px_3().py_2().text_color(theme.secondary).child(none))),
+                    .when(matches.is_empty() && typing_path.is_none(), |d| d.child(div().px_3().py_2().text_color(theme.secondary).child(none))),
             )
     }
 }
@@ -6085,7 +6314,8 @@ impl Render for Workspace {
             .on_action(cx.listener(|this, _: &NewWindow, _, cx| this.new_window(cx)))
             .on_action(cx.listener(|this, _: &NextTab, window, cx| this.step_tab(1, window, cx)))
             .on_action(cx.listener(|this, _: &PreviousTab, window, cx| this.step_tab(-1, window, cx)))
-            .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Org, window, cx)))
+            .on_action(cx.listener(|this, _: &OpenSwitcher, window, cx| this.open_switcher(Pick::Folder, window, cx)))
+            .on_action(cx.listener(|this, _: &OpenFolder, window, cx| this.pick_folder(window, cx)))
             // Escape closes the top drawer; the switcher takes it first when open.
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
                 if event.keystroke.key == "escape" && this.sign_in.is_some() {
