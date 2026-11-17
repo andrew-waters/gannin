@@ -7,6 +7,7 @@
 //! never the workspace, so it doesn't touch a running Gannin.
 
 use crate::charts::{self, Theme};
+use crate::markdown::markdown;
 use gpui::{div, prelude::*, px, AnyElement, ClickEvent, Context, Entity, FocusHandle, Focusable, FontWeight, Hsla, KeyDownEvent, SharedString, Window};
 use std::collections::HashSet;
 use std::time::Duration;
@@ -92,6 +93,9 @@ enum Body {
     Findings { cause: String, evidence: Vec<String>, confidence: String, unknown: String },
     /// "Since you looked", at the top of a session's thread.
     Since { what: String, since: String, wants: String },
+    /// A long reply: its point in a bubble, then the whole of it as a page
+    /// of Markdown, folded to a few lines until opened.
+    Long { point: String, body: String },
     /// Catch me up: a line per unread thread.
     CatchUp(Vec<(usize, String)>),
 }
@@ -138,6 +142,10 @@ const REMIND: [(&str, &str, u64); 7] = [
     ("Tomorrow", "tomorrow morning", 90),
     ("When CI passes", "when CI passes", 20),
 ];
+
+const REVIEW_LONG: &str = "## Verdict: approve\n\nThe retry wrapper is sound: it backs off exponentially with jitter, caps at 30s, and only retries on 5xx and timeouts, never on 4xx.\n\n### What changed since the last review\n\n- `export/retry.go`: the cap is now configurable, which fixes my earlier finding about the hard-coded 10s.\n- `export/worker.go`: the context is passed through, so a cancelled export stops retrying.\n- Tests cover the cancel path and the cap.\n\n### Nits\n\n1. `export/retry.go:42`: the retry log line is at `debug`; at `info` it would show in HyperDX without turning on debug logging.\n2. `export/retry.go:18`: `maxBackoff = 30` is a bare number; a `time.Duration` constant would read better.\n\n### Not covered\n\nNo test for a retry that succeeds on the last attempt. Not a blocker, but it's the case most likely to regress.";
+const PLAN_LONG: &str = "## Plan\n\n1. **When did it start?** HyperDX: p95 for `/permits/export` over the last 14 days, split by org.\n2. **Which step is slow?** Trace spans for one slow export: the query, the CSV build, the upload.\n3. **Is it the data?** Mongo, read only: document counts for the two orgs, and `explain` on the export query.\n4. **What changed?** Deploys and migrations since the start, from the mono release log.\n\n### What I won't do\n\n- No writes anywhere; mongo is the read-only user on a secondary.\n- No full collection scans: the MCP server refuses them, and I'll sample instead.\n\n### What I'll hand back\n\nThe likely cause with evidence and links, confidence, what's still unknown, and the smallest fix.";
+const STANDUP_LONG: &str = "### Yesterday\n\n- Merged **mono#1533** (export retries, part 1) and **clients#2459** (offline queue fix).\n- Reviewed **mono#1533**, **api#12** and **lib.export-bundle#2**.\n- Investigated **product#4248**: closed as a config issue on staging.\n\n### Today\n\n- Finish **mono#1528** (feedback subscriber pings CS): tests in progress.\n- Review **mono#1541** for Jo (240 lines).\n- Decide on **lib.slugify#1**'s missing CHANGELOG.\n\n### Blockers\n\nNone. **clients#2466** waits on an e2e run you need to allow.";
 
 const SCOPES: [&str; 4] = ["All", "ctrl-hub harness", "andrew-waters harness", "mini (server)"];
 
@@ -208,6 +216,7 @@ fn seed() -> (Vec<Thread>, Vec<Item>) {
                 text(Who::You, "investigate product#4251"),
                 text(Who::Worker, "Read the ticket: exports over ~5,000 permits time out for two orgs since Tuesday. Planning with triage: logs first, then the query, then the data."),
                 text(Who::Worker, "Skills: triage, hyperdx, mongo (prod, read only)."),
+                Message { who: Who::Worker, body: Body::Long { point: "Plan: confirm when it started, find the slow step, then check the data shape.".into(), body: PLAN_LONG.into() } },
             ],
         },
         Thread {
@@ -223,7 +232,7 @@ fn seed() -> (Vec<Thread>, Vec<Item>) {
             scope: 1,
             messages: vec![
                 Message { who: Who::Event, body: Body::Since { what: "Adds retries with backoff to permit exports".into(), since: "3 commits, 1 comment from Sam, review re-run".into(), wants: "Post the review".into() } },
-                text(Who::Worker, "Reviewed afresh after the 3 new commits. Verdict: approve. Two nits: a log line at debug that should be info, and a magic number for the backoff cap."),
+                Message { who: Who::Worker, body: Body::Long { point: "Approve, with 2 nits. The retry logic is sound; the new commits fixed both earlier findings.".into(), body: REVIEW_LONG.into() } },
             ],
         },
         Thread {
@@ -310,6 +319,10 @@ pub struct AssistantPreview {
     more_open: bool,
     /// The open thread's Pin, Mute and Mark as unread.
     thread_menu: bool,
+    /// A thread's right-click menu: which, and where.
+    row_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    /// The window's theme, as of the last render.
+    theme: Theme,
     /// The highlighted suggestion while typing / or @.
     suggest: usize,
     /// A / or @ word whose suggestions were closed with Escape.
@@ -317,6 +330,8 @@ pub struct AssistantPreview {
     _edits: gpui::Subscription,
     unread_only: bool,
     open: Option<usize>,
+    /// Long replies opened in full: (thread, message).
+    long_open: HashSet<(usize, usize)>,
     /// Answer cards whose "How I got it" is open: (thread, message).
     how_open: HashSet<(usize, usize)>,
     toasts: Vec<Toast>,
@@ -359,12 +374,15 @@ impl AssistantPreview {
             later_menu: false,
             more_open: false,
             thread_menu: false,
+            row_menu: None,
+            theme: Theme::for_window(window),
             suggest: 0,
             suggest_closed: None,
             _edits: edits,
             unread_only: false,
             open: None,
             how_open: HashSet::new(),
+            long_open: HashSet::new(),
             toasts: Vec::new(),
             next_toast: 0,
             focus_mode: false,
@@ -553,6 +571,9 @@ impl AssistantPreview {
         if lower.starts_with("waiting") {
             let lines: Vec<String> = self.queue().iter().map(|&i| format!("{}: {} ({}m)", self.items[i].subject, self.items[i].task.to_lowercase(), self.items[i].minutes)).collect();
             self.say(if lines.is_empty() { "Nothing needs you.".into() } else { lines.join("\n") });
+        } else if lower.starts_with("standup") || lower.contains("standup") {
+            self.threads[0].messages.push(Message { who: Who::Assistant, body: Body::Long { point: "Yesterday: 2 PRs merged, 3 reviews posted. Today: finish mono#1528, review mono#1541.".into(), body: STANDUP_LONG.into() } });
+            self.threads[0].last = "Standup ready".into();
         } else if lower.contains("catch me up") || lower.starts_with("catch") {
             let lines: Vec<(usize, String)> = self.listed().into_iter().filter(|&i| i != 0 && self.is_unread(i)).map(|i| (i, format!("{}: {}", self.threads[i].title, self.threads[i].last))).collect();
             self.threads[0].messages.push(Message { who: Who::Assistant, body: Body::CatchUp(lines) });
@@ -1134,14 +1155,15 @@ impl AssistantPreview {
             })
     }
 
-    /// The list as iOS Messages draws it: an unread dot in the margin, a
-    /// round avatar for the kind, the name in bold, the time and a chevron,
-    /// the last line beneath, and a hairline inset to the text.
+    /// The list as iOS Messages draws it. Pinned threads come first, a line
+    /// each (you know what they are), above one divider; the rest have a
+    /// round avatar for the kind, the name, the time, and the last line.
+    /// Right-click a thread to pin, mute or mark it read or unread.
     fn threads_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let listed = self.listed();
         let unread = self.unread_count();
-        let count = listed.len();
-        let pinned = listed.iter().filter(|&&t| self.threads[t].pinned).count();
+        let (pins, rest): (Vec<usize>, Vec<usize>) = listed.into_iter().partition(|&t| self.threads[t].pinned);
+        let rest_count = rest.len();
         div()
             .id("threads")
             .flex_1()
@@ -1149,45 +1171,57 @@ impl AssistantPreview {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .py_2()
+            .pb_2()
+            // Only unread, as an icon with its count, at the right.
             .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_end()
-                    .px_4()
-                    .pb_1()
-                    .child(div().flex_1().text_xl().font_weight(FontWeight::BOLD).text_color(theme.fg).child("Threads"))
-                    .child(
-                        div()
-                            .id("unread-toggle")
-                            .text_sm()
-                            .cursor_pointer()
-                            .text_color(theme.selected)
-                            .child(if self.unread_only { "Show all".to_string() } else { format!("Unread ({unread})") })
-                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                                this.unread_only = !this.unread_only;
-                                cx.notify();
-                            })),
-                    ),
+                div().flex().flex_row().justify_end().px_3().pt_2().child(
+                    div()
+                        .id("unread-toggle")
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_1()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .when(self.unread_only, |d| d.bg(theme.selected))
+                        .when(!self.unread_only, |d| d.hover(|s| s.bg(theme.row_selected)))
+                        .child(gpui::svg().path("icons/filter.svg").size(px(14.)).text_color(if self.unread_only { theme.on_selected } else { theme.secondary }))
+                        .child(div().text_xs().text_color(if self.unread_only { theme.on_selected } else { theme.secondary }).child(format!("{unread}")))
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            this.unread_only = !this.unread_only;
+                            cx.notify();
+                        })),
+                ),
             )
-            .children(listed.into_iter().enumerate().map(|(row, t)| {
+            .children(pins.iter().map(|&t| {
                 let thread = &self.threads[t];
                 let unread = self.is_unread(t);
-                let last_row = row + 1 == count;
-                // Pinned threads sit above a full-width divider.
-                let ends_pins = pinned > 0 && pinned < count && row + 1 == pinned;
-                div()
-                    .id(SharedString::from(format!("thread-{t}")))
-                    .when(ends_pins, |d| d.border_b_1().border_color(theme.border).mb_1())
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .pl_1()
-                    .cursor_pointer()
-                    .hover(|s| s.bg(theme.row_selected))
-                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(t, cx)))
-                    .child(div().w(px(16.)).flex().justify_center().child(div().size(px(9.)).rounded_full().when(unread, |d| d.bg(theme.selected))))
+                self.thread_row(t, cx)
+                    .py_1()
+                    .child(avatar_view(thread.kind, unread, 22., 13., theme))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .ml_2()
+                            .pr_3()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_2()
+                            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
+                            .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
+                            .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) })),
+                    )
+            }))
+            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().mt_1().mb_1().h(px(1.)).bg(theme.border)))
+            .children(rest.iter().enumerate().map(|(row, &t)| {
+                let thread = &self.threads[t];
+                let unread = self.is_unread(t);
+                let last_row = row + 1 == rest_count;
+                self.thread_row(t, cx)
                     .child(avatar_view(thread.kind, unread, 34., 19., theme))
                     .child(
                         div()
@@ -1198,7 +1232,7 @@ impl AssistantPreview {
                             .py_2()
                             .flex()
                             .flex_col()
-                            .when(!last_row && !ends_pins, |d| d.border_b_1().border_color(theme.grid))
+                            .when(!last_row, |d| d.border_b_1().border_color(theme.grid))
                             .child(
                                 div()
                                     .flex()
@@ -1206,7 +1240,7 @@ impl AssistantPreview {
                                     .items_center()
                                     .gap_2()
                                     .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
-                                                                        .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
+                                    .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
                                     .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) }))
                                     .child(div().text_sm().text_color(theme.tertiary).child("›")),
                             )
@@ -1223,6 +1257,85 @@ impl AssistantPreview {
             }))
     }
 
+    /// A thread's row: the unread dot in the margin, open on click, its
+    /// menu on right-click.
+    fn thread_row(&self, t: usize, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let theme = self.theme;
+        let unread = self.is_unread(t);
+        div()
+            .id(SharedString::from(format!("thread-{t}")))
+            .flex()
+            .flex_row()
+            .items_center()
+            .pl_1()
+            .cursor_pointer()
+            .when(self.row_menu.is_some_and(|(m, _)| m == t), |d| d.bg(theme.row_selected))
+            .hover(|s| s.bg(theme.row_selected))
+            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(t, cx)))
+            .on_mouse_down(
+                gpui::MouseButton::Right,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _, cx| {
+                    cx.stop_propagation();
+                    this.row_menu = Some((t, event.position));
+                    cx.notify();
+                }),
+            )
+            .child(div().w(px(16.)).flex().justify_center().child(div().size(px(9.)).rounded_full().when(unread, |d| d.bg(theme.selected))))
+    }
+
+    /// The right-click menu on a thread, where the click was.
+    fn row_menu_view(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let theme = self.theme;
+        let (t, at) = self.row_menu?;
+        let thread = &self.threads[t];
+        let entries: [(&str, usize); 3] = [
+            (if thread.pinned { "Unpin" } else { "Pin" }, 0),
+            (if thread.muted { "Unmute" } else { "Mute" }, 1),
+            (if self.is_unread(t) { "Mark as Read" } else { "Mark as Unread" }, 2),
+        ];
+        Some(
+            div()
+                .absolute()
+                .left(at.x)
+                .top(at.y)
+                .w(px(170.))
+                .p_1()
+                .bg(theme.popover)
+                .border_1()
+                .border_color(theme.border)
+                .rounded_md()
+                .shadow_lg()
+                .occlude()
+                .children(entries.into_iter().map(|(label, which)| {
+                    div()
+                        .id(SharedString::from(format!("row-menu-{which}")))
+                        .px_2()
+                        .py_1()
+                        .rounded(px(4.))
+                        .text_sm()
+                        .text_color(theme.fg)
+                        .cursor_pointer()
+                        .hover(|s| s.bg(theme.selected).text_color(theme.on_selected))
+                        .child(label)
+                        .on_mouse_down(
+                            gpui::MouseButton::Left,
+                            cx.listener(move |this, _: &gpui::MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                let thread = &mut this.threads[t];
+                                match which {
+                                    0 => thread.pinned = !thread.pinned,
+                                    1 => thread.muted = !thread.muted,
+                                    _ => thread.unread = !thread.unread,
+                                }
+                                this.row_menu = None;
+                                cx.notify();
+                            }),
+                        )
+                }))
+                .into_any_element(),
+        )
+    }
+
     fn message_view(&self, t: usize, m: usize, message: &Message, named: bool, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let label = match message.who {
             Who::You | Who::Event => "",
@@ -1231,7 +1344,8 @@ impl AssistantPreview {
         };
         let body: AnyElement = match &message.body {
             Body::Text(s) if matches!(message.who, Who::Event) => {
-                return div().w_full().flex().justify_center().px_6().child(div().text_xs().text_color(theme.secondary).text_center().child(s.clone())).into_any_element();
+                // Wraps within the panel; a flex row would let it run past both edges.
+                return div().w_full().px_6().text_xs().text_color(theme.secondary).text_center().child(s.clone()).into_any_element();
             }
             Body::Text(s) => {
                 let mine = matches!(message.who, Who::You);
@@ -1334,6 +1448,43 @@ impl AssistantPreview {
                 .child(div().text_sm().text_color(theme.fg).child(format!("Since you looked: {since}")))
                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {wants}")))
                 .into_any_element(),
+            Body::Long { point, body } => {
+                let open = self.long_open.contains(&(t, m));
+                div()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .gap_1p5()
+                    .child(div().max_w(px(320.)).px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.fg).child(point.clone()))
+                    .child(
+                        div()
+                            .w_full()
+                            .relative()
+                            .px_3()
+                            .py_2()
+                            .rounded(px(12.))
+                            .border_1()
+                            .border_color(theme.border)
+                            .when(!open, |d| d.max_h(px(150.)).overflow_hidden())
+                            .child(markdown(&format!("long-{t}-{m}"), body, theme)),
+                    )
+                    .child(
+                        div()
+                            .id(SharedString::from(format!("long-toggle-{t}-{m}")))
+                            .pl_3()
+                            .text_xs()
+                            .text_color(theme.selected)
+                            .cursor_pointer()
+                            .child(if open { "Show less" } else { "Show all" })
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                                if !this.long_open.remove(&(t, m)) {
+                                    this.long_open.insert((t, m));
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .into_any_element()
+            }
             Body::CatchUp(lines) => div()
                 .flex()
                 .flex_col()
@@ -1711,6 +1862,7 @@ impl Focusable for AssistantPreview {
 impl Render for AssistantPreview {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
+        self.theme = theme;
         let scenarios = ["Session blocked", "Comment on a done thread", "Review finished", if self.focus_mode { "Focus off" } else { "Focus on" }];
         let controls = div()
             .flex_none()
@@ -1768,5 +1920,15 @@ impl Render for AssistantPreview {
             .child(div().flex_1().min_h_0().flex().flex_row().child(workspace).child(panel))
             .child(self.toasts_view(&theme, cx))
             .when_some(menus, |d, menus| d.child(menus))
+            .when_some(self.row_menu_view(cx), |d, menu| d.child(menu))
+            // A click anywhere else closes a thread's menu.
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                    if this.row_menu.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
     }
 }
