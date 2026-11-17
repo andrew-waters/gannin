@@ -1,5 +1,5 @@
 //! The folder a window opens, as Zed opens a project: on this Mac, or on a
-//! server (Settings › Servers) as Zed opens a remote project.
+//! server (the title bar's Remotes) as Zed opens a remote project.
 //!
 //! A folder is a harness, or an org's folder holding one or more harnesses
 //! (and the code repos beside them). Each harness is a project; a harness
@@ -232,6 +232,13 @@ pub fn remember(opened: &Opened, org: Option<&str>) {
     if let Some(dir) = recents_path().parent() {
         let _ = std::fs::create_dir_all(dir);
     }
+    let _ = std::fs::write(recents_path(), serde_json::to_vec_pretty(&list).unwrap_or_default());
+}
+
+/// Takes a folder off Open Recent (the folder itself is left alone).
+pub fn forget(key: &str) {
+    let mut list = recent();
+    list.retain(|r| r.location.key() != key);
     let _ = std::fs::write(recents_path(), serde_json::to_vec_pretty(&list).unwrap_or_default());
 }
 

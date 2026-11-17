@@ -70,7 +70,7 @@ pub struct Launch {
     /// its pull requests the gap apart. Minutes of that gap.
     #[serde(default)]
     pub unattended: Option<u32>,
-    /// The server it runs on (Settings › Servers); None is this Mac.
+    /// The server it runs on (from the window's folder); None is this Mac.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub server: Option<crate::servers::Server>,
 }

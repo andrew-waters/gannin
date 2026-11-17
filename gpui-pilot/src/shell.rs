@@ -385,7 +385,6 @@ enum Page {
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
-    Settings(Entity<crate::servers_page::ServersPage>),
     AgentMetrics(Entity<crate::agent_metrics::AgentMetricsPage>),
     None,
 }
@@ -459,6 +458,11 @@ pub struct Workspace {
     inspector_width: f32,
     resizing: Option<Edge>,
     switcher: Option<Switcher>,
+    /// The Remotes popover, open under the title bar.
+    remotes: Option<Entity<crate::remotes::Remotes>>,
+    /// Servers whose check is running, by key.
+    checking_servers: std::collections::HashSet<String>,
+    _remotes_subscription: Option<Subscription>,
     /// Bottom first; the last is on top.
     drawers: Vec<Drawer>,
     drawer_seq: usize,
@@ -671,7 +675,8 @@ impl Workspace {
             }
             workspace.start_scheduler(cx);
         }
-        for view in &views {
+        // Settings held only the servers, now in the title bar's Remotes.
+        for view in views.iter().filter(|v| v.nav != Nav::Settings) {
             let tab = workspace.make_tab(view.nav, Some(view), window, cx);
             workspace.tabs.push(tab);
         }
@@ -849,6 +854,9 @@ impl Workspace {
             last_saved: Some(saved),
             resizing: None,
             switcher: None,
+            remotes: None,
+            checking_servers: Default::default(),
+            _remotes_subscription: None,
             drawers: Vec::new(),
             drawer_seq: 0,
             issues,
@@ -942,7 +950,6 @@ impl Workspace {
             Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
             Nav::AgentMetrics => Page::AgentMetrics(cx.new(|cx| crate::agent_metrics::AgentMetricsPage::new(org.clone(), cx))),
-            Nav::Settings => Page::Settings(cx.new(|cx| crate::servers_page::ServersPage::new(window, cx))),
             _ => Page::None,
         };
         let subscriptions = Self::watch(&page, window, cx);
@@ -3571,6 +3578,9 @@ impl Workspace {
     fn opened(&mut self, opened: crate::folders::Opened, window: &mut Window, cx: &mut Context<Self>) {
         let org = opened.org(&self.orgs);
         crate::folders::remember(&opened, org.as_deref());
+        if let Some(server) = opened.location.server.clone().filter(|s| crate::servers::last_check(s).is_none()) {
+            self.check_server(server, cx);
+        }
         self.saved_folder = Some(opened.location.clone());
         let none = opened.harnesses.is_empty();
         self.folder = Some(opened.clone());
@@ -3837,7 +3847,7 @@ impl Workspace {
             (None, None, None) => "Open a Folder".into(),
         };
         let org_beside = self.folder.as_ref().zip(self.org.as_ref()).filter(|(f, org)| !f.location.name().eq_ignore_ascii_case(org)).map(|(_, org)| org.clone());
-        let server = self.folder.as_ref().and_then(|f| f.location.server.as_ref()).map(|s| s.name());
+        let server = self.folder.as_ref().and_then(|f| f.location.server.clone());
         div()
             .id("title-bar")
             .h(px(TITLE_BAR))
@@ -3857,9 +3867,12 @@ impl Workspace {
                     window.titlebar_double_click();
                 }
             })
+            // A window on a server has its host first, as Zed's.
+            .when_some(server, |d, server| d.child(self.host_button(&server, theme, cx)))
             .child(self.switcher_button(Pick::Folder, label, theme, cx))
-            .when_some(server, |d, server| d.child(div().text_sm().text_color(theme.secondary).child(format!("on {server}"))))
             .when_some(org_beside, |d, org| d.child(div().text_sm().text_color(theme.tertiary).child(org)))
+            // Open Remote Folder from a window on this Mac shows the popover here.
+            .when(self.folder.as_ref().is_none_or(|f| f.location.server.is_none()), |d| d.when_some(self.remotes_popover(), |d, popover| d.child(popover)))
             .when(!self.projects.is_empty(), |d| {
                 let name = self
                     .projects
@@ -3871,6 +3884,100 @@ impl Workspace {
             .child(div().flex_1())
             .when(self.viewer.is_some(), |d| d.child(self.sync_button(theme, cx)))
             .child(self.account(theme, cx))
+    }
+
+    /// The server a window's folder is on, as Zed's remote project button:
+    /// its icon with the last check's dot, and its name. It opens Remotes.
+    fn host_button(&self, server: &crate::servers::Server, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let (_, tint) = crate::remotes::status(crate::servers::last_check(server).as_ref(), self.checking_servers.contains(&server.key()), theme);
+        let open = self.remotes.is_some();
+        div()
+            .flex()
+            .flex_col()
+            .child(
+                div()
+                    .id("host-button")
+                    .px_2()
+                    .py_0p5()
+                    .rounded_md()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_1p5()
+                    .cursor_pointer()
+                    .text_sm()
+                    .bg(theme.selected.opacity(if open { 0.22 } else { 0.10 }))
+                    .hover(|s| s.bg(theme.selected.opacity(0.22)))
+                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.toggle_remotes(window, cx);
+                    }))
+                    .child(
+                        div()
+                            .relative()
+                            .flex_none()
+                            .child(gpui::svg().path("icons/server.svg").size(px(14.)).text_color(theme.fg))
+                            .child(div().absolute().right(px(-2.)).bottom(px(-1.)).size(px(6.)).rounded_full().border_1().border_color(theme.sidebar).bg(tint)),
+                    )
+                    .child(div().max_w(px(140.)).truncate().child(server.name())),
+            )
+            .when_some(self.remotes_popover(), |d, popover| d.child(popover))
+    }
+
+    fn remotes_popover(&self) -> Option<impl IntoElement> {
+        let remotes = self.remotes.clone()?;
+        Some(deferred(anchored().snap_to_window_with_margin(px(8.)).child(remotes)).with_priority(2))
+    }
+
+    fn toggle_remotes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.remotes.is_some() {
+            return self.close_remotes(window, cx);
+        }
+        self.switcher = None;
+        let remotes = cx.new(|cx| crate::remotes::Remotes::new(window, cx));
+        self._remotes_subscription = Some(cx.subscribe_in(&remotes, window, |this, _, event: &crate::remotes::RemotesEvent, window, cx| match event {
+            crate::remotes::RemotesEvent::Dismiss => this.close_remotes(window, cx),
+            crate::remotes::RemotesEvent::Open(location) => {
+                this.close_remotes(window, cx);
+                this.open_folder(location.clone(), true, window, cx);
+            }
+            crate::remotes::RemotesEvent::OpenOn(server) => {
+                this.close_remotes(window, cx);
+                this.open_switcher(Pick::Folder, window, cx);
+                if let Some(switcher) = this.switcher.as_mut() {
+                    switcher.server = Some(server.clone());
+                    switcher.query = "~/".into();
+                    switcher.highlighted = 0;
+                }
+            }
+        }));
+        window.focus(&remotes.read(cx).focus_handle(), cx);
+        self.remotes = Some(remotes);
+        cx.notify();
+    }
+
+    fn close_remotes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.remotes = None;
+        self._remotes_subscription = None;
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    /// Checks a server off the main thread, for the host button's dot.
+    fn check_server(&mut self, server: crate::servers::Server, cx: &mut Context<Self>) {
+        if !self.checking_servers.insert(server.key()) {
+            return;
+        }
+        let key = server.key();
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().spawn(async move { crate::servers::check(&server) }).await;
+            this.update(cx, |this, cx| {
+                this.checking_servers.remove(&key);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// A title bar button opening its switcher, drawn beneath it, as Zed's
@@ -4074,15 +4181,6 @@ impl Workspace {
             .border_r_1()
             .border_color(theme.border)
             .child(div().id("nav").flex_1().min_h_0().overflow_y_scroll().px_2().pb_3().children(rows))
-            // Settings: for now, the servers sessions run on.
-            .child(
-                div()
-                    .flex_none()
-                    .p_2()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .child(self.nav_row(Nav::Settings, 0, None, current, theme, cx)),
-            )
             .child(self.resize_handle("resize-sidebar", Edge::Sidebar, cx))
     }
 
@@ -4544,6 +4642,7 @@ impl Workspace {
                 let session_tint = matches!(tab.nav, Nav::Session(_)).then_some(tint);
                 let active = index == self.active;
                 let label = self.tab_name(tab, cx);
+                let elsewhere = self.runs_elsewhere(tab, cx);
                 let landing = theme.row_selected;
                 div()
                     .id(("tab", index))
@@ -4602,6 +4701,12 @@ impl Workspace {
                         ),
                         // Down the column the name takes the width, the close at the end.
                         _ => d.child(div().map(|d| if vertical { d.flex_1().min_w_0() } else { d.max_w(px(220.)) }).truncate().child(label.clone())),
+                    })
+                    // A session that runs somewhere other than the window's
+                    // folder (one started before it, or in another window)
+                    // says where.
+                    .when_some(elsewhere, |d, (icon, place)| {
+                        d.child(div().flex_none().flex().flex_row().items_center().gap_1().text_xs().text_color(theme.tertiary).child(gpui::svg().path(icon).size(px(11.)).text_color(theme.tertiary)).child(place))
                     })
                     .when_some(match &page {
                         _ if self.renaming.as_ref().is_some_and(|(r, _)| *r == id) => None,
@@ -4744,6 +4849,21 @@ impl Workspace {
                             .child("×"),
                     )
             })
+    }
+
+    /// Where a session tab's session runs, when that isn't where the
+    /// window's folder is: its icon and the place's name.
+    fn runs_elsewhere(&self, tab: &Tab, cx: &App) -> Option<(&'static str, String)> {
+        let Nav::Session(id) = tab.nav else { return None };
+        let launch = self.session(id, cx)?.read(cx).launch.as_ref()?;
+        let window_server = self.folder.as_ref().and_then(|f| f.location.server.as_ref()).map(|s| s.key());
+        if launch.server.as_ref().map(|s| s.key()) == window_server {
+            return None;
+        }
+        Some(match &launch.server {
+            Some(server) => ("icons/server.svg", server.name()),
+            None => ("icons/screen.svg", "this Mac".into()),
+        })
     }
 
     /// What kind of tab it is, for its icon and the tab bar's filter.
@@ -4968,7 +5088,6 @@ impl Workspace {
                 Page::ReviewPreview(page) => page.into_any_element(),
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
-                Page::Settings(page) => page.into_any_element(),
                 Page::AgentMetrics(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
@@ -6012,7 +6131,16 @@ impl Workspace {
             .right_0()
             .bottom_0()
             .occlude()
-            .on_mouse_down(MouseButton::Left, cx.listener(|this, _: &MouseDownEvent, window, cx| this.close_switcher(window, cx)))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _: &MouseDownEvent, window, cx| {
+                    if this.remotes.is_some() {
+                        this.close_remotes(window, cx);
+                    } else {
+                        this.close_switcher(window, cx);
+                    }
+                }),
+            )
     }
 
     fn switcher_panel(&self, switcher: &Switcher, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -6030,63 +6158,49 @@ impl Workspace {
         };
         let matches = if typing_path.is_some() { Vec::new() } else { matches };
         let recents = if pick == Pick::Folder { crate::folders::recent() } else { Vec::new() };
-        let servers = if pick == Pick::Folder && typing_path.is_none() { crate::servers::load().servers } else { Vec::new() };
-        // Actions first: Open Folder and Open on each server for folders;
-        // the project's settings for projects.
-        let action_row = |id: gpui::ElementId, glyph: &'static str, label: String| {
+        // Typing a path on a server: what Return does, in place of the list.
+        let typing_note = typing_path.as_ref().map(|server| {
             div()
-                .id(id)
-                .mx_1()
-                .px_2()
-                .py_1p5()
-                .rounded_md()
-                .flex()
-                .flex_row()
-                .items_center()
-                .gap_3()
-                .cursor_pointer()
-                .hover(|s| s.bg(theme.row_selected))
-                .child(div().w(px(16.)).text_color(theme.secondary).child(glyph))
-                .child(label)
-        };
-        let actions: Vec<gpui::AnyElement> = match (pick, &typing_path) {
-            (_, Some(server)) => vec![div()
                 .mx_1()
                 .px_2()
                 .py_1p5()
                 .text_sm()
                 .text_color(theme.secondary)
                 .child(format!("Return opens it on {server}; Escape goes back. It's read there, and its sessions run there."))
-                .into_any_element()],
-            (Pick::Folder, None) => {
-                let mut rows = vec![action_row("switcher-open-folder".into(), "▢", "Open Folder".into())
-                    .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.pick_folder(window, cx)))
-                    .into_any_element()];
-                for (index, server) in servers.into_iter().enumerate() {
-                    let name = server.name();
-                    rows.push(
-                        action_row(("switcher-open-on", index).into(), "⇄", format!("Open on {name}"))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
-                                if let Some(switcher) = this.switcher.as_mut() {
-                                    switcher.server = Some(server.clone());
-                                    switcher.query = "~/".into();
-                                    switcher.highlighted = 0;
-                                }
-                                window.focus(&this.switcher_focus, cx);
-                                cx.notify();
-                            }))
-                            .into_any_element(),
-                    );
-                }
-                rows
-            }
-            (Pick::Project, None) => vec![action_row("switcher-settings".into(), "⚙", "Project settings".into())
-                .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
-                    this.close_switcher(window, cx);
-                    this.navigate(Nav::Settings, false, window, cx);
-                }))
-                .into_any_element()],
+        });
+        // Open Recent's footer, as Zed's: open a folder here or on a server.
+        let footer_button = |id: &'static str, label: &'static str, keys: &'static str| {
+            div()
+                .id(id)
+                .px_2()
+                .py_0p5()
+                .rounded_md()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .text_sm()
+                .cursor_pointer()
+                .hover(|s| s.bg(theme.row_selected))
+                .child(label)
+                .when(!keys.is_empty(), |d| d.child(div().text_xs().text_color(theme.tertiary).child(keys)))
         };
+        let footer = (pick == Pick::Folder && typing_path.is_none()).then(|| {
+            div()
+                .px_2()
+                .py_1()
+                .flex()
+                .flex_row()
+                .justify_end()
+                .gap_1()
+                .border_t_1()
+                .border_color(theme.border)
+                .child(footer_button("switcher-open-folder", "Open Local Folder", "⌘O").on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.pick_folder(window, cx))))
+                .child(footer_button("switcher-open-remote", "Open Remote Folder", "").on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                    this.switcher = None;
+                    this.toggle_remotes(window, cx);
+                })))
+        });
         div()
             .id("switcher")
             .track_focus(&self.switcher_focus)
@@ -6123,8 +6237,7 @@ impl Workspace {
                         }
                     }),
             )
-            // Actions first, then the list.
-            .child(div().flex().flex_col().py_1().when(typing_path.is_none(), |d| d.border_b_1().border_color(theme.border)).children(actions))
+            .children(typing_note)
             .child(
                 div()
                     .id("switcher-list")
@@ -6136,47 +6249,77 @@ impl Workspace {
                         let highlighted = index == switcher.highlighted;
                         let is_current = current.as_ref() == Some(key);
                         let chosen = key.clone();
-                        let detail = match pick {
-                            Pick::Folder => recents.iter().find(|r| &r.location.key() == key).map_or_else(String::new, |r| match &r.org {
-                                Some(org) => format!("{} • {org}", r.location.place()),
-                                None => r.location.place(),
-                            }),
-                            Pick::Project => self.projects.iter().find(|p| &p.id == key).map_or_else(String::new, |p| {
-                                let repos = match p.repos.len() {
-                                    0 => "every repo".to_string(),
-                                    1 => "1 repo".to_string(),
-                                    n => format!("{n} repos"),
-                                };
-                                format!("{repos} • {}", p.id)
-                            }),
-                        };
-                        div()
+                        let row = div()
                             .id(("switcher-item", index))
                             .mx_1()
                             .px_2()
-                            .py_1p5()
                             .rounded_md()
                             .flex()
                             .flex_row()
-                            .items_start()
-                            .gap_3()
                             .cursor_pointer()
                             .when(highlighted, |d| d.bg(theme.row_selected))
                             .hover(|s| s.bg(theme.row_selected))
-                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.choose(pick, chosen.clone(), window, cx)))
-                            .child(div().w(px(16.)).pt_0p5().text_color(theme.selected).child(if is_current { "✓" } else { "" }))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .flex()
-                                    .flex_col()
-                                    .child(div().text_base().truncate().child(label.clone()))
-                                    .child(div().text_sm().text_color(theme.secondary).truncate().child(detail)),
-                            )
+                            .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.choose(pick, chosen.clone(), window, cx)));
+                        match pick {
+                            // One line, as Zed's Open Recent: this Mac or a
+                            // server by its icon, the name, then where it is,
+                            // muted; the window's own folder ticked at the end.
+                            Pick::Folder => {
+                                let recent = recents.iter().find(|r| &r.location.key() == key);
+                                let remote = recent.is_some_and(|r| r.location.server.is_some());
+                                let place = recent.map_or_else(String::new, |r| {
+                                    let path = home_relative(&r.location.path);
+                                    match &r.location.server {
+                                        Some(server) => format!("{} · {path}", server.name()),
+                                        None => path,
+                                    }
+                                });
+                                row.py_1()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(gpui::svg().path(if remote { "icons/server.svg" } else { "icons/screen.svg" }).size(px(14.)).flex_none().text_color(theme.secondary))
+                                    .child(div().flex_none().max_w(px(160.)).truncate().child(label.clone()))
+                                    .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.tertiary).child(place))
+                                    .child(div().flex_none().w(px(14.)).text_color(theme.selected).child(if is_current { "✓" } else { "" }))
+                            }
+                            Pick::Project => {
+                                let detail = self.projects.iter().find(|p| &p.id == key).map_or_else(String::new, |p| {
+                                    let repos = match p.repos.len() {
+                                        0 => "every repo".to_string(),
+                                        1 => "1 repo".to_string(),
+                                        n => format!("{n} repos"),
+                                    };
+                                    format!("{repos} • {}", p.id)
+                                });
+                                row.py_1p5()
+                                    .items_start()
+                                    .gap_3()
+                                    .child(div().w(px(16.)).pt_0p5().text_color(theme.selected).child(if is_current { "✓" } else { "" }))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .flex()
+                                            .flex_col()
+                                            .child(div().text_base().truncate().child(label.clone()))
+                                            .child(div().text_sm().text_color(theme.secondary).truncate().child(detail)),
+                                    )
+                            }
+                        }
                     }))
                     .when(matches.is_empty() && typing_path.is_none(), |d| d.child(div().px_3().py_2().text_color(theme.secondary).child(none))),
             )
+            .children(footer)
+    }
+}
+
+/// A path with the home folder as ~, as Zed shows one. A server's path is
+/// already as it was typed there.
+fn home_relative(path: &std::path::Path) -> String {
+    let shown = path.display().to_string();
+    match std::env::var("HOME") {
+        Ok(home) if !home.is_empty() && shown.starts_with(&home) => format!("~{}", &shown[home.len()..]),
+        _ => shown,
     }
 }
 
@@ -6364,7 +6507,7 @@ impl Render for Workspace {
                     .when(self.sync.open, |d| d.child(self.sync_panel(&theme, cx))),
             )
             .child(self.status_bar(&theme, cx))
-            .when(self.switcher.is_some(), |d| d.child(self.switcher_backdrop(cx)))
+            .when(self.switcher.is_some() || self.remotes.is_some(), |d| d.child(self.switcher_backdrop(cx)))
             .when(self.account_open, |d| {
                 d.child(
                     div()
