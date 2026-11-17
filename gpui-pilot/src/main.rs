@@ -5,6 +5,7 @@
 //! cargo run --release -- [--org NAME] [--days 7|30|90]
 
 mod actions;
+mod assistant_preview;
 mod auth;
 mod activity;
 mod agent_metrics;
@@ -83,6 +84,24 @@ fn main() {
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
+            // The assistant's mock-up alone, in its own window and process:
+            // no workspace, no saved state, nothing a running Gannin uses.
+            "--assistant-preview" => {
+                gpui_platform::application().with_assets(assets::Assets).run(|cx: &mut App| {
+                    zed::init(cx);
+                    cx.bind_keys([KeyBinding::new(crate::zed::keys("secondary-q"), Quit, None)]);
+                    cx.on_action(|_: &Quit, cx| cx.quit());
+                    cx.set_menus(vec![Menu { name: "Assistant Preview".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false }]);
+                    let options = gpui::WindowOptions {
+                        window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(gpui::px(1280.), gpui::px(860.)), cx))),
+                        titlebar: Some(gpui::TitlebarOptions { title: Some("Assistant Preview".into()), appears_transparent: true, traffic_light_position: Some(gpui::point(gpui::px(14.), gpui::px(12.))) }),
+                        ..Default::default()
+                    };
+                    cx.open_window(options, |window, cx| cx.new(|cx| assistant_preview::AssistantPreview::new(window, cx))).expect("open the preview");
+                    cx.activate(true);
+                });
+                return;
+            }
             "--org" => org = args.next(),
             "--days" => days = args.next().and_then(|d| d.parse().ok()),
             // Writes a Work on This launch against the harness folder given
