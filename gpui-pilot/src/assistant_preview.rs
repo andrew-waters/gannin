@@ -1465,8 +1465,16 @@ impl AssistantPreview {
                             .rounded(px(12.))
                             .border_1()
                             .border_color(theme.border)
-                            .when(!open, |d| d.max_h(px(150.)).overflow_hidden())
-                            .child(markdown(&format!("long-{t}-{m}"), body, theme)),
+                            // An explicit height while folded: a flex item's
+                            // content height would win over a max height.
+                            .when(!open, |d| d.h(px(150.)).overflow_hidden())
+                            .text_sm()
+                            .text_color(theme.fg)
+                            .child(markdown(&format!("long-{t}-{m}"), body, theme))
+                            // A fade over the fold, so it reads as cut off.
+                            .when(!open, |d| {
+                                d.child(div().absolute().bottom_0().left_0().right_0().h(px(40.)).bg(gpui::linear_gradient(180., gpui::linear_color_stop(theme.bg.opacity(0.), 0.), gpui::linear_color_stop(theme.bg, 1.))))
+                            }),
                     )
                     .child(
                         div()
@@ -1699,7 +1707,13 @@ impl AssistantPreview {
     }
 
     fn composer_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let target = self.open.filter(|&t| t != 0).map(|t| format!("To {}'s worker", self.threads[t].title));
+        let target = self.open.filter(|&t| t != 0).map(|t| format!("Replying in this thread: goes to its {}", match self.threads[t].kind {
+            Kind::Question => "question's worker",
+            Kind::Investigation => "investigation's worker",
+            Kind::Build => "session",
+            Kind::Review => "review session",
+            Kind::Main => "assistant",
+        }));
         let token = self.typing_token(cx);
         let options = token.as_deref().map(|t| self.suggestions(t)).unwrap_or_default();
         let highlighted = self.suggest.min(options.len().saturating_sub(1));
