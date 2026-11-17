@@ -127,6 +127,18 @@ struct Toast {
     thread: Option<usize>,
 }
 
+/// Remind me: what the person picks, how it reads once picked, and
+/// when it's back in the preview (where a minute takes a second).
+const REMIND: [(&str, &str, u64); 7] = [
+    ("5m", "in 5 minutes", 5),
+    ("10m", "in 10 minutes", 10),
+    ("15m", "in 15 minutes", 15),
+    ("30m", "in 30 minutes", 30),
+    ("1h", "in an hour", 60),
+    ("Tomorrow", "tomorrow morning", 90),
+    ("When CI passes", "when CI passes", 20),
+];
+
 const SCOPES: [&str; 4] = ["All", "ctrl-hub harness", "andrew-waters harness", "mini (server)"];
 
 // MARK: - Seed data
@@ -426,7 +438,8 @@ impl AssistantPreview {
         cx.notify();
     }
 
-    fn later(&mut self, item: usize, when: &str, cx: &mut Context<Self>) {
+    fn later(&mut self, item: usize, choice: usize, cx: &mut Context<Self>) {
+        let (_, when, secs) = REMIND[choice];
         if item >= self.items.len() {
             return;
         }
@@ -435,12 +448,12 @@ impl AssistantPreview {
         self.selected = 0;
         if let Some(t) = it.thread {
             self.threads[t].state = State::Parked;
-            self.threads[t].last = format!("Parked until {when}");
+            self.threads[t].last = format!("Reminding you {when}");
         }
-        self.say(format!("Parked {} until {when}. It comes back here by itself.", it.subject));
+        self.say(format!("I'll remind you about {} {when}. It comes back to the top by itself.", it.subject));
         // Back after a moment, as if the time had come.
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(Duration::from_secs(12)).await;
+            cx.background_executor().timer(Duration::from_secs(secs)).await;
             this.update(cx, |this, cx| {
                 let mut back = it.clone();
                 back.need = Need::Back;
@@ -684,7 +697,7 @@ impl AssistantPreview {
             }
             2 => {
                 self.items.push(Item { lane: Lane::Review, need: Need::Decide, subject: "api#1550".into(), task: "Review ready to post".into(), detail: "Request changes: 1 blocker".into(), minutes: 0, actions: vec!["Post as Request changes", "Look", "Open"], thread: None, scope: 2 });
-                self.notify("api#1550: review ready to post".into(), "Request changes, 1 blocker".into(), vec!["Post", "Open", "Later"], None, cx);
+                self.notify("api#1550: review ready to post".into(), "Request changes, 1 blocker".into(), vec!["Post", "Open", "Remind me"], None, cx);
             }
             _ => {
                 self.focus_mode = !self.focus_mode;
@@ -711,10 +724,7 @@ impl AssistantPreview {
         let queue = self.queue();
         if self.later_menu {
             let when = match event.keystroke.key.as_str() {
-                "1" => Some("30 minutes"),
-                "2" => Some("after lunch"),
-                "3" => Some("tomorrow morning"),
-                "4" => Some("CI passes"),
+                k @ ("1" | "2" | "3" | "4" | "5" | "6" | "7") => k.parse::<usize>().ok().map(|n| n - 1),
                 "escape" => {
                     self.later_menu = false;
                     cx.notify();
@@ -1074,15 +1084,14 @@ impl AssistantPreview {
                                 }))
                                 .child(div().flex_1())
                                 .child(button(format!("open-{i}"), "Open", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.act(i, "Open", cx))))
-                                .child(button(format!("later-{i}"), "Later", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                .child(button(format!("later-{i}"), "Remind me", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                     this.later_menu = !this.later_menu;
                                     cx.notify();
                                 }))),
                         )
                         .when(self.later_menu, |d| {
-                            d.child(div().flex().flex_row().flex_wrap().gap_1().children(["30 minutes", "after lunch", "tomorrow morning", "CI passes"].into_iter().enumerate().map(|(n, when)| {
-                                pill(format!("when-{n}"), if n == 3 { "When CI passes".to_string() } else { format!("In {when}").replace("In after", "After").replace("In tomorrow", "Tomorrow") }, false, theme)
-                                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.later(i, when, cx)))
+                            d.child(div().flex().flex_row().flex_wrap().items_center().gap_1().child(div().text_xs().text_color(theme.secondary).pr_1().child("Remind me")).children(REMIND.iter().enumerate().map(|(n, (label, _, _))| {
+                                button(format!("when-{n}"), *label, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.later(i, n, cx)))
                             })))
                         }),
                 )
