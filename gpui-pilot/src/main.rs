@@ -29,6 +29,7 @@ mod launch;
 mod launch_form;
 mod markdown;
 mod marra;
+mod marra_api;
 mod marra_mcp;
 mod marra_model;
 mod marra_view;
@@ -109,6 +110,12 @@ fn main() {
             // Marra's engine and Gannin's MCP server against a real claude,
             // without a window: `--marra-check [model] [prompt]`. Tool calls
             // get canned answers; permission requests are allowed.
+            // The phone API on this Mac: pairs, calls, and is refused without
+            // a token, then puts the paired devices back as they were.
+            "--marra-api-check" => {
+                marra_api_check();
+                return;
+            }
             "--marra-check" => {
                 marra_check(args.next(), args.next());
                 return;
@@ -433,3 +440,42 @@ fn marra_check(model: Option<String>, prompt: Option<String>) {
     }
     println!("timed out");
 }
+
+/// See `--marra-api-check`.
+fn marra_api_check() {
+    let before = std::fs::read(marra::dir().join("devices.json")).ok();
+    let mut api = match marra_api::Api::start() {
+        Ok(api) => api,
+        Err(e) => return println!("{e}"),
+    };
+    let code = api.new_code();
+    let calls = std::mem::replace(&mut api.calls, std::sync::mpsc::channel().1);
+    std::thread::spawn(move || {
+        for call in calls.iter() {
+            let _ = call.reply.send((200, serde_json::json!({ "echo": format!("{} {}", call.method, call.path) })));
+        }
+    });
+    let curl = |args: &[&str]| -> String {
+        let out = std::process::Command::new("/usr/bin/curl").args(["-s", "-w", " %{http_code}"]).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+        out
+    };
+    let base = format!("http://127.0.0.1:{}/v1", marra_api::PORT);
+    println!("no token: {}", curl(&[&format!("{base}/needs")]));
+    println!("wrong code: {}", curl(&["-X", "POST", "-d", "{\"code\":\"000000x\"}", &format!("{base}/pair")]));
+    let paired = curl(&["-X", "POST", "-d", &format!("{{\"code\":\"{code}\",\"name\":\"check\"}}"), &format!("{base}/pair")]);
+    println!("pair: {paired}");
+    let token = serde_json::from_str::<serde_json::Value>(paired.rsplit_once(' ').map(|(b, _)| b).unwrap_or_default()).ok().and_then(|v| v["token"].as_str().map(str::to_string)).unwrap_or_default();
+    let auth = format!("Authorization: Bearer {token}");
+    println!("needs: {}", curl(&["-H", &auth, &format!("{base}/needs")]));
+    println!("code reused: {}", curl(&["-X", "POST", "-d", &format!("{{\"code\":\"{code}\"}}"), &format!("{base}/pair")]));
+    println!("events: {}", curl(&["-m", "1", "-H", &auth, &format!("{base}/events")]));
+    match before {
+        Some(bytes) => {
+            let _ = std::fs::write(marra::dir().join("devices.json"), bytes);
+        }
+        None => {
+            let _ = std::fs::remove_file(marra::dir().join("devices.json"));
+        }
+    }
+}
+

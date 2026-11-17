@@ -429,6 +429,9 @@ pub struct Marra {
     pub log: HashMap<String, Vec<(DateTime<Local>, String)>>,
     /// Each session's state as last seen, to notice changes.
     states: HashMap<String, String>,
+    /// The phone API, while it's on.
+    pub api: Option<crate::marra_api::Api>,
+    pub api_error: Option<String>,
     _poll: Task<()>,
 }
 
@@ -463,6 +466,14 @@ impl Marra {
                 return;
             }
         });
+        let (api, api_error) = if saved.api {
+            match crate::marra_api::Api::start() {
+                Ok(api) => (Some(api), None),
+                Err(e) => (None, Some(e)),
+            }
+        } else {
+            (None, None)
+        };
         Self {
             saved,
             main,
@@ -480,6 +491,8 @@ impl Marra {
             floating: None,
             log: HashMap::new(),
             states: HashMap::new(),
+            api,
+            api_error,
             _poll: poll,
         }
     }
@@ -540,7 +553,16 @@ impl Marra {
             }
             self.check_needs(cx);
         }
+        let api_calls: Vec<crate::marra_api::ApiCall> = self.api.as_ref().map(|a| a.calls.try_iter().collect()).unwrap_or_default();
+        for call in api_calls {
+            changed = true;
+            let (status, body) = self.api_call(&call.method, &call.path, &call.body, cx);
+            let _ = call.reply.send((status, body));
+        }
         if changed || self.main.busy() || self.errands.iter().any(|e| e.convo.busy()) {
+            if let Some(api) = &self.api {
+                api.changed();
+            }
             cx.notify();
         }
     }
@@ -590,6 +612,137 @@ impl Marra {
     pub fn since_read(&self, key: &str) -> Vec<(DateTime<Local>, String)> {
         let read = self.saved.read.get(&format!("s:{key}")).and_then(|r| DateTime::parse_from_rfc3339(r).ok()).map(|d| d.with_timezone(&Local));
         self.log.get(key).map(|l| l.iter().filter(|(at, _)| read.is_none_or(|r| *at > r)).cloned().collect()).unwrap_or_default()
+    }
+
+    // MARK: Phone
+
+    /// Phone access on or off; on makes a pairing code.
+    pub fn set_api(&mut self, on: bool) {
+        self.saved.api = on;
+        self.saved.save();
+        self.api = None;
+        self.api_error = None;
+        if on {
+            match crate::marra_api::Api::start() {
+                Ok(api) => {
+                    api.new_code();
+                    self.api = Some(api);
+                }
+                Err(e) => self.api_error = Some(e),
+            }
+        }
+    }
+
+    /// One API request, on the main thread: (status, JSON body).
+    fn api_call(&mut self, method: &str, path: &str, body: &Value, cx: &mut Context<Self>) -> (u16, Value) {
+        use serde_json::json;
+        let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
+        let text = body["text"].as_str().unwrap_or_default().trim().to_string();
+        let convo_json = |c: &Convo| json!({ "messages": c.chat, "busy": c.busy(), "streaming": c.streaming, "context": c.context, "pending": c.asks.keys().collect::<Vec<_>>() });
+        match (method, parts.as_slice()) {
+            ("GET", ["assistant", "messages"]) => (200, convo_json(&self.main)),
+            ("POST", ["assistant", "messages"]) if !text.is_empty() => {
+                self.main.send(&text, &text);
+                (202, json!({}))
+            }
+            ("POST", ["assistant", "stop"]) => {
+                self.main.engine.interrupt();
+                (202, json!({}))
+            }
+            ("POST", ["assistant", "compact"]) => match self.main.engine.send("/compact") {
+                Ok(()) => (202, json!({})),
+                Err(e) => (409, json!({ "error": e })),
+            },
+            ("POST", ["assistant", "new"]) => {
+                self.new_conversation();
+                (202, json!({}))
+            }
+            ("GET", ["needs"]) => (200, json!({ "needs": self.needs(None, cx).iter().map(need_json).collect::<Vec<_>>() })),
+            ("POST", ["needs", key, "remind"]) => {
+                let key = urldecode(key);
+                self.remind(&key, body["minutes"].as_i64());
+                (202, json!({}))
+            }
+            ("GET", ["threads"]) => {
+                let threads = self.threads(cx);
+                (200, json!({ "threads": threads.iter().map(|t| json!({ "id": t.id, "kind": format!("{:?}", t.kind).to_lowercase(), "title": t.title, "last": t.last, "activity": t.activity.map(|a| a.to_rfc3339()), "working": t.working, "unread": self.is_unread(t), "pinned": self.saved.pinned.contains(&t.id), "muted": self.saved.muted.contains(&t.id) })).collect::<Vec<_>>() }))
+            }
+            ("POST", ["threads", id, "read"]) => {
+                self.mark_read(&urldecode(id), body["read"].as_bool().unwrap_or(true));
+                (202, json!({}))
+            }
+            ("GET", ["approvals"]) => {
+                let mut list = Vec::new();
+                for (who, convo) in std::iter::once((Who::Main, &self.main)).chain(self.errands.iter().map(|e| (Who::Errand(e.saved.id.clone()), &e.convo))) {
+                    for (request, (tool, input)) in &convo.asks {
+                        list.push(json!({ "id": request, "kind": "permission", "thread": thread_id(&who), "summary": crate::marra::summarize(tool, input) }));
+                    }
+                }
+                for c in &self.confirms {
+                    list.push(json!({ "id": format!("send-{}", c.id), "kind": "send", "thread": format!("s:{}", c.session), "summary": format!("Send to {}: {}", c.title, c.text) }));
+                }
+                (200, json!({ "approvals": list }))
+            }
+            ("POST", ["approvals", id]) => {
+                let allow = body["allow"].as_bool().unwrap_or(false);
+                if let Some(n) = id.strip_prefix("send-").and_then(|n| n.parse::<u64>().ok()) {
+                    // On the phone, the confirmation is the tap.
+                    self.confirm(n, allow, cx);
+                    return (202, json!({}));
+                }
+                let always = body["always"].as_bool().unwrap_or(false);
+                let who = std::iter::once(Who::Main).chain(self.errands.iter().map(|e| Who::Errand(e.saved.id.clone()))).find(|w| self.convo(w).is_some_and(|c| c.asks.contains_key(*id)));
+                match who {
+                    Some(who) => {
+                        if let Some(key) = self.convo_mut(&who).and_then(|c| c.decide(id, allow, always)) {
+                            self.saved.always.push(key);
+                            self.saved.save();
+                        }
+                        (202, json!({}))
+                    }
+                    None => (404, json!({ "error": "No such request; it may have been answered." })),
+                }
+            }
+            ("GET", ["sessions"]) => (200, json!({ "sessions": sessions(cx).iter().map(|s| json!({ "id": s.key, "title": s.title, "kind": s.kind, "state": s.state.label(), "since": s.since.to_rfc3339(), "subject": s.subject, "server": s.server, "review_ready": s.review_ready.as_ref().map(|(kept, verdict)| json!({ "kept": kept, "verdict": verdict })) })).collect::<Vec<_>>() })),
+            ("GET", ["sessions", key]) => {
+                let key = urldecode(key);
+                match sessions(cx).into_iter().find(|s| s.key == key) {
+                    Some(s) => {
+                        let messages = s.claude_id.as_deref().and_then(|c| marra_mcp::transcript_messages(c, 30)).unwrap_or_default();
+                        (200, json!({ "id": s.key, "title": s.title, "state": s.state.label(), "since_read": self.since_read(&key).iter().map(|(at, what)| json!({ "at": at.to_rfc3339(), "what": what })).collect::<Vec<_>>(), "messages": messages.iter().map(|(who, text)| json!({ "who": who, "text": text })).collect::<Vec<_>>() }))
+                    }
+                    None => (404, json!({ "error": "No such session." })),
+                }
+            }
+            ("POST", ["sessions", key, "message"]) if !text.is_empty() => {
+                let key = urldecode(key);
+                match sessions(cx).into_iter().find(|s| s.key == key) {
+                    Some(s) => {
+                        s.page.update(cx, |page, cx| page.tell(&text, cx));
+                        (202, json!({}))
+                    }
+                    None => (404, json!({ "error": "No such session." })),
+                }
+            }
+            ("GET", ["workload"]) => {
+                let work = work(cx);
+                let pr = |p: &crate::work::Pr| json!({ "repo": p.repo, "number": p.number, "title": p.title, "url": p.url, "author": p.author, "standing": p.standing(), "needs": p.needs() });
+                (200, json!({ "reviews": work.reviews.iter().map(pr).collect::<Vec<_>>(), "mine": work.mine.iter().map(pr).collect::<Vec<_>>(), "live": work.live }))
+            }
+            ("GET", ["errands", id]) => match self.errands.iter().find(|e| e.saved.id == *id) {
+                Some(e) => (200, json!({ "id": e.saved.id, "title": e.saved.title, "point": e.saved.point, "needs_you": e.saved.needs, "conversation": convo_json(&e.convo) })),
+                None => (404, json!({ "error": "No such errand." })),
+            },
+            ("POST", ["errands", id, "messages"]) if !text.is_empty() => match self.errands.iter_mut().find(|e| e.saved.id == *id) {
+                Some(e) => {
+                    e.saved.done = false;
+                    e.convo.send(&text, &text);
+                    (202, json!({}))
+                }
+                None => (404, json!({ "error": "No such errand." })),
+            },
+            _ => (404, json!({ "error": format!("No {method} /v1{path}") })),
+        }
     }
 
     // MARK: Errands
@@ -1127,6 +1280,41 @@ pub fn notify(title: &str, body: &str) {
     });
 }
 
+fn need_json(n: &Need) -> serde_json::Value {
+    serde_json::json!({
+        "key": n.key,
+        "subject": n.subject,
+        "task": n.task,
+        "detail": n.detail,
+        "since": n.since.to_rfc3339(),
+        "waiting": waiting(n.since),
+        "blocked": n.rank == 0,
+        "back": n.returned,
+        "thread": n.thread,
+        "lane": n.lane.title(),
+        "actions": n.actions.iter().map(|(label, _)| label).collect::<Vec<_>>(),
+    })
+}
+
+/// A path segment's %-escapes undone (a session id's colon may arrive as %3A).
+fn urldecode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+                out.push(b);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 fn describe_sessions(list: &[SessionInfo]) -> String {
     if list.is_empty() {
         return "No sessions are open in Gannin.".into();
@@ -1161,6 +1349,13 @@ fn describe_work(work: &crate::work::Work) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decodes_paths() {
+        assert_eq!(urldecode("12%3A3"), "12:3");
+        assert_eq!(urldecode("plain"), "plain");
+        assert_eq!(urldecode("bad%2"), "bad%2");
+    }
 
     #[test]
     fn reads_the_contract() {

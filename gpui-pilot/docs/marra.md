@@ -240,5 +240,10 @@ Not discussed in detail; change any of them.
   last read the thread; the log isn't kept across a relaunch.
 - **Review requests** offer Start review (Gannin's Review with Claude, in the front window) once
   Your Work knows the PR's node id; until its next load, Open on GitHub only.
-- **Not started:** the HTTP API and the phone (step 8), Done today, archive.
+- **Phone API** (`marra_api.rs`, endpoints in `marra-api.md`): off until Phone access is on in the
+  menu; port 47870, refusing anything not on a private, link-local or loopback address. Pairing with
+  a six-digit code (ten minutes, one device); only token hashes are kept, in `devices.json` (0600)
+  rather than the keychain. REST plus a Server-Sent Events stream. No QR code yet: the menu shows the
+  address and the code.
+- **Not started:** the phone app, Done today, archive.
 

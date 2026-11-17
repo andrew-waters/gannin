@@ -58,13 +58,22 @@ pub fn serve() -> Option<(u16, String, Receiver<Call>)> {
     Some((port, token, rx))
 }
 
-fn handle(mut stream: TcpStream, expected: &str, calls: &Sender<Call>) -> std::io::Result<()> {
+/// An HTTP request, as much of it as Gannin's servers need.
+pub struct Request {
+    pub method: String,
+    pub path: String,
+    /// Header names in lower case.
+    pub headers: std::collections::HashMap<String, String>,
+    pub body: Vec<u8>,
+}
+
+/// Reads one request (Content-Length bodies only, up to 4 MB).
+pub fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
     let mut request_line = String::new();
     reader.read_line(&mut request_line)?;
-    let mut length = 0usize;
-    let mut authorized = false;
+    let mut headers = std::collections::HashMap::new();
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line)? == 0 {
@@ -75,25 +84,26 @@ fn handle(mut stream: TcpStream, expected: &str, calls: &Sender<Call>) -> std::i
             break;
         }
         if let Some((name, value)) = line.split_once(':') {
-            let (name, value) = (name.trim().to_ascii_lowercase(), value.trim());
-            if name == "content-length" {
-                length = value.parse().unwrap_or(0);
-            } else if name == "authorization" {
-                authorized = value == expected;
-            }
+            headers.insert(name.trim().to_ascii_lowercase(), value.trim().to_string());
         }
     }
-    let method = request_line.split_whitespace().next().unwrap_or_default().to_string();
-    if !authorized {
-        return respond(&mut stream, 401, "text/plain", "unauthorized");
-    }
-    if method != "POST" {
-        // No server-to-client stream: everything is a reply to a POST.
-        return respond(&mut stream, if method == "DELETE" { 200 } else { 405 }, "text/plain", "");
-    }
+    let length: usize = headers.get("content-length").and_then(|l| l.parse().ok()).unwrap_or(0);
     let mut body = vec![0u8; length.min(4 << 20)];
     reader.read_exact(&mut body)?;
-    let Ok(message) = serde_json::from_slice::<Value>(&body) else {
+    let mut parts = request_line.split_whitespace();
+    Ok(Request { method: parts.next().unwrap_or_default().to_string(), path: parts.next().unwrap_or_default().to_string(), headers, body })
+}
+
+fn handle(mut stream: TcpStream, expected: &str, calls: &Sender<Call>) -> std::io::Result<()> {
+    let request = read_request(&stream)?;
+    if request.headers.get("authorization").map(String::as_str) != Some(expected) {
+        return respond(&mut stream, 401, "text/plain", "unauthorized");
+    }
+    if request.method != "POST" {
+        // No server-to-client stream: everything is a reply to a POST.
+        return respond(&mut stream, if request.method == "DELETE" { 200 } else { 405 }, "text/plain", "");
+    }
+    let Ok(message) = serde_json::from_slice::<Value>(&request.body) else {
         return respond(&mut stream, 400, "text/plain", "bad json");
     };
     // A notification (no id) is acknowledged without a body.
@@ -129,12 +139,16 @@ fn rpc(message: &Value, calls: &Sender<Call>) -> Value {
     json!({ "jsonrpc": "2.0", "id": id, "result": result })
 }
 
-fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) -> std::io::Result<()> {
+pub fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) -> std::io::Result<()> {
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
         400 => "Bad Request",
         401 => "Unauthorized",
+        403 => "Forbidden",
+        404 => "Not Found",
+        409 => "Conflict",
+        503 => "Service Unavailable",
         _ => "Method Not Allowed",
     };
     write!(stream, "HTTP/1.1 {status} {reason}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len())?;

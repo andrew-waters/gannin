@@ -911,6 +911,69 @@ impl MarraView {
         if let Some(other) = model.filter(|m| !MODELS.iter().any(|(_, v)| *v == Some(m.as_str()))) {
             rows.push(div().px_2().py_1().text_sm().text_color(theme.fg).child(format!("✓ {other}")).into_any_element());
         }
+        // Phone access: the API on the local network, with its pairing code.
+        let (api_on, code, error) = {
+            let m = self.marra.read(cx);
+            (m.api.is_some(), m.api.as_ref().and_then(|a| a.code()), m.api_error.clone())
+        };
+        let devices = crate::marra_api::devices().len();
+        rows.push(div().mx_2().my_1().h(px(1.)).bg(theme.border).into_any_element());
+        rows.push(
+            Self::menu_row("phone", if api_on { "✓ Phone access" } else { "   Phone access" }, false, theme)
+                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                    this.marra.update(cx, |m, cx| {
+                        m.set_api(!api_on);
+                        cx.notify();
+                    });
+                    cx.notify();
+                }))
+                .into_any_element(),
+        );
+        if let Some(error) = error {
+            rows.push(div().px_2().pb_1().text_xs().text_color(theme.orange()).child(error).into_any_element());
+        }
+        if api_on {
+            let address = crate::marra_api::address().unwrap_or_else(|| "no local network".into());
+            rows.push(div().px_2().text_xs().text_color(theme.secondary).child(format!("On this network at {address}")).into_any_element());
+            rows.push(
+                div()
+                    .px_2()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .child(div().text_xs().text_color(theme.secondary).child(match &code {
+                        Some(code) => format!("Pairing code {code} (10 minutes, one device)"),
+                        None => "No pairing code".into(),
+                    }))
+                    .child(div().id("new-code").text_xs().text_color(theme.selected).cursor_pointer().child("New code").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.marra.update(cx, |m, cx| {
+                            if let Some(api) = &m.api {
+                                api.new_code();
+                            }
+                            cx.notify();
+                        });
+                        cx.notify();
+                    })))
+                    .into_any_element(),
+            );
+            rows.push(
+                div()
+                    .px_2()
+                    .pb_1()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .child(div().text_xs().text_color(theme.secondary).child(format!("{devices} device{} paired", if devices == 1 { "" } else { "s" })))
+                    .when(devices > 0, |d| {
+                        d.child(div().id("revoke").text_xs().text_color(theme.orange()).cursor_pointer().child("Revoke all").on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                            crate::marra_api::revoke_all();
+                            cx.notify();
+                        })))
+                    })
+                    .into_any_element(),
+            );
+        }
         // Claude Code compacts near its limit by itself; this says how close.
         let share = (context as f32 / 200_000.).clamp(0., 1.);
         rows.push(div().mt_1().mx_2().h(px(3.)).rounded_full().bg(theme.grid).child(div().h_full().w(px(250. * share)).rounded_full().bg(theme.blue())).into_any_element());

@@ -155,7 +155,9 @@ in `~/.gannin/state.json`. Headless checks: `--harness <org>` prints what the ha
   every open session and each errand (a read-only worker in a harness for a data question or an
   investigation, replying under a contract), Remind me, Focus and notifications. Its state is in
   `~/.gannin/marra/`. `--marra-check [model]` runs the engine and the MCP server against a real
-  claude without a window. `--assistant-preview` is the clickable mock-up it was designed from.
+  claude without a window. Phone access (off by default) is an HTTP API on the local network,
+  `docs/marra-api.md`; `--marra-api-check` tries it on this Mac. `--assistant-preview` is the
+  clickable mock-up it was designed from.
 - **Plans and requirements** (`src/harness.rs`): a Work on This session's Issue pane lists the
   harness documents about or mentioning its issue or PRs, with their progress, read again every
   minute; a row opens the document in a drawer.
