@@ -26,7 +26,7 @@ static RECORDING: AtomicBool = AtomicBool::new(true);
 static LOADED: AtomicBool = AtomicBool::new(false);
 
 fn pref_path() -> std::path::PathBuf {
-    std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default().join("Library/Application Support/GanninGPUIPilot/record-reviews")
+    crate::paths::app_dir().join("record-reviews")
 }
 
 /// Record reviews in the harness: on unless turned off, as Gannin's

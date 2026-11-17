@@ -28,6 +28,7 @@ mod metrics;
 mod new_issue;
 mod page;
 mod planning_panel;
+mod paths;
 mod projects;
 mod promise_drop;
 mod review;
@@ -109,6 +110,12 @@ fn main() {
                     Ok(path) => println!("set up {}", path.display()),
                     Err(error) => println!("{error}"),
                 }
+                return;
+            }
+            // Moves what's in Application Support to the harness and
+            // ~/.gannin, as the window does on opening.
+            "--migrate" => {
+                paths::migrate();
                 return;
             }
             // Reads a review session's result from claude's transcript.
@@ -241,6 +248,7 @@ fn main() {
         }
     }
 
+    paths::migrate();
     gpui_platform::application().with_assets(assets::Assets).run(move |cx: &mut App| {
         zed::init(cx);
         cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);

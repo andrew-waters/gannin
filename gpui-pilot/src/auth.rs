@@ -41,8 +41,7 @@ pub struct DeviceCode {
 }
 
 fn viewer_path() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Application Support/GanninGPUIPilot/viewer.json")
+    crate::paths::app_dir().join("viewer.json")
 }
 
 // MARK: - Keychain

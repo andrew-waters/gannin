@@ -344,7 +344,7 @@ impl Readiness {
 }
 
 pub fn folder() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Library/Application Support/GanninGPUIPilot")
+    crate::paths::app_dir()
 }
 
 fn path() -> PathBuf {

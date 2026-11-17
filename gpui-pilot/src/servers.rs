@@ -125,7 +125,7 @@ pub struct Servers {
 }
 
 fn servers_path() -> PathBuf {
-    crate::launch::sessions_dir().parent().map(Path::to_path_buf).unwrap_or_default().join("servers.json")
+    crate::paths::app_dir().join("servers.json")
 }
 
 pub fn load() -> Servers {

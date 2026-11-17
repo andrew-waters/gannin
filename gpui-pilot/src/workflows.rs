@@ -183,7 +183,7 @@ pub fn team_path(harness: &Path) -> PathBuf {
 }
 
 fn own_path() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Library/Application Support/GanninGPUIPilot/agent-workflows.json")
+    crate::paths::app_dir().join("agent-workflows.json")
 }
 
 fn read(path: &Path) -> Library {

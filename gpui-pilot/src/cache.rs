@@ -1,8 +1,8 @@
 //! The pilot's own copies of Gannin's GitHub caches, in the same formats,
 //! in a hidden folder in the org's home harness checkout
 //! (`<harness>/.gannin-cache/`), which ignores itself in git so it's never
-//! committed. With no checkout of the harness on this Mac they stay in
-//! `Application Support/GanninGPUIPilot/Caches/`. The first read of one
+//! committed. With no checkout of the harness on this Mac they're kept in
+//! `~/.gannin/caches/`. The first read of one
 //! copies the pilot's earlier copy, else Gannin's, as a start; from then on
 //! the pilot's sync keeps its copy current and Gannin's files are never
 //! written, so the two apps can't overwrite each other.
@@ -59,7 +59,7 @@ pub fn gannin_path(kind: Kind, org: &str) -> PathBuf {
 /// Where the pilot kept its caches before they moved into the harness, and
 /// still keeps them for an org with no harness checkout here.
 fn fallback() -> PathBuf {
-    support().join("GanninGPUIPilot/Caches")
+    crate::paths::app_dir().join("caches")
 }
 
 /// The folder an org's synced data lives in: `.gannin-cache/` in its home
@@ -84,19 +84,7 @@ fn harness_root(org: &str) -> Option<PathBuf> {
         return None;
     }
     let repo = crate::projects::load(org).projects.first().map(|p| p.id.clone()).filter(|id| id.contains('/'))?;
-    let checkout = crate::launch::harness_path(org, &repo);
-    if !checkout.join(".git").exists() {
-        return None;
-    }
-    let root = checkout.join(".gannin-cache");
-    std::fs::create_dir_all(&root).ok()?;
-    // The folder ignores itself, so nothing in it is ever committed and the
-    // harness's own .gitignore needn't change.
-    let ignore = root.join(".gitignore");
-    if !ignore.exists() {
-        std::fs::write(&ignore, "# Gannin's synced GitHub data, kept on this Mac only.\n*\n").ok()?;
-    }
-    Some(root)
+    crate::paths::harness_cache(&crate::launch::harness_path(org, &repo))
 }
 
 /// Copies `source` to `path` through a temporary file, so a half-copied

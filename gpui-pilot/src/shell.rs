@@ -1139,7 +1139,7 @@ impl Workspace {
                         }
                         // Forget (or after Finish): the pilot's record of it goes; its files stay.
                         (crate::work_panel::WorkEvent::Forget, Some(launch)) => {
-                            let _ = std::fs::remove_dir_all(launch.dir());
+                            launch.remove_dir();
                         }
                         _ => {}
                     }

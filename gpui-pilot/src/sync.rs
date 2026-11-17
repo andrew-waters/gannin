@@ -16,7 +16,6 @@ use crate::github::{self, Error};
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
 
 const PR_FIELDS: &str = "... on PullRequest { id number title url isDraft state createdAt updatedAt mergedAt reviewDecision additions deletions changedFiles commits(last: 1) { nodes { commit { statusCheckRollup { state } committedDate } } } repository { nameWithOwner } author { login avatarUrl } assignees(first: 10) { nodes { login avatarUrl } } reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login avatarUrl } ... on Team { combinedSlug } } } } latestReviews(first: 10) { nodes { state submittedAt author { login avatarUrl } } } closingIssuesReferences(first: 10) { nodes { id number title url state repository { nameWithOwner } } } timelineItems(itemTypes: [REVIEW_REQUESTED_EVENT], last: 20) { nodes { ... on ReviewRequestedEvent { createdAt requestedReviewer { ... on User { login } } } } } comments(last: 10) { nodes { createdAt author { login avatarUrl } } } }";
 
@@ -38,7 +37,7 @@ fn read_synced(org: &str) -> Synced {
     if let Some(synced) = std::fs::read(&path).ok().and_then(|b| serde_json::from_slice::<Synced>(&b).ok()) {
         return synced;
     }
-    let earlier = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default().join("Library/Application Support/GanninGPUIPilot/Caches/synced.json");
+    let earlier = crate::paths::app_dir().join("caches/synced.json");
     std::fs::read(earlier).ok().and_then(|b| serde_json::from_slice::<BTreeMap<String, Synced>>(&b).ok()).and_then(|mut all| all.remove(org)).unwrap_or_default()
 }
 

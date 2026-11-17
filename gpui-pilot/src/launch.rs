@@ -5,9 +5,10 @@
 //! script clones or updates the harness, puts the brief and hooks in the
 //! folder, then starts claude, or resumes it once it has started before.
 //!
-//! The pilot keeps its sessions in its own folder
-//! (`Application Support/GanninGPUIPilot/Sessions/<id>/`), never Gannin's,
-//! and records nothing in the harness: Gannin's "Record the session" commit
+//! The pilot keeps each session in a folder of its own in the harness's
+//! git-ignored `.gannin-cache/sessions/<id>/` (in `~/.gannin/sessions/<id>/`
+//! when the harness isn't cloned yet, as a clone needs an empty folder),
+//! never Gannin's, and records nothing in the harness: Gannin's "Record the session" commit
 //! is a write to GitHub the pilot doesn't make.
 
 use chrono::{DateTime, Utc};
@@ -97,8 +98,28 @@ impl Launch {
         self.id.to_lowercase()
     }
 
+    /// The session's own folder. `~/.gannin/sessions/<id>` indexes them:
+    /// a link to the folder in the harness, or the folder itself when the
+    /// harness wasn't there to hold it. Never changes once it's made, as
+    /// the start script and hooks are written with it.
     pub fn dir(&self) -> PathBuf {
-        sessions_dir().join(&self.id)
+        let entry = sessions_dir().join(&self.id);
+        if let Ok(target) = std::fs::read_link(&entry) {
+            return target;
+        }
+        if entry.exists() {
+            return entry;
+        }
+        match self.harness_path.join(".git").exists() {
+            true => self.harness_path.join(".gannin-cache/sessions").join(&self.id),
+            false => entry,
+        }
+    }
+
+    /// Takes the session's folder away, and its entry in the index.
+    pub fn remove_dir(&self) {
+        let _ = std::fs::remove_dir_all(self.dir());
+        let _ = std::fs::remove_file(sessions_dir().join(&self.id));
     }
 
     /// The session's folder in the harness.
@@ -121,7 +142,16 @@ impl Launch {
     /// record; `extra` adds files the flow needs (Ask's context README).
     pub fn prepare(&self, brief: &str, prompt: &str, disallow_edits: bool, gate: bool) -> std::io::Result<()> {
         let dir = self.dir();
+        let entry = sessions_dir().join(&self.id);
+        if dir != entry {
+            // Ignored by git before anything goes in it.
+            crate::paths::harness_cache(&self.harness_path);
+        }
         std::fs::create_dir_all(&dir)?;
+        if dir != entry && !entry.is_symlink() {
+            std::fs::create_dir_all(sessions_dir())?;
+            std::os::unix::fs::symlink(&dir, &entry)?;
+        }
         std::fs::write(dir.join("brief.md"), brief)?;
         let gap = self.unattended.map(|minutes| crate::schedule::gap_hook(&self.id, minutes));
         std::fs::write(dir.join("settings.json"), settings_json(&dir, gate, gap))?;
@@ -222,9 +252,9 @@ exec "${{SHELL:-bash}}" -l
     }
 }
 
-/// `Application Support/GanninGPUIPilot/Sessions`.
+/// `~/.gannin/sessions`: every session, by id (see `Launch::dir`).
 pub fn sessions_dir() -> PathBuf {
-    home().join("Library/Application Support/GanninGPUIPilot/Sessions")
+    crate::paths::app_dir().join("sessions")
 }
 
 /// Every session the pilot has started, newest first.

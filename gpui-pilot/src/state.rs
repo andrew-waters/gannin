@@ -121,8 +121,7 @@ impl Default for SavedState {
 }
 
 fn folder() -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
-    home.join("Library/Application Support/GanninGPUIPilot")
+    crate::paths::app_dir()
 }
 
 /// A window's state: the first window's is state.json, others' state-<n>.json.

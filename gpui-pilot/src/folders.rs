@@ -214,7 +214,7 @@ pub struct Recent {
 }
 
 fn recents_path() -> PathBuf {
-    crate::launch::sessions_dir().parent().map(Path::to_path_buf).unwrap_or_default().join("folders.json")
+    crate::paths::app_dir().join("folders.json")
 }
 
 /// The folders opened, most recent first.
