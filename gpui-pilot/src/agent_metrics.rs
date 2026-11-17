@@ -237,44 +237,100 @@ impl AgentMetricsPage {
             .child(div().text_xs().text_color(theme.secondary).child(help.to_string()))
     }
 
-    /// Posted against acted on, a pair of bars a group, and each group's
-    /// acted-on rate beneath.
+    /// A rounded top for the axis and its step: 1, 2 or 5 times a power of
+    /// ten, about four steps up.
+    fn scale(max: usize) -> (usize, usize) {
+        let max = max.max(1);
+        let mut step = 1;
+        loop {
+            for m in [1, 2, 5] {
+                if max.div_ceil(step * m) <= 4 {
+                    let step = step * m;
+                    return (max.div_ceil(step) * step, step);
+                }
+            }
+            step *= 10;
+        }
+    }
+
+    const AXIS: f32 = 40.;
+
+    /// A plot `height` high: the y axis's labels down the left, gridlines
+    /// at each step, and `bars` (a row aligned to the bottom) over them.
+    fn plot(height: f32, top: usize, step: usize, bars: gpui::Div, theme: &Theme) -> impl IntoElement {
+        let ticks: Vec<usize> = (0..=top).step_by(step.max(1)).collect();
+        let at = |t: usize| t as f32 / top.max(1) as f32 * height;
+        div()
+            .flex()
+            .flex_row()
+            .child(div().relative().w(px(Self::AXIS)).h(px(height)).flex_none().children(ticks.iter().map(|&t| {
+                div().absolute().right(px(8.)).bottom(px(at(t) - 7.)).text_xs().text_color(theme.tertiary).child(t.to_string())
+            })))
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_w_0()
+                    .h(px(height))
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .children(ticks.iter().filter(|&&t| t > 0).map(|&t| div().absolute().left_0().right_0().bottom(px(at(t))).h(px(1.)).bg(theme.border).opacity(0.5)))
+                    .child(bars.absolute().inset_0().flex().flex_row().items_end()),
+            )
+    }
+
+    /// A bar's height for `n` on an axis up to `top`: at least a sliver
+    /// when it's not nothing, so a small count still shows.
+    fn bar_height(n: usize, top: usize, height: f32) -> f32 {
+        if n == 0 {
+            0.
+        } else {
+            (n as f32 / top.max(1) as f32 * height).max(2.)
+        }
+    }
+
+    /// Posted against acted on, a pair of bars a group with their counts,
+    /// and each group's acted-on rate beneath.
     fn pairs(groups: Vec<(String, usize, usize)>, theme: &Theme) -> impl IntoElement {
-        let max = groups.iter().map(|g| g.1).max().unwrap_or(0).max(1) as f32;
-        let height = 160.;
+        let (top, step) = Self::scale(groups.iter().map(|g| g.1).max().unwrap_or(0));
+        let height = 180.;
         let (posted, acted) = (theme.orange(), theme.blue());
         let legend = |label: &str, tint: Hsla| div().flex().flex_row().items_center().gap_1().text_xs().text_color(theme.secondary).child(div().size(px(8.)).rounded_sm().bg(tint)).child(label.to_string());
+        let bar = |n: usize, tint: Hsla| {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap_0p5()
+                .child(div().text_xs().text_color(theme.secondary).child(if n > 0 { n.to_string() } else { String::new() }))
+                .child(div().w(px(26.)).h(px(Self::bar_height(n, top, height))).rounded_t(px(3.)).bg(tint))
+        };
         div()
             .flex()
             .flex_col()
             .gap_2()
             .child(div().flex().flex_row().gap_3().child(legend("Posted", posted)).child(legend("Acted on", acted)))
-            .child(
-                div().h(px(height)).flex().flex_row().items_end().gap_3().border_b_1().border_color(theme.border).children(groups.iter().map(|(_, p, a)| {
-                    div()
-                        .flex_1()
-                        .flex()
-                        .flex_row()
-                        .items_end()
-                        .justify_center()
-                        .gap(px(3.))
-                        .child(div().w(px(14.)).h(px(*p as f32 / max * height)).rounded_t(px(2.)).bg(posted))
-                        .child(div().w(px(14.)).h(px(*a as f32 / max * height)).rounded_t(px(2.)).bg(acted))
-                })),
-            )
-            .child(div().flex().flex_row().gap_3().children(groups.iter().map(|(name, p, a)| {
+            .child(Self::plot(
+                height,
+                top,
+                step,
+                div().children(groups.iter().map(|(_, p, a)| div().flex_1().flex().flex_row().items_end().justify_center().gap(px(4.)).child(bar(*p, posted)).child(bar(*a, acted)))),
+                theme,
+            ))
+            .child(div().flex().flex_row().pl(px(Self::AXIS)).children(groups.iter().map(|(name, p, a)| {
                 div()
                     .flex_1()
                     .flex()
                     .flex_col()
                     .items_center()
                     .child(div().text_xs().text_color(theme.secondary).child(name.clone()))
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if *p > 0 { Self::percent(*a, *p) } else { String::new() }))
+                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(if *p > 0 { format!("{} acted on", Self::percent(*a, *p)) } else { "None".into() }))
             })))
     }
 
-    /// Reviews a week, stacked by who ran them.
-    fn weekly(records: &[&Record], reviewers: &[String], theme: &Theme) -> impl IntoElement {
+    /// Reviews a week, stacked by who ran them: every week in the range,
+    /// empty ones too, each with its total and its date.
+    fn weekly(records: &[&Record], reviewers: &[String], since: Option<DateTime<Utc>>, theme: &Theme) -> impl IntoElement {
         let week = |d: DateTime<Utc>| {
             let day = d.date_naive();
             day - Duration::days(day.weekday().num_days_from_monday() as i64)
@@ -283,9 +339,21 @@ impl AgentMetricsPage {
         for r in records {
             *weeks.entry(week(r.date())).or_default().entry(r.reviewer.to_lowercase()).or_default() += 1;
         }
-        let max = weeks.values().map(|m| m.values().sum::<usize>()).max().unwrap_or(0).max(1) as f32;
-        let height = 140.;
+        // The weeks with none, from the range's start (or the first review)
+        // to this one.
+        if let Some(first) = since.map(week).or_else(|| weeks.keys().next().copied()) {
+            let mut day = first;
+            while day <= week(Utc::now()) {
+                weeks.entry(day).or_default();
+                day += Duration::days(7);
+            }
+        }
+        let totals: Vec<usize> = weeks.values().map(|m| m.values().sum()).collect();
+        let (top, step) = Self::scale(totals.iter().copied().max().unwrap_or(0));
+        let height = 180.;
         let tint = |login: &str| theme.slot(reviewers.iter().position(|r| r == login).unwrap_or(0));
+        // A date under every week, or every few when there are many.
+        let every = weeks.len().div_ceil(12).max(1);
         div()
             .flex()
             .flex_col()
@@ -293,23 +361,45 @@ impl AgentMetricsPage {
             .child(div().flex().flex_row().flex_wrap().gap_3().children(reviewers.iter().map(|login| {
                 div().flex().flex_row().items_center().gap_1().text_xs().text_color(theme.secondary).child(div().size(px(8.)).rounded_sm().bg(tint(login))).child(format!("@{login}"))
             })))
-            .child(
-                div().h(px(height)).flex().flex_row().items_end().gap_1().border_b_1().border_color(theme.border).children(weeks.iter().map(|(_, by)| {
+            .child(Self::plot(
+                height,
+                top,
+                step,
+                div().gap_1().children(weeks.values().zip(&totals).map(|(by, &total)| {
                     let mut by: Vec<(&String, &usize)> = by.iter().collect();
                     by.sort();
-                    div().flex_1().max_w(px(28.)).flex().flex_col().justify_end().children(by.into_iter().map(|(login, n)| div().w_full().h(px(*n as f32 / max * height)).bg(tint(login))))
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_0p5()
+                        .child(div().text_xs().text_color(theme.secondary).child(if total > 0 { total.to_string() } else { String::new() }))
+                        .child(
+                            div()
+                                .w_full()
+                                .max_w(px(56.))
+                                .flex()
+                                .flex_col()
+                                .justify_end()
+                                .rounded_t(px(3.))
+                                .overflow_hidden()
+                                .children(by.into_iter().map(|(login, n)| div().w_full().h(px(*n as f32 / top.max(1) as f32 * height)).bg(tint(login)))),
+                        )
                 })),
-            )
-            .child(
+                theme,
+            ))
+            .child(div().flex().flex_row().gap_1().pl(px(Self::AXIS)).children(weeks.keys().enumerate().map(|(i, d)| {
                 div()
+                    .flex_1()
+                    .min_w_0()
                     .flex()
-                    .flex_row()
-                    .justify_between()
+                    .justify_center()
                     .text_xs()
                     .text_color(theme.tertiary)
-                    .children(weeks.keys().next().map(|d| d.format("%-d %b").to_string()))
-                    .children(weeks.keys().next_back().filter(|_| weeks.len() > 1).map(|d| d.format("%-d %b").to_string())),
-            )
+                    .child(if i % every == 0 { d.format("%-d %b").to_string() } else { String::new() })
+            })))
     }
 }
 
@@ -570,7 +660,7 @@ impl Render for AgentMetricsPage {
                                 .child(Self::card("By severity", "Findings posted, and those whose threads were resolved", &theme).child(Self::pairs(severity, &theme)))
                                 .child(Self::card("By category", "The same by category; reviews before categories count as Other", &theme).child(Self::pairs(category, &theme))),
                         )
-                        .child(Self::card("Reviews a week", "By who ran them", &theme).child(Self::weekly(&records, &reviewers, &theme)))
+                        .child(Self::card("Reviews a week", "By who ran them", &theme).child(Self::weekly(&records, &reviewers, (self.days > 0).then(|| Utc::now() - Duration::days(self.days)), &theme)))
                         .child(
                             div()
                                 .flex()
