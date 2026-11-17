@@ -235,8 +235,9 @@ Not discussed in detail; change any of them.
 - **Notifications:** macOS notifications through `osascript`, which can't carry buttons or open
   Marra on a click. Focus, quiet hours (22:00 to 07:00) and Remind me as designed; Focus doesn't yet
   turn on by itself.
-- **Unread** for a session thread follows its state changes; there's no event log yet, so "where you
-  left off" shows what the session is and wants, not what happened since you looked.
+- **Unread** for a session thread follows its state changes. Gannin logs each session's changes
+  (state, a review becoming ready) while it runs, and "where you left off" lists those since you
+  last read the thread; the log isn't kept across a relaunch.
 - **Review requests** offer Start review (Gannin's Review with Claude, in the front window) once
   Your Work knows the PR's node id; until its next load, Open on GitHub only.
 - **Not started:** the HTTP API and the phone (step 8), Done today, archive.

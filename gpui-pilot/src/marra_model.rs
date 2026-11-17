@@ -424,6 +424,11 @@ pub struct Marra {
     started: Instant,
     /// The floating window, while open.
     pub floating: Option<gpui::AnyWindowHandle>,
+    /// Gannin's own log of each session's changes (by session key), for
+    /// "since you looked"; no model call. Kept while Gannin runs.
+    pub log: HashMap<String, Vec<(DateTime<Local>, String)>>,
+    /// Each session's state as last seen, to notice changes.
+    states: HashMap<String, String>,
     _poll: Task<()>,
 }
 
@@ -473,6 +478,8 @@ impl Marra {
             last_check: Instant::now() - Duration::from_secs(60),
             started: Instant::now(),
             floating: None,
+            log: HashMap::new(),
+            states: HashMap::new(),
             _poll: poll,
         }
     }
@@ -525,6 +532,7 @@ impl Marra {
         }
         if self.last_check.elapsed() >= Duration::from_secs(1) {
             self.last_check = Instant::now();
+            self.note_changes(cx);
             let signature = self.signature(cx);
             if signature != self.signature {
                 self.signature = signature;
@@ -549,6 +557,39 @@ impl Marra {
             (&pr.url, pr.needs(), &pr.checks).hash(&mut hasher);
         }
         hasher.finish()
+    }
+
+    /// Logs what changed in each session since the last look: its state,
+    /// and a review becoming ready.
+    fn note_changes(&mut self, cx: &App) {
+        let now = Local::now();
+        let mut seen = HashSet::new();
+        for s in sessions(cx) {
+            seen.insert(s.key.clone());
+            let state = match &s.review_ready {
+                Some((kept, verdict)) => format!("Review ready ({}{kept} kept)", verdict.clone().map(|v| format!("{v}, ")).unwrap_or_default()),
+                None => s.state.label().to_string(),
+            };
+            match self.states.insert(s.key.clone(), state.clone()) {
+                Some(before) if before != state => {
+                    let entries = self.log.entry(s.key.clone()).or_default();
+                    entries.push((now, state));
+                    let keep = entries.len().saturating_sub(40);
+                    entries.drain(..keep);
+                }
+                // First seen: started now, unless Gannin itself just started.
+                None if self.started.elapsed() > Duration::from_secs(5) => self.log.entry(s.key.clone()).or_default().push((now, "Started".into())),
+                _ => {}
+            }
+        }
+        self.states.retain(|k, _| seen.contains(k));
+        self.log.retain(|k, _| seen.contains(k));
+    }
+
+    /// What a session did after the user last read its thread.
+    pub fn since_read(&self, key: &str) -> Vec<(DateTime<Local>, String)> {
+        let read = self.saved.read.get(&format!("s:{key}")).and_then(|r| DateTime::parse_from_rfc3339(r).ok()).map(|d| d.with_timezone(&Local));
+        self.log.get(key).map(|l| l.iter().filter(|(at, _)| read.is_none_or(|r| *at > r)).cloned().collect()).unwrap_or_default()
     }
 
     // MARK: Errands

@@ -64,6 +64,8 @@ pub struct MarraView {
     skills: Vec<String>,
     /// A session thread's conversation, read from its transcript.
     tail: Option<(String, Vec<(String, String)>)>,
+    /// What the session did since it was last read, taken as it opened.
+    since: Option<(String, Vec<(chrono::DateTime<chrono::Local>, String)>)>,
     _tail_task: Option<Task<()>>,
     theme: Theme,
     _subscriptions: Vec<Subscription>,
@@ -120,6 +122,7 @@ impl MarraView {
             mentions: Vec::new(),
             skills,
             tail: None,
+            since: None,
             _tail_task: None,
             theme: Theme::for_window(window),
             _subscriptions: vec![edits, observe],
@@ -176,6 +179,7 @@ impl MarraView {
     // MARK: Doing
 
     fn open_thread(&mut self, id: String, cx: &mut Context<Self>) {
+        self.since = id.strip_prefix("s:").map(|key| (key.to_string(), self.marra.read(cx).since_read(key)));
         self.marra.update(cx, |m, _| m.mark_read(&id, true));
         self.tail = None;
         self._tail_task = None;
@@ -1239,6 +1243,9 @@ impl MarraView {
         let info = marra_model::sessions(cx).into_iter().find(|s| s.key == key);
         let need = self.marra.read(cx).needs(None, cx).into_iter().find(|n| n.thread.as_deref() == Some(&format!("s:{key}")));
         let lines = self.tail.as_ref().filter(|(k, _)| k == key).map(|(_, l)| l.clone()).unwrap_or_default();
+        // What happened since the last look, from Gannin's log; frozen when
+        // the thread opened, as opening marks it read.
+        let since = self.since.clone().filter(|(k, _)| k == key).map(|(_, l)| l).unwrap_or_default();
         let mut body = div().id(SharedString::from(format!("session-body-{key}"))).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_2().px_3().py_3();
         if let Some(s) = &info {
             let what = format!("{} ({}){}", s.subject.clone().unwrap_or_else(|| s.title.clone()), s.kind, s.server.as_ref().map(|n| format!(", on {n}")).unwrap_or_default());
@@ -1255,6 +1262,7 @@ impl MarraView {
                     .child(div().text_xs().text_color(theme.secondary).child("Where you left off"))
                     .child(div().text_sm().text_color(theme.fg).child(format!("What it is: {what}")))
                     .child(div().text_sm().text_color(theme.fg).child(format!("Now: {state}")))
+                    .child(div().text_sm().text_color(theme.fg).child(if since.is_empty() { "Since you looked: nothing new".to_string() } else { format!("Since you looked: {}", since.iter().map(|(at, what)| format!("{what} at {}", at.format("%H:%M"))).collect::<Vec<_>>().join(", ")) }))
                     .when_some(need, |d, n| d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {}", n.task)))),
             );
         }
