@@ -656,6 +656,8 @@ enum Column {
     Requested,
     Assignees,
     Checks,
+    /// The merge risk its latest review graded.
+    Risk,
     Linked,
     Files,
     Size,
@@ -669,12 +671,12 @@ enum Column {
 impl Column {
     fn defaults() -> Vec<Column> {
         use Column::*;
-        vec![State, Status, Title, Repository, Number, Author, Reviewers, Requested, Checks, Size, Updated]
+        vec![State, Status, Title, Repository, Number, Author, Reviewers, Requested, Checks, Risk, Size, Updated]
     }
 
     fn all() -> Vec<Column> {
         use Column::*;
-        vec![State, Status, Title, Repository, Number, Author, Reviewers, Requested, Assignees, Checks, Linked, Files, Size, Branch, Opened, Updated, Merged, Closed]
+        vec![State, Status, Title, Repository, Number, Author, Reviewers, Requested, Assignees, Checks, Risk, Linked, Files, Size, Branch, Opened, Updated, Merged, Closed]
     }
 
     fn title(&self) -> &'static str {
@@ -689,6 +691,7 @@ impl Column {
             Column::Requested => "Requested",
             Column::Assignees => "Assignees",
             Column::Checks => "Checks",
+            Column::Risk => "Risk",
             Column::Linked => "Linked",
             Column::Files => "Files",
             Column::Size => "Size",
@@ -711,6 +714,7 @@ impl Column {
             Column::Reviewers | Column::Assignees => 100.,
             Column::Requested => 104.,
             Column::Checks => 56.,
+            Column::Risk => 76.,
             Column::Linked | Column::Files => 56.,
             Column::Size => 110.,
             Column::Branch => 180.,
@@ -719,7 +723,7 @@ impl Column {
     }
 
     fn sorts_descending(&self) -> bool {
-        matches!(self, Column::Opened | Column::Updated | Column::Merged | Column::Closed | Column::Linked | Column::Files | Column::Size)
+        matches!(self, Column::Opened | Column::Updated | Column::Merged | Column::Closed | Column::Linked | Column::Files | Column::Size | Column::Risk)
     }
 
     fn id(&self) -> SharedString {
@@ -1429,6 +1433,8 @@ impl PrsPage {
                 .gap_1p5()
                 .child(div().flex_shrink(1.).min_w(px(60.)).truncate().child(pr.title.clone()))
                 .when(pr.author_is_bot, |d| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child("bot")))
+                // Its merge risk, here when the Risk column isn't shown.
+                .when_some(crate::risk::level_for(&pr.id).filter(|_| !self.columns.contains(&Column::Risk)), |d, level| d.child(risk_pill(level, theme)))
                 // A review session open for it, to click through to.
                 .when_some(self.reviewing.get(&pr.id).copied(), |d, running| {
                     let item = pr.clone();
@@ -1545,6 +1551,13 @@ impl PrsPage {
                 .when_some(pr.checks, |d, checks| {
                     d.child(checks_badge(checks, theme)).tooltip(move |_, cx| cx.new(|_| Tooltip(checks.title().to_string())).into())
                 })
+                .into_any_element(),
+            Column::Risk => div()
+                .w(px(width))
+                .flex_none()
+                .flex()
+                .items_center()
+                .when_some(crate::risk::level_for(&pr.id), |d, level| d.child(risk_pill(level, theme)))
                 .into_any_element(),
             Column::Linked => count(pr.linked.len()).into_any_element(),
             Column::Files => quiet(pr.files.map(|f| f.to_string()).unwrap_or_default()).into_any_element(),
@@ -1714,6 +1727,7 @@ fn compare(a: &PrItem, b: &PrItem, (column, descending): &(Column, bool), me: Op
         }
         Column::Assignees => a.assignees.first().map(|x| &x.0).cmp(&b.assignees.first().map(|x| &x.0)),
         Column::Checks => present(a.checks, b.checks),
+        Column::Risk => present(crate::risk::level_for(&a.id), crate::risk::level_for(&b.id)),
         Column::Linked => a.linked.len().cmp(&b.linked.len()),
         Column::Files => a.files.cmp(&b.files),
         Column::Size => size(a).cmp(&size(b)),
@@ -1999,4 +2013,22 @@ impl Render for PrsPage {
                 )
             })
     }
+}
+
+/// A merge risk grade as a small coloured pill: a dot and the word.
+fn risk_pill(level: crate::risk::Level, theme: &Theme) -> gpui::Div {
+    let tint = crate::review_panel::risk_tint(level, theme);
+    div()
+        .flex_none()
+        .flex()
+        .flex_row()
+        .items_center()
+        .gap_1()
+        .px_1p5()
+        .rounded_md()
+        .bg(tint.opacity(0.12))
+        .text_xs()
+        .text_color(tint)
+        .child(div().size(px(6.)).rounded_full().bg(tint))
+        .child(level.title())
 }

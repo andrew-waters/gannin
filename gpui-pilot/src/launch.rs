@@ -415,9 +415,10 @@ pub fn opening_prompt(reference: &str, title: &str, branch: &str) -> String {
 }
 
 /// `pullRequestReviewPrompt`, with no team learnings or review config.
-pub fn review_prompt(repo: &str, number: i64, title: &str, url: &str, branch: &str) -> String {
+pub fn review_prompt(repo: &str, number: i64, title: &str, url: &str, branch: &str, sensitive: &[crate::risk::Sensitive]) -> String {
     let (owner, name) = repo.split_once('/').unwrap_or((repo, repo));
     REVIEW_PROMPT
+        .replace("{sensitive}", &crate::risk::prompt_part(sensitive))
         .replace("{repo}", repo)
         .replace("{owner}", owner)
         .replace("{name}", name)

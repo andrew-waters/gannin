@@ -60,6 +60,8 @@ pub struct ReviewResult {
     pub learnings: Vec<Suggested>,
     /// When claude gave it, from the transcript.
     pub at: Option<chrono::DateTime<chrono::Utc>>,
+    /// The merge risk claude graded, and the acceptance criteria it checked.
+    pub risk: Option<crate::risk::Risk>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -222,6 +224,7 @@ pub fn parse(reply: &str) -> Option<ReviewResult> {
             })
             .unwrap_or_default(),
         at: None,
+        risk: crate::risk::parse(&value),
         learnings: value["learnings"]
             .as_array()
             .map(|a| {

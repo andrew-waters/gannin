@@ -115,6 +115,8 @@ pub struct ReviewPanel {
     resolve_note: Option<String>,
     /// The hooks' state file as last read, to redraw when it changes.
     seen_state: Option<String>,
+    /// The team's sensitive paths for this PR's repo, read once.
+    sensitive: Vec<crate::risk::Sensitive>,
     /// The harness documents about or mentioning the PR or the issues it
     /// closes, with their progress: empty until found, or when none.
     plans: Vec<(crate::harness::Doc, bool)>,
@@ -133,6 +135,14 @@ fn severity_tint(severity: Option<&str>, theme: &Theme) -> Hsla {
         Some("major") => theme.orange(),
         Some("minor") => gpui::rgb(0xEDA100).into(),
         _ => theme.secondary,
+    }
+}
+
+pub fn risk_tint(level: crate::risk::Level, theme: &Theme) -> Hsla {
+    match level {
+        crate::risk::Level::Low => theme.good(),
+        crate::risk::Level::Medium => theme.orange(),
+        crate::risk::Level::High => theme.critical(),
     }
 }
 
@@ -173,6 +183,7 @@ impl ReviewPanel {
     pub fn new(launch: Launch, terminal: Entity<Terminal>, view: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let claude_id = launch.claude_id();
         let state_file = launch.dir().join("state");
+        let sensitive = launch.subject.as_ref().map(|s| crate::risk::sensitive_paths(&launch.harness_path, &s.repo)).unwrap_or_default();
         // The transcript is read again every few seconds, off the main
         // thread, until a result is there and whenever it may have changed.
         let poll = cx.spawn(async move |this, cx| loop {
@@ -187,6 +198,7 @@ impl ReviewPanel {
                     if result.is_some() && this.result != result {
                         let first = this.checked.is_none();
                         this.result = result;
+                        this.remember_risk(cx);
                         // A check once there's a result, so Review Again knows
                         // whether anything's changed since.
                         if first {
@@ -257,6 +269,7 @@ impl ReviewPanel {
             record_with_post: crate::review_record::recording(),
             _clock: Self::clock(cx),
             source: Source::Live { launch, terminal, view },
+            sensitive,
             result: None,
             dismissed,
             edits,
@@ -296,6 +309,7 @@ impl ReviewPanel {
             record_note: None,
             resolve_note: None,
             seen_state: None,
+            sensitive: Vec::new(),
             plans: Vec::new(),
             author: None,
             record_with_post: crate::review_record::recording(),
@@ -343,6 +357,25 @@ impl ReviewPanel {
         match &self.source {
             Source::Live { launch, .. } => launch.state(),
             Source::Preview { idle, working, .. } => Some(if *working { "working" } else if *idle { "idle" } else { "exited" }.into()),
+        }
+    }
+
+    /// The merge risk, with the team's floors applied: None before a
+    /// result, or when claude gave none.
+    fn risk(&self) -> Option<crate::risk::Risk> {
+        let result = self.result.as_ref()?;
+        let changed: Vec<String> = result.walkthrough.iter().flat_map(|a| a.files.iter().cloned()).collect();
+        Some(result.risk.clone()?.assessed(&changed, &self.sensitive))
+    }
+
+    /// Keeps the grade beside the session and for the Pull Requests table.
+    fn remember_risk(&self, cx: &mut Context<Self>) {
+        let Source::Live { launch, .. } = &self.source else { return };
+        let Some(subject) = launch.subject.as_ref() else { return };
+        let Some(level) = self.risk().and_then(|r| r.level()) else { return };
+        let at = self.result.as_ref().and_then(|r| r.at).unwrap_or_else(chrono::Utc::now);
+        if crate::risk::remember(&subject.id, &launch.dir(), level, at) {
+            cx.refresh_windows();
         }
     }
 
@@ -651,6 +684,8 @@ impl ReviewPanel {
         let _ = std::fs::write(dir.join("auto-posted"), "");
         let (repo, number) = self.subject();
         let approve = crate::schedule::Schedule::load().settings.approve_by_itself;
+        // An approval goes by itself only at low merge risk.
+        let level = self.risk().and_then(|r| r.level());
         cx.spawn(async move |this, cx| {
             let posted = cx
                 .background_executor()
@@ -659,12 +694,20 @@ impl ReviewPanel {
                     let snapshot = review::snapshot(&token, &repo, number).map_err(|e| e.to_string())?;
                     let draft = review::draft(&result, &HashSet::new(), &snapshot);
                     let mut event = review::default_event(&result, snapshot.is_own());
+                    let mut held = None;
                     if event == "APPROVE" && !approve {
                         event = "COMMENT";
+                    } else if event == "APPROVE" && level != Some(crate::risk::Level::Low) {
+                        event = "COMMENT";
+                        held = Some(match level {
+                            Some(level) => format!("Posted as a comment, not an approval: merge risk is {}.", level.title()),
+                            None => "Posted as a comment, not an approval: the merge risk wasn't graded.".to_string(),
+                        });
                     }
                     let url = review::post(&token, &repo, number, event, &draft, &snapshot).map_err(|e| e.to_string())?;
                     let resolved = review::resolve_threads(&token, &snapshot, &result.resolved);
-                    Ok::<_, String>((event, url, resolved))
+                    let note = [held, resolved].into_iter().flatten().collect::<Vec<_>>().join(" ");
+                    Ok::<_, String>((event, url, (!note.is_empty()).then_some(note)))
                 })
                 .await;
             this.update(cx, |this, cx| {
@@ -812,6 +855,7 @@ impl ReviewPanel {
             })
             .unwrap_or_default();
         let has_result = self.result.is_some();
+        let risk_level = self.risk().and_then(|r| r.level());
         Self::well(theme)
             .child(
                 div()
@@ -830,6 +874,19 @@ impl ReviewPanel {
                         div().flex().flex_row().items_center().gap_1().child(div().size(px(7.)).rounded_full().bg(tint)).child(format!("{n} {sev}"))
                     })))
                 }
+            })
+            .when_some(risk_level, |d, level| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap_2()
+                        .text_sm()
+                        .child(div().text_color(theme.secondary).child("Merge risk"))
+                        .child(Self::risk_meter(level, 18., theme))
+                        .child(div().font_weight(FontWeight::MEDIUM).text_color(risk_tint(level, theme)).child(level.title())),
+                )
             })
             .when_some(self.result.as_ref().and_then(|r| r.effort), |d, e| {
                 d.child(
@@ -1317,6 +1374,128 @@ impl ReviewPanel {
         )
     }
 
+    /// Low, medium and high as three bars, the grade's lit.
+    fn risk_meter(level: crate::risk::Level, segment: f32, theme: &Theme) -> impl IntoElement {
+        use crate::risk::Level;
+        div().flex().flex_row().gap(px(2.)).children([Level::Low, Level::Medium, Level::High].into_iter().map(move |l| {
+            div().w(px(segment)).h(px(4.)).rounded(px(1.)).bg(if l == level { risk_tint(level, theme) } else { theme.secondary.opacity(0.25) })
+        }))
+    }
+
+    /// The merge risk: each signal with its mark, reason and verdict, and
+    /// the overall grade with what to look at; then the gaps, the sensitive
+    /// paths it touches and the acceptance criteria.
+    fn risk_card(risk: &crate::risk::Risk, theme: &Theme) -> impl IntoElement {
+        use crate::risk::Level;
+        let level = risk.level();
+        let tint = level.map(|l| risk_tint(l, theme)).unwrap_or(theme.secondary);
+        let rows = risk.signals.iter().map(|signal| {
+            let (mark, mark_tint) = match signal.score() {
+                Some(1) => ("✓", theme.good()),
+                Some(2) => ("~", theme.orange()),
+                Some(_) => ("!", theme.critical()),
+                None => ("·", theme.tertiary),
+            };
+            div()
+                .flex()
+                .flex_row()
+                .gap_2()
+                .child(div().flex_none().w(px(14.)).font_weight(FontWeight::SEMIBOLD).text_color(mark_tint).child(mark))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().font_weight(FontWeight::MEDIUM).child(signal.title))
+                        .when_some(signal.reason.clone(), |d, r| d.child(div().text_sm().text_color(theme.secondary).child(r)))
+                        .when_some(signal.raised.clone(), |d, r| d.child(div().text_sm().text_color(theme.orange()).child(format!("Raised: {r}")))),
+                )
+                .child(div().flex_none().text_sm().text_color(theme.secondary).child(signal.verdict.clone().unwrap_or_else(|| "unknown".into())))
+        });
+        let overall = div()
+            .flex_none()
+            .w(px(220.))
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(div().text_xs().text_color(theme.tertiary).child("MERGE RISK"))
+            .child(div().text_3xl().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(level.map(Level::title).unwrap_or("ungraded")))
+            .child(div().text_sm().text_color(theme.secondary).child(risk.next_step()))
+            .when_some(level, |d, level| {
+                d.child(
+                    div()
+                        .mt_2()
+                        .flex()
+                        .flex_col()
+                        .gap_1()
+                        .child(Self::risk_meter(level, 68., theme))
+                        .child(div().flex().flex_row().gap(px(2.)).text_xs().children([Level::Low, Level::Medium, Level::High].into_iter().map(move |l| {
+                            div().w(px(68.)).text_color(if l == level { tint } else { theme.tertiary }).child(l.title())
+                        }))),
+                )
+            });
+        let list = |title: &str, items: Vec<gpui::AnyElement>| {
+            div().flex().flex_col().gap_1().child(div().text_sm().font_weight(FontWeight::SEMIBOLD).child(title.to_string())).children(items)
+        };
+        let gaps: Vec<gpui::AnyElement> = risk.gaps.iter().enumerate().map(|(i, g)| markdown(&format!("risk-gap-{i}"), &format!("- {g}"), theme)).collect();
+        let sensitive: Vec<gpui::AnyElement> = risk
+            .sensitive
+            .iter()
+            .map(|(path, why)| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .text_sm()
+                    .child(div().text_color(theme.orange()).child(path.clone()))
+                    .when_some(why.clone(), |d, why| d.child(div().text_color(theme.secondary).child(why)))
+                    .into_any_element()
+            })
+            .collect();
+        let criteria: Vec<gpui::AnyElement> = risk
+            .criteria
+            .iter()
+            .map(|c| {
+                let (label, tint) = match c.status.as_str() {
+                    "met" => ("Met", theme.good()),
+                    "partial" => ("Partly", theme.orange()),
+                    "missing" => ("Missing", theme.critical()),
+                    _ => ("Can't tell", theme.secondary),
+                };
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_2()
+                    .text_sm()
+                    .child(div().flex_none().w(px(64.)).font_weight(FontWeight::MEDIUM).text_color(tint).child(label))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().child(c.criterion.clone()))
+                            .when_some(c.evidence.clone(), |d, e| d.child(div().text_color(theme.secondary).child(e)))
+                            .when_some(c.issue.clone(), |d, i| d.child(div().text_xs().text_color(theme.tertiary).child(i))),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        div()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .p_4()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .child(div().flex().flex_row().gap_6().child(div().flex_1().min_w_0().flex().flex_col().gap_3().children(rows)).child(overall))
+            .when(!gaps.is_empty(), |d| d.child(list("What would lower it", gaps)))
+            .when(!sensitive.is_empty(), |d| d.child(list("Sensitive paths it touches", sensitive)))
+            .when(!criteria.is_empty(), |d| d.child(list("Acceptance criteria", criteria)))
+    }
+
     fn section_heading(text: &str) -> impl IntoElement {
         div().text_base().font_weight(FontWeight::SEMIBOLD).child(text.to_string())
     }
@@ -1327,6 +1506,7 @@ impl ReviewPanel {
         let Some(result) = self.result.clone() else {
             return self.waiting(theme, cx).into_any_element();
         };
+        let risk_card = self.risk().map(|risk| Self::risk_card(&risk, theme).into_any_element());
         // Needs attention: the findings still kept, by how much they hold
         // up the merge.
         let mut kept: Vec<Finding> = result.findings.iter().filter(|f| !self.dismissed.contains(&f.key())).cloned().collect();
@@ -1400,6 +1580,7 @@ impl ReviewPanel {
                     )
                     .child(markdown("review-summary", &result.summary, theme)),
             )
+            .children(risk_card)
             .when(has_attention, |d| d.child(div().flex().flex_col().gap_3().child(Self::section_heading("Needs attention")).children(attention)))
             .when(!result.walkthrough.is_empty(), |d| {
                 d.child(

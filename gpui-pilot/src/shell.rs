@@ -1411,7 +1411,8 @@ impl Workspace {
             let _ = std::fs::write(launch.dir().join("auto-post"), "");
         }
         let brief = format!("# Review of {}#{}: {}\n\n{}\n", pr.repo, pr.number, pr.title, pr.url);
-        let prompt = launch::review_prompt(&pr.repo, pr.number, &pr.title, &pr.url, &branch);
+        let sensitive = crate::risk::sensitive_paths(&launch.harness_path, &pr.repo);
+        let prompt = launch::review_prompt(&pr.repo, pr.number, &pr.title, &pr.url, &branch, &sensitive);
         self.start_launch(launch, &brief, &prompt, true, window, cx);
     }
 

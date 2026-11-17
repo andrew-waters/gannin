@@ -36,6 +36,19 @@ const FINDINGS: &str = r#"I read the diff and the surrounding code.
     {"path": "src/api/payments.rs", "line": 140, "severity": "nit", "category": "maintainability", "comment": "Leftover debug log.", "suggestion": ""},
     {"path": "README.md", "line": 12, "severity": "minor", "category": "maintainability", "comment": "The README's API section doesn't mention the new header."}
   ],
+  "risk": {
+    "alignment": {"verdict": "good", "reason": "Does what the issue asks, and nothing else."},
+    "impact": {"verdict": "medium", "reason": "Every payment request goes through the new check."},
+    "verification": {"verdict": "decent", "reason": "Retries are tested; concurrent retries aren't."},
+    "rollback": {"verdict": "medium", "reason": "Reverting leaves the new table behind, which is harmless."},
+    "detection": {"verdict": "poor", "reason": "A double charge would only show up when a customer reports it."},
+    "gaps": ["A test with two concurrent retries of one key (`tests/payments_idempotency.rs`)", "A metric or alert on 409s from the payments handler (`src/api/payments.rs:95`)"]
+  },
+  "criteria": [
+    {"criterion": "A retried request with the same key never charges twice", "issue": "acme/api#311", "status": "partial", "evidence": "Sequential retries are tested; concurrent ones can still both charge."},
+    {"criterion": "A reused key with a different body returns 409", "issue": "acme/api#311", "status": "met", "evidence": "tests/payments_idempotency.rs: conflicting_body_is_409"},
+    {"criterion": "Keys expire after 24 hours", "issue": "acme/api#311", "status": "missing", "evidence": "No expiry or sweep in src/store/keys.rs."}
+  ],
   "resolved": [],
   "applied": [],
   "learnings": []
