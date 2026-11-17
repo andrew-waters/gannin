@@ -11,6 +11,11 @@ final class ActionsStore {
     /// Top-ups reach back this far, for re-runs and runs that were still
     /// going at the last sync.
     private static let overlap: TimeInterval = 24 * 60 * 60
+    /// A top-up reaches back to a run still unfinished at the last sync only
+    /// if it was created this recently. A run stuck as queued or waiting
+    /// never completes, and would otherwise pull every sync back to its
+    /// creation date, refetching the whole window.
+    private static let unfinishedReach: TimeInterval = 7 * 24 * 60 * 60
     /// Repos pushed to this long before the window are still checked, since
     /// scheduled workflows run without pushes (GitHub turns them off after 60
     /// quiet days).
@@ -102,6 +107,7 @@ final class ActionsStore {
             // What each repo still needs: older weeks when the window has
             // grown, and what's changed since its last sync.
             var plans: [(repo: ActionsRepository, ranges: [(Date, Date)])] = []
+            let unfinishedCutoff = now.addingTimeInterval(-Self.unfinishedReach)
             for var repo in listed {
                 let stored = history.repositories[repo.name]
                 repo.coveredFrom = stored?.coveredFrom ?? .distantFuture
@@ -110,7 +116,7 @@ final class ActionsStore {
                 if let stored, stored.coveredFrom < .distantFuture {
                     if start < stored.coveredFrom { ranges.append((start, stored.coveredFrom)) }
                     let unfinished = history.runs.values
-                        .filter { $0.repo == repo.name && !$0.isCompleted }
+                        .filter { $0.repo == repo.name && !$0.isCompleted && $0.createdAt > unfinishedCutoff }
                         .map(\.createdAt)
                         .min()
                     let topUp = min(stored.syncedAt.addingTimeInterval(-Self.overlap), unfinished ?? .distantFuture)
