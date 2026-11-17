@@ -45,6 +45,8 @@ pulldown-cmark = { version = "0.12", default-features = false }
 [target.'cfg(target_os = "macos")'.dependencies]
 # As Zed has them: the screenshot thumbnail's file promises (promise_drop.rs).
 objc2 = "0.6"
+# The floating Marra window stays up when Gannin is in the background (marra_view.rs).
+raw-window-handle = "0.6"
 block2 = "0.6"
 
 # GPUI on Linux draws through Wayland or X11, whichever the session has.

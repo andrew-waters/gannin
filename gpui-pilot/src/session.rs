@@ -374,6 +374,26 @@ impl SessionPage {
         }
     }
 
+    /// The end of the terminal's screen, for Marra reading a plain session.
+    pub fn screen_tail(&self, lines: usize, cx: &App) -> String {
+        let content = self.terminal.read(cx).get_content();
+        let all: Vec<&str> = content.lines().map(str::trim_end).collect();
+        let end = all.iter().rposition(|l| !l.is_empty()).map_or(0, |i| i + 1);
+        all[end.saturating_sub(lines)..end].join("\n")
+    }
+
+    /// The server it runs on, by name; None on this Mac.
+    pub fn server_name(&self) -> Option<String> {
+        self.server.as_ref().or(self.launch.as_ref().and_then(|l| l.server.as_ref())).map(|s| s.name())
+    }
+
+    /// A review whose result isn't posted yet: the findings kept and the verdict.
+    pub fn review_ready(&self, cx: &App) -> Option<(usize, Option<String>)> {
+        let review = self.review.as_ref()?.read(cx);
+        let (result, posted, kept) = review.closing();
+        (result && !posted).then(|| (kept, review.verdict()))
+    }
+
     /// A Work on This session's panel.
     pub fn work(&self) -> Option<Entity<crate::work_panel::WorkPanel>> {
         self.work.clone()

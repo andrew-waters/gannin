@@ -470,6 +470,8 @@ pub struct Workspace {
     issues: Entity<IssuesPage>,
     sessions: Vec<Entity<SessionPage>>,
     next_session: u32,
+    /// Marra, docked down the right of this window (⌘J), when it's docked.
+    pub marra_dock: Option<Entity<crate::marra_view::MarraView>>,
     /// Reviews asked of you and your PRs, from the org's PR cache.
     work: Work,
     /// Who's signed in to the pilot with GitHub.
@@ -880,6 +882,7 @@ impl Workspace {
             _scheduler: None,
             schedule_ticks: 0,
             window_handle: None,
+            marra_dock: None,
             reopening: 0,
             slot: 0,
             show_on_reopen: None,
@@ -1053,6 +1056,24 @@ impl Workspace {
         let current = self.current_page();
         let pages = std::iter::once(&current).chain(self.tabs.iter().map(|t| &t.page));
         pages.into_iter().find_map(|p| if let Page::Ci(p) = p { Some(p.read(cx).saved()) } else { None }).unwrap_or_else(|| self.templates.2.clone())
+    }
+
+    /// The window's sessions, for Marra.
+    pub fn session_pages(&self) -> &[Entity<SessionPage>] {
+        &self.sessions
+    }
+
+    /// Your Work as the window has it, for Marra.
+    pub fn work_lists(&self) -> &Work {
+        &self.work
+    }
+
+    /// Shows a session's tab, for Marra's Open.
+    pub fn reveal_session(&mut self, id: u32, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(index) = self.tabs.iter().position(|t| t.nav == Nav::Session(id)) {
+            self.drawers.clear();
+            self.activate(index, window, cx);
+        }
     }
 
     fn session(&self, id: u32, cx: &App) -> Option<&Entity<SessionPage>> {
@@ -6642,7 +6663,8 @@ impl Render for Workspace {
                     .when(self.tabs_on_left, |d| d.child(self.tab_column(&theme, cx)))
                     .child(center)
                     .when(self.inspector_open, |d| d.child(self.inspector(&theme, cx)))
-                    .when(self.sync.open, |d| d.child(self.sync_panel(&theme, cx))),
+                    .when(self.sync.open, |d| d.child(self.sync_panel(&theme, cx)))
+                    .when_some(self.marra_dock.clone(), |d, marra| d.child(div().flex_none().w(px(400.)).h_full().border_l_1().border_color(theme.border).child(marra))),
             )
             .child(self.status_bar(&theme, cx))
             .when(self.switcher.is_some() || self.remotes.is_some(), |d| d.child(self.switcher_backdrop(cx)))

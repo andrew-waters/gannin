@@ -2976,6 +2976,7 @@ dependencies = [
  "objc2 0.6.3",
  "project",
  "pulldown-cmark 0.12.2",
+ "raw-window-handle",
  "release_channel",
  "remote",
  "rpc",

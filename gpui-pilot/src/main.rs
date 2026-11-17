@@ -28,6 +28,10 @@ mod issues;
 mod launch;
 mod launch_form;
 mod markdown;
+mod marra;
+mod marra_mcp;
+mod marra_model;
+mod marra_view;
 mod metrics;
 mod new_issue;
 mod page;
@@ -100,6 +104,13 @@ fn main() {
                     cx.open_window(options, |window, cx| cx.new(|cx| assistant_preview::AssistantPreview::new(window, cx))).expect("open the preview");
                     cx.activate(true);
                 });
+                return;
+            }
+            // Marra's engine and Gannin's MCP server against a real claude,
+            // without a window: `--marra-check [model] [prompt]`. Tool calls
+            // get canned answers; permission requests are allowed.
+            "--marra-check" => {
+                marra_check(args.next(), args.next());
                 return;
             }
             "--org" => org = args.next(),
@@ -304,6 +315,9 @@ fn main() {
         zed::init(cx);
         cx.bind_keys([KeyBinding::new(crate::zed::keys("secondary-q"), Quit, None)]);
         cx.bind_keys(shell::key_bindings());
+        // Marra: ⌘J while Gannin is active brings it forward.
+        cx.bind_keys([KeyBinding::new(crate::zed::keys("secondary-j"), marra_view::ToggleMarra, None)]);
+        cx.on_action(|_: &marra_view::ToggleMarra, cx| marra_view::toggle(cx));
         cx.set_menus(vec![
             Menu { name: "Gannin".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false },
             Menu {
@@ -331,6 +345,8 @@ fn main() {
                     MenuItem::action("Toggle Your Work", ToggleInspector),
                     MenuItem::action("Toggle Sync", ToggleSync),
                     MenuItem::action("Toggle Tabs on Left", ToggleTabsOnLeft),
+                    MenuItem::separator(),
+                    MenuItem::action("Marra", marra_view::ToggleMarra),
                     MenuItem::separator(),
                     MenuItem::action("Refresh", Refresh),
                 ],
@@ -376,4 +392,41 @@ fn main() {
         .detach();
         cx.activate(true);
     });
+}
+
+/// See `--marra-check`.
+fn marra_check(model: Option<String>, prompt: Option<String>) {
+    let Some((port, token, calls)) = marra_mcp::serve() else { return println!("couldn't listen") };
+    let folder = std::env::temp_dir().join("gannin-marra-check");
+    let profile = marra::Profile { cwd: folder, system: marra::system_prompt(), session: None, model, extra: Vec::new() };
+    let mut engine = marra::Engine::new(profile);
+    engine.mcp = Some((port, token));
+    let prompt = prompt.unwrap_or_else(|| "Use the gannin list_sessions tool, then tell me in one sentence what it said.".into());
+    if let Err(e) = engine.send(&prompt) {
+        return println!("send failed: {e}");
+    }
+    let started = std::time::Instant::now();
+    while started.elapsed() < std::time::Duration::from_secs(180) {
+        for call in calls.try_iter() {
+            println!("TOOL CALL {} {}", call.tool, call.args);
+            let _ = call.reply.send(Ok("- id 1:1: \"Review acme/api#12\" (review), needs you since 10:02, review ready to post (approve, 2 findings)".into()));
+        }
+        for event in engine.drain() {
+            match &event {
+                marra::Event::Delta(_) => {}
+                marra::Event::Ask { request, tool, input } => {
+                    println!("ASK {tool} {input}");
+                    let _ = engine.answer(request, true, input);
+                }
+                marra::Event::Done { .. } | marra::Event::Exited(_) => {
+                    println!("{event:?}");
+                    engine.stop();
+                    return;
+                }
+                other => println!("{other:?}"),
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    println!("timed out");
 }
