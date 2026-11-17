@@ -296,6 +296,13 @@ pub struct AssistantPreview {
     later_menu: bool,
     /// The rest of the queue, below its top item.
     more_open: bool,
+    /// The open thread's Pin, Mute and Mark as unread.
+    thread_menu: bool,
+    /// The highlighted suggestion while typing / or @.
+    suggest: usize,
+    /// A / or @ word whose suggestions were closed with Escape.
+    suggest_closed: Option<String>,
+    _edits: gpui::Subscription,
     unread_only: bool,
     open: Option<usize>,
     /// Answer cards whose "How I got it" is open: (thread, message).
@@ -310,14 +317,22 @@ pub struct AssistantPreview {
 
 impl AssistantPreview {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // The input is the focus: open on it, growing to ten lines, Return
+        // for a new line and Command-Return to send.
         let composer = cx.new(|cx| {
-            let mut editor = editor::Editor::single_line(window, cx);
-            editor.set_placeholder_text("Ask anything, / for commands, @ to name a thread", window, cx);
+            let mut editor = editor::Editor::auto_height(2, 10, window, cx);
+            editor.set_placeholder_text("Message the assistant. / for commands, @ to mention", window, cx);
             editor
+        });
+        let edits = cx.subscribe(&composer, |this: &mut Self, _, event: &editor::EditorEvent, cx| {
+            if matches!(event, editor::EditorEvent::BufferEdited) {
+                this.suggest = 0;
+                cx.notify();
+            }
         });
         let (threads, items) = seed();
         let focus = cx.focus_handle();
-        window.focus(&focus, cx);
+        window.focus(&composer.focus_handle(cx), cx);
         Self {
             focus,
             composer,
@@ -331,6 +346,10 @@ impl AssistantPreview {
             more_menu: false,
             later_menu: false,
             more_open: false,
+            thread_menu: false,
+            suggest: 0,
+            suggest_closed: None,
+            _edits: edits,
             unread_only: false,
             open: None,
             how_open: HashSet::new(),
@@ -510,10 +529,18 @@ impl AssistantPreview {
         }
         self.threads[0].messages.push(text(Who::You, &typed));
         let lower = typed.to_lowercase();
-        if lower.starts_with("/waiting") {
+        if let Some(rest) = typed.strip_prefix("/ask ") {
+            self.start_question(rest.trim().to_string(), cx);
+            self.open = Some(0);
+            cx.notify();
+            return;
+        }
+        let lower = lower.trim_start_matches('/').to_string();
+        let typed = typed.trim_start_matches('/').to_string();
+        if lower.starts_with("waiting") {
             let lines: Vec<String> = self.queue().iter().map(|&i| format!("{}: {} ({}m)", self.items[i].subject, self.items[i].task.to_lowercase(), self.items[i].minutes)).collect();
             self.say(if lines.is_empty() { "Nothing needs you.".into() } else { lines.join("\n") });
-        } else if lower.contains("catch me up") || lower.starts_with("/catch") {
+        } else if lower.contains("catch me up") || lower.starts_with("catch") {
             let lines: Vec<(usize, String)> = self.listed().into_iter().filter(|&i| i != 0 && self.is_unread(i)).map(|i| (i, format!("{}: {}", self.threads[i].title, self.threads[i].last))).collect();
             self.threads[0].messages.push(Message { who: Who::Assistant, body: Body::CatchUp(lines) });
         } else if lower.starts_with("investigate") || lower.contains('#') && lower.contains("bug") {
@@ -776,11 +803,42 @@ fn section(label: impl Into<SharedString>, theme: &Theme) -> gpui::Div {
     div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(label.into())
 }
 
+/// A thread's round avatar: a glyph and tint for its kind.
+fn avatar(kind: Kind, theme: &Theme) -> (&'static str, Hsla) {
+    match kind {
+        Kind::Main => ("✦", theme.selected),
+        Kind::Question => ("?", theme.slot(6)),
+        Kind::Investigation => ("⌕", theme.orange()),
+        Kind::Build => ("⚒", theme.good()),
+        Kind::Review => ("✓", theme.slot(4)),
+    }
+}
+
+/// How long ago, said as such: "now", "2m ago", "1h ago".
+fn kind_name(kind: Kind) -> &'static str {
+    match kind {
+        Kind::Main => "",
+        Kind::Question => "Question",
+        Kind::Investigation => "Investigation",
+        Kind::Build => "Build",
+        Kind::Review => "Review",
+    }
+}
+
 fn ago(minutes: u32) -> String {
     match minutes {
         0 => "now".into(),
-        m if m < 60 => format!("{m}m"),
-        m => format!("{}h", m / 60),
+        m if m < 60 => format!("{m}m ago"),
+        m => format!("{}h ago", m / 60),
+    }
+}
+
+/// How long something has waited on you: "just now", "waiting 40m".
+fn waiting(minutes: u32) -> String {
+    match minutes {
+        0 => "just now".into(),
+        m if m < 60 => format!("waiting {m}m"),
+        m => format!("waiting {}h", m / 60),
     }
 }
 
@@ -985,7 +1043,7 @@ impl AssistantPreview {
                                 .gap_2()
                                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(it.subject.clone()))
                                 .child(div().flex_1())
-                                .child(div().text_xs().text_color(age_color(it.minutes, theme)).child(ago(it.minutes))),
+                                .child(div().text_xs().text_color(age_color(it.minutes, theme)).child(waiting(it.minutes))),
                         )
                         .child(div().text_base().text_color(theme.fg).child(it.task.clone()))
                         .child(div().text_xs().text_color(theme.secondary).child(it.detail.clone()))
@@ -1046,15 +1104,19 @@ impl AssistantPreview {
                             }))
                             .child(div().text_sm().text_color(theme.fg).child(it.subject.clone()))
                             .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.secondary).child(it.task.clone()))
-                            .child(div().text_xs().text_color(age_color(it.minutes, theme)).child(ago(it.minutes)))
+                            .child(div().text_xs().text_color(age_color(it.minutes, theme)).child(waiting(it.minutes)))
                     }))
                 })
             })
     }
 
+    /// The list as iOS Messages draws it: an unread dot in the margin, a
+    /// round avatar for the kind, the name in bold, the time and a chevron,
+    /// the last line beneath, and a hairline inset to the text.
     fn threads_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let listed = self.listed();
         let unread = self.unread_count();
+        let count = listed.len();
         div()
             .id("threads")
             .flex_1()
@@ -1062,86 +1124,111 @@ impl AssistantPreview {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .px_4()
-            .py_3()
-            .gap_1()
+            .py_2()
             .child(
                 div()
                     .flex()
                     .flex_row()
-                    .items_center()
-                    .gap_2()
+                    .items_end()
+                    .px_4()
                     .pb_1()
-                    .child(section("Threads", theme))
-                    .child(div().flex_1())
+                    .child(div().flex_1().text_xl().font_weight(FontWeight::BOLD).text_color(theme.fg).child("Threads"))
                     .child(
                         div()
                             .id("unread-toggle")
-                            .text_xs()
+                            .text_sm()
                             .cursor_pointer()
-                            .text_color(if self.unread_only { theme.selected } else { theme.secondary })
-                            .child(if self.unread_only { format!("Unread {unread} · show all") } else { format!("{unread} unread") })
+                            .text_color(theme.selected)
+                            .child(if self.unread_only { "Show all".to_string() } else { format!("Unread ({unread})") })
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                 this.unread_only = !this.unread_only;
                                 cx.notify();
                             })),
                     ),
             )
-            .children(listed.into_iter().map(|t| {
+            .children(listed.into_iter().enumerate().map(|(row, t)| {
                 let thread = &self.threads[t];
                 let unread = self.is_unread(t);
+                let (glyph, tint) = avatar(thread.kind, theme);
+                let last_row = row + 1 == count;
                 div()
                     .id(SharedString::from(format!("thread-{t}")))
                     .flex()
                     .flex_row()
-                    .gap_2()
-                    .px_2()
-                    .py_1p5()
-                    .rounded_md()
+                    .items_center()
+                    .pl_1()
                     .cursor_pointer()
                     .hover(|s| s.bg(theme.row_selected))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(t, cx)))
-                    .child(div().w(px(10.)).pt(px(5.)).child(div().size(px(7.)).rounded_full().when(unread, |d| d.bg(theme.selected))))
+                    .child(div().w(px(16.)).flex().justify_center().child(div().size(px(9.)).rounded_full().when(unread, |d| d.bg(theme.selected))))
+                    .child(div().flex_none().size(px(34.)).rounded_full().bg(tint).flex().items_center().justify_center().text_base().text_color(gpui::white()).child(glyph))
                     .child(
                         div()
                             .flex_1()
                             .min_w_0()
+                            .ml_3()
+                            .pr_3()
+                            .py_2()
                             .flex()
                             .flex_col()
+                            .when(!last_row, |d| d.border_b_1().border_color(theme.grid))
                             .child(
                                 div()
                                     .flex()
                                     .flex_row()
+                                    .items_center()
                                     .gap_2()
-                                    .child(div().flex_1().min_w_0().truncate().text_sm().text_color(theme.fg).when(unread, |d| d.font_weight(FontWeight::SEMIBOLD)).child(thread.title.clone()))
-                                    .child(div().text_xs().text_color(theme.tertiary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) })),
+                                    .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
+                                    .when(thread.pinned, |d| d.child(div().text_xs().text_color(theme.tertiary).child("📌")))
+                                    .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) }))
+                                    .child(div().text_sm().text_color(theme.tertiary).child("›")),
                             )
-                            .child(div().truncate().text_xs().text_color(theme.secondary).child(thread.last.clone())),
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_1()
+                                    .text_xs()
+                                    .when(thread.kind != Kind::Main, |d| d.child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(kind_name(thread.kind))).child(div().flex_none().text_color(theme.tertiary).child("·")))
+                                    .child(div().flex_1().min_w_0().truncate().text_color(if thread.muted { theme.tertiary } else { theme.secondary }).child(thread.last.clone())),
+                            ),
                     )
             }))
     }
 
-    fn message_view(&self, t: usize, m: usize, message: &Message, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
-        let (label, color) = match message.who {
-            Who::You => ("You", theme.fg),
-            Who::Assistant => ("Assistant", theme.selected),
-            Who::Worker => ("Worker", theme.good()),
-            Who::Event => ("", theme.secondary),
+    fn message_view(&self, t: usize, m: usize, message: &Message, named: bool, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+        let label = match message.who {
+            Who::You | Who::Event => "",
+            Who::Assistant => "Assistant",
+            Who::Worker => "Worker",
         };
         let body: AnyElement = match &message.body {
-            Body::Text(s) if matches!(message.who, Who::Event) => div().text_xs().text_color(theme.secondary).child(format!("· {s}")).into_any_element(),
-            Body::Text(s) => div().text_sm().text_color(theme.fg).children(s.lines().map(|l| div().child(l.to_string()))).into_any_element(),
+            Body::Text(s) if matches!(message.who, Who::Event) => {
+                return div().w_full().flex().justify_center().px_6().child(div().text_xs().text_color(theme.secondary).text_center().child(s.clone())).into_any_element();
+            }
+            Body::Text(s) => {
+                let mine = matches!(message.who, Who::You);
+                div()
+                    .max_w(px(320.))
+                    .px_3()
+                    .py_1p5()
+                    .rounded(px(18.))
+                    .text_sm()
+                    .when(mine, |d| d.bg(theme.selected).text_color(theme.on_selected))
+                    .when(!mine, |d| d.bg(theme.tile).text_color(theme.fg))
+                    .children(s.lines().map(|l| div().child(l.to_string())))
+                    .into_any_element()
+            }
             Body::Answer { headline, figures, spark, caveat, how, skill } => {
                 let open = self.how_open.contains(&(t, m));
                 div()
                     .flex()
                     .flex_col()
                     .gap_2()
+                    .max_w(px(380.))
                     .p_3()
-                    .rounded_lg()
+                    .rounded(px(18.))
                     .bg(theme.tile)
-                    .border_1()
-                    .border_color(theme.border)
                     .child(div().text_xs().text_color(theme.secondary).child(format!("Answer · {skill} · prod, read only")))
                     .child(div().text_base().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(headline.clone()))
                     .child(div().flex().flex_row().gap_4().children(figures.iter().map(|(k, v)| div().flex().flex_col().child(div().text_xs().text_color(theme.secondary).child(k.clone())).child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(v.clone())))))
@@ -1185,11 +1272,10 @@ impl AssistantPreview {
                 .flex()
                 .flex_col()
                 .gap_2()
+                .max_w(px(380.))
                 .p_3()
-                .rounded_lg()
+                .rounded(px(18.))
                 .bg(theme.tile)
-                .border_1()
-                .border_color(theme.border)
                 .child(div().text_xs().text_color(theme.secondary).child(format!("Findings · confidence {confidence}")))
                 .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(cause.clone()))
                 .child(section("Evidence", theme))
@@ -1212,10 +1298,9 @@ impl AssistantPreview {
                 .flex()
                 .flex_col()
                 .gap_0p5()
-                .p_2()
-                .rounded_lg()
-                .border_1()
-                .border_color(theme.border)
+                .w_full()
+                .p_3()
+                .rounded(px(14.))
                 .bg(theme.sidebar)
                 .child(div().text_xs().text_color(theme.secondary).child("Where you left off"))
                 .child(div().text_sm().text_color(theme.fg).child(format!("What it is: {what}")))
@@ -1251,52 +1336,111 @@ impl AssistantPreview {
                 }))))
                 .into_any_element(),
         };
+        let mine = matches!(message.who, Who::You);
         div()
+            .w_full()
             .flex()
             .flex_col()
             .gap_0p5()
-            .when(!label.is_empty(), |d| d.child(div().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(color).child(label)))
+            .when(mine, |d| d.items_end())
+            .when(!mine, |d| d.items_start())
+            .when(named && !label.is_empty(), |d| d.child(div().pl_3().text_xs().text_color(theme.secondary).child(label)))
             .child(body)
             .into_any_element()
     }
 
     fn thread_view(&self, t: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = &self.threads[t];
+        let (glyph, tint) = avatar(thread.kind, theme);
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
+            // A navigation bar: back on the left, the thread in the middle,
+            // its options on the right.
             .child(
                 div()
                     .flex_none()
+                    .relative()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap_2()
-                    .px_3()
-                    .py_2()
+                    .px_2()
+                    .h(px(52.))
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(button("back", "‹ Threads", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        this.open = None;
-                        cx.notify();
-                    })))
-                    .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(thread.title.clone()))
-                    .child(pill(format!("mute-{t}"), if thread.muted { "Muted" } else { "Mute" }, thread.muted, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.threads[t].muted = !this.threads[t].muted;
-                        cx.notify();
-                    })))
-                    .child(pill(format!("pin-{t}"), if thread.pinned { "Pinned" } else { "Pin" }, thread.pinned, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.threads[t].pinned = !this.threads[t].pinned;
-                        cx.notify();
-                    })))
-                    .child(pill(format!("unread-{t}"), "Mark unread", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                        this.threads[t].unread = true;
-                        this.open = None;
-                        cx.notify();
-                    }))),
+                    .bg(theme.sidebar)
+                    .child(
+                        div()
+                            .id("back")
+                            .flex_none()
+                            .text_sm()
+                            .text_color(theme.selected)
+                            .cursor_pointer()
+                            .child("‹ Threads")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.open = None;
+                                this.thread_menu = false;
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .child(div().size(px(24.)).rounded_full().bg(tint).flex().items_center().justify_center().text_xs().text_color(gpui::white()).child(glyph))
+                            .child(div().max_w(px(260.)).truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(thread.title.clone())),
+                    )
+                    .child(
+                        div()
+                            .id("thread-menu")
+                            .flex_none()
+                            .w(px(64.))
+                            .flex()
+                            .justify_end()
+                            .text_base()
+                            .text_color(theme.selected)
+                            .cursor_pointer()
+                            .child("⋯")
+                            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                this.thread_menu = !this.thread_menu;
+                                cx.notify();
+                            })),
+                    ),
             )
+            .when(self.thread_menu, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .flex()
+                        .flex_row()
+                        .justify_center()
+                        .gap_1()
+                        .py_1()
+                        .border_b_1()
+                        .border_color(theme.border)
+                        .child(pill(format!("pin-{t}"), if thread.pinned { "Unpin" } else { "Pin" }, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.threads[t].pinned = !this.threads[t].pinned;
+                            this.thread_menu = false;
+                            cx.notify();
+                        })))
+                        .child(pill(format!("mute-{t}"), if thread.muted { "Unmute" } else { "Mute" }, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.threads[t].muted = !this.threads[t].muted;
+                            this.thread_menu = false;
+                            cx.notify();
+                        })))
+                        .child(pill(format!("unread-{t}"), "Mark as unread", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.threads[t].unread = true;
+                            this.open = None;
+                            this.thread_menu = false;
+                            cx.notify();
+                        }))),
+                )
+            })
             .child(
                 div()
                     .id(SharedString::from(format!("thread-body-{t}")))
@@ -1305,41 +1449,183 @@ impl AssistantPreview {
                     .overflow_y_scroll()
                     .flex()
                     .flex_col()
-                    .gap_3()
+                    .gap_2()
                     .px_3()
                     .py_3()
-                    .children(thread.messages.iter().enumerate().map(|(m, message)| self.message_view(t, m, message, theme, cx)))
-                    .when_some(thread.doing.clone(), |d, doing| d.child(div().text_xs().text_color(theme.blue()).child(format!("◐ {doing}")))),
+                    .children(thread.messages.iter().enumerate().map(|(m, message)| {
+                        let named = m == 0 || std::mem::discriminant(&thread.messages[m - 1].who) != std::mem::discriminant(&message.who);
+                        self.message_view(t, m, message, named, theme, cx)
+                    }))
+                    .when_some(thread.doing.clone(), |d, doing| {
+                        d.child(div().flex().flex_col().items_start().child(div().px_3().py_1p5().rounded(px(18.)).bg(theme.tile).text_sm().text_color(theme.secondary).child(format!("• • •  {doing}"))))
+                    }),
             )
+    }
+
+    /// The / or @ word being typed at the end, if any.
+    fn typing_token(&self, cx: &gpui::App) -> Option<String> {
+        let text = self.composer.read(cx).text(cx);
+        if text.ends_with(char::is_whitespace) {
+            return None;
+        }
+        let token = text.rsplit(char::is_whitespace).next()?.to_string();
+        (token.starts_with('/') || token.starts_with('@')).then_some(token).filter(|t| self.suggest_closed.as_ref() != Some(t))
+    }
+
+    /// What to offer for a / or @ word: (what goes in, what it is).
+    fn suggestions(&self, token: &str) -> Vec<(String, String)> {
+        let needle = token[1..].to_lowercase();
+        let options: Vec<(String, String)> = if token.starts_with('/') {
+            [
+                ("/waiting", "What needs you now"),
+                ("/catch-up", "Summarise unread threads"),
+                ("/ask", "A question for the data skills (Mongo, ClickHouse)"),
+                ("/investigate", "Investigate a ticket with the harness skills"),
+                ("/review", "Start a review of a pull request"),
+                ("/standup", "Yesterday and today, from your activity"),
+                ("/open", "Switch to a session's tab"),
+                ("/later", "Park the top item"),
+            ]
+            .iter()
+            .map(|(c, d)| (c.to_string(), d.to_string()))
+            .collect()
+        } else {
+            let mut found: Vec<(String, String)> = self
+                .threads
+                .iter()
+                .skip(1)
+                .map(|t| (format!("@{}", t.title.split_whitespace().next().unwrap_or("")), format!("{} · {}", t.title, match t.kind {
+                    Kind::Question => "question",
+                    Kind::Investigation => "investigation",
+                    Kind::Build => "build session",
+                    Kind::Review => "review session",
+                    Kind::Main => "",
+                })))
+                .collect();
+            found.extend(self.items.iter().filter(|i| i.thread.is_none()).map(|i| (format!("@{}", i.subject), format!("{} · pull request", i.task))));
+            found.extend([("@sam", "Sam Okafor · person"), ("@jo", "Jo Lind · person"), ("@ch/analytics", "ClickHouse analytics · skill"), ("@mongo", "MongoDB, read only · skill"), ("@triage", "Triage a bug · skill"), ("@hyperdx", "Logs and traces · skill")].iter().map(|(a, b)| (a.to_string(), b.to_string())));
+            found
+        };
+        options.into_iter().filter(|(insert, label)| insert.to_lowercase().contains(&needle) || label.to_lowercase().contains(&needle)).take(6).collect()
+    }
+
+    fn accept(&mut self, insert: String, window: &mut Window, cx: &mut Context<Self>) {
+        let text = self.composer.read(cx).text(cx);
+        let token_len = text.rsplit(char::is_whitespace).next().map_or(0, str::len);
+        let replaced = format!("{}{} ", &text[..text.len() - token_len], insert);
+        self.composer.update(cx, |editor, cx| {
+            editor.set_text(replaced, window, cx);
+            editor.move_to_end(&editor::actions::MoveToEnd, window, cx);
+        });
+        self.suggest = 0;
+        cx.notify();
     }
 
     fn composer_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let target = self.open.filter(|&t| t != 0).map(|t| format!("To {}'s worker", self.threads[t].title));
+        let token = self.typing_token(cx);
+        let options = token.as_deref().map(|t| self.suggestions(t)).unwrap_or_default();
+        let highlighted = self.suggest.min(options.len().saturating_sub(1));
+        let keyed = options.clone();
         div()
             .flex_none()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap_2()
             .px_4()
-            .py_3()
+            .pt_3()
+            .pb_4()
             .border_t_1()
             .border_color(theme.border)
+            .bg(theme.sidebar)
             .when_some(target, |d, target| d.child(div().text_xs().text_color(theme.tertiary).child(target)))
+            // What / or @ offers, as you type; arrows move, Return or Tab
+            // takes one, Escape closes.
+            .when(!options.is_empty(), |d| {
+                d.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .p_1()
+                        .rounded(px(12.))
+                        .bg(theme.popover)
+                        .border_1()
+                        .border_color(theme.border)
+                        .shadow_lg()
+                        .children(options.into_iter().enumerate().map(|(n, (insert, label))| {
+                            let chosen = insert.clone();
+                            div()
+                                .id(SharedString::from(format!("suggest-{n}")))
+                                .flex()
+                                .flex_row()
+                                .gap_2()
+                                .px_2()
+                                .py_1()
+                                .rounded(px(8.))
+                                .cursor_pointer()
+                                .when(n == highlighted, |d| d.bg(theme.selected))
+                                .when(n != highlighted, |d| d.hover(|s| s.bg(theme.row_selected)))
+                                .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.accept(chosen.clone(), window, cx)))
+                                .child(div().flex_none().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(if n == highlighted { theme.on_selected } else { theme.fg }).child(insert))
+                                .child(div().flex_1().min_w_0().truncate().text_sm().text_color(if n == highlighted { theme.on_selected } else { theme.secondary }).child(label))
+                        })),
+                )
+            })
             .child(
                 div()
-                    .px_2()
-                    .py_1()
-                    .rounded_md()
+                    .flex()
+                    .flex_row()
+                    .items_end()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .rounded(px(18.))
                     .border_1()
                     .border_color(theme.border)
-                    .capture_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
-                        if event.keystroke.key == "enter" {
+                    .bg(theme.bg)
+                    .capture_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
+                        let key = event.keystroke.key.as_str();
+                        if !keyed.is_empty() {
+                            match key {
+                                "down" => this.suggest = (this.suggest + 1).min(keyed.len() - 1),
+                                "up" => this.suggest = this.suggest.saturating_sub(1),
+                                "enter" | "tab" => {
+                                    let pick = keyed[this.suggest.min(keyed.len() - 1)].0.clone();
+                                    cx.stop_propagation();
+                                    this.accept(pick, window, cx);
+                                    return;
+                                }
+                                "escape" => this.suggest_closed = this.typing_token(cx),
+                                _ => return,
+                            }
+                            cx.stop_propagation();
+                            cx.notify();
+                            return;
+                        }
+                        if key == "enter" && event.keystroke.modifiers.platform {
                             cx.stop_propagation();
                             this.send(window, cx);
                         }
                     }))
-                    .child(self.composer.clone()),
+                    .child(div().flex_1().min_w_0().py_0p5().child(self.composer.clone()))
+                    .child(
+                        div()
+                            .id("send")
+                            .flex_none()
+                            .size(px(28.))
+                            .rounded_full()
+                            .bg(theme.selected)
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_sm()
+                            .text_color(theme.on_selected)
+                            .cursor_pointer()
+                            .child("↑")
+                            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send(window, cx))),
+                    ),
             )
+            .child(div().text_xs().text_color(theme.tertiary).child("↩ new line · ⌘↩ send · / commands · @ mention · Esc to the list"))
     }
 
     fn toasts_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
