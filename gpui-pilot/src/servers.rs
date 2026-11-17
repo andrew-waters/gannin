@@ -228,6 +228,23 @@ impl Check {
     }
 }
 
+/// Each server's last check, by key, for every window: the title bar's dot
+/// and the Remotes popover read it. Absent while it's never been checked.
+fn checks() -> &'static Mutex<HashMap<String, Check>> {
+    static CHECKS: OnceLock<Mutex<HashMap<String, Check>>> = OnceLock::new();
+    CHECKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+pub fn last_check(server: &Server) -> Option<Check> {
+    checks().lock().ok()?.get(&server.key()).cloned()
+}
+
+pub fn forget_check(server: &Server) {
+    if let Ok(mut checks) = checks().lock() {
+        checks.remove(&server.key());
+    }
+}
+
 /// Connects and looks for what sessions need there. Never reads claude's
 /// sign-in: a session asks for it when it starts.
 pub fn check(server: &Server) -> Check {
@@ -239,8 +256,16 @@ printf 'gh=%s\n' "$(gh --version 2>/dev/null | head -1)"
 printf 'ghauth=%s\n' "$(gh auth status 2>&1 | sed -n 's/.*Logged in to \([^ ]*\) account \([^ ]*\).*/\2/p' | head -1)"
 printf 'container=%s\n' "$(container --version 2>/dev/null | head -1)"
 "#;
+    let check = probe(server, PROBE);
+    if let Ok(mut checks) = checks().lock() {
+        checks.insert(server.key(), check.clone());
+    }
+    check
+}
+
+fn probe(server: &Server, script_text: &str) -> Check {
     let at = chrono::Utc::now();
-    let output = match script(server, PROBE) {
+    let output = match script(server, script_text) {
         Ok(output) => output,
         Err(error) => return Check { at, error: Some(error), items: Vec::new() },
     };
@@ -284,14 +309,20 @@ pub fn start_command(server: &Server, launch: &crate::launch::Launch) -> String 
     let keep = ["state", "started", "changed", "pr", "tool.json", "transcript.jsonl", "risk.json", "auto-posted", "posted.json", "decisions.json"];
     let excludes: String = keep.iter().map(|f| format!(" --exclude {}", crate::launch::quote(&format!("./{f}")))).collect();
     let unpack = format!("mkdir -p {remote} && tar -C {remote} -xf - && printf starting > {remote}/state");
-    let run = format!(r#"exec "${{SHELL:-/bin/bash}}" -lic 'exec bash "$0"' {remote}/start.sh"#);
+    // git's own helper there is the macOS keychain, which ssh can't unlock
+    // ("User interaction is not allowed"), so git asks for a username and
+    // the session hangs. gh keeps its token where ssh can read it: the
+    // session's git (the harness pull, worktrees, claude's pushes) uses gh
+    // for github.com, and never prompts. The server's git config is left as it is.
+    let git_env = "GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=credential.https://github.com.helper GIT_CONFIG_VALUE_0= GIT_CONFIG_KEY_1=credential.https://github.com.helper 'GIT_CONFIG_VALUE_1=!gh auth git-credential' GIT_TERMINAL_PROMPT=0";
+    let run = format!(r#"exec env {git_env} "${{SHELL:-/bin/bash}}" -lic 'exec bash "$0"' {remote}/start.sh"#);
     format!(
         "printf '\\033[90m%s\\033[0m\\n' {note} && COPYFILE_DISABLE=1 tar -C {local}{excludes} -cf - . | {upload} {unpack} || {{ printf '\\033[31mGannin: %s\\033[0m\\n' {failed}; exec \"${{SHELL:-/bin/zsh}}\" -l; }}; exec {terminal} {run}",
         note = crate::launch::quote(&format!("Starting on {}", server.name())),
         local = crate::launch::quote(&local.to_string_lossy()),
         upload = server.ssh_command(false),
         unpack = crate::launch::quote(&unpack),
-        failed = crate::launch::quote(&format!("Couldn't reach {} to start the session. Check it in Settings › Servers.", server.name())),
+        failed = crate::launch::quote(&format!("Couldn't reach {} to start the session. Check it from the server button in the title bar.", server.name())),
         terminal = server.ssh_command(true),
         run = crate::launch::quote(&run),
     )
