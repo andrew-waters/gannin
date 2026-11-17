@@ -248,6 +248,10 @@ pub struct WorkPanel {
     /// Feedback ticked to send, by PR and index.
     ticked: Vec<(i64, usize)>,
     auto_feedback: bool,
+    /// The pull request list's filters: a state, a repo, and grouping by repo.
+    pr_state: Option<PrState>,
+    pr_repo: Option<String>,
+    pr_by_repo: bool,
     /// Feedback passed to claude already (failing checks and comments, by
     /// key), and what's waiting for its turn to end.
     feedback_sent: std::collections::HashSet<String>,
@@ -320,6 +324,9 @@ impl WorkPanel {
             picked,
             ticked: Vec::new(),
             auto_feedback: true,
+            pr_state: None,
+            pr_repo: None,
+            pr_by_repo: false,
             feedback_sent: Default::default(),
             feedback_queue: Vec::new(),
             feedback_seeding: false,
@@ -1552,7 +1559,7 @@ impl WorkPanel {
             // The plans first: how far the work has got against them.
             .when(self.live.is_some() && !d.reference.is_empty(), |el| el.child(self.plans_section(theme, cx)))
             // Then the pull requests: where the work stands.
-            .when(!d.prs.is_empty(), |el| el.child(Self::section("Pull requests", theme).child(self.pr_cards(theme, cx))))
+            .when(!d.prs.is_empty(), |el| el.child(Self::section(&format!("Pull requests · {}", d.prs.len()), theme).child(self.pr_filters(theme, cx)).child(self.pr_cards(theme, cx))))
             .child(
                 Self::section("Issue", theme)
                     .child(div().font_weight(FontWeight::SEMIBOLD).child(d.title.clone()))
@@ -1574,22 +1581,6 @@ impl WorkPanel {
                     .child(Self::fact("State", div().flex().flex_row().items_center().gap_1p5().child(Self::dot(state.tint(theme), 8.)).child(state.label()), theme))
                     .child(Self::fact("Branch", div().font_family("SF Mono").text_xs().truncate().child(d.branch.clone()), theme))
                     .child(Self::fact("Worktree", div().text_xs().truncate().child(d.folder.clone()), theme))
-                    .when(!d.prs.is_empty(), |el| {
-                        el.child(Self::fact(
-                            "Pull request",
-                            div().flex().flex_col().children(d.prs.iter().map(|p| {
-                                let url = format!("https://github.com/{}/pull/{}", p.repo, p.number);
-                                div()
-                                    .id(("work-pr-link", p.number as usize))
-                                    .text_color(theme.selected)
-                                    .cursor_pointer()
-                                    .hover(|s| s.opacity(0.8))
-                                    .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
-                                    .child(format!("{}#{}", p.repo.rsplit('/').next().unwrap_or(&p.repo), p.number))
-                            })),
-                            theme,
-                        ))
-                    })
                     .child(
                         div()
                             .flex()
@@ -1752,16 +1743,109 @@ impl WorkPanel {
     /// The session's pull requests, one compact card each: state and
     /// title on a line; review, checks and conflicts on the next; then
     /// what's failing and the feedback to send, when there is any.
+    /// Above the pull requests: their states, with counts, to show one;
+    /// their repos, when there's more than one; and grouping by repo.
+    fn pr_filters(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let prs = &self.data.prs;
+        let chip = |id: SharedString, label: String, on: bool| {
+            div()
+                .id(id)
+                .px_1p5()
+                .rounded_md()
+                .text_xs()
+                .cursor_pointer()
+                .text_color(if on { theme.fg } else { theme.secondary })
+                .when(on, |d| d.bg(theme.row_selected))
+                .hover(|s| s.bg(theme.row_selected))
+                .child(label)
+        };
+        let mut states = vec![chip("pr-state-all".into(), format!("All {}", prs.len()), self.pr_state.is_none())
+            .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                this.pr_state = None;
+                cx.notify();
+            }))
+            .into_any_element()];
+        for (state, label) in [(PrState::Open, "Open"), (PrState::Draft, "Draft"), (PrState::Merged, "Merged"), (PrState::Closed, "Closed")] {
+            let n = prs.iter().filter(|p| p.state == state).count();
+            if n == 0 {
+                continue;
+            }
+            let on = self.pr_state == Some(state);
+            states.push(
+                chip(SharedString::from(format!("pr-state-{label}")), format!("{label} {n}"), on)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.pr_state = if on { None } else { Some(state) };
+                        cx.notify();
+                    }))
+                    .into_any_element(),
+            );
+        }
+        let mut repos: Vec<String> = prs.iter().map(|p| p.repo.clone()).collect();
+        repos.sort();
+        repos.dedup();
+        let repo_chips: Vec<gpui::AnyElement> = if repos.len() > 1 {
+            repos
+                .iter()
+                .map(|repo| {
+                    let on = self.pr_repo.as_ref() == Some(repo);
+                    let n = prs.iter().filter(|p| &p.repo == repo).count();
+                    let picked = repo.clone();
+                    chip(SharedString::from(format!("pr-repo-{repo}")), format!("{} {n}", repo.rsplit('/').next().unwrap_or(repo)), on)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.pr_repo = if on { None } else { Some(picked.clone()) };
+                            cx.notify();
+                        }))
+                        .into_any_element()
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let by_repo = self.pr_by_repo;
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .flex_wrap()
+                    .items_center()
+                    .gap_0p5()
+                    .children(states)
+                    .child(div().flex_1())
+                    .when(repos.len() > 1, |d| {
+                        d.child(chip("pr-by-repo".into(), "By repo".into(), by_repo).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.pr_by_repo = !by_repo;
+                            cx.notify();
+                        })))
+                    }),
+            )
+            .when(!repo_chips.is_empty(), |d| d.child(div().flex().flex_row().flex_wrap().gap_0p5().children(repo_chips)))
+    }
+
     fn pr_cards(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let d = &self.data;
         let running = d.state.running();
         let auto = self.auto_feedback;
         let any_open = d.prs.iter().any(|p| p.state == PrState::Open);
+        let shown: Vec<&WorkPr> = d.prs.iter().filter(|p| self.pr_state.is_none_or(|s| p.state == s) && self.pr_repo.as_ref().is_none_or(|r| &p.repo == r)).collect();
+        // Grouped: each repo's heading before its first PR.
+        let mut order: Vec<&WorkPr> = shown.clone();
+        if self.pr_by_repo {
+            order.sort_by(|a, b| a.repo.cmp(&b.repo));
+        }
+        let headings: Vec<Option<String>> = order
+            .iter()
+            .enumerate()
+            .map(|(i, pr)| (self.pr_by_repo && (i == 0 || order[i - 1].repo != pr.repo)).then(|| pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string()))
+            .collect();
         div()
             .flex()
             .flex_col()
-            .gap_2()
-            .children(d.prs.iter().map(|pr| {
+            .when(shown.is_empty(), |d| d.child(div().text_sm().text_color(theme.secondary).child("None with these filters.")))
+            .children(order.into_iter().zip(headings).map(|(pr, heading)| {
                 let (state, tint) = match pr.state {
                     PrState::Open => ("Open", theme.good()),
                     PrState::Draft => ("Draft", theme.secondary),
@@ -1779,17 +1863,18 @@ impl WorkPanel {
                 let ticked: Vec<usize> = self.ticked.iter().filter(|(n, _)| *n == number).map(|(_, i)| *i).collect();
                 let count = |n: usize, mark: &'static str, tint: Hsla| (n > 0).then(|| div().flex().flex_row().gap_0p5().text_color(tint).child(mark).child(n.to_string()));
                 let name = pr.repo.rsplit('/').next().unwrap_or(&pr.repo).to_string();
+                // While it's open, the review says more than "Open".
+                let (label, label_tint) = match review.filter(|_| open) {
+                    Some((label, tint)) => (label, tint),
+                    None => (state, tint),
+                };
                 div()
                     .flex()
                     .flex_col()
-                    .gap_1p5()
-                    .p(px(10.))
-                    .rounded_lg()
-                    .bg(theme.bg)
-                    .border_1()
-                    .border_color(if open && (pr.conflicts || !pr.failed.is_empty()) { theme.critical().opacity(0.5) } else { theme.border })
-                    // The header opens the PR on GitHub; the card's buttons
-                    // below keep their own clicks.
+                    .gap_1()
+                    .when_some(heading, |d, repo| d.child(div().pt_1().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.secondary).child(repo)))
+                    // One line: it opens the PR on GitHub; what's below keeps
+                    // its own clicks.
                     .child({
                         let url = format!("https://github.com/{}/pull/{number}", pr.repo);
                         div()
@@ -1798,29 +1883,28 @@ impl WorkPanel {
                             .flex_row()
                             .items_center()
                             .gap_2()
+                            .py_0p5()
+                            .text_sm()
                             .cursor_pointer()
                             .hover(|s| s.opacity(0.8))
                             .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| cx.open_url(&url)))
                             .child(Self::dot(tint, 8.))
-                            .child(div().flex_none().text_sm().text_color(theme.secondary).child(format!("{name}#{number}")))
-                            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::MEDIUM).child(pr.title.clone()))
+                            .child(div().flex_none().text_color(theme.secondary).child(if self.pr_by_repo { format!("#{number}") } else { format!("{name}#{number}") }))
+                            .child(div().flex_1().min_w_0().truncate().child(pr.title.clone()))
+                            .child(div().flex_none().text_xs().text_color(label_tint).child(label))
+                            .when(open && pr.conflicts, |d| d.child(div().flex_none().text_xs().text_color(theme.critical()).child("Conflicts")))
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .flex()
+                                    .flex_row()
+                                    .gap_1p5()
+                                    .text_xs()
+                                    .children(count(pr.passed, "✓", theme.good()))
+                                    .children(count(pr.failed.len(), "✕", theme.critical()))
+                                    .children(count(pr.pending.len(), "◷", theme.orange())),
+                            )
                     })
-                    .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .items_center()
-                            .gap_3()
-                            .text_xs()
-                            .child(div().text_color(tint).child(state))
-                            .when_some(review.filter(|_| open), |d, (label, tint)| d.child(div().text_color(tint).child(label)))
-                            .when(open && pr.conflicts, |d| d.child(div().text_color(theme.critical()).child("Conflicts")))
-                            .child(div().flex_1())
-                            .children(count(pr.passed, "✓", theme.good()))
-                            .children(count(pr.failed.len(), "✕", theme.critical()))
-                            .children(count(pr.pending.len(), "◷", theme.orange()))
-                            .when(pr.passed + pr.failed.len() + pr.pending.len() == 0, |d| d.child(div().text_color(theme.tertiary).child("No checks"))),
-                    )
                     .when(open && !pr.failed.is_empty(), |d| {
                         d.child(
                             div()
