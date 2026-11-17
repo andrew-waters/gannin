@@ -30,6 +30,15 @@ struct ReviewReadinessTests {
         #expect(sentence(status(decision: nil, isDraft: true)) == "Can't merge: it's still a draft")
     }
 
+    @Test func anApprovalThatNoLongerStandsIsNotClaimed() {
+        var lapsed = status(decision: "APPROVED")
+        lapsed.approvalStands = false
+        #expect(sentence(lapsed) == "Ready once the approver has looked again")
+        var current = status(decision: "APPROVED")
+        current.approvalStands = true
+        #expect(sentence(current) == "Approved, ready to merge")
+    }
+
     @Test func anApprovalIsNotClaimedForCommitsPushedSinceTheReview() {
         #expect(sentence(status(decision: "APPROVED"), isStale: true) == "Ready once the reviewer has looked at the new commits")
     }

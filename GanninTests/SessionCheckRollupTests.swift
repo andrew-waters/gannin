@@ -33,6 +33,55 @@ struct SessionCheckRollupTests {
         return try #require(raw.model).checks
     }
 
+    // MARK: Whether an approval stands
+
+    /// `reviews` and `requests` are the raw JSON of each connection's nodes;
+    /// nil leaves the connection out of the response.
+    private func approvalStands(reviews: String?, requests: String?) throws -> Bool? {
+        let reviewsJSON = reviews.map { #","latestOpinionatedReviews":{"nodes":[\#($0)]}"# } ?? ""
+        let requestsJSON = requests.map { #","reviewRequests":{"nodes":[\#($0)]}"# } ?? ""
+        let json = """
+        {"id": "PR_1", "number": 7, "title": "T", "url": "https://github.com/acme/app/pull/7", "state": "OPEN",
+         "repository": {"nameWithOwner": "acme/app"}\(reviewsJSON)\(requestsJSON)}
+        """
+        let raw = try JSONDecoder().decode(SessionRawPullRequest.self, from: Data(json.utf8))
+        return try #require(raw.model).approvalStands
+    }
+
+    private let approvedByDwrss = #"{"state":"APPROVED","author":{"login":"dwrss"}}"#
+    private func asked(_ login: String) -> String { #"{"requestedReviewer":{"login":"\#(login)"}}"# }
+
+    @Test func anApprovalWhoseReviewerWasAskedAgainNoLongerStands() throws {
+        #expect(try approvalStands(reviews: approvedByDwrss, requests: asked("dwrss")) == false)
+    }
+
+    @Test func anApprovalStandsWhenOnlyAnotherReviewerIsAsked() throws {
+        #expect(try approvalStands(reviews: approvedByDwrss, requests: asked("andrew-waters")) == true)
+    }
+
+    @Test func aTeamRequestIsNotTakenForTheApprover() throws {
+        // A team reviewer decodes as an empty object.
+        #expect(try approvalStands(reviews: approvedByDwrss, requests: "{}") == true)
+    }
+
+    @Test func oneApproverStandingIsEnoughWhenAnotherIsAskedAgain() throws {
+        let both = approvedByDwrss + #",{"state":"APPROVED","author":{"login":"cheeryfella"}}"#
+        #expect(try approvalStands(reviews: both, requests: asked("dwrss")) == true)
+    }
+
+    @Test func aChangesRequestedReviewIsNotAnApproval() throws {
+        let review = #"{"state":"CHANGES_REQUESTED","author":{"login":"dwrss"}}"#
+        #expect(try approvalStands(reviews: review, requests: "") == false)
+    }
+
+    @Test func unknownWithoutTheReviewsConnection() throws {
+        #expect(try approvalStands(reviews: nil, requests: asked("dwrss")) == nil)
+    }
+
+    @Test func standsWhenNobodyIsAskedAndTheRequestsAreMissing() throws {
+        #expect(try approvalStands(reviews: approvedByDwrss, requests: nil) == true)
+    }
+
     @Test func aFailedRunReplacedByANewerPassingOneIsNotListed() throws {
         let result = try checks([
             run("build", workflow: "CI", conclusion: "FAILURE", startedAt: "2026-10-20T09:00:00Z"),

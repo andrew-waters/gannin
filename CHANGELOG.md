@@ -13,6 +13,7 @@ Add your change under `## [Unreleased]` in the pull request that makes it, in an
 - ⇧⌘F finishes a PR review, asking first as the Finish button does
 
 ### Changed
+- A PR review's Overview no longer says "Approved" when the reviewer who approved has been asked to review again: it waits on them, and a session's PR row says "Re-review requested"
 - A PR review's Overview says "Approved" when the PR has been approved on GitHub
 - Added and removed lines in code diffs have stronger green and red tints, so changes stand out more
 

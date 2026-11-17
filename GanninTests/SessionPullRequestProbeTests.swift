@@ -37,6 +37,19 @@ struct SessionPullRequestProbeTests {
         #expect(before.fingerprints[0] == (try decode(#"{"s0":{"nodes":[\#(pr("A"))]}}"#)).fingerprints[0])
     }
 
+    @Test func aReReviewRequestChangesTheFingerprint() throws {
+        func asked(_ logins: [String]) -> String {
+            let nodes = logins.map { #"{"requestedReviewer":{"login":"\#($0)"}}"# }.joined(separator: ",")
+            return #"{"id":"A","state":"OPEN","updatedAt":"t","mergeable":"MERGEABLE","reviewDecision":"APPROVED","reviewRequests":{"nodes":[\#(nodes)]}}"#
+        }
+        let none = try decode(#"{"s0":{"nodes":[\#(asked([]))]}}"#)
+        let one = try decode(#"{"s0":{"nodes":[\#(asked(["dwrss"]))]}}"#)
+        let swapped = try decode(#"{"s0":{"nodes":[\#(asked(["b", "a"]))]}}"#)
+        let sorted = try decode(#"{"s0":{"nodes":[\#(asked(["a", "b"]))]}}"#)
+        #expect(none.fingerprints[0] != one.fingerprints[0])
+        #expect(swapped.fingerprints[0] == sorted.fingerprints[0])
+    }
+
     @Test func aLookedUpURLThatIsNotAPullRequestIsIgnored() throws {
         let response = try decode(#"{"s0":{"nodes":[]},"u0_0":{}}"#)
         #expect(response.fingerprints[0] == nil || response.fingerprints[0]?.isEmpty == true)

@@ -61,6 +61,10 @@ struct SessionPullRequest: Identifiable, Hashable {
     let feedback: [Feedback]
     /// The branch it merges into.
     var baseRef: String? = nil
+    /// Whether an approval still stands: one given by someone not asked to
+    /// review again. `reviewDecision` stays `APPROVED` through a re-request,
+    /// so it alone can't say the PR is still approved. Nil when not known.
+    var approvalStands: Bool? = nil
 
     var failed: [Check] { checks.filter { $0.state == .failed } }
     var pending: [Check] { checks.filter { $0.state == .pending } }
@@ -379,7 +383,7 @@ struct SessionPullRequestsPane: View {
 
     private func reviewLabel(_ pr: SessionPullRequest) -> String? {
         switch pr.reviewDecision {
-        case "APPROVED": "Approved"
+        case "APPROVED": pr.approvalStands == false ? "Re-review requested" : "Approved"
         case "CHANGES_REQUESTED": "Changes requested"
         case "REVIEW_REQUIRED": pr.state == "OPEN" ? "Review required" : nil
         default: nil
@@ -443,6 +447,8 @@ extension GitHubAPI {
             }
             fragment SessionPR on PullRequest {
               id number title url state isDraft reviewDecision mergeable baseRefName
+              latestOpinionatedReviews(first: 10) { nodes { state author { login } } }
+              reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
               author { login }
               repository { nameWithOwner }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 80) { nodes {
@@ -511,6 +517,7 @@ extension GitHubAPI {
             }
             fragment Probe on PullRequest {
               id state updatedAt mergeable reviewDecision
+              reviewRequests(first: 10) { nodes { requestedReviewer { ... on User { login } } } }
               commits(last: 1) { nodes { commit { oid statusCheckRollup { state } } } }
             }
             """
@@ -563,12 +570,25 @@ struct ProbeResponse: Decodable {
         let updatedAt: String?
         let mergeable: String?
         let reviewDecision: String?
+        let reviewRequests: Requests?
         let commits: Commits?
+
+        /// Who is asked to review, which the full read turns into whether
+        /// an approval still stands: a re-request leaves `reviewDecision`
+        /// as it was, so only the requests tell the probe something changed.
+        struct Requests: Decodable {
+            struct Node: Decodable {
+                struct Reviewer: Decodable { let login: String? }
+                let requestedReviewer: Reviewer?
+            }
+            let nodes: [Node?]?
+        }
 
         var fingerprint: String? {
             guard let id else { return nil }
             let commit = commits?.nodes?.compactMap { $0 }.first?.commit
-            return [id, state, updatedAt, mergeable, reviewDecision, commit?.oid, commit?.statusCheckRollup?.state]
+            let asked = (reviewRequests?.nodes ?? []).compactMap { $0?.requestedReviewer?.login }.sorted().joined(separator: ",")
+            return [id, state, updatedAt, mergeable, reviewDecision, asked, commit?.oid, commit?.statusCheckRollup?.state]
                 .map { $0 ?? "-" }
                 .joined(separator: "|")
         }
@@ -675,6 +695,15 @@ struct SessionRawPullRequest: Decodable {
         let body: String
         let url: URL
     }
+    struct OpinionatedReview: Decodable {
+        let state: String
+        let author: Login?
+    }
+    /// A team (or other non-user) reviewer comes back as an empty object.
+    struct ReviewRequest: Decodable {
+        struct Reviewer: Decodable { let login: String? }
+        let requestedReviewer: Reviewer?
+    }
     struct Thread: Decodable {
         let id: String
         let isResolved: Bool
@@ -696,6 +725,8 @@ struct SessionRawPullRequest: Decodable {
     let reviewDecision: String?
     let mergeable: String?
     let baseRefName: String?
+    let latestOpinionatedReviews: Connection<OpinionatedReview>?
+    let reviewRequests: Connection<ReviewRequest>?
     let author: Login?
     let repository: Repository?
     let commits: Connection<CommitNode>?
@@ -753,10 +784,15 @@ struct SessionRawPullRequest: Decodable {
                 comments: [.init(author: who, body: review.body, url: review.url)]
             ))
         }
+        let askedAgain = Set((reviewRequests?.nodes ?? []).compactMap { $0.requestedReviewer?.login })
+        let approvalStands = latestOpinionatedReviews.map { reviews in
+            reviews.nodes.contains { $0.state == "APPROVED" && !askedAgain.contains($0.author?.login ?? "") }
+        }
         return SessionPullRequest(
             id: id, number: number, title: title, url: url, repo: repository.nameWithOwner, author: prAuthor, state: state,
             isDraft: isDraft ?? false, reviewDecision: reviewDecision, mergeable: mergeable,
-            checks: checks.sorted { (order($0.state), $0.name) < (order($1.state), $1.name) }, feedback: feedback, baseRef: baseRefName
+            checks: checks.sorted { (order($0.state), $0.name) < (order($1.state), $1.name) }, feedback: feedback, baseRef: baseRefName,
+            approvalStands: approvalStands
         )
     }
 
