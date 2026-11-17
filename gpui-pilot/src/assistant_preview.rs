@@ -1921,29 +1921,9 @@ impl Render for AssistantPreview {
             .pr_3()
             .h(px(40.))
             .border_b_1()
-            // Focus turns the bar purple, with a moon and what's held.
+            // Focus turns the bar purple; the moon switches it.
             .map(|d| if self.focus_mode { d.bg(theme.slot(6).opacity(0.45)).border_color(theme.slot(6)) } else { d.bg(theme.sidebar).border_color(theme.border) })
             .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child("Marra"))
-            .when(self.focus_mode, |d| {
-                d.child(
-                    div()
-                        .id("focus-chip")
-                        .flex()
-                        .flex_row()
-                        .items_center()
-                        .gap_1()
-                        .px_2()
-                        .py_0p5()
-                        .rounded_full()
-                        .bg(theme.slot(6))
-                        .text_xs()
-                        .text_color(gpui::white())
-                        .cursor_pointer()
-                        .child("☾")
-                        .child(if self.held > 0 { format!("Focus · {} held", self.held) } else { "Focus".to_string() })
-                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.simulate(3, cx))),
-                )
-            })
             .child(div().flex_1())
             // The moon switches Focus on and off.
             .child(
