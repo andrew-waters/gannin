@@ -3,6 +3,9 @@
 For a phone app (or anything else) on the local network. Off until Marra's menu › Phone access is
 on; the menu shows the address (`<this Mac>:47870`) and a pairing code. Connections from outside
 private, link-local and loopback addresses are refused (so no Tailscale or other overlay range).
+"Private" is any 10/8, 172.16/12 or 192.168/16 address, so on a VPN that hands out one of those, its
+other users count as local too: keep Phone access off there. A pairing code stops working after five
+wrong tries.
 
 Every call but pairing needs `Authorization: Bearer <token>`. Bodies are JSON. Errors are
 `{"error": "..."}` with a 4xx or 5xx status; accepted actions reply `202 {}`.
