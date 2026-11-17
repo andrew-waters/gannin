@@ -321,6 +321,9 @@ pub struct AssistantPreview {
     thread_menu: bool,
     /// A thread's right-click menu: which, and where.
     row_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
+    /// When a menu last closed from a click outside it: a click on its own
+    /// button that closed it mustn't open it again straight away.
+    menu_closed: Option<std::time::Instant>,
     /// The window's theme, as of the last render.
     theme: Theme,
     /// The highlighted suggestion while typing / or @.
@@ -373,6 +376,7 @@ impl AssistantPreview {
             more_open: false,
             thread_menu: false,
             row_menu: None,
+            menu_closed: None,
             theme: Theme::for_window(window),
             suggest: 0,
             suggest_closed: None,
@@ -389,6 +393,10 @@ impl AssistantPreview {
     }
 
     // MARK: Queries
+
+    fn just_closed(&self) -> bool {
+        self.menu_closed.is_some_and(|at| at.elapsed() < Duration::from_millis(300))
+    }
 
     fn in_scope(&self, scope: usize) -> bool {
         self.scope == 0 || scope == 0 || scope == self.scope
@@ -949,6 +957,9 @@ impl AssistantPreview {
                             .cursor_pointer()
                             .child(format!("{} ▾", SCOPES[self.scope]))
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                if this.just_closed() {
+                                    return;
+                                }
                                 this.scope_menu = !this.scope_menu;
                                 this.more_menu = false;
                                 cx.notify();
@@ -965,6 +976,9 @@ impl AssistantPreview {
                             .hover(|s| s.bg(theme.row_selected))
                             .child("⋯")
                             .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                                if this.just_closed() {
+                                    return;
+                                }
                                 this.more_menu = !this.more_menu;
                                 this.scope_menu = false;
                                 cx.notify();
@@ -988,6 +1002,12 @@ impl AssistantPreview {
                     .rounded_md()
                     .shadow_lg()
                     .occlude()
+                    .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                        this.scope_menu = false;
+                        this.more_menu = false;
+                        this.menu_closed = Some(std::time::Instant::now());
+                        cx.notify();
+                    }))
                     .children(SCOPES.iter().enumerate().map(|(i, name)| {
                         let need = self.items.iter().filter(|it| i == 0 || it.scope == i).count();
                         div()
@@ -1028,6 +1048,12 @@ impl AssistantPreview {
                     .rounded_md()
                     .shadow_lg()
                     .occlude()
+                    .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                        this.scope_menu = false;
+                        this.more_menu = false;
+                        this.menu_closed = Some(std::time::Instant::now());
+                        cx.notify();
+                    }))
                     .children(entries.iter().enumerate().map(|(i, label)| {
                         div()
                             .id(SharedString::from(format!("more-{i}")))
@@ -1297,6 +1323,11 @@ impl AssistantPreview {
                 .rounded_md()
                 .shadow_lg()
                 .occlude()
+                .on_mouse_down_out(cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
+                    this.row_menu = None;
+                    this.menu_closed = Some(std::time::Instant::now());
+                    cx.notify();
+                }))
                 .children(entries.into_iter().map(|(label, which)| {
                     div()
                         .id(SharedString::from(format!("row-menu-{which}")))
@@ -1922,14 +1953,6 @@ impl Render for AssistantPreview {
             .child(self.toasts_view(&theme, cx))
             .when_some(menus, |d, menus| d.child(menus))
             .when_some(self.row_menu_view(cx), |d, menu| d.child(menu))
-            // A click anywhere else closes a thread's menu.
-            .on_mouse_down(
-                gpui::MouseButton::Left,
-                cx.listener(|this, _: &gpui::MouseDownEvent, _, cx| {
-                    if this.row_menu.take().is_some() {
-                        cx.notify();
-                    }
-                }),
-            )
+
     }
 }
