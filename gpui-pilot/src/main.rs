@@ -6,6 +6,7 @@
 
 mod auth;
 mod activity;
+mod agent_metrics;
 mod avatars;
 mod cache;
 mod changes;

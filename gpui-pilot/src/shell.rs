@@ -218,7 +218,7 @@ fn sections() -> Vec<Section> {
         //     rows: vec![Item(AgentMetrics), Item(WaitingOnYou), Item(Routines), Item(Queue)],
         // },
         // Claude Code's agents: the workflows sessions run through.
-        Section { id: "agents", title: Some("Agents"), rows: vec![Item(SchedulePreview), Item(WorkflowsPreview)] },
+        Section { id: "agents", title: Some("Agents"), rows: vec![Item(AgentMetrics), Item(SchedulePreview), Item(WorkflowsPreview)] },
     ]
 }
 
@@ -385,6 +385,7 @@ enum Page {
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
     Settings(Entity<crate::servers_page::ServersPage>),
+    AgentMetrics(Entity<crate::agent_metrics::AgentMetricsPage>),
     None,
 }
 
@@ -913,6 +914,7 @@ impl Workspace {
             Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_page::SchedulePage::new(org.clone(), window, cx))),
             Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
+            Nav::AgentMetrics => Page::AgentMetrics(cx.new(|cx| crate::agent_metrics::AgentMetricsPage::new(org.clone(), cx))),
             Nav::Settings => Page::Settings(cx.new(|cx| crate::servers_page::ServersPage::new(window, cx))),
             _ => Page::None,
         };
@@ -2220,6 +2222,7 @@ impl Workspace {
                 Page::Scorecard(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::Activity(page) => page.update(cx, |page, cx| page.reload(cx)),
                 Page::Harness(page) => page.update(cx, |page, cx| page.reload(cx)),
+                Page::AgentMetrics(page) => page.update(cx, |page, cx| page.reload(cx)),
                 _ => {}
             }
         }
@@ -3507,6 +3510,7 @@ impl Workspace {
                 Page::Activity(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::Harness(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 Page::SchedulePreview(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
+                Page::AgentMetrics(page) => page.update(cx, |page, cx| page.set_org(Some(org.clone()), cx)),
                 _ => {}
             }
         }
@@ -4568,6 +4572,7 @@ impl Workspace {
             Nav::SchedulePreview => "icons/clock.svg",
             Nav::WorkflowsPreview => "icons/git_graph.svg",
             Nav::Settings => "icons/settings.svg",
+            Nav::AgentMetrics => "icons/sparkle.svg",
             Nav::Session(id) => match self.session(id, cx).map(|p| p.read(cx)) {
                 Some(page) if page.launch.is_some() => self.tab_kind(tab, cx).icon(),
                 Some(page) if page.kind == Kind::Shell => "icons/terminal.svg",
@@ -4763,6 +4768,7 @@ impl Workspace {
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
                 Page::Settings(page) => page.into_any_element(),
+                Page::AgentMetrics(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()
