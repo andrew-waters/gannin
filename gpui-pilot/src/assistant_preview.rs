@@ -319,6 +319,8 @@ pub struct AssistantPreview {
     more_open: bool,
     /// The open thread's Pin, Mute and Mark as unread.
     thread_menu: bool,
+    /// The thread shown in the drawer beside the panel, when one's open.
+    drawer: Option<usize>,
     /// A thread's right-click menu: which, and where.
     row_menu: Option<(usize, gpui::Point<gpui::Pixels>)>,
     /// The window's theme, as of the last render.
@@ -374,6 +376,7 @@ impl AssistantPreview {
             later_menu: false,
             more_open: false,
             thread_menu: false,
+            drawer: None,
             row_menu: None,
             theme: Theme::for_window(window),
             suggest: 0,
@@ -429,9 +432,9 @@ impl AssistantPreview {
         self.later_menu = false;
         match action {
             "Open" | "Look" | "Open on GitHub" => {
-                self.workspace = format!("Switched to {}'s tab.", it.subject);
-                if let Some(t) = it.thread {
-                    self.open_thread(t, cx);
+                match it.thread {
+                    Some(t) => self.open_drawer(t, cx),
+                    None => self.workspace = format!("{} would open on GitHub.", it.subject),
                 }
                 cx.notify();
                 return;
@@ -496,6 +499,13 @@ impl AssistantPreview {
         self.threads[0].messages.push(text(Who::Assistant, &line));
         self.threads[0].last = line;
         self.threads[0].minutes = 0;
+    }
+
+    /// Shows a thread in the drawer beside the panel, and marks it read.
+    fn open_drawer(&mut self, t: usize, cx: &mut Context<Self>) {
+        self.drawer = Some(t);
+        self.threads[t].unread = false;
+        cx.notify();
     }
 
     fn open_thread(&mut self, t: usize, cx: &mut Context<Self>) {
@@ -787,6 +797,7 @@ impl AssistantPreview {
                     self.threads[t].unread = !self.threads[t].unread;
                 }
             }
+            "escape" if self.drawer.is_some() => self.drawer = None,
             "escape" => {
                 self.open = None;
                 self.scope_menu = false;
@@ -861,15 +872,6 @@ fn avatar_view(kind: Kind, unread: bool, size: f32, icon: f32, theme: &Theme) ->
 }
 
 /// How long ago, said as such: "now", "2m ago", "1h ago".
-fn kind_name(kind: Kind) -> &'static str {
-    match kind {
-        Kind::Main => "",
-        Kind::Question => "Question",
-        Kind::Investigation => "Investigation",
-        Kind::Build => "Build",
-        Kind::Review => "Review",
-    }
-}
 
 fn ago(minutes: u32) -> String {
     match minutes {
@@ -1155,9 +1157,9 @@ impl AssistantPreview {
             })
     }
 
-    /// The list as iOS Messages draws it. Pinned threads come first, a line
-    /// each (you know what they are), above one divider; the rest have a
-    /// round avatar for the kind, the name, the time, and the last line.
+    /// The list as iOS Messages draws it: pinned threads first, above one
+    /// divider, then the rest; each with its kind's icon, name, time and
+    /// last line.
     /// Right-click a thread to pin, mute or mark it read or unread.
     fn threads_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let listed = self.listed();
@@ -1195,66 +1197,42 @@ impl AssistantPreview {
                         })),
                 ),
             )
-            .children(pins.iter().map(|&t| {
-                let thread = &self.threads[t];
-                let unread = self.is_unread(t);
-                self.thread_row(t, cx)
-                    .py_1()
-                    .child(avatar_view(thread.kind, unread, 22., 13., theme))
+            .children(pins.iter().map(|&t| self.full_row(t, false, cx)))
+            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().mt_1().mb_1().h(px(1.)).bg(theme.border)))
+            .children(rest.iter().enumerate().map(|(row, &t)| self.full_row(t, row + 1 < rest_count, cx)))
+    }
+
+    /// A thread as two lines beside its kind's icon: the name, mute and
+    /// time, then the last line. `hairline` draws the inset line under it.
+    fn full_row(&self, t: usize, hairline: bool, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let theme = &self.theme;
+        let thread = &self.threads[t];
+        let unread = self.is_unread(t);
+        self.thread_row(t, cx)
+            .child(avatar_view(thread.kind, unread, 34., 19., theme))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .ml_3()
+                    .pr_3()
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .when(hairline, |d| d.border_b_1().border_color(theme.grid))
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .ml_2()
-                            .pr_3()
                             .flex()
                             .flex_row()
                             .items_center()
                             .gap_2()
                             .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
                             .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
-                            .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) })),
+                            .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) }))
+                            .child(div().text_sm().text_color(theme.tertiary).child("›")),
                     )
-            }))
-            .when(!pins.is_empty() && rest_count > 0, |d| d.child(div().mt_1().mb_1().h(px(1.)).bg(theme.border)))
-            .children(rest.iter().enumerate().map(|(row, &t)| {
-                let thread = &self.threads[t];
-                let unread = self.is_unread(t);
-                let last_row = row + 1 == rest_count;
-                self.thread_row(t, cx)
-                    .child(avatar_view(thread.kind, unread, 34., 19., theme))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .ml_3()
-                            .pr_3()
-                            .py_2()
-                            .flex()
-                            .flex_col()
-                            .when(!last_row, |d| d.border_b_1().border_color(theme.grid))
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap_2()
-                                    .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
-                                    .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
-                                    .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) }))
-                                    .child(div().text_sm().text_color(theme.tertiary).child("›")),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .gap_1()
-                                    .text_xs()
-                                    .when(thread.kind != Kind::Main, |d| d.child(div().flex_none().text_color(theme.tertiary).child(kind_name(thread.kind))).child(div().flex_none().text_color(theme.tertiary).child("·")))
-                                    .child(div().flex_1().min_w_0().truncate().text_color(if thread.muted { theme.tertiary } else { theme.secondary }).child(thread.last.clone())),
-                            ),
-                    )
-            }))
+                    .child(div().truncate().text_xs().text_color(if thread.muted { theme.tertiary } else { theme.secondary }).child(thread.last.clone())),
+            )
     }
 
     /// A thread's row: the unread dot in the margin, open on click, its
@@ -1401,6 +1379,7 @@ impl AssistantPreview {
                                     match label {
                                         "Follow up" => window.focus(&this.composer.focus_handle(cx), cx),
                                         "Copy" => this.notify("Copied".into(), "Plain text, ready for Slack or notes".into(), vec![], None, cx),
+                                        "Open session" => this.open_drawer(t, cx),
                                         _ => this.threads[t].messages.push(text(Who::Event, &format!("{label}: done (preview)"))),
                                     }
                                     cx.notify();
@@ -1582,9 +1561,18 @@ impl AssistantPreview {
                     )
                     .child(
                         div()
+                            .id("thread-expand")
+                            .flex_none()
+                            .px_1()
+                            .cursor_pointer()
+                            .child(gpui::svg().path("icons/maximize.svg").size(px(14.)).text_color(theme.selected))
+                            .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_drawer(t, cx))),
+                    )
+                    .child(
+                        div()
                             .id("thread-menu")
                             .flex_none()
-                            .w(px(64.))
+                            .w(px(36.))
                             .flex()
                             .justify_end()
                             .text_base()
@@ -1704,6 +1692,157 @@ impl AssistantPreview {
         });
         self.suggest = 0;
         cx.notify();
+    }
+
+    /// The drawer: what a thread opens to, beside the panel and hidden till
+    /// then. A session shows its own view (the review panel, or terminal and
+    /// Changes) with a strip saying where you left off; a question or an
+    /// investigation shows its thread at full width beside its evidence.
+    fn drawer_view(&self, t: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+        let thread = &self.threads[t];
+        let since = thread.messages.iter().find_map(|m| match &m.body {
+            Body::Since { what, since, wants } => Some((what.clone(), since.clone(), wants.clone())),
+            _ => None,
+        });
+        let header = div()
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .h(px(52.))
+            .border_b_1()
+            .border_color(theme.border)
+            .child(avatar_view(thread.kind, false, 26., 15., theme))
+            .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(thread.title.clone()))
+            .child(button("drawer-tab", "Open as Tab", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                this.workspace = format!("{} is now a tab in your workspace.", this.threads[t].title);
+                this.drawer = None;
+                cx.notify();
+            })))
+            .child(
+                div()
+                    .id("drawer-close")
+                    .px_1()
+                    .cursor_pointer()
+                    .child(gpui::svg().path("icons/close.svg").size(px(14.)).text_color(theme.secondary))
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        this.drawer = None;
+                        cx.notify();
+                    })),
+            );
+        let strip = since.map(|(what, since, wants)| {
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_3()
+                .px_4()
+                .py_2()
+                .bg(theme.sidebar)
+                .border_b_1()
+                .border_color(theme.border)
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .child(div().text_xs().text_color(theme.secondary).child(format!("{what}. Since you looked: {since}.")))
+                        .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {wants}"))),
+                )
+                .child(button("strip-dismiss", "Dismiss", false, theme))
+        });
+        let body: AnyElement = match thread.kind {
+            Kind::Review => div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .gap_3()
+                .p_4()
+                .child(div().text_xs().text_color(theme.tertiary).child("The review panel, as it is today"))
+                .child(div().text_lg().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child("Ready to merge, with 2 minor points"))
+                .child(div().text_sm().text_color(theme.secondary).child("Adds retries with backoff to permit exports. The new commits fixed both earlier findings."))
+                .children(["nit · export/retry.go:42 · log at info, not debug", "nit · export/retry.go:18 · name the backoff cap"].into_iter().map(|f| div().p_2().rounded_md().bg(theme.tile).text_sm().text_color(theme.fg).child(f)))
+                .child(div().flex_1())
+                .child(div().flex().flex_row().gap_1().child(button("d-again", "Review Again", false, theme)).child(button("d-post", "Post Review", true, theme)))
+                .into_any_element(),
+            Kind::Build => div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(div().px_4().pt_3().text_xs().text_color(theme.tertiary).child("The session tab, as it is today: terminal and Changes"))
+                .child(
+                    div()
+                        .flex_1()
+                        .m_4()
+                        .p_3()
+                        .rounded_md()
+                        .bg(gpui::rgb(0x111111))
+                        .font_family("Menlo")
+                        .text_xs()
+                        .text_color(gpui::rgb(0xD0D0D0))
+                        .children(["✓ unit tests: 48 passed", "", "● I'd like to run the e2e suite:", "  pnpm e2e --project mobile", "", "  Allow?  1. Yes   2. Yes, always   3. No"].into_iter().map(|l| div().child(l))),
+                )
+                .child(div().px_4().pb_4().flex().flex_col().gap_0p5().child(section("Changes · 6 files", theme)).children(["M  mobile/log-job/Picker.tsx", "M  mobile/log-job/search.ts", "A  mobile/log-job/search.test.ts"].into_iter().map(|f| div().font_family("Menlo").text_xs().text_color(theme.secondary).child(f))))
+                .into_any_element(),
+            _ => div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_row()
+                .child(
+                    div()
+                        .id(SharedString::from(format!("drawer-thread-{t}")))
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .p_4()
+                        .children(thread.messages.iter().enumerate().map(|(m, message)| {
+                            let named = m == 0 || std::mem::discriminant(&thread.messages[m - 1].who) != std::mem::discriminant(&message.who);
+                            self.message_view(t, m, message, named, theme, cx)
+                        })),
+                )
+                .child(
+                    div()
+                        .w(px(190.))
+                        .flex_none()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .p_3()
+                        .border_l_1()
+                        .border_color(theme.border)
+                        .bg(theme.sidebar)
+                        .child(section("Evidence", theme))
+                        .children(["HyperDX trace ↗", "mongo explain", "Migration 0142 ↗"].into_iter().map(|e| div().text_xs().text_color(theme.selected).child(e)))
+                        .child(div().pt_2().child(section("Skills used", theme)))
+                        .children(["triage", "hyperdx", "mongo (prod, read only)"].into_iter().map(|e| div().text_xs().text_color(theme.secondary).child(e)))
+                        .child(div().flex_1())
+                        .child(button("d-terminal", "Show Terminal", false, theme))
+                        .when(thread.kind == Kind::Investigation, |d| d.child(button("d-fix", "Start fix", true, theme))),
+                )
+                .into_any_element(),
+        };
+        div()
+            .w(px(620.))
+            .flex_none()
+            .flex()
+            .flex_col()
+            .border_l_1()
+            .border_color(theme.border)
+            .bg(theme.bg)
+            .shadow_lg()
+            .child(header)
+            .when_some(strip, |d, strip| d.child(strip))
+            .child(body)
     }
 
     fn composer_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1851,7 +1990,7 @@ impl AssistantPreview {
                             button(format!("toast-{id}-{n}"), action, n == 0, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                 this.toasts.retain(|t| t.id != id);
                                 match (action, thread) {
-                                    ("Open", Some(t)) => this.open_thread(t, cx),
+                                    ("Open", Some(t)) => this.open_drawer(t, cx),
                                     (_, Some(t)) => {
                                         if let Some(i) = this.items.iter().position(|it| it.thread == Some(t)) {
                                             this.act(i, action, cx);
@@ -1931,7 +2070,7 @@ impl Render for AssistantPreview {
             .flex_col()
             .bg(theme.bg)
             .child(controls)
-            .child(div().flex_1().min_h_0().flex().flex_row().child(workspace).child(panel))
+            .child(div().flex_1().min_h_0().flex().flex_row().child(workspace).when_some(self.drawer, |d, t| d.child(self.drawer_view(t, &theme, cx))).child(panel))
             .child(self.toasts_view(&theme, cx))
             .when_some(menus, |d, menus| d.child(menus))
             .when_some(self.row_menu_view(cx), |d, menu| d.child(menu))
