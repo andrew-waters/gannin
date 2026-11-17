@@ -173,9 +173,11 @@ struct ReviewReadiness {
         let minor = items.filter { $0.tier == .minor }.count
 
         self.items = items
-        // GitHub's decision can predate the newest commits, so a stale review
-        // doesn't claim the PR as it stands is approved.
-        let approved = status?.reviewDecision == "APPROVED" && !isStale
+        // GitHub's decision can predate the newest commits, and it keeps an
+        // approval after its reviewer is asked again, so neither a stale
+        // review nor an approval that no longer stands claims the PR as it is
+        // is approved.
+        let approved = status?.reviewDecision == "APPROVED" && !isStale && status?.approvalStands != false
         if !blocking.isEmpty {
             sentence = (approved ? "Approved, but can't merge: " : "Can't merge: ") + Self.list(blocking)
             color = ChartPalette.critical

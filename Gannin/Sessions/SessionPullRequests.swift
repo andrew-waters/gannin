@@ -61,6 +61,10 @@ struct SessionPullRequest: Identifiable, Hashable {
     let feedback: [Feedback]
     /// The branch it merges into.
     var baseRef: String? = nil
+    /// Whether an approval still stands: one given by someone not asked to
+    /// review again. `reviewDecision` stays `APPROVED` through a re-request,
+    /// so it alone can't say the PR is still approved. Nil when not known.
+    var approvalStands: Bool? = nil
 
     var failed: [Check] { checks.filter { $0.state == .failed } }
     var pending: [Check] { checks.filter { $0.state == .pending } }
@@ -443,6 +447,8 @@ extension GitHubAPI {
             }
             fragment SessionPR on PullRequest {
               id number title url state isDraft reviewDecision mergeable baseRefName
+              latestOpinionatedReviews(first: 30) { nodes { state author { login } } }
+              reviewRequests(first: 30) { nodes { requestedReviewer { ... on User { login } } } }
               author { login }
               repository { nameWithOwner }
               commits(last: 1) { nodes { commit { statusCheckRollup { contexts(first: 80) { nodes {
@@ -675,6 +681,15 @@ struct SessionRawPullRequest: Decodable {
         let body: String
         let url: URL
     }
+    struct OpinionatedReview: Decodable {
+        let state: String
+        let author: Login?
+    }
+    /// A team (or other non-user) reviewer comes back as an empty object.
+    struct ReviewRequest: Decodable {
+        struct Reviewer: Decodable { let login: String? }
+        let requestedReviewer: Reviewer?
+    }
     struct Thread: Decodable {
         let id: String
         let isResolved: Bool
@@ -696,6 +711,8 @@ struct SessionRawPullRequest: Decodable {
     let reviewDecision: String?
     let mergeable: String?
     let baseRefName: String?
+    let latestOpinionatedReviews: Connection<OpinionatedReview>?
+    let reviewRequests: Connection<ReviewRequest>?
     let author: Login?
     let repository: Repository?
     let commits: Connection<CommitNode>?
@@ -753,10 +770,15 @@ struct SessionRawPullRequest: Decodable {
                 comments: [.init(author: who, body: review.body, url: review.url)]
             ))
         }
+        let askedAgain = Set((reviewRequests?.nodes ?? []).compactMap { $0.requestedReviewer?.login })
+        let approvalStands = latestOpinionatedReviews.map { reviews in
+            reviews.nodes.contains { $0.state == "APPROVED" && !askedAgain.contains($0.author?.login ?? "") }
+        }
         return SessionPullRequest(
             id: id, number: number, title: title, url: url, repo: repository.nameWithOwner, author: prAuthor, state: state,
             isDraft: isDraft ?? false, reviewDecision: reviewDecision, mergeable: mergeable,
-            checks: checks.sorted { (order($0.state), $0.name) < (order($1.state), $1.name) }, feedback: feedback, baseRef: baseRefName
+            checks: checks.sorted { (order($0.state), $0.name) < (order($1.state), $1.name) }, feedback: feedback, baseRef: baseRefName,
+            approvalStands: approvalStands
         )
     }
 
