@@ -46,6 +46,19 @@ pub fn follow_appearance(window: &gpui::Window, cx: &mut App) {
     theme_settings::reload_theme(cx);
 }
 
+/// A shortcut with `secondary-` read as Command on a Mac and Control
+/// elsewhere. GPUI's `KeyBinding::new` doesn't take `secondary` itself, and
+/// keeps the text for good: the bindings are made once, at launch.
+pub fn keys(text: &str) -> &'static str {
+    let text = if cfg!(target_os = "macos") {
+        text.replace("secondary-", "cmd-")
+    } else {
+        // Control and Command together is Control and Option there.
+        text.replace("ctrl-secondary-", "ctrl-alt-").replace("secondary-", "ctrl-")
+    };
+    Box::leak(text.into_boxed_str())
+}
+
 /// The monospace font: the system's on a Mac, else Zed's own (Lilex, loaded
 /// with its assets), which every platform has.
 pub const MONO: &str = if cfg!(target_os = "macos") { "SF Mono" } else { "Lilex" };

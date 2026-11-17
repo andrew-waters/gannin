@@ -283,7 +283,7 @@ fn main() {
     paths::migrate();
     gpui_platform::application().with_assets(assets::Assets).run(move |cx: &mut App| {
         zed::init(cx);
-        cx.bind_keys([KeyBinding::new("secondary-q", Quit, None)]);
+        cx.bind_keys([KeyBinding::new(crate::zed::keys("secondary-q"), Quit, None)]);
         cx.bind_keys(shell::key_bindings());
         cx.set_menus(vec![
             Menu { name: "Gannin".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false },

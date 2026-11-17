@@ -33,24 +33,24 @@ actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, R
 
 pub fn key_bindings() -> Vec<KeyBinding> {
     vec![
-        KeyBinding::new("ctrl-secondary-s", ToggleSidebar, None),
-        KeyBinding::new("secondary-alt-i", ToggleInspector, None),
-        KeyBinding::new("secondary-t", NewClaudeSession, None),
+        KeyBinding::new(crate::zed::keys("ctrl-secondary-s"), ToggleSidebar, None),
+        KeyBinding::new(crate::zed::keys("secondary-alt-i"), ToggleInspector, None),
+        KeyBinding::new(crate::zed::keys("secondary-t"), NewClaudeSession, None),
         KeyBinding::new("ctrl-`", NewTerminal, None),
-        KeyBinding::new("secondary-w", CloseTab, None),
-        KeyBinding::new("secondary-shift-n", NewWindow, None),
-        KeyBinding::new("secondary-shift-right", NextTab, None),
-        KeyBinding::new("secondary-shift-left", PreviousTab, None),
-        KeyBinding::new("secondary-shift-]", NextTab, None),
-        KeyBinding::new("secondary-shift-[", PreviousTab, None),
+        KeyBinding::new(crate::zed::keys("secondary-w"), CloseTab, None),
+        KeyBinding::new(crate::zed::keys("secondary-shift-n"), NewWindow, None),
+        KeyBinding::new(crate::zed::keys("secondary-shift-right"), NextTab, None),
+        KeyBinding::new(crate::zed::keys("secondary-shift-left"), PreviousTab, None),
+        KeyBinding::new(crate::zed::keys("secondary-shift-]"), NextTab, None),
+        KeyBinding::new(crate::zed::keys("secondary-shift-["), PreviousTab, None),
         // ⇧⌘[ and ⇧⌘] arrive as ⌘{ and ⌘}, as Zed binds them.
-        KeyBinding::new("secondary-}", NextTab, None),
-        KeyBinding::new("secondary-{", PreviousTab, None),
+        KeyBinding::new(crate::zed::keys("secondary-}"), NextTab, None),
+        KeyBinding::new(crate::zed::keys("secondary-{"), PreviousTab, None),
         KeyBinding::new("ctrl-tab", NextTab, None),
         KeyBinding::new("ctrl-shift-tab", PreviousTab, None),
-        KeyBinding::new("secondary-alt-o", OpenSwitcher, None),
-        KeyBinding::new("secondary-o", OpenFolder, None),
-        KeyBinding::new("secondary-r", Refresh, None),
+        KeyBinding::new(crate::zed::keys("secondary-alt-o"), OpenSwitcher, None),
+        KeyBinding::new(crate::zed::keys("secondary-o"), OpenFolder, None),
+        KeyBinding::new(crate::zed::keys("secondary-r"), Refresh, None),
     ]
 }
 
