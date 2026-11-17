@@ -153,6 +153,29 @@ final class SharedIssueStore {
         save(org)
     }
 
+    /// Adds issues carried over from an old cache, which have no `updatedAt`,
+    /// assignees, labels or `closedAt` of their own. A held issue keeps its
+    /// core, since the incoming one could empty its lists when the held core
+    /// has no `updatedAt` either; only the incoming work log part is laid over it.
+    func mergeCarriedOver(_ incoming: [StoredIssue], org: String) {
+        var held = load(org)
+        var changed = false
+        for issue in incoming {
+            var next = issue
+            if let existing = held[issue.id] {
+                var workLogOnly = existing
+                workLogOnly.workLog = issue.workLog
+                next = existing.merged(with: workLogOnly)
+                guard next != existing else { continue }
+            }
+            held[issue.id] = next
+            changed = true
+        }
+        guard changed else { return }
+        loaded[org] = held
+        save(org)
+    }
+
     /// Removes one store's part from the issues it no longer needs, and any
     /// issue left with nothing from a store.
     func prune(_ slot: StoredIssue.Slot, org: String, keeping ids: Set<String>) {

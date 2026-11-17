@@ -128,21 +128,25 @@ final class WorkLogStore {
         }
         let keyed = Dictionary(uniqueKeysWithValues: searches.enumerated().map { ("w\($0.offset)", $0.element) }
             + issueSearches(issueRanges).enumerated().map { ("i\($0.offset)", $0.element) })
-        if let counts = try? await run.overhead({ try await api.counts(searches: keyed) }) {
+        let counts = try? await run.overhead({ try await api.counts(searches: keyed) })
+        if let counts {
             run.setTotal(counts.filter { $0.key.hasPrefix("w") }.values.map { min($0, 1000) }.reduce(0, +) + (feedIDs?.count ?? 0), for: "prs")
-            // A search that reached the cap lost issues, so its range is searched a day at a time.
-            let capped = issueRanges.indices.filter { (counts["i\($0)"] ?? 0) >= ParallelSearches.searchCap }
-            let split = Self.splittingCapped(issueRanges, at: Set(capped), now: now)
-            var issueTotal = counts.filter { $0.key.hasPrefix("i") }.values.map { min($0, 1000) }.reduce(0, +) + (feedIssueIDs?.count ?? 0)
-            if split.count != issueRanges.count {
-                issueRanges = split
-                let recount = Dictionary(uniqueKeysWithValues: issueSearches(split).enumerated().map { ("i\($0.offset)", $0.element) })
-                if let counts = try? await run.overhead({ try await api.counts(searches: recount) }) {
-                    issueTotal = counts.values.map { min($0, 1000) }.reduce(0, +) + (feedIssueIDs?.count ?? 0)
-                }
-            }
-            run.setTotal(issueTotal, for: "issues")
         }
+        // A search that reached the cap lost issues, so its range is searched a
+        // day at a time. A range whose count is unknown (the count failed) is
+        // treated as capped, since searching it whole could drop issues silently.
+        let capped = issueRanges.indices.filter { index in
+            counts?["i\(index)"].map { $0 >= ParallelSearches.searchCap } ?? true
+        }
+        let split = Self.splittingCapped(issueRanges, at: Set(capped), now: now)
+        var issueTotal = counts.map { $0.filter { $0.key.hasPrefix("i") }.values.map { min($0, 1000) }.reduce(0, +) + (feedIssueIDs?.count ?? 0) }
+        if split.count != issueRanges.count {
+            issueRanges = split
+            let recount = Dictionary(uniqueKeysWithValues: issueSearches(split).enumerated().map { ("i\($0.offset)", $0.element) })
+            issueTotal = (try? await run.overhead({ try await api.counts(searches: recount) }))
+                .map { $0.values.map { min($0, 1000) }.reduce(0, +) + (feedIssueIDs?.count ?? 0) }
+        }
+        if let issueTotal { run.setTotal(issueTotal, for: "issues") }
         let issueQueries = issueSearches(issueRanges)
         do {
             let prs = try await run.track("prs", count: \.count) { progress in
@@ -278,7 +282,8 @@ final class WorkLogStore {
             let legacy = (try? Self.decoder.decode(WorkLogHistory.LegacyIssues.self, from: data))?.issues ?? [:]
             history.issues = legacy
             history.version = WorkLogHistory.currentVersion
-            save(history, merging: [], issues: Array(legacy.values))
+            issueStore.mergeCarriedOver(legacy.values.map { StoredIssue(workLog: $0) }, org: org)
+            save(history, merging: [], issues: [])
         }
         histories[org] = history
     }

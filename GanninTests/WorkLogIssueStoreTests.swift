@@ -80,6 +80,28 @@ struct WorkLogIssueStoreTests {
         #expect(again.history(for: "acme")?.issues["I_1"]?.comments == issue.comments)
     }
 
+    @Test func aCarriedOverIssueLeavesAHeldCoresListsAlone() {
+        let issues = SharedIssueStore(folder: uniqueFolder())
+        defer { issues.clear() }
+        let person = Person(login: "sam", name: "Sam", avatarUrl: nil)
+        // A held core with no `updatedAt`, as an old workload cache has.
+        var held = StoredIssue(workLog: logged(updated: nil))
+        held.core.assignees = [person]
+        held.core.labels = [StoredLabel(name: "bug", color: "d73a4a")]
+        held.workLog = nil
+        issues.merge([held], org: "acme")
+
+        var carried = logged(updated: nil)
+        carried.assignees = nil
+        carried.labels = nil
+        issues.mergeCarriedOver([StoredIssue(workLog: carried)], org: "acme")
+
+        let after = issues.issues(org: "acme")["I_1"]
+        #expect(after?.core.assignees == [person])
+        #expect(after?.core.labels == [StoredLabel(name: "bug", color: "d73a4a")])
+        #expect(after?.workLog?.comments == carried.comments)
+    }
+
     @Test func theLogsFileKeepsNoIssueFieldsOnceSaved() throws {
         let directory = directory()
         let issues = SharedIssueStore(folder: uniqueFolder())
