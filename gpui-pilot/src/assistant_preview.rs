@@ -794,23 +794,17 @@ fn age_color(minutes: u32, theme: &Theme) -> Hsla {
 }
 
 impl AssistantPreview {
-    fn header(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
+    /// The scope and the menu, at the right of the title bar.
+    fn title_controls(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex_none()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(theme.border)
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child("Assistant"))
+                    .when(self.focus_mode, |d| d.child(div().text_xs().text_color(theme.blue()).child(format!("Focus{}", if self.held > 0 { format!(" · {} held", self.held) } else { String::new() }))))
                     .child(
                         div()
                             .id("scope")
@@ -828,8 +822,6 @@ impl AssistantPreview {
                                 cx.notify();
                             })),
                     )
-                    .child(div().flex_1())
-                    .when(self.focus_mode, |d| d.child(div().text_xs().text_color(theme.blue()).child(format!("Focus{}", if self.held > 0 { format!(" · {} held", self.held) } else { String::new() }))))
                     .child(
                         div()
                             .id("more")
@@ -854,8 +846,8 @@ impl AssistantPreview {
             return Some(
                 div()
                     .absolute()
-                    .top(px(36.))
-                    .left(px(84.))
+                    .top(px(38.))
+                    .right(px(40.))
                     .w(px(240.))
                     .p_1()
                     .bg(theme.popover)
@@ -894,8 +886,8 @@ impl AssistantPreview {
             return Some(
                 div()
                     .absolute()
-                    .top(px(36.))
-                    .right(px(8.))
+                    .top(px(38.))
+                    .right(px(10.))
                     .w(px(220.))
                     .p_1()
                     .bg(theme.popover)
@@ -1421,7 +1413,9 @@ impl Render for AssistantPreview {
             .border_color(theme.border)
             .bg(theme.sidebar)
             .child(div().pr_2().text_xs().text_color(theme.secondary).child("Simulate"))
-            .children(scenarios.into_iter().enumerate().map(|(n, label)| pill(format!("sim-{n}"), label, n == 3 && self.focus_mode, &theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.simulate(n, cx)))));
+            .children(scenarios.into_iter().enumerate().map(|(n, label)| pill(format!("sim-{n}"), label, n == 3 && self.focus_mode, &theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.simulate(n, cx)))))
+            .child(div().flex_1())
+            .child(self.title_controls(&theme, cx));
         let workspace = div()
             .flex_1()
             .min_w_0()
@@ -1444,13 +1438,11 @@ impl Render for AssistantPreview {
             .border_l_1()
             .border_color(theme.border)
             .bg(theme.bg)
-            .child(self.header(&theme, cx))
             .map(|d| match self.open {
                 Some(t) => d.child(self.thread_view(t, &theme, cx)),
                 None => d.child(self.queue_view(&theme, cx)).child(self.threads_view(&theme, cx)),
             })
-            .child(self.composer_view(&theme, cx))
-            .when_some(menus, |d, menus| d.child(menus));
+            .child(self.composer_view(&theme, cx));
         div()
             .id("assistant-preview")
             .track_focus(&self.focus)
@@ -1463,5 +1455,6 @@ impl Render for AssistantPreview {
             .child(controls)
             .child(div().flex_1().min_h_0().flex().flex_row().child(workspace).child(panel))
             .child(self.toasts_view(&theme, cx))
+            .when_some(menus, |d, menus| d.child(menus))
     }
 }
