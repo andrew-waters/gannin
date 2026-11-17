@@ -324,7 +324,9 @@ fn main() {
         cx.bind_keys(shell::key_bindings());
         // Marra: ⌘J while Gannin is active brings it forward.
         cx.bind_keys([KeyBinding::new(crate::zed::keys("secondary-j"), marra_view::ToggleMarra, None)]);
-        cx.on_action(|_: &marra_view::ToggleMarra, cx| marra_view::toggle(cx));
+        // Deferred: the action arrives inside the active window's update, and
+        // that window (Marra's own, or the one it docks in) is lent out until then.
+        cx.on_action(|_: &marra_view::ToggleMarra, cx| cx.defer(marra_view::toggle));
         cx.set_menus(vec![
             Menu { name: "Gannin".into(), items: vec![MenuItem::action("Quit", Quit)], disabled: false },
             Menu {
@@ -431,6 +433,9 @@ fn marra_check(model: Option<String>, prompt: Option<String>) {
                 marra::Event::Done { .. } | marra::Event::Exited(_) => {
                     println!("{event:?}");
                     engine.stop();
+                    if let Some(id) = &engine.profile.session {
+                        let _ = std::fs::remove_file(marra::dir().join(format!("mcp-{id}.json")));
+                    }
                     return;
                 }
                 other => println!("{other:?}"),

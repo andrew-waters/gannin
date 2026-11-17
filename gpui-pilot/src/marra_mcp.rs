@@ -71,13 +71,21 @@ pub struct Request {
 pub fn read_request(stream: &TcpStream) -> std::io::Result<Request> {
     stream.set_read_timeout(Some(Duration::from_secs(30)))?;
     let mut reader = BufReader::new(stream.try_clone()?);
+    // Lines and headers are capped: this is read before anyone's checked.
+    let too_long = || std::io::Error::new(std::io::ErrorKind::InvalidData, "request too large");
     let mut request_line = String::new();
-    reader.read_line(&mut request_line)?;
+    (&mut reader).take(8192).read_line(&mut request_line)?;
     let mut headers = std::collections::HashMap::new();
-    loop {
+    for count in 0.. {
+        if count > 100 {
+            return Err(too_long());
+        }
         let mut line = String::new();
-        if reader.read_line(&mut line)? == 0 {
+        if (&mut reader).take(8192).read_line(&mut line)? == 0 {
             break;
+        }
+        if !line.ends_with('\n') {
+            return Err(too_long());
         }
         let line = line.trim_end();
         if line.is_empty() {
@@ -214,11 +222,8 @@ fn clip(s: &str, max: usize) -> String {
 
 /// The harnesses Gannin knows (from its sessions) and their skills.
 pub fn skills() -> String {
-    let mut harnesses: Vec<std::path::PathBuf> = crate::launch::saved().into_iter().filter(|l| l.server.is_none()).map(|l| l.harness_path).collect();
-    harnesses.sort();
-    harnesses.dedup();
     let mut out = Vec::new();
-    for harness in harnesses.into_iter().filter(|h| h.exists()) {
+    for harness in harnesses() {
         let mut names: Vec<String> = Vec::new();
         for folder in ["skills", ".claude/skills"] {
             for entry in std::fs::read_dir(harness.join(folder)).into_iter().flatten().flatten() {
@@ -240,3 +245,59 @@ pub fn skills() -> String {
         out.join("\n\n")
     }
 }
+
+/// The harness folders Gannin knows on this Mac (from its sessions).
+pub fn harnesses() -> Vec<std::path::PathBuf> {
+    let mut list: Vec<std::path::PathBuf> = crate::launch::saved().into_iter().filter(|l| l.server.is_none()).map(|l| l.harness_path).filter(|h| h.exists()).collect();
+    list.sort();
+    list.dedup();
+    list
+}
+
+/// A saved prompt Marra offers as a / command.
+#[derive(Clone)]
+pub struct SavedCommand {
+    pub name: String,
+    pub about: String,
+    pub body: String,
+    /// The harness it's from; None for one of the user's own.
+    pub harness: Option<String>,
+}
+
+/// The user's own (`~/.gannin/marra/commands/*.md`) and the team's
+/// (`prompts/*.md` in a harness with `use: marra` in their front matter).
+pub fn saved_commands() -> Vec<SavedCommand> {
+    let mut out = Vec::new();
+    let mut read = |folder: std::path::PathBuf, harness: Option<String>, need_use: bool| {
+        for entry in std::fs::read_dir(&folder).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else { continue };
+            let (front, body) = match text.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---")) {
+                Some((front, body)) => (front.to_string(), body.trim_start_matches('-').trim().to_string()),
+                None => (String::new(), text.trim().to_string()),
+            };
+            let field = |key: &str| front.lines().find_map(|l| l.trim().strip_prefix(&format!("{key}:")).map(|v| v.trim().trim_matches('"').to_string()));
+            if need_use && !field("use").is_some_and(|u| u.split(|c: char| c == ',' || c.is_whitespace() || c == '[' || c == ']').any(|w| w == "marra")) {
+                continue;
+            }
+            let name = path.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            if body.is_empty() || name.is_empty() {
+                continue;
+            }
+            let about = field("description").unwrap_or_else(|| clip(body.lines().next().unwrap_or_default(), 70));
+            out.push(SavedCommand { name, about, body, harness: harness.clone() });
+        }
+    };
+    read(crate::marra::dir().join("commands"), None, false);
+    for harness in harnesses() {
+        let label = harness.file_name().map(|n| n.to_string_lossy().into_owned());
+        read(harness.join("prompts"), label, true);
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    out.dedup_by(|a, b| a.name == b.name);
+    out
+}
+

@@ -39,13 +39,15 @@ pub struct Convo {
     pub asks: HashMap<String, (String, Value)>,
     /// What it's doing, while busy: the last tool it used.
     pub doing: Option<String>,
+    /// When each open permission request arrived, for its reminders.
+    pub asked_at: HashMap<String, DateTime<Local>>,
     log: PathBuf,
 }
 
 impl Convo {
     fn new(profile: Profile, log: PathBuf) -> Self {
         let chat = marra::load_chat(&log);
-        Self { engine: Engine::new(profile), chat, streaming: String::new(), status: None, context: 0, asks: HashMap::new(), doing: None, log }
+        Self { engine: Engine::new(profile), chat, streaming: String::new(), status: None, context: 0, asks: HashMap::new(), doing: None, asked_at: HashMap::new(), log }
     }
 
     pub fn busy(&self) -> bool {
@@ -117,11 +119,12 @@ impl Convo {
                     }
                 }
                 Event::Ask { request, tool, input } => {
-                    if marra::read_only(&tool, &input) || always.contains(&marra::always_key(&tool, &input)) {
+                    if marra::read_only(&tool, &input) || marra::always_key(&tool, &input).is_some_and(|k| always.contains(&k)) {
                         let _ = self.engine.answer(&request, true, &input);
                     } else {
                         let summary = marra::summarize(&tool, &input);
                         self.chat.push(Entry::Permission { request: request.clone(), tool: tool.clone(), summary, answer: None });
+                        self.asked_at.insert(request.clone(), Local::now());
                         self.asks.insert(request, (tool, input));
                         self.save();
                     }
@@ -163,6 +166,7 @@ impl Convo {
     /// Answers a permission card.
     pub fn decide(&mut self, request: &str, allow: bool, always: bool) -> Option<String> {
         let (tool, input) = self.asks.remove(request)?;
+        self.asked_at.remove(request);
         let _ = self.engine.answer(request, allow, &input);
         let label = match (allow, always) {
             (true, true) => "Allowed always",
@@ -178,7 +182,7 @@ impl Convo {
             }
         }
         self.save();
-        (allow && always).then(|| marra::always_key(&tool, &input))
+        if allow && always { marra::always_key(&tool, &input) } else { None }
     }
 }
 
@@ -275,8 +279,22 @@ pub struct SessionInfo {
     pub review_ready: Option<(usize, Option<String>)>,
 }
 
-/// Every session open, in every window.
+/// Every session open, in every window, as Marra last read them. Read
+/// from Marra's cache: a window being drawn or handling a click can't be
+/// read (GPUI lends it out), so a docked view reading live would miss its
+/// own window. Never call from inside Marra's own update.
 pub fn sessions(cx: &App) -> Vec<SessionInfo> {
+    cx.try_global::<MarraGlobal>().map(|g| g.0.read(cx).sessions.clone()).unwrap_or_default()
+}
+
+/// Your Work, as Marra last read it.
+pub fn work(cx: &App) -> crate::work::Work {
+    cx.try_global::<MarraGlobal>().map(|g| g.0.read(cx).work.clone()).unwrap_or_default()
+}
+
+/// Every session open, read from the windows: only from Marra's tick,
+/// which runs outside any window's update.
+fn live_sessions(cx: &App) -> Vec<SessionInfo> {
     let mut out = Vec::new();
     for handle in cx.windows() {
         let Some(window) = handle.downcast::<Workspace>() else { continue };
@@ -290,7 +308,9 @@ pub fn sessions(cx: &App) -> Vec<SessionInfo> {
                 (None, crate::session::Kind::Shell) => "terminal".into(),
             };
             out.push(SessionInfo {
-                key: format!("{}:{}", handle.window_id().as_u64(), p.id),
+                // Its claude conversation where it has one, so pins, mutes and
+                // reminders outlive a relaunch; else its window and tab.
+                key: launch.map(|l| l.claude_id()).unwrap_or_else(|| format!("{}:{}", handle.window_id().as_u64(), p.id)),
                 window,
                 id: p.id,
                 page: page.clone(),
@@ -310,8 +330,8 @@ pub fn sessions(cx: &App) -> Vec<SessionInfo> {
     out
 }
 
-/// Your Work, from the first window that has it.
-pub fn work(cx: &App) -> crate::work::Work {
+/// Your Work, from the window that has the most of it.
+fn live_work(cx: &App) -> crate::work::Work {
     cx.windows().into_iter().filter_map(|h| h.downcast::<Workspace>()).filter_map(|w| w.read(cx).ok().map(|w| w.work_lists().clone())).max_by_key(|w| w.reviews.len() + w.mine.len()).unwrap_or_default()
 }
 
@@ -363,7 +383,7 @@ pub struct Need {
     pub thread: Option<String>,
     pub lane: Lane,
     pub org: Option<String>,
-    /// A PR, so "when CI passes" is offered.
+    /// One of your PRs, so "when CI passes" is offered.
     pub pr: Option<String>,
     pub returned: bool,
 }
@@ -429,6 +449,9 @@ pub struct Marra {
     pub log: HashMap<String, Vec<(DateTime<Local>, String)>>,
     /// Each session's state as last seen, to notice changes.
     states: HashMap<String, String>,
+    /// Sessions and Your Work as last read from the windows (in `tick`).
+    pub sessions: Vec<SessionInfo>,
+    pub work: crate::work::Work,
     /// The phone API, while it's on.
     pub api: Option<crate::marra_api::Api>,
     pub api_error: Option<String>,
@@ -446,7 +469,22 @@ impl Marra {
     }
 
     fn new(cx: &mut Context<Self>) -> Self {
-        let saved = Saved::load();
+        let mut saved = Saved::load();
+        // A session without a claude id is known by its window, whose id is
+        // new each launch: what was kept for one means nothing now.
+        let stale = |k: &str| k.strip_prefix("s:").or_else(|| k.strip_prefix("session:")).is_some_and(|rest| rest.split(':').next().is_some_and(|w| w.chars().all(|c| c.is_ascii_digit())) && rest.contains(':'));
+        saved.read.retain(|k, _| !stale(k));
+        saved.pinned.retain(|k| !stale(k));
+        saved.muted.retain(|k| !stale(k));
+        saved.snoozed.retain(|k, _| !stale(k));
+        // Each claude gets its config (with this launch's token) as it
+        // starts; earlier launches' are stale.
+        for entry in std::fs::read_dir(marra::dir()).into_iter().flatten().flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with("mcp-") && name.ends_with(".json") {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
         let served = marra_mcp::serve();
         let mcp = served.as_ref().map(|(port, token, _)| (*port, token.clone()));
         let mut main = Convo::new(Profile::marra(&saved), marra::dir().join("chat.jsonl"));
@@ -493,6 +531,8 @@ impl Marra {
             states: HashMap::new(),
             api,
             api_error,
+            sessions: Vec::new(),
+            work: Default::default(),
             _poll: poll,
         }
     }
@@ -513,6 +553,8 @@ impl Marra {
 
     fn tick(&mut self, cx: &mut Context<Self>) {
         let mut changed = false;
+        // Read here, outside any window's update, for everything else to use.
+        self.sessions = live_sessions(cx);
         let always = self.saved.always.clone();
         let events = self.main.engine.drain();
         if !events.is_empty() {
@@ -526,7 +568,8 @@ impl Marra {
                 continue;
             }
             changed = true;
-            if errand.convo.apply(events, &always) && !errand.convo.engine.busy {
+            // A worker is read only: the user's Allow always is Marra's, not its.
+            if errand.convo.apply(events, &[]) && !errand.convo.engine.busy {
                 finished.push(errand.saved.id.clone());
             }
         }
@@ -545,21 +588,45 @@ impl Marra {
         }
         if self.last_check.elapsed() >= Duration::from_secs(1) {
             self.last_check = Instant::now();
-            self.note_changes(cx);
-            let signature = self.signature(cx);
+            self.work = live_work(cx);
+            // A send card whose tool call has given up waiting goes too.
+            self.confirms.retain(|c| (Local::now() - c.at).num_minutes() < 15);
+            self.note_changes();
+            let signature = self.signature();
             if signature != self.signature {
                 self.signature = signature;
                 changed = true;
             }
-            self.check_needs(cx);
+            self.check_needs();
         }
         let api_calls: Vec<crate::marra_api::ApiCall> = self.api.as_ref().map(|a| a.calls.try_iter().collect()).unwrap_or_default();
         for call in api_calls {
             changed = true;
+            // A session's transcript can be large: read it off the main thread.
+            let parts: Vec<String> = call.path.trim_matches('/').split('/').map(urldecode).collect();
+            if call.method == "GET" && parts.len() == 2 && parts[0] == "sessions" {
+                match self.sessions.iter().find(|s| s.key == parts[1]) {
+                    Some(s) => {
+                        let (key, title, state, claude) = (s.key.clone(), s.title.clone(), s.state.label(), s.claude_id.clone());
+                        let since: Vec<Value> = self.since_read(&key).iter().map(|(at, what)| serde_json::json!({ "at": at.to_rfc3339(), "what": what })).collect();
+                        let reply = call.reply;
+                        std::thread::spawn(move || {
+                            let messages = claude.as_deref().and_then(|c| marra_mcp::transcript_messages(c, 30)).unwrap_or_default();
+                            let _ = reply.send((200, serde_json::json!({ "id": key, "title": title, "state": state, "since_read": since, "messages": messages.iter().map(|(who, text)| serde_json::json!({ "who": who, "text": text })).collect::<Vec<_>>() })));
+                        });
+                    }
+                    None => {
+                        let _ = call.reply.send((404, serde_json::json!({ "error": "No such session." })));
+                    }
+                }
+                continue;
+            }
             let (status, body) = self.api_call(&call.method, &call.path, &call.body, cx);
             let _ = call.reply.send((status, body));
         }
-        if changed || self.main.busy() || self.errands.iter().any(|e| e.convo.busy()) {
+        // Only on a change: a busy turn's events are changes, and the
+        // spinner turns by itself.
+        if changed {
             if let Some(api) = &self.api {
                 api.changed();
             }
@@ -568,13 +635,13 @@ impl Marra {
     }
 
     /// What the views draw from Gannin's state, hashed.
-    fn signature(&self, cx: &App) -> u64 {
+    fn signature(&self) -> u64 {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for s in sessions(cx) {
+        for s in self.sessions.clone() {
             (s.key, s.title, s.state.label(), s.since.timestamp(), s.review_ready.map(|r| r.0)).hash(&mut hasher);
         }
-        let work = work(cx);
+        let work = self.work.clone();
         for pr in work.reviews.iter().chain(&work.mine) {
             (&pr.url, pr.needs(), &pr.checks).hash(&mut hasher);
         }
@@ -583,10 +650,10 @@ impl Marra {
 
     /// Logs what changed in each session since the last look: its state,
     /// and a review becoming ready.
-    fn note_changes(&mut self, cx: &App) {
+    fn note_changes(&mut self) {
         let now = Local::now();
         let mut seen = HashSet::new();
-        for s in sessions(cx) {
+        for s in self.sessions.clone() {
             seen.insert(s.key.clone());
             let state = match &s.review_ready {
                 Some((kept, verdict)) => format!("Review ready ({}{kept} kept)", verdict.clone().map(|v| format!("{v}, ")).unwrap_or_default()),
@@ -657,14 +724,14 @@ impl Marra {
                 self.new_conversation();
                 (202, json!({}))
             }
-            ("GET", ["needs"]) => (200, json!({ "needs": self.needs(None, cx).iter().map(need_json).collect::<Vec<_>>() })),
+            ("GET", ["needs"]) => (200, json!({ "needs": self.needs(None).iter().map(need_json).collect::<Vec<_>>() })),
             ("POST", ["needs", key, "remind"]) => {
                 let key = urldecode(key);
                 self.remind(&key, body["minutes"].as_i64());
                 (202, json!({}))
             }
             ("GET", ["threads"]) => {
-                let threads = self.threads(cx);
+                let threads = self.threads();
                 (200, json!({ "threads": threads.iter().map(|t| json!({ "id": t.id, "kind": format!("{:?}", t.kind).to_lowercase(), "title": t.title, "last": t.last, "activity": t.activity.map(|a| a.to_rfc3339()), "working": t.working, "unread": self.is_unread(t), "pinned": self.saved.pinned.contains(&t.id), "muted": self.saved.muted.contains(&t.id) })).collect::<Vec<_>>() }))
             }
             ("POST", ["threads", id, "read"]) => {
@@ -703,20 +770,10 @@ impl Marra {
                     None => (404, json!({ "error": "No such request; it may have been answered." })),
                 }
             }
-            ("GET", ["sessions"]) => (200, json!({ "sessions": sessions(cx).iter().map(|s| json!({ "id": s.key, "title": s.title, "kind": s.kind, "state": s.state.label(), "since": s.since.to_rfc3339(), "subject": s.subject, "server": s.server, "review_ready": s.review_ready.as_ref().map(|(kept, verdict)| json!({ "kept": kept, "verdict": verdict })) })).collect::<Vec<_>>() })),
-            ("GET", ["sessions", key]) => {
-                let key = urldecode(key);
-                match sessions(cx).into_iter().find(|s| s.key == key) {
-                    Some(s) => {
-                        let messages = s.claude_id.as_deref().and_then(|c| marra_mcp::transcript_messages(c, 30)).unwrap_or_default();
-                        (200, json!({ "id": s.key, "title": s.title, "state": s.state.label(), "since_read": self.since_read(&key).iter().map(|(at, what)| json!({ "at": at.to_rfc3339(), "what": what })).collect::<Vec<_>>(), "messages": messages.iter().map(|(who, text)| json!({ "who": who, "text": text })).collect::<Vec<_>>() }))
-                    }
-                    None => (404, json!({ "error": "No such session." })),
-                }
-            }
+            ("GET", ["sessions"]) => (200, json!({ "sessions": self.sessions.clone().iter().map(|s| json!({ "id": s.key, "title": s.title, "kind": s.kind, "state": s.state.label(), "since": s.since.to_rfc3339(), "subject": s.subject, "server": s.server, "review_ready": s.review_ready.as_ref().map(|(kept, verdict)| json!({ "kept": kept, "verdict": verdict })) })).collect::<Vec<_>>() })),
             ("POST", ["sessions", key, "message"]) if !text.is_empty() => {
                 let key = urldecode(key);
-                match sessions(cx).into_iter().find(|s| s.key == key) {
+                match self.sessions.clone().into_iter().find(|s| s.key == key) {
                     Some(s) => {
                         s.page.update(cx, |page, cx| page.tell(&text, cx));
                         (202, json!({}))
@@ -725,7 +782,7 @@ impl Marra {
                 }
             }
             ("GET", ["workload"]) => {
-                let work = work(cx);
+                let work = self.work.clone();
                 let pr = |p: &crate::work::Pr| json!({ "repo": p.repo, "number": p.number, "title": p.title, "url": p.url, "author": p.author, "standing": p.standing(), "needs": p.needs() });
                 (200, json!({ "reviews": work.reviews.iter().map(pr).collect::<Vec<_>>(), "mine": work.mine.iter().map(pr).collect::<Vec<_>>(), "live": work.live }))
             }
@@ -806,17 +863,28 @@ impl Marra {
         let reply = call.reply;
         let id = call.args["id"].as_str().unwrap_or_default().to_string();
         let outcome: Result<String, String> = match call.tool.as_str() {
-            "list_sessions" => Ok(describe_sessions(&sessions(cx))),
+            "list_sessions" => Ok(describe_sessions(&self.sessions.clone())),
             "waiting" => {
-                let needs = self.needs(None, cx);
+                let needs = self.needs(None);
                 Ok(if needs.is_empty() { "Nothing needs the user right now.".into() } else { needs.iter().map(|n| format!("- {}: {} ({}; {})", n.subject, n.task, n.detail, waiting(n.since))).collect::<Vec<_>>().join("\n") })
             }
-            "read_session" => match sessions(cx).into_iter().find(|s| s.key == id) {
+            "read_session" => match self.sessions.clone().into_iter().find(|s| s.key == id) {
                 None => Err(format!("No session {id}. Call list_sessions for the ids.")),
                 Some(s) => {
                     let count = call.args["messages"].as_u64().unwrap_or(12) as usize;
-                    let body = s.claude_id.as_deref().and_then(|c| marra_mcp::transcript_tail(c, count)).unwrap_or_else(|| s.page.read(cx).screen_tail(60, cx));
-                    Ok(format!("{} ({}, {} since {}):\n\n{}", s.title, s.kind, s.state.label(), s.since.format("%H:%M"), body))
+                    let head = format!("{} ({}, {} since {}):\n\n", s.title, s.kind, s.state.label(), s.since.format("%H:%M"));
+                    match s.claude_id.clone() {
+                        // A transcript can be large: read it off the main thread.
+                        Some(claude) => {
+                            let screen = s.page.read(cx).screen_tail(60, cx);
+                            std::thread::spawn(move || {
+                                let body = marra_mcp::transcript_tail(&claude, count).unwrap_or(screen);
+                                let _ = reply.send(Ok(format!("{head}{body}")));
+                            });
+                            return;
+                        }
+                        None => Ok(format!("{head}{}", s.page.read(cx).screen_tail(60, cx))),
+                    }
                 }
             },
             "open_tab" => {
@@ -826,7 +894,7 @@ impl Marra {
                     Err(format!("No session {id}."))
                 }
             }
-            "workload" => Ok(describe_work(&work(cx))),
+            "workload" => Ok(describe_work(&self.work.clone())),
             "list_skills" => Ok(marra_mcp::skills()),
             "notes" => {
                 let path = marra::dir().join("marra-notes.md");
@@ -841,7 +909,7 @@ impl Marra {
                 let harness = PathBuf::from(call.args["harness"].as_str().unwrap_or_default());
                 self.start_errand(kind, call.args["ask"].as_str().unwrap_or_default(), harness, &skills).map(|id| format!("Started errand {id}. It shows as a thread of its own and reports back there; you needn't wait for it."))
             }
-            "send_to_session" => match sessions(cx).into_iter().find(|s| s.key == id) {
+            "send_to_session" => match self.sessions.clone().into_iter().find(|s| s.key == id) {
                 None => Err(format!("No session {id}.")),
                 Some(s) => {
                     // Waits for the user's OK on a card; the reply goes when they decide.
@@ -862,7 +930,7 @@ impl Marra {
         let outcome = if !send {
             Err("The user said not to send it.".to_string())
         } else {
-            match sessions(cx).into_iter().find(|s| s.key == confirm.session) {
+            match self.sessions.clone().into_iter().find(|s| s.key == confirm.session) {
                 Some(s) => {
                     let text = confirm.text.clone();
                     s.page.update(cx, |page, cx| page.tell(&text, cx));
@@ -890,7 +958,7 @@ impl Marra {
 
     /// Brings a session's window forward on its tab.
     pub fn open_session(&mut self, key: &str, cx: &mut App) -> bool {
-        let Some(s) = sessions(cx).into_iter().find(|s| s.key == key) else { return false };
+        let Some(s) = self.sessions.clone().into_iter().find(|s| s.key == key) else { return false };
         let id = s.id;
         s.window
             .update(cx, |workspace, window, cx| {
@@ -903,7 +971,7 @@ impl Marra {
     // MARK: Needs you
 
     /// What needs the user, in order; `org` narrows it.
-    pub fn needs(&self, org: Option<&str>, cx: &App) -> Vec<Need> {
+    pub fn needs(&self, org: Option<&str>) -> Vec<Need> {
         let mut out: Vec<Need> = Vec::new();
         let now = Local::now();
         // Marra's own and its workers' permission requests: blocked.
@@ -921,7 +989,7 @@ impl Marra {
                         subject: title.clone(),
                         task: "Wants your OK".into(),
                         detail: summary.clone(),
-                        since: now,
+                        since: convo.asked_at.get(request).copied().unwrap_or(now),
                         actions: vec![("Allow".into(), Act::Allow(who.clone(), request.clone(), false)), ("Allow always".into(), Act::Allow(who.clone(), request.clone(), true)), ("Deny".into(), Act::Deny(who.clone(), request.clone()))],
                         open: Some(Act::OpenThread(thread.clone())),
                         thread: Some(thread),
@@ -950,7 +1018,7 @@ impl Marra {
                 returned: false,
             });
         }
-        for s in sessions(cx) {
+        for s in self.sessions.clone() {
             let lane = if s.kind == "review" { Lane::Review } else if s.kind == "ask" { Lane::Ask } else { Lane::Build };
             let thread = format!("s:{}", s.key);
             let base = |rank: u8, task: &str, detail: String| Need {
@@ -999,9 +1067,9 @@ impl Marra {
                 });
             }
         }
-        let work = work(cx);
+        let work = self.work.clone();
         let org_of = |repo: &str| repo.split('/').next().map(str::to_string);
-        let subjects: Vec<String> = sessions(cx).into_iter().filter_map(|s| s.subject).collect();
+        let subjects: Vec<String> = self.sessions.clone().into_iter().filter_map(|s| s.subject).collect();
         for pr in &work.reviews {
             if subjects.contains(&format!("{}#{}", pr.repo, pr.number)) {
                 continue;
@@ -1022,7 +1090,7 @@ impl Marra {
                 thread: None,
                 lane: Lane::Review,
                 org: org_of(&pr.repo),
-                pr: Some(pr.url.clone()),
+                pr: None,
                 returned: false,
             });
         }
@@ -1059,9 +1127,11 @@ impl Marra {
 
     /// Parks an item: back after `minutes`, or (None) when its PR's CI passes.
     pub fn remind(&mut self, key: &str, minutes: Option<i64>) {
-        let when = match minutes {
-            Some(m) => (Local::now() + chrono::Duration::minutes(m)).to_rfc3339(),
-            None => "ci".into(),
+        let pr = self.needs(None).into_iter().find(|n| n.key == key).and_then(|n| n.pr);
+        let when = match (minutes, pr) {
+            (Some(m), _) => (Local::now() + chrono::Duration::minutes(m)).to_rfc3339(),
+            (None, Some(url)) => format!("ci:{url}"),
+            (None, None) => (Local::now() + chrono::Duration::minutes(60)).to_rfc3339(),
         };
         self.saved.snoozed.insert(key.to_string(), when);
         self.returned.remove(key);
@@ -1070,16 +1140,19 @@ impl Marra {
 
     /// Reminders due come back; new items notify; blocked ones are
     /// mentioned again at 15 minutes and an hour.
-    fn check_needs(&mut self, cx: &mut Context<Self>) {
+    fn check_needs(&mut self) {
         let now = Local::now();
-        let work = work(cx);
+        let work = self.work.clone();
         let due: Vec<String> = self
             .saved
             .snoozed
             .iter()
-            .filter(|(key, when)| match when.as_str() {
-                "ci" => work.mine.iter().any(|pr| key.contains(&pr.url) && pr.checks.as_deref() == Some("SUCCESS")),
-                when => DateTime::parse_from_rfc3339(when).is_ok_and(|w| w <= now),
+            .filter(|(_, when)| match when.as_str() {
+                when => match when.strip_prefix("ci:") {
+                    // Back when its checks pass, or when the PR has gone.
+                    Some(url) => work.mine.iter().find(|pr| pr.url == url).is_none_or(|pr| pr.checks.as_deref() == Some("SUCCESS")),
+                    None => DateTime::parse_from_rfc3339(when).is_ok_and(|w| w <= now),
+                },
             })
             .map(|(k, _)| k.clone())
             .collect();
@@ -1090,8 +1163,16 @@ impl Marra {
         if !due.is_empty() {
             self.saved.save();
         }
-        let needs = self.needs(None, cx);
+        let needs = self.needs(None);
         let keys: HashSet<String> = needs.iter().map(|n| n.key.clone()).collect();
+        // A PR parked until CI passed whose item has gone (its checks were
+        // what it needed): say so once.
+        for key in due.iter().filter(|k| !keys.contains(*k) && k.starts_with("mine:")) {
+            let url = key.trim_start_matches("mine:").rsplit_once(':').map_or(key.as_str(), |(u, _)| u).to_string();
+            if let Some(pr) = work.mine.iter().find(|p| p.url == url) {
+                notify(&format!("{}#{}", pr.short_repo(), pr.number), "Back: its checks passed.");
+            }
+        }
         self.returned.retain(|k| keys.contains(k) || self.saved.snoozed.contains_key(k));
         let first_look = self.started.elapsed() < Duration::from_secs(5);
         for need in &needs {
@@ -1112,7 +1193,8 @@ impl Marra {
                 }
             }
         }
-        self.seen.retain(|k| keys.contains(k));
+        // A parked item's key stays seen, so it comes back as "back", not new.
+        self.seen.retain(|k| keys.contains(k) || self.saved.snoozed.contains_key(k));
         self.reminded.retain(|k, _| keys.contains(k));
         // The morning digest: what quiet hours held, once they end.
         if !quiet_hours() && !self.saved.focus && !self.held.is_empty() {
@@ -1148,7 +1230,7 @@ impl Marra {
 
     // MARK: Threads
 
-    pub fn threads(&self, cx: &App) -> Vec<Thread> {
+    pub fn threads(&self) -> Vec<Thread> {
         let mut out = vec![Thread { id: "main".into(), kind: ThreadKind::Main, title: "Marra".into(), last: self.main.last_line(), activity: self.main.activity(), working: self.main.busy(), org: None }];
         for e in &self.errands {
             out.push(Thread {
@@ -1161,7 +1243,7 @@ impl Marra {
                 org: None,
             });
         }
-        for s in sessions(cx) {
+        for s in self.sessions.clone() {
             let last = match (&s.review_ready, s.state) {
                 (Some(_), _) => "Review ready to post".to_string(),
                 (_, State::Working) => "Working".into(),
@@ -1303,7 +1385,8 @@ fn urldecode(s: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(b) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            // Bytes, not a str slice: a % before a multibyte character mustn't panic.
+            if let Some(b) = std::str::from_utf8(&bytes[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()) {
                 out.push(b);
                 i += 3;
                 continue;
@@ -1355,6 +1438,7 @@ mod tests {
         assert_eq!(urldecode("12%3A3"), "12:3");
         assert_eq!(urldecode("plain"), "plain");
         assert_eq!(urldecode("bad%2"), "bad%2");
+        assert_eq!(urldecode("%aé"), "%aé");
     }
 
     #[test]

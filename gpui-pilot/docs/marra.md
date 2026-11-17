@@ -227,8 +227,10 @@ Not discussed in detail; change any of them.
   thread view, the input with / and @. Lanes are ⌥B, ⌥R and ⌥A, since the input always has the
   keyboard.
 - **Instant commands:** `/waiting`, `/review`, `/open`, `/later`, `/compact`, `/new`, `/model`,
-  `/notes`, `/help`. Prompted: `/catch-up`, `/standup`, `/ask`, `/investigate`. Saved prompts in the
-  harness aren't read yet.
+  `/notes`, `/save`, `/help`. Prompted: `/catch-up`, `/standup`, `/ask`, `/investigate`, and saved
+  prompts: the team's are a harness's `prompts/*.md` with `use: marra` in their front matter (the
+  file name is the command, `description` its line in the list); your own are
+  `~/.gannin/marra/commands/*.md`, made with `/save <name>` from your last message.
 - **Errands:** a worker per errand in the harness folder, Edit and Write disallowed, the reply
   contract parsed when its turn ends. Answer and findings cards (figures, charts, Start fix) aren't
   drawn yet: the body shows as Markdown.

@@ -20,7 +20,7 @@ const REMIND: [(&str, Option<i64>); 7] = [("5m", Some(5)), ("10m", Some(10)), ("
 /// The models offered in the menu; any other goes with /model.
 const MODELS: [(&str, Option<&str>); 4] = [("Claude's default", None), ("Opus", Some("opus")), ("Sonnet", Some("sonnet")), ("Haiku", Some("haiku"))];
 
-const COMMANDS: [(&str, &str); 13] = [
+const COMMANDS: [(&str, &str); 14] = [
     ("/waiting", "What needs you now"),
     ("/catch-up", "Sum up the unread threads"),
     ("/ask", "A data question, answered by a worker in a harness"),
@@ -33,6 +33,7 @@ const COMMANDS: [(&str, &str); 13] = [
     ("/new", "Start a new conversation"),
     ("/model", "Marra's model: /model sonnet, /model default"),
     ("/notes", "Edit Marra's notes about you"),
+    ("/save", "Save your last message as a command: /save name"),
     ("/help", "What Marra can do"),
 ];
 
@@ -55,6 +56,9 @@ pub struct MarraView {
     more_menu: bool,
     row_menu: Option<(String, Point<Pixels>)>,
     menu_closed: Option<Instant>,
+    /// Phone access's address and paired devices, read as the menu opens
+    /// (not on every frame).
+    phone: (Option<String>, usize),
     suggest: usize,
     suggest_closed: Option<String>,
     long_open: HashSet<(String, usize)>,
@@ -62,6 +66,8 @@ pub struct MarraView {
     mentions: Vec<(String, String)>,
     /// The skills the harnesses offer, for @.
     skills: Vec<String>,
+    /// Saved prompts offered as / commands, the user's and the team's.
+    saved_commands: Vec<crate::marra_mcp::SavedCommand>,
     /// A session thread's conversation, read from its transcript.
     tail: Option<(String, Vec<(String, String)>)>,
     /// What the session did since it was last read, taken as it opened.
@@ -88,7 +94,7 @@ impl MarraView {
         // Marra's changes redraw it; an open thread stays read as it grows.
         let observe = cx.observe(&marra, |this: &mut Self, marra, cx| {
             if let Some(open) = this.open.clone() {
-                let thread = marra.read(cx).threads(cx).into_iter().find(|t| t.id == open);
+                let thread = marra.read(cx).threads().into_iter().find(|t| t.id == open);
                 if thread.is_some_and(|t| marra.read(cx).is_unread(&t)) {
                     marra.update(cx, |m, _| m.mark_read(&open, true));
                 }
@@ -116,11 +122,13 @@ impl MarraView {
             more_menu: false,
             row_menu: None,
             menu_closed: None,
+            phone: (None, 0),
             suggest: 0,
             suggest_closed: None,
             long_open: HashSet::new(),
             mentions: Vec::new(),
             skills,
+            saved_commands: crate::marra_mcp::saved_commands(),
             tail: None,
             since: None,
             _tail_task: None,
@@ -147,7 +155,7 @@ impl MarraView {
     // MARK: Queries
 
     fn needs(&self, cx: &App) -> Vec<Need> {
-        let mut needs = self.marra.read(cx).needs(self.scope.as_deref(), cx);
+        let mut needs = self.marra.read(cx).needs(self.scope.as_deref());
         if let Some(lane) = self.lane {
             needs.retain(|n| n.lane == lane);
         }
@@ -156,7 +164,7 @@ impl MarraView {
 
     fn listed(&self, cx: &App) -> Vec<Thread> {
         let marra = self.marra.read(cx);
-        let mut threads = marra.threads(cx);
+        let mut threads = marra.threads();
         if let Some(scope) = &self.scope {
             threads.retain(|t| t.org.as_deref().is_none_or(|o| o == scope));
         }
@@ -228,14 +236,22 @@ impl MarraView {
     fn act(&mut self, act: Act, window: &mut Window, cx: &mut Context<Self>) {
         match act {
             Act::OpenSession(key) => {
-                self.marra.update(cx, |m, cx| {
-                    m.mark_read(&format!("s:{key}"), true);
-                    m.open_session(&key, cx);
+                self.marra.update(cx, |m, _| m.mark_read(&format!("s:{key}"), true));
+                // After this window's update: a docked Marra's own window is
+                // lent out until then, and it may be the one to show.
+                let marra = self.marra.clone();
+                cx.defer(move |cx| {
+                    marra.update(cx, |m, cx| {
+                        m.open_session(&key, cx);
+                    });
                 });
             }
             Act::OpenThread(id) => self.open_thread(id, cx),
             Act::Url(url) => cx.open_url(&url),
-            Act::StartReview(subject) => self.marra.update(cx, |m, cx| m.start_review(subject, cx)),
+            Act::StartReview(subject) => {
+                let marra = self.marra.clone();
+                cx.defer(move |cx| marra.update(cx, |m, cx| m.start_review(subject, cx)));
+            }
             Act::Allow(who, request, always) => self.marra.update(cx, |m, cx| {
                 if let Some(key) = m.convo_mut(&who).and_then(|c| c.decide(&request, true, always)) {
                     m.saved.always.push(key);
@@ -368,8 +384,11 @@ impl MarraView {
                 let body = match found {
                     Some(s) => {
                         let key = s.key.clone();
-                        self.marra.update(cx, |m, cx| {
-                            m.open_session(&key, cx);
+                        let marra = self.marra.clone();
+                        cx.defer(move |cx| {
+                            marra.update(cx, |m, cx| {
+                                m.open_session(&key, cx);
+                            });
                         });
                         format!("Opened {}.", s.title)
                     }
@@ -410,10 +429,33 @@ impl MarraView {
                 note(self, text, body, cx);
             }
             "notes" => edit_notes(cx),
+            "save" => {
+                let name: String = arg.trim_start_matches('/').chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>().to_lowercase();
+                let last = self.marra.read(cx).main.chat.iter().rev().find_map(|e| match e {
+                    Entry::You { text, .. } if !text.starts_with('/') => Some(text.clone()),
+                    _ => None,
+                });
+                let body = match (name.is_empty(), last) {
+                    (true, _) => "Name it: /save standup-notes".to_string(),
+                    (_, None) => "There's no message of yours to save yet.".to_string(),
+                    (false, Some(last)) => {
+                        let folder = crate::marra::dir().join("commands");
+                        let _ = std::fs::create_dir_all(&folder);
+                        match std::fs::write(folder.join(format!("{name}.md")), format!("{last}\n")) {
+                            Ok(()) => {
+                                self.saved_commands = crate::marra_mcp::saved_commands();
+                                format!("Saved as /{name}: your last message. It's in {}; edit it there.", folder.join(format!("{name}.md")).display())
+                            }
+                            Err(e) => format!("Couldn't save it: {e}"),
+                        }
+                    }
+                };
+                note(self, text, body, cx);
+            }
             "help" => note(self, text, COMMANDS.iter().map(|(c, d)| format!("- `{c}`: {d}")).collect::<Vec<_>>().join("\n") + "\n\nAsk anything else in plain words: Marra reads Gannin's sessions and your work.", cx),
             "catch-up" => {
                 let marra = self.marra.read(cx);
-                let unread: Vec<String> = marra.threads(cx).into_iter().filter(|t| marra.is_unread(t) && t.kind != ThreadKind::Main).map(|t| format!("- {} ({}): {}", t.title, t.id, t.last)).collect();
+                let unread: Vec<String> = marra.threads().into_iter().filter(|t| marra.is_unread(t) && t.kind != ThreadKind::Main).map(|t| format!("- {} ({}): {}", t.title, t.id, t.last)).collect();
                 let sent = if unread.is_empty() { "Catch me up: is anything waiting on me? Check with your tools.".to_string() } else { format!("Catch me up on these unread threads, most urgent first, one line each, reading the sessions with read_session where it helps:\n{}", unread.join("\n")) };
                 prompt(self, text, sent, cx);
             }
@@ -422,7 +464,11 @@ impl MarraView {
                 let kind = if name == "ask" { "question" } else { "investigation" };
                 prompt(self, text, format!("Start a {kind} errand for this with start_errand, choosing the harness and skills from list_skills (say which you chose): {arg}"), cx);
             }
-            _ => return false,
+            other => match self.saved_commands.iter().find(|c| c.name == other).cloned() {
+                // A saved prompt goes to Marra, with anything typed after it.
+                Some(saved) => prompt(self, text, if arg.is_empty() { saved.body } else { format!("{}\n\n{arg}", saved.body) }, cx),
+                None => return false,
+            },
         }
         let _ = window;
         true
@@ -446,7 +492,9 @@ impl MarraView {
             if self.open.as_ref().is_some_and(|o| o != "main") {
                 return Vec::new();
             }
-            COMMANDS.iter().map(|(c, d)| (c.to_string(), d.to_string(), None)).collect()
+            let mut list: Vec<(String, String, Option<String>)> = COMMANDS.iter().map(|(c, d)| (c.to_string(), d.to_string(), None)).collect();
+            list.extend(self.saved_commands.iter().filter(|c| !COMMANDS.iter().any(|(n, _)| n[1..] == c.name)).map(|c| (format!("/{}", c.name), format!("{}{}", c.about, c.harness.as_ref().map(|h| format!(" · {h}")).unwrap_or_else(|| " · yours".into())), None)));
+            list
         } else {
             let mut found: Vec<(String, String, Option<String>)> = marra_model::sessions(cx)
                 .into_iter()
@@ -543,7 +591,7 @@ fn open_floating(cx: &mut App) {
 }
 
 /// Docks Marra into the front Gannin window, or floats it again.
-fn set_docked(docked: bool, window: &mut Window, cx: &mut App) {
+fn set_docked(docked: bool, cx: &mut App) {
     let marra = Marra::get(cx);
     marra.update(cx, |m, _| {
         m.saved.docked = docked;
@@ -566,7 +614,6 @@ fn set_docked(docked: bool, window: &mut Window, cx: &mut App) {
         }
         open_floating(cx);
     }
-    let _ = window;
 }
 
 /// GPUI's floating window is a panel, which macOS hides while another app
@@ -668,7 +715,7 @@ impl MarraView {
     fn title_bar(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let marra = self.marra.read(cx);
         let focus = marra.saved.focus;
-        let unread = marra.threads(cx).iter().filter(|t| marra.is_unread(t)).count();
+        let unread = marra.threads().iter().filter(|t| marra.is_unread(t)).count();
         div()
             .flex_none()
             .flex()
@@ -751,6 +798,9 @@ impl MarraView {
                         }
                         this.more_menu = !this.more_menu;
                         this.scope_menu = false;
+                        if this.more_menu {
+                            this.phone = (crate::marra_api::address(), crate::marra_api::devices().len());
+                        }
                         cx.notify();
                     })),
             )
@@ -821,7 +871,7 @@ impl MarraView {
                 .into_iter()
                 .enumerate()
                 .map(|(i, scope)| {
-                    let count = self.marra.read(cx).needs(scope.as_deref(), cx).len();
+                    let count = self.marra.read(cx).needs(scope.as_deref()).len();
                     let on = scope == self.scope;
                     Self::menu_row(format!("scope-{i}"), scope.clone().unwrap_or_else(|| "All".into()), on, theme)
                         .child(div().flex_1())
@@ -872,7 +922,7 @@ impl MarraView {
                             "stop" => this.marra.update(cx, |m, _| m.main.engine.interrupt()),
                             "notes" => edit_notes(cx),
                             "read" => this.marra.update(cx, |m, cx| {
-                                for t in m.threads(cx) {
+                                for t in m.threads() {
                                     m.saved.read.insert(t.id, chrono::Local::now().to_rfc3339());
                                 }
                                 m.saved.save();
@@ -880,8 +930,9 @@ impl MarraView {
                             }),
                             "focus" => this.marra.update(cx, |m, cx| m.set_focus(!focus, cx)),
                             _ => {
+                                // At the app level, once no window is lent out.
                                 let docked = this.docked;
-                                cx.defer_in(window, move |_, window, cx| set_docked(!docked, window, cx));
+                                cx.defer(move |cx| set_docked(!docked, cx));
                             }
                         }
                         cx.notify();
@@ -916,7 +967,7 @@ impl MarraView {
             let m = self.marra.read(cx);
             (m.api.is_some(), m.api.as_ref().and_then(|a| a.code()), m.api_error.clone())
         };
-        let devices = crate::marra_api::devices().len();
+        let devices = self.phone.1;
         rows.push(div().mx_2().my_1().h(px(1.)).bg(theme.border).into_any_element());
         rows.push(
             Self::menu_row("phone", if api_on { "✓ Phone access" } else { "   Phone access" }, false, theme)
@@ -925,6 +976,7 @@ impl MarraView {
                         m.set_api(!api_on);
                         cx.notify();
                     });
+                    this.phone = (crate::marra_api::address(), crate::marra_api::devices().len());
                     cx.notify();
                 }))
                 .into_any_element(),
@@ -933,7 +985,7 @@ impl MarraView {
             rows.push(div().px_2().pb_1().text_xs().text_color(theme.orange()).child(error).into_any_element());
         }
         if api_on {
-            let address = crate::marra_api::address().unwrap_or_else(|| "no local network".into());
+            let address = self.phone.0.clone().unwrap_or_else(|| "no local network".into());
             rows.push(div().px_2().text_xs().text_color(theme.secondary).child(format!("On this network at {address}")).into_any_element());
             rows.push(
                 div()
@@ -966,8 +1018,9 @@ impl MarraView {
                     .gap_2()
                     .child(div().text_xs().text_color(theme.secondary).child(format!("{devices} device{} paired", if devices == 1 { "" } else { "s" })))
                     .when(devices > 0, |d| {
-                        d.child(div().id("revoke").text_xs().text_color(theme.orange()).cursor_pointer().child("Revoke all").on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                        d.child(div().id("revoke").text_xs().text_color(theme.orange()).cursor_pointer().child("Revoke all").on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             crate::marra_api::revoke_all();
+                            this.phone.1 = 0;
                             cx.notify();
                         })))
                     })
@@ -1180,7 +1233,7 @@ impl MarraView {
     fn row_menu_view(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
         let (id, at) = self.row_menu.clone()?;
         let marra = self.marra.read(cx);
-        let thread = marra.threads(cx).into_iter().find(|t| t.id == id)?;
+        let thread = marra.threads().into_iter().find(|t| t.id == id)?;
         let unread = marra.is_unread(&thread);
         let pinned = marra.saved.pinned.contains(&id);
         let muted = marra.saved.muted.contains(&id);
@@ -1250,7 +1303,7 @@ impl MarraView {
 
     fn thread_view(&self, id: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let marra = self.marra.read(cx);
-        let Some(thread) = marra.threads(cx).into_iter().find(|t| t.id == id) else {
+        let Some(thread) = marra.threads().into_iter().find(|t| t.id == id) else {
             return div().flex_1().p_4().text_color(theme.secondary).child(div().id("gone").cursor_pointer().text_color(theme.selected).child("‹ Threads").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx)))).child("This thread has closed.").into_any_element();
         };
         let pinned = marra.saved.pinned.iter().any(|p| p == id);
@@ -1304,7 +1357,7 @@ impl MarraView {
     /// its conversation from the transcript.
     fn session_body(&self, key: &str, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
         let info = marra_model::sessions(cx).into_iter().find(|s| s.key == key);
-        let need = self.marra.read(cx).needs(None, cx).into_iter().find(|n| n.thread.as_deref() == Some(&format!("s:{key}")));
+        let need = self.marra.read(cx).needs(None).into_iter().find(|n| n.thread.as_deref() == Some(&format!("s:{key}")));
         let lines = self.tail.as_ref().filter(|(k, _)| k == key).map(|(_, l)| l.clone()).unwrap_or_default();
         // What happened since the last look, from Gannin's log; frozen when
         // the thread opened, as opening marks it read.

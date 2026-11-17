@@ -26,6 +26,9 @@ use std::time::{Duration, Instant};
 
 pub const PORT: u16 = 47870;
 const CODE_LIFE: Duration = Duration::from_secs(10 * 60);
+/// Wrong codes before the code stops working: a million codes can't be
+/// tried in ten minutes five at a time.
+const CODE_TRIES: u32 = 5;
 
 /// A request for the main thread: the method, the path after `/v1` and
 /// the body (from a paired device).
@@ -93,14 +96,23 @@ fn local(ip: IpAddr) -> bool {
 pub struct Api {
     on: Arc<AtomicBool>,
     pub version: Arc<AtomicU64>,
-    pairing: Arc<Mutex<Option<(String, Instant)>>>,
+    pairing: Arc<Mutex<Option<(String, Instant, u32)>>>,
     pub calls: Receiver<ApiCall>,
 }
 
 impl Api {
     /// Starts listening on every interface (refusing anything not local).
     pub fn start() -> Result<Self, String> {
-        let listener = TcpListener::bind(("0.0.0.0", PORT)).map_err(|e| format!("Couldn't listen on port {PORT}: {e}"))?;
+        // Turned off a moment ago, the last listener may still be closing.
+        let mut bound = TcpListener::bind(("0.0.0.0", PORT));
+        for _ in 0..4 {
+            if bound.is_ok() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(150));
+            bound = TcpListener::bind(("0.0.0.0", PORT));
+        }
+        let listener = bound.map_err(|e| format!("Couldn't listen on port {PORT}: {e}"))?;
         listener.set_nonblocking(true).map_err(|e| e.to_string())?;
         let on = Arc::new(AtomicBool::new(true));
         let version = Arc::new(AtomicU64::new(1));
@@ -134,13 +146,13 @@ impl Api {
         let n = u128::from_le_bytes(*uuid::Uuid::new_v4().as_bytes()) % 1_000_000;
         let code = format!("{n:06}");
         if let Ok(mut p) = self.pairing.lock() {
-            *p = Some((code.clone(), Instant::now()));
+            *p = Some((code.clone(), Instant::now(), 0));
         }
         code
     }
 
     pub fn code(&self) -> Option<String> {
-        self.pairing.lock().ok().and_then(|p| p.clone()).filter(|(_, at)| at.elapsed() < CODE_LIFE).map(|(c, _)| c)
+        self.pairing.lock().ok().and_then(|p| p.clone()).filter(|(_, at, tries)| at.elapsed() < CODE_LIFE && *tries < CODE_TRIES).map(|(c, _, _)| c)
     }
 
     pub fn changed(&self) {
@@ -166,7 +178,7 @@ pub fn address() -> Option<String> {
     None
 }
 
-fn handle(mut stream: TcpStream, calls: &Sender<ApiCall>, on: &AtomicBool, version: &AtomicU64, pairing: &Mutex<Option<(String, Instant)>>) -> std::io::Result<()> {
+fn handle(mut stream: TcpStream, calls: &Sender<ApiCall>, on: &AtomicBool, version: &AtomicU64, pairing: &Mutex<Option<(String, Instant, u32)>>) -> std::io::Result<()> {
     use crate::marra_mcp::respond;
     let request = crate::marra_mcp::read_request(&stream)?;
     let reply = |stream: &mut TcpStream, status: u16, body: Value| respond(stream, status, "application/json", &body.to_string());
@@ -176,10 +188,15 @@ fn handle(mut stream: TcpStream, calls: &Sender<ApiCall>, on: &AtomicBool, versi
     if request.method == "POST" && path == "/pair" {
         let body: Value = serde_json::from_slice(&request.body).unwrap_or_default();
         let offered = body["code"].as_str().unwrap_or_default();
-        let valid = pairing.lock().ok().is_some_and(|mut p| match p.as_ref() {
-            Some((code, at)) if code == offered && at.elapsed() < CODE_LIFE => {
-                *p = None;
-                true
+        let valid = pairing.lock().ok().is_some_and(|mut p| match p.as_mut() {
+            Some((code, at, tries)) if *tries < CODE_TRIES && at.elapsed() < CODE_LIFE => {
+                if code == offered {
+                    *p = None;
+                    true
+                } else {
+                    *tries += 1;
+                    false
+                }
             }
             _ => false,
         });

@@ -16,7 +16,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -181,6 +181,9 @@ pub struct Engine {
     /// The process this reader belongs to, so a stale reader's events are dropped.
     generation: Arc<Mutex<u64>>,
     pub busy: bool,
+    /// Messages sent whose turns haven't ended: a second message sent while
+    /// busy keeps it busy after the first turn's result.
+    turns: u32,
     pub profile: Profile,
     /// The MCP server's address and token, given to each process started.
     pub mcp: Option<(u16, String)>,
@@ -207,7 +210,7 @@ impl Profile {
 
 impl Engine {
     pub fn new(profile: Profile) -> Self {
-        Self { child: None, stdin: None, events: Arc::default(), generation: Arc::default(), busy: false, profile, mcp: None }
+        Self { child: None, stdin: None, events: Arc::default(), generation: Arc::default(), busy: false, turns: 0, profile, mcp: None }
     }
 
     pub fn running(&mut self) -> bool {
@@ -221,13 +224,19 @@ impl Engine {
     pub fn drain(&mut self) -> Vec<Event> {
         let out: Vec<Event> = self.events.lock().map(|mut q| q.drain(..).collect()).unwrap_or_default();
         for event in &out {
-            if matches!(event, Event::Done { .. } | Event::Exited(_)) {
-                self.busy = false;
+            match event {
+                Event::Done { .. } => self.turns = self.turns.saturating_sub(1),
+                Event::Exited(_) => self.turns = 0,
+                _ => {}
             }
         }
+        self.busy = self.turns > 0;
         if out.iter().any(|e| matches!(e, Event::Exited(_))) {
             self.stdin = None;
-            self.child = None;
+            // Reaped, so it doesn't linger as a zombie.
+            if let Some(mut child) = self.child.take() {
+                let _ = child.wait();
+            }
         }
         out
     }
@@ -294,7 +303,25 @@ impl Engine {
             *g
         };
         let stdout = child.stdout.take();
-        let mut stderr = child.stderr.take();
+        // stderr drains on its own thread, so a chatty shell can't fill the
+        // pipe and stall claude; its last lines say why it stopped.
+        let stderr_tail: Arc<Mutex<VecDeque<String>>> = Arc::default();
+        if let Some(stderr) = child.stderr.take() {
+            let tail = stderr_tail.clone();
+            std::thread::spawn(move || {
+                for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+                    if line.trim().is_empty() || line.contains("can't change option") || line.contains("no job control") {
+                        continue;
+                    }
+                    if let Ok(mut t) = tail.lock() {
+                        t.push_back(line);
+                        if t.len() > 3 {
+                            t.pop_front();
+                        }
+                    }
+                }
+            });
+        }
         let events = self.events.clone();
         let current = self.generation.clone();
         std::thread::spawn(move || {
@@ -313,12 +340,9 @@ impl Engine {
                     }
                 }
             }
-            let mut errors = String::new();
-            if let Some(stderr) = stderr.as_mut() {
-                let _ = stderr.read_to_string(&mut errors);
-            }
-            let lines: Vec<&str> = errors.lines().filter(|l| !l.trim().is_empty()).collect();
-            let tail = lines[lines.len().saturating_sub(3)..].join("\n");
+            // A moment for stderr's last lines to arrive.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let tail = stderr_tail.lock().map(|t| t.iter().cloned().collect::<Vec<_>>().join("\n")).unwrap_or_default();
             push(Event::Exited(if tail.is_empty() { "claude stopped.".into() } else { tail }));
         });
         self.child = Some(child);
@@ -339,12 +363,17 @@ impl Engine {
     pub fn send(&mut self, text: &str) -> Result<(), String> {
         let value = json!({ "type": "user", "message": { "role": "user", "content": text } });
         self.write(&value)?;
+        self.turns += 1;
         self.busy = true;
         Ok(())
     }
 
     /// Answers a permission request: allowed (with the input unchanged) or not.
     pub fn answer(&mut self, request: &str, allow: bool, input: &Value) -> Result<(), String> {
+        // The request died with its process; a new one wouldn't know it.
+        if !self.running() {
+            return Err("claude has stopped; the request went with it.".into());
+        }
         let response = if allow { json!({ "behavior": "allow", "updatedInput": input }) } else { json!({ "behavior": "deny", "message": "The user declined this. Ask them, or carry on without it." }) };
         self.write(&json!({ "type": "control_response", "response": { "subtype": "success", "request_id": request, "response": response } }))
     }
@@ -367,6 +396,7 @@ impl Engine {
             let _ = child.kill();
             let _ = child.wait();
         }
+        self.turns = 0;
         self.busy = false;
     }
 
@@ -477,11 +507,25 @@ pub fn summarize(tool: &str, input: &Value) -> String {
     }
 }
 
-/// The key Allow always records for a tool call.
-pub fn always_key(tool: &str, input: &Value) -> String {
+/// The key Allow always records for a tool call: the tool, or for Bash
+/// the program and its subcommand. None for a command that chains,
+/// redirects or substitutes: allowing that for good would allow anything.
+pub fn always_key(tool: &str, input: &Value) -> Option<String> {
     match tool {
-        "Bash" => format!("Bash({})", input["command"].as_str().and_then(|c| c.split_whitespace().next()).unwrap_or_default()),
-        _ => tool.to_string(),
+        "Bash" => {
+            let command = input["command"].as_str()?;
+            if command.contains([';', '&', '|', '>', '<', '`', '$', '\n']) {
+                return None;
+            }
+            let words: Vec<&str> = command.split_whitespace().take(2).collect();
+            let key = match words.as_slice() {
+                [program, sub] if !sub.starts_with('-') => format!("{program} {sub}"),
+                [program, ..] => program.to_string(),
+                [] => return None,
+            };
+            Some(format!("Bash({key})"))
+        }
+        _ => Some(tool.to_string()),
     }
 }
 
@@ -506,10 +550,15 @@ fn read_only_command(command: &str) -> bool {
         return false;
     }
     let words: Vec<&str> = command.split_whitespace().collect();
+    // Options that write a file, run a program or never finish.
+    let risky = |w: &&str| w.starts_with("--output") || w.starts_with("--pre") || w.starts_with("-exec") || w.starts_with("-ok") || w.starts_with("-fprint") || w.starts_with("-fls") || *w == "-delete" || *w == "-f" || *w == "-F" || *w == "--follow";
+    if words.iter().any(risky) {
+        return false;
+    }
     match words.as_slice() {
         [] => false,
-        ["ls" | "cat" | "head" | "tail" | "wc" | "rg" | "grep" | "find" | "pwd" | "date" | "which" | "echo", rest @ ..] => !rest.iter().any(|w| *w == "-delete" || w.starts_with("-exec")),
-        ["git", sub, ..] => matches!(*sub, "status" | "log" | "diff" | "show" | "branch" | "rev-parse" | "ls-files" | "blame"),
+        ["ls" | "cat" | "head" | "tail" | "wc" | "rg" | "grep" | "find" | "pwd" | "date" | "which" | "echo", ..] => true,
+        ["git", sub, ..] => matches!(*sub, "status" | "log" | "diff" | "show" | "rev-parse" | "ls-files" | "blame"),
         ["gh", "pr" | "issue" | "run" | "repo" | "release", sub, ..] => matches!(*sub, "view" | "list" | "diff" | "checks" | "status"),
         ["gh", "search", ..] => true,
         _ => false,
@@ -543,6 +592,12 @@ mod tests {
         assert!(!read_only_command("ls; rm -rf x"));
         assert!(!read_only_command("find . -delete"));
         assert!(!read_only_command("cat x > y"));
+        assert!(!read_only_command("git branch -D main"));
+        assert!(!read_only_command("rg --pre sh x"));
+        assert!(!read_only_command("tail -f log"));
+        assert!(!read_only_command("git diff --output=x"));
+        assert_eq!(always_key("Bash", &json!({ "command": "git commit -m x" })), Some("Bash(git commit)".into()));
+        assert_eq!(always_key("Bash", &json!({ "command": "cd x && npm test" })), None);
     }
 
     #[test]
