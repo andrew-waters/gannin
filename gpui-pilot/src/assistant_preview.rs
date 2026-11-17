@@ -163,7 +163,7 @@ fn seed() -> (Vec<Thread>, Vec<Item>) {
             doing: None,
             unread: true,
             muted: false,
-            pinned: false,
+            pinned: true,
             minutes: 2,
             scope: 1,
             messages: vec![
@@ -1132,6 +1132,7 @@ impl AssistantPreview {
         let listed = self.listed();
         let unread = self.unread_count();
         let count = listed.len();
+        let pinned = listed.iter().filter(|&&t| self.threads[t].pinned).count();
         div()
             .id("threads")
             .flex_1()
@@ -1165,8 +1166,11 @@ impl AssistantPreview {
                 let thread = &self.threads[t];
                 let unread = self.is_unread(t);
                 let last_row = row + 1 == count;
+                // Pinned threads sit above a full-width divider.
+                let ends_pins = pinned > 0 && pinned < count && row + 1 == pinned;
                 div()
                     .id(SharedString::from(format!("thread-{t}")))
+                    .when(ends_pins, |d| d.border_b_1().border_color(theme.border).mb_1())
                     .flex()
                     .flex_row()
                     .items_center()
@@ -1185,7 +1189,7 @@ impl AssistantPreview {
                             .py_2()
                             .flex()
                             .flex_col()
-                            .when(!last_row, |d| d.border_b_1().border_color(theme.grid))
+                            .when(!last_row && !ends_pins, |d| d.border_b_1().border_color(theme.grid))
                             .child(
                                 div()
                                     .flex()
@@ -1193,8 +1197,7 @@ impl AssistantPreview {
                                     .items_center()
                                     .gap_2()
                                     .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
-                                    .when(thread.pinned, |d| d.child(gpui::svg().path("icons/pin.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
-                                    .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
+                                                                        .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
                                     .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) }))
                                     .child(div().text_sm().text_color(theme.tertiary).child("›")),
                             )
