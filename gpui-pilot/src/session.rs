@@ -121,7 +121,15 @@ pub fn spawn_terminal(kind: Kind, folder: PathBuf, launch: Option<&crate::launch
                     "-l".into(),
                     "-i".into(),
                     "-c".into(),
-                    format!("bash {}", crate::launch::quote(&launch.dir().join("start.sh").to_string_lossy())),
+                    match &launch.server {
+                        // On a server: copied up and run there over ssh,
+                        // its files mirrored back.
+                        Some(server) => {
+                            crate::servers::watch(launch);
+                            crate::servers::start_command(server, launch)
+                        }
+                        None => format!("bash {}", crate::launch::quote(&launch.dir().join("start.sh").to_string_lossy())),
+                    },
                 ],
                 title_override: None,
             }),

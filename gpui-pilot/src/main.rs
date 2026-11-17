@@ -44,6 +44,8 @@ mod workflows_page;
 mod scorecard;
 mod pr_picker;
 mod prs;
+mod servers;
+mod servers_page;
 mod session;
 mod shell;
 mod state;

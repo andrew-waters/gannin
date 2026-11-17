@@ -104,6 +104,11 @@ pub(crate) fn transcript_path(claude_id: &str) -> Option<PathBuf> {
 }
 
 fn transcript(claude_id: &str) -> Option<PathBuf> {
+    // A session on a server: the copy its mirror keeps in its folder here.
+    let mirrored = crate::launch::sessions_dir().join(claude_id.to_uppercase()).join("transcript.jsonl");
+    if mirrored.exists() {
+        return Some(mirrored);
+    }
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let projects = home.join(".claude/projects");
     std::fs::read_dir(projects).ok()?.flatten().map(|e| e.path().join(format!("{claude_id}.jsonl"))).find(|p| p.exists())

@@ -69,6 +69,9 @@ pub struct Launch {
     /// its pull requests the gap apart. Minutes of that gap.
     #[serde(default)]
     pub unattended: Option<u32>,
+    /// The server it runs on (Settings › Servers); None is this Mac.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub server: Option<crate::servers::Server>,
 }
 
 impl Launch {
@@ -84,6 +87,7 @@ impl Launch {
             subject,
             created_at: Utc::now(),
             unattended: None,
+            server: crate::servers::run_on(),
         }
     }
 
@@ -244,7 +248,7 @@ pub fn quote(text: &str) -> String {
 }
 
 /// A path for the script, under `$HOME` where it is, as Gannin writes it.
-fn quote_path(path: &Path) -> String {
+pub fn quote_path(path: &Path) -> String {
     let home = home();
     match path.strip_prefix(&home) {
         Ok(rest) if !home.as_os_str().is_empty() => format!("\"$HOME\"/{}", quote(&rest.to_string_lossy())),

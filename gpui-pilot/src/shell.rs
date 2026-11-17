@@ -384,6 +384,7 @@ enum Page {
     ReviewPreview(Entity<crate::review_preview::ReviewPreview>),
     SchedulePreview(Entity<crate::schedule_page::SchedulePage>),
     WorkflowsPreview(Entity<crate::workflows_page::WorkflowsPage>),
+    Settings(Entity<crate::servers_page::ServersPage>),
     None,
 }
 
@@ -912,6 +913,7 @@ impl Workspace {
             Nav::SchedulePreview => Page::SchedulePreview(cx.new(|cx| crate::schedule_page::SchedulePage::new(org.clone(), window, cx))),
             Nav::WorkflowsPreview => Page::WorkflowsPreview(cx.new(|cx| crate::workflows_page::WorkflowsPage::new(org.clone(), self.project.clone(), window, cx))),
             Nav::Harness(kind) => Page::Harness(cx.new(|cx| crate::harness::HarnessPage::new(org, kind, window, cx))),
+            Nav::Settings => Page::Settings(cx.new(|cx| crate::servers_page::ServersPage::new(window, cx))),
             _ => Page::None,
         };
         let subscriptions = Self::watch(&page, window, cx);
@@ -1219,6 +1221,10 @@ impl Workspace {
     /// Then it asks: switch it back (and pull) and start, start anyway, or
     /// not start.
     fn start_launch(&mut self, launch: crate::launch::Launch, brief: &str, prompt: &str, disallow_edits: bool, window: &mut Window, cx: &mut Context<Self>) {
+        // On a server, the harness checked is there: its start script pulls it.
+        if launch.server.is_some() {
+            return self.start_now(launch, brief, prompt, disallow_edits, window, cx);
+        }
         let (brief, prompt) = (brief.to_string(), prompt.to_string());
         let harness = launch.harness_path.clone();
         let check = cx.background_executor().spawn(async move { crate::launch::harness_branch(&harness) });
@@ -3108,6 +3114,10 @@ impl Workspace {
         }
         // Dropping a session's terminal ends its process (a hangup).
         if let Nav::Session(id) = self.tabs.remove(index).nav {
+            // Its mirror stops with it, if it ran on a server.
+            if let Some(launch) = self.sessions.iter().find(|s| s.read(cx).id == id).and_then(|s| s.read(cx).launch.clone()) {
+                crate::servers::unwatch(&launch.id);
+            }
             self.sessions.retain(|s| s.read(cx).id != id);
             self.sync_reviewing(cx);
         }
@@ -3859,15 +3869,15 @@ impl Workspace {
             .border_r_1()
             .border_color(theme.border)
             .child(div().id("nav").flex_1().min_h_0().overflow_y_scroll().px_2().pb_3().children(rows))
-            // Settings isn't ported yet.
-            // .child(
-            //     div()
-            //         .flex_none()
-            //         .p_2()
-            //         .border_t_1()
-            //         .border_color(theme.border)
-            //         .child(self.nav_row(Nav::Settings, 0, None, current, theme, cx)),
-            // )
+            // Settings: for now, the servers sessions run on.
+            .child(
+                div()
+                    .flex_none()
+                    .p_2()
+                    .border_t_1()
+                    .border_color(theme.border)
+                    .child(self.nav_row(Nav::Settings, 0, None, current, theme, cx)),
+            )
             .child(self.resize_handle("resize-sidebar", Edge::Sidebar, cx))
     }
 
@@ -4557,6 +4567,7 @@ impl Workspace {
             Nav::ReviewPreview => "icons/eye.svg",
             Nav::SchedulePreview => "icons/clock.svg",
             Nav::WorkflowsPreview => "icons/git_graph.svg",
+            Nav::Settings => "icons/settings.svg",
             Nav::Session(id) => match self.session(id, cx).map(|p| p.read(cx)) {
                 Some(page) if page.launch.is_some() => self.tab_kind(tab, cx).icon(),
                 Some(page) if page.kind == Kind::Shell => "icons/terminal.svg",
@@ -4751,6 +4762,7 @@ impl Workspace {
                 Page::ReviewPreview(page) => page.into_any_element(),
                 Page::SchedulePreview(page) => page.into_any_element(),
                 Page::WorkflowsPreview(page) => page.into_any_element(),
+                Page::Settings(page) => page.into_any_element(),
                 Page::None => div().into_any_element(),
             },
             Some(nav) => div()

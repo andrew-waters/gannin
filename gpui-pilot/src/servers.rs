@@ -1,0 +1,397 @@
+//! Servers sessions can run on, added as Zed adds a remote: you type the
+//! ssh command you'd use (`ssh aw@mini.home -p 22`, or just `mini`), read
+//! with Zed's own parser, and the server is kept only once a connection
+//! works. Kept in `servers.json` in the pilot's folder, shaped like Zed's
+//! `ssh_connections` (host, username, port, args, nickname).
+//!
+//! A session started while Settings › Servers says "Run new sessions on" a
+//! server keeps it (`Launch::server`), and everything about it goes over one
+//! ssh connection per server (a ControlMaster, as Zed's):
+//!
+//! - its terminal: the session's folder is copied up, then `start.sh` runs
+//!   there in a login shell, through `ssh -t`;
+//! - a mirror: every two seconds the hook files (state, tool.json, pr,
+//!   changed, started) and new lines of claude's transcript are copied back
+//!   into the session's folder here, so everything that reads them works as
+//!   it does for a session on this Mac;
+//! - git in the session's worktrees, for Changes, over ssh.
+//!
+//! The harness is at the same place under the server's home as here (the
+//! start script clones it when it's missing). Batch mode: ssh never asks for
+//! a password, so a server needs key (or agent) sign-in, as Zed recommends.
+
+use base64::Engine;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::{Mutex, OnceLock};
+
+/// Where ssh keeps each shared connection. Short, as a socket's path must
+/// be under 104 bytes on macOS, which Application Support isn't.
+const CONTROL_PATH: &str = "/tmp/gannin-pilot-%C";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Server {
+    pub host: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub port: Option<u16>,
+    /// ssh options kept from the command typed (`-i key`, `-J jump`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nickname: Option<String>,
+}
+
+impl Server {
+    /// From the ssh command as typed, read as Zed's Connect New Server reads
+    /// it: options that would break the connection (`-t`, `-N`, `-f`) are
+    /// refused.
+    pub fn parse(command: &str, nickname: &str) -> Result<Server, String> {
+        let command = command.trim();
+        if command.is_empty() {
+            return Err("Type the ssh command you use to reach it, such as ssh me@devbox.".into());
+        }
+        let options = ::remote::SshConnectionOptions::parse_command_line(command).map_err(|e| format!("{e}"))?;
+        Ok(Server {
+            host: options.host.to_string(),
+            username: options.username,
+            port: options.port,
+            args: options.args.unwrap_or_default(),
+            nickname: Some(nickname.trim().to_string()).filter(|n| !n.is_empty()),
+        })
+    }
+
+    /// `user@host:port`, as much as was given: what tells two servers apart.
+    pub fn key(&self) -> String {
+        let host = match self.port {
+            Some(port) => format!("{}:{port}", self.host),
+            None => self.host.clone(),
+        };
+        match &self.username {
+            Some(user) => format!("{user}@{host}"),
+            None => host,
+        }
+    }
+
+    /// Its nickname, else its key.
+    pub fn name(&self) -> String {
+        self.nickname.clone().unwrap_or_else(|| self.key())
+    }
+
+    fn destination(&self) -> String {
+        match &self.username {
+            Some(user) => format!("{user}@{}", self.host),
+            None => self.host.clone(),
+        }
+    }
+
+    /// ssh's arguments up to the remote command: the shared connection,
+    /// then batch mode (or a terminal, for a session), the server's own
+    /// options, its port and where to.
+    pub fn ssh_args(&self, terminal: bool) -> Vec<String> {
+        let mut args: Vec<String> = ["-o", "ControlMaster=auto", "-o", &format!("ControlPath={CONTROL_PATH}"), "-o", "ControlPersist=300", "-o", "ServerAliveInterval=30"].map(str::to_string).to_vec();
+        if terminal {
+            args.push("-t".into());
+        } else {
+            args.extend(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10"].map(str::to_string));
+        }
+        args.extend(self.args.iter().cloned());
+        if let Some(port) = self.port {
+            args.extend(["-p".to_string(), port.to_string()]);
+        }
+        args.push(self.destination());
+        args
+    }
+
+    /// `ssh <arguments>` as one shell command line.
+    pub fn ssh_command(&self, terminal: bool) -> String {
+        std::iter::once("ssh".to_string()).chain(self.ssh_args(terminal).iter().map(|a| crate::launch::quote(a))).collect::<Vec<_>>().join(" ")
+    }
+}
+
+// MARK: - Saved servers
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Servers {
+    #[serde(default)]
+    pub servers: Vec<Server>,
+    /// The key of the server new sessions run on; None is this Mac.
+    #[serde(default)]
+    pub run_on: Option<String>,
+}
+
+fn servers_path() -> PathBuf {
+    crate::launch::sessions_dir().parent().map(Path::to_path_buf).unwrap_or_default().join("servers.json")
+}
+
+pub fn load() -> Servers {
+    std::fs::read(servers_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+pub fn save(servers: &Servers) {
+    if let Some(dir) = servers_path().parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(servers_path(), serde_json::to_vec_pretty(servers).unwrap_or_default());
+}
+
+/// Where a new session runs: the server picked, while it's still saved.
+pub fn run_on() -> Option<Server> {
+    let saved = load();
+    let key = saved.run_on?;
+    saved.servers.into_iter().find(|s| s.key() == key)
+}
+
+/// The hosts named in `~/.ssh/config` (not patterns), offered when adding
+/// a server.
+pub fn config_hosts() -> Vec<String> {
+    let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
+    let text = std::fs::read_to_string(home.join(".ssh/config")).unwrap_or_default();
+    let mut hosts: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter_map(|line| {
+            let (key, rest) = line.split_once(char::is_whitespace)?;
+            key.eq_ignore_ascii_case("host").then(|| rest.split_whitespace().filter(|h| !h.contains(['*', '?', '!'])).map(str::to_string).collect::<Vec<_>>())
+        })
+        .flatten()
+        .collect();
+    hosts.dedup();
+    hosts
+}
+
+// MARK: - Running things there
+
+/// Runs `command` on the server through its shell, in batch mode: what it
+/// printed, or why it failed.
+pub fn command(server: &Server, command: &str, input: Option<&[u8]>) -> Result<Vec<u8>, String> {
+    let mut child = Command::new("ssh")
+        .args(server.ssh_args(false))
+        .arg(command)
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Couldn't run ssh: {e}"))?;
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        let _ = stdin.write_all(input);
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(out.stdout)
+    } else {
+        let error = String::from_utf8_lossy(&out.stderr);
+        Err(error.lines().rev().find(|l| !l.trim().is_empty()).map(str::to_string).unwrap_or_else(|| format!("ssh exited with {}", out.status)))
+    }
+}
+
+/// Runs a bash script there in a login shell, so it finds what a session
+/// would (the PATH from the shell's profile).
+pub fn script(server: &Server, script: &str) -> Result<String, String> {
+    command(server, r#"exec "${SHELL:-/bin/bash}" -lc 'exec bash -s'"#, Some(script.as_bytes())).map(|o| String::from_utf8_lossy(&o).into_owned())
+}
+
+/// git in a folder there, as the Changes pane runs it here.
+pub fn git(server: &Server, dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    let args: Vec<String> = args.iter().map(|a| crate::launch::quote(a)).collect();
+    command(server, &format!("git -C {} {}", crate::launch::quote_path(dir), args.join(" ")), None)
+}
+
+/// The git checkouts in a folder there, by name, as the worktree list
+/// reads a folder here.
+pub fn checkouts(server: &Server, dir: &Path) -> Vec<String> {
+    let script = format!(r#"cd {} 2>/dev/null || exit 0; for d in */; do [ -e "$d.git" ] && printf '%s\n' "${{d%/}}"; done; exit 0"#, crate::launch::quote_path(dir));
+    let listed = command(server, "bash -s", Some(script.as_bytes())).unwrap_or_default();
+    String::from_utf8_lossy(&listed).lines().filter(|l| !l.is_empty()).map(str::to_string).collect()
+}
+
+// MARK: - Checking a server
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Item {
+    pub label: &'static str,
+    pub ok: bool,
+    /// What was found, or what to do.
+    pub detail: String,
+    /// Sessions can't run without it.
+    pub needed: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Check {
+    pub at: chrono::DateTime<chrono::Utc>,
+    /// Why it couldn't connect; the items are empty then.
+    pub error: Option<String>,
+    pub items: Vec<Item>,
+}
+
+impl Check {
+    pub fn ready(&self) -> bool {
+        self.error.is_none() && self.items.iter().all(|i| i.ok || !i.needed)
+    }
+}
+
+/// Connects and looks for what sessions need there. Never reads claude's
+/// sign-in: a session asks for it when it starts.
+pub fn check(server: &Server) -> Check {
+    const PROBE: &str = r#"
+printf 'os=%s\n' "$( (sw_vers -productVersion 2>/dev/null || uname -sr) | head -1) $(uname -m)"
+if [ "$(uname)" = Darwin ] && ! xcode-select -p >/dev/null 2>&1; then echo git=; else printf 'git=%s\n' "$(git --version 2>/dev/null)"; fi
+printf 'claude=%s\n' "$(claude --version 2>/dev/null | head -1)"
+printf 'gh=%s\n' "$(gh --version 2>/dev/null | head -1)"
+printf 'ghauth=%s\n' "$(gh auth status 2>&1 | sed -n 's/.*Logged in to \([^ ]*\) account \([^ ]*\).*/\2/p' | head -1)"
+printf 'container=%s\n' "$(container --version 2>/dev/null | head -1)"
+"#;
+    let at = chrono::Utc::now();
+    let output = match script(server, PROBE) {
+        Ok(output) => output,
+        Err(error) => return Check { at, error: Some(error), items: Vec::new() },
+    };
+    let found: HashMap<&str, &str> = output.lines().filter_map(|l| l.split_once('=')).map(|(k, v)| (k, v.trim())).collect();
+    let get = |key: &str| found.get(key).copied().filter(|v| !v.is_empty()).map(str::to_string);
+    let item = |label, value: Option<String>, missing: &str, needed| Item { label, ok: value.is_some(), detail: value.unwrap_or_else(|| missing.to_string()), needed };
+    let items = vec![
+        item("Connected", get("os"), "", true),
+        item("git", get("git"), "Missing. On a Mac: xcode-select --install", true),
+        item("Claude Code", get("claude"), "Missing. curl -fsSL https://claude.ai/install.sh | bash", true),
+        item("gh", get("gh").map(|v| v.replace("gh version ", "")), "Missing. Sessions use it for pull requests.", false),
+        item("gh signed in", get("ghauth").map(|login| format!("as {login}")), "Not signed in. Run gh auth login there.", false),
+        item("Apple container", get("container"), "Not installed. Only sandboxed sessions need it.", false),
+    ];
+    Check { at, error: None, items }
+}
+
+// MARK: - Sessions there
+
+#[derive(Clone)]
+struct Watched {
+    server: Server,
+    /// The session's folder here, which the mirror fills.
+    local: PathBuf,
+    claude_id: String,
+    /// Its folder in the harness, the same path there as here.
+    folder: PathBuf,
+}
+
+fn watched() -> &'static Mutex<HashMap<String, Watched>> {
+    static WATCHED: OnceLock<Mutex<HashMap<String, Watched>>> = OnceLock::new();
+    WATCHED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The shell command that starts a session on its server: copies the
+/// session's folder up (not the files the server writes back), sets its
+/// state, then runs `start.sh` there in a login shell with a terminal.
+pub fn start_command(server: &Server, launch: &crate::launch::Launch) -> String {
+    let local = launch.dir();
+    let remote = crate::launch::quote_path(&local);
+    let keep = ["state", "started", "changed", "pr", "tool.json", "transcript.jsonl", "risk.json", "auto-posted", "posted.json", "decisions.json"];
+    let excludes: String = keep.iter().map(|f| format!(" --exclude {}", crate::launch::quote(&format!("./{f}")))).collect();
+    let unpack = format!("mkdir -p {remote} && tar -C {remote} -xf - && if [ -e {remote}/started ]; then printf idle > {remote}/state; else printf starting > {remote}/state; fi");
+    let run = format!(r#"exec "${{SHELL:-/bin/bash}}" -lic 'exec bash "$0"' {remote}/start.sh"#);
+    format!(
+        "printf '\\033[90m%s\\033[0m\\n' {note} && COPYFILE_DISABLE=1 tar -C {local}{excludes} -cf - . | {upload} {unpack} || {{ printf '\\033[31mGannin: %s\\033[0m\\n' {failed}; exec \"${{SHELL:-/bin/zsh}}\" -l; }}; exec {terminal} {run}",
+        note = crate::launch::quote(&format!("Starting on {}", server.name())),
+        local = crate::launch::quote(&local.to_string_lossy()),
+        upload = server.ssh_command(false),
+        unpack = crate::launch::quote(&unpack),
+        failed = crate::launch::quote(&format!("Couldn't reach {} to start the session. Check it in Settings › Servers.", server.name())),
+        terminal = server.ssh_command(true),
+        run = crate::launch::quote(&run),
+    )
+}
+
+/// Starts mirroring a session on a server back here.
+pub fn watch(launch: &crate::launch::Launch) {
+    let Some(server) = launch.server.clone() else { return };
+    let entry = Watched { server, local: launch.dir(), claude_id: launch.claude_id(), folder: launch.folder() };
+    if let Ok(mut map) = watched().lock() {
+        map.insert(launch.id.clone(), entry);
+    }
+    static MIRROR: OnceLock<()> = OnceLock::new();
+    MIRROR.get_or_init(|| {
+        std::thread::spawn(|| loop {
+            let jobs: Vec<Watched> = watched().lock().map(|m| m.values().cloned().collect()).unwrap_or_default();
+            for job in jobs {
+                let _ = pull(&job);
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        });
+    });
+}
+
+pub fn unwatch(launch_id: &str) {
+    if let Ok(mut map) = watched().lock() {
+        map.remove(launch_id);
+    }
+}
+
+/// The server a path there belongs to: inside a watched session's folder.
+pub fn server_for(path: &Path) -> Option<Server> {
+    watched().lock().ok()?.values().find(|w| path.starts_with(&w.folder)).map(|w| w.server.clone())
+}
+
+/// One round of the mirror: the hook files, whole (they're small), and the
+/// transcript from where the copy here ends.
+fn pull(job: &Watched) -> Result<(), String> {
+    let transcript = job.local.join("transcript.jsonl");
+    let have = std::fs::metadata(&transcript).map(|m| m.len()).unwrap_or(0);
+    let probe = format!(
+        r#"cd {remote} 2>/dev/null || exit 0
+for f in state tool.json pr changed started; do [ -f "$f" ] && printf '%s %s\n' "$f" "$(base64 < "$f" | tr -d '\n')"; done
+t=$(ls "$HOME"/.claude/projects/*/{id}.jsonl 2>/dev/null | head -1)
+if [ -n "$t" ]; then printf 'size %s\n' "$(wc -c < "$t" | tr -d ' ')"; printf 'transcript %s\n' "$(tail -c +{from} "$t" | base64 | tr -d '\n')"; fi
+"#,
+        remote = crate::launch::quote_path(&job.local),
+        id = job.claude_id,
+        from = have + 1,
+    );
+    // bash, not the login shell: zsh stops at a glob that matches nothing.
+    let output = command(&job.server, "bash -s", Some(probe.as_bytes()))?;
+    let output = String::from_utf8_lossy(&output);
+    let decode = |text: &str| base64::engine::general_purpose::STANDARD.decode(text.trim()).ok();
+    let mut shrank = false;
+    for line in output.lines() {
+        let (name, value) = line.split_once(' ').unwrap_or((line, ""));
+        match name {
+            "size" => shrank = value.trim().parse::<u64>().is_ok_and(|size| size < have),
+            "transcript" if shrank => {
+                // Rewritten there: start the copy again next round.
+                let _ = std::fs::remove_file(&transcript);
+            }
+            "transcript" => {
+                if let Some(bytes) = decode(value).filter(|b| !b.is_empty()) {
+                    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(&transcript).map_err(|e| e.to_string())?;
+                    file.write_all(&bytes).map_err(|e| e.to_string())?;
+                }
+            }
+            "state" | "tool.json" | "pr" | "changed" | "started" => {
+                let Some(bytes) = decode(value) else { continue };
+                let path = job.local.join(name);
+                if std::fs::read(&path).ok().as_deref() != Some(bytes.as_slice()) {
+                    let _ = std::fs::write(&path, bytes);
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_as_zed_does() {
+        let server = Server::parse("ssh -p 2222 aw@mini.home", "mini").unwrap();
+        assert_eq!((server.host.as_str(), server.username.as_deref(), server.port), ("mini.home", Some("aw"), Some(2222)));
+        assert_eq!(server.key(), "aw@mini.home:2222");
+        assert_eq!(server.name(), "mini");
+        assert!(Server::parse("ssh -t mini", "").is_err());
+        assert_eq!(Server::parse("mini", "").unwrap().key(), "mini");
+    }
+}

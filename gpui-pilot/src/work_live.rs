@@ -18,6 +18,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
+    // A session on a server: its worktrees are there.
+    if let Some(server) = crate::servers::server_for(dir) {
+        return crate::servers::git(&server, dir, args).ok().map(|o| String::from_utf8_lossy(&o).to_string());
+    }
     let out = Command::new("git").arg("-C").arg(dir).args(args).output().ok()?;
     out.status.success().then(|| String::from_utf8_lossy(&out.stdout).to_string())
 }
@@ -25,6 +29,11 @@ fn git(dir: &Path, args: &[&str]) -> Option<String> {
 /// The worktrees in the session's folder: each folder in it that git
 /// knows as a checkout.
 pub fn worktrees(folder: &Path) -> Vec<Worktree> {
+    if let Some(server) = crate::servers::server_for(folder) {
+        let mut names = crate::servers::checkouts(&server, folder);
+        names.sort();
+        return names.iter().filter_map(|name| worktree(&folder.join(name))).collect();
+    }
     let mut dirs: Vec<PathBuf> = std::fs::read_dir(folder)
         .into_iter()
         .flatten()

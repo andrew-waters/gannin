@@ -332,6 +332,12 @@ impl Render for ChangesView {
 // MARK: - Reading git
 
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    // A session on a server: its checkout is there.
+    if let Some(server) = crate::servers::server_for(root) {
+        let mut all = vec!["--no-optional-locks"];
+        all.extend_from_slice(args);
+        return crate::servers::git(&server, root, &all);
+    }
     let output = Command::new("git")
         .arg("-C")
         .arg(root)

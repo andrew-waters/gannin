@@ -23,6 +23,9 @@ theme_settings = { git = "https://github.com/zed-industries/zed", rev = "99c890d
 terminal_view = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
 workspace = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
 project = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
+# The ssh command parser behind Zed's Connect New Server. Already built for
+# project, with no features, so it adds nothing to compile.
+remote = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
 release_channel = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
 util = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
 rpc = { git = "https://github.com/zed-industries/zed", rev = "99c890d39d336052d9dae34c7914b55ee82abc5f" }
