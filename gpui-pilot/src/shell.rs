@@ -18,7 +18,7 @@ use std::sync::Arc;
 use crate::metrics::RepoStats;
 use crate::page::{ActionsPage, OpenRepo};
 use crate::session::{self, Changed, Kind, SessionPage, State};
-use crate::prs::{OpenPr, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs};
+use crate::prs::{OpenPr, PrItem, PrState, PrsPage, PrsSaved, ReviewPrs, ShowReview};
 use crate::state::{remove_slot, CiSaved, SavedState, SavedTab};
 use crate::work::{self, Pr, Work};
 use gpui::{
@@ -26,7 +26,7 @@ use gpui::{
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, SharedString, Subscription, Window,
     WindowAppearance,
 };
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 actions!(shell, [ToggleSidebar, ToggleInspector, ToggleSync, ToggleTabsOnLeft, Refresh, NewClaudeSession, NewTerminal, NewAsk, NewQuickChange, NewPlan, CloseTab, NextTab, PreviousTab, OpenSwitcher, NewWindow]);
@@ -898,6 +898,8 @@ impl Workspace {
                 let page = cx.new(|cx| PrsPage::new(org, &state, window, cx));
                 let me = self.viewer.as_ref().map(|v| v.login.clone());
                 page.update(cx, |page, cx| page.set_me(me, cx));
+                let reviewing = self.reviewing(cx);
+                page.update(cx, |page, cx| page.set_reviewing(reviewing, cx));
                 Page::Prs(page)
             }
             Nav::Ci => {
@@ -949,6 +951,9 @@ impl Workspace {
                     this.push_pr_drawer(event.0.clone(), cx);
                 }),
                 cx.subscribe_in(page, window, |this, _, event: &ReviewPrs, window, cx| this.review_many(event.0.clone(), window, cx)),
+                cx.subscribe_in(page, window, |this, _, event: &ShowReview, window, cx| {
+                    this.show_session(&event.0.id, crate::launch::Flow::Review, window, cx);
+                }),
                 cx.observe(page, |this, _, cx| {
                     this.persist(cx);
                     cx.notify();
@@ -1087,7 +1092,10 @@ impl Workspace {
                 let id = this.next_session;
                 this.next_session += 1;
                 let page = cx.new(|cx| SessionPage::new(id, kind, folder, launch, builder, window, cx));
-                this._subscriptions.push(cx.subscribe(&page, |_, _, _: &Changed, cx| cx.notify()));
+                this._subscriptions.push(cx.subscribe(&page, |this, _, _: &Changed, cx| {
+                    this.sync_reviewing(cx);
+                    cx.notify();
+                }));
                 this._subscriptions.push(cx.subscribe_in(&page, window, move |this, page, event: &crate::work_panel::WorkEvent, window, cx| {
                     let launch = page.read(cx).launch.clone();
                     let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(id)) else { return };
@@ -1114,6 +1122,7 @@ impl Workspace {
                     this.open_drawer(DrawerItem::Doc(event.0.clone()), id, cx);
                 }));
                 this.sessions.push(page);
+                this.sync_reviewing(cx);
                 this.drawers.clear();
                 this.next_tab += 1;
                 let tab = Tab { id: this.next_tab, nav: Nav::Session(id), name: None, page: Page::None };
@@ -1142,6 +1151,32 @@ impl Workspace {
     /// else the org's first.
     fn harness_for(&self, repo: &str) -> Option<String> {
         self.projects.iter().find(|p| p.repos.iter().any(|r| r == repo)).or(self.projects.first()).map(|p| p.id.clone())
+    }
+
+    /// The PRs with a review session in a tab, by id: whether it's running.
+    fn reviewing(&self, cx: &App) -> HashMap<String, bool> {
+        self.sessions
+            .iter()
+            .filter_map(|s| {
+                let s = s.read(cx);
+                let launch = s.launch.as_ref().filter(|l| l.flow == crate::launch::Flow::Review)?;
+                Some((launch.subject.as_ref()?.id.clone(), s.state != State::Ended))
+            })
+            .fold(HashMap::new(), |mut map, (id, running)| {
+                *map.entry(id).or_insert(false) |= running;
+                map
+            })
+    }
+
+    /// Tells the PR tables which PRs have a review session open.
+    fn sync_reviewing(&mut self, cx: &mut Context<Self>) {
+        let reviewing = self.reviewing(cx);
+        for tab in &self.tabs {
+            if let Page::Prs(page) = &tab.page {
+                let reviewing = reviewing.clone();
+                page.update(cx, |page, cx| page.set_reviewing(reviewing, cx));
+            }
+        }
     }
 
     /// The tab already showing a launch about `subject_id` of this flow.
@@ -3073,6 +3108,7 @@ impl Workspace {
         // Dropping a session's terminal ends its process (a hangup).
         if let Nav::Session(id) = self.tabs.remove(index).nav {
             self.sessions.retain(|s| s.read(cx).id != id);
+            self.sync_reviewing(cx);
         }
         if self.active >= self.tabs.len() || self.active > index {
             self.active = self.active.saturating_sub(1);

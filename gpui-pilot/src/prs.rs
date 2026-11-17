@@ -782,6 +782,11 @@ pub struct ReviewPrs(pub Vec<PrItem>);
 
 impl EventEmitter<ReviewPrs> for PrsPage {}
 
+/// Show the review session open for this PR.
+pub struct ShowReview(pub PrItem);
+
+impl EventEmitter<ShowReview> for PrsPage {}
+
 pub struct PrsPage {
     org: Option<String>,
     prs: Arc<Vec<PrItem>>,
@@ -808,6 +813,8 @@ pub struct PrsPage {
     loading: bool,
     timings: String,
     generation: u64,
+    /// PRs with a review session in a tab, by id: whether it's running.
+    reviewing: HashMap<String, bool>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -843,6 +850,7 @@ impl PrsPage {
             loading: false,
             timings: String::new(),
             generation: 0,
+            reviewing: HashMap::new(),
             _subscriptions: subscriptions,
         };
         page.load(cx);
@@ -864,6 +872,14 @@ impl PrsPage {
                 ..Filters::default()
             };
             self.load(cx);
+        }
+    }
+
+    /// The PRs with a review session open, from the window's tabs.
+    pub fn set_reviewing(&mut self, reviewing: HashMap<String, bool>, cx: &mut Context<Self>) {
+        if self.reviewing != reviewing {
+            self.reviewing = reviewing;
+            cx.notify();
         }
     }
 
@@ -1413,6 +1429,34 @@ impl PrsPage {
                 .gap_1p5()
                 .child(div().flex_shrink(1.).min_w(px(60.)).truncate().child(pr.title.clone()))
                 .when(pr.author_is_bot, |d| d.child(div().flex_none().text_xs().text_color(theme.tertiary).child("bot")))
+                // A review session open for it, to click through to.
+                .when_some(self.reviewing.get(&pr.id).copied(), |d, running| {
+                    let item = pr.clone();
+                    let tint = if running { theme.good() } else { theme.secondary };
+                    d.child(
+                        div()
+                            .id(gpui::ElementId::Name(format!("reviewing-{}", pr.id).into()))
+                            .flex_none()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .gap_1()
+                            .px_1p5()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(tint.opacity(0.5))
+                            .text_xs()
+                            .text_color(tint)
+                            .cursor_pointer()
+                            .hover(|s| s.bg(tint.opacity(0.15)))
+                            .child(div().size(px(6.)).rounded_full().bg(tint))
+                            .child(if running { "Reviewing" } else { "Review stopped" })
+                            .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
+                                cx.stop_propagation();
+                                cx.emit(ShowReview(item.clone()));
+                            })),
+                    )
+                })
                 .into_any_element(),
             Column::State => div().w(px(width)).flex_none().flex().overflow_hidden().child(state_pill(pr, theme)).into_any_element(),
             Column::Status => div()
