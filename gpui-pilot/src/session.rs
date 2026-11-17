@@ -83,6 +83,9 @@ pub struct SessionPage {
     pub state: State,
     /// When the state last changed, for "waiting since".
     pub since: chrono::DateTime<chrono::Local>,
+    /// While Move to Server runs: where it's going and the step it's on.
+    /// The whole page is covered, so nothing in it can be used meanwhile.
+    pub moving: Option<(String, String)>,
     last_output: Instant,
     _subscriptions: Vec<gpui::Subscription>,
     _tick: Task<()>,
@@ -261,6 +264,7 @@ impl SessionPage {
             show,
             state: State::Working,
             since: chrono::Local::now(),
+            moving: None,
             last_output: Instant::now(),
             _subscriptions: subscriptions,
             _tick: tick,
@@ -417,6 +421,37 @@ impl Focusable for SessionPage {
     }
 }
 
+impl SessionPage {
+    /// Covers the page while it moves to a server: a spinner, where it's
+    /// going and the step it's on. It takes every click, so the terminal and
+    /// the panel's buttons can't be used until it's done.
+    fn moving_cover(title: String, step: String, theme: &Theme) -> impl IntoElement {
+        use gpui::{Animation, AnimationExt, Transformation};
+        div()
+            .id("session-moving")
+            .absolute()
+            .inset_0()
+            .occlude()
+            .bg(theme.bg)
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .child(
+                gpui::svg()
+                    .path("icons/arrow_circle.svg")
+                    .size(px(28.))
+                    .flex_none()
+                    .text_color(theme.secondary)
+                    .with_animation("session-moving-spinner", Animation::new(Duration::from_millis(1200)).repeat(), |svg, delta| svg.with_transformation(Transformation::rotate(gpui::percentage(delta)))),
+            )
+            .child(div().text_lg().font_weight(gpui::FontWeight::MEDIUM).child(title))
+            .child(div().max_w(px(520.)).text_sm().text_color(theme.secondary).text_center().child(step))
+            .child(div().text_xs().text_color(theme.tertiary).child("The session can't be used until it's moved."))
+    }
+}
+
 impl Render for SessionPage {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = Theme::for_window(window);
@@ -465,10 +500,12 @@ impl Render for SessionPage {
             _ => d.child(self.changes.clone()),
         });
         div()
+            .relative()
             .size_full()
             .flex()
             .flex_col()
             .bg(theme.bg)
+            .when_some(self.moving.clone(), |d, (title, step)| d.child(Self::moving_cover(title, step, &theme)))
             // A review's own header says all this, in one row.
             .when(self.review.is_none() && self.work.is_none(), |d| d.child(header))
             .child(div().flex_1().min_h_0().flex().flex_row().map(|d| match self.show {

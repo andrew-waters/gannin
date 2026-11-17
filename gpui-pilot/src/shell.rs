@@ -1140,12 +1140,75 @@ impl Workspace {
             "Its worktrees go to {name} at the same commits, with what isn't committed, and Claude's conversation with them. Nothing is pushed to GitHub. The copies on this Mac stay as they are. Then it resumes on {name}.",
             name = server.name()
         );
+        let Some(page) = self.session(session, cx).cloned() else { return };
+        if page.read(cx).moving.is_some() {
+            return;
+        }
         let answer = window.prompt(gpui::PromptLevel::Info, &format!("Move this session to {}?", server.name()), Some(&detail), &["Move", "Cancel"], cx);
         cx.spawn_in(window, async move |this, cx| {
             if answer.await.ok() != Some(0) {
                 return;
             }
-            let moved = cx.background_executor().spawn(async move { crate::session_move::move_to(&launch, &server) }).await;
+            // The page is covered until the move ends; the step it's on is
+            // read from the move as it goes.
+            let title = format!("Moving to {}", server.name());
+            let step = std::sync::Arc::new(std::sync::Mutex::new("Starting".to_string()));
+            let started = cx
+                .update(|window, cx| {
+                    page.update(cx, |page, cx| {
+                        if page.moving.is_some() {
+                            return false;
+                        }
+                        page.moving = Some((title.clone(), "Starting".into()));
+                        cx.notify();
+                        true
+                    }) && {
+                        // Keys would still reach the terminal under the cover.
+                        window.blur(cx);
+                        true
+                    }
+                })
+                .unwrap_or(false);
+            if !started {
+                return;
+            }
+            let task = cx.background_executor().spawn({
+                let step = step.clone();
+                async move {
+                    crate::session_move::move_to(&launch, &server, &|now| {
+                        if let Ok(mut s) = step.lock() {
+                            *s = now;
+                        }
+                    })
+                }
+            });
+            let ticker = cx.spawn({
+                let page = page.downgrade();
+                let step = step.clone();
+                async move |cx| loop {
+                    cx.background_executor().timer(std::time::Duration::from_millis(200)).await;
+                    let now = step.lock().map(|s| s.clone()).unwrap_or_default();
+                    let alive = page
+                        .update(cx, |page, cx| {
+                            if let Some((_, shown)) = page.moving.as_mut() {
+                                if *shown != now {
+                                    *shown = now;
+                                    cx.notify();
+                                }
+                            }
+                        })
+                        .is_ok();
+                    if !alive {
+                        return;
+                    }
+                }
+            });
+            let moved = task.await;
+            drop(ticker);
+            page.update(cx, |page, cx| {
+                page.moving = None;
+                cx.notify();
+            });
             this.update_in(cx, |this, window, cx| match moved {
                 Ok(launch) => {
                     if let Some(index) = this.tabs.iter().position(|t| t.nav == Nav::Session(session)) {
@@ -3041,6 +3104,11 @@ impl Workspace {
     fn close_tab(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(nav) = self.tabs.get(index).map(|tab| tab.nav) else { return };
         if let Nav::Session(id) = nav {
+            // Not while it's moving to a server: the move needs its folder
+            // and the tab is replaced when it's done.
+            if self.session(id, cx).is_some_and(|p| p.read(cx).moving.is_some()) {
+                return;
+            }
             if let Some(review) = self.session(id, cx).and_then(|p| p.read(cx).review()) {
                 return self.close_review(id, review, window, cx);
             }

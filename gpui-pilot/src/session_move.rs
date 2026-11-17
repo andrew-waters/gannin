@@ -78,7 +78,7 @@ fn relative(root: &Path, path: &Path) -> String {
 
 /// One worktree made there, at the same commit, with what isn't
 /// committed.
-fn move_worktree(server: &Server, launch: &Launch, worktree: &Path) -> Result<(), String> {
+fn move_worktree(server: &Server, launch: &Launch, worktree: &Path, step: &dyn Fn(&str)) -> Result<(), String> {
     let name = worktree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let fail = |what: &str, e: String| format!("{name}: {what}: {e}");
     let common = PathBuf::from(git(worktree, &["rev-parse", "--path-format=absolute", "--git-common-dir"]).map_err(|e| fail("not a git worktree", e))?);
@@ -102,6 +102,7 @@ fn move_worktree(server: &Server, launch: &Launch, worktree: &Path) -> Result<()
     let _ = std::fs::remove_file(&bundle_path);
     let remote_bundle = format!("/tmp/gannin-move-{}-{}.bundle", launch.id, name.replace(|c: char| !c.is_ascii_alphanumeric(), "-"));
     if let Some(bytes) = &bundle {
+        step("sending the branch");
         upload(server, &quote(&remote_bundle), bytes).map_err(|e| fail("couldn't send the branch", e))?;
     }
 
@@ -134,6 +135,7 @@ fi
             String::new()
         },
     );
+    step("checking it out there");
     remote(server, &script).map_err(|e| fail("couldn't make the worktree there", e))?;
 
     // What isn't committed: changed and new files, then deletions.
@@ -141,6 +143,7 @@ fi
     let deleted = git(worktree, &["ls-files", "-z", "--deleted"]).unwrap_or_default();
     let deleted: Vec<&str> = deleted.split('\0').filter(|p| !p.is_empty()).collect();
     let changed: Vec<String> = changed.split('\0').filter(|p| !p.is_empty() && !deleted.contains(p)).map(str::to_string).collect();
+    step("copying what isn't committed");
     copy_files(server, worktree, &changed, &quote_path(worktree)).map_err(|e| fail("couldn't copy the uncommitted files", e))?;
     if !deleted.is_empty() {
         let removals: String = deleted.iter().map(|p| format!("rm -f -- {}\n", quote(p))).collect();
@@ -150,11 +153,12 @@ fi
 }
 
 /// Moves the session to `server`. The session must be stopped. The moved
-/// launch, saved, on success.
-pub fn move_to(launch: &Launch, server: &Server) -> Result<Launch, String> {
+/// launch, saved, on success. `progress` hears each step as it starts.
+pub fn move_to(launch: &Launch, server: &Server, progress: &dyn Fn(String)) -> Result<Launch, String> {
     if launch.server.is_some() {
         return Err("It already runs on a server.".into());
     }
+    progress(format!("Getting the harness ready on {}", server.name()));
     let harness = quote_path(&launch.harness_path);
     remote(
         server,
@@ -179,14 +183,19 @@ pub fn move_to(launch: &Launch, server: &Server) -> Result<Launch, String> {
         }
     }
     worktrees.sort();
-    for worktree in &worktrees {
-        move_worktree(server, launch, worktree)?;
+    let count = worktrees.len();
+    for (index, worktree) in worktrees.iter().enumerate() {
+        let name = worktree.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let step = |what: &str| progress(if count > 1 { format!("Worktree {} of {count}, {name}: {what}", index + 1) } else { format!("{name}: {what}") });
+        move_worktree(server, launch, worktree, &step)?;
     }
+    progress("Copying the session's files".into());
     copy_files(server, &folder, &others, &quote_path(&folder)).map_err(|e| format!("Couldn't copy the session's files: {e}"))?;
 
     // Claude's conversation, into the project folder Claude Code keeps for
     // the harness's path there (every character but letters and digits as -).
     if let Some(transcript) = crate::review::transcript_path(&launch.claude_id()) {
+        progress("Copying Claude's conversation".into());
         let project = transcript.parent().ok_or("transcript")?.to_path_buf();
         let id = launch.claude_id();
         let mut files = vec![format!("{id}.jsonl")];
@@ -210,6 +219,7 @@ pub fn move_to(launch: &Launch, server: &Server) -> Result<Launch, String> {
         remote(server, &format!("mkdir -p {remote_dir} && touch {remote_dir}/started")).map_err(|e| format!("Couldn't mark it started there: {e}"))?;
     }
 
+    progress("Saving the session".into());
     let mut moved = launch.clone();
     moved.server = Some(server.clone());
     std::fs::write(dir.join("session.json"), serde_json::to_vec_pretty(&moved).unwrap_or_default()).map_err(|e| format!("Couldn't save the session: {e}"))?;
