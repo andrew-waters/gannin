@@ -1189,7 +1189,7 @@ impl AssistantPreview {
                                     .flex_row()
                                     .gap_1()
                                     .text_xs()
-                                    .when(thread.kind != Kind::Main, |d| d.child(div().flex_none().font_weight(FontWeight::SEMIBOLD).text_color(tint).child(kind_name(thread.kind))).child(div().flex_none().text_color(theme.tertiary).child("·")))
+                                    .when(thread.kind != Kind::Main, |d| d.child(div().flex_none().text_color(theme.tertiary).child(kind_name(thread.kind))).child(div().flex_none().text_color(theme.tertiary).child("·")))
                                     .child(div().flex_1().min_w_0().truncate().text_color(if thread.muted { theme.tertiary } else { theme.secondary }).child(thread.last.clone())),
                             ),
                     )
