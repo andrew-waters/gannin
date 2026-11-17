@@ -806,12 +806,27 @@ fn section(label: impl Into<SharedString>, theme: &Theme) -> gpui::Div {
 /// A thread's round avatar: a glyph and tint for its kind.
 fn avatar(kind: Kind, theme: &Theme) -> (&'static str, Hsla) {
     match kind {
-        Kind::Main => ("✦", theme.selected),
-        Kind::Question => ("?", theme.slot(6)),
-        Kind::Investigation => ("⌕", theme.orange()),
-        Kind::Build => ("⚒", theme.good()),
-        Kind::Review => ("✓", theme.slot(4)),
+        Kind::Main => ("icons/sparkle.svg", theme.selected),
+        Kind::Question => ("icons/database_zap.svg", theme.slot(6)),
+        Kind::Investigation => ("icons/magnifying_glass.svg", theme.orange()),
+        Kind::Build => ("icons/tool_hammer.svg", theme.good()),
+        Kind::Review => ("icons/pull_request.svg", theme.slot(4)),
     }
+}
+
+/// The avatar: the kind's colour while unread, grey once read, so colour
+/// says only what's new.
+fn avatar_view(kind: Kind, unread: bool, size: f32, icon: f32, theme: &Theme) -> gpui::Div {
+    let (path, tint) = avatar(kind, theme);
+    div()
+        .flex_none()
+        .size(px(size))
+        .rounded_full()
+        .bg(if unread { tint } else { theme.border })
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(gpui::svg().path(path).size(px(icon)).text_color(if unread { gpui::white() } else { theme.secondary }))
 }
 
 /// How long ago, said as such: "now", "2m ago", "1h ago".
@@ -1149,7 +1164,6 @@ impl AssistantPreview {
             .children(listed.into_iter().enumerate().map(|(row, t)| {
                 let thread = &self.threads[t];
                 let unread = self.is_unread(t);
-                let (glyph, tint) = avatar(thread.kind, theme);
                 let last_row = row + 1 == count;
                 div()
                     .id(SharedString::from(format!("thread-{t}")))
@@ -1161,7 +1175,7 @@ impl AssistantPreview {
                     .hover(|s| s.bg(theme.row_selected))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.open_thread(t, cx)))
                     .child(div().w(px(16.)).flex().justify_center().child(div().size(px(9.)).rounded_full().when(unread, |d| d.bg(theme.selected))))
-                    .child(div().flex_none().size(px(34.)).rounded_full().bg(tint).flex().items_center().justify_center().text_base().text_color(gpui::white()).child(glyph))
+                    .child(avatar_view(thread.kind, unread, 34., 19., theme))
                     .child(
                         div()
                             .flex_1()
@@ -1179,8 +1193,8 @@ impl AssistantPreview {
                                     .items_center()
                                     .gap_2()
                                     .child(div().flex_1().min_w_0().truncate().text_sm().font_weight(if unread { FontWeight::BOLD } else { FontWeight::MEDIUM }).text_color(theme.fg).child(thread.title.clone()))
-                                    .when(thread.pinned, |d| d.child(gpui::svg().path("icons/pin.svg").size(px(12.)).flex_none().text_color(theme.tertiary)))
-                                    .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(12.)).flex_none().text_color(theme.tertiary)))
+                                    .when(thread.pinned, |d| d.child(gpui::svg().path("icons/pin.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
+                                    .when(thread.muted, |d| d.child(gpui::svg().path("icons/bell_off.svg").size(px(14.)).flex_none().text_color(theme.tertiary)))
                                     .child(div().text_xs().text_color(theme.secondary).child(if thread.state == State::Working { "working".to_string() } else { ago(thread.minutes) }))
                                     .child(div().text_sm().text_color(theme.tertiary).child("›")),
                             )
@@ -1352,7 +1366,6 @@ impl AssistantPreview {
 
     fn thread_view(&self, t: usize, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         let thread = &self.threads[t];
-        let (glyph, tint) = avatar(thread.kind, theme);
         div()
             .flex_1()
             .min_h_0()
@@ -1393,7 +1406,7 @@ impl AssistantPreview {
                             .flex()
                             .flex_col()
                             .items_center()
-                            .child(div().size(px(24.)).rounded_full().bg(tint).flex().items_center().justify_center().text_xs().text_color(gpui::white()).child(glyph))
+                            .child(avatar_view(thread.kind, false, 26., 15., theme))
                             .child(div().max_w(px(260.)).truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(thread.title.clone())),
                     )
                     .child(
