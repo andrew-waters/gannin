@@ -54,6 +54,10 @@ pub struct MarraView {
     later_menu: bool,
     scope_menu: bool,
     more_menu: bool,
+    /// New Issue's menu of harnesses to raise it from.
+    issue_menu: bool,
+    /// Why New Issue couldn't start, shown until the next try.
+    issue_error: Option<String>,
     row_menu: Option<(String, Point<Pixels>)>,
     menu_closed: Option<Instant>,
     /// Phone access's address and paired devices, read as the menu opens
@@ -135,6 +139,8 @@ impl MarraView {
             later_menu: false,
             scope_menu: false,
             more_menu: false,
+            issue_menu: false,
+            issue_error: None,
             row_menu: None,
             menu_closed: None,
             phone: (None, 0),
@@ -179,6 +185,7 @@ impl MarraView {
     }
 
     fn close_menus(&mut self) {
+        self.issue_menu = false;
         self.scope_menu = false;
         self.more_menu = false;
         self.row_menu = None;
@@ -886,6 +893,7 @@ fn avatar(kind: ThreadKind, theme: &Theme) -> (&'static str, Hsla) {
         ThreadKind::Main => ("icons/sparkle.svg", theme.selected),
         ThreadKind::Question => ("icons/database_zap.svg", theme.slot(6)),
         ThreadKind::Investigation => ("icons/magnifying_glass.svg", theme.orange()),
+        ThreadKind::Issue => ("icons/notepad.svg", theme.good()),
         ThreadKind::Build => ("icons/tool_hammer.svg", theme.good()),
         ThreadKind::Review => ("icons/pull_request.svg", theme.slot(4)),
     }
@@ -978,6 +986,25 @@ impl MarraView {
                     .child(div().text_xs().text_color(if self.unread_only { theme.on_selected } else { theme.secondary }).child(format!("{unread}")))
                     .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                         this.unread_only = !this.unread_only;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .id("new-issue")
+                    .px_1()
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|s| s.bg(theme.row_selected))
+                    .child(gpui::svg().path("icons/square_plus.svg").size(px(15.)).text_color(theme.secondary))
+                    .tooltip(|_, cx| cx.new(|_| crate::issues::Tooltip("New issue".into())).into())
+                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                        if this.just_closed() {
+                            return;
+                        }
+                        this.issue_menu = !this.issue_menu;
+                        this.scope_menu = false;
+                        this.more_menu = false;
                         cx.notify();
                     })),
             )
@@ -1083,6 +1110,43 @@ impl MarraView {
     }
 
     fn menus(&self, theme: &Theme, cx: &mut Context<Self>) -> Option<AnyElement> {
+        if self.issue_menu {
+            // Which harness to raise it from: each the issue errand can run in.
+            let places = crate::marra_mcp::harness_places();
+            let mut rows: Vec<AnyElement> = vec![div().px_2().py_1().text_xs().text_color(theme.secondary).child("New issue in").into_any_element()];
+            if places.is_empty() {
+                rows.push(div().px_2().pb_1().text_sm().text_color(theme.secondary).child("No harness yet: start a session in one first.").into_any_element());
+            }
+            for (i, place) in places.into_iter().enumerate() {
+                let label = place.label();
+                let name = place.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| label.clone());
+                let shown = match &place.server {
+                    Some(server) => format!("{name} on {}", server.name()),
+                    None => name,
+                };
+                rows.push(
+                    Self::menu_row(format!("issue-in-{i}"), shown, false, theme)
+                        .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                            this.issue_menu = false;
+                            let started = this.marra.update(cx, |m, cx| {
+                                let started = m.start_issue(&label);
+                                cx.notify();
+                                started
+                            });
+                            match started {
+                                Ok(id) => {
+                                    this.issue_error = None;
+                                    this.open_thread(format!("e:{id}"), cx);
+                                }
+                                Err(error) => this.issue_error = Some(error),
+                            }
+                            cx.notify();
+                        }))
+                        .into_any_element(),
+                );
+            }
+            return Some(self.menu_shell(theme, 280., cx).children(rows).into_any_element());
+        }
         if self.scope_menu {
             let mut scopes: Vec<Option<String>> = vec![None];
             scopes.extend(self.orgs(cx).into_iter().map(Some));
@@ -2304,6 +2368,7 @@ impl Render for MarraView {
             .text_color(theme.fg)
             .font_family(".SystemUIFont")
             .child(self.title_bar(&theme, cx))
+            .when_some(self.issue_error.clone(), |d, error| d.child(div().flex_none().px_3().py_1().text_xs().text_color(theme.orange()).child(format!("Couldn't start the issue: {error}"))))
             .child(panel)
             .when_some(menus, |d, m| d.child(m))
             .when_some(row_menu, |d, m| d.child(m))

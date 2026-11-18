@@ -198,6 +198,8 @@ impl Convo {
 pub enum ErrandKind {
     Question,
     Investigation,
+    /// A new issue, talked through, scouted and created with the harness's skills.
+    Issue,
 }
 
 /// An errand as saved, so it comes back after a relaunch.
@@ -243,9 +245,12 @@ fn errand_log(id: &str) -> PathBuf {
 
 /// A worker's standing brief: read only, and the reply contract.
 fn errand_brief(kind: ErrandKind) -> String {
+    if kind == ErrandKind::Issue {
+        return issue_brief();
+    }
     let job = match kind {
         ErrandKind::Question => "answer a data question using this harness's skills (ClickHouse, Mongo, analytics and so on). Pick the skill that fits, run read-only queries, and check the numbers make sense before answering.",
-        ErrandKind::Investigation => "investigate a bug or ticket using this harness's skills: plan with the triage skill if there is one, then follow the evidence (logs, traces, databases, the code). Do not fix anything: report the cause, the evidence, your confidence and what is still unknown.",
+        ErrandKind::Investigation | ErrandKind::Issue => "investigate a bug or ticket using this harness's skills: plan with the triage skill if there is one, then follow the evidence (logs, traces, databases, the code). Do not fix anything: report the cause, the evidence, your confidence and what is still unknown.",
     };
     format!(
         "You are a worker for Marra, the user's assistant in Gannin. Your job: {job}\n\n\
@@ -255,6 +260,25 @@ End every reply with the reply contract, a fenced json block and nothing after i
 Rules: lead with the answer, never with what you did; point is one sentence; set needs_you to {{\"task\": \"...\", \"actions\": [\"...\"]}} only for a real decision the user must make, never for \"let me know if\"; body is evidence, never needed to act. Text before the json block is not shown, so put everything in point and body."
     )
 }
+
+/// An Issue errand's brief: a conversation, then a scout, then the issue
+/// made as the harness's own skills say. Its one write is creating the
+/// issue, which Gannin asks the user to approve as a card.
+fn issue_brief() -> String {
+    "You are a worker for Marra, the user's assistant in Gannin, in the team's harness. Your job: raise one GitHub issue with the user, by talking it through.\n\n\
+The harness's own rules come first. Before you ask anything, read what this harness says about issues and planning: its CLAUDE.md, every skill (.claude/skills/, skills/ and wherever its CLAUDE.md points) that covers creating, scoping, triaging or planning issues, and its issue templates. Where they say something different from the steps below (the questions to ask, the order, the template, where it goes, labels, types, boards, fields, how to create it), do what they say: these steps are only the fallback. Tell the user in one line which skills you're following.\n\n\
+How it goes, unless a skill says otherwise:\n\
+1. Talk. Ask what the issue is about, then ask only what you need: the problem or goal, who it's for, what done looks like. One or two short questions at a time, in plain words. Don't draft yet.\n\
+2. Scout. Once you know what it is, read the code (the repos are shared clones under projects/, or this checkout when it's the code repo): where it lives, what it touches, how it behaves today. Change nothing. Say in a few lines what you found, and ask anything the code leaves open.\n\
+3. Check the harness again. Before drafting, go back to the skills and templates you found, and any the scout turned up for the repo it belongs in (its own .github templates and docs). They decide the repo, the template, labels, type, board and fields.\n\
+4. Draft. Show the whole issue: repo, title, body in Markdown (real files and behaviour, scope in and out, acceptance criteria someone can check), labels, type, board and fields. Don't invent details: say what's unknown. Ask whether to create it or change something.\n\
+5. Create. Only after the user says to, create it the way the skill says (gh, or gh api for board fields). Gannin shows the user each write to approve first. Then give the link.\n\n\
+Never edit files or write anything but the issue and its board fields. Write as a person would talk; no preamble, no summaries of what you did.\n\n\
+When the issue is created (or the user calls it off), end that reply with a fenced json block and nothing after it: {\"point\": \"one sentence: the issue's link and title, or that it was called off\", \"body\": \"the issue as created, in Markdown\", \"needs_you\": null}. Don't add the block to any other reply.".to_string()
+}
+
+/// The opening a new Issue errand sends its worker, so it asks first.
+pub const ISSUE_OPENING: &str = "I want to raise a new issue from this harness. Ask me what it's about.";
 
 /// The reply contract at the end of a worker's text, if it's there.
 pub fn contract(text: &str) -> Option<(String, String, Option<NeedsYou>)> {
@@ -449,6 +473,7 @@ pub enum ThreadKind {
     Main,
     Question,
     Investigation,
+    Issue,
     Build,
     Review,
 }
@@ -892,6 +917,17 @@ impl Marra {
         convo.send(ask, &format!("{ask}{hint}"));
         let saved = ErrandSaved { id: id.clone(), kind, title, harness, server, session: convo.engine.profile.session.clone(), created: marra::now(), point: None, needs: None, done: false };
         self.errands.push(Errand { saved, convo });
+        self.save_errands();
+        Ok(id)
+    }
+
+    /// New Issue: an Issue errand in the harness picked (as `harness_places`
+    /// labels it), its worker asking what the issue is about.
+    pub fn start_issue(&mut self, harness: &str) -> Result<String, String> {
+        let id = self.start_errand(ErrandKind::Issue, ISSUE_OPENING, harness, &[])?;
+        if let Some(errand) = self.errands.iter_mut().find(|e| e.saved.id == id) {
+            errand.saved.title = "New issue".into();
+        }
         self.save_errands();
         Ok(id)
     }
@@ -1380,7 +1416,11 @@ impl Marra {
         for e in &self.errands {
             out.push(Thread {
                 id: format!("e:{}", e.saved.id),
-                kind: if e.saved.kind == ErrandKind::Investigation { ThreadKind::Investigation } else { ThreadKind::Question },
+                kind: match e.saved.kind {
+                    ErrandKind::Investigation => ThreadKind::Investigation,
+                    ErrandKind::Issue => ThreadKind::Issue,
+                    ErrandKind::Question => ThreadKind::Question,
+                },
                 title: e.saved.title.clone(),
                 last: e.saved.point.clone().filter(|_| !e.convo.busy()).unwrap_or_else(|| e.convo.last_line()),
                 activity: e.convo.activity(),
