@@ -446,7 +446,10 @@ fn main() {
             window_menu(),
         ]);
 
-        let workspace = cx.open_window(
+        // The first window, when it was open at quit or nothing else was:
+        // closed, it stays closed while other windows come back.
+        let first = state::has_slot(0) || state::extra_slots().is_empty();
+        let workspace = first.then(|| cx.open_window(
             shell::window_options(cx),
             |window, cx| {
                 // Where it was left, unless the command line says otherwise.
@@ -460,7 +463,7 @@ fn main() {
                 cx.new(|cx| Workspace::new(saved, 0, window, cx))
             },
         )
-        .expect("open the window");
+        .expect("open the window"));
         // The other windows that were open come back too.
         Workspace::reopen_windows(cx);
         let _ = workspace;

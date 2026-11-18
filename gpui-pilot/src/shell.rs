@@ -3427,8 +3427,17 @@ impl Workspace {
     /// `this` is marked closed before its state goes, when it closes after
     /// asking; when it can close at once the caller marks it.
     fn confirm_close(running: Vec<Entity<SessionPage>>, slot: usize, this: gpui::WeakEntity<Self>, window: &mut Window, cx: &mut App) -> bool {
+        // The last window's state stays: closing it quits, and it should
+        // come back at the next launch, as quitting brings every window back.
+        let own = window.window_handle();
+        let others = cx.windows().into_iter().any(|h| h != own && h.downcast::<Workspace>().is_some());
+        let forget = move || {
+            if others {
+                remove_slot(slot);
+            }
+        };
         if running.is_empty() {
-            remove_slot(slot);
+            forget();
             return true;
         }
         let message = match running.len() {
@@ -3441,7 +3450,7 @@ impl Workspace {
             .spawn(cx, async move |cx| {
                 if answer.await == Ok(0) {
                     this.update(cx, |workspace, _| workspace.closed = true).ok();
-                    remove_slot(slot);
+                    forget();
                     cx.update(|window, _| window.remove_window()).ok();
                 }
             })

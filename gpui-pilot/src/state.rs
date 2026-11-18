@@ -153,11 +153,15 @@ pub fn extra_slots() -> Vec<usize> {
     slots
 }
 
-/// A closed window's state goes, so it doesn't open again.
+/// A closed window's state goes, so it doesn't open again: the first
+/// window's too, which then opens only when no other window was saved.
 pub fn remove_slot(slot: usize) {
-    if slot > 0 {
-        let _ = std::fs::remove_file(path_for(slot));
-    }
+    let _ = std::fs::remove_file(path_for(slot));
+}
+
+/// Whether a window's state was saved, so it opens at launch.
+pub fn has_slot(slot: usize) -> bool {
+    path_for(slot).exists()
 }
 
 impl SavedState {
