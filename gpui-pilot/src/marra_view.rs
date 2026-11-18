@@ -71,7 +71,14 @@ pub struct MarraView {
     /// A session thread's conversation, read from its transcript.
     tail: Option<(String, Vec<(String, String)>)>,
     /// What the session did since it was last read, taken as it opened.
-    since: Option<(String, Vec<(chrono::DateTime<chrono::Local>, String)>)>,
+    since: Option<(String, Vec<(chrono::DateTime<chrono::Local>, String)>, Option<chrono::DateTime<chrono::Local>>)>,
+    /// The open session's digest since the last look, from its transcript
+    /// (None inside when there's no transcript to read).
+    digest: Option<(String, Option<crate::marra_mcp::Digest>)>,
+    /// Haiku's summary of the open session since the last look, or why it
+    /// couldn't; and the session being summarised now.
+    summary: Option<(String, Result<String, String>)>,
+    summarising: Option<String>,
     _tail_task: Option<Task<()>>,
     theme: Theme,
     _subscriptions: Vec<Subscription>,
@@ -134,6 +141,9 @@ impl MarraView {
             saved_commands: crate::marra_mcp::saved_commands(),
             tail: None,
             since: None,
+            digest: None,
+            summary: None,
+            summarising: None,
             _tail_task: None,
             theme: Theme::for_window(window),
             _subscriptions: vec![edits, observe],
@@ -187,7 +197,14 @@ impl MarraView {
     // MARK: Doing
 
     fn open_thread(&mut self, id: String, cx: &mut Context<Self>) {
-        self.since = id.strip_prefix("s:").map(|key| (key.to_string(), self.marra.read(cx).since_read(key)));
+        self.since = id.strip_prefix("s:").map(|key| {
+            let m = self.marra.read(cx);
+            (key.to_string(), m.since_read(key), m.read_at(key))
+        });
+        self.digest = None;
+        if self.summary.as_ref().is_some_and(|(k, _)| Some(k.as_str()) != id.strip_prefix("s:")) {
+            self.summary = None;
+        }
         self.marra.update(cx, |m, _| m.mark_read(&id, true));
         self.tail = None;
         self._tail_task = None;
@@ -211,17 +228,31 @@ impl MarraView {
     /// Reads a session's conversation now and every few seconds while its
     /// thread is open.
     fn watch_session(&mut self, key: String, cx: &mut Context<Self>) {
-        let claude = marra_model::sessions(cx).into_iter().find(|s| s.key == key).and_then(|s| s.claude_id);
+        let info = marra_model::sessions(cx).into_iter().find(|s| s.key == key);
+        let (claude, folder, on_server) = info.map(|s| (s.claude_id, s.folder, s.server.is_some())).unwrap_or((None, std::path::PathBuf::new(), true));
+        let read_at = self.since.as_ref().filter(|(k, _, _)| k == &key).and_then(|(_, _, at)| *at).map(|at| at.with_timezone(&chrono::Utc));
         self._tail_task = Some(cx.spawn(async move |this, cx| loop {
-            let lines = match claude.clone() {
-                Some(id) => cx.background_executor().spawn(async move { crate::marra_mcp::transcript_messages(&id, 30).unwrap_or_default() }).await,
-                None => Vec::new(),
-            };
+            let (claude, folder) = (claude.clone(), folder.clone());
+            let (lines, digest) = cx
+                .background_executor()
+                .spawn(async move {
+                    // A plain tab from before tabs had a conversation ID: its
+                    // folder's newest transcript.
+                    match crate::marra_mcp::resolve_claude(claude, &folder, on_server) {
+                        Some(id) => (crate::marra_mcp::transcript_messages(&id, 30).unwrap_or_default(), crate::marra_mcp::digest(&id, read_at)),
+                        None => (Vec::new(), None),
+                    }
+                })
+                .await;
             let key = key.clone();
             let gone = this
                 .update(cx, |this, cx| {
                     if this.tail.as_ref().is_none_or(|(k, l)| k != &key || l != &lines) {
-                        this.tail = Some((key, lines));
+                        this.tail = Some((key.clone(), lines));
+                        cx.notify();
+                    }
+                    if this.digest.as_ref().is_none_or(|(k, d)| k != &key || d != &digest) {
+                        this.digest = Some((key, digest));
                         cx.notify();
                     }
                 })
@@ -231,6 +262,47 @@ impl MarraView {
             }
             cx.background_executor().timer(Duration::from_secs(3)).await;
         }));
+    }
+
+    /// Asks Haiku what a session did since the last look, from its
+    /// transcript: one call, no tools, shown in its thread.
+    fn summarise_session(&mut self, key: String, cx: &mut Context<Self>) {
+        let Some(info) = marra_model::sessions(cx).into_iter().find(|s| s.key == key) else { return };
+        if self.summarising.is_some() {
+            return;
+        }
+        let read_at = self.since.as_ref().filter(|(k, _, _)| k == &key).and_then(|(_, _, at)| *at).map(|at| at.with_timezone(&chrono::Utc));
+        let title = info.subject.clone().map(|s| format!("{s}: {}", info.title)).unwrap_or(info.title.clone());
+        let (claude, folder, on_server) = (info.claude_id.clone(), info.folder.clone(), info.server.is_some());
+        self.summarising = Some(key.clone());
+        self.summary = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let id = crate::marra_mcp::resolve_claude(claude, &folder, on_server).ok_or("Its conversation isn't on this Mac.")?;
+                    let lines = crate::marra_mcp::transcript_since(&id, read_at, 150, 600).ok_or("Couldn't read its conversation.")?;
+                    if lines.is_empty() {
+                        return Ok("Nothing has happened since you looked.".to_string());
+                    }
+                    let since = if read_at.is_some() { "since they last looked" } else { "so far" };
+                    let prompt = format!(
+                        "Summarise what happened in this Claude Code session {since}, for the person who owns it. They switch between several sessions, so lead with where it stands now and what, if anything, it needs from them; then what was done and what changed. At most six short bullets, plain words, no preamble.\n\nSession: {title}\n\nConversation:\n\n{}",
+                        crate::marra_mcp::as_text(lines)
+                    );
+                    crate::marra::summarise(&prompt)
+                })
+                .await
+                .map_err(|e: String| e);
+            this.update(cx, |this, cx| {
+                this.summarising = None;
+                this.summary = Some((key, result));
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn act(&mut self, act: Act, window: &mut Window, cx: &mut Context<Self>) {
@@ -1375,7 +1447,10 @@ impl MarraView {
         let lines = self.tail.as_ref().filter(|(k, _)| k == key).map(|(_, l)| l.clone()).unwrap_or_default();
         // What happened since the last look, from Gannin's log; frozen when
         // the thread opened, as opening marks it read.
-        let since = self.since.clone().filter(|(k, _)| k == key).map(|(_, l)| l).unwrap_or_default();
+        let (since, read_at) = self.since.clone().filter(|(k, _, _)| k == key).map(|(_, l, at)| (l, at)).unwrap_or_default();
+        let digest = self.digest.clone().filter(|(k, _)| k == key).map(|(_, d)| d);
+        let summary = self.summary.clone().filter(|(k, _)| k == key).map(|(_, r)| r);
+        let summarising = self.summarising.as_deref() == Some(key);
         let mut body = div().id(SharedString::from(format!("session-body-{key}"))).flex_1().min_h_0().overflow_y_scroll().flex().flex_col().gap_2().px_3().py_3();
         if let Some(s) = &info {
             let what = format!("{} ({}){}", s.subject.clone().unwrap_or_else(|| s.title.clone()), s.kind, s.server.as_ref().map(|n| format!(", on {n}")).unwrap_or_default());
@@ -1392,12 +1467,45 @@ impl MarraView {
                     .child(div().text_xs().text_color(theme.secondary).child("Where you left off"))
                     .child(div().text_sm().text_color(theme.fg).child(format!("What it is: {what}")))
                     .child(div().text_sm().text_color(theme.fg).child(format!("Now: {state}")))
-                    .child(div().text_sm().text_color(theme.fg).child(if since.is_empty() { "Since you looked: nothing new".to_string() } else { format!("Since you looked: {}", since.iter().map(|(at, what)| format!("{what} at {}", at.format("%H:%M"))).collect::<Vec<_>>().join(", ")) }))
+                    .child(div().pt_2().text_xs().text_color(theme.secondary).child(match read_at {
+                        Some(at) => format!("Since you looked at {}", at.format("%H:%M")),
+                        None => "Since it started".to_string(),
+                    }))
+                    .children(since_lines(&since, digest.as_ref(), s.state.label() == "Working", theme))
+                    .when_some(digest.as_ref().and_then(|d| d.as_ref()).and_then(|d| d.waiting.clone()), |d, waiting| {
+                        d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Waiting on you: {waiting}")))
+                    })
+                    .when(summarising, |d| d.child(div().flex().flex_row().items_center().gap_2().pt_1().text_sm().text_color(theme.secondary).child(spinner(SharedString::from(format!("summary-{key}")), 12., theme)).child("Haiku is reading it")))
+                    .when_some(summary, |d, summary| {
+                        d.child(match summary {
+                            Ok(text) => div()
+                                .mt_1()
+                                .p_2()
+                                .rounded(px(10.))
+                                .bg(theme.tile)
+                                .flex()
+                                .flex_col()
+                                .gap_0p5()
+                                .child(div().text_xs().text_color(theme.secondary).child("Summary, by Haiku"))
+                                .child(div().text_sm().text_color(theme.fg).child(markdown(&format!("summary-{key}"), &text, theme)))
+                                .into_any_element(),
+                            Err(error) => div().text_sm().text_color(theme.orange()).child(error).into_any_element(),
+                        })
+                    })
                     .when_some(need, |d, n| d.child(div().text_sm().font_weight(FontWeight::SEMIBOLD).text_color(theme.orange()).child(format!("Wants from you: {}", n.task))))
                     .child({
                         let mut links = div().flex().flex_row().flex_wrap().gap_1p5().pt_2();
                         let open_key = key.to_string();
                         links = links.child(button("left-off-session", "Open session", true, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::OpenSession(open_key.clone()), window, cx))));
+                        // Only where there's a conversation to read, and something in it.
+                        if digest.as_ref().and_then(|d| d.as_ref()).is_some_and(|d| !d.is_empty()) && !summarising {
+                            let summary_key = key.to_string();
+                            links = links.child(button("left-off-summary", "Summarise", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.summarise_session(summary_key.clone(), cx))));
+                        }
+                        for (n, url) in digest.as_ref().and_then(|d| d.as_ref()).map(|d| d.prs.clone()).unwrap_or_default().into_iter().enumerate() {
+                            let label = url.rsplit('/').next().map(|n| format!("Open PR #{n}")).unwrap_or_else(|| "Open PR".into());
+                            links = links.child(button(format!("left-off-pr-{n}"), label, false, theme).on_click(cx.listener(move |this, _: &ClickEvent, window, cx| this.act(Act::Url(url.clone()), window, cx))));
+                        }
                         if let Some(subject) = &s.subject_link {
                             let (in_app, url) = (key.to_string(), subject.url.clone());
                             // A PR has no drawer to open by itself yet: the session
@@ -1413,7 +1521,15 @@ impl MarraView {
             );
         }
         if lines.is_empty() {
-            body = body.child(div().w_full().px_6().text_xs().text_color(theme.secondary).text_center().child(if info.as_ref().is_some_and(|s| s.claude_id.is_some()) { "Reading its conversation." } else { "A plain session: open it to see its terminal." }));
+            let text = match &info {
+                Some(s) if s.kind == "terminal" => "A terminal: open it to see its screen.".to_string(),
+                Some(s) if digest.as_ref().is_some_and(|d| d.is_none()) => match &s.server {
+                    Some(server) => format!("Its conversation is on {server}: open it to see its terminal."),
+                    None => "No conversation found for it: open it to see its terminal.".to_string(),
+                },
+                _ => "Reading its conversation.".to_string(),
+            };
+            body = body.child(div().w_full().px_6().text_xs().text_color(theme.secondary).text_center().child(text));
         }
         for (n, (who, text)) in lines.iter().enumerate() {
             body = body.child(match who.as_str() {
@@ -1829,3 +1945,82 @@ impl Render for MarraView {
     }
 }
 
+
+/// The lines under "Since you looked": how long it worked, from Gannin's
+/// log, then what its transcript says it did; the log alone when there's
+/// no transcript.
+fn since_lines(log: &[(chrono::DateTime<chrono::Local>, String)], digest: Option<&Option<crate::marra_mcp::Digest>>, working: bool, theme: &Theme) -> Vec<AnyElement> {
+    let line = |text: String| div().text_sm().text_color(theme.fg).child(text).into_any_element();
+    let mut out = Vec::new();
+    // Each Working entry lasts until the next entry, or until now.
+    let mut minutes = 0i64;
+    let mut turns = 0usize;
+    for (i, (at, what)) in log.iter().enumerate() {
+        if what == "Working" {
+            turns += 1;
+            let end = log.get(i + 1).map(|(next, _)| *next).unwrap_or_else(|| if working { chrono::Local::now() } else { *at });
+            minutes += (end - *at).num_seconds().max(0);
+        }
+    }
+    let minutes = (minutes + 30) / 60;
+    let worked = match (turns, minutes) {
+        (0, _) => None,
+        (1, m) if m < 1 => Some("Worked once, briefly".to_string()),
+        (1, m) => Some(format!("Worked once, about {m} min")),
+        (n, m) if m < 1 => Some(format!("Worked {n} times, briefly")),
+        (n, m) => Some(format!("Worked {n} times, about {m} min in all")),
+    };
+    match digest.and_then(|d| d.as_ref()) {
+        Some(d) if d.is_empty() && worked.is_none() => out.push(line("Nothing new".into())),
+        Some(d) => {
+            let mut doing: Vec<String> = worked.into_iter().collect();
+            if d.commands > 0 {
+                doing.push(format!("ran {} command{}", d.commands, if d.commands == 1 { "" } else { "s" }));
+            }
+            if d.tools > d.commands {
+                doing.push(format!("{} other step{}", d.tools - d.commands, if d.tools - d.commands == 1 { "" } else { "s" }));
+            }
+            if !doing.is_empty() {
+                let mut text = doing.join(", ");
+                if let Some(first) = text.get_mut(0..1) {
+                    first.make_ascii_uppercase();
+                }
+                out.push(line(text));
+            }
+            if let Some(last) = d.prompts.last() {
+                let more = d.prompts.len() - 1;
+                let first_line = last.lines().find(|l| !l.trim().is_empty()).unwrap_or_default();
+                out.push(line(format!("You asked: {}{}", clip_line(first_line, 140), if more > 0 { format!(" (and {more} more)") } else { String::new() })));
+            }
+            if !d.files.is_empty() {
+                let shown: Vec<&str> = d.files.iter().take(4).map(String::as_str).collect();
+                let rest = d.files.len().saturating_sub(4);
+                out.push(line(format!(
+                    "Changed {} file{}: {}{}",
+                    d.files.len(),
+                    if d.files.len() == 1 { "" } else { "s" },
+                    shown.join(", "),
+                    if rest > 0 { format!(" and {rest} more") } else { String::new() }
+                )));
+            }
+            if let Some(reply) = &d.last_reply {
+                let first = reply.split("\n\n").next().unwrap_or(reply);
+                out.push(div().text_sm().text_color(theme.secondary).child(format!("Ended with: {}", clip_line(&first.replace('\n', " "), 280))).into_any_element());
+            }
+        }
+        // No transcript: Gannin's log, condensed.
+        _ => out.push(line(worked.unwrap_or_else(|| "Nothing new".into()))),
+    }
+    out
+}
+
+fn clip_line(text: &str, max: usize) -> String {
+    let text = text.trim();
+    if text.chars().count() <= max {
+        text.to_string()
+    } else {
+        // Cut at a word, so a clipped quote doesn't end mid-word.
+        let cut: String = text.chars().take(max).collect();
+        cut.rsplit_once(' ').map(|(head, _)| head.to_string()).unwrap_or(cut)
+    }
+}

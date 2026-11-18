@@ -418,6 +418,37 @@ impl Drop for Engine {
     }
 }
 
+/// A one-off summary from Haiku, no tools, no MCP and nothing saved: for
+/// reading what a session did, where Marra's own model would cost more and
+/// add to its conversation. Blocks: call it off the main thread.
+pub fn summarise(prompt: &str) -> Result<String, String> {
+    let args = ["-p", "--model", "haiku", "--tools", "", "--strict-mcp-config", "--no-session-persistence", "--output-format", "text"];
+    let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
+    let line = format!("command -v claude >/dev/null 2>&1 || {{ echo 'Claude Code is not installed on this Mac.' >&2; exit 127; }}; exec claude {}", quoted.join(" "));
+    let folder = dir();
+    let _ = std::fs::create_dir_all(&folder);
+    let mut command = Command::new(crate::paths::shell());
+    command.args(["-l", "-i", "-c", &line]).current_dir(&folder).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    for (key, _) in std::env::vars() {
+        if key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_") {
+            command.env_remove(key);
+        }
+    }
+    let mut child = command.spawn().map_err(|e| format!("Couldn't start claude: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(prompt.as_bytes()).map_err(|e| format!("Couldn't reach claude: {e}"))?;
+    }
+    let output = child.wait_with_output().map_err(|e| e.to_string())?;
+    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if output.status.success() && !text.is_empty() {
+        Ok(text)
+    } else {
+        let error = String::from_utf8_lossy(&output.stderr);
+        let error = error.lines().filter(|l| !l.trim().is_empty() && !l.contains("can't change option") && !l.contains("no job control")).last().unwrap_or("it gave nothing back");
+        Err(format!("Haiku couldn't summarise it: {error}"))
+    }
+}
+
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }

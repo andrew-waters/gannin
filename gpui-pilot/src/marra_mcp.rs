@@ -8,6 +8,7 @@
 //! a session) waits here too, up to `PATIENCE`.
 
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
@@ -29,7 +30,7 @@ pub fn tools() -> Value {
     json!([
         { "name": "list_sessions", "description": "Every Claude Code session open in Gannin, in every window: id, title, kind (work, review, ask, quick change, plan, terminal), state (working, needs you, your turn, ended), how long it has been in that state, its harness folder, the server it runs on, and its issue or PR. Call this before saying what's going on.", "inputSchema": { "type": "object", "properties": {} } },
         { "name": "waiting", "description": "What needs the user now, most urgent first: sessions blocked on them, reviews ready to post, sessions whose turn it is, review requests, and their PRs that need something (failing checks, changes requested, conflicts, ready to merge).", "inputSchema": { "type": "object", "properties": {} } },
-        { "name": "read_session", "description": "What a session has been doing: the last messages of its conversation (or the end of its terminal screen for a plain terminal).", "inputSchema": { "type": "object", "properties": { "id": id, "messages": { "type": "integer", "description": "How many recent messages, default 12" } }, "required": ["id"] } },
+        { "name": "read_session", "description": "What a session has been doing: the last messages of its conversation (or the end of its terminal screen for a plain terminal).", "inputSchema": { "type": "object", "properties": { "id": id, "messages": { "type": "integer", "description": "How many recent messages, default 12" }, "since": { "type": "string", "description": "An RFC 3339 time: every message after it instead (up to 150, each shortened), for summarising what happened since then" } }, "required": ["id"] } },
         { "name": "open_tab", "description": "Brings the Gannin window holding a session forward, on that session's tab, for the user to look at.", "inputSchema": { "type": "object", "properties": { "id": id }, "required": ["id"] } },
         { "name": "workload", "description": "The user's pull requests and review requests across their orgs, with each PR's state, and issues assigned to them.", "inputSchema": { "type": "object", "properties": {} } },
         { "name": "list_skills", "description": "The harnesses Gannin knows and the skills each offers (skills/*.md), for choosing where to answer a data question or run an investigation.", "inputSchema": { "type": "object", "properties": {} } },
@@ -163,17 +164,57 @@ pub fn respond(stream: &mut TcpStream, status: u16, kind: &str, body: &str) -> s
     stream.flush()
 }
 
-/// The last `count` messages of a Claude Code conversation, from its
-/// transcript: who said it ("User" or "Claude") and the text, a tool call
-/// as one line ("tool").
-pub fn transcript_messages(claude_id: &str, count: usize) -> Option<Vec<(String, String)>> {
+/// A conversation's transcript file, in whichever project folder it is.
+fn transcript_file(claude_id: &str) -> Option<std::path::PathBuf> {
     let projects = std::env::var_os("HOME").map(std::path::PathBuf::from)?.join(".claude/projects");
-    let path = std::fs::read_dir(projects).ok()?.flatten().map(|d| d.path().join(format!("{claude_id}.jsonl"))).find(|p| p.exists())?;
-    let text = std::fs::read_to_string(path).ok()?;
+    std::fs::read_dir(projects).ok()?.flatten().map(|d| d.path().join(format!("{claude_id}.jsonl"))).find(|p| p.exists())
+}
+
+/// The conversation a session is having: its own ID, else (a plain tab
+/// from before tabs had one) the newest transcript Claude Code keeps for
+/// its folder on this Mac. None on a server, where the transcript isn't.
+pub fn resolve_claude(claude_id: Option<String>, folder: &std::path::Path, on_server: bool) -> Option<String> {
+    if claude_id.is_some() || on_server {
+        return claude_id;
+    }
+    // Claude Code names a project's folder after its path, every character
+    // but letters and digits made a hyphen.
+    let name: String = folder.to_string_lossy().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect();
+    let dir = std::env::var_os("HOME").map(std::path::PathBuf::from)?.join(".claude/projects").join(name);
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .max_by_key(|(at, _)| *at)
+        .and_then(|(_, path)| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
+}
+
+/// The transcript's entries that are the conversation itself (not Claude
+/// Code's meta lines or subagents'), with when each was written.
+fn entries(claude_id: &str) -> Option<Vec<(Option<chrono::DateTime<chrono::Utc>>, Value)>> {
+    let text = std::fs::read_to_string(transcript_file(claude_id)?).ok()?;
+    Some(
+        text.lines()
+            .filter_map(|raw| serde_json::from_str::<Value>(raw).ok())
+            .filter(|v| v["isMeta"].as_bool() != Some(true) && v["isSidechain"].as_bool() != Some(true))
+            .map(|v| (v["timestamp"].as_str().and_then(|t| t.parse().ok()), v))
+            .collect(),
+    )
+}
+
+/// Claude Code's own wrappers (command output, reminders) aren't the user's words.
+fn wrapper(text: &str) -> bool {
+    text.trim_start().starts_with('<') || text.trim().is_empty()
+}
+
+/// The messages of a Claude Code conversation after `since` (all of them
+/// when None), the last `count` of them, each clipped to `each`: who said
+/// it ("User" or "Claude") and the text, a tool call as one line ("tool").
+pub fn transcript_since(claude_id: &str, since: Option<chrono::DateTime<chrono::Utc>>, count: usize, each: usize) -> Option<Vec<(String, String)>> {
     let mut lines: Vec<(String, String)> = Vec::new();
-    for raw in text.lines() {
-        let Ok(value) = serde_json::from_str::<Value>(raw) else { continue };
-        if value["isMeta"].as_bool() == Some(true) || value["isSidechain"].as_bool() == Some(true) {
+    for (at, value) in entries(claude_id)? {
+        if since.is_some_and(|since| at.is_none_or(|at| at <= since)) {
             continue;
         }
         let who = match value["type"].as_str() {
@@ -183,9 +224,8 @@ pub fn transcript_messages(claude_id: &str, count: usize) -> Option<Vec<(String,
         };
         let content = &value["message"]["content"];
         if let Some(s) = content.as_str() {
-            // Claude Code's own wrappers (command output, reminders) aren't the user's words.
-            if !s.trim_start().starts_with('<') {
-                lines.push((who.into(), clip(s, 2000)));
+            if !wrapper(s) {
+                lines.push((who.into(), clip(s, each)));
             }
             continue;
         }
@@ -193,8 +233,8 @@ pub fn transcript_messages(claude_id: &str, count: usize) -> Option<Vec<(String,
             match block["type"].as_str() {
                 Some("text") => {
                     let text = block["text"].as_str().unwrap_or_default();
-                    if !text.trim_start().starts_with('<') && !text.trim().is_empty() {
-                        lines.push((who.into(), clip(text, 2000)));
+                    if !wrapper(text) {
+                        lines.push((who.into(), clip(text, each)));
                     }
                 }
                 Some("tool_use") => lines.push(("tool".into(), crate::marra::summarize(block["name"].as_str().unwrap_or_default(), &block["input"]))),
@@ -206,10 +246,145 @@ pub fn transcript_messages(claude_id: &str, count: usize) -> Option<Vec<(String,
     Some(lines.split_off(start))
 }
 
-/// The same, as text for Marra.
-pub fn transcript_tail(claude_id: &str, count: usize) -> Option<String> {
-    let lines = transcript_messages(claude_id, count)?;
-    Some(lines.into_iter().map(|(who, text)| if who == "tool" { format!("Claude used {text}") } else { format!("{who}: {text}") }).collect::<Vec<_>>().join("\n\n"))
+/// The last `count` messages of a Claude Code conversation, from its
+/// transcript.
+pub fn transcript_messages(claude_id: &str, count: usize) -> Option<Vec<(String, String)>> {
+    transcript_since(claude_id, None, count, 2000)
+}
+
+/// What a session did after `since`, read from its transcript with no
+/// model call: for the top of its thread in Marra.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Digest {
+    /// What the user typed, in order.
+    pub prompts: Vec<String>,
+    /// Claude's last words.
+    pub last_reply: Option<String>,
+    /// Files it edited or wrote, relative to where it runs.
+    pub files: Vec<String>,
+    pub commands: usize,
+    pub tools: usize,
+    /// Pull requests it opened (their links).
+    pub prs: Vec<String>,
+    /// A question or plan of Claude's not yet answered.
+    pub waiting: Option<String>,
+}
+
+impl Digest {
+    pub fn is_empty(&self) -> bool {
+        self.prompts.is_empty() && self.last_reply.is_none() && self.tools == 0
+    }
+}
+
+pub fn digest(claude_id: &str, since: Option<chrono::DateTime<chrono::Utc>>) -> Option<Digest> {
+    let mut d = Digest::default();
+    // Tool calls whose results matter: a PR being made, a question asked.
+    let mut pr_calls: HashSet<String> = HashSet::new();
+    let mut open_question: Option<(String, String)> = None;
+    for (at, value) in entries(claude_id)? {
+        if since.is_some_and(|since| at.is_none_or(|at| at <= since)) {
+            continue;
+        }
+        let cwd = value["cwd"].as_str().unwrap_or_default().to_string();
+        let content = &value["message"]["content"];
+        match value["type"].as_str() {
+            Some("user") => {
+                if let Some(text) = content.as_str() {
+                    if !wrapper(text) {
+                        d.prompts.push(clip(text, 300));
+                    }
+                }
+                for block in content.as_array().into_iter().flatten() {
+                    match block["type"].as_str() {
+                        Some("text") => {
+                            let text = block["text"].as_str().unwrap_or_default();
+                            if !wrapper(text) {
+                                d.prompts.push(clip(text, 300));
+                            }
+                        }
+                        Some("tool_result") => {
+                            let id = block["tool_use_id"].as_str().unwrap_or_default();
+                            if open_question.as_ref().is_some_and(|(q, _)| q == id) {
+                                open_question = None;
+                            }
+                            if pr_calls.remove(id) {
+                                let result = block["content"].to_string();
+                                if let Some(url) = pr_link(&result) {
+                                    if !d.prs.contains(&url) {
+                                        d.prs.push(url);
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            Some("assistant") => {
+                for block in content.as_array().into_iter().flatten() {
+                    match block["type"].as_str() {
+                        Some("text") => {
+                            let text = block["text"].as_str().unwrap_or_default();
+                            if !wrapper(text) {
+                                d.last_reply = Some(text.trim().to_string());
+                            }
+                        }
+                        Some("tool_use") => {
+                            d.tools += 1;
+                            let id = block["id"].as_str().unwrap_or_default().to_string();
+                            let input = &block["input"];
+                            match block["name"].as_str().unwrap_or_default() {
+                                "Edit" | "Write" | "MultiEdit" | "NotebookEdit" => {
+                                    if let Some(path) = input["file_path"].as_str().or(input["notebook_path"].as_str()) {
+                                        let shown = path.strip_prefix(&format!("{cwd}/")).unwrap_or(path).to_string();
+                                        if !d.files.contains(&shown) {
+                                            d.files.push(shown);
+                                        }
+                                    }
+                                }
+                                "Bash" => {
+                                    d.commands += 1;
+                                    let command = input["command"].as_str().unwrap_or_default();
+                                    if command.contains("gh pr create") || (command.contains("gh api") && command.contains("/pulls")) {
+                                        pr_calls.insert(id);
+                                    }
+                                }
+                                "AskUserQuestion" => {
+                                    let question = input["questions"][0]["question"].as_str().unwrap_or("A question").to_string();
+                                    open_question = Some((id, question));
+                                }
+                                "ExitPlanMode" => open_question = Some((id, "A plan to approve".into())),
+                                name if name.ends_with("create_pull_request") => {
+                                    pr_calls.insert(id);
+                                }
+                                _ => {}
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    d.waiting = open_question.map(|(_, q)| q);
+    Some(d)
+}
+
+/// The first pull request link in a tool's result.
+fn pr_link(text: &str) -> Option<String> {
+    let start = text.find("https://github.com/")?;
+    let rest = &text[start..];
+    let end = rest.find(|c: char| c.is_whitespace() || c == '"' || c == '\\' || c == ')').unwrap_or(rest.len());
+    let url = &rest[..end];
+    let tail = url.split("/pull/").nth(1)?;
+    let number: String = tail.chars().take_while(|c| c.is_ascii_digit()).collect();
+    (!number.is_empty()).then(|| format!("{}/pull/{number}", url.split("/pull/").next().unwrap_or_default()))
+}
+
+/// Messages as text for a model to read.
+pub fn as_text(lines: Vec<(String, String)>) -> String {
+    lines.into_iter().map(|(who, text)| if who == "tool" { format!("Claude used {text}") } else { format!("{who}: {text}") }).collect::<Vec<_>>().join("\n\n")
 }
 
 fn clip(s: &str, max: usize) -> String {

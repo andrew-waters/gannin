@@ -332,7 +332,7 @@ fn live_sessions(cx: &App) -> Vec<SessionInfo> {
                 server: p.server_name(),
                 subject: launch.and_then(|l| l.subject.as_ref()).map(|s| format!("{}#{}", s.repo, s.number)),
                 subject_link: launch.and_then(|l| l.subject.clone()),
-                claude_id: launch.map(|l| l.claude_id()),
+                claude_id: launch.map(|l| l.claude_id()).or_else(|| p.claude_id.clone()),
                 review_ready: p.review_ready(cx),
             });
         }
@@ -707,6 +707,11 @@ impl Marra {
         self.log.retain(|k, _| seen.contains(k));
     }
 
+    /// When the user last read a session's thread.
+    pub fn read_at(&self, key: &str) -> Option<DateTime<Local>> {
+        self.saved.read.get(&format!("s:{key}")).and_then(|r| DateTime::parse_from_rfc3339(r).ok()).map(|d| d.with_timezone(&Local))
+    }
+
     /// What a session did after the user last read its thread.
     pub fn since_read(&self, key: &str) -> Vec<(DateTime<Local>, String)> {
         let read = self.saved.read.get(&format!("s:{key}")).and_then(|r| DateTime::parse_from_rfc3339(r).ok()).map(|d| d.with_timezone(&Local));
@@ -904,18 +909,27 @@ impl Marra {
                 None => Err(format!("No session {id}. Call list_sessions for the ids.")),
                 Some(s) => {
                     let count = call.args["messages"].as_u64().unwrap_or(12) as usize;
+                    let since: Option<chrono::DateTime<chrono::Utc>> = call.args["since"].as_str().and_then(|t| t.parse().ok());
                     let head = format!("{} ({}, {} since {}):\n\n", s.title, s.kind, s.state.label(), s.since.format("%H:%M"));
-                    match s.claude_id.clone() {
+                    if s.kind == "terminal" {
+                        Ok(format!("{head}{}", s.page.read(cx).screen_tail(60, cx)))
+                    } else {
                         // A transcript can be large: read it off the main thread.
-                        Some(claude) => {
-                            let screen = s.page.read(cx).screen_tail(60, cx);
-                            std::thread::spawn(move || {
-                                let body = marra_mcp::transcript_tail(&claude, count).unwrap_or(screen);
-                                let _ = reply.send(Ok(format!("{head}{body}")));
+                        let screen = s.page.read(cx).screen_tail(60, cx);
+                        let (claude, folder, on_server) = (s.claude_id.clone(), s.folder.clone(), s.server.is_some());
+                        std::thread::spawn(move || {
+                            let lines = marra_mcp::resolve_claude(claude, &folder, on_server).and_then(|id| match since {
+                                Some(_) => marra_mcp::transcript_since(&id, since, 150, 600),
+                                None => marra_mcp::transcript_since(&id, None, count, 2000),
                             });
-                            return;
-                        }
-                        None => Ok(format!("{head}{}", s.page.read(cx).screen_tail(60, cx))),
+                            let body = match lines {
+                                Some(lines) if lines.is_empty() => "(nothing since then)".to_string(),
+                                Some(lines) => marra_mcp::as_text(lines),
+                                None => screen,
+                            };
+                            let _ = reply.send(Ok(format!("{head}{body}")));
+                        });
+                        return;
                     }
                 }
             },
