@@ -2055,11 +2055,6 @@ impl MarraView {
     }
 
     fn composer_view(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
-        let target = match self.open.as_deref() {
-            Some(id) if id.starts_with("s:") => Some("Goes to this session's Claude Code, as if typed there"),
-            Some(id) if id.starts_with("e:") => Some("Goes to this errand's worker"),
-            _ => None,
-        };
         let busy = self.marra.read(cx).main.busy() && self.open.as_deref().is_none_or(|o| o == "main");
         let token = self.typing_token(cx);
         let options = token.as_deref().map(|t| self.suggestions(t, cx)).unwrap_or_default();
@@ -2076,7 +2071,6 @@ impl MarraView {
             .border_t_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
-            .when_some(target, |d, target| d.child(div().text_xs().text_color(theme.tertiary).child(target)))
             .when(!options.is_empty(), |d| {
                 d.child(
                     div()
@@ -2138,7 +2132,9 @@ impl MarraView {
                             cx.notify();
                             return;
                         }
-                        if key == "enter" && event.keystroke.modifiers.platform {
+                        // Return sends; Shift-Return (or Option, Control) is a new line.
+                        let m = &event.keystroke.modifiers;
+                        if key == "enter" && !m.shift && !m.alt && !m.control {
                             cx.stop_propagation();
                             this.send(window, cx);
                         } else if key == "escape" && this.open.is_some() && this.composer.read(cx).text(cx).is_empty() {
@@ -2179,7 +2175,6 @@ impl MarraView {
                             .on_click(cx.listener(|this, _: &ClickEvent, window, cx| this.send(window, cx)))
                     }),
             )
-            .child(div().truncate().text_xs().text_color(theme.tertiary).child("⌘↩ send · / commands · @ mention · ⌥B ⌥R ⌥A lanes"))
     }
 }
 
