@@ -446,10 +446,15 @@ pub fn opening_prompt(reference: &str, title: &str, branch: &str) -> String {
     )
 }
 
-/// `pullRequestReviewPrompt`, with no team learnings or review config.
+/// `pullRequestReviewPrompt`, with no team learnings or review config. The
+/// team's default review prompts are named, not inlined: claude reads them
+/// in the harness after the start script pulls it, here or on a server.
 pub fn review_prompt(repo: &str, number: i64, title: &str, url: &str, branch: &str, sensitive: &[crate::risk::Sensitive]) -> String {
     let (owner, name) = repo.split_once('/').unwrap_or((repo, repo));
+    // The team's `{{placeholders}}` stay as written: hide them from ours.
     REVIEW_PROMPT
+        .replace("{{", "\u{1}")
+        .replace("}}", "\u{2}")
         .replace("{sensitive}", &crate::risk::prompt_part(sensitive))
         .replace("{repo}", repo)
         .replace("{owner}", owner)
@@ -458,6 +463,8 @@ pub fn review_prompt(repo: &str, number: i64, title: &str, url: &str, branch: &s
         .replace("{title}", title)
         .replace("{url}", url)
         .replace("{branch}", branch)
+        .replace('\u{1}', "{{")
+        .replace('\u{2}', "}}")
 }
 
 /// The Review Again prompt.

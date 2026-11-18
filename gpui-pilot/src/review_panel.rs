@@ -1578,6 +1578,8 @@ impl ReviewPanel {
                     "met" => ("Met", theme.good()),
                     "partial" => ("Partly", theme.orange()),
                     "missing" => ("Missing", theme.critical()),
+                    // Another PR's, or checked by people after merge.
+                    "later" => ("Later", theme.tertiary),
                     _ => ("Can't tell", theme.secondary),
                 };
                 div()

@@ -101,7 +101,8 @@ impl Signal {
 pub struct Criterion {
     pub criterion: String,
     pub issue: Option<String>,
-    /// met, partial, missing or untestable.
+    /// met, partial, missing, untestable, or later (another PR's, or
+    /// checked by people after merge: never a floor or a gap).
     pub status: String,
     pub evidence: Option<String>,
 }
@@ -426,5 +427,17 @@ mod tests {
         assert_eq!(risk.level(), Some(Level::Medium));
         let raised = risk.assessed(&["db/migrations/1.sql".into()], &[Sensitive { path: "db/migrations/".into(), why: None }]);
         assert_eq!(raised.signals[1].verdict.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn later_criteria_are_no_floor() {
+        let value = serde_json::json!({
+            "risk": { "alignment": { "verdict": "good" }, "impact": { "verdict": "small" }, "verification": { "verdict": "good" } },
+            "criteria": [{ "criterion": "Checked on staging", "status": "later" }]
+        });
+        let risk = parse(&value).unwrap().assessed(&[], &[]);
+        let verification = risk.signals.iter().find(|s| s.key == "verification").unwrap();
+        assert_eq!(verification.verdict.as_deref(), Some("good"));
+        assert_eq!(risk.level(), Some(Level::Low));
     }
 }
