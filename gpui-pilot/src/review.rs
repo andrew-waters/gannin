@@ -118,16 +118,18 @@ fn transcript(claude_id: &str) -> Option<PathBuf> {
 /// leniently so one bad finding never loses the rest.
 pub fn read_result(claude_id: &str) -> Option<ReviewResult> {
     let text = std::fs::read_to_string(transcript(claude_id)?).ok()?;
-    let (last_reply, at) = text.lines().rev().filter_map(|line| serde_json::from_str::<Value>(line).ok()).find_map(|entry| {
+    // The newest reply with a review in it, not just the last reply: told
+    // something after the review ("post the review"), claude answers
+    // without the block, and the review must still show.
+    text.lines().rev().filter_map(|line| serde_json::from_str::<Value>(line).ok()).find_map(|entry| {
         if entry["type"] != "assistant" || entry["isSidechain"] == true {
             return None;
         }
         let blocks = entry["message"]["content"].as_array()?;
         let text: Vec<&str> = blocks.iter().filter(|b| b["type"] == "text").filter_map(|b| b["text"].as_str()).collect();
-        let text = text.join("\n");
-        (!text.trim().is_empty()).then(|| (text, entry["timestamp"].as_str().and_then(|t| t.parse().ok())))
-    })?;
-    parse(&last_reply).map(|r| ReviewResult { at, ..r })
+        let at = entry["timestamp"].as_str().and_then(|t| t.parse().ok());
+        parse(&text.join("\n")).map(|r| ReviewResult { at, ..r })
+    })
 }
 
 /// What claude is doing, from the end of its transcript: the tool it last
