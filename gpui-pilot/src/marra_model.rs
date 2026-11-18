@@ -484,6 +484,12 @@ impl Marra {
         }
         let entity = cx.new(Marra::new);
         cx.set_global(MarraGlobal(entity.clone()));
+        // A click on one of Marra's notifications brings Marra forward, on
+        // its thread when it has one.
+        cx.on_system_notification_response(|response, cx| {
+            let thread = response.tag.strip_prefix("thread:").map(str::to_string);
+            crate::marra_view::show_thread(thread, cx);
+        });
         entity
     }
 
@@ -573,6 +579,7 @@ impl Marra {
     }
 
     fn tick(&mut self, cx: &mut Context<Self>) {
+        post_notifications(cx);
         let mut changed = false;
         // Read here, outside any window's update, for everything else to use.
         self.sessions = live_sessions(cx);
@@ -1284,7 +1291,7 @@ impl Marra {
             self.held.push(line);
             return;
         }
-        notify(&need.subject, &format!("{}. {}", need.task, need.detail));
+        notify_thread(need.thread.clone(), &need.subject, &format!("{}. {}", need.task, need.detail));
     }
 
     pub fn set_focus(&mut self, on: bool, cx: &mut Context<Self>) {
@@ -1427,17 +1434,33 @@ fn quiet_hours() -> bool {
     !(7..22).contains(&hour)
 }
 
-/// A macOS notification.
+/// Notifications waiting for the tick to post them: (thread, title, body).
+static PENDING: std::sync::Mutex<Vec<(Option<String>, String, String)>> = std::sync::Mutex::new(Vec::new());
+
+/// A notification, posted on the next tick as Gannin's own (its name and
+/// icon; osascript's came from Script Editor). Clicking it opens Marra.
 pub fn notify(title: &str, body: &str) {
-    if !cfg!(target_os = "macos") {
-        return;
+    notify_thread(None, title, body);
+}
+
+/// The same, opening `thread` in Marra when clicked.
+pub fn notify_thread(thread: Option<String>, title: &str, body: &str) {
+    if let Ok(mut pending) = PENDING.lock() {
+        pending.push((thread, title.to_string(), body.to_string()));
     }
-    let (title, body) = (title.to_string(), body.to_string());
-    std::thread::spawn(move || {
-        let _ = std::process::Command::new("/usr/bin/osascript")
-            .args(["-e", "on run argv", "-e", "display notification (item 2 of argv) with title \"Marra\" subtitle (item 1 of argv)", "-e", "end run", &title, &body])
-            .output();
-    });
+}
+
+/// Posts what's waiting. The tag is the thread (a newer notification for a
+/// thread replaces its older one), and it comes back on a click.
+fn post_notifications(cx: &mut App) {
+    let pending: Vec<_> = PENDING.lock().map(|mut p| std::mem::take(&mut *p)).unwrap_or_default();
+    for (thread, title, body) in pending {
+        let tag = match thread {
+            Some(thread) => format!("thread:{thread}"),
+            None => format!("marra:{}", uuid::Uuid::new_v4()),
+        };
+        cx.show_system_notification(gpui::SystemNotification { tag: tag.into(), title: title.into(), body: body.into(), actions: Vec::new() });
+    }
 }
 
 fn need_json(n: &Need) -> serde_json::Value {

@@ -691,6 +691,42 @@ pub fn toggle(cx: &mut App) {
     open_floating(cx);
 }
 
+/// A notification clicked: Gannin comes forward with Marra showing (never
+/// toggled away), open on the notification's thread when it has one.
+pub fn show_thread(thread: Option<String>, cx: &mut App) {
+    cx.activate(true);
+    let marra = Marra::get(cx);
+    let open = move |view: &mut MarraView, window: &mut Window, cx: &mut Context<MarraView>| {
+        if let Some(thread) = thread.clone() {
+            view.open_thread(thread, cx);
+        }
+        view.focus_input(window, cx);
+    };
+    if marra.read(cx).saved.docked {
+        let target = cx.active_window().and_then(|w| w.downcast::<Workspace>()).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));
+        if let Some(window) = target {
+            let _ = window.update(cx, |workspace, window, cx| {
+                window.activate_window();
+                let view = workspace.marra_dock.get_or_insert_with(|| cx.new(|cx| MarraView::new(true, window, cx))).clone();
+                view.update(cx, |v, cx| open(v, window, cx));
+                cx.notify();
+            });
+        }
+        return;
+    }
+    if marra.read(cx).floating.is_none_or(|h| h.update(cx, |_, _, _| ()).is_err()) {
+        open_floating(cx);
+    }
+    if let Some(handle) = marra.read(cx).floating {
+        let _ = handle.update(cx, |root, window, cx| {
+            window.activate_window();
+            if let Ok(view) = root.downcast::<MarraView>() {
+                view.update(cx, |v, cx| open(v, window, cx));
+            }
+        });
+    }
+}
+
 fn open_floating(cx: &mut App) {
     let options = gpui::WindowOptions {
         window_bounds: Some(gpui::WindowBounds::Windowed(gpui::Bounds::centered(None, gpui::size(px(460.), px(800.)), cx))),
