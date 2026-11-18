@@ -398,6 +398,17 @@ impl MarraView {
         cx.notify();
     }
 
+    /// Dismiss: the item's gone for good.
+    fn dismiss(&mut self, key: String, cx: &mut Context<Self>) {
+        self.marra.update(cx, |m, cx| {
+            m.dismiss(&key);
+            cx.notify();
+        });
+        self.later_menu = false;
+        self.selected = 0;
+        cx.notify();
+    }
+
     fn remind(&mut self, key: String, minutes: Option<i64>, cx: &mut Context<Self>) {
         // Tomorrow is nine in the morning.
         let minutes = minutes.map(|m| {
@@ -1293,7 +1304,11 @@ impl MarraView {
                                 .child(button("later-top", "Remind me", false, theme).on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                                     this.later_menu = !this.later_menu;
                                     cx.notify();
-                                }))),
+                                })))
+                                .child({
+                                    let key = key.clone();
+                                    button("dismiss-top", "Dismiss", false, theme).on_click(cx.listener(move |this, _: &ClickEvent, _, cx| this.dismiss(key.clone(), cx)))
+                                }),
                         )
                         .when(self.later_menu, |d| {
                             d.child(div().flex().flex_row().flex_wrap().items_center().gap_1().child(div().text_xs().text_color(theme.secondary).pr_1().child("Remind me in")).children(REMIND.iter().enumerate().filter(|(_, (_, m))| m.is_some() || offers_ci).map(|(n, (label, minutes))| {
@@ -1503,12 +1518,24 @@ impl MarraView {
             .flex_row()
             .items_center()
             .px_2()
-            .h(px(52.))
+            .h(px(40.))
             .border_b_1()
             .border_color(theme.border)
             .bg(theme.sidebar)
             .child(div().id("back").flex_none().w(px(80.)).text_sm().text_color(theme.selected).cursor_pointer().child("‹ Threads").on_click(cx.listener(|this, _: &ClickEvent, _, cx| this.back(cx))))
-            .child(div().flex_1().min_w_0().flex().flex_col().items_center().child(avatar_view(thread.kind, false, 26., 15., theme)).child(div().max_w(px(260.)).truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(thread.title.clone())))
+            // The avatar and title on one line, the title cut short to fit.
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .child(div().flex_none().child(avatar_view(thread.kind, false, 20., 12., theme)))
+                    .child(div().min_w_0().truncate().text_xs().font_weight(FontWeight::SEMIBOLD).text_color(theme.fg).child(thread.title.clone())),
+            )
             .child(
                 div()
                     .flex_none()

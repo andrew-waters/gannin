@@ -1601,6 +1601,20 @@ impl Workspace {
         self.review_subject(crate::launch::Subject { id: pr.id, repo: pr.repo, number: pr.number, title: pr.title, url: pr.url }, unattended, window, cx);
     }
 
+    /// How well this window suits reviewing a PR in `repo`, for Marra to
+    /// pick one: None when its org isn't the repo's or it has no harness;
+    /// else whether a harness lists the repo, and whether it runs on a
+    /// server (where sessions are meant to run).
+    pub fn review_fit(&self, repo: &str) -> Option<(bool, bool)> {
+        let owner = repo.split('/').next()?;
+        if !self.org.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(owner)) || self.projects.is_empty() {
+            return None;
+        }
+        let listed = self.projects.iter().any(|p| p.repos.iter().any(|r| r == repo));
+        let on_server = self.folder.as_ref().is_some_and(|f| f.location.server.is_some());
+        Some((listed, on_server))
+    }
+
     /// Review with Claude, from Marra's Needs you: a review request.
     pub fn review_for_marra(&mut self, subject: crate::launch::Subject, window: &mut Window, cx: &mut Context<Self>) {
         self.review_subject(subject, None, window, cx);

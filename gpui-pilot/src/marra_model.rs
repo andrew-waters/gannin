@@ -502,6 +502,7 @@ impl Marra {
         saved.pinned.retain(|k| !stale(k));
         saved.muted.retain(|k| !stale(k));
         saved.snoozed.retain(|k, _| !stale(k));
+        saved.dismissed.retain(|k| !stale(k));
         // Each claude gets its config (with this launch's token) as it
         // starts; earlier launches' are stale.
         for entry in std::fs::read_dir(marra::dir()).into_iter().flatten().flatten() {
@@ -1000,7 +1001,17 @@ impl Marra {
     /// Review with Claude in the front Gannin window (it asks for nothing
     /// on GitHub; posting confirms in the review as always).
     pub fn start_review(&mut self, subject: crate::launch::Subject, cx: &mut App) {
-        let target = cx.active_window().and_then(|w| w.downcast::<Workspace>()).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));
+        // The window whose org and harness suit the PR, one on a server
+        // first: Marra's own window is usually the active one, and the first
+        // window may be a local folder, which would run it on this Mac.
+        let fits = cx
+            .windows()
+            .into_iter()
+            .filter_map(|w| w.downcast::<Workspace>())
+            .filter_map(|w| w.read(cx).ok().and_then(|ws| ws.review_fit(&subject.repo)).map(|fit| (w, fit)))
+            .max_by_key(|(_, (listed, on_server))| (*listed, *on_server))
+            .map(|(w, _)| w);
+        let target = fits.or_else(|| cx.active_window().and_then(|w| w.downcast::<Workspace>())).or_else(|| cx.windows().into_iter().find_map(|w| w.downcast::<Workspace>()));
         if let Some(window) = target {
             let _ = window.update(cx, |workspace, window, cx| {
                 workspace.review_for_marra(subject, window, cx);
@@ -1190,7 +1201,7 @@ impl Marra {
             }
         }
         // Remind me: hidden until due; back at the top once it is.
-        out.retain(|n| !self.saved.snoozed.contains_key(&n.key));
+        out.retain(|n| !self.saved.snoozed.contains_key(&n.key) && !self.saved.dismissed.contains(&n.key));
         for n in &mut out {
             n.returned = self.returned.contains(&n.key);
         }
@@ -1215,6 +1226,16 @@ impl Marra {
         };
         self.saved.snoozed.insert(key.to_string(), when);
         self.returned.remove(key);
+        self.saved.save();
+    }
+
+    /// Hides an item for good: no reminder brings it back.
+    pub fn dismiss(&mut self, key: &str) {
+        self.saved.snoozed.remove(key);
+        self.returned.remove(key);
+        if !self.saved.dismissed.iter().any(|k| k == key) {
+            self.saved.dismissed.push(key.to_string());
+        }
         self.saved.save();
     }
 

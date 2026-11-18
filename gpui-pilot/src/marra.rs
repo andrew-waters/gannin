@@ -59,6 +59,9 @@ pub struct Saved {
     /// (RFC 3339), or "ci" for when CI passes.
     #[serde(default)]
     pub snoozed: std::collections::HashMap<String, String>,
+    /// Items dismissed with Dismiss: never shown again.
+    #[serde(default)]
+    pub dismissed: Vec<String>,
     /// Phone access: the HTTP API on the local network.
     #[serde(default)]
     pub api: bool,
