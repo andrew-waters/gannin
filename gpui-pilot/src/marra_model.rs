@@ -207,6 +207,9 @@ pub struct ErrandSaved {
     pub kind: ErrandKind,
     pub title: String,
     pub harness: PathBuf,
+    /// The server the harness is on; None for this Mac.
+    #[serde(default)]
+    pub server: Option<crate::servers::Server>,
     pub session: Option<String>,
     pub created: String,
     #[serde(default)]
@@ -525,7 +528,7 @@ impl Marra {
         let errands = saved_errands
             .into_iter()
             .map(|s| {
-                let profile = Profile { cwd: s.harness.clone(), system: errand_brief(s.kind), session: s.session.clone(), model: saved.model.clone(), extra: errand_flags() };
+                let profile = Profile { cwd: s.harness.clone(), system: errand_brief(s.kind), session: s.session.clone(), model: saved.model.clone(), extra: errand_flags(), server: s.server.clone() };
                 let convo = Convo::new(profile, errand_log(&s.id));
                 Errand { saved: s, convo }
             })
@@ -855,17 +858,28 @@ impl Marra {
 
     // MARK: Errands
 
-    pub fn start_errand(&mut self, kind: ErrandKind, ask: &str, harness: PathBuf, skills: &[String]) -> Result<String, String> {
-        if !harness.is_dir() {
-            return Err(format!("{} isn't a folder on this Mac.", harness.display()));
-        }
+    /// `harness` as list_skills names it. An errand runs where the harness's
+    /// sessions run: on its server when one has run there, even when it's
+    /// named by its folder on this Mac.
+    pub fn start_errand(&mut self, kind: ErrandKind, ask: &str, harness: &str, skills: &[String]) -> Result<String, String> {
+        let places = marra_mcp::harness_places();
+        let place = places
+            .iter()
+            .find(|p| p.label() == harness)
+            .or_else(|| places.iter().find(|p| p.local.as_deref() == Some(std::path::Path::new(harness)) || p.path == std::path::Path::new(harness)))
+            .cloned();
+        let (harness, server) = match place {
+            Some(p) => (p.path, p.server),
+            None if std::path::Path::new(harness).is_dir() => (PathBuf::from(harness), None),
+            None => return Err(format!("{harness} isn't a harness Gannin knows: use one list_skills names.")),
+        };
         let id = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
         let title = ask.lines().next().unwrap_or_default().chars().take(60).collect::<String>();
-        let profile = Profile { cwd: harness.clone(), system: errand_brief(kind), session: None, model: self.saved.model.clone(), extra: errand_flags() };
+        let profile = Profile { cwd: harness.clone(), system: errand_brief(kind), session: None, model: self.saved.model.clone(), extra: errand_flags(), server: server.clone() };
         let mut convo = Convo::new(profile, errand_log(&id));
         let hint = if skills.is_empty() { String::new() } else { format!("\n\nSkills to start with: {}.", skills.join(", ")) };
         convo.send(ask, &format!("{ask}{hint}"));
-        let saved = ErrandSaved { id: id.clone(), kind, title, harness, session: convo.engine.profile.session.clone(), created: marra::now(), point: None, needs: None, done: false };
+        let saved = ErrandSaved { id: id.clone(), kind, title, harness, server, session: convo.engine.profile.session.clone(), created: marra::now(), point: None, needs: None, done: false };
         self.errands.push(Errand { saved, convo });
         self.save_errands();
         Ok(id)
@@ -966,8 +980,8 @@ impl Marra {
             "start_errand" => {
                 let kind = if call.args["kind"] == "investigation" { ErrandKind::Investigation } else { ErrandKind::Question };
                 let skills: Vec<String> = call.args["skills"].as_array().map(|a| a.iter().filter_map(|s| s.as_str().map(str::to_string)).collect()).unwrap_or_default();
-                let harness = PathBuf::from(call.args["harness"].as_str().unwrap_or_default());
-                self.start_errand(kind, call.args["ask"].as_str().unwrap_or_default(), harness, &skills).map(|id| format!("Started errand {id}. It shows as a thread of its own and reports back there; you needn't wait for it."))
+                let harness = call.args["harness"].as_str().unwrap_or_default().to_string();
+                self.start_errand(kind, call.args["ask"].as_str().unwrap_or_default(), &harness, &skills).map(|id| format!("Started errand {id}. It shows as a thread of its own and reports back there; you needn't wait for it."))
             }
             "send_to_session" => match self.sessions.clone().into_iter().find(|s| s.key == id) {
                 None => Err(format!("No session {id}.")),

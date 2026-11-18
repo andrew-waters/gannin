@@ -486,7 +486,7 @@ fn main() {
 fn marra_check(model: Option<String>, prompt: Option<String>) {
     let Some((port, token, calls)) = marra_mcp::serve() else { return println!("couldn't listen") };
     let folder = std::env::temp_dir().join("gannin-marra-check");
-    let profile = marra::Profile { cwd: folder, system: marra::system_prompt(), session: None, model, extra: Vec::new() };
+    let profile = marra::Profile { cwd: folder, system: marra::system_prompt(), session: None, model, extra: Vec::new(), server: None };
     let mut engine = marra::Engine::new(profile);
     engine.mcp = Some((port, token));
     let prompt = prompt.unwrap_or_else(|| "Use the gannin list_sessions tool, then tell me in one sentence what it said.".into());

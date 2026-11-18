@@ -209,12 +209,14 @@ pub struct Profile {
     pub model: Option<String>,
     /// More arguments (an errand's disallowed tools).
     pub extra: Vec<String>,
+    /// Where claude runs: a server (in `cwd` there, over ssh) or this Mac.
+    pub server: Option<crate::servers::Server>,
 }
 
 impl Profile {
     /// Marra's own, from what's saved.
     pub fn marra(saved: &Saved) -> Self {
-        Self { cwd: dir(), system: system_prompt(), session: saved.session.clone(), model: saved.model.clone(), extra: Vec::new() }
+        Self { cwd: dir(), system: system_prompt(), session: saved.session.clone(), model: saved.model.clone(), extra: Vec::new(), server: None }
     }
 }
 
@@ -258,7 +260,10 @@ impl Engine {
 
     fn start(&mut self) -> Result<(), String> {
         let folder = self.profile.cwd.clone();
-        std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        let server = self.profile.server.clone();
+        if server.is_none() {
+            std::fs::create_dir_all(&folder).map_err(|e| e.to_string())?;
+        }
         let mut args: Vec<String> = vec![
             "-p".into(),
             "--input-format".into(),
@@ -272,21 +277,23 @@ impl Engine {
             "--append-system-prompt".into(),
             self.profile.system.clone(),
         ];
-        // A conversation that exists resumes; a new one takes the id it was given.
-        match &self.profile.session {
-            Some(id) if transcript_exists(id) => args.extend(["--resume".into(), id.clone()]),
-            Some(id) => args.extend(["--session-id".into(), id.clone()]),
-            None => {
-                let id = uuid::Uuid::new_v4().to_string();
-                self.profile.session = Some(id.clone());
-                args.extend(["--session-id".into(), id]);
+        // A conversation that exists resumes; a new one takes the id it was
+        // given. On a server, where the transcript is, the script decides.
+        let id = self.profile.session.clone().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+        self.profile.session = Some(id.clone());
+        if server.is_none() {
+            if transcript_exists(&id) {
+                args.extend(["--resume".into(), id.clone()]);
+            } else {
+                args.extend(["--session-id".into(), id.clone()]);
             }
         }
         if let Some(model) = self.profile.model.as_ref().filter(|m| !m.trim().is_empty()) {
             args.extend(["--model".into(), model.trim().into()]);
         }
         args.extend(self.profile.extra.iter().cloned());
-        if let Some((port, token)) = &self.mcp {
+        // Gannin's MCP server listens on this Mac only.
+        if let Some((port, token)) = self.mcp.as_ref().filter(|_| server.is_none()) {
             let config = json!({ "mcpServers": { "gannin": { "type": "http", "url": format!("http://127.0.0.1:{port}/mcp"), "headers": { "Authorization": format!("Bearer {token}") } } } });
             // Kept in Marra's folder (only this user can read ~/.gannin), not the harness.
             let path = dir().join(format!("mcp-{}.json", self.profile.session.as_deref().unwrap_or("marra")));
@@ -302,14 +309,33 @@ impl Engine {
         // An interactive login shell's PATH finds claude as a terminal would
         // (as explain.rs starts it); exec hands it the pipes.
         let quoted: Vec<String> = args.iter().map(|a| shell_quote(a)).collect();
-        let line = format!("command -v claude >/dev/null 2>&1 || {{ echo 'Claude Code is not installed on this Mac.' >&2; exit 127; }}; exec claude {}", quoted.join(" "));
-        let mut command = Command::new(crate::paths::shell());
-        command.args(["-l", "-i", "-c", &line]).current_dir(&folder).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-        for (key, _) in std::env::vars() {
-            if key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_") {
-                command.env_remove(key);
+        let mut command = match &server {
+            // ssh carries the pipes; a login shell there finds claude.
+            Some(server) => {
+                // A UUID: safe in the script as it is.
+                let script = format!(
+                    "cd {folder} || exit 1\ncommand -v claude >/dev/null 2>&1 || {{ echo 'Claude Code is not installed on {name}.' >&2; exit 127; }}\nif ls \"$HOME\"/.claude/projects/*/{id}.jsonl >/dev/null 2>&1; then exec claude {args} --resume {id}; else exec claude {args} --session-id {id}; fi",
+                    folder = crate::launch::quote_path(&folder),
+                    name = server.name(),
+                    args = quoted.join(" "),
+                );
+                let mut command = Command::new("ssh");
+                command.args(server.ssh_args(false)).arg(format!(r#"exec "${{SHELL:-/bin/bash}}" -lc {}"#, shell_quote(&script)));
+                command
             }
-        }
+            None => {
+                let line = format!("command -v claude >/dev/null 2>&1 || {{ echo 'Claude Code is not installed on this Mac.' >&2; exit 127; }}; exec claude {}", quoted.join(" "));
+                let mut command = Command::new(crate::paths::shell());
+                command.args(["-l", "-i", "-c", &line]).current_dir(&folder);
+                for (key, _) in std::env::vars() {
+                    if key == "CLAUDECODE" || key.starts_with("CLAUDE_CODE_") {
+                        command.env_remove(key);
+                    }
+                }
+                command
+            }
+        };
+        command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = command.spawn().map_err(|e| format!("Couldn't start claude: {e}"))?;
         self.stdin = child.stdin.take();
         let generation = {

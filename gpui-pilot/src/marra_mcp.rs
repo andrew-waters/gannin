@@ -35,7 +35,7 @@ pub fn tools() -> Value {
         { "name": "workload", "description": "The user's pull requests and review requests across their orgs, with each PR's state, and issues assigned to them.", "inputSchema": { "type": "object", "properties": {} } },
         { "name": "list_skills", "description": "The harnesses Gannin knows and the skills each offers (skills/*.md), for choosing where to answer a data question or run an investigation.", "inputSchema": { "type": "object", "properties": {} } },
         { "name": "send_to_session", "description": "Types a message into a session's Claude Code, as if the user had. Gannin shows the user a card first and only sends if they say so; the reply says whether it went.", "inputSchema": { "type": "object", "properties": { "id": id, "text": { "type": "string" } }, "required": ["id", "text"] } },
-        { "name": "start_errand", "description": "Starts a question or an investigation in a harness: a separate read-only Claude Code worker with that harness's skills and access, shown to the user as a thread of its own. Use for data questions (ClickHouse, Mongo, analytics) and bug investigations, rather than answering them yourself.", "inputSchema": { "type": "object", "properties": { "kind": { "type": "string", "enum": ["question", "investigation"] }, "ask": { "type": "string", "description": "The question or what to investigate, in the user's words plus anything you know" }, "harness": { "type": "string", "description": "The harness folder, from list_skills" }, "skills": { "type": "array", "items": { "type": "string" } } }, "required": ["kind", "ask", "harness"] } },
+        { "name": "start_errand", "description": "Starts a question or an investigation in a harness: a separate read-only Claude Code worker with that harness's skills and access, shown to the user as a thread of its own. Use for data questions (ClickHouse, Mongo, analytics) and bug investigations, rather than answering them yourself.", "inputSchema": { "type": "object", "properties": { "kind": { "type": "string", "enum": ["question", "investigation"] }, "ask": { "type": "string", "description": "The question or what to investigate, in the user's words plus anything you know" }, "harness": { "type": "string", "description": "The harness, exactly as list_skills names it (server:/path for one on a server)" }, "skills": { "type": "array", "items": { "type": "string" } } }, "required": ["kind", "ask", "harness"] } },
         { "name": "notes", "description": "Reads your notes about the user (their preferences, standing instructions); with text, replaces them. Keep them short.", "inputSchema": { "type": "object", "properties": { "text": { "type": "string" } } } }
     ])
 }
@@ -404,7 +404,9 @@ fn clip(s: &str, max: usize) -> String {
 /// The harnesses Gannin knows (from its sessions) and their skills.
 pub fn skills() -> String {
     let mut out = Vec::new();
-    for harness in harnesses() {
+    for place in harness_places() {
+        // The skills from this Mac's checkout of the same repo.
+        let harness = place.local.clone().unwrap_or_else(|| place.path.clone());
         let mut names: Vec<String> = Vec::new();
         for folder in ["skills", ".claude/skills"] {
             for entry in std::fs::read_dir(harness.join(folder)).into_iter().flatten().flatten() {
@@ -418,13 +420,53 @@ pub fn skills() -> String {
             }
         }
         names.sort();
-        out.push(format!("{}\n{}", harness.display(), if names.is_empty() { "  (no skills)".to_string() } else { names.join("\n") }));
+        out.push(format!("{}\n{}", place.label(), if names.is_empty() { "  (no skills)".to_string() } else { names.join("\n") }));
     }
     if out.is_empty() {
         "No harnesses yet: Gannin knows a harness once a session has run in it.".into()
     } else {
         out.join("\n\n")
     }
+}
+
+/// A harness Gannin has run sessions in, and where: on a server when one
+/// has run there (where sessions are meant to run), else on this Mac.
+#[derive(Clone, Debug)]
+pub struct HarnessPlace {
+    pub path: std::path::PathBuf,
+    pub server: Option<crate::servers::Server>,
+    /// A checkout here of the same repo, to read its skills and prompts.
+    pub local: Option<std::path::PathBuf>,
+}
+
+impl HarnessPlace {
+    /// As Marra names it: `server:/path` on a server, else the path.
+    pub fn label(&self) -> String {
+        match &self.server {
+            Some(server) => format!("{}:{}", server.name(), self.path.display()),
+            None => self.path.display().to_string(),
+        }
+    }
+}
+
+/// Each harness repo once, where its errands should run.
+pub fn harness_places() -> Vec<HarnessPlace> {
+    let launches = crate::launch::saved();
+    let mut repos: Vec<String> = launches.iter().map(|l| l.harness_repo.to_lowercase()).filter(|r| !r.is_empty()).collect();
+    repos.sort();
+    repos.dedup();
+    repos
+        .into_iter()
+        .filter_map(|repo| {
+            let of_repo = || launches.iter().filter(|l| l.harness_repo.eq_ignore_ascii_case(&repo));
+            let local = of_repo().filter(|l| l.server.is_none()).map(|l| l.harness_path.clone()).find(|h| h.exists());
+            // Newest first, as `saved` lists them.
+            match of_repo().find(|l| l.server.is_some()) {
+                Some(l) => Some(HarnessPlace { path: l.harness_path.clone(), server: l.server.clone(), local }),
+                None => local.clone().map(|path| HarnessPlace { path, server: None, local }),
+            }
+        })
+        .collect()
 }
 
 /// The harness folders Gannin knows on this Mac (from its sessions).
